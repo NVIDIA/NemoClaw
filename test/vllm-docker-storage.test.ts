@@ -5,11 +5,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { afterEach, expect, test, vi } from "vitest";
 
-import { probeDockerStorage } from "../src/lib/inference/vllm-storage";
+import { detectVllmProfile, installVllm } from "../src/lib/inference/vllm";
+import {
+  imageStorageRequirementBytes,
+  probeDockerStorage,
+} from "../src/lib/inference/vllm-storage";
 
 const TARGET_ID = "vllm-docker-storage";
 const DOCKER_HOST = "unix:///run/docker.sock";
@@ -45,11 +50,14 @@ function writeEvidence(evidence: Record<string, unknown>): void {
   persist();
 }
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 realDockerTest(
-  "measures real Docker storage through the /run/docker.sock alias (#7039)",
-  () => {
+  "allows non-interactive managed vLLM past the real /run/docker.sock storage gate (#7039)",
+  async () => {
     expect(process.platform, "this release acceptance requires a native Linux host").toBe("linux");
     expect(
       fs.statSync("/run/docker.sock").isSocket(),
@@ -97,6 +105,45 @@ realDockerTest(
     expect(probe.capacity.availableBytes).toBe(measuredAvailableBytes);
     expect(probe.capacity.availableBytes).toBeGreaterThan(0n);
 
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+    assert(profile);
+    const acceptanceProfile = {
+      ...profile,
+      image: `example.invalid/nemoclaw/vllm@sha256:${"0".repeat(64)}`,
+      imageDownloadSizeBytes: 1,
+      containerName: `nemoclaw-vllm-storage-e2e-${String(process.pid)}`,
+      pullTimeoutSec: 1,
+    };
+    expect(probe.capacity.availableBytes).toBeGreaterThanOrEqual(
+      imageStorageRequirementBytes(acceptanceProfile.imageDownloadSizeBytes),
+    );
+
+    const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-storage-"));
+    const blockedHome = path.join("/proc", `nemoclaw-vllm-storage-e2e-${String(process.pid)}`);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      fs.writeFileSync(path.join(fakeBinDir, "nvidia-smi"), "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
+      vi.stubEnv("PATH", `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`);
+      vi.stubEnv("HOME", blockedHome);
+      vi.stubEnv("NEMOCLAW_VLLM_MODEL", profile.defaultModel.envValue);
+      vi.stubEnv("NEMOCLAW_VLLM_EXTRA_ARGS_JSON", undefined);
+      expect(os.homedir()).toBe(blockedHome);
+
+      const result = await installVllm(acceptanceProfile, {
+        hasImage: false,
+        nonInteractive: true,
+        promptFn: async () => "",
+      });
+      expect(result).toEqual({ ok: false });
+      const installErrors = errorSpy.mock.calls.flat().map(String).join("\n");
+      expect(installErrors).toContain("could not create Hugging Face cache directory");
+      expect(installErrors).not.toContain("Docker storage for the managed vLLM image");
+    } finally {
+      fs.rmSync(fakeBinDir, { force: true, recursive: true });
+    }
+
     const checkoutResult = spawnSync("git", ["rev-parse", "HEAD"], {
       encoding: "utf8",
       timeout: 5_000,
@@ -121,6 +168,7 @@ realDockerTest(
       measuredPath: probe.capacity.path,
       measuredSource: probe.capacity.source,
       measuredAvailableBytes: String(probe.capacity.availableBytes),
+      managedInstallCrossedImageStorageGate: true,
     };
     writeEvidence(evidence);
     console.info(`[${TARGET_ID}] ${JSON.stringify(evidence)}`);
