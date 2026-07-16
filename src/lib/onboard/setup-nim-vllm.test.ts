@@ -151,6 +151,28 @@ describe("setupNim vLLM route containment", () => {
     expect(console.error).toHaveBeenCalledWith("  Then select Local vLLM when prompted.");
   });
 
+  it("rejects a served alias when root metadata is missing (#7023)", async () => {
+    const validate = vi.fn(async () => ({ ok: true }));
+    const selection = state("nvidia/nemotron-3-ultra-550b-a55b");
+    selection.assertRouteCompatible = () => ({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () => JSON.stringify({ data: [{ id: "nemotron-ultra" }] }),
+        validateOpenAiLikeSelection: validate,
+      }),
+    );
+
+    await expect(handler(selection)).rejects.toThrow("exit 1");
+    expect(validate).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "  Detected vLLM model 'nemotron-ultra' does not match the shared gateway route 'nvidia/nemotron-3-ultra-550b-a55b'.",
+    );
+  });
+
   it("exact-checks an adopted alias against the durable shared route before validation", async () => {
     const validate = vi.fn(async () => ({ ok: true }));
     const selection = state("required/model");
