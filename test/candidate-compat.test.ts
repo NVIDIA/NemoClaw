@@ -85,10 +85,25 @@ describe("OpenShell candidate compatibility contract", () => {
   it("keeps the manual controller read-only and runs digest-bound deterministic and live lanes (#6691)", () => {
     const source = readFileSync(resolve(".github/workflows/candidate-compatibility.yaml"), "utf8");
     const workflow = parseYaml(source) as {
-      jobs: Record<string, unknown>;
+      jobs: Record<
+        string,
+        {
+          permissions?: Record<string, string>;
+          steps?: Array<{
+            env?: Record<string, string>;
+            id?: string;
+            if?: string;
+            name?: string;
+            run?: string;
+          }>;
+        }
+      >;
       on: { workflow_dispatch: { inputs: Record<string, unknown> } };
       permissions: Record<string, string>;
     };
+    const evidence = workflow.jobs.evidence;
+    const finalize = evidence?.steps?.find((step) => step.name === "Finalize auditable evidence");
+    const enforce = evidence?.steps?.find((step) => step.name === "Enforce aggregate result");
     expect(Object.keys(workflow.on.workflow_dispatch.inputs).sort()).toEqual([
       "candidate",
       "component",
@@ -107,7 +122,162 @@ describe("OpenShell candidate compatibility contract", () => {
     expect(source).toContain("RESOLUTION_ID: ${{ needs.resolve.outputs.resolution_id }}");
     expect(source).toContain("verify-invocations");
     expect(source).toContain("openshell-gateway-auth-source-contract.test.ts");
+    expect(evidence?.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(finalize?.id).toBe("finalize");
+    expect(finalize?.env).toMatchObject({
+      GH_TOKEN: "${{ github.token }}",
+      RUN_ATTEMPT: "${{ github.run_attempt }}",
+      RUN_ID: "${{ github.run_id }}",
+      RUN_URL:
+        "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+    });
+    expect(finalize?.run).toContain("actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100");
+    expect(finalize?.run).toContain("Number.isSafeInteger(job.id)");
+    expect(finalize?.run).toContain("job.name === expectedJobName");
+    expect(finalize?.run).toContain("job.run_id === runId");
+    expect(finalize?.run).toContain("job.run_attempt === runAttempt");
+    expect(finalize?.run).toContain("matches.length === 1");
+    expect(finalize?.run).not.toContain("html_url");
+    expect(enforce?.run).toContain("::error title=Candidate installer compatibility failed::See");
+    expect(enforce?.run).toContain("::error title=Candidate live compatibility failed::See");
+    expect(enforce?.run).not.toContain('test "$DETERMINISTIC_RESULT"');
+    expect(enforce?.if).toBe("${{ always() }}");
     expect(source).not.toMatch(/\b(?:git push|gh pr|npm publish|docker push)\b/u);
+  });
+
+  it("links failed evidence to validated jobs and falls back to the workflow run", () => {
+    const source = readFileSync(resolve(".github/workflows/candidate-compatibility.yaml"), "utf8");
+    const workflow = parseYaml(source) as {
+      jobs: {
+        evidence: {
+          steps: Array<{ name?: string; run?: string }>;
+        };
+      };
+    };
+    const finalize = workflow.jobs.evidence.steps.find(
+      (step) => step.name === "Finalize auditable evidence",
+    );
+    const enforce = workflow.jobs.evidence.steps.find(
+      (step) => step.name === "Enforce aggregate result",
+    );
+    const renderer =
+      finalize?.run?.match(
+        /node <<'NODE' >> "\$GITHUB_STEP_SUMMARY"\n([\s\S]*?)\nNODE(?:\n|$)/u,
+      )?.[1] ?? "";
+
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-candidate-links-"));
+    const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";
+    const evidence = {
+      overall: "failure",
+      plan: {
+        deterministic: [{ id: "installer", status: "selected" }],
+        live: [{ id: "openshell-gateway-auth-contract", status: "selected" }],
+      },
+      receipt: {
+        component: "openshell",
+        nemoclawSha: SHA,
+        requestedCandidate: `v${VERSION}`,
+        resolutionId: "d".repeat(64),
+      },
+      results: [
+        { conclusion: "failure", lane: "installer" },
+        { conclusion: "failure", lane: "live:openshell-gateway-auth-contract" },
+      ],
+    };
+    const outputPath = join(directory, "github-output");
+    const render = (jobResponse: unknown) => {
+      writeFileSync(
+        join(directory, "candidate-compatibility-evidence.json"),
+        JSON.stringify(evidence),
+      );
+      writeFileSync(
+        join(directory, "candidate-current-attempt-jobs.json"),
+        JSON.stringify(jobResponse),
+      );
+      writeFileSync(outputPath, "");
+      const result = spawnSync(process.execPath, ["-e", renderer], {
+        cwd: directory,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: outputPath,
+          RUN_ATTEMPT: "2",
+          RUN_ID: "123",
+          RUN_URL: runUrl,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      return { output: readFileSync(outputPath, "utf8"), summary: result.stdout };
+    };
+
+    try {
+      const direct = render({
+        jobs: [
+          {
+            conclusion: "failure",
+            id: 456,
+            name: "deterministic (installer)",
+            run_attempt: 2,
+            run_id: 123,
+            status: "completed",
+          },
+          {
+            conclusion: "failure",
+            id: 789,
+            name: "live",
+            run_attempt: 2,
+            run_id: 123,
+            status: "completed",
+          },
+        ],
+        total_count: 2,
+      });
+      expect(direct.summary).toContain(`[failure](${runUrl}/job/456)`);
+      expect(direct.summary).toContain(`[failure](${runUrl}/job/789)`);
+      expect(direct.output).toContain(`deterministic_failure_url=${runUrl}/job/456`);
+      expect(direct.output).toContain(`live_failure_url=${runUrl}/job/789`);
+
+      const fallback = render({
+        jobs: [
+          {
+            conclusion: "failure",
+            id: Number.MAX_SAFE_INTEGER + 1,
+            name: "deterministic (installer)",
+            run_attempt: 2,
+            run_id: 123,
+            status: "completed",
+          },
+        ],
+        total_count: 1,
+      });
+      expect(fallback.summary.match(new RegExp(`\\[failure\\]\\(${runUrl}\\)`, "gu"))).toHaveLength(
+        2,
+      );
+      expect(fallback.summary).not.toContain(`${runUrl}/job/`);
+      expect(fallback.output).toContain(`deterministic_failure_url=${runUrl}`);
+      expect(fallback.output).toContain(`live_failure_url=${runUrl}`);
+
+      const aggregate = spawnSync("bash", ["-e", "-o", "pipefail", "-c", enforce?.run ?? ""], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DETERMINISTIC_FAILURE_URL: "",
+          DETERMINISTIC_RESULT: "cancelled",
+          LIVE_FAILURE_URL: "",
+          LIVE_RESULT: "failure",
+          RUN_URL: runUrl,
+        },
+      });
+      expect(aggregate.status).toBe(1);
+      expect(aggregate.stdout).toContain(
+        `::error title=Candidate installer compatibility failed::See ${runUrl}`,
+      );
+      expect(aggregate.stdout).toContain(
+        `::error title=Candidate live compatibility failed::See ${runUrl}`,
+      );
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("rejects unsupported, ambiguous, and unsafe candidate input before metadata access (#6691)", async () => {
