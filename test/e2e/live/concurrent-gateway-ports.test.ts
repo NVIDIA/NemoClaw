@@ -329,8 +329,12 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
 
   const gatewayA = gatewayNameForPort(GATEWAY_PORT_A);
   const gatewayB = gatewayNameForPort(GATEWAY_PORT_B);
+  // OpenShell reaches this fixture from its gateway network namespace, where
+  // the runner's loopback address is not routable.
   const fake = await startFakeOpenAiCompatibleServer({
+    host: "0.0.0.0",
     port: Number(process.env.NEMOCLAW_E2E_FAKE_PORT ?? 0),
+    publicHost: "host.openshell.internal",
   });
   await artifacts.target.declare({
     id: "concurrent-gateway-ports",

@@ -259,6 +259,7 @@ jobs:
         if: ${{ steps.start.outputs.dispatched == 'true' }}
         continue-on-error: true
         env:
+          GATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.start.outputs.run_id }}
         run: |
@@ -267,7 +268,8 @@ jobs:
           set -euo pipefail
 
           if [[ ! "$RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
-            printf '::error title=Invalid run ID::The controller did not provide a positive numeric run ID.\n' >&2
+            printf '::error title=Invalid run ID::The controller did not provide a positive numeric run ID. %s\n' \
+              "$GATE_RUN_URL" >&2
             exit 1
           fi
 
@@ -321,7 +323,9 @@ jobs:
           WAIT
 
           if [ "$wait_status" -eq 124 ]; then
-            printf 'Run %s did not complete within 105 minutes; finalization will cancel it and report the PR gate outcome.\n' "$RUN_ID"
+            run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+            printf 'Run %s did not complete within 105 minutes; finalization will cancel it and report the PR gate outcome. %s\n' \
+              "$RUN_ID" "$run_url"
             wait_status=0
           fi
           exit "$wait_status"
@@ -333,6 +337,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.start.outputs.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.start.outputs.run_id }}
         run: |
           set -euo pipefail
           download_status=0
@@ -340,7 +345,11 @@ jobs:
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
               --dir "${{ steps.workspace.outputs.work_dir }}/evidence" || download_status=$?
           if [ "$download_status" -eq 124 ]; then
-            printf '::error title=Evidence download timed out::Artifact download exceeded 10 minutes.\n' >&2
+            printf '::error title=Evidence download timed out::Artifact download exceeded 10 minutes. %s\n' \
+              "$RUN_URL" >&2
+          elif [ "$download_status" -ne 0 ]; then
+            printf '::error title=Evidence download failed::Artifact download exited with status %s. %s\n' \
+              "$download_status" "$RUN_URL" >&2
           fi
           exit "$download_status"
 

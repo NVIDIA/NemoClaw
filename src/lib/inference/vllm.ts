@@ -44,7 +44,6 @@ import {
   probeDockerStorage,
   probeHostStorage,
   type StorageProbeResult,
-  VLLM_STORAGE_OVERRIDE_ENV,
 } from "./vllm-storage";
 
 // Per-platform install recipe. Add new platforms by appending an entry to
@@ -796,7 +795,9 @@ function printImageStorageWarning(
     console.error(`  Storage:   ${probe.source ?? "filesystem"} (${probe.path})`);
   }
   console.error("");
-  if (insufficient) console.error("  Free or expand Docker storage before continuing.");
+  if (insufficient) {
+    console.error("  Free or expand Docker storage to reduce the risk of download failure.");
+  }
   console.error("  Useful diagnostics:");
   console.error("    docker system df");
   console.error("    docker info --format '{{.DockerRootDir}}'");
@@ -833,7 +834,11 @@ function printModelStorageWarning(
     console.error(`  Storage:   ${probe.source ?? "filesystem"} (${probe.path})`);
   }
   console.error("");
-  if (insufficient) console.error("  Free or expand the model-cache storage before continuing.");
+  if (insufficient) {
+    console.error(
+      "  Free or expand the model-cache storage to reduce the risk of download failure.",
+    );
+  }
   console.error("  Useful diagnostics:");
   console.error(`    df -h ${hostHfCacheDir()}`);
   console.error(`    du -sh ${hostHfCacheDir()} 2>/dev/null`);
@@ -842,7 +847,6 @@ function printModelStorageWarning(
 async function imageStorageAccepted(
   profile: VllmProfile,
   opts: InstallVllmOptions,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   const probe = probeDockerStorage();
   const requiredBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
@@ -854,15 +858,11 @@ async function imageStorageAccepted(
     console.error("  Continuing because Docker storage capacity could not be verified.");
     return true;
   }
-  if (env[VLLM_STORAGE_OVERRIDE_ENV] === "1") {
-    console.error(`  Continuing because ${VLLM_STORAGE_OVERRIDE_ENV}=1.`);
-    return true;
-  }
   if (opts.nonInteractive) {
     console.error(
-      `  Non-interactive setup stops before the guarded download. Set ${VLLM_STORAGE_OVERRIDE_ENV}=1 to override.`,
+      "  Continuing because managed vLLM storage estimates are advisory in non-interactive setup.",
     );
-    return false;
+    return true;
   }
   return isAffirmativeAnswer(await opts.promptFn("  Continue with the pull anyway? [y/N]: "));
 }
@@ -871,7 +871,6 @@ async function modelStorageAccepted(
   profile: VllmProfile,
   model: VllmModelDef,
   opts: InstallVllmOptions,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   if (profile.modelDownloadSizeBytes === undefined) return true;
   if (!Number.isFinite(profile.modelDownloadSizeBytes) || profile.modelDownloadSizeBytes <= 0) {
@@ -886,13 +885,15 @@ async function modelStorageAccepted(
   const requiredBytes = modelStorageRequirementBytes(Number(remainingBytes));
   if (probe.ok && probe.capacity.availableBytes >= requiredBytes) return true;
   printModelStorageWarning(model, probe, requiredBytes, cachedBytes, snapshotBytes);
-  if (env[VLLM_STORAGE_OVERRIDE_ENV] === "1") {
-    console.error(`  Continuing because ${VLLM_STORAGE_OVERRIDE_ENV}=1.`);
+  if (probe.ok && opts.nonInteractive) {
+    console.error(
+      "  Continuing because managed vLLM storage estimates are advisory in non-interactive setup.",
+    );
     return true;
   }
   if (opts.nonInteractive) {
     console.error(
-      `  Non-interactive setup stops before the guarded download. Set ${VLLM_STORAGE_OVERRIDE_ENV}=1 to override.`,
+      "  Non-interactive setup stops because model-cache capacity could not be verified. Re-run interactively to review the warning.",
     );
     return false;
   }

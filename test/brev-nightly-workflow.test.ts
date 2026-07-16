@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { BREV_WORKFLOW_OWNERSHIP_ENV } from "../tools/e2e/brev-remote-vitest.mts";
@@ -45,6 +50,80 @@ type Workflow = {
   jobs?: Record<string, ReusableCallerJob>;
 };
 
+const TESTED_SHA = "a".repeat(40);
+
+function runReporter(script: string, jobResponse: unknown, failJobLookup = false) {
+  const directory = mkdtempSync(join(tmpdir(), "nemoclaw-brev-reporter-"));
+  const binDirectory = join(directory, "bin");
+  const fakeGh = join(binDirectory, "gh");
+  const checkArgsPath = join(directory, "check-args");
+  const commentPath = join(directory, "comment.md");
+  const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";
+  try {
+    mkdirSync(binDirectory);
+    writeFileSync(
+      fakeGh,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'if [[ "$1" == "pr" && "$2" == "view" ]]; then',
+        `  printf '%s\\n' '{"headRefName":"feature/test","headRefOid":"${TESTED_SHA}"}'`,
+        'elif [[ "$1" == "api" && "$2" == *"/actions/runs/123/attempts/2/jobs?per_page=100" ]]; then',
+        '  [[ "${FAKE_JOBS_FAIL:-0}" != "1" ]] || exit 1',
+        "  printf '%s' \"$FAKE_JOBS_JSON\"",
+        'elif [[ "$1" == "api" && "$2" == "repos/$GITHUB_REPOSITORY/check-runs" ]]; then',
+        '  printf \'%s\\0\' "$@" > "$FAKE_CHECK_ARGS"',
+        'elif [[ "$1" == "pr" && "$2" == "comment" ]]; then',
+        "  shift 2",
+        '  while [[ "$#" -gt 0 ]]; do',
+        '    if [[ "$1" == "--body-file" ]]; then',
+        '      cp "$2" "$FAKE_COMMENT"',
+        "      exit 0",
+        "    fi",
+        "    shift",
+        "  done",
+        "  exit 1",
+        "else",
+        "  exit 1",
+        "fi",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeGh, 0o700);
+    const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", script], {
+      encoding: "utf8",
+      timeout: 5_000,
+      env: {
+        ...process.env,
+        FAKE_CHECK_ARGS: checkArgsPath,
+        FAKE_COMMENT: commentPath,
+        FAKE_JOBS_FAIL: failJobLookup ? "1" : "0",
+        FAKE_JOBS_JSON: JSON.stringify(jobResponse),
+        GH_TOKEN: "token",
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        INSTANCE_NAME: "e2e-42-full-123-2",
+        KEEP_ALIVE: "false",
+        PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
+        PR_NUMBER: "42",
+        RUN_ATTEMPT: "2",
+        RUN_ID: "123",
+        RUN_URL: runUrl,
+        TESTED_SHA,
+        TEST_SUITE: "full",
+        VALIDATION_RESULT: "failure",
+      },
+    });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    return {
+      checkArgs: readFileSync(checkArgsPath, "utf8").split("\0").filter(Boolean),
+      comment: readFileSync(commentPath, "utf8"),
+      runUrl,
+    };
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+}
+
 describe("Brev nightly workflow contract", () => {
   const nightly = readYaml<Workflow>(".github/workflows/brev-nightly-e2e.yaml");
   const branchValidation = readYaml<Workflow>(".github/workflows/e2e-branch-validation.yaml");
@@ -73,6 +152,7 @@ describe("Brev nightly workflow contract", () => {
   it("grants the reusable workflow permission ceiling so GitHub can start the run", () => {
     expect(nightly.permissions).toEqual(branchValidation.permissions);
     expect(nightly.permissions).toEqual({
+      actions: "read",
       contents: "read",
       checks: "write",
       "pull-requests": "write",
@@ -105,6 +185,7 @@ describe("Brev nightly workflow contract", () => {
     expect(recordRevision?.run).toContain("git rev-parse HEAD");
     expect(validation?.env?.BREV_E2E_INSTANCE_NAME).toContain("inputs.test_suite");
     expect(reporter?.permissions).toEqual({
+      actions: "read",
       contents: "read",
       checks: "write",
       "pull-requests": "write",
@@ -117,8 +198,69 @@ describe("Brev nightly workflow contract", () => {
     expect(reporter?.steps?.[0]?.run).toContain(
       "PR head moved after Brev validation; refusing to report stale evidence",
     );
+    expect(reporter?.steps?.[0]?.run).toContain(
+      "pr_number must be a positive integer. See $RUN_URL",
+    );
+    expect(reporter?.steps?.[0]?.run).toContain("refusing to report stale evidence. See $RUN_URL");
+    expect(reporter?.steps?.[0]?.run).toContain(
+      "actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100",
+    );
+    expect(reporter?.steps?.[0]?.run).toContain(".id <= 9007199254740991");
+    expect(reporter?.steps?.[0]?.run).not.toContain("html_url");
     expect(reporter?.steps?.some((step) => step.uses?.includes("checkout"))).toBe(false);
     expect(JSON.stringify(reporter)).not.toMatch(/BREV_|NVIDIA_INFERENCE_API_KEY/);
+  });
+
+  it("links failed checks and comments to the validated job with a run fallback", () => {
+    const reporter = branchValidation.jobs?.["report-pr"]?.steps?.find(
+      (step) => step.name === "Publish completed check and PR comment",
+    );
+    const script = reporter?.run ?? "";
+
+    const direct = runReporter(script, {
+      jobs: [
+        {
+          conclusion: "failure",
+          id: 456,
+          name: "brev-nightly-e2e (full) / e2e-branch-validation",
+          run_attempt: 2,
+          run_id: 123,
+          status: "completed",
+        },
+      ],
+      total_count: 1,
+    });
+    const directUrl = `${direct.runUrl}/job/456`;
+    expect(direct.checkArgs).toContain("conclusion=failure");
+    expect(direct.checkArgs).toContain(`details_url=${directUrl}`);
+    expect(direct.checkArgs).toContain(
+      `output[summary]=[Open the validation job](${directUrl}) for details.`,
+    );
+    expect(direct.comment).toContain(`[See validation job](${directUrl})`);
+
+    const unsafeId = runReporter(script, {
+      jobs: [
+        {
+          conclusion: "failure",
+          id: Number.MAX_SAFE_INTEGER + 1,
+          name: "brev-nightly-e2e (full) / e2e-branch-validation",
+          run_attempt: 2,
+          run_id: 123,
+          status: "completed",
+        },
+      ],
+      total_count: 1,
+    });
+    expect(unsafeId.checkArgs).toContain(`details_url=${unsafeId.runUrl}`);
+    expect(unsafeId.comment).not.toContain(`${unsafeId.runUrl}/job/`);
+
+    const fallback = runReporter(script, { jobs: [], total_count: 0 }, true);
+    expect(fallback.checkArgs).toContain("conclusion=failure");
+    expect(fallback.checkArgs).toContain(`details_url=${fallback.runUrl}`);
+    expect(fallback.checkArgs).toContain(
+      `output[summary]=[Open the workflow run](${fallback.runUrl}) for details.`,
+    );
+    expect(fallback.comment).toContain(`[See workflow run](${fallback.runUrl})`);
   });
 
   // source-shape-contract: security -- Suite validation must reject unsupported input before any target checkout

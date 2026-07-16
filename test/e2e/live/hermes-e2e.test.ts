@@ -380,7 +380,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
 
   if (hermesDashboardE2eEnabled()) {
     expect(resultText(install)).toContain(
-      "Deployment verified — gateway and dashboard are healthy.",
+      "Deployment verified — gateway, dashboard, and inference route are healthy.",
     );
     expect(resultText(install)).toContain("Hermes Agent Dashboard");
     expect(resultText(install)).toContain(`http://127.0.0.1:${HERMES_DASHBOARD_PORT}/`);
