@@ -20,8 +20,10 @@ function runPreinstallUpgradeGuard(
     currentBackupSucceeds?: boolean;
     currentCliAvailable?: boolean;
     hasOldCli?: boolean;
+    openshellOnPath?: boolean;
     openshellVersion?: string;
     registryJson?: string;
+    userLocalOpenshell?: boolean;
   } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-upgrade-prompt-"));
@@ -66,6 +68,18 @@ fi
 exit 0
 `,
   );
+  const openshellScript = `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${openshellLog}"
+exit 0
+`;
+  const openshellTargets = [
+    options.openshellOnPath !== false ? path.join(bin, "openshell") : null,
+    options.userLocalOpenshell === true ? path.join(home, ".local", "bin", "openshell") : null,
+  ].filter((target): target is string => target !== null);
+  for (const target of openshellTargets) {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    writeExecutable(target, openshellScript);
+  }
   writeExecutable(path.join(bin, "python3"), "#!/usr/bin/env bash\nexit 127\n");
 
   const resolveCli =
@@ -78,7 +92,6 @@ exit 0
     warn() { printf '[WARN] %s\\n' "$*"; }
     _CLI_BIN=nemoclaw
     HOME="${home}"
-    command_exists() { [ "$1" = "openshell" ]; }
     installed_openshell_version() { printf '${openshellVersion}'; }
     resolve_existing_cli_runner() { ${resolveCli}; }
     prepare_current_cli_for_preupgrade_backup() {
@@ -88,7 +101,6 @@ exit 0
       _CLI_PATH="${currentCli}"
       return 0
     }
-    openshell() { printf '%s\\n' "$*" >> "${openshellLog}"; return 0; }
     preinstall_backup_and_retire_legacy_gateway
     printf 'RESTORE=%s\\n' "\${NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE:-}"
     printf 'CONFIRMED_NAMES=%s\\n' "\${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-}"
@@ -97,7 +109,7 @@ exit 0
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: home,
-    PATH: `${bin}:${process.env.PATH ?? ""}`,
+    PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
     ...env,
   };
   const inheritedControlKeys = [
@@ -105,7 +117,9 @@ exit 0
     "NEMOCLAW_NON_INTERACTIVE",
     "NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE",
     "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE",
+    "NEMOCLAW_OPENSHELL_BIN",
     "NEMOCLAW_OPENSHELL_UPGRADE_PREPARED",
+    "XDG_BIN_HOME",
   ].filter((key) => !(key in env));
   for (const key of inheritedControlKeys) delete childEnv[key];
   const result = spawnSync("bash", ["-c", snippet], {
@@ -273,6 +287,42 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(cliLog).not.toContain("old:");
+    expect(openshellLog).toBe("");
+  });
+
+  it("discovers a v0.0.55 user-local OpenShell before preparing recovery (#6114)", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
+      },
+      {
+        hasOldCli: false,
+        openshellOnPath: false,
+        openshellVersion: "0.0.44",
+        userLocalOpenshell: true,
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("RESTORE=1");
+    expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
+    expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toContain("require-all-env=1");
+    expect(openshellLog).toBe("");
+  });
+
+  it("leaves recovery preparation untouched when OpenShell is not installed (#6114)", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      { hasOldCli: false, openshellOnPath: false, openshellVersion: "0.0.44" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("RESTORE=");
+    expect(result.stdout).toContain("CONFIRMED_NAMES=[]");
+    expect(cliLog).toBe("");
     expect(openshellLog).toBe("");
   });
 
