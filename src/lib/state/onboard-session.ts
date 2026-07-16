@@ -30,6 +30,10 @@ import {
   isTerminalOnboardMachineState,
 } from "../onboard/machine/transitions";
 import type { OnboardMachineState, OnboardNonTerminalMachineState } from "../onboard/machine/types";
+import {
+  parseStationExpressResumeIntent,
+  type StationExpressResumeIntent,
+} from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
   assignSafeToolDisclosureUpdate,
@@ -153,6 +157,8 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  /** Secret-free installer choices needed to retry an interrupted DGX Station Express run. */
+  stationExpressIntent: StationExpressResumeIntent | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
@@ -631,6 +637,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    stationExpressIntent: parseStationExpressResumeIntent(overrides.stationExpressIntent),
     endpointUrl: overrides.endpointUrl ?? null,
     credentialEnv: overrides.credentialEnv ?? null,
     hermesAuthMethod: overrides.hermesAuthMethod ?? null,
@@ -673,6 +680,13 @@ export function createSession(overrides: Partial<Session> = {}): Session {
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
+  const stationExpressIntent = parseStationExpressResumeIntent(data.stationExpressIntent);
+  if (
+    hasOwn(data, "stationExpressIntent") &&
+    data.stationExpressIntent !== null &&
+    !stationExpressIntent
+  )
+    return null;
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -683,6 +697,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    stationExpressIntent,
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
     credentialEnv: readString(data.credentialEnv),
     hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
@@ -712,6 +727,14 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   });
   normalized.resumable = data.resumable !== false;
   normalized.status = readString(data.status) ?? normalized.status;
+  if (
+    normalized.stationExpressIntent &&
+    (normalized.mode !== "non-interactive" ||
+      normalized.resumable === false ||
+      normalized.status === "complete")
+  ) {
+    return null;
+  }
 
   if (isObject(data.steps)) {
     for (const [name, step] of Object.entries(data.steps)) {
@@ -1504,6 +1527,7 @@ export function completeSession(updates: SessionUpdates = {}): Session {
     Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
+    session.stationExpressIntent = null;
     session.failure = null;
     transitionMachineSnapshot(session, "complete", now);
     return session;
