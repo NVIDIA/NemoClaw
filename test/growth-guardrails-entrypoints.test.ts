@@ -67,7 +67,7 @@ function runEntrypoint(
   return result;
 }
 
-describe("growth-guardrails executable entrypoints", () => {
+describe("growth-guardrails executable entrypoints (#6953)", () => {
   it("prints the conditional guardrail PASS diagnostic", () => {
     const result = runEntrypoint("tools/growth-guardrails/test-conditionals.mts", [[]]);
 
