@@ -696,6 +696,71 @@ describe("PR E2E controller lifecycle", () => {
     }
   });
 
+  it("preserves the evidence-download retry marker when completion falls back (#7052)", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fallback-"));
+    const outputPath = path.join(workDir, "github-output");
+    const statePath = path.join(workDir, "controller-state.json");
+    const evidencePath = path.join(workDir, "evidence");
+    const gate = state();
+    const serializedState = `${JSON.stringify(gate, null, 2)}\n`;
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    fs.writeFileSync(statePath, serializedState, { mode: 0o600 });
+    fs.mkdirSync(evidencePath);
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    let completionAttempt = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => githubResponse(workflowRun(gate)),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          existingPrGateCheckRunsRoute(),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => {
+              completionAttempt += 1;
+              return completionAttempt === 1
+                ? githubResponse({ message: "simulated completion failure" }, 503)
+                : prGateMutationResponse(request);
+            },
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(
+        finishPrGate({
+          statePath,
+          stateHash: sha256(serializedState),
+          evidencePath,
+          checkRunId: 17,
+          childRunId: 23,
+          evidenceOutcome: "failure",
+        }),
+      ).rejects.toThrow(/Evidence download did not complete/u);
+      const completions = requests.filter(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(completions).toHaveLength(2);
+      const marker = "<!-- nemoclaw-pr-e2e-retry:v1:evidence-download -->";
+      expect(JSON.stringify(completions[0]?.body)).toContain(marker);
+      expect(JSON.stringify(completions[1]?.body)).toContain(marker);
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps malformed evidence terminal without an infrastructure retry marker", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-malformed-"));
     const outputPath = path.join(workDir, "github-output");

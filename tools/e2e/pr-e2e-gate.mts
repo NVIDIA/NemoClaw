@@ -2612,6 +2612,7 @@ export async function finishPrGate(options: {
   const childRunUrl = `https://github.com/${repository}/actions/runs/${options.childRunId}`;
   const context = { repository, checkRunId: options.checkRunId };
   let finalized = false;
+  let controllerFailureRetryReason: RetryableFailureReason | undefined;
   try {
     if (!HASH_PATTERN.test(options.stateHash)) throw new Error("controller state hash is invalid");
     const serializedState = readPrivateRegularFile(options.statePath, {
@@ -2680,6 +2681,7 @@ export async function finishPrGate(options: {
     let verdict: PrGateVerdict;
     if (workflowConclusion === "success") {
       if (options.evidenceOutcome !== "success") {
+        controllerFailureRetryReason = "evidence-download";
         const error = new Error(
           `Evidence download did not complete (outcome: ${options.evidenceOutcome}) after selected E2E run ${options.childRunId} succeeded. The controller could not verify its artifacts; inspect the Download evidence step and rerun the gate.`,
         );
@@ -2690,7 +2692,7 @@ export async function finishPrGate(options: {
           {
             error,
             detailsUrl: childRunUrl,
-            retryableFailureReason: "evidence-download",
+            retryableFailureReason: controllerFailureRetryReason,
           },
         );
         if (closed) {
@@ -2749,7 +2751,11 @@ export async function finishPrGate(options: {
         context,
         token,
         "Evidence could not be verified",
-        { error, detailsUrl: childRunUrl },
+        {
+          error,
+          detailsUrl: childRunUrl,
+          retryableFailureReason: controllerFailureRetryReason,
+        },
       );
       if (closed) appendOutput("finalized", "true");
     }
