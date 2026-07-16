@@ -184,6 +184,21 @@ describe("doctor inference checks", () => {
     );
   });
 
+  it("omits the serving process check when the agent has declared self_report (#7003)", async () => {
+    const checks = await collectInferenceChecks(
+      "alpha",
+      { provider: "nvidia-prod", model: "model" },
+      true,
+      {
+        probeProviderHealthImpl: () => upstream(),
+        probeSandboxInferenceGatewayHealthImpl: async () => gateway(true),
+        agentHasSelfReport: true,
+      },
+    );
+
+    expect(checks).not.toContainEqual(expect.objectContaining({ label: "Serving process" }));
+  });
+
   it("does not mutate direct provider health while adding route evidence", async () => {
     const providerHealth = upstream();
 

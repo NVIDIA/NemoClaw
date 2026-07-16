@@ -408,7 +408,7 @@ describe("agent definitions", () => {
     expect(agent.selfReport).toBeNull();
   });
 
-  it("parses self_report url and timeout from manifests (#7003)", () => {
+  it("parses self_report url and explicit timeout from manifests (#7003)", () => {
     const agentName = `has-self-report-${String(Date.now())}`;
     writeTempAgentManifest(
       agentName,
@@ -416,8 +416,23 @@ describe("agent definitions", () => {
         `name: ${agentName}`,
         "self_report:",
         '  url: "http://localhost:18789/health/monitor"',
-        "  timeout_seconds: 10",
+        "  timeout_seconds: 7",
       ].join("\n"),
+    );
+    const agent = loadAgent(agentName);
+    expect(agent.selfReport).toEqual({
+      url: "http://localhost:18789/health/monitor",
+      timeout_seconds: 7,
+    });
+  });
+
+  it("falls back to timeout_seconds 10 when self_report omits it (#7003)", () => {
+    const agentName = `self-report-no-timeout-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "self_report:", '  url: "http://localhost:18789/health/monitor"'].join(
+        "\n",
+      ),
     );
     const agent = loadAgent(agentName);
     expect(agent.selfReport).toEqual({

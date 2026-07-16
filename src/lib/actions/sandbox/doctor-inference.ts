@@ -15,6 +15,8 @@ export type DoctorInferenceRoute = {
 type DoctorInferenceDeps = {
   probeProviderHealthImpl?: typeof probeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: typeof probeSandboxInferenceGatewayHealth;
+  /** True when the agent has declared a self_report endpoint; suppresses the "not checked" leg. */
+  agentHasSelfReport?: boolean;
 };
 
 function pushInferenceHealthCheck(
@@ -159,11 +161,13 @@ export async function collectInferenceChecks(
   // Serving-process leg: the above probes run in a fresh exec with OpenShell's
   // injected env, so they cannot attest what the long-running gateway process
   // can reach. Report explicitly when no self-report source is declared (#7003).
-  checks.push({
-    group: "Inference",
-    label: "Serving process",
-    status: "info",
-    detail: "not checked — no self_report endpoint declared for this agent",
-  });
+  if (!deps.agentHasSelfReport) {
+    checks.push({
+      group: "Inference",
+      label: "Serving process",
+      status: "info",
+      detail: "not checked — no self_report endpoint declared for this agent",
+    });
+  }
   return checks;
 }

@@ -7,6 +7,7 @@ import { stripAnsi } from "../../adapters/openshell/client";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import { loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -387,6 +388,14 @@ function collectToolScopeChecks(
   });
 }
 
+function resolveAgentHasSelfReport(agentName: string | null | undefined): boolean {
+  try {
+    return loadAgent(agentName || "openclaw").selfReport !== null;
+  } catch {
+    return false;
+  }
+}
+
 async function collectDoctorChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -401,7 +410,9 @@ async function collectDoctorChecks(
     ...host.checks,
     ...gateway.checks,
     ...sandbox.checks,
-    ...(await collectInferenceChecks(sandboxName, route, sandbox.reachable)),
+    ...(await collectInferenceChecks(sandboxName, route, sandbox.reachable, {
+      agentHasSelfReport: resolveAgentHasSelfReport(sb?.agent),
+    })),
     ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable),
     ...collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix),
     ollamaDoctorCheck(route.provider),
