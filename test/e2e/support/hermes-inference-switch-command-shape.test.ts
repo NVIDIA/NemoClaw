@@ -136,10 +136,9 @@ describe("Hermes inference switch command shape", () => {
           {
             auth: "ok",
             authorizationSent: true,
-            bodyBytes: 42,
+            bodyBytes: 0,
             method: "POST",
-            model: "legacy-chat-probe",
-            path: "/v1/chat/completions",
+            path: "/v1/models",
           },
         ],
       }),

@@ -92,6 +92,7 @@ export function expectAuthenticatedBaselineInventoryRequest(
     expect.objectContaining({
       auth: "ok",
       authorizationSent: true,
+      method: "GET",
       path: "/v1/models",
     }),
   );
