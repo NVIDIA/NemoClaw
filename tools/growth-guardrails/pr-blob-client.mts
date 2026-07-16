@@ -162,10 +162,14 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
     if (!file) return null;
     const encodedPath = file.split("/").map(encodeURIComponent).join("/");
     const url = `${REST_API_ROOT}/repos/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
+    // This fallback only runs for blobs GraphQL truncated, i.e. large files
+    // (1-100 MB). The default /contents object shape drops `content` above 1 MB,
+    // so request the raw media type and read the body text directly.
+    const rawHeaders = { ...headers, Accept: "application/vnd.github.raw" };
     return withRetry(url, async () => {
       let response: Response;
       try {
-        response = await fetchImpl(url, { headers });
+        response = await fetchImpl(url, { headers: rawHeaders });
       } catch (error) {
         const wrapped: RetriableError = new Error(
           `${url}: network error ${(error as Error)?.message ?? error}`,
@@ -175,19 +179,7 @@ export function createPrBlobClient(options: PrBlobClientOptions): PrBlobClient {
       }
       if (response.status === 404) return null;
       if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-      const bodyValue = (await response.json()) as {
-        type?: string;
-        encoding?: string;
-        content?: unknown;
-      };
-      if (
-        bodyValue.type !== "file" ||
-        bodyValue.encoding !== "base64" ||
-        typeof bodyValue.content !== "string"
-      ) {
-        throw new Error(`Could not decode file contents for ${file}`);
-      }
-      return Buffer.from(bodyValue.content.replace(/\s/g, ""), "base64").toString("utf8");
+      return response.text();
     });
   }
 

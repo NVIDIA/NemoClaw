@@ -33,6 +33,7 @@ function fakeClient(
 }
 
 const CLEAN_BUDGET = { defaultMaxLines: 1500, legacyMaxLines: {} } as const;
+const NO_RENAMES: ReadonlyMap<string, string> = new Map();
 
 describe("growth-guardrails test-size-budget: pure policy", () => {
   it("passes when nothing changed and no test files are touched", () => {
@@ -40,7 +41,7 @@ describe("growth-guardrails test-size-budget: pure policy", () => {
       evaluateTestSizeBudgetViolations({
         baseBudget: CLEAN_BUDGET,
         headBudget: CLEAN_BUDGET,
-        baseWasFallback: false,
+        renames: NO_RENAMES,
         headBlobs: blobs({}),
         changedTests: [],
       }),
@@ -62,7 +63,7 @@ describe("growth-guardrails test-size-budget: pure policy", () => {
     const violations = evaluateTestSizeBudgetViolations({
       baseBudget: { defaultMaxLines: 1500, legacyMaxLines: { "test/a.test.ts": 1800 } },
       headBudget,
-      baseWasFallback: false,
+      renames: NO_RENAMES,
       headBlobs: blobs({ "test/a.test.ts": linesOf(1700) }),
       changedTests: [],
     });
@@ -73,7 +74,7 @@ describe("growth-guardrails test-size-budget: pure policy", () => {
     const violations = evaluateTestSizeBudgetViolations({
       baseBudget: CLEAN_BUDGET,
       headBudget: { defaultMaxLines: 1500, legacyMaxLines: { "test/new.test.ts": 1900 } },
-      baseWasFallback: false,
+      renames: NO_RENAMES,
       headBlobs: blobs({ "test/new.test.ts": linesOf(1850) }),
       changedTests: [],
     });
@@ -86,7 +87,7 @@ describe("growth-guardrails test-size-budget: pure policy", () => {
     const violations = evaluateTestSizeBudgetViolations({
       baseBudget: { defaultMaxLines: 1500, legacyMaxLines: { "test/a.test.ts": 1800 } },
       headBudget: { defaultMaxLines: 1500, legacyMaxLines: { "test/a.test.ts": 1800 } },
-      baseWasFallback: false,
+      renames: NO_RENAMES,
       headBlobs: blobs({ "test/a.test.ts": linesOf(1600) }),
       changedTests: [],
     });
@@ -99,7 +100,7 @@ describe("growth-guardrails test-size-budget: pure policy", () => {
     const violations = evaluateTestSizeBudgetViolations({
       baseBudget: { defaultMaxLines: 1500, legacyMaxLines: { "test/a.test.ts": 1800 } },
       headBudget: CLEAN_BUDGET,
-      baseWasFallback: false,
+      renames: NO_RENAMES,
       headBlobs: blobs({ "test/a.test.ts": linesOf(1700) }),
       changedTests: [],
     });
@@ -112,20 +113,32 @@ describe("growth-guardrails test-size-budget: pure policy", () => {
     const violations = evaluateTestSizeBudgetViolations({
       baseBudget: CLEAN_BUDGET,
       headBudget: CLEAN_BUDGET,
-      baseWasFallback: false,
+      renames: NO_RENAMES,
       headBlobs: blobs({ "test/big.test.ts": linesOf(1501) }),
       changedTests: ["test/big.test.ts"],
     });
     expect(violations).toEqual(["test/big.test.ts: 1501 line(s) > 1500"]);
   });
 
-  it("skips monotonicity checks when the base budget was absent", () => {
+  it("enforces default monotonicity against the fallback baseline", () => {
     const violations = evaluateTestSizeBudgetViolations({
       baseBudget: CLEAN_BUDGET,
       headBudget: { defaultMaxLines: 99999, legacyMaxLines: {} },
-      baseWasFallback: true,
+      renames: NO_RENAMES,
       headBlobs: blobs({ "test/ok.test.ts": linesOf(10) }),
       changedTests: ["test/ok.test.ts"],
+    });
+    expect(violations.join("\n")).toMatch(/defaultMaxLines increased from 1500 to 99999/);
+  });
+
+  it("carries a legacy allowance across a rename without flagging it as new", () => {
+    const renames = new Map([["test/new.test.ts", "test/old.test.ts"]]);
+    const violations = evaluateTestSizeBudgetViolations({
+      baseBudget: { defaultMaxLines: 1500, legacyMaxLines: { "test/old.test.ts": 1800 } },
+      headBudget: { defaultMaxLines: 1500, legacyMaxLines: { "test/new.test.ts": 1800 } },
+      renames,
+      headBlobs: blobs({ "test/new.test.ts": linesOf(1800) }),
+      changedTests: [],
     });
     expect(violations).toEqual([]);
   });
@@ -135,7 +148,7 @@ describe("growth-guardrails test-size-budget: pure policy", () => {
       evaluateTestSizeBudgetViolations({
         baseBudget: CLEAN_BUDGET,
         headBudget: CLEAN_BUDGET,
-        baseWasFallback: false,
+        renames: NO_RENAMES,
         headBlobs: blobs({}),
         changedTests: ["test/missing.test.ts"],
       }),
@@ -178,6 +191,35 @@ describe("growth-guardrails test-size-budget: orchestration", () => {
         '{"defaultMaxLines":1500,"legacyMaxLines":{}}',
       "fork/repo head test/foo.test.ts": linesOf(20),
     });
+    const result = await runTestSizeBudget(client, ENV);
+    expect(result.ok).toBe(true);
+    expect(result.violations).toEqual([]);
+  });
+
+  it("enforces the fallback baseline when the base budget file is absent", async () => {
+    const client = fakeClient([{ filename: "ci/test-file-size-budget.json", status: "added" }], {
+      "fork/repo head ci/test-file-size-budget.json":
+        '{"defaultMaxLines":2000,"legacyMaxLines":{}}',
+    });
+    const result = await runTestSizeBudget(client, ENV);
+    expect(result.ok).toBe(false);
+    expect(result.violations.join("\n")).toMatch(/defaultMaxLines increased from 1500 to 2000/);
+  });
+
+  it("passes an unchanged legacy test renamed with its budget key", async () => {
+    const client = fakeClient(
+      [
+        { filename: "ci/test-file-size-budget.json", status: "modified" },
+        { filename: "test/new.test.ts", previous_filename: "test/old.test.ts", status: "renamed" },
+      ],
+      {
+        "NVIDIA/NemoClaw base ci/test-file-size-budget.json":
+          '{"defaultMaxLines":1500,"legacyMaxLines":{"test/old.test.ts":1800}}',
+        "fork/repo head ci/test-file-size-budget.json":
+          '{"defaultMaxLines":1500,"legacyMaxLines":{"test/new.test.ts":1800}}',
+        "fork/repo head test/new.test.ts": linesOf(1800),
+      },
+    );
     const result = await runTestSizeBudget(client, ENV);
     expect(result.ok).toBe(true);
     expect(result.violations).toEqual([]);

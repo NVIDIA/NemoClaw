@@ -29,6 +29,20 @@ const HEAD_REF_MARKERS = [
   "refs/pull/",
 ] as const;
 
+// A run step is trusted only if it carries one of these signatures: a data-only
+// PR inspection, the tool-detection guard, the pinned dependency install, or a
+// pinned trusted tool invocation. Anything else fails closed.
+const PERMITTED_RUN_SIGNATURES = [
+  "gh api ",
+  '>> "$GITHUB_OUTPUT"',
+  "npm ci --ignore-scripts",
+  ...REQUIRED_TOOL_INVOCATIONS,
+] as const;
+
+// Primitives that could fetch or execute PR-controlled code. Forbidden in every
+// run step even when the step also carries a permitted signature.
+const FORBIDDEN_RUN_SUBSTRINGS = ["| bash", "| sh", "curl ", "wget ", "eval ", "node <<"] as const;
+
 type WorkflowStep = {
   readonly name?: string;
   readonly uses?: string;
@@ -38,6 +52,7 @@ type WorkflowStep = {
 
 type WorkflowJob = {
   readonly steps?: readonly WorkflowStep[];
+  readonly permissions?: Record<string, unknown>;
 };
 
 type WorkflowDoc = {
@@ -77,6 +92,17 @@ export function validateGrowthGuardrailsWorkflowBoundary(workflowPath: string): 
       violations.push(`permission ${scope}: ${String(value)} must be read or none, not write`);
     }
   }
+  // A job-level permissions block overrides the workflow default, so a write
+  // scope there would reopen the boundary even with read-only top-level perms.
+  for (const [jobId, job] of Object.entries(wf.jobs ?? {})) {
+    for (const [scope, value] of Object.entries(job.permissions ?? {})) {
+      if (value !== "read" && value !== "none") {
+        violations.push(
+          `job ${jobId} permission ${scope}: ${String(value)} must be read or none, not write`,
+        );
+      }
+    }
+  }
 
   const steps = allSteps(wf);
 
@@ -99,30 +125,44 @@ export function validateGrowthGuardrailsWorkflowBoundary(workflowPath: string): 
     }
   }
 
-  // 4/5/6. Inspect run scripts: no inline node heredoc may survive, dependency
-  //        installs must not run PR install scripts, and each policy must go
-  //        through its pinned trusted tool.
-  const runScripts = steps.map((step) => step.run ?? "");
+  // 4. Each policy must still be invoked through its pinned trusted tool.
+  const runScripts = steps.flatMap((step) => (step.run ? [step.run] : []));
   const allRun = runScripts.join("\n");
-
-  if (/node\s+<<'?NODE'?/.test(allRun)) {
-    violations.push("no inline node heredoc may remain; invoke the trusted tools instead");
-  }
-
   for (const invocation of REQUIRED_TOOL_INVOCATIONS) {
     if (!allRun.includes(invocation)) {
       violations.push(`workflow must invoke the trusted tool: ${invocation}`);
     }
   }
 
+  // 5. Fail closed on run steps. Requiring the tool strings to appear somewhere
+  //    is not enough: an extra step could fetch and execute PR-controlled code
+  //    while the tool strings remain elsewhere. Every run step must carry a
+  //    permitted signature and no forbidden execution primitive.
   for (const script of runScripts) {
+    const firstLine =
+      script
+        .split("\n")
+        .find((line) => line.trim().length > 0)
+        ?.trim() ?? "";
+    if (!PERMITTED_RUN_SIGNATURES.some((signature) => script.includes(signature))) {
+      violations.push(
+        `run step is not on the trusted allowlist (may execute PR code): ${firstLine}`,
+      );
+    }
+    for (const forbidden of FORBIDDEN_RUN_SUBSTRINGS) {
+      if (script.includes(forbidden)) {
+        violations.push(
+          `run step uses a forbidden execution primitive '${forbidden}': ${firstLine}`,
+        );
+      }
+    }
     for (const line of script.split("\n")) {
       if (/\bnpm (ci|install)\b/.test(line) && !line.includes("--ignore-scripts")) {
         violations.push(`dependency install must use --ignore-scripts: ${line.trim()}`);
       }
       if (
         /\bgit (checkout|fetch|merge)\b/.test(line) &&
-        HEAD_REF_MARKERS.some((m) => line.includes(m))
+        HEAD_REF_MARKERS.some((marker) => line.includes(marker))
       ) {
         violations.push(`must not check out PR head code in a run step: ${line.trim()}`);
       }

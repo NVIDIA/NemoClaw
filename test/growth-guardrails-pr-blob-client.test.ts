@@ -107,23 +107,25 @@ describe("growth-guardrails pr-blob-client", () => {
     );
   });
 
-  it("falls back to REST for truncated blobs", async () => {
-    const restBody = {
-      type: "file",
-      encoding: "base64",
-      content: Buffer.from("a\nb\n").toString("base64"),
+  it("falls back to the REST raw media type for truncated blobs", async () => {
+    const contentsAccept: string[] = [];
+    let call = 0;
+    const fetchImpl: FetchLike = async (url, init) => {
+      call += 1;
+      const accept = (init?.headers as Record<string, string> | undefined)?.Accept ?? "";
+      contentsAccept.push(String(url).includes("/contents/") ? accept : "");
+      return call === 1
+        ? jsonResponse(
+            blobData({
+              f0: { __typename: "Blob", text: null, isBinary: false, isTruncated: true },
+            }),
+          )
+        : new Response("a\nb\n", { status: 200 });
     };
-    const { fetchImpl, urls } = scriptedFetch([
-      async () =>
-        jsonResponse(
-          blobData({ f0: { __typename: "Blob", text: null, isBinary: false, isTruncated: true } }),
-        ),
-      async () => jsonResponse(restBody),
-    ]);
     const client = createPrBlobClient({ token: "t", fetchImpl, ...DETERMINISTIC });
     const blobs = await client.fetchBlobs("NVIDIA/NemoClaw", "oid", ["big.test.ts"]);
     expect(blobs.get("big.test.ts")).toBe("a\nb\n");
-    expect(urls[1]).toContain("/contents/");
+    expect(contentsAccept).toContain("application/vnd.github.raw");
   });
 
   it("retries a transient 500 then succeeds", async () => {

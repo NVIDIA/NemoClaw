@@ -28,10 +28,13 @@ const TEST_FILE_RE = /^(test|src|nemoclaw\/src)\/.*\.(test|spec)\.(ts|js|mts|mjs
 export type BudgetEvaluationInput = {
   readonly baseBudget: TestFileSizeBudget;
   readonly headBudget: TestFileSizeBudget;
-  /** When the base budget file is absent, monotonicity checks are skipped. */
-  readonly baseWasFallback: boolean;
   readonly headBlobs: BlobMap;
   readonly changedTests: readonly string[];
+  /**
+   * Maps a renamed test's head path to its base path, so a moved legacy
+   * allowance is compared against the base-path entry instead of read as new.
+   */
+  readonly renames: ReadonlyMap<string, string>;
 };
 
 function legacyOf(budget: TestFileSizeBudget): Readonly<Record<string, number>> {
@@ -41,52 +44,57 @@ function legacyOf(budget: TestFileSizeBudget): Readonly<Record<string, number>> 
 /**
  * Pure budget policy. Returns human-readable violation strings (empty = PASS).
  * Throws only for a structural impossibility (a changed test missing at head).
+ *
+ * When the base budget file is absent the caller passes the 1500-line fallback
+ * as baseBudget, so default-limit monotonicity is always enforced against it.
  */
 export function evaluateTestSizeBudgetViolations(input: BudgetEvaluationInput): string[] {
-  const { baseBudget, headBudget, baseWasFallback, headBlobs, changedTests } = input;
+  const { baseBudget, headBudget, headBlobs, changedTests, renames } = input;
   const baseLegacy = legacyOf(baseBudget);
   const headLegacy = legacyOf(headBudget);
   const violations: string[] = [];
 
-  if (!baseWasFallback) {
-    if (headBudget.defaultMaxLines > baseBudget.defaultMaxLines) {
+  if (headBudget.defaultMaxLines > baseBudget.defaultMaxLines) {
+    violations.push(
+      `defaultMaxLines increased from ${baseBudget.defaultMaxLines} to ${headBudget.defaultMaxLines}`,
+    );
+  }
+
+  // Each head legacy entry is compared against its base allowance, following a
+  // rename so a moved-but-unchanged budget is not misread as newly added.
+  for (const [file, headMax] of Object.entries(headLegacy)) {
+    const baseMax = baseLegacy[renames.get(file) ?? file];
+    if (baseMax === undefined && headMax > headBudget.defaultMaxLines) {
       violations.push(
-        `defaultMaxLines increased from ${baseBudget.defaultMaxLines} to ${headBudget.defaultMaxLines}`,
+        `${file} adds a new legacy budget (${headMax}) above defaultMaxLines (${headBudget.defaultMaxLines})`,
       );
     }
-    for (const [file, baseMax] of Object.entries(baseLegacy)) {
-      const headMax = headLegacy[file];
-      if (headMax !== undefined && headMax > baseMax) {
-        violations.push(`${file} legacy budget increased from ${baseMax} to ${headMax}`);
-      }
-      if (headMax === undefined) {
-        const text = headBlobs.get(file);
-        if (text != null && countLines(text) > headBudget.defaultMaxLines) {
-          violations.push(
-            `${file} removed its legacy budget while still exceeding defaultMaxLines`,
-          );
-        }
-      }
+    if (baseMax !== undefined && headMax > baseMax) {
+      violations.push(`${file} legacy budget increased from ${baseMax} to ${headMax}`);
     }
-    for (const [file, headMax] of Object.entries(headLegacy)) {
-      if (baseLegacy[file] === undefined && headMax > headBudget.defaultMaxLines) {
-        violations.push(
-          `${file} adds a new legacy budget (${headMax}) above defaultMaxLines (${headBudget.defaultMaxLines})`,
-        );
-      }
-      const text = headBlobs.get(file);
-      if (text == null) {
-        violations.push(`${file} has a legacy budget but no matching test file at the PR head`);
-        continue;
-      }
-      const lines = countLines(text);
-      if (lines > headMax)
-        violations.push(`${file} has ${lines} line(s), above its legacy budget ${headMax}`);
-      if (lines < headMax) {
-        violations.push(
-          `${file}: ${lines} line(s) < ${headMax} legacy budget; lower the budget entry`,
-        );
-      }
+    const text = headBlobs.get(file);
+    if (text == null) {
+      violations.push(`${file} has a legacy budget but no matching test file at the PR head`);
+      continue;
+    }
+    const lines = countLines(text);
+    if (lines > headMax)
+      violations.push(`${file} has ${lines} line(s), above its legacy budget ${headMax}`);
+    if (lines < headMax) {
+      violations.push(
+        `${file}: ${lines} line(s) < ${headMax} legacy budget; lower the budget entry`,
+      );
+    }
+  }
+
+  // A base legacy entry dropped at head (and not carried over by a rename) must
+  // not be removed while its file still exceeds the default.
+  const carriedBases = new Set(Object.keys(headLegacy).map((file) => renames.get(file) ?? file));
+  for (const file of Object.keys(baseLegacy)) {
+    if (headLegacy[file] !== undefined || carriedBases.has(file)) continue;
+    const text = headBlobs.get(file);
+    if (text != null && countLines(text) > headBudget.defaultMaxLines) {
+      violations.push(`${file} removed its legacy budget while still exceeding defaultMaxLines`);
     }
   }
 
@@ -132,11 +140,19 @@ export async function runTestSizeBudget(
     )
     .map(({ filename }) => filename);
 
+  // Renamed test files map their head path back to their base path so a moved
+  // legacy budget is compared against the base-path allowance, not read as new.
+  const renames = new Map<string, string>();
+  for (const { filename, previous_filename } of files) {
+    if (previous_filename && previous_filename !== filename)
+      renames.set(filename, previous_filename);
+  }
+
   // Base budget lives in the trusted base repo; fetch it alone so we can parse
-  // legacy entries before deciding which HEAD blobs to load.
+  // legacy entries before deciding which HEAD blobs to load. When it is absent
+  // the 1500-line fallback becomes the baseline the head budget must not weaken.
   const baseBlobs = await client.fetchBlobs(env.REPO, env.BASE_SHA, [BUDGET_FILE]);
   const baseText = baseBlobs.get(BUDGET_FILE);
-  const baseWasFallback = baseText == null;
   const baseBudget = parseBudget(baseText ?? FALLBACK_BUDGET, "base budget");
 
   let headBudget = baseBudget;
@@ -162,9 +178,9 @@ export async function runTestSizeBudget(
   const violations = evaluateTestSizeBudgetViolations({
     baseBudget,
     headBudget,
-    baseWasFallback,
     headBlobs,
     changedTests,
+    renames,
   });
 
   return { ok: violations.length === 0, violations, changedTestCount: changedTests.length };

