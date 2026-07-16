@@ -703,6 +703,19 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("uses the requested PR number in comparator GitHub fixtures", () => {
+    const result = runComparatorGate(
+      {
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+      },
+      "73",
+    );
+
+    expect(JSON.parse(result.stdout).pr).toBe(73);
+    expect(result.stderr).toBe("");
+  });
+
   it("serializes unusual GitHub string values as valid JSON", () => {
     const result = runComparatorGate({
       body: "Signed-off-by: Example User <user@example.com>",

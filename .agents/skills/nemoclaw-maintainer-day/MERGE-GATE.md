@@ -67,6 +67,6 @@ If the contributor/approver advisory is present, include it in the summary witho
 | Gate | Status | What is needed |
 |------|--------|----------------|
 | CI | Failing | Fix flaky timeout test |
-| Conflicts | DIRTY | Rebase onto main first — approval would be invalidated |
+| Conflicts | Not `MERGEABLE` or merge state not allowed/current | Rebase onto main first — approval would be invalidated |
 
 Use full GitHub links.

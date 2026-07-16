@@ -742,14 +742,45 @@ describe("maintainer merge-gate contributor compliance", () => {
           [101, 2, "SUCCESS"],
         ],
         {
-          "100": exactDiffGateRun("cancelled", [{ id: 1, name: "E2E / PR Gate" }]),
-          "101": exactDiffGateRun("success", [{ id: 2, name: "E2E / PR Gate" }]),
+          "100": {
+            ...exactDiffGateRun("cancelled", [{ id: 1, name: "E2E / PR Gate" }]),
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+          "101": {
+            ...exactDiffGateRun("success", [{ id: 2, name: "E2E / PR Gate" }]),
+            createdAt: "2026-01-01T00:01:00Z",
+          },
         },
       ),
     );
 
     const output = JSON.parse(result.stdout);
     expect(output.gates.ci).toMatchObject({ pass: true });
+  });
+  it("orders overlapping workflow runs by run creation time", () => {
+    const result = runGate(
+      e2eRunFixture(
+        [
+          [102, 3, "SUCCESS", "2026-01-01T00:03:00Z"],
+          [103, 4, "FAILURE", "2026-01-01T00:02:00Z"],
+        ],
+        {
+          "102": {
+            ...exactDiffGateRun("success", [{ id: 3, name: "E2E / PR Gate" }]),
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+          "103": {
+            ...exactDiffGateRun("failure", [{ id: 4, name: "E2E / PR Gate" }]),
+            createdAt: "2026-01-01T00:01:00Z",
+          },
+        },
+      ),
+    );
+
+    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: ["E2E / PR Gate: FAILURE"],
+    });
   });
   it("keeps every duplicate job from the latest workflow run", () => {
     const result = runGate({
@@ -1297,9 +1328,13 @@ describe("maintainer merge-gate contributor compliance", () => {
       name: "rejects exact-diff runs with different workflow identities",
       checks: e2eChecks([480, 40, "FAILURE"], [481, 41, "SUCCESS"]),
       runs: {
-        "480": exactDiffGateRun("failure", e2eJobs(40)),
+        "480": {
+          ...exactDiffGateRun("failure", e2eJobs(40)),
+          createdAt: "2026-01-01T00:00:00Z",
+        },
         "481": {
           ...exactDiffGateRun("success", e2eJobs(41)),
+          createdAt: "2026-01-01T00:01:00Z",
           path: ".github/workflows/unrelated.yaml",
         },
       } as Record<string, ActionRunFixture>,

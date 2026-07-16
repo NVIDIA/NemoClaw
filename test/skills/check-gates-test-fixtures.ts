@@ -159,7 +159,7 @@ function e2eGateCheck(check: E2eCheckFixture, index = 0) {
     workflowName: workflowName ?? "E2E / PR Gate Controller",
     detailsUrl:
       detailsUrl ?? `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${jobId}`,
-    startedAt: startedAt ?? `2026-01-01T00:0${index * 2}:00Z`,
+    startedAt: startedAt ?? `2026-01-01T00:${String(index * 2).padStart(2, "0")}:00Z`,
     status: "COMPLETED",
     conclusion,
   };
@@ -482,7 +482,7 @@ function runComparatorGate(fixture: ComparatorFixture, prNumber = "42") {
   const ghPath = path.join(bin, "gh");
 
   const pr = {
-    number: 42,
+    number: Number(prNumber),
     state: fixture.state ?? "OPEN",
     body: fixture.body,
     author: { login: fixture.prAuthorLogin ?? "example-user" },
@@ -509,7 +509,7 @@ function runComparatorGate(fixture: ComparatorFixture, prNumber = "42") {
 set -euo pipefail
 case "$1 $2" in
   "pr view") printf '%s' ${shellSingleQuote(JSON.stringify(pr))} ;;
-  "api repos/NVIDIA/NemoClaw/pulls/42/commits") printf '%s' ${shellSingleQuote(commitOutput)} ;;
+  ${shellSingleQuote(`api repos/NVIDIA/NemoClaw/pulls/${prNumber}/commits`)}) printf '%s' ${shellSingleQuote(commitOutput)} ;;
   *) echo "unexpected gh args: $*" >&2; exit 9 ;;
 esac
 `,

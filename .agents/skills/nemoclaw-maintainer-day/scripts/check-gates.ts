@@ -1056,10 +1056,10 @@ function currentCheckRollup(
     }
 
     if (group[0].__typename !== "StatusContext") {
-      const hasOrderingEvidence = group.every((check) =>
+      const hasCheckTimestampEvidence = group.every((check) =>
         Number.isFinite(parseGitHubTimestamp(check.startedAt ?? check.completedAt)),
       );
-      if (!hasOrderingEvidence) {
+      if (!hasCheckTimestampEvidence) {
         incompleteAttemptEvidence.add(group[0]?.name ?? "(unknown)");
       }
       const byRun = new Map<string, StatusCheck[]>();
@@ -1075,15 +1075,17 @@ function currentCheckRollup(
       }
       if (byRun.size > 1) {
         const runs = [...byRun].map(([runId, checks]) => {
-          const timestamps = checks.map((check) =>
-            parseGitHubTimestamp(check.startedAt ?? check.completedAt),
-          );
           return {
             runId,
             checks,
-            timestamp: timestamps.every(Number.isFinite) ? Math.min(...timestamps) : Number.NaN,
+            timestamp: actionRunMetadata(runId)?.createdAt ?? Number.NaN,
           };
         });
+        const hasOrderingEvidence =
+          hasCheckTimestampEvidence && runs.every(({ timestamp }) => Number.isFinite(timestamp));
+        if (!hasOrderingEvidence) {
+          incompleteAttemptEvidence.add(group[0]?.name ?? "(unknown)");
+        }
         if (hasOrderingEvidence) {
           const currentIdentityRuns = runs.filter(
             ({ runId }) => runIdentityEvidence(runId, requiredCheck) === "current",
