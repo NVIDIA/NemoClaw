@@ -147,6 +147,8 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 
 On DGX Station, accepting the installer express prompt sets `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b` and overrides the profile default.
 Pass `--station-deepseek` to select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow.
+The flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
+Without terminal access, the installer stops before it installs Docker or build dependencies instead of silently continuing with another configuration.
 The registered Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
 NemoClaw intentionally keeps its existing bridge-networked managed-inference topology instead of importing the playbook's host-network setting.
 The container publishes port `8000` through Docker, so apply the firewall guidance at the top of this page.
@@ -175,6 +177,14 @@ On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is sufficient for
 Add `NEMOCLAW_EXPERIMENTAL=1` on a generic Linux NVIDIA GPU host.
 Non-interactive runs use the profile default unless you set `NEMOCLAW_VLLM_MODEL`.
 On DGX Station, a direct provider-only run therefore selects `deepseek-v4-flash`; the installer express flow sets the Nemotron 3 Ultra override for you.
+
+For a headless DGX Station setup that selects DeepSeek V4 Flash explicitly, use the environment-variable path instead of `--station-deepseek`.
+
+```bash
+NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_MODEL=deepseek-v4-flash \
+  $$nemoclaw onboard --non-interactive
+```
 
 ## Select a Managed Model
 
