@@ -311,29 +311,20 @@ describe("E2E operations workflow boundary", () => {
       }),
     };
     const scorecardJobs = {
-      isSelectiveDispatch: vi.fn().mockReturnValue(false),
       loadWorkflowRunJobs: vi.fn().mockResolvedValue([]),
-      summarizeJobs: vi.fn().mockReturnValue({
-        cancelled: 0,
-        failedJobs: [],
-        failure: 0,
-        ran: 1,
-        skipped: 0,
-        success: 1,
-        total: 1,
-      }),
     };
-    const slackBlocks = {
-      buildBlocks: vi.fn().mockReturnValue([]),
-      buildFallbackText: vi.fn().mockReturnValue("scorecard fallback"),
-      getSlackChannel: vi.fn().mockReturnValue("daily"),
-      getStatusColor: vi.fn().mockReturnValue("good"),
+    const coordinator = {
+      buildScorecard: vi.fn().mockReturnValue({
+        scorecardData: { ran: 0, runMode: "Scheduled E2E", total: 0 },
+        slackData: { channel: "daily", payload: { attachments: [], text: "scorecard fallback" } },
+        summaryMarkdown: "## 🌅 NemoClaw E2E Scorecard\n\n### Onboard Performance Budget",
+      }),
     };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
+      ["/workspace/scripts/scorecard/coordinate-scorecard.mts", coordinator],
       ["/workspace/scripts/scorecard/analyze-trace-timing.mts", traceTiming],
       ["/workspace/scripts/scorecard/summarize-jobs.mts", scorecardJobs],
-      ["/workspace/scripts/scorecard/build-slack-blocks.mts", slackBlocks],
     ]);
     const runtimeRequire = (specifier: string) => {
       const runtimeModule = runtimeModules.get(specifier);
@@ -367,6 +358,19 @@ describe("E2E operations workflow boundary", () => {
 
     expect(traceTiming.buildTraceTimingResult).toHaveBeenCalledWith({ github: {}, context, core });
     expect(warning).toHaveBeenCalledWith("Cloud onboard advisory performance budget exceeded");
+    expect(coordinator.buildScorecard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiJobs: [],
+        eventName: "schedule",
+        needs: { "generate-matrix": { result: "success" } },
+        rawExplicitOnly: "",
+        rawJobs: "",
+        rawTargets: "",
+        trace: expect.objectContaining({
+          traceSummaryLines: expect.arrayContaining(["### Onboard Performance Budget"]),
+        }),
+      }),
+    );
     expect(summary.addRaw).toHaveBeenCalledWith(
       expect.stringContaining("### Onboard Performance Budget"),
     );
