@@ -30,6 +30,7 @@ import {
   renderSandboxInventoryText,
 } from "../src/lib/inventory/index.js";
 import { recoverRegistryEntriesWithFallback } from "../src/lib/list-command-deps.js";
+import { nemoclawStateRoot } from "../src/lib/state/state-root.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
@@ -206,31 +207,17 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
       { mode: 0o755 },
     );
 
-    const registryDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(registryDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({
-        sandboxes: {
-          "my-assist": {
-            name: "my-assist",
-            model: "test-model",
-            provider: "nvidia-prod",
-            gpuEnabled: false,
-            policies: [],
-          },
-        },
-        defaultSandbox: "my-assist",
-      }),
-      { mode: 0o600 },
-    );
+    seedRegistry(path.join(home, ".nemoclaw"));
   });
 
   afterEach(() => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  function runCli(args: string[]): { code: number; stdout: string; stderr: string } {
+  function runCli(
+    args: string[],
+    envOverrides: NodeJS.ProcessEnv = {},
+  ): { code: number; stdout: string; stderr: string } {
     const result = spawnSync(process.execPath, [CLI, ...args], {
       encoding: "utf-8",
       timeout: 30_000,
@@ -242,6 +229,8 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
         NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
         NEMOCLAW_STATUS_PROBE_TIMEOUT_MS: "2000",
         NEMOCLAW_TEST_NO_SLEEP: "1",
+        NEMOCLAW_GATEWAY_PORT: "",
+        ...envOverrides,
       },
     });
     return {
@@ -257,6 +246,26 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
 
   function writeFakeOpenshell(lines: string[]): void {
     fs.writeFileSync(path.join(binDir, "openshell"), lines.join("\n"), { mode: 0o755 });
+  }
+
+  function seedRegistry(stateDir: string, model = "test-model"): void {
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "sandboxes.json"),
+      JSON.stringify({
+        sandboxes: {
+          "my-assist": {
+            name: "my-assist",
+            model,
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "my-assist",
+      }),
+      { mode: 0o600 },
+    );
   }
 
   function expectLayerBefore(combined: string, layer: string, laterText: string): void {
@@ -279,6 +288,42 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     // registry-only listing is the documented fallback behavior (#2666).
     expect(code).toBe(0);
   });
+
+  it("nemoclaw list reads the registry scoped to a non-default gateway port (#3053)", () => {
+    const port = 9123;
+    seedRegistry(path.join(home, ".nemoclaw"), "default-root-model");
+    seedRegistry(nemoclawStateRoot(home, port), "selected-port-model");
+
+    const { code, stdout, stderr } = runCli(["list"], {
+      NEMOCLAW_GATEWAY_PORT: String(port),
+    });
+    const combined = `${stdout}\n${stderr}`;
+
+    expect(code).toBe(0);
+    expect(combined).toContain("my-assist");
+    expect(combined).toContain("selected-port-model");
+    expect(combined).not.toContain("default-root-model");
+  });
+
+  it(
+    "nemoclaw <name> status reads only the registry scoped to a non-default gateway port (#3053)",
+    testTimeoutOptions(30_000),
+    () => {
+      const port = 9123;
+      seedRegistry(path.join(home, ".nemoclaw"), "default-root-model");
+      seedRegistry(nemoclawStateRoot(home, port), "selected-port-model");
+
+      const { code, stdout, stderr } = runCli(["my-assist", "status"], {
+        NEMOCLAW_GATEWAY_PORT: String(port),
+      });
+      const combined = `${stdout}\n${stderr}`;
+
+      expect(code).not.toBe(0);
+      expect(combined).toContain("my-assist");
+      expect(combined).toContain("selected-port-model");
+      expect(combined).not.toContain("default-root-model");
+    },
+  );
 
   it(
     "nemoclaw <name> status never produces silent empty output when openshell is broken",
@@ -379,6 +424,8 @@ describe("simulated container-stopped and foreign-port-holder subprocess regress
     const listener = net.createServer();
     await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
     const port = (listener.address() as { port: number }).port;
+    fs.rmSync(path.join(home, ".nemoclaw", "sandboxes.json"), { force: true });
+    seedRegistry(nemoclawStateRoot(home, port));
 
     try {
       // Fake docker: info OK, ps shows nothing running, ps -a shows the

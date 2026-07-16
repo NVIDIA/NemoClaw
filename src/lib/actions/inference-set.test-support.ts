@@ -86,12 +86,14 @@ export function createDeps(options: {
   prepareRunOpenshell?: () => void;
   rewriteConfigUrlsWithDnsPinning?: (value: ConfigValue) => Promise<ConfigValue>;
   restartSandboxGateway?: InferenceSetDeps["restartSandboxGateway"];
+  seedHermesDashboardConfigResult?: "converged" | "absent" | "failed";
   withGatewayRouteMutationLock?: InferenceSetDeps["withGatewayRouteMutationLock"];
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
     writeSandboxConfig: ReturnType<typeof vi.fn>;
     recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
+    seedHermesDashboardConfig: ReturnType<typeof vi.fn>;
     updateSandbox: ReturnType<typeof vi.fn>;
     readSandboxConfig: ReturnType<typeof vi.fn>;
     updateSession: ReturnType<typeof vi.fn>;
@@ -124,6 +126,7 @@ export function createDeps(options: {
     })),
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
+    seedHermesDashboardConfig: vi.fn(() => options.seedHermesDashboardConfigResult ?? "converged"),
     updateSandbox: vi.fn(() => true),
     readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
@@ -169,6 +172,7 @@ export function createDeps(options: {
     readSandboxConfig: calls.readSandboxConfig,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
+    seedHermesDashboardConfig: calls.seedHermesDashboardConfig,
     prepareRunOpenshell: calls.prepareRunOpenshell,
     captureOpenshell: calls.captureOpenshell,
     appendAuditEntry: calls.appendAuditEntry,

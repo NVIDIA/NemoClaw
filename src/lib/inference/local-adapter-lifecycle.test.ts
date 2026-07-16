@@ -6,7 +6,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ensureLocalAdapterStateDir,
@@ -22,6 +22,7 @@ import {
   writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
 } from "./local-adapter-lifecycle";
+import { isOllamaAuthProxyCommandLine } from "./ollama/process";
 
 const tempDirs: string[] = [];
 const servers: http.Server[] = [];
@@ -39,6 +40,7 @@ afterEach(async () => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+  vi.unstubAllEnvs();
 });
 
 function tempDir(): string {
@@ -80,25 +82,48 @@ describe("local adapter lifecycle", () => {
     expect(fs.statSync(pidPath).mode & 0o777).toBe(0o600);
   });
 
-  it("guards PID cleanup by process command line", () => {
+  it.each([
+    "ollama-auth-proxy.js",
+    "ollama-auth-proxy.mts",
+  ])("guards PID cleanup for the supported %s script", (scriptName) => {
+    const pidPath = path.join(tempDir(), "adapter.pid");
+    persistLocalAdapterPid(pidPath, 789);
+    const killed: string[][] = [];
+    const commandLine = `node /opt/nemoclaw/scripts/${scriptName}`;
+
+    expect(isLocalAdapterProcess(789, isOllamaAuthProxyCommandLine, () => commandLine)).toBe(true);
+
+    killLocalAdapterPid({
+      pidPath,
+      processMatcher: isOllamaAuthProxyCommandLine,
+      run: (args) => {
+        killed.push(args);
+      },
+      runCapture: () => commandLine,
+    });
+
+    expect(killed).toEqual([["kill", "789"]]);
+    expect(loadLocalAdapterPid(pidPath)).toBeNull();
+  });
+
+  it.each([
+    "ollama-auth-proxy-helper.mjs",
+    "ollama-auth-proxy.mts.backup",
+  ])("does not clean up the near-named %s process", (scriptName) => {
     const pidPath = path.join(tempDir(), "adapter.pid");
     persistLocalAdapterPid(pidPath, 789);
     const killed: string[][] = [];
 
-    expect(
-      isLocalAdapterProcess(789, "ollama-auth-proxy.js", () => "node scripts/ollama-auth-proxy.js"),
-    ).toBe(true);
-
     killLocalAdapterPid({
       pidPath,
-      processNeedle: "ollama-auth-proxy.js",
+      processMatcher: isOllamaAuthProxyCommandLine,
       run: (args) => {
         killed.push(args);
       },
-      runCapture: () => "node scripts/ollama-auth-proxy.js",
+      runCapture: () => `node /opt/nemoclaw/scripts/${scriptName}`,
     });
 
-    expect(killed).toEqual([["kill", "789"]]);
+    expect(killed).toEqual([]);
     expect(loadLocalAdapterPid(pidPath)).toBeNull();
   });
 
@@ -150,6 +175,43 @@ describe("ensureLocalAdapterStateDir", () => {
     ensureLocalAdapterStateDir(stateDir);
     const stat = fs.statSync(stateDir);
     expect(stat.mode & 0o777).toBe(0o700);
+  });
+
+  describe.skipIf(process.platform === "win32")("symlink-safe adapter state", () => {
+    it.each([
+      "gateways",
+      "selected port",
+    ])("rejects a symlink at the %s ancestor before writing adapter secrets (#3053)", (symlinkAt) => {
+      const home = tempDir();
+      vi.stubEnv("HOME", home);
+      const controlled = path.join(home, "controlled");
+      const sharedRoot = path.join(home, ".nemoclaw");
+      const gatewaysDir = path.join(sharedRoot, "gateways");
+      const selectedDir = path.join(gatewaysDir, "9123");
+      fs.mkdirSync(controlled, { recursive: true });
+      fs.mkdirSync(symlinkAt === "gateways" ? sharedRoot : gatewaysDir, { recursive: true });
+      fs.symlinkSync(controlled, symlinkAt === "gateways" ? gatewaysDir : selectedDir);
+
+      expect(() =>
+        writeLocalAdapterSecretFile(path.join(selectedDir, "adapter-token"), "secret"),
+      ).toThrow(/symbolic link/);
+      expect(fs.existsSync(path.join(controlled, "adapter-token"))).toBe(false);
+    });
+
+    it("refuses to overwrite an adapter secret through a final-component symlink", () => {
+      const home = tempDir();
+      vi.stubEnv("HOME", home);
+      const selectedDir = path.join(home, ".nemoclaw", "gateways", "9123");
+      const controlled = path.join(home, "controlled-token");
+      fs.mkdirSync(selectedDir, { recursive: true });
+      fs.writeFileSync(controlled, "unchanged\n", { mode: 0o600 });
+      fs.symlinkSync(controlled, path.join(selectedDir, "adapter-token"));
+
+      expect(() =>
+        writeLocalAdapterSecretFile(path.join(selectedDir, "adapter-token"), "secret"),
+      ).toThrow();
+      expect(fs.readFileSync(controlled, "utf8")).toBe("unchanged\n");
+    });
   });
 });
 

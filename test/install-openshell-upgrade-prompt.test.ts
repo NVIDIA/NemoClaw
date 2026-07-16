@@ -139,6 +139,37 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(openshellLog).toBe("");
   });
 
+  it("scopes non-default manual upgrade commands to the selected gateway", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_GATEWAY_PORT: "9123",
+      },
+      {
+        registryJson:
+          '{"sandboxes":{"alpha":{"name":"alpha","gatewayName":"nemoclaw-9123","gatewayPort":9123}}}',
+      },
+    );
+
+    const output = result.stdout + result.stderr;
+    expect(result.status).not.toBe(0);
+    expect(output).toContain(
+      "NEMOCLAW_GATEWAY_PORT=9123 NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 nemoclaw backup-all",
+    );
+    expect(output).toContain(
+      "openshell gateway remove nemoclaw-9123 || openshell gateway destroy -g nemoclaw-9123",
+    );
+    expect(output).toContain(
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_GATEWAY_PORT=9123 NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash",
+    );
+    expect(output).toContain("NEMOCLAW_GATEWAY_PORT=9123 nemoclaw upgrade-sandboxes --check");
+    expect(output).not.toContain("openshell gateway remove nemoclaw ||");
+    expect(output).not.toContain("|| openshell gateway destroy\n");
+    expect(output).not.toContain("pkill -f openshell-gateway");
+    expect(cliLog).toBe("");
+    expect(openshellLog).toBe("");
+  });
+
   it("requires separate managed-image confirmation before preparing a backup (#6114)", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard({
       NON_INTERACTIVE: "1",

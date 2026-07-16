@@ -100,7 +100,7 @@ jobs:
       - name: Install macOS test dependencies
         run: |
           set -euo pipefail
-          brew install bash coreutils gawk ripgrep
+          brew install bash coreutils fd gawk ripgrep
           printf '%s\n' \
             "$(brew --prefix bash)/bin" \
             "$(brew --prefix coreutils)/libexec/gnubin" \

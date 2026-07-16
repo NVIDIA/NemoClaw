@@ -44,6 +44,9 @@ if (process.env.PTY_DRIVER_POISON_STDIN === "1") {
 
 const preservable = process.env.PTY_DRIVER_PRESERVABLE === "1";
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-driver-"));
+if (preservable) {
+  fs.mkdirSync(path.join(home, ".nemoclaw", "backups"), { recursive: true });
+}
 const okResult: RunResult = { status: 0, stdout: "", stderr: "" };
 
 const { exitCode } = runUninstallPlan(
@@ -62,7 +65,7 @@ const { exitCode } = runUninstallPlan(
       NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "",
       TMPDIR: home,
     } as NodeJS.ProcessEnv,
-    existsSync: (target) => preservable && target.includes(".nemoclaw"),
+    existsSync: fs.existsSync,
     kill: () => true,
     rmSync: (() => {}) as never,
     run: () => okResult,
