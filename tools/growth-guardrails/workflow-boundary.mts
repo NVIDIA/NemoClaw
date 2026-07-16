@@ -10,6 +10,7 @@
 // returns a violation string for every broken invariant (empty array = OK), so
 // a regression that weakens the boundary fails a unit test rather than shipping.
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import YAML from "yaml";
@@ -29,21 +30,49 @@ const HEAD_REF_MARKERS = [
   "refs/pull/",
 ] as const;
 
-// A run step is trusted only if it carries one of these signatures: a data-only
-// PR inspection, the tool-detection guard, the pinned dependency install, or a
-// pinned trusted tool invocation. Anything else fails closed.
-const PERMITTED_RUN_SIGNATURES = [
-  "gh api ",
-  '>> "$GITHUB_OUTPUT"',
-  "npm ci --ignore-scripts",
-  ...REQUIRED_TOOL_INVOCATIONS,
+const TRUSTED_JOB_ID = "codebase-growth-guardrails";
+const APPROVED_WORKFLOW_ENVELOPE_SHA256 =
+  "d3dcbf1a277f7d41fa3ff0357935027be900d866c5b808bb9b31e851d5719968";
+const APPROVED_JOB_ENVELOPE_SHA256 =
+  "a674580895f5761361f13fc49eecab030694c28a403c98cba38ee24fdfac15f1";
+
+// Hash the complete parsed step object, not only `run`. This binds names, env,
+// conditions, action refs and inputs, and execution fields such as `shell`,
+// while allowing comments and YAML formatting to change without weakening the
+// trust boundary.
+const APPROVED_STEP_SHAPES = [
+  {
+    name: "Block newly added JavaScript files",
+    sha256: "c2291c5ea47f093845b8e6bc6a93698fd9fe3f617b5c03265c2803439749ea38",
+  },
+  {
+    name: "Require src/lib/onboard.ts to be net-neutral or smaller",
+    sha256: "92aba85cd31e30bfaa9cdd05dde6962f14373b1d60a9121bfcea48146ca0348b",
+  },
+  {
+    name: "Check out the trusted base revision",
+    sha256: "ca92ffc6907f8ef3ddcf98eacb19dee0de5b7a76b0520f0ada097fa88b0af3b2",
+  },
+  {
+    name: "Detect guardrail tools on the base revision",
+    sha256: "f10b24b97320e991cc060be9f5e98bda2705abd8d0814da123cfd5ca8672a442",
+  },
+  {
+    name: "Install trusted dependencies",
+    sha256: "bf5757db70862f1e068748855d97ab5ae6a4a43ebd7ed812baa9f45269bdf6c3",
+  },
+  {
+    name: "Require changed test files to stay within size budget",
+    sha256: "eec9020e81cf9d972592cc3129f6656ec0d46618623fb368674e8e823d8c1457",
+  },
+  {
+    name: "Require changed test files not to add if statements",
+    sha256: "9aa363162eb2dc6740d9a27c52e6171b2a5587017eb039773a0f4ee0b32f8cde",
+  },
 ] as const;
 
-// Primitives that could fetch or execute PR-controlled code. Forbidden in every
-// run step even when the step also carries a permitted signature.
-const FORBIDDEN_RUN_SUBSTRINGS = ["| bash", "| sh", "curl ", "wget ", "eval ", "node <<"] as const;
-
 type WorkflowStep = {
+  readonly [key: string]: unknown;
   readonly name?: string;
   readonly uses?: string;
   readonly run?: string;
@@ -51,15 +80,43 @@ type WorkflowStep = {
 };
 
 type WorkflowJob = {
+  readonly [key: string]: unknown;
   readonly steps?: readonly WorkflowStep[];
   readonly permissions?: Record<string, unknown>;
 };
 
 type WorkflowDoc = {
+  readonly [key: string]: unknown;
   readonly on?: Record<string, unknown>;
   readonly permissions?: Record<string, unknown>;
   readonly jobs?: Record<string, WorkflowJob>;
 };
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === "object") {
+    const object = value as Readonly<Record<string, unknown>>;
+    return Object.fromEntries(
+      Object.keys(object)
+        .sort()
+        .map((key) => [key, canonicalize(object[key])]),
+    );
+  }
+  return value;
+}
+
+function canonicalSha256(value: unknown): string {
+  const serialized = JSON.stringify(canonicalize(value));
+  if (serialized === undefined) throw new Error("cannot hash an undefined workflow shape");
+  return createHash("sha256").update(serialized).digest("hex");
+}
+
+function withoutKey(
+  object: Readonly<Record<string, unknown>>,
+  excludedKey: string,
+): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(object).filter(([key]) => key !== excludedKey));
+}
 
 function allSteps(wf: WorkflowDoc): WorkflowStep[] {
   return Object.values(wf.jobs ?? {}).flatMap((job) => job.steps ?? []);
@@ -104,9 +161,72 @@ export function validateGrowthGuardrailsWorkflowBoundary(workflowPath: string): 
     }
   }
 
+  // 3. Bind the complete execution shape. A substring allowlist is not a trust
+  //    boundary: a permitted command can be followed by another executor, and
+  //    an extra action or reusable-workflow job has no `run` text to inspect.
+  //    The envelopes reject new execution fields, while the ordered full-step
+  //    hashes reject missing, duplicate, extra, reordered, or modified steps.
+  const workflowEnvelopeHash = canonicalSha256(withoutKey(wf, "jobs"));
+  if (workflowEnvelopeHash !== APPROVED_WORKFLOW_ENVELOPE_SHA256) {
+    violations.push(
+      `workflow envelope must match the approved shape (sha256: ${workflowEnvelopeHash})`,
+    );
+  }
+
+  const jobs = wf.jobs ?? {};
+  const jobIds = Object.keys(jobs);
+  if (jobIds.length !== 1 || jobIds[0] !== TRUSTED_JOB_ID) {
+    violations.push(
+      `workflow jobs must be exactly ${TRUSTED_JOB_ID}, not ${jobIds.join(", ") || "none"}`,
+    );
+  }
+
+  const trustedJob = jobs[TRUSTED_JOB_ID];
+  if (trustedJob) {
+    const jobEnvelopeHash = canonicalSha256(withoutKey(trustedJob, "steps"));
+    if (jobEnvelopeHash !== APPROVED_JOB_ENVELOPE_SHA256) {
+      violations.push(
+        `job ${TRUSTED_JOB_ID} envelope must match the approved shape (sha256: ${jobEnvelopeHash})`,
+      );
+    }
+
+    const jobSteps = trustedJob.steps ?? [];
+    if (jobSteps.length !== APPROVED_STEP_SHAPES.length) {
+      violations.push(
+        `job ${TRUSTED_JOB_ID} must contain exactly ${APPROVED_STEP_SHAPES.length} approved steps, not ${jobSteps.length}`,
+      );
+    }
+
+    const stepNames = jobSteps.flatMap((step) => (step.name ? [step.name] : []));
+    const duplicateNames = [
+      ...new Set(stepNames.filter((name, index) => stepNames.indexOf(name) !== index)),
+    ];
+    if (duplicateNames.length > 0) {
+      violations.push(
+        `job ${TRUSTED_JOB_ID} must not contain duplicate step names: ${duplicateNames.join(", ")}`,
+      );
+    }
+
+    for (const [index, approved] of APPROVED_STEP_SHAPES.entries()) {
+      const step = jobSteps[index];
+      if (!step) continue;
+      if (step.name !== approved.name) {
+        violations.push(
+          `job ${TRUSTED_JOB_ID} step ${index + 1} must be ${approved.name}, not ${step.name ?? "unnamed"}`,
+        );
+      }
+      const stepHash = canonicalSha256(step);
+      if (stepHash !== approved.sha256) {
+        violations.push(
+          `job ${TRUSTED_JOB_ID} step ${step.name ?? index + 1} must match the approved shape (sha256: ${stepHash})`,
+        );
+      }
+    }
+  }
+
   const steps = allSteps(wf);
 
-  // 3. Any checkout must pin the trusted base commit and never the PR head.
+  // 4. Any checkout must pin the trusted base commit and never the PR head.
   const checkoutSteps = steps.filter((step) => (step.uses ?? "").startsWith("actions/checkout"));
   if (checkoutSteps.length === 0) {
     violations.push("workflow must check out the trusted base ref to run the guardrail tools");
@@ -125,7 +245,7 @@ export function validateGrowthGuardrailsWorkflowBoundary(workflowPath: string): 
     }
   }
 
-  // 4. Each policy must still be invoked through its pinned trusted tool.
+  // 5. Each policy must still be invoked through its pinned trusted tool.
   const runScripts = steps.flatMap((step) => (step.run ? [step.run] : []));
   const allRun = runScripts.join("\n");
   for (const invocation of REQUIRED_TOOL_INVOCATIONS) {
@@ -134,28 +254,9 @@ export function validateGrowthGuardrailsWorkflowBoundary(workflowPath: string): 
     }
   }
 
-  // 5. Fail closed on run steps. Requiring the tool strings to appear somewhere
-  //    is not enough: an extra step could fetch and execute PR-controlled code
-  //    while the tool strings remain elsewhere. Every run step must carry a
-  //    permitted signature and no forbidden execution primitive.
+  // 6. Preserve specific diagnostics for dependency installs and PR-head Git
+  //    operations in addition to the exact execution-shape check above.
   for (const script of runScripts) {
-    const firstLine =
-      script
-        .split("\n")
-        .find((line) => line.trim().length > 0)
-        ?.trim() ?? "";
-    if (!PERMITTED_RUN_SIGNATURES.some((signature) => script.includes(signature))) {
-      violations.push(
-        `run step is not on the trusted allowlist (may execute PR code): ${firstLine}`,
-      );
-    }
-    for (const forbidden of FORBIDDEN_RUN_SUBSTRINGS) {
-      if (script.includes(forbidden)) {
-        violations.push(
-          `run step uses a forbidden execution primitive '${forbidden}': ${firstLine}`,
-        );
-      }
-    }
     for (const line of script.split("\n")) {
       if (/\bnpm (ci|install)\b/.test(line) && !line.includes("--ignore-scripts")) {
         violations.push(`dependency install must use --ignore-scripts: ${line.trim()}`);
