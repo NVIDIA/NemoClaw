@@ -35,11 +35,11 @@ export interface WeightedShard<T> {
 // E2E-support is hermetic and shares the same installed dependencies and CLI
 // build as the CLI coverage projects, so the coverage matrix owns it too.
 const cliCoverageProjects = new Set(["cli", "integration", "e2e-support"]);
-// Changing either salt remaps that lane's tests. E2E-support uses its own salt
-// so folding it into this matrix does not disturb existing CLI and integration
-// ownership; both fixed values keep the representative roster balanced.
-const stableShardSalt = "1612";
-const e2eSupportShardSalt = "1925";
+// Changing either salt intentionally remaps that lane's tests. These values
+// are calibrated against the timing-hint source profile, then kept fixed so
+// ordinary roster changes preserve ownership between profile refreshes.
+const stableShardSalt = "6096";
+const e2eSupportShardSalt = "2045";
 // Only measured outliers are stored; new and ordinary files share the
 // conservative fallback used to estimate each stable shard's load.
 const timingHintsUrl = new URL("../../ci/cli-test-timing-hints.json", import.meta.url);

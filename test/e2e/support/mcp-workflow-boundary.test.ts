@@ -26,10 +26,10 @@ describe("MCP workflow artifact boundary", () => {
         (step) => step.name === "Run MCP OpenShell provider live test",
       );
       requireFixture(run?.run, `${jobName} MCP live-test fixture is missing`);
-      const reporter = "--reporter=test/e2e/risk-signal-reporter.ts";
-      requireFixture(run.run.includes(reporter), `${jobName} reporter fixture is missing`);
-      const updatedRun = run.run.replace(` ${reporter}`, "");
-      requireFixture(updatedRun !== run.run, `${jobName} reporter could not be removed`);
+      const helper = "tools/e2e/live-vitest-invocation.mts run --test-path";
+      requireFixture(run.run.includes(helper), `${jobName} live-vitest helper fixture is missing`);
+      const updatedRun = run.run.replace(helper, "vitest run");
+      requireFixture(updatedRun !== run.run, `${jobName} live-vitest helper could not be removed`);
       run.run = updatedRun;
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
@@ -86,6 +86,12 @@ describe("MCP workflow artifact boundary", () => {
       mutate: (run: string) =>
         run.replace("test/e2e/live/openshell-credential-generation-window.test.ts", ""),
       name: "is missing",
+    },
+    {
+      expected:
+        "mcp-bridge credential generation-window proof must publish canonical risk-signal evidence",
+      mutate: (run: string) => run.replace("--reporter=test/e2e/risk-signal-reporter.ts", ""),
+      name: "omits its risk-signal reporter",
     },
   ])("rejects a credential generation-window proof that $name", ({ expected, mutate, name }) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));

@@ -425,16 +425,26 @@ function validateJobExecution(
       errors.push("mcp-bridge stable lane must run its full MCP lifecycle unconditionally");
     }
   }
-  for (const required of ["--project e2e-live", "test/e2e/live/mcp-bridge.test.ts"]) {
+  for (const required of [
+    "tools/e2e/live-vitest-invocation.mts run --test-path",
+    "test/e2e/live/mcp-bridge.test.ts",
+  ]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
   }
-  const riskReporter = "--reporter=test/e2e/risk-signal-reporter.ts";
-  const reporterCount = asString(run.run).split(riskReporter).length - 1;
-  const expectedReporterCount = jobName === "mcp-bridge" ? 2 : 1;
-  if (reporterCount !== expectedReporterCount) {
-    errors.push(`${jobName} must publish canonical risk-signal evidence`);
-  }
+  requireContains(
+    errors,
+    run.run,
+    "tools/e2e/live-vitest-invocation.mts run --test-path",
+    `${jobName} must publish canonical risk-signal evidence`,
+  );
   if (jobName === "mcp-bridge") {
+    const riskReporter = "--reporter=test/e2e/risk-signal-reporter.ts";
+    const reporterCount = asString(run.run).split(riskReporter).length - 1;
+    if (reporterCount !== 1) {
+      errors.push(
+        "mcp-bridge credential generation-window proof must publish canonical risk-signal evidence",
+      );
+    }
     requireContains(
       errors,
       run.run,

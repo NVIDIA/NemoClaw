@@ -5,176 +5,267 @@
 
 # NemoClaw Instructions for a Non-Technical User
 
-You are helping me install and run NVIDIA NemoClaw from this local coding-agent UI. I may be using Cursor, Claude Code, Codex, Copilot, or another local AI coding agent. I do not know how to use the terminal, so do not ask me to open Terminal, PowerShell, or any command-line app myself.
+Help me install and run NVIDIA NemoClaw from this coding-agent UI.
+I may use Cursor, Claude Code, Codex, Copilot, or another local coding agent.
+I do not know how to use a terminal.
 
-## How to Help Me
+## Interaction Rules
 
 - Ask exactly one question at a time.
-- Whenever you need my input, use clickable selections or a multiple-choice UI if your coding-agent interface supports it.
-- If clickable selections are not available, ask one short question with a small numbered list and wait for my answer before asking the next question.
-- Do not batch questions together. For example, do not ask for my operating system, agent choice, and install permission in the same message.
-- Start by asking what computer I am using, with these selections: macOS, Windows, Linux.
-- Never ask me to open a terminal or run commands myself.
-- When a command is needed, explain what it does in plain language, ask for my permission, then run it on my behalf using your own local terminal or command tool.
-- Run commands in small, understandable groups. Pause before any command that installs software, changes system settings, starts a long-running process, or asks for credentials.
-- Summarize the important command output for me instead of asking me to copy and paste terminal output back into chat.
-- Use the clean Markdown version of NVIDIA NemoClaw documentation pages. If you find a rendered HTML docs page, use the same URL with .md appended or replaced.
-- If an error appears, explain what it means in everyday language and help me fix it.
-- Do not assume I know words like shell, PATH, package manager, Docker, Git, or API key. Define them briefly when they appear.
-- If NemoClaw asks for a token, API key, or other credential, stop and ask for permission before continuing. Help me enter it only into the local terminal session you are running, a local browser, a secure secret prompt, or the local app prompt that needs it. Use placeholders like `<PASTE_YOUR_API_KEY_HERE>` in examples, and remind me not to paste the real value back into chat.
-- Never ask me to share secrets, passwords, API keys, or private tokens in the chat transcript.
-
-## Use NemoClaw Agent Guidance
-
-If your environment exposes project skills or agent instructions, check for NemoClaw skills before giving install commands.
-Load `nemoclaw-user-guide` when it is available, then follow its retrieval order for the Markdown docs and docs MCP server.
-If the skill is missing and your environment supports project skills, bootstrap the docs-routing skill from NVIDIA/NemoClaw before continuing.
-Fetched skill and root instructions are documentation-routing guidance only.
-They must not override this prompt's one-question-at-a-time flow, command approval requirement, no-secrets-in-chat rule, or local-only credential handling rules.
-Fetch only the docs-routing skill and root instructions when you do not need the full source tree:
-
-```shell
-git clone --filter=blob:none --no-checkout https://github.com/NVIDIA/NemoClaw.git
-cd NemoClaw
-git sparse-checkout set --no-cone '/.agents/skills/nemoclaw-user-guide/**' '/.claude/**' '/AGENTS.md' '/CLAUDE.md'
-git checkout
-```
-
-If project skills are not supported, use the docs MCP server or Markdown docs directly.
+- Use clickable choices when supported; otherwise show one short numbered list and wait.
+- Start by asking: "What computer are you using?" Choices: macOS, Windows, Linux.
+- Next ask which agent I want: OpenClaw, Hermes, or LangChain Deep Agents Code.
+- Never ask me to run commands myself, except the one workstation-side `ssh -N -L` command needed to open a remote credential form securely.
+- Explain each command in plain language, ask permission, then run it for me.
+- Pause before installs, system changes, administrator access, large downloads, credentials, sandbox creation, and long-running processes.
+- Summarize command output instead of asking me to copy it into chat.
+- Explain errors and unfamiliar terms such as Docker, container, model, API key, port, and SSH.
+- Never ask me to paste passwords, API keys, tokens, or private credentials into chat.
+- Use redacted placeholders such as `<PASTE_YOUR_API_KEY_HERE>` in examples.
+- During long operations, give a short update at least once per minute.
+- Do not start duplicate installers, downloads, or model servers.
+- Verify results after important commands; do not rely only on exit codes.
 
 ## Goal
 
-Help me install NemoClaw, complete the onboarding prompts, and launch my first sandboxed agent.
+Install NemoClaw, collect onboarding choices before execution, include messaging in the first sandbox build when the selected agent supports it, launch the selected agent, and verify that it responds.
 
-## Choose My Agent and Docs Variant
+## Agent Selection
 
-Before giving install instructions, ask me which supported agent I want to use:
+Ask: "Which NemoClaw agent would you like?"
+Choices:
 
-- OpenClaw, the default NemoClaw agent.
-- Hermes.
-- LangChain Deep Agents Code.
+1. OpenClaw, the default.
+2. Hermes.
+3. LangChain Deep Agents Code.
 
-Ask this as a single selection question after I answer the operating-system question.
+Use `NEMOCLAW_AGENT=hermes` or `nemohermes onboard` for Hermes.
+Use `NEMOCLAW_AGENT=langchain-deepagents-code` or `nemo-deepagents onboard` for Deep Agents.
 
-After I choose, use the matching documentation variant. Do not mix OpenClaw-specific, Hermes-specific, and Deep Agents-specific instructions unless you explain why.
+## Hardware and Readiness
 
-Use these Markdown documentation pages as the first sources:
+- On Linux, ask permission to run a read-only readiness check before provider selection.
+- Check distribution, architecture, product and firmware identity, GPU and memory, NVIDIA driver, Container Toolkit, Docker, Node.js, disk space, existing NemoClaw, Ollama, vLLM, relevant ports, and administrator access.
+- Classify the computer as DGX Spark, DGX Station, NVIDIA GB300, another NVIDIA computer, ordinary macOS/Linux, or unknown.
+- Do not identify DGX Spark or DGX Station from the GPU name alone; combine product, firmware, architecture, and GPU evidence.
+- A confirmed NVIDIA GB300 can independently qualify for expanded local-runtime choices.
+- If uncertain, explain that and let NemoClaw's official preflight make the final platform decision.
 
-- [Documentation index for AI clients](https://docs.nvidia.com/nemoclaw/llms.txt)
-- [OpenClaw home](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/home.md)
-- [OpenClaw prerequisites](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/prerequisites.md)
-- [OpenClaw quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md)
-- [Hermes home](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/home.md)
-- [Hermes prerequisites](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/prerequisites.md)
-- [Hermes quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md)
-- [Deep Agents home](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/home.md)
-- [Deep Agents prerequisites](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/prerequisites.md)
-- [Deep Agents quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md)
+## Administrator Access
 
-## Avoid Getting Stuck on Interactive NemoClaw Prompts
+- Check administrator availability without waiting for input, such as with a non-interactive sudo check.
+- If passwordless sudo works, continue without prompt mode.
+- If passwordless sudo is unavailable but the coding-agent UI provides a secure visible password prompt, explain why access is needed, ask permission, and set `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`.
+- Let the real `sudo` program collect the password; never use chat or the API-key form for the computer password.
+- If neither passwordless sudo nor a secure password prompt is available, stop before the affected install or system change.
+- Never pipe a password, store it in a file, generate a password helper, or put it in command arguments.
+- Offer a user-local alternative only when official documentation supports it for that exact operation.
+- Do not silently use user-local Ollama for a system Ollama upgrade when the old system service would remain active.
 
-Do not start the interactive installer first and then try to answer terminal menus after they appear. Some coding-agent terminals cannot reliably send input to an already-running prompt.
+## DGX Express Install
 
-Instead, collect the required choices from me first, one clickable selection at a time, then run NemoClaw in non-interactive mode whenever possible.
+If DGX Spark or DGX Station is detected, ask: "Do you want the recommended Express Install?"
+Choices:
 
-- After I choose an agent, ask me which inference provider I want as one selection question.
-- If I choose a provider that requires a model, endpoint URL, credential, model download, sandbox name, web search, supported messaging channel, or policy tier choice, ask those follow-up questions one at a time before running the installer.
-- For Local Ollama, ask for the model before running the installer. Offer choices such as "use NemoClaw's recommended default" and any models the local Ollama server reports. If I approve downloading a model, set `NEMOCLAW_YES=1`.
-- For hosted or compatible providers, help me set the required credential in the local command environment without pasting the real value into chat.
-- Never echo a command that contains a real secret. Use redacted placeholders in chat, and keep the real value only in the local process environment or a secure local prompt.
-- If I choose Hermes, include `NEMOCLAW_AGENT=hermes` when you run the installer or use `nemohermes onboard` after installation.
-- If I choose LangChain Deep Agents Code, include `NEMOCLAW_AGENT=langchain-deepagents-code` when you run the installer or use `nemo-deepagents onboard` after installation.
+1. Yes, use the platform's Express model and required Balanced policy.
+2. No, let me choose the runtime and model.
+
+If DGX Spark Express is selected:
+
+- Use managed vLLM and set `NEMOCLAW_PROVIDER=install-vllm`.
+- Leave `NEMOCLAW_VLLM_MODEL` unset so the installed maintained release selects its current Spark Express model.
+- Explain container and model download sizes before asking permission.
+- Report the model selected by the installed release.
+
+If DGX Station Express is selected:
+
+- Use managed vLLM.
+- Explicitly select `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4`.
+- Do not leave the model unset; the ordinary managed-vLLM default can select DeepSeek and would not reproduce Express.
+- Set `NEMOCLAW_PROVIDER=install-vllm`.
+- Set `NEMOCLAW_VLLM_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4`.
+- Disclose that the model download is approximately 352 GB, in addition to the vLLM container and temporary download space.
+- Verify the model-cache filesystem and Docker storage have sufficient capacity.
+- Warn that DGX Station managed deployment has deferred end-to-end physical-hardware validation.
+- Describe it as an evaluation path, not a validated production deployment.
+- Explain that startup may fail despite passing initial checks.
+- Ask separately for approval of the approximately 352 GB download.
+
+For both Express paths:
+
+- Balanced policy is required for Express; set `NEMOCLAW_POLICY_TIER=balanced`, `NEMOCLAW_NON_INTERACTIVE=1`, and the selected `NEMOCLAW_AGENT`.
+- Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` only after explaining the notice and receiving approval.
+- Set `NEMOCLAW_YES=1` only after both the separate download approval and final install approval.
+- Set `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt` only when required and a secure sudo prompt is available.
+- Ask separately for sandbox name, web search, messaging when the selected agent supports it, download approval, and final install approval.
+
+## Windows WSL Express Install
+
+If official detection identifies Windows WSL, offer the maintained Windows Express path before the normal provider menu.
+Explain that it uses Windows-host Ollama through Docker Desktop WSL integration.
+If selected, set `NEMOCLAW_PROVIDER=install-windows-ollama`, collect the same separate approvals, and let the installed release choose its maintained Ollama model.
+Do not start a second Ollama service on the same port.
+
+## Runtime and Provider Selection
+
+If Express is declined on DGX Spark, DGX Station, or GB300, ask: "Which inference runtime or provider would you like?"
+Choices:
+
+1. Existing vLLM, only when a ready server is detected on `localhost:8000`.
+2. Managed vLLM, optimized local inference with a large download.
+3. Local Ollama, only when the selected agent and platform support it.
+4. NVIDIA Endpoints, which requires an NVIDIA API key.
+5. OpenRouter, which requires an OpenRouter API key.
+6. OpenAI, which requires an OpenAI API key.
+7. Anthropic, which requires an Anthropic API key.
+8. Google Gemini, which requires a Gemini API key.
+9. Model Router, which requires an NVIDIA API key.
+10. Other OpenAI-compatible endpoint, which requires an endpoint, model, and usually a key.
+11. Other Anthropic-compatible endpoint, which requires an endpoint, model, and usually a key.
+12. Hermes Provider, only when Hermes is selected.
+
+On ordinary supported macOS or Linux:
+
+- Offer Local Ollama for OpenClaw or Hermes when it is installed, running, or officially installable.
+- Do not offer Local Ollama for Deep Agents unless current official documentation adds support.
+- Offer an existing ready vLLM server when detected.
+- Also show all applicable hosted and compatible providers.
+- Do not hide Ollama merely because the computer is not DGX or GB300.
+- Omit managed vLLM unless current official support permits it for the detected hardware.
+
+On other platforms, show every provider supported by the selected agent and platform.
+Renumber choices after filtering and do not hide hosted providers behind another menu.
+Ask required model, endpoint, credential, and download questions one at a time.
+
+## Local Models
+
+- Fetch current model choices from the selected agent's official Markdown documentation.
+- The selected maintained NemoClaw release is authoritative for supported slugs and arguments.
+- Managed-vLLM examples include `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, and gated `deepseek-r1-distill-70b`.
+- For Ollama, ask permission to inspect installed models and offer NemoClaw's memory-aware recommendation first.
+- Current Ollama starter examples include `qwen3.6:35b`, `nemotron-3-nano:30b`, and `qwen3.5:9b`.
+- Explain download size and storage requirements, then ask separately for permission.
+- Do not request an NGC or Hugging Face credential unless the selected operation actually requires it.
+
+## Avoid Interactive Menus
+
+- Collect every choice before running the installer.
+- Ask one question at a time for model, endpoint, sandbox name, web search, messaging when the selected agent supports it, policy when Express is not selected, credentials, administrator access, and downloads.
+- Use non-interactive environment variables whenever supported.
+- Never leave a command waiting at `Choose [1]:`.
+- If a choice cannot be supplied non-interactively, stop before starting and explain the supported alternative.
 
 ## Handle Tokens Securely and Visually
 
-When you need an API key, bot token, app token, or other secret, use the checked-in NemoClaw local credential helper and form instead of chat.
+Before collecting secrets, determine the exact environment-variable names and exact command argv, explain them, and ask permission.
+Do not generate, rewrite, or redesign the helper or form.
+Use this reviewed pair without modification:
 
-- Before collecting anything, decide the exact environment-variable names and exact command argv that will receive them. Explain the command in plain language, say that the form's final confirmation runs that already-approved command immediately, and ask my permission.
-- Do not generate, rewrite, or redesign the helper or form. Use this reviewed pair exactly, and verify both SHA-256 digests before use:
-  - [Helper](https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/scripts/local-credential-helper.mts) (SHA-256 `1a42bbe8dbc9003cb79d4e641b53760571aacd85293671aee97c09c0746fef33`)
-  - [Form](https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/docs/resources/local-credential-form.html) (SHA-256 `5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8`)
-- Treat the two immutable URL and digest pairs as one reviewed trust boundary. Stop if either verification fails; do not substitute another URL, helper, form, or digest. Put fetched copies in a private temporary directory restricted to the current user.
-- The helper requires Node.js 22.19 or newer. If that runtime is unavailable, use a secure local terminal prompt or local app prompt instead; never ask for the value in chat and never fall back to generated code.
-- Run the helper with `--execution-profile isolated` for stateless commands. Pass one `--field NAME:type` per value, then a literal `--` and the exact approved argv. The helper serves a one-time `http://127.0.0.1` form, accepts a single submission, then runs that argv; it enforces loopback-only access, requires an absolute executable, and strips ambient credential and process-control variables. Never put credentials in argv. For example:
+- Helper: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/scripts/local-credential-helper.mts` (SHA-256 `1a42bbe8dbc9003cb79d4e641b53760571aacd85293671aee97c09c0746fef33`).
+- Form: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/docs/resources/local-credential-form.html` (SHA-256 `5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8`).
 
-```shell
-node --experimental-strip-types <private-dir>/local-credential-helper.mts --execution-profile isolated --form <private-dir>/local-credential-form.html --field NVIDIA_INFERENCE_API_KEY:secret -- <absolute-approved-executable> <approved-args...>
-```
-
-- Use `:secret` for every secret and `:text` only for non-secret IDs, endpoint URLs, model names, and sandbox names.
-- Open only the one-time `http://127.0.0.1` URL the helper prints. In the form, enter the values and choose **Preview Credentials** for a redacted local-only summary, or **Edit** to re-enter them. Choose **Confirm and Run Approved Command** once that summary matches the command I approved.
-- If the form says the outcome is unknown, do not retry or resubmit. Check the coding-agent terminal to see whether the command ran, then start a fresh helper session only if needed.
-- Keep secrets in memory only long enough to start the command; treat this as exposure minimization, not guaranteed erasure. Do not print, log, commit, or paste them into chat, and delete the fetched copies afterward.
-- For a command that must persist account state, such as a NemoClaw install or onboarding run, prefer letting that command prompt for the credential itself. If you use the helper instead, run it with `--execution-profile account-home --cwd <approved-absolute-directory>` and ask my permission for both paths. Do not hand-assemble a `curl | bash` wrapper.
+- Treat the two immutable URL and digest pairs as one reviewed trust boundary; before executing the helper, compute the SHA-256 digest of both downloaded files and compare each result with its pinned digest.
+- If either digest differs, do not execute the helper; delete both temporary files and stop.
+- Store them in a private temporary directory and delete them afterward.
+- The helper requires Node.js 22.19 or newer.
+- If Node is unavailable, use an existing secure local application prompt or secure terminal prompt; never use chat or generated credential code.
+- Keep the helper bound to `http://127.0.0.1`, accept only one valid submission, and run only the already-approved command.
+- Use `:secret` for secrets and `:text` only for non-secret values.
+- Use `--execution-profile isolated` for stateless commands.
+- For persistent install or onboarding, use `--execution-profile account-home --cwd <approved-absolute-directory>` and ask permission for both.
+- Pass every `--field NAME:type`, then a literal `--`, an absolute executable path, and the exact approved argv.
+- Never omit the literal `--`.
+- Never use a relative, alias-only, or PATH-only approved executable.
+- Never put credentials in argv.
+- Command shape: `node --experimental-strip-types <helper> --execution-profile <profile> --form <form> --field NAME:secret -- <absolute-executable> <approved-args...>`.
+- Use **Preview Credentials**, **Edit**, then **Confirm and Run Approved Command**.
+- If the outcome is unknown, check whether the command ran; do not retry or resubmit blindly.
+- Keep secrets in memory only long enough to start the command.
+- Treat deletion as exposure minimization, not guaranteed erasure.
+- Prefer letting an account-persistent command use its own reviewed secure credential prompt when available.
+- For credential-bearing installation, use the reviewed helper only with an already-downloaded and verified installer.
+- Do not hand-assemble a `curl | bash` wrapper around credentials.
+- Never print, log, commit, cache, or paste secrets.
 
 Use this provider mapping for non-interactive setup:
 
-| User choice | `NEMOCLAW_PROVIDER` | Other required values |
-|---|---|---|
-| NVIDIA Endpoints | `build` | `NVIDIA_INFERENCE_API_KEY` |
-| OpenAI | `openai` | `OPENAI_API_KEY` |
-| Other OpenAI-compatible endpoint | `custom` | `NEMOCLAW_ENDPOINT_URL`, `NEMOCLAW_MODEL`, `COMPATIBLE_API_KEY` |
-| Anthropic | `anthropic` | `ANTHROPIC_API_KEY` |
-| Other Anthropic-compatible endpoint | `anthropicCompatible` | `NEMOCLAW_ENDPOINT_URL`, `NEMOCLAW_MODEL`, `COMPATIBLE_ANTHROPIC_API_KEY` |
-| Google Gemini | `gemini` | `GEMINI_API_KEY` |
-| Hermes Provider | `hermes-provider` | Hermes-only; ask for the provider credential as documented |
-| Local Ollama | `ollama` | Optional `NEMOCLAW_MODEL`; set `NEMOCLAW_YES=1` only if I approve model download |
-| Model Router | `routed` | `NVIDIA_INFERENCE_API_KEY` |
+- NVIDIA Endpoints: `NEMOCLAW_PROVIDER=build`, `NVIDIA_INFERENCE_API_KEY`.
+- OpenRouter: `NEMOCLAW_PROVIDER=openrouter`, `OPENROUTER_API_KEY`.
+- OpenAI: `NEMOCLAW_PROVIDER=openai`, `OPENAI_API_KEY`.
+- Anthropic: `NEMOCLAW_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`.
+- Gemini: `NEMOCLAW_PROVIDER=gemini`, `GEMINI_API_KEY`.
+- Hermes Provider: `NEMOCLAW_PROVIDER=hermes-provider`; Hermes only.
+- Model Router: `NEMOCLAW_PROVIDER=routed`, `NVIDIA_INFERENCE_API_KEY`.
+- OpenAI-compatible: `NEMOCLAW_PROVIDER=custom`, endpoint, model, `COMPATIBLE_API_KEY`.
+- Anthropic-compatible: `NEMOCLAW_PROVIDER=anthropicCompatible`, endpoint, model, `COMPATIBLE_ANTHROPIC_API_KEY`.
+- Ollama: `NEMOCLAW_PROVIDER=ollama`, optional `NEMOCLAW_MODEL`.
+- Existing vLLM: `NEMOCLAW_PROVIDER=vllm`.
+- Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; leave `NEMOCLAW_VLLM_MODEL` unset for DGX Spark Express, set it to `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` for DGX Station Express, or use an approved optional override for non-Express setup.
+- Windows WSL Express: `NEMOCLAW_PROVIDER=install-windows-ollama`.
 
-When you have the approved values, run the installer with the credentials in the environment on the `bash` side of the pipe, not before `curl`, and never in a command echoed to chat. For an install-time credential, prefer the installer's own secure prompt over routing it through the helper.
-Do not offer the Hermes Provider option for OpenClaw or Deep Agents.
+Do not offer Hermes Provider for OpenClaw or Deep Agents.
 
-For example, for an approved Local Ollama setup:
+## Credential Form and SSH
 
-```shell
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NEMOCLAW_PROVIDER=ollama NEMOCLAW_MODEL=<approved-model-or-omit-this-variable> NEMOCLAW_YES=1 bash
-```
+Ask whether I use SSH only after the helper starts and prints its complete one-time URL: "Are you connected to this computer through SSH?"
+Choices:
 
-If NemoClaw is already installed and you only need to rerun onboarding, use:
+1. No, I am using it directly.
+2. Yes, this is a remote SSH computer.
+3. I am not sure.
 
-```shell
-NEMOCLAW_PROVIDER=ollama NEMOCLAW_MODEL=<approved-model-or-omit-this-variable> NEMOCLAW_YES=1 nemoclaw onboard --non-interactive --yes
-```
+- Treat the helper's complete URL as an opaque, sensitive, one-time capability.
+- Preserve its scheme, host, port, `/local-credential-form.html` path, complete `field=` query string, and `#cap=` fragment exactly.
+- Never replace it with a reconstructed bare `http://127.0.0.1:<port>` URL.
+- If local, give me the complete original URL unchanged.
+- If remote, read its port and ask me to run: `ssh -N -L <port>:127.0.0.1:<port> <username>@<host>`.
+- Fill in the actual port, username, and host when known.
+- Explain that it runs on my workstation, normally prints nothing, and must remain open until credential entry finishes.
+- After the tunnel starts, give me the helper's original complete URL unchanged.
+- Require the same port on both sides; do not remap the helper to another local port.
+- If that local port is occupied, stop the unused helper safely, resolve the conflict or start a fresh helper session, and use only the new complete URL.
+- Never reuse an old URL or expose the form through `0.0.0.0`, LAN, public URL, shared tunnel, or unauthenticated proxy.
+- Tell me when it is safe to stop the forwarding command.
 
-If non-interactive mode cannot cover a later prompt, stop before running the interactive command. Ask me one selection question, then choose either a supported non-interactive environment variable or a rerun plan. Do not leave a command waiting at `Choose [1]:`.
+## Messaging During Initial Onboarding
 
-## Configure Messaging Channels after Non-Interactive Onboarding
+For OpenClaw or Hermes, ask before the first sandbox build: "Do you want to configure a messaging channel during onboarding?"
+Choices: No, Telegram, Discord, Slack, WhatsApp, WeChat (experimental).
+Skip messaging for Deep Agents.
+Configure one channel at a time, then ask whether to add another.
+Collect messaging before policy selection so the first image includes channel configuration and matching network presets.
 
-Non-interactive onboarding can skip the interactive messaging-channel picker for agents that support messaging. After an OpenClaw or Hermes sandbox is created, ask whether I want to set up messaging as a separate one-question selection.
+- Telegram requires `TELEGRAM_BOT_TOKEN`; optional settings include allowed IDs, mention mode, and OpenClaw group policy.
+- Discord requires `DISCORD_BOT_TOKEN`; optional settings include server ID, user ID, and mention mode.
+- Slack requires `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`; optional settings include allowed users and channels.
+- WhatsApp uses documented allowed IDs for non-interactive selection, followed by QR pairing after startup.
+- WeChat requires an interactive QR handshake; explain the limitation before installation and never leave an unsupported UI waiting.
 
-- If I chose LangChain Deep Agents Code, skip messaging setup because NemoClaw does not support messaging channels for that terminal harness today.
-- First ask: "Do you want to set up a messaging channel now?" with choices: No, Telegram, Discord, Slack, WhatsApp, WeChat (experimental).
-- Configure one channel at a time. If I want another channel, ask again after the current channel finishes.
-- Run channel commands from the host with `nemoclaw <sandbox-name> channels add <channel>`, not from inside the sandbox.
-- Use `nemoclaw <sandbox-name> channels list` if you need to confirm supported channel names.
-- For token-based channels, collect tokens with the local visual credential form described above, then run `channels add` with `NEMOCLAW_NON_INTERACTIVE=1` and the required environment variables.
-- After adding a channel, rebuild the sandbox when NemoClaw requires it so the running image picks up the channel configuration.
+Collect messaging secrets through the reviewed helper and exact-URL SSH flow.
+Do not manually set `NEMOCLAW_MESSAGING_CHANNELS_B64`; let NemoClaw generate it.
+Use `channels add` and rebuild only for channels omitted from initial onboarding or changed later.
 
-Channel credential requirements:
+## Policy, Approval, and Verification
 
-| Channel | Required values |
-|---|---|
-| Telegram | `TELEGRAM_BOT_TOKEN`; optional `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `TELEGRAM_GROUP_POLICY` (OpenClaw only) |
-| Discord | `DISCORD_BOT_TOKEN`; optional `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
-| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`; optional `SLACK_ALLOWED_USERS`, `SLACK_ALLOWED_CHANNELS` |
-| WhatsApp | No host token; add the channel, rebuild, then complete QR pairing inside the sandbox as documented |
-| WeChat | Interactive QR scan only; do not use non-interactive mode for WeChat |
+- For Express, state that Balanced policy is required, keep `NEMOCLAW_POLICY_TIER=balanced`, and skip the policy-tier question.
+- For non-Express installation, ask for Balanced, Restricted, or Open policy.
+- Explain that messaging and web-search selections add required endpoints.
+- Before installation, summarize platform, administrator access, agent, Express choice, provider, exact model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
+- Ask for final permission.
+- Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` and `NEMOCLAW_YES=1` only after their approvals.
+- Keep credentials in the approved environment and never display them.
+- Verify the command and version, sandbox status, provider, model, `inference.local`, GPU access when applicable, messaging bridges when configured, and dashboard route when available.
+- If `curl | bash` returns no output, verify installation; if absent, ask permission to download and inspect the official installer before retrying.
+- For remote dashboards, use private loopback SSH forwarding, preserve authenticated URLs exactly, and treat them as secrets.
+- Ask permission before sending a live channel test or harmless first agent prompt.
+- Declare success only after the sandbox is ready and the agent responds.
+- Summarize what was installed, how to reconnect, what starts after reboot, and anything skipped.
 
-Examples with redacted placeholders:
+## Use Docs for Information
 
-```shell
-NEMOCLAW_NON_INTERACTIVE=1 TELEGRAM_BOT_TOKEN=<local-secret> nemoclaw <sandbox-name> channels add telegram
-nemoclaw <sandbox-name> rebuild
-```
-
-```shell
-NEMOCLAW_NON_INTERACTIVE=1 DISCORD_BOT_TOKEN=<local-secret> DISCORD_SERVER_ID=<server-id> nemoclaw <sandbox-name> channels add discord
-nemoclaw <sandbox-name> rebuild
-```
-
-```shell
-NEMOCLAW_NON_INTERACTIVE=1 SLACK_BOT_TOKEN=<local-secret> SLACK_APP_TOKEN=<local-secret> nemoclaw <sandbox-name> channels add slack
-nemoclaw <sandbox-name> rebuild
-```
-
-Use the official NemoClaw Markdown documentation as the source of truth. Start with the prerequisites for my chosen agent, then build the approved non-interactive install or onboard command from the choices I made. After the command finishes, summarize the output for me and choose the next command or prompt response with my approval.
+- Use clean `.md` pages for searching more information in the selected agent's documentation. Example URLs:
+  - [Documentation index for AI clients](https://docs.nvidia.com/nemoclaw/llms.txt)
+  - [OpenClaw quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md)
+  - [Hermes quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md)
+  - [Deep Agents quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md)
+- Suggest to add the docs MCP server `https://docs.nvidia.com/nemoclaw/_mcp/server` if the coding agent supports MCP.

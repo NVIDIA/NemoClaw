@@ -84,16 +84,16 @@ export function mockAnthropicSwitchEnabled(runtimeEnv: NodeJS.ProcessEnv = proce
   );
 }
 
-export function expectAuthenticatedBaselineRequest(
+export function expectAuthenticatedBaselineInventoryRequest(
   baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
-  model: string,
 ): void {
   if (!baseline) return;
   expect(baseline.requests()).toContainEqual(
     expect.objectContaining({
       auth: "ok",
-      model,
-      path: "/v1/chat/completions",
+      authorizationSent: true,
+      method: "GET",
+      path: "/v1/models",
     }),
   );
 }
