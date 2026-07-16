@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // @module-tag e2e/credential-free
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 
 import { probeDockerStorage } from "../src/lib/inference/vllm-storage";
 
@@ -31,13 +32,20 @@ function dockerEnvironment(): NodeJS.ProcessEnv {
 
 function writeEvidence(evidence: Record<string, unknown>): void {
   const artifactDir = process.env.E2E_ARTIFACT_DIR;
-  if (!artifactDir) return;
-  fs.mkdirSync(artifactDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(artifactDir, `${TARGET_ID}.json`),
-    `${JSON.stringify(evidence, null, 2)}\n`,
-  );
+  const persist =
+    artifactDir === undefined
+      ? () => undefined
+      : () => {
+          fs.mkdirSync(artifactDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(artifactDir, `${TARGET_ID}.json`),
+            `${JSON.stringify(evidence, null, 2)}\n`,
+          );
+        };
+  persist();
 }
+
+afterEach(() => vi.unstubAllEnvs());
 
 realDockerTest(
   "measures real Docker storage through the /run/docker.sock alias (#7039)",
@@ -70,53 +78,44 @@ realDockerTest(
     const dockerRootAvailableBytes = dockerRootStats.bavail * dockerRootStats.bsize;
     expect(dockerRootAvailableBytes).toBeGreaterThan(0n);
 
-    const previousDockerHost = process.env.DOCKER_HOST;
-    const previousDockerContext = process.env.DOCKER_CONTEXT;
-    process.env.DOCKER_HOST = DOCKER_HOST;
-    delete process.env.DOCKER_CONTEXT;
-    try {
-      const probe = probeDockerStorage();
-      expect(probe.ok, probe.ok ? undefined : probe.reason).toBe(true);
-      if (!probe.ok) return;
+    vi.stubEnv("DOCKER_HOST", DOCKER_HOST);
+    vi.stubEnv("DOCKER_CONTEXT", undefined);
+    const probe = probeDockerStorage();
+    expect(probe.ok, probe.ok ? undefined : probe.reason).toBe(true);
+    assert(probe.ok);
 
-      const capacityStats = fs.statfsSync(probe.capacity.path, { bigint: true });
-      const measuredAvailableBytes = capacityStats.bavail * capacityStats.bsize;
-      expect(probe.capacity.availableBytes).toBe(measuredAvailableBytes);
-      expect(probe.capacity.availableBytes).toBeGreaterThan(0n);
+    const capacityStats = fs.statfsSync(probe.capacity.path, { bigint: true });
+    const measuredAvailableBytes = capacityStats.bavail * capacityStats.bsize;
+    expect(probe.capacity.availableBytes).toBe(measuredAvailableBytes);
+    expect(probe.capacity.availableBytes).toBeGreaterThan(0n);
 
-      const checkoutResult = spawnSync("git", ["rev-parse", "HEAD"], {
-        encoding: "utf8",
-        timeout: 5_000,
-      });
-      expect(
-        checkoutResult.status,
-        `could not record the validated checkout: ${
-          checkoutResult.error?.message || checkoutResult.stderr || checkoutResult.stdout
-        }`,
-      ).toBe(0);
-      const checkoutSha = checkoutResult.stdout.trim();
-      expect(checkoutSha).toMatch(/^[0-9a-f]{40}$/u);
-      const evidence = {
-        schemaVersion: 1,
-        checkoutSha,
-        platform: process.platform,
-        architecture: process.arch,
-        dockerHost: DOCKER_HOST,
-        dockerServerVersion: info.ServerVersion,
-        dockerRootDir,
-        dockerRootAvailableBytes: String(dockerRootAvailableBytes),
-        measuredPath: probe.capacity.path,
-        measuredSource: probe.capacity.source,
-        measuredAvailableBytes: String(probe.capacity.availableBytes),
-      };
-      writeEvidence(evidence);
-      console.info(`[${TARGET_ID}] ${JSON.stringify(evidence)}`);
-    } finally {
-      if (previousDockerHost === undefined) delete process.env.DOCKER_HOST;
-      else process.env.DOCKER_HOST = previousDockerHost;
-      if (previousDockerContext === undefined) delete process.env.DOCKER_CONTEXT;
-      else process.env.DOCKER_CONTEXT = previousDockerContext;
-    }
+    const checkoutResult = spawnSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    expect(
+      checkoutResult.status,
+      `could not record the validated checkout: ${
+        checkoutResult.error?.message || checkoutResult.stderr || checkoutResult.stdout
+      }`,
+    ).toBe(0);
+    const checkoutSha = checkoutResult.stdout.trim();
+    expect(checkoutSha).toMatch(/^[0-9a-f]{40}$/u);
+    const evidence = {
+      schemaVersion: 1,
+      checkoutSha,
+      platform: process.platform,
+      architecture: process.arch,
+      dockerHost: DOCKER_HOST,
+      dockerServerVersion: info.ServerVersion,
+      dockerRootDir,
+      dockerRootAvailableBytes: String(dockerRootAvailableBytes),
+      measuredPath: probe.capacity.path,
+      measuredSource: probe.capacity.source,
+      measuredAvailableBytes: String(probe.capacity.availableBytes),
+    };
+    writeEvidence(evidence);
+    console.info(`[${TARGET_ID}] ${JSON.stringify(evidence)}`);
   },
   30_000,
 );
