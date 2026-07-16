@@ -192,7 +192,7 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   expect(installLog).not.toContain(
     "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
   );
-  expect(installLog).not.toContain("Docker GPU mode selected:");
+  expect(installLog).not.toContain("Docker GPU mode selected");
 
   const sandboxContainers = await host.command(
     "docker",
@@ -202,7 +202,7 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
       "--filter",
       `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
       "--format",
-      "{{.Names}}",
+      "{{json .}}",
     ],
     {
       artifactName: "gpu-native-route-sandbox-containers",
@@ -211,15 +211,26 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
     },
   );
   expect(sandboxContainers.exitCode, resultText(sandboxContainers)).toBe(0);
-  const sandboxContainerNames = sandboxContainers.stdout
+  const sandboxContainerInventory = sandboxContainers.stdout
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          Names?: string;
+          State?: string;
+          Status?: string;
+        },
+    );
   expect(
-    sandboxContainerNames,
+    sandboxContainerInventory,
     `native GPU route must retain exactly one sandbox container; got ${sandboxContainers.stdout}`,
   ).toHaveLength(1);
-  expect(sandboxContainerNames[0]).not.toContain("-nemoclaw-gpu-backup-");
+  const retainedSandboxContainer = sandboxContainerInventory[0];
+  expect(retainedSandboxContainer.Names).not.toContain("-nemoclaw-gpu-backup-");
+  expect(retainedSandboxContainer.State).toBe("running");
+  expect(retainedSandboxContainer.Status).toMatch(/\(healthy\)/i);
 
   const route = await sandbox.openshell(["inference", "get"], {
     artifactName: "openshell-inference-route",
