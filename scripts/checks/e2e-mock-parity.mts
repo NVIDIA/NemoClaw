@@ -179,7 +179,7 @@ function changedFiles(base: string, head: string): string[] {
   );
 }
 
-function main(): void {
+export function main(): void {
   const base = argument("--base");
   const head = argument("--head") ?? "HEAD";
   if (!base) throw new Error("usage: e2e-mock-parity.mts --base <git-ref> [--head <git-ref>]");
