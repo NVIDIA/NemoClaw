@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { CheckpointLoadResult } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
+import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import type { ResumeConfigConflict } from "./resume-config";
 
 export interface OnboardSessionBootstrapInput {
@@ -44,6 +46,7 @@ export interface OnboardSessionBootstrapDeps {
   cliName(): string;
   error(message: string): void;
   exitProcess(code: number): never;
+  resolveResumeCheckpoint?: () => CheckpointLoadResult;
 }
 
 export interface OnboardSessionBootstrapResult {
@@ -60,6 +63,11 @@ export function checkpointSandboxName(
   updateSession((current) => {
     current.sandboxName = sandboxName;
     current.sandboxPromptProgress.sandboxName = true;
+    recordCheckpointSandboxIdentity(
+      current,
+      sandboxName,
+      current.agent ?? agent?.name ?? "openclaw",
+    );
     return current;
   });
 }
@@ -83,6 +91,36 @@ function reportMissingResumeSession(deps: OnboardSessionBootstrapDeps): never {
   deps.error("  To change configuration on an existing sandbox, rebuild it:");
   deps.error(`    ${deps.cliName()} onboard`);
   deps.exitProcess(1);
+}
+
+function reportUnsupportedResumeCheckpoint(
+  foundVersion: number,
+  deps: OnboardSessionBootstrapDeps,
+): never {
+  deps.error(
+    `  This onboarding session was written by a newer NemoClaw (checkpoint schema v${foundVersion}).`,
+  );
+  deps.error(
+    "  Resuming it with this version could create a second sandbox or drop recorded decisions.",
+  );
+  deps.error(`  Upgrade NemoClaw to resume it, or start fresh: ${deps.cliName()} onboard`);
+  deps.exitProcess(1);
+}
+
+function reportCorruptResumeCheckpoint(deps: OnboardSessionBootstrapDeps): never {
+  deps.error("  The onboarding resume checkpoint is unreadable and cannot be safely continued.");
+  deps.error(`  Start fresh: ${deps.cliName()} onboard`);
+  deps.exitProcess(1);
+}
+
+function guardResumeCheckpoint(deps: OnboardSessionBootstrapDeps): void {
+  const result = deps.resolveResumeCheckpoint?.();
+  if (result?.status === "unsupported_future") {
+    reportUnsupportedResumeCheckpoint(result.foundVersion, deps);
+  }
+  if (result?.status === "corrupt") {
+    reportCorruptResumeCheckpoint(deps);
+  }
 }
 
 function reportResumeConflict(
@@ -173,6 +211,7 @@ async function prepareResumeSession(
   if (!session || session.resumable === false) {
     reportMissingResumeSession(deps);
   }
+  guardResumeCheckpoint(deps);
 
   const sessionFrom = session.metadata?.fromDockerfile || null;
   const fromDockerfile = input.requestedFromDockerfile

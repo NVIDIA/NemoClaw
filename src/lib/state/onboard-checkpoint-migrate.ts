@@ -1,0 +1,107 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+
+import { isObjectRecord, type JsonValue } from "../core/json-types";
+import type { WebSearchConfig } from "../inference/web-search";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
+import { inspectCheckpoint } from "./onboard-checkpoint";
+import {
+  decisionFromLegacyNullable,
+  decisionSelected,
+  decisionUnset,
+} from "./onboard-checkpoint-decision";
+import {
+  CHECKPOINT_SCHEMA_VERSION,
+  type CheckpointDecision,
+  type CheckpointLoadResult,
+  type CheckpointResourceProfile,
+  type CheckpointSandboxIdentity,
+  type OnboardCheckpoint,
+} from "./onboard-checkpoint-types";
+import { normalizeSession, SESSION_FILE, type Session } from "./onboard-session";
+
+function identityDecision(session: Session): CheckpointDecision<CheckpointSandboxIdentity> {
+  const { sandboxName, agent } = session;
+  if (
+    session.sandboxPromptProgress.sandboxName &&
+    typeof sandboxName === "string" &&
+    sandboxName.length > 0 &&
+    typeof agent === "string" &&
+    agent.length > 0
+  ) {
+    return decisionSelected({ name: sandboxName, agent });
+  }
+  return decisionUnset();
+}
+
+function webSearchDecision(session: Session): CheckpointDecision<WebSearchConfig> {
+  return decisionFromLegacyNullable(
+    session.sandboxPromptProgress.webSearch,
+    session.webSearchConfig,
+    (config) => config,
+  );
+}
+
+function messagingDecision(session: Session): CheckpointDecision<SandboxMessagingPlan> {
+  return decisionFromLegacyNullable(
+    session.sandboxPromptProgress.messaging,
+    session.messagingPlan,
+    (plan) => plan,
+  );
+}
+
+function resourceDecision(session: Session): CheckpointDecision<CheckpointResourceProfile> {
+  return decisionFromLegacyNullable(
+    session.sandboxPromptProgress.resourceProfile,
+    session.resourceProfile,
+    (profile) => ({ cpu: profile.cpu, memory: profile.memory }),
+  );
+}
+
+export function deriveCheckpointFromSession(session: Session): OnboardCheckpoint {
+  return {
+    schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    sessionId: session.sessionId,
+    machineState: session.machine.state,
+    updatedAt: session.updatedAt,
+    sandboxIdentity: identityDecision(session),
+    webSearch: webSearchDecision(session),
+    messaging: messagingDecision(session),
+    resourceProfile: resourceDecision(session),
+    effectGroups: {},
+    bindings: {
+      credentialEnvs: session.credentialEnv ? [session.credentialEnv] : [],
+      registeredProviders: [...session.stagedCredentialProviders],
+    },
+  };
+}
+
+export function resolveCheckpointForResume(rawSession: unknown): CheckpointLoadResult {
+  if (!isObjectRecord(rawSession)) return { status: "none" };
+
+  const inspected = inspectCheckpoint(rawSession.checkpoint);
+  if (inspected.status === "unsupported_future" || inspected.status === "corrupt") {
+    return inspected;
+  }
+  if (inspected.status === "loaded") return inspected;
+
+  const session = normalizeSession(rawSession as JsonValue);
+  if (!session) return { status: "none" };
+  return {
+    status: "migrated",
+    checkpoint: deriveCheckpointFromSession(session),
+    fromVersion: 0,
+  };
+}
+
+export function loadResumeCheckpoint(): CheckpointLoadResult {
+  try {
+    if (!fs.existsSync(SESSION_FILE)) return { status: "none" };
+    const raw = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
+    return resolveCheckpointForResume(raw);
+  } catch {
+    return { status: "none" };
+  }
+}
