@@ -78,6 +78,8 @@ KILL_GRACE_SECONDS = 5.0
 RECOVERY_TIMEOUT_SECONDS = 150.0
 RECOVER_EXISTING_GRACE_SECONDS = 10.0
 POLL_SECONDS = 0.2
+SUPERVISOR_DISCOVERY_ATTEMPTS = 3
+SUPERVISOR_DISCOVERY_RETRY_SECONDS = 0.02
 NEMOCLAW_RUNTIME_DIR = "/run/nemoclaw"
 NEMOCLAW_RUNTIME_DIR_MODE = 0o711
 EXPECTED_EXIT_MARKER_NAME = "managed-gateway-expected-exit"
@@ -783,7 +785,24 @@ def _discover_supervisor(reader: ProcReader) -> ProcessIdentity:
     sandbox_uid = _sandbox_uid()
     matches, inconclusive = _supervisor_candidates(reader, pid1, sandbox_uid)
     if inconclusive:
-        raise ControlError("SUPERVISOR_UNAVAILABLE")
+        # Busy agents can create or reap an unrelated short-lived process while
+        # /proc is being read. Retry only when one exact supervisor was already
+        # proven, and require that same pinned identity on every scan. A missing,
+        # changing, or duplicate supervisor still fails closed immediately.
+        if len(matches) != 1:
+            raise ControlError("SUPERVISOR_UNAVAILABLE")
+        expected = matches[0].stable_key()
+        for _attempt in range(1, SUPERVISOR_DISCOVERY_ATTEMPTS):
+            time.sleep(SUPERVISOR_DISCOVERY_RETRY_SECONDS)
+            if reader.capture(1).stable_key() != pid1.stable_key():
+                raise ControlError("SUPERVISOR_UNAVAILABLE")
+            matches, inconclusive = _supervisor_candidates(reader, pid1, sandbox_uid)
+            if len(matches) != 1 or matches[0].stable_key() != expected:
+                raise ControlError("SUPERVISOR_UNAVAILABLE")
+            if not inconclusive:
+                break
+        if inconclusive:
+            raise ControlError("SUPERVISOR_UNAVAILABLE")
     if len(matches) == 0:
         # A zero-match scan is the only absence signal that may authorize the
         # host to recreate a legacy Docker container with its managed startup

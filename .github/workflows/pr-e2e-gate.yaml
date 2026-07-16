@@ -85,7 +85,7 @@ jobs:
 
   required:
     name: E2E / PR Gate
-    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' }}
+    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' && (github.event.action != 'edited' || github.event.changes.base != null) }}
     runs-on: ubuntu-latest
     timeout-minutes: 170
     permissions:
@@ -259,76 +259,11 @@ jobs:
         if: ${{ steps.start.outputs.dispatched == 'true' }}
         continue-on-error: true
         env:
-          GATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ steps.start.outputs.run_id }}
-        run: |
-          wait_status=0
-          timeout --signal=TERM --kill-after=30s 105m bash -s <<'WAIT' || wait_status=$?
-          set -euo pipefail
-
-          if [[ ! "$RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
-            printf '::error title=Invalid run ID::The controller did not provide a positive numeric run ID. %s\n' \
-              "$GATE_RUN_URL" >&2
-            exit 1
-          fi
-
-          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
-          last_state=""
-          while true; do
-            if ! state="$(
-              gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
-                --json status,conclusion \
-                --jq '.status + ":" + (if (.conclusion == null or .conclusion == "") then "none" else .conclusion end)'
-            )"; then
-              printf '::error title=Run status query failed::Unable to query run %s. %s\n' \
-                "$RUN_ID" "$run_url" >&2
-              exit 1
-            fi
-
-            if [[ "$state" != "$last_state" ]]; then
-              case "$state" in
-                queued:none | in_progress:none | requested:none | waiting:none | pending:none)
-                  printf 'Run %s status=%s url=%s\n' \
-                    "$RUN_ID" "${state%%:*}" "$run_url"
-                  ;;
-                completed:success)
-                  printf 'Run %s status=completed conclusion=success url=%s\n' \
-                    "$RUN_ID" "$run_url"
-                  ;;
-                completed:failure | completed:cancelled | completed:timed_out | completed:action_required | completed:neutral | completed:skipped | completed:stale | completed:startup_failure)
-                  printf 'Run %s status=completed conclusion=%s url=%s\n' \
-                    "$RUN_ID" "${state#*:}" "$run_url"
-                  ;;
-                *)
-                  printf '::error title=Unexpected run state::Run %s returned an unsupported status/conclusion pair. %s\n' \
-                    "$RUN_ID" "$run_url" >&2
-                  ;;
-              esac
-              last_state="$state"
-            fi
-
-            case "$state" in
-              queued:none | in_progress:none | requested:none | waiting:none | pending:none)
-                sleep 10
-                ;;
-              completed:success | completed:failure | completed:cancelled | completed:timed_out | completed:action_required | completed:neutral | completed:skipped | completed:stale | completed:startup_failure)
-                exit 0
-                ;;
-              *)
-                exit 1
-                ;;
-            esac
-          done
-          WAIT
-
-          if [ "$wait_status" -eq 124 ]; then
-            run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
-            printf 'Run %s did not complete within 105 minutes; finalization will cancel it and report the PR gate outcome. %s\n' \
-              "$RUN_ID" "$run_url"
-            wait_status=0
-          fi
-          exit "$wait_status"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode wait
+          --run-id "${{ steps.start.outputs.run_id }}"
 
       - id: evidence
         name: Download evidence
@@ -336,22 +271,12 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ steps.start.outputs.run_id }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.start.outputs.run_id }}
-        run: |
-          set -euo pipefail
-          download_status=0
-          timeout --signal=TERM --kill-after=30s 10m \
-            gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
-              --dir "${{ steps.workspace.outputs.work_dir }}/evidence" || download_status=$?
-          if [ "$download_status" -eq 124 ]; then
-            printf '::error title=Evidence download timed out::Artifact download exceeded 10 minutes. %s\n' \
-              "$RUN_URL" >&2
-          elif [ "$download_status" -ne 0 ]; then
-            printf '::error title=Evidence download failed::Artifact download exited with status %s. %s\n' \
-              "$download_status" "$RUN_URL" >&2
-          fi
-          exit "$download_status"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode download
+          --work-dir "${{ steps.workspace.outputs.work_dir }}"
+          --run-id "${{ steps.start.outputs.run_id }}"
 
       - id: finish
         name: Verify evidence

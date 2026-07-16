@@ -14,17 +14,7 @@ runs:
 
         image="ghcr.io/nvidia/nemoclaw/hermes-sandbox-base"
         min_glibc="2.39"
-
-        glibc_version() {
-          docker run --rm --entrypoint /usr/bin/ldd "$1" --version 2>/dev/null \
-            | sed -nE 's/.*GLIBC ([0-9]+\.[0-9]+).*/\1/p; s/.* ([0-9]+\.[0-9]+)$/\1/p' \
-            | head -n 1
-        }
-
-        glibc_ok() {
-          local have="$1"
-          [[ -n "$have" ]] && [[ "$(printf '%s\n%s\n' "$min_glibc" "$have" | sort -V | head -n 1)" == "$min_glibc" ]]
-        }
+        source "${GITHUB_ACTION_PATH}/../base-image-resolver.sh"
 
         # Build-time package/import guard only. Authenticated HTTPS execution is
         # validated by test/e2e/live/mcp-bridge.test.ts against a
@@ -51,16 +41,16 @@ runs:
 
         try_image() {
           local ref="$1" version digest_ref
-          if ! docker pull "$ref" >/dev/null 2>&1; then
+          if ! resolver_pull "$ref"; then
             return 1
           fi
-          digest_ref="$(docker image inspect "$ref" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F -m 1 "${image}@sha256:" || true)"
+          digest_ref="$(resolver_repo_digest "$ref" "$image" || true)"
           if [[ -z "$digest_ref" ]]; then
             echo "::warning::Hermes sandbox base image ${ref} did not expose an immutable GHCR repo digest (may be a fresh tag); building locally"
             return 1
           fi
-          version="$(glibc_version "$digest_ref" || true)"
-          if ! glibc_ok "$version"; then
+          version="$(resolver_glibc_version "$digest_ref" || true)"
+          if ! resolver_glibc_ok "$version" "$min_glibc"; then
             echo "::warning::Hermes sandbox base image ${ref} has glibc ${version:-unknown}; need >= ${min_glibc}"
             return 1
           fi
@@ -72,14 +62,17 @@ runs:
             echo "::warning::Hermes sandbox base image ${ref} lacks the packaged MCP Streamable HTTP client imports"
             return 1
           fi
-          echo "HERMES_BASE_IMAGE=${digest_ref}" >> "$GITHUB_ENV"
+          resolver_write_env HERMES_BASE_IMAGE "$digest_ref" || return 1
           return 0
         }
 
         # The final Hermes Dockerfile is the trust anchor for remote base
         # images. Prefer its immutable digest so a newly published, mutable
         # source-SHA tag cannot outrank the reviewed pin during E2E.
-        mapfile -t tracked_refs < <(
+        tracked_refs=()
+        while IFS= read -r ref; do
+          tracked_refs+=("$ref")
+        done < <(
           sed -nE \
             's|^ARG BASE_IMAGE=(ghcr\.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[0-9a-f]{64})$|\1|p' \
             agents/hermes/Dockerfile
@@ -96,16 +89,14 @@ runs:
         fi
         candidates+=("${image}:latest")
 
-        for ref in "${candidates[@]}"; do
-          if try_image "$ref"; then
-            exit 0
-          fi
-        done
+        if resolver_try_candidates try_image "${candidates[@]}"; then
+          exit 0
+        fi
 
         echo "::warning::No compatible GHCR Hermes sandbox base image found, building locally"
-        docker build -f agents/hermes/Dockerfile.base -t nemoclaw-hermes-base-local .
-        version="$(glibc_version nemoclaw-hermes-base-local || true)"
-        if ! glibc_ok "$version"; then
+        resolver_build_local agents/hermes/Dockerfile.base nemoclaw-hermes-base-local
+        version="$(resolver_glibc_version nemoclaw-hermes-base-local || true)"
+        if ! resolver_glibc_ok "$version" "$min_glibc"; then
           echo "::error::Local Hermes sandbox base image has glibc ${version:-unknown}; need >= ${min_glibc}"
           exit 1
         fi
@@ -117,4 +108,4 @@ runs:
           echo "::error::Local Hermes sandbox base image lacks the packaged MCP Streamable HTTP client imports"
           exit 1
         fi
-        echo "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local" >> "$GITHUB_ENV"
+        resolver_write_env HERMES_BASE_IMAGE nemoclaw-hermes-base-local
