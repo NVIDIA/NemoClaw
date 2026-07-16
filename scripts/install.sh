@@ -2880,6 +2880,18 @@ normalize_station_vllm_model() {
   printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
+# True when an interactive terminal is reachable for a prompt: stdin is a TTY,
+# or /dev/tty can be opened (the curl|bash case where stdin is the script pipe).
+# Mirrors how maybe_offer_express_install decides whether it can prompt.
+express_prompt_can_read_tty() {
+  [ -t 0 ] && return 0
+  if { exec 3</dev/tty; } 2>/dev/null; then
+    exec 3<&-
+    return 0
+  fi
+  return 1
+}
+
 validate_station_deepseek_override() {
   local platform="$1"
   if [ "${STATION_DEEPSEEK:-}" != "1" ]; then
@@ -2916,6 +2928,17 @@ validate_station_deepseek_override() {
       error "--station-deepseek conflicts with NEMOCLAW_VLLM_MODEL='${NEMOCLAW_VLLM_MODEL}'. Remove one override or set NEMOCLAW_VLLM_MODEL=${STATION_DEEPSEEK_VLLM_MODEL}."
       ;;
   esac
+
+  # #7014: --station-deepseek selects the interactive DGX Station express prompt,
+  # so it needs a terminal. Without one, maybe_offer_express_install would just
+  # log "Skipping express prompt (no TTY)" and continue, silently ignoring the
+  # flag and installing a different configuration. Fail fast here (before Docker
+  # / build deps) with a clear message instead, mirroring the --non-interactive
+  # rejection above. Checked last so a genuine config conflict (provider/model)
+  # is still reported first.
+  if ! express_prompt_can_read_tty; then
+    error "--station-deepseek selects the DGX Station express prompt, which needs an interactive terminal. Re-run from a terminal (for a curl|bash pipe, /dev/tty must be available), or omit --station-deepseek and configure the install non-interactively."
+  fi
 }
 
 preflight_explicit_express_flags() {
