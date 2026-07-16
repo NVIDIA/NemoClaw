@@ -117,6 +117,55 @@ export function chatContent(raw: string): string {
   );
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * Assert that upstream `openclaw agent --json` completed through the expected inference route.
+ * NemoClaw preserves that upstream stdout without owning its schema, so the live invocation is the
+ * producer-facing contract check. Visible assistant text is intentionally excluded because OpenClaw
+ * can suppress a successful turn as `NO_REPLY`. Replace this assertion when the pinned OpenClaw
+ * runtime exposes a dedicated stable completion signal.
+ */
+export function assertAgentExecutionSucceeded(
+  raw: string,
+  expectedProvider: string,
+  expectedModel: string,
+): void {
+  const envelope = asRecord(JSON.parse(raw));
+  const result = asRecord(envelope?.result);
+  const meta = asRecord(result?.meta);
+  const agentMeta = asRecord(meta?.agentMeta);
+  const trace = asRecord(meta?.executionTrace);
+  const attempts = Array.isArray(trace?.attempts)
+    ? trace.attempts.flatMap((attempt) => {
+        const record = asRecord(attempt);
+        return record ? [record] : [];
+      })
+    : [];
+
+  expect(envelope?.status, "agent command must report success").toBe("ok");
+  expect(envelope?.summary, "agent command must complete").toBe("completed");
+  expect(meta?.aborted, "agent command must not abort").toBe(false);
+  expect(agentMeta?.provider, "agent must use the expected provider").toBe(expectedProvider);
+  expect(agentMeta?.model, "agent must use the expected model").toBe(expectedModel);
+  expect(trace?.winnerProvider, "execution trace must select the expected provider").toBe(
+    expectedProvider,
+  );
+  expect(trace?.winnerModel, "execution trace must select the expected model").toBe(expectedModel);
+  expect(attempts, "execution trace must contain a successful assistant attempt").toContainEqual(
+    expect.objectContaining({
+      provider: expectedProvider,
+      model: expectedModel,
+      result: "success",
+      stage: "assistant",
+    }),
+  );
+}
+
 export async function cleanupGpu(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
   await preCleanBestEffort("destroy GPU sandbox", () =>
     host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
