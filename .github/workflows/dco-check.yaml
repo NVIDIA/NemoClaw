@@ -29,7 +29,9 @@ jobs:
         env:
           USERNAME: ${{ github.event.pull_request.user.login }}
         run: |
-          if [[ "$USERNAME" == "dependabot[bot]" ]]; then
+          # GitHub exposes the same trusted app as dependabot[bot] in event
+          # payloads and app/dependabot through some GraphQL PR surfaces.
+          if [[ "$USERNAME" == "dependabot[bot]" || "$USERNAME" == "app/dependabot" ]]; then
             echo "bypass=true" >> "$GITHUB_OUTPUT"
             echo "Dependabot is exempt from the PR-body DCO declaration."
           elif grep -Fxq "$USERNAME" .github/dco-bypass.txt; then

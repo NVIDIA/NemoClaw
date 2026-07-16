@@ -322,7 +322,8 @@ describe("pull request and main workflow contracts", () => {
 
     expect(job.if).toBeUndefined();
     expect(bypass.env?.USERNAME).toBe("${{ github.event.pull_request.user.login }}");
-    expect(bypass.run).toContain('[[ "$USERNAME" == "dependabot[bot]" ]]');
+    expect(bypass.run).toContain('"$USERNAME" == "dependabot[bot]"');
+    expect(bypass.run).toContain('"$USERNAME" == "app/dependabot"');
     expect(declaration.if).toBe("${{ steps.dco-bypass.outputs.bypass != 'true' }}");
   });
 
