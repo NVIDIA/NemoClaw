@@ -387,8 +387,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
   });
 
   it("keeps the salvageable partial manifest when all dirs failed but --force is set (#6972)", () => {
-    const manifest = makeBackupResult().manifest;
-    if (!manifest) throw new Error("test fixture requires a backup manifest");
+    const manifest = makeBackupResult().manifest!;
     manifest.stateDirs = ["memories", "sessions"];
     manifest.backedUpDirs = [];
     manifest.stateFiles = [{ path: "SOUL.md", strategy: "copy" }];
