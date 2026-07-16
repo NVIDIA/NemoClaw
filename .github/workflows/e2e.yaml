@@ -369,13 +369,19 @@ jobs:
         shell: bash
         run: bash scripts/check-dcode-profile-import-gate.sh
 
+      # The common live-Vitest invocation (fixed e2e-live project + standard
+      # reporters) is built by the trusted helper, which validates the test path
+      # and selector against traversal and shell metacharacters before running.
+      # Covered by test/e2e/support/live-vitest-invocation.test.ts.
       - name: Run live E2E tests
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TARGET_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live test/e2e/live/registry-targets.test.ts -t "^${TARGET_ID}$" --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          node --experimental-strip-types tools/e2e/live-vitest-invocation.mts run \
+            --test-path test/e2e/live/registry-targets.test.ts \
+            --selector "^${TARGET_ID}$"
 
       # The sanitizer reads raw traces only after checking the workflow-owned
       # runner-temp path, then writes the timing-only file into upload roots.

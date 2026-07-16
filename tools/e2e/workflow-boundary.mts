@@ -4005,9 +4005,12 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
-  requireRunContains(errors, runVitest, '"^${TARGET_ID}$"');
+  // The common live-Vitest invocation is built by the trusted helper (#6961),
+  // which fixes the e2e-live project and reporters and validates the path and
+  // selector before running.
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
+  requireRunContains(errors, runVitest, "--test-path test/e2e/live/registry-targets.test.ts");
+  requireRunContains(errors, runVitest, '--selector "^${TARGET_ID}$"');
 
   const sanitizeTrace = requireStep(errors, steps, "Build trusted live E2E timing summary");
   const sanitizeTraceEnv = asRecord(sanitizeTrace?.env);
