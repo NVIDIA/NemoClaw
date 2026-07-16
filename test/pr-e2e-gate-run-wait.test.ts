@@ -54,6 +54,7 @@ describe("PR E2E child run wait", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter([
         childRunRoute([
+          { status: "queued", conclusion: null },
           { status: "in_progress", conclusion: null },
           { status: "in_progress", conclusion: null },
           { status: "completed", conclusion: "success" },
@@ -63,9 +64,10 @@ describe("PR E2E child run wait", () => {
 
     await waitForChildRun(23, { sleep: async () => {} });
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
     expect(logs).toEqual([
+      `Run 23 status=queued url=${CHILD_RUN_URL}`,
       `Run 23 status=in_progress url=${CHILD_RUN_URL}`,
       `Run 23 status=completed conclusion=success url=${CHILD_RUN_URL}`,
     ]);
