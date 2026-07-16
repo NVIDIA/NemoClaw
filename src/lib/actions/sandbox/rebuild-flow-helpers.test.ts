@@ -273,6 +273,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(errorLines.some((line: string) => line.includes("rebuild --force"))).toBe(true);
+    expect(errorLines.some((line: string) => line.includes("accept losing state"))).toBe(true);
   });
 
   it("aborts without force even when force option is explicitly false", () => {
@@ -387,6 +388,10 @@ describe("backupSandboxStateForRebuild with --force", () => {
 
   it("keeps the salvageable partial manifest when all dirs failed but --force is set (#6972)", () => {
     const manifest = makeBackupResult().manifest;
+    if (!manifest) throw new Error("test fixture requires a backup manifest");
+    manifest.stateDirs = ["memories", "sessions"];
+    manifest.backedUpDirs = [];
+    manifest.stateFiles = [{ path: "SOUL.md", strategy: "copy" }];
     backupSpy.mockReturnValue({
       success: false,
       backedUpDirs: [],
@@ -407,6 +412,8 @@ describe("backupSandboxStateForRebuild with --force", () => {
     );
 
     expect(result).toBe(manifest);
+    expect(result?.backedUpDirs).toEqual([]);
+    expect(result?.stateFiles).toEqual([{ path: "SOUL.md", strategy: "copy" }]);
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(warnLines.some((line: string) => line.includes("--force was specified"))).toBe(true);
   });

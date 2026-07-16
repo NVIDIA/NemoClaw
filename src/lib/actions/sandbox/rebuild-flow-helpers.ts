@@ -340,7 +340,7 @@ export function backupSandboxStateForRebuild(
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     console.error("  Aborting rebuild to prevent data loss.");
     console.error(
-      `  Hint: use '${CLI_NAME} ${sandboxName} rebuild --force' to skip backup and rebuild from registry metadata.`,
+      `  Hint: use '${CLI_NAME} ${sandboxName} rebuild --force' only if you accept losing state the incomplete backup could not preserve.`,
     );
     relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
