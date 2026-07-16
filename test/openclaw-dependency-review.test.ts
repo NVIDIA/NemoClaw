@@ -31,7 +31,7 @@ const MESSAGING_BUILD_APPLIER = path.join(
 const ISSUE_4434_PATCH = path.join(
   REPO_ROOT,
   "scripts",
-  "patch-openclaw-issue-4434-diagnostics.ts",
+  "patch-openclaw-issue-4434-diagnostics.mts",
 );
 const DEVICE_SELF_APPROVAL_PATCH = path.join(
   REPO_ROOT,
@@ -217,7 +217,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("PR CI intentionally does not treat PR-authored harness code");
     expect(review).toContain("applies the Dockerfile patch block");
     expect(review).toContain("test/openclaw-issue-4434-diagnostics-patch.test.ts");
-    expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.ts");
+    expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.mts");
     expect(review).toContain("scripts/patch-openclaw-device-self-approval.mts");
     expect(review).toContain("NemoClaw no longer reads or writes device state during approval");
     expect(review).toContain("Merge disposition for this OpenClaw 2026.6.10 bump");
@@ -411,8 +411,8 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'formatRawAssistantErrorForUi' "$issue_4434_patch"
 	grep -Fq 'OPENSHELL_SANDBOX !== "1"' "$issue_4434_patch"
 		grep -Fq 'nemoclaw: #4434 structured unreachable-inference diagnostic' "$issue_4434_patch"
-		grep -Fq 'COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts' Dockerfile
-		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \\' Dockerfile
+		grep -Fq 'COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts' Dockerfile
+		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \\' Dockerfile
 		grep -Fq 'COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts' Dockerfile
 		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \\' Dockerfile
 		! grep -Fq 'patch-openclaw-tool-catalog.js' Dockerfile

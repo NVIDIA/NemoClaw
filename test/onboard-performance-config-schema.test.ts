@@ -350,6 +350,23 @@ describe("full-E2E cold-path calibration", () => {
     expect(validation.imageChangeSha).toMatch(/^[0-9a-f]{40}$/u);
     expect(validation.imageInputsVerifiedThroughSha).toMatch(/^[0-9a-f]{40}$/u);
     expect(validation.imageInputPaths.length).toBeGreaterThan(0);
+    expect(validation.imageInputPaths).toEqual(
+      expect.arrayContaining([
+        "scripts/patch-openclaw-tool-catalog.mts",
+        "scripts/patch-openclaw-chat-send.mts",
+        "scripts/patch-openclaw-mcp-npx.mts",
+        "scripts/patch-openclaw-issue-4434-diagnostics.mts",
+        "scripts/patch-openclaw-device-self-approval.mts",
+      ]),
+    );
+    expect(validation.imageInputPaths).not.toEqual(
+      expect.arrayContaining([
+        "scripts/patch-openclaw-tool-catalog.js",
+        "scripts/patch-openclaw-chat-send.js",
+        "scripts/patch-openclaw-issue-4434-diagnostics.ts",
+        "scripts/patch-openclaw-device-self-approval.ts",
+      ]),
+    );
     expect(validationProvenanceViolations(validation)).toEqual({
       nonDescendantRunHeads: [],
       runHeadsBeyondVerifiedInputs: [],

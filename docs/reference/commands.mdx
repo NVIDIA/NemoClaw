@@ -2453,7 +2453,7 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 | Flag | Description |
 |------|-------------|
 | `--yes`, `-y` | Skip the confirmation prompt. |
-| `--force` | Skip the confirmation prompt and, after a total backup failure, continue recreation without restoring prior sandbox state. |
+| `--force` | Skip the confirmation prompt and continue when no state directory was preserved. NemoClaw restores any captured loose files; after a total failure, it recreates from registry metadata only. |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |
@@ -2463,10 +2463,11 @@ If another terminal has an active SSH session to the sandbox, `rebuild` prints a
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
 The sandbox normally must be reachable for the backup step to succeed.
-If an archive command reports partial output while still producing usable data, `rebuild` keeps the captured backup entries and reports only the manifest-defined paths that could not be archived.
-If backup fails before producing any usable entry, `rebuild` exits before destroying the original sandbox unless you explicitly pass `--force`.
-With `--force`, NemoClaw continues from the recorded registry metadata, recreates the sandbox without restoring the failed backup, and warns that prior sandbox state was not preserved.
-Use this recovery path only when losing uncommitted or otherwise unsnapshotted sandbox state is acceptable.
+If an archive command preserves at least one state directory, `rebuild` keeps the captured backup entries and reports the manifest-defined paths that could not be archived.
+If every state directory fails, `rebuild` exits before destroying the original sandbox even when it captured loose files, unless you explicitly pass `--force`.
+With `--force`, NemoClaw preserves any captured loose files in the partial manifest and restores them after recreation.
+If the backup produced nothing usable, it continues from recorded registry metadata without restoring prior sandbox state.
+Use this recovery path only when losing the state that could not be backed up is acceptable.
 Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy transaction.
 For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <name> mcp remove <server> --force` when the sandbox is still live.
 For a pending or both-marker transaction, it points to `$$nemoclaw <name> destroy` because the registry records that OpenShell deletion was already confirmed.

@@ -518,7 +518,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain("claiming `openclaw-pipeline-runtime` inbound proof");
         expect(reviewNote).toContain("imports `dist/extensions/telegram/test-api.js`");
         expect(reviewNote).toContain("gateway/upstream reporting layer");
-        expect(reviewNote).toContain("scripts/patch-openclaw-issue-4434-diagnostics.ts");
+        expect(reviewNote).toContain("scripts/patch-openclaw-issue-4434-diagnostics.mts");
         expect(reviewNote).toContain("scripts/patch-openclaw-device-self-approval.mts");
         expect(reviewNote).toContain("approveDevicePairing");
         expect(reviewNote).toContain(

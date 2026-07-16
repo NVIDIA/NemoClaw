@@ -392,13 +392,16 @@ function validateJobExecution(
       errors.push("mcp-bridge stable lane must run its full MCP lifecycle unconditionally");
     }
   }
-  for (const required of ["--project e2e-live", "test/e2e/live/mcp-bridge.test.ts"]) {
+  for (const required of [
+    "tools/e2e/live-vitest-invocation.mts run --test-path",
+    "test/e2e/live/mcp-bridge.test.ts",
+  ]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
   }
   requireContains(
     errors,
     run.run,
-    "--reporter=test/e2e/risk-signal-reporter.ts",
+    "tools/e2e/live-vitest-invocation.mts run --test-path",
     `${jobName} must publish canonical risk-signal evidence`,
   );
   requireEqual(

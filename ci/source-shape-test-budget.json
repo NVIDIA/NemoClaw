@@ -522,6 +522,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/growth-guardrails-workflow-boundary.test.ts",
+      "test": "flags %s",
+      "category": "security"
+    },
+    {
       "file": "test/wechat-runtime-audit-workflow.test.ts",
       "test": "makes the trusted audit required in PR and main workflows",
       "category": "security"
