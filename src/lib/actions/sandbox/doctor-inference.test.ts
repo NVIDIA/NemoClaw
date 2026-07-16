@@ -164,6 +164,26 @@ describe("doctor inference checks", () => {
     );
   });
 
+  it("includes a serving process check as not checked when no self_report is declared (#7003)", async () => {
+    const checks = await collectInferenceChecks(
+      "alpha",
+      { provider: "nvidia-prod", model: "model" },
+      true,
+      {
+        probeProviderHealthImpl: () => upstream(),
+        probeSandboxInferenceGatewayHealthImpl: async () => gateway(true),
+      },
+    );
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        label: "Serving process",
+        status: "info",
+        detail: expect.stringContaining("not checked"),
+      }),
+    );
+  });
+
   it("does not mutate direct provider health while adding route evidence", async () => {
     const providerHealth = upstream();
 

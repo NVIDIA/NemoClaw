@@ -10,6 +10,7 @@ import type {
   AgentHealthProbe,
   AgentInference,
   AgentMcpCapability,
+  AgentSelfReport,
   AgentStateFile,
   AgentVersionScheme,
   ManifestRecord,
@@ -224,6 +225,23 @@ export function readHealthProbe(record: ManifestRecord): AgentHealthProbe | unde
   }
 
   return undefined;
+}
+
+export function readSelfReport(record: ManifestRecord): AgentSelfReport | undefined {
+  const selfReport = readObject(record, "self_report");
+  if (!selfReport) return undefined;
+
+  const url = readString(selfReport, "url");
+  if (!url) {
+    throw new Error("Agent manifest field 'self_report.url' is required");
+  }
+
+  const timeoutSeconds = selfReport.timeout_seconds;
+  if (typeof timeoutSeconds === "number" && Number.isFinite(timeoutSeconds)) {
+    return { url, timeout_seconds: timeoutSeconds };
+  }
+
+  return { url, timeout_seconds: 10 };
 }
 
 export function readDashboard(record: ManifestRecord): AgentDashboard {

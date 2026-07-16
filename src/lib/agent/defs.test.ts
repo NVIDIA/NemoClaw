@@ -400,4 +400,38 @@ describe("agent definitions", () => {
 
     expect(() => loadAgent(agentName)).toThrow(/user_managed_files\[0\].*control characters/);
   });
+
+  it("exposes selfReport as null when self_report is absent from the manifest (#7003)", () => {
+    const agentName = `no-self-report-${String(Date.now())}`;
+    writeTempAgentManifest(agentName, `name: ${agentName}\n`);
+    const agent = loadAgent(agentName);
+    expect(agent.selfReport).toBeNull();
+  });
+
+  it("parses self_report url and timeout from manifests (#7003)", () => {
+    const agentName = `has-self-report-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "self_report:",
+        '  url: "http://localhost:18789/health/monitor"',
+        "  timeout_seconds: 10",
+      ].join("\n"),
+    );
+    const agent = loadAgent(agentName);
+    expect(agent.selfReport).toEqual({
+      url: "http://localhost:18789/health/monitor",
+      timeout_seconds: 10,
+    });
+  });
+
+  it("rejects self_report entries with a missing url (#7003)", () => {
+    const agentName = `self-report-no-url-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "self_report:", "  timeout_seconds: 10"].join("\n"),
+    );
+    expect(() => loadAgent(agentName)).toThrow(/self_report\.url/);
+  });
 });

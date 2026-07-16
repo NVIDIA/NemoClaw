@@ -59,6 +59,7 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
     policyPermissivePath: null,
     pluginDir: null,
     legacyPaths: null,
+    selfReport: null,
     agentDir: "/repo/root/agents/hermes",
     manifestPath: "/repo/root/agents/hermes/manifest.yaml",
     ...overrides,
