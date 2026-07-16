@@ -3115,6 +3115,7 @@ activate_express_install() {
   export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
   export NEMOCLAW_YES=1
   export NEMOCLAW_POLICY_MODE=suggested
+  unset NEMOCLAW_STATION_EXPRESS
   case "$platform" in
     "DGX Spark")
       export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
@@ -3124,6 +3125,7 @@ activate_express_install() {
       fi
       ;;
     "DGX Station")
+      export NEMOCLAW_STATION_EXPRESS=1
       export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       export NEMOCLAW_PROVIDER=install-vllm
       configure_station_express_model
