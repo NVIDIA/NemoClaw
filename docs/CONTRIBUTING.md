@@ -131,6 +131,8 @@ If the tag does not point to a commit on `main`, the job stops before installing
 
 The canonical coding-agent installation prompt lives in `docs/resources/starter-prompt.md`.
 Edit that Markdown file instead of placing prompt text in a React component.
+Keep conditional platform instructions in focused Markdown files under `docs/resources/prompt-assets/` and link to their raw GitHub URLs from the starter prompt.
+The main prompt should tell the coding agent when to load each asset and should not repeat the asset's detailed instructions.
 Downstream consumers can pin the source with a raw URL such as
 `https://raw.githubusercontent.com/NVIDIA/NemoClaw/<commit-sha>/docs/resources/starter-prompt.md`.
 The Markdown SPDX comment is part of that raw file but does not appear when Markdown is rendered.

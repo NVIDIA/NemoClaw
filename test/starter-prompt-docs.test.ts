@@ -21,6 +21,20 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
+const promptAssets = {
+  dgxSpark: {
+    path: "docs/resources/prompt-assets/dgx-spark.md",
+    url: "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/prompt-assets/dgx-spark.md",
+  },
+  dgxStation: {
+    path: "docs/resources/prompt-assets/dgx-station.md",
+    url: "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/prompt-assets/dgx-station.md",
+  },
+  windowsWsl: {
+    path: "docs/resources/prompt-assets/windows-wsl.md",
+    url: "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/prompt-assets/windows-wsl.md",
+  },
+} as const;
 const localCredentialFormSource = path.join(
   repoRoot,
   "docs",
@@ -146,6 +160,10 @@ function readStarterPrompt(): string {
     fs.readFileSync(starterPromptMarkdownSource, "utf8"),
     "docs/resources/starter-prompt.md",
   );
+}
+
+function readPromptAsset(asset: (typeof promptAssets)[keyof typeof promptAssets]): string {
+  return read(asset.path);
 }
 
 function urlsIn(content: string): URL[] {
@@ -605,43 +623,69 @@ describe("starter prompt docs CTA", () => {
     );
     expect(promptSource).toContain("OpenRouter: `NEMOCLAW_PROVIDER=openrouter`");
     expect(promptSource).toContain("Existing vLLM: `NEMOCLAW_PROVIDER=vllm`");
-    expect(promptSource).toContain(
-      "Windows WSL Express: `NEMOCLAW_PROVIDER=install-windows-ollama`",
-    );
-    expect(promptSource).toContain(
+  });
+
+  it("routes platform-only Express instructions to raw prompt assets (#6990)", () => {
+    const promptSource = readStarterPrompt();
+    const sparkSource = readPromptAsset(promptAssets.dgxSpark);
+    const stationSource = readPromptAsset(promptAssets.dgxStation);
+    const windowsSource = readPromptAsset(promptAssets.windowsWsl);
+
+    for (const asset of Object.values(promptAssets)) {
+      expect(promptSource).toContain(asset.url);
+    }
+
+    expect(promptSource).toContain("load exactly one matching instruction asset");
+    expect(promptSource).toContain("Read the matching raw Markdown file completely");
+    expect(promptSource).toContain("Do not load a platform asset for any other computer.");
+    expect(promptSource).not.toContain("approximately 352 GB");
+    expect(promptSource).not.toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
+    expect(promptSource).not.toContain(
       "NEMOCLAW_VLLM_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
     );
-    expect(promptSource).toContain(
+
+    expect(sparkSource).toContain(
       "Leave `NEMOCLAW_VLLM_MODEL` unset so the installed maintained release selects its current Spark Express model.",
     );
-    expect(promptSource).toContain(
-      "Set `NEMOCLAW_YES=1` only after both the separate download approval and final install approval.",
+    expect(stationSource).toContain(
+      "NEMOCLAW_VLLM_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
     );
+    expect(stationSource).toContain("approximately 352 GB");
+    expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
+    expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
   });
 
   it("aligns messaging and policy questions with agent support and Express mode (#6990)", () => {
     const promptSource = readStarterPrompt();
+    const expressAssets = [
+      readPromptAsset(promptAssets.dgxSpark),
+      readPromptAsset(promptAssets.dgxStation),
+      readPromptAsset(promptAssets.windowsWsl),
+    ];
 
     expect(promptSource).toContain(
       "include messaging in the first sandbox build when the selected agent supports it",
     );
-    expect(promptSource).toContain(
-      "Ask separately for sandbox name, web search, messaging when the selected agent supports it, download approval, and final install approval.",
-    );
     expect(promptSource).toContain("Skip messaging for Deep Agents.");
     expect(promptSource).toContain(
-      "Balanced policy is required for Express; set `NEMOCLAW_POLICY_TIER=balanced`",
-    );
-    expect(promptSource).toContain(
-      "For Express, state that Balanced policy is required, keep `NEMOCLAW_POLICY_TIER=balanced`, and skip the policy-tier question.",
+      "If a loaded platform asset selects Express, follow its policy requirement and skip the policy-tier question.",
     );
     expect(promptSource).toContain(
       "For non-Express installation, ask for Balanced, Restricted, or Open policy.",
     );
     expect(promptSource).not.toContain("\n- Ask for Balanced, Restricted, or Open policy.\n");
-    expect(promptSource).toContain(
-      "Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; leave `NEMOCLAW_VLLM_MODEL` unset for DGX Spark Express, set it to `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` for DGX Station Express",
-    );
+
+    for (const assetSource of expressAssets) {
+      expect(assetSource).toContain(
+        "Balanced policy is required; set `NEMOCLAW_POLICY_TIER=balanced`",
+      );
+      expect(assetSource).toContain(
+        "Ask separately for sandbox name, web search, messaging when the selected agent supports it, download approval, and final install approval.",
+      );
+      expect(assetSource).toContain(
+        "Set `NEMOCLAW_YES=1` only after both the separate download approval and final install approval.",
+      );
+    }
   });
 
   it("rejects missing, ambiguous, and unsafe credential schemas (#5048)", async () => {
