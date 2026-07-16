@@ -501,9 +501,10 @@ describe("handleProviderInferenceState", () => {
   });
 
   it("reuses a persisted vLLM served alias when resume repairs inference (#7023)", async () => {
+    const persistedServedAlias = "my-ultra-served-alias";
     const session = createSession({
       provider: "vllm-local",
-      model: "nemotron-ultra",
+      model: persistedServedAlias,
       endpointUrl: "http://host.openshell.internal:8000/v1",
       credentialEnv: null,
       preferredInferenceApi: "openai-completions",
@@ -520,7 +521,7 @@ describe("handleProviderInferenceState", () => {
     expect(calls.setupNim).not.toHaveBeenCalled();
     expect(calls.setupInference).toHaveBeenCalledWith(
       "my-assistant",
-      "nemotron-ultra",
+      persistedServedAlias,
       "vllm-local",
       "http://host.openshell.internal:8000/v1",
       null,
@@ -533,9 +534,9 @@ describe("handleProviderInferenceState", () => {
     );
     expect(calls.complete).toHaveBeenCalledWith(
       "inference",
-      expect.objectContaining({ provider: "vllm-local", model: "nemotron-ultra" }),
+      expect.objectContaining({ provider: "vllm-local", model: persistedServedAlias }),
     );
-    expect(result).toMatchObject({ provider: "vllm-local", model: "nemotron-ultra" });
+    expect(result).toMatchObject({ provider: "vllm-local", model: persistedServedAlias });
   });
 
   it("reserves the prompted sandbox route when resume skips already-ready inference (#6562)", async () => {
