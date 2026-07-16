@@ -149,7 +149,7 @@ export function validateOpenShellGatewayAuthContractWorkflow(
 
   const runName = "Run OpenShell gateway auth contract live test";
   const run = findStep(job, runName);
-  requireRunContains(errors, run, "npx vitest run --project e2e-live");
+  requireRunContains(errors, run, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, run, "test/e2e/live/openshell-gateway-auth-source-contract.test.ts");
   if (Object.keys(run.env ?? {}).length > 0 || JSON.stringify(run).includes("secrets.")) {
     errors.push(`${JOB_NAME} live test must not receive workflow credentials`);

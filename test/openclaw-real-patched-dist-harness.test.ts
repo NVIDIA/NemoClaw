@@ -17,7 +17,7 @@ const PATCH_OPENCLAW_CHAT_SEND = path.join(REPO_ROOT, "scripts", "patch-openclaw
 const PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS = path.join(
   REPO_ROOT,
   "scripts",
-  "patch-openclaw-issue-4434-diagnostics.ts",
+  "patch-openclaw-issue-4434-diagnostics.mts",
 );
 // Focused patch scripts also scan the full generated dist. APFS cold-cache
 // reads can exceed one minute, so keep them bounded without using unit-fixture

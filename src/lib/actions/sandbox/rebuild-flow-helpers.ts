@@ -14,6 +14,11 @@ import {
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
 import {
+  BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
+  BACKUP_FAILURE_PERMISSION_DENIED,
+  formatFailedBackupItems,
+} from "../../domain/backup-failure";
+import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
@@ -276,24 +281,66 @@ export function backupSandboxStateForRebuild(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );
   const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
-  if (!backup.success && !hasAnyBackup) {
+  // Saving a few loose files while every state directory failed is still
+  // catastrophic: the top-level state dirs (memories, sessions, workspace,
+  // plans, ...) would be permanently lost once rebuild recreates the sandbox.
+  // Guard against it the same way as a fully-empty backup so the rebuild aborts
+  // by default instead of silently discarding them. See issue #6972: a
+  // post-reboot mount-ownership/permission corruption left every `.hermes`
+  // state dir unreadable, the sandbox-user tar backed up only 3 loose files,
+  // and the old code proceeded and destroyed all 14 state directories.
+  const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
+  if (!backup.success && (!hasAnyBackup || allStateDirsFailed)) {
     if (options?.force) {
       console.warn(
-        `  ${YW}⚠${R} Backup failed but --force was specified — skipping backup and rebuilding from registry metadata.`,
+        `  ${YW}⚠${R} Backup could not preserve sandbox state but --force was specified — continuing with any salvageable files and rebuilding from registry metadata.`,
       );
       log(
-        "Force-skip: backup failed completely; continuing without backup as requested by --force",
+        "Force-skip: backup could not preserve state directories; continuing as requested by --force",
       );
-      return null;
+      // Keep the partial manifest when at least some files were saved so --force
+      // still restores what it could rather than throwing it away.
+      return hasAnyBackup ? (backup.manifest ?? null) : null;
     }
     console.error("  Failed to back up sandbox state.");
+    if (allStateDirsFailed && hasAnyBackup) {
+      const dirCount = backup.failedDirs.length;
+      const fileCount = backup.backedUpFiles.length;
+      console.error(
+        `  None of the ${dirCount} sandbox state ${dirCount === 1 ? "directory" : "directories"} could be preserved (only ${fileCount} loose ${fileCount === 1 ? "file was" : "files were"} saved).`,
+      );
+      // Tailor the hypothesis to the recorded per-dir cause instead of always
+      // blaming ownership: "permission denied" points at ownership/permissions,
+      // while "absent after extraction" points at an unstable/disappearing mount.
+      const reasons = Object.values(backup.failedDirReasons ?? {});
+      const anyPermissionDenied = reasons.includes(BACKUP_FAILURE_PERMISSION_DENIED);
+      const allAbsent =
+        reasons.length === backup.failedDirs.length &&
+        reasons.every((reason) => reason === BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION);
+      if (anyPermissionDenied) {
+        console.error(
+          "  The sandbox user could not read this state — the mounted files likely have wrong ownership or permissions, for example after a host reboot remapped the mount's UIDs.",
+        );
+      } else if (allAbsent) {
+        console.error(
+          "  The directories were reported by the sandbox but did not materialize on extraction — the mounted state may be unstable or disappearing under the container.",
+        );
+      } else {
+        console.error(
+          "  Inspect the per-directory failure reasons below along with the mount's ownership and permissions.",
+        );
+      }
+    }
     if (backup.error) console.error(`  Reason: ${backup.error}`);
-    if (backup.failedDirs.length > 0) console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
+    if (backup.failedDirs.length > 0)
+      console.error(
+        `  Failed: ${formatFailedBackupItems(backup.failedDirs, backup.failedDirReasons)}`,
+      );
     if (backup.failedFiles.length > 0)
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     console.error("  Aborting rebuild to prevent data loss.");
     console.error(
-      `  Hint: use '${CLI_NAME} ${sandboxName} rebuild --force' to skip backup and rebuild from registry metadata.`,
+      `  Hint: use '${CLI_NAME} ${sandboxName} rebuild --force' only if you accept losing state the incomplete backup could not preserve.`,
     );
     relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");

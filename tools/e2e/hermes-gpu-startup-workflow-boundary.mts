@@ -295,7 +295,7 @@ removalCondition:`,
       true,
     ) ||
     /\b(?:install\s+-m|chmod)\s+0?644\b/u.test(run) ||
-    !run.includes("npx vitest run --project e2e-live") ||
+    !run.includes("tools/e2e/live-vitest-invocation.mts run --test-path") ||
     !run.includes("test/e2e/live/hermes-gpu-startup.test.ts")
   ) {
     errors.push(`${JOB_NAME} trusted runtime boundary failed`);
