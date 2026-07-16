@@ -413,6 +413,9 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 		grep -Fq 'nemoclaw: #4434 structured unreachable-inference diagnostic' "$issue_4434_patch"
 		grep -Fq 'COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts' Dockerfile
 		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \\' Dockerfile
+		grep -Fq 'COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts' Dockerfile
+		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \\' Dockerfile
+		! grep -Fq 'patch-openclaw-tool-catalog.js' Dockerfile
 		device_self_approval_patch=${JSON.stringify(DEVICE_SELF_APPROVAL_PATCH)}
 		grep -Fq 'nemoclaw: reach gateway for bounded same-device scope approval' "$device_self_approval_patch"
 		grep -Fq 'nemoclaw: bounded same-device scope approval' "$device_self_approval_patch"

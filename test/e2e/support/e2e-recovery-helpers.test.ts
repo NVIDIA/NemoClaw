@@ -187,12 +187,36 @@ describe("GatewayClient recovery helpers (#2701)", () => {
   });
 
   describe("resolveGatewayPid", () => {
-    it("returns the parsed PID when the script prints a number", async () => {
+    it("accepts the recorded PID when its process start identity still matches", async () => {
       const runner = new ScriptedRunner();
-      runner.queue({ stdout: "1234\n" });
+      runner.queue({ stdout: "1234 987654 987654 S\n" });
       const gateway = buildGateway(runner);
 
       await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBe(1234);
+    });
+
+    it("returns null when the PID probe fails despite valid-looking output", async () => {
+      const runner = new ScriptedRunner();
+      runner.queue({ exitCode: 1, stdout: "1234 987654 987654 S\n" });
+      const gateway = buildGateway(runner);
+
+      await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBeNull();
+    });
+
+    it("rejects a reused PID whose process start identity no longer matches", async () => {
+      const runner = new ScriptedRunner();
+      runner.queue({ stdout: "1234 987654 123456 S\n" });
+      const gateway = buildGateway(runner);
+
+      await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBeNull();
+    });
+
+    it.each(["Z", "X"])("rejects a gateway process in terminal state %s", async (state) => {
+      const runner = new ScriptedRunner();
+      runner.queue({ stdout: `1234 987654 987654 ${state}\n` });
+      const gateway = buildGateway(runner);
+
+      await expect(gateway.resolveGatewayPid(fakeInstance())).resolves.toBeNull();
     });
 
     it("returns null when the script prints non-numeric output", async () => {
@@ -212,10 +236,10 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       const runner = new ScriptedRunner();
       // initial sample + 3 stable samples
       runner.queue(
-        { stdout: "100\n" },
-        { stdout: "100\n" },
-        { stdout: "100\n" },
-        { stdout: "100\n" },
+        { stdout: "100 111 111 S\n" },
+        { stdout: "100 111 111 S\n" },
+        { stdout: "100 111 111 S\n" },
+        { stdout: "100 111 111 S\n" },
       );
       const gateway = buildGateway(runner);
 
@@ -229,7 +253,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
 
     it("throws when the PID changes (crash-loop)", async () => {
       const runner = new ScriptedRunner();
-      runner.queue({ stdout: "100\n" }, { stdout: "201\n" });
+      runner.queue({ stdout: "100 111 111 S\n" }, { stdout: "201 222 222 S\n" });
       const gateway = buildGateway(runner);
 
       const observation = expect(
@@ -244,7 +268,7 @@ describe("GatewayClient recovery helpers (#2701)", () => {
 
     it("throws when the gateway disappears mid-window", async () => {
       const runner = new ScriptedRunner();
-      runner.queue({ stdout: "100\n" }, { stdout: "" });
+      runner.queue({ stdout: "100 111 111 S\n" }, { stdout: "" });
       const gateway = buildGateway(runner);
 
       const observation = expect(
@@ -270,16 +294,52 @@ describe("GatewayClient recovery helpers (#2701)", () => {
       ).rejects.toThrow(/no gateway process.*at start/);
     });
 
-    it("rejects non-positive durations", async () => {
+    it.each([
+      {
+        name: "zero duration",
+        durationSeconds: 0,
+        pollIntervalSeconds: 1,
+        message: /durationSeconds must be > 0/,
+      },
+      {
+        name: "NaN duration",
+        durationSeconds: Number.NaN,
+        pollIntervalSeconds: 1,
+        message: /durationSeconds must be > 0/,
+      },
+      {
+        name: "infinite duration",
+        durationSeconds: Number.POSITIVE_INFINITY,
+        pollIntervalSeconds: 1,
+        message: /durationSeconds must be > 0/,
+      },
+      {
+        name: "zero poll interval",
+        durationSeconds: 1,
+        pollIntervalSeconds: 0,
+        message: /pollIntervalSeconds must be > 0/,
+      },
+      {
+        name: "NaN poll interval",
+        durationSeconds: 1,
+        pollIntervalSeconds: Number.NaN,
+        message: /pollIntervalSeconds must be > 0/,
+      },
+      {
+        name: "infinite poll interval",
+        durationSeconds: 1,
+        pollIntervalSeconds: Number.POSITIVE_INFINITY,
+        message: /pollIntervalSeconds must be > 0/,
+      },
+    ])("rejects $name before any probe or timer", async (options) => {
       const runner = new ScriptedRunner();
       const gateway = buildGateway(runner);
 
-      await expect(
-        gateway.expectPidStable(fakeInstance(), {
-          durationSeconds: 0,
-          pollIntervalSeconds: 1,
-        }),
-      ).rejects.toThrow(/durationSeconds must be > 0/);
+      await expect(gateway.expectPidStable(fakeInstance(), options)).rejects.toThrow(
+        options.message,
+      );
+      expect(runner.calls).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 });

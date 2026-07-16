@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Mocked unit coverage for the Bearer-token enforcement and header-stripping
-// contract of scripts/ollama-auth-proxy.js. The live E2E target
+// contract of scripts/ollama-auth-proxy.mts. The live E2E target
 // (test/e2e/live/ollama-auth-proxy.test.ts) exercises the same boundary but
 // needs a real Ollama install plus a model pull; this pins the security-
 // critical request-handler behavior hermetically.
@@ -23,7 +23,10 @@ import { afterEach, beforeEach, describe, expect, vi } from "vitest";
 import { test as it } from "./helpers/owned-test-resources";
 
 import {
+  closeServer,
+  forceKill,
   freePort,
+  PROXY_SCRIPT,
   request,
   startBackend,
   startProxy,
@@ -47,7 +50,7 @@ describe("ollama-auth-proxy request handler", () => {
   afterEach(async () => {
     await terminate(proxy);
     proxy = undefined;
-    await new Promise<void>((resolve) => backend?.server.close(() => resolve()));
+    await closeServer(backend?.server);
     backend = undefined;
   });
 
@@ -124,9 +127,75 @@ describe("ollama-auth-proxy request handler", () => {
     expect(res.body).toMatch(/Ollama backend error/);
     expect(proxy?.exitCode).toBeNull();
   });
+
+  it("stays alive when the backend disconnects after a partial response", async ({ resources }) => {
+    await terminate(proxy);
+    proxy = undefined;
+    await closeServer(backend?.server);
+    backend = undefined;
+
+    const disconnectingBackend = resources.ownServer(
+      http.createServer((req, res) => {
+        req.resume();
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.write("partial", () => res.socket?.destroy());
+      }),
+    );
+    await new Promise<void>((resolve, reject) => {
+      disconnectingBackend.once("error", reject);
+      disconnectingBackend.listen(0, "127.0.0.1", resolve);
+    });
+
+    proxyPort = await freePort();
+    proxy = await startProxy(
+      proxyPort,
+      (disconnectingBackend.address() as AddressInfo).port,
+      TOKEN,
+    );
+
+    await expect(
+      request(proxyPort, { path: "/api/tags", auth: `Bearer ${TOKEN}` }),
+    ).rejects.toBeInstanceOf(Error);
+
+    const alive = await request(proxyPort, { path: "/api/tags" });
+    expect(alive.status).toBe(401);
+    expect(proxy.exitCode).toBeNull();
+  });
 });
 
 describe("ollama-auth-proxy process ownership", () => {
+  it("reports EADDRINUSE and exits nonzero when the configured port is occupied", async ({
+    onTestFinished,
+    resources,
+  }) => {
+    const portOwner = resources.ownServer(net.createServer());
+    await new Promise<void>((resolve, reject) => {
+      portOwner.once("error", reject);
+      portOwner.listen(0, "0.0.0.0", resolve);
+    });
+    const occupiedPort = (portOwner.address() as AddressInfo).port;
+    const child = spawn(process.execPath, [PROXY_SCRIPT], {
+      env: {
+        ...process.env,
+        OLLAMA_PROXY_TOKEN: TOKEN,
+        OLLAMA_PROXY_PORT: String(occupiedPort),
+        OLLAMA_BACKEND_PORT: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    onTestFinished(() => forceKill(child));
+    const stderrChunks: Buffer[] = [];
+    child.stderr?.on("data", (chunk) => stderrChunks.push(Buffer.from(chunk)));
+
+    const [exitCode, signal] = (await once(child, "close")) as [number | null, string | null];
+    const stderr = Buffer.concat(stderrChunks).toString("utf8");
+
+    expect(signal).toBeNull();
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain(`Ollama auth proxy: port ${occupiedPort} is already in use`);
+    expect(stderr).not.toContain(TOKEN);
+  });
+
   it("reaps the proxy before reporting a readiness failure", async ({
     onTestFinished,
     resources,

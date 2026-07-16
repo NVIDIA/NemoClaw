@@ -747,6 +747,7 @@ usage() {
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
+  printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -2594,20 +2595,32 @@ run_onboard() {
         # choice may be the cause, so auto-resuming would just loop.
         # Refuse in non-interactive mode (no safe default); prompt in
         # interactive mode so the user can pick resume vs. fresh.
+        local _fresh_install_cmd
+        case "${NEMOCLAW_AGENT:-openclaw}" in
+          hermes)
+            _fresh_install_cmd="curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash -s -- --fresh"
+            ;;
+          langchain-deepagents-code)
+            _fresh_install_cmd="curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash -s -- --fresh"
+            ;;
+          *)
+            _fresh_install_cmd="curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh"
+            ;;
+        esac
         if [ "${NON_INTERACTIVE:-}" = "1" ]; then
-          error "Previous onboarding session failed. Re-run with NEMOCLAW_FRESH=1 to discard it, or run '${_CLI_BIN} onboard --resume' to retry the same session."
+          error "Previous onboarding session failed. To discard it and start over, run '${_fresh_install_cmd}'. To retry the same session, run '${_CLI_BIN} onboard --resume'."
         fi
         local _prompt_stdin="/dev/tty"
         if [ -t 0 ]; then _prompt_stdin="/dev/stdin"; fi
         if [ ! -r "$_prompt_stdin" ]; then
-          error "Previous onboarding session failed, and no TTY is available to prompt. Re-run with NEMOCLAW_FRESH=1 or run '${_CLI_BIN} onboard --resume'."
+          error "Previous onboarding session failed, and no TTY is available to prompt. To discard it and start over, run '${_fresh_install_cmd}'. To retry the same session, run '${_CLI_BIN} onboard --resume'."
         fi
         info "Previous onboarding session failed."
         local _resume_answer=""
         while :; do
           printf "  Resume the failed session, or start fresh? [R/f]: " >&2
           if ! IFS= read -r _resume_answer <"$_prompt_stdin"; then
-            error "Could not read response from TTY. Re-run with NEMOCLAW_FRESH=1 or run '${_CLI_BIN} onboard --resume'."
+            error "Could not read response from TTY. To discard the failed session and start over, run '${_fresh_install_cmd}'. To retry the same session, run '${_CLI_BIN} onboard --resume'."
           fi
           # Use tr to lowercase the answer rather than the bash 4 case
           # expansion form (lowercase via the comma-comma operator), which
@@ -2851,6 +2864,81 @@ detect_express_platform() {
   esac
 }
 
+STATION_ULTRA_VLLM_MODEL="nemotron-3-ultra-550b-a55b"
+STATION_ULTRA_SERVED_MODEL="nvidia/nemotron-3-ultra-550b-a55b"
+STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
+STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
+
+normalize_station_vllm_model() {
+  printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+validate_station_deepseek_override() {
+  local platform="$1"
+  if [ "${STATION_DEEPSEEK:-}" != "1" ]; then
+    return 0
+  fi
+  if [ "$platform" != "DGX Station" ]; then
+    error "--station-deepseek requires a detected DGX Station (detected: ${platform:-unsupported platform})."
+  fi
+  if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    error "--station-deepseek cannot be combined with NEMOCLAW_NO_EXPRESS=1. Remove one override."
+  fi
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    error "--station-deepseek selects the DGX Station express prompt and cannot be combined with --non-interactive."
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    error "--station-deepseek conflicts with NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER}. Remove the provider override to use Station express install."
+  fi
+
+  local requested_model
+  requested_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
+  case "$requested_model" in
+    "" | "$STATION_DEEPSEEK_VLLM_MODEL" | "deepseek-ai/deepseek-v4-flash") ;;
+    *)
+      error "--station-deepseek conflicts with NEMOCLAW_VLLM_MODEL='${NEMOCLAW_VLLM_MODEL}'. Remove one override or set NEMOCLAW_VLLM_MODEL=${STATION_DEEPSEEK_VLLM_MODEL}."
+      ;;
+  esac
+}
+
+preflight_explicit_express_flags() {
+  local platform
+  platform="$(detect_express_platform)"
+  validate_station_deepseek_override "$platform"
+}
+
+configure_station_express_model() {
+  local selected_model
+  selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
+  if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+    NEMOCLAW_VLLM_MODEL="$STATION_DEEPSEEK_VLLM_MODEL"
+    NEMOCLAW_MODEL="$STATION_DEEPSEEK_SERVED_MODEL"
+  elif [ -z "$selected_model" ]; then
+    NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
+    NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+  else
+    case "$selected_model" in
+      "$STATION_ULTRA_VLLM_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
+        NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+        ;;
+      "$STATION_ULTRA_SERVED_MODEL")
+        # The served alias is useful in route output but is not a Hugging Face
+        # repository ID. Normalize it to the registered model slug before the
+        # existing managed-vLLM selector consumes it.
+        NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
+        NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
+        ;;
+      "$STATION_DEEPSEEK_VLLM_MODEL" | "deepseek-ai/deepseek-v4-flash")
+        NEMOCLAW_MODEL="$STATION_DEEPSEEK_SERVED_MODEL"
+        ;;
+    esac
+  fi
+  export NEMOCLAW_VLLM_MODEL
+  if [ -n "${NEMOCLAW_MODEL:-}" ]; then
+    export NEMOCLAW_MODEL
+  fi
+}
+
 # Prompt the user to opt into express install on supported platforms. Sets the
 # non-interactive + provider/model env vars when accepted. Skipped when
 # the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
@@ -2874,8 +2962,16 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "DGX Station")
-      inference_summary="managed local vLLM"
-      inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local vLLM inference container."
+      if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+        inference_summary="managed local vLLM with DeepSeek V4 Flash"
+        inference_disclosure="Managed vLLM pulls the configured Station image/model and runs a local inference container."
+      elif [ -n "$(printf "%s" "${NEMOCLAW_VLLM_MODEL:-}" | tr -d '[:space:]')" ]; then
+        inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
+        inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local inference container."
+      else
+        inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B"
+        inference_disclosure="Managed vLLM pulls the pinned Station image and approximately 352 GB model, then runs a local inference container."
+      fi
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
@@ -2918,6 +3014,7 @@ describe_express_install() {
 maybe_offer_express_install() {
   local platform
   platform="$(detect_express_platform)"
+  validate_station_deepseek_override "$platform"
   # Not on a platform we have an express recipe for — say nothing.
   if [ -z "$platform" ]; then
     return 0
@@ -2977,7 +3074,9 @@ maybe_offer_express_install() {
           fi
           ;;
         "DGX Station")
+          export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
           export NEMOCLAW_PROVIDER=install-vllm
+          configure_station_express_model
           ;;
         "Windows WSL")
           export NEMOCLAW_PROVIDER=install-windows-ollama
@@ -3002,11 +3101,13 @@ main() {
   NON_INTERACTIVE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
   FRESH=""
+  STATION_DEEPSEEK=""
   for arg in "$@"; do
     case "$arg" in
       --non-interactive) NON_INTERACTIVE=1 ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --fresh) FRESH=1 ;;
+      --station-deepseek) STATION_DEEPSEEK=1 ;;
       --version | -v)
         local version_suffix
         version_suffix="$(installer_version_for_display)"
@@ -3044,6 +3145,12 @@ main() {
   # Validate the gateway port before the banner, notice acceptance, downloads,
   # or any other installer side effect.
   resolve_nemoclaw_gateway_port >/dev/null
+
+  # Explicit express-only flags must fail before license state, Docker, build
+  # dependencies, or any other host mutation. maybe_offer_express_install
+  # repeats the same authoritative validation at the prompt boundary because
+  # it is also exercised directly by sourced-installer callers and tests.
+  preflight_explicit_express_flags
 
   print_banner
 

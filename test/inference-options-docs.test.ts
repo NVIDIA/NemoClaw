@@ -292,9 +292,14 @@ describe("inference setup navigation", () => {
     const markdown = fs.readFileSync(vllmSetupPath, "utf8");
     const entries = [
       {
-        prefix: "- DGX Spark and DGX Station",
+        prefix: "- DGX Spark and DGX Station models without a model-specific runtime",
         image: VLLM_IMAGES.ngc2605Post1.arm64,
         tag: VLLM_IMAGES.ngc2605Post1.tag,
+      },
+      {
+        prefix: "- The DGX Station Nemotron 3 Ultra express recipe",
+        image: VLLM_IMAGES.vllm022.arm64,
+        tag: VLLM_IMAGES.vllm022.tag,
       },
       {
         prefix: "- Generic Linux `arm64` hosts",
@@ -315,6 +320,16 @@ describe("inference setup navigation", () => {
       expect(line).toContain(`\`${(image.downloadSizeBytes / 1_000_000_000).toFixed(2)} GB\``);
       expect(line).toContain(`\`${tag}\``);
     }
+  });
+
+  it("documents the canonical Station Ultra recipe and DeepSeek demo override", () => {
+    const markdown = fs.readFileSync(vllmSetupPath, "utf8");
+
+    expect(markdown).toContain("--station-deepseek");
+    expect(markdown).toContain("memory/stack ulimits");
+    expect(markdown).toContain("MTP speculative decoding");
+    expect(markdown).toContain("model-cache storage is insufficient");
+    expect(markdown).toContain("not retained by the long-lived vLLM container");
   });
 
   it("keeps tool-calling remediation canonical in troubleshooting", () => {

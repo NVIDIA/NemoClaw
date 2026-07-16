@@ -168,13 +168,13 @@ function parseArgs(argv: string[]): Options {
 
 function printHelp(): void {
   console.log(
-    "Usage: tsx scripts/list-command-helper-uses.ts [--root <dir>] [--names run,runInteractive,...] [--include-tests] [--list-calls] [--markdown] [--json] [path ...]\n\n" +
+    "Usage: tsx scripts/list-command-helper-uses.mts [--root <dir>] [--names run,runInteractive,...] [--include-tests] [--list-calls] [--markdown] [--json] [path ...]\n\n" +
       "Lists AST-level callsites and assignments for command helper names such as run(), runInteractive(), runCapture(), runShell(), execFileSync(), spawnSync(), and runCommand(). By default it excludes test files and groups results by inferred command head.\n\n" +
       "Examples:\n" +
-      "  tsx scripts/list-command-helper-uses.ts\n" +
-      "  tsx scripts/list-command-helper-uses.ts --markdown src\n" +
-      "  tsx scripts/list-command-helper-uses.ts --include-tests --list-calls --json src test\n" +
-      "  tsx scripts/list-command-helper-uses.ts --names run,runInteractive src test\n",
+      "  tsx scripts/list-command-helper-uses.mts\n" +
+      "  tsx scripts/list-command-helper-uses.mts --markdown src\n" +
+      "  tsx scripts/list-command-helper-uses.mts --include-tests --list-calls --json src test\n" +
+      "  tsx scripts/list-command-helper-uses.mts --names run,runInteractive src test\n",
   );
 }
 
