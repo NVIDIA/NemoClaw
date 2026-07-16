@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -13,7 +12,6 @@ const requireSource = createRequire(import.meta.url);
 const INDEX_MODULE = "./index.js";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
-const HERMES_ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle";
 const LOCK_TOKEN = "a".repeat(64);
 const OLD_GUARD_HELP = "usage: guard {ensure-api-key,refresh-hashes,provider-placeholders}";
 const PARTIAL_GUARD_HELP = "begin-shields-transition --rollback-shields-mode";
@@ -28,7 +26,6 @@ const CURRENT_GUARD_HELP = [
 ].join(" ");
 
 type ShieldsModule = typeof import("./index");
-type HermesRootLifecycleMarkerState = "missing" | "regular" | "dangling-symlink";
 
 function hermesTarget() {
   return {
@@ -131,23 +128,7 @@ describe("legacy Hermes shields compatibility", () => {
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 
-  function installExecResponses(
-    help: string,
-    hermesDirMode = "3770",
-    markerState: HermesRootLifecycleMarkerState = "missing",
-    topologyResponseOverride?: string,
-  ): void {
-    const localMarker = path.join(homeDir, "hermes-root-lifecycle");
-    switch (markerState) {
-      case "missing":
-        break;
-      case "regular":
-        fs.writeFileSync(localMarker, "root-separated\n");
-        break;
-      case "dangling-symlink":
-        fs.symlinkSync(`${localMarker}.missing`, localMarker);
-        break;
-    }
+  function installExecResponses(help: string, hermesDirMode = "3770", finishError?: Error): void {
     dockerExecSpy.mockImplementation((cmd: string[]) => {
       switch (true) {
         case cmd.includes(HERMES_GUARD) && cmd.includes("--help"):
@@ -156,21 +137,14 @@ describe("legacy Hermes shields compatibility", () => {
           return `lock_token=${LOCK_TOKEN} original_locked=1`;
         case isGuardAction(cmd, "apply-shields-transition"):
           return "shields_mode=mutable chattr_applied=0";
+        case isGuardAction(cmd, "finish-shields-transition") && finishError !== undefined:
+          throw finishError;
         case cmd[0] === "stat":
           return cmd.at(-1) === "/sandbox/.hermes"
             ? `${hermesDirMode} sandbox:sandbox`
             : "640 sandbox:sandbox";
         case cmd[0] === "lsattr":
           return `---------------- ${cmd.at(-1)}`;
-        case cmd.includes(HERMES_ROOT_LIFECYCLE_MARKER): {
-          const localProbe = cmd.map((arg) =>
-            arg === HERMES_ROOT_LIFECYCLE_MARKER ? localMarker : arg,
-          );
-          return (
-            topologyResponseOverride ??
-            execFileSync(localProbe[0], localProbe.slice(1), { encoding: "utf8" })
-          );
-        }
         default:
           return "";
       }
@@ -294,7 +268,7 @@ describe("legacy Hermes shields compatibility", () => {
     expect(commands.some(isInlinePython)).toBe(false);
   });
 
-  it("accepts the dashboard-tightened private Hermes root after a sealed unlock", () => {
+  it("delegates a private Hermes root to the sealed guard before completing unlock", () => {
     installExecResponses(CURRENT_GUARD_HELP, "700");
 
     expect(() =>
@@ -302,44 +276,32 @@ describe("legacy Hermes shields compatibility", () => {
     ).not.toThrow();
 
     const commands = dockerExecSpy.mock.calls.map(commandFromCall);
-    expect(commands.some((cmd) => cmd.includes(HERMES_ROOT_LIFECYCLE_MARKER))).toBe(true);
     expect(commands.some((cmd) => isGuardAction(cmd, "finish-shields-transition"))).toBe(true);
   });
 
-  it("rejects a private Hermes root in the root-separated topology", () => {
-    installExecResponses(CURRENT_GUARD_HELP, "700", "regular");
+  it("rolls back when the sealed guard cannot attest a private Hermes root", () => {
+    installExecResponses(
+      CURRENT_GUARD_HELP,
+      "700",
+      new Error("private mutable .hermes lacks an attested same-UID topology"),
+    );
 
     expect(() => shields.unlockAgentConfig("current-hermes", hermesTarget(), true, true)).toThrow(
-      /managed non-root topology/,
+      /attested same-UID topology/,
     );
 
     const commands = dockerExecSpy.mock.calls.map(commandFromCall);
-    expect(commands.some((cmd) => cmd.includes(HERMES_ROOT_LIFECYCLE_MARKER))).toBe(true);
-    expect(commands.some((cmd) => isGuardAction(cmd, "finish-shields-transition"))).toBe(false);
-  });
-
-  it("rejects a dangling lifecycle marker as root-separated", () => {
-    installExecResponses(CURRENT_GUARD_HELP, "700", "dangling-symlink");
-
-    expect(() => shields.unlockAgentConfig("current-hermes", hermesTarget(), true, true)).toThrow(
-      /managed non-root topology/,
-    );
-
-    const commands = dockerExecSpy.mock.calls.map(commandFromCall);
-    expect(commands.some((cmd) => cmd.includes(HERMES_ROOT_LIFECYCLE_MARKER))).toBe(true);
-    expect(commands.some((cmd) => isGuardAction(cmd, "finish-shields-transition"))).toBe(false);
-  });
-
-  it("rejects an unexpected Hermes topology response before finishing", () => {
-    installExecResponses(CURRENT_GUARD_HELP, "700", "missing", "unexpected-topology");
-
-    expect(() => shields.unlockAgentConfig("current-hermes", hermesTarget(), true, true)).toThrow(
-      /Unexpected Hermes workload topology response/,
-    );
-
-    const commands = dockerExecSpy.mock.calls.map(commandFromCall);
-    expect(commands.some((cmd) => cmd.includes(HERMES_ROOT_LIFECYCLE_MARKER))).toBe(true);
-    expect(commands.some((cmd) => isGuardAction(cmd, "finish-shields-transition"))).toBe(false);
+    expect(commands.some((cmd) => isGuardAction(cmd, "finish-shields-transition"))).toBe(true);
+    expect(commands.some((cmd) => isGuardAction(cmd, "prepare-shields-abort"))).toBe(true);
+    expect(
+      commands.some(
+        (cmd) =>
+          isGuardAction(cmd, "run-state-dir-transition") &&
+          cmd.includes("--state-action") &&
+          cmd.includes("lock"),
+      ),
+    ).toBe(true);
+    expect(commands.some((cmd) => isGuardAction(cmd, "abort-shields-transition"))).toBe(true);
   });
 
   it("rejects other sandbox-owned Hermes root modes before finishing a sealed unlock", () => {
