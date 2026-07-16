@@ -21,6 +21,14 @@ describe("GPU E2E helpers", () => {
     expect(env({}, {}).NEMOCLAW_OLLAMA_PULL_TIMEOUT).toBeUndefined();
   });
 
+  it("uses the release-supported small GPU model by default", () => {
+    expect(env({}, {}).NEMOCLAW_MODEL).toBe("qwen3.5:9b");
+  });
+
+  it("honors the workflow-owned GPU model", () => {
+    expect(env({}, { NEMOCLAW_MODEL: "workflow/model" }).NEMOCLAW_MODEL).toBe("workflow/model");
+  });
+
   it("forwards the workflow-owned trace directory through availability probes", () => {
     expect(env({}, { NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-traces" }).NEMOCLAW_TRACE_DIR).toBe(
       "/tmp/nemoclaw-traces",

@@ -42,6 +42,8 @@ export { trustedShellCommand } from "./shell/trusted-command.ts";
 
 export interface ShellProbeResult {
   command: string[];
+  /** Wall-clock command duration, persisted for CI bottleneck analysis. */
+  durationMs?: number;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
@@ -200,6 +202,7 @@ export class ShellProbe {
 
     const stdout = createTextCapture(options.captureLimitBytes);
     const stderr = createTextCapture(options.captureLimitBytes);
+    const startedAtMs = Date.now();
     const child = spawn(command, args, {
       cwd: options.cwd,
       detached: true,
@@ -230,11 +233,13 @@ export class ShellProbe {
 
     const redactedStdout = renderCapturedText(stdout);
     const redactedStderr = renderCapturedText(stderr);
+    const durationMs = Date.now() - startedAtMs;
     if (supervised.spawnError) {
       const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
       const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
       await writeArtifacts({
         command: redactedCommand,
+        durationMs,
         exitCode: null,
         signal: null,
         timedOut: supervised.timedOut,
@@ -246,6 +251,7 @@ export class ShellProbe {
 
     const result: Omit<ShellProbeResult, "artifacts"> = {
       command: redactedCommand,
+      durationMs,
       exitCode: supervised.exitCode,
       signal: supervised.signal,
       timedOut: supervised.timedOut,

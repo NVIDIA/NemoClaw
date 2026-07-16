@@ -148,9 +148,22 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     // --tool-call-parser to be set" (#6314) — which blocks every agent
     // tool-call flow on the generic-Linux managed vLLM default (Spark and
     // Station defaults already pin their own tool-call parser).
+    //
+    // `--reasoning-parser nemotron_v3` is likewise part of that same model
+    // card launch recipe: Nemotron-3-Nano is a reasoning model that emits a
+    // `<think>…</think>` trace. Without a reasoning parser vLLM leaves the
+    // trace — including the bare `</think>` marker the chat template does not
+    // pair with an opening `<think>` — inline in `content`, and the agent's
+    // streaming parser mishandles that orphan marker into an empty turn that
+    // wedges the session (#6915). `nemotron_v3` is a built-in parser in the
+    // pinned NGC vLLM image (it subclasses the DeepSeek-R1 parser) and moves
+    // the trace out of `content`, so no plugin file is required. The Spark and
+    // Station defaults already pin their own reasoning parser.
     modelArgs: [
       "--gpu-memory-utilization",
       "0.7",
+      "--reasoning-parser",
+      "nemotron_v3",
       "--load-format",
       "fastsafetensors",
       "--enable-auto-tool-choice",

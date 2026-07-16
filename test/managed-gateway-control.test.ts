@@ -159,6 +159,22 @@ with tempfile.TemporaryDirectory() as root:
             candidates[0], replace(supervisor, namespace_inode=None), hermes
         )
 
+        real_supervisor_candidates = control._supervisor_candidates
+        transient_scan_calls = []
+        def transient_unrelated_process_churn(reader, pid1, sandbox_uid):
+            matches, inconclusive = real_supervisor_candidates(reader, pid1, sandbox_uid)
+            transient_scan_calls.append(len(matches))
+            return matches, len(transient_scan_calls) == 1 or inconclusive
+        control._supervisor_candidates = transient_unrelated_process_churn
+        try:
+            transient_supervisor = control._discover_supervisor(reader)
+            transient_supervisor_retry = [
+                transient_supervisor.pid,
+                len(transient_scan_calls),
+            ]
+        finally:
+            control._supervisor_candidates = real_supervisor_candidates
+
         real_namespace_inode = control._namespace_inode
         control._namespace_inode = lambda _pid_fd: None
         try:
@@ -690,6 +706,7 @@ with tempfile.TemporaryDirectory() as root:
         "initial": initial_proof,
         "state_key_behavior": state_key_behavior,
         "mixed_namespace_rejected": mixed_namespace_rejected,
+        "transient_supervisor_retry": transient_supervisor_retry,
         "namespace_denied": namespace_denied,
         "preflight": preflight_steps,
         "runtime_validation": runtime_validation,
@@ -746,6 +763,7 @@ describe("managed gateway root control", () => {
       },
       state_key_behavior: [true, false],
       mixed_namespace_rejected: true,
+      transient_supervisor_retry: [40, 2],
       namespace_denied: true,
       preflight: [
         {

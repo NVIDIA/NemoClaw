@@ -4340,6 +4340,15 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
         "step 'Post E2E target results to PR' must resolve discovered matrix test results from the jobs API",
       );
     }
+    if (
+      !reportScript.includes("Number.isSafeInteger(job.id)") ||
+      !reportScript.includes("job.id > 0") ||
+      !reportScript.includes("`${runUrl}/job/${job.id}`")
+    ) {
+      errors.push(
+        "step 'Post E2E target results to PR' must build same-run job links only from positive safe-integer job IDs",
+      );
+    }
     if (!reportScript.includes("cancelled")) {
       errors.push("step 'Post E2E target results to PR' run script must count cancelled jobs");
     }

@@ -36,7 +36,7 @@ const ISSUE_4434_PATCH = path.join(
 const DEVICE_SELF_APPROVAL_PATCH = path.join(
   REPO_ROOT,
   "scripts",
-  "patch-openclaw-device-self-approval.ts",
+  "patch-openclaw-device-self-approval.mts",
 );
 const REBUILD_RESUME_SESSION = path.join(
   REPO_ROOT,
@@ -218,7 +218,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("applies the Dockerfile patch block");
     expect(review).toContain("test/openclaw-issue-4434-diagnostics-patch.test.ts");
     expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.ts");
-    expect(review).toContain("scripts/patch-openclaw-device-self-approval.ts");
+    expect(review).toContain("scripts/patch-openclaw-device-self-approval.mts");
     expect(review).toContain("NemoClaw no longer reads or writes device state during approval");
     expect(review).toContain("Merge disposition for this OpenClaw 2026.6.10 bump");
     expect(review).toContain("Issue #4434 full live acceptance");
@@ -420,8 +420,8 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 		grep -Fq 'nemoclaw: reach gateway for bounded same-device scope approval' "$device_self_approval_patch"
 		grep -Fq 'nemoclaw: bounded same-device scope approval' "$device_self_approval_patch"
 		grep -Fq 'nemoclaw: validate bounded self-approval inside pairing lock' "$device_self_approval_patch"
-		grep -Fq 'COPY scripts/patch-openclaw-device-self-approval.ts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts' Dockerfile
-		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts \\' Dockerfile
+		grep -Fq 'COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts' Dockerfile
+		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \\' Dockerfile
 
 	phase_count="$(grep -Ec -- '--phase (runtime-setup|agent-install|post-agent-install)' Dockerfile)"
 test "$phase_count" -eq 3
