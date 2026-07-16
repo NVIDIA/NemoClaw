@@ -5,8 +5,8 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { parseOpenClawAgentText } from "./common-egress-agent-helpers.ts";
 import {
+  assertAgentExecutionSucceeded,
   assertGpuInstallProofs,
   assertNvidiaAvailable,
   CLI,
@@ -311,7 +311,7 @@ exit 1`,
   expect(recovered.exitCode, resultText(recovered)).toBe(0);
   expect(resultText(recovered)).toContain("Checking Ollama model readiness after daemon restart");
   expect(resultText(recovered)).toContain(`Ollama model '${model}' is loaded and ready.`);
-  expect(parseOpenClawAgentText(recovered.stdout)).toMatch(/pong/i);
+  assertAgentExecutionSucceeded(recovered.stdout, "inference", model);
 
   const loaded = await host.command("curl", ["-fsS", "http://127.0.0.1:11434/api/ps"], {
     artifactName: "ollama-model-loaded-after-recovery",
