@@ -108,6 +108,15 @@ function existingPrGateCheckRunsRoute(overrides: Record<string, unknown> = {}) {
   );
 }
 
+function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Response {
+  return githubResponse(
+    exactPrGateCheck({
+      id,
+      ...(request.body as Record<string, unknown> | undefined),
+    }),
+  );
+}
+
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -749,7 +758,7 @@ describe("PR E2E controller", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/18") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request, 18),
           ),
         ],
         requests,
@@ -817,7 +826,7 @@ describe("PR E2E controller", () => {
           emptyPrGateCheckRunsRoute(),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
-            () => githubResponse({ id: 17 }),
+            (request) => prGateMutationResponse(request),
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls?state=open&head="),
@@ -829,7 +838,7 @@ describe("PR E2E controller", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -899,7 +908,7 @@ describe("PR E2E controller", () => {
           }),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -976,7 +985,7 @@ describe("PR E2E controller", () => {
           emptyPrGateCheckRunsRoute(),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
-            () => githubResponse({ id: 17 }),
+            (request) => prGateMutationResponse(request),
           ),
           githubFetchRoute(
             ({ url }) =>
@@ -1038,7 +1047,7 @@ describe("PR E2E controller", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -1124,7 +1133,7 @@ describe("PR E2E controller", () => {
           emptyPrGateCheckRunsRoute(),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
-            () => githubResponse({ id: 17 }),
+            (request) => prGateMutationResponse(request),
           ),
           githubFetchRoute(
             ({ url }) =>
@@ -1133,7 +1142,7 @@ describe("PR E2E controller", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -1216,7 +1225,7 @@ describe("PR E2E controller", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -1268,7 +1277,7 @@ describe("PR E2E controller", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
-            () => githubResponse({ id: 17 }),
+            (request) => prGateMutationResponse(request),
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls?state=open&head="),
@@ -1308,7 +1317,7 @@ describe("PR E2E controller", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -1425,7 +1434,7 @@ describe("PR E2E controller", () => {
           emptyPrGateCheckRunsRoute(),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
-            () => githubResponse({ id: 17 }),
+            (request) => prGateMutationResponse(request),
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls?state=open&head="),
@@ -1444,7 +1453,7 @@ describe("PR E2E controller", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,

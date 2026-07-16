@@ -190,6 +190,59 @@ describe("native PR E2E required job", () => {
     expect(urls[0]).toContain("E2E%20%2F%20PR%20Gate%20Coordination");
   });
 
+  it("selects the newest exact-diff check after marker-backed immutable history", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      githubResponse(
+        listing([
+          check(undefined, {
+            status: "completed",
+            conclusion: "failure",
+            output: {
+              title: "Selected E2E did not pass",
+              summary:
+                "The child run was cancelled.\n\n<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->",
+            },
+          }),
+          check(undefined, {
+            id: 18,
+            status: "in_progress",
+            conclusion: null,
+            output: { title: "Maintainer authorization required to run E2E" },
+          }),
+        ]),
+      ),
+    );
+
+    await expect(findCoordinationCheck(identity)).resolves.toMatchObject({ id: 18 });
+  });
+
+  it.each([
+    {
+      label: "an older unmarked terminal check",
+      checks: [
+        check(undefined, {
+          status: "completed",
+          conclusion: "failure",
+          output: { title: "Unknown controller failure", summary: "No retry marker." },
+        }),
+        check(undefined, { id: 18, status: "in_progress", conclusion: null }),
+      ],
+      expectedError: "history contains a non-retryable older check",
+    },
+    {
+      label: "multiple active current candidates",
+      checks: [
+        check(undefined, { status: "in_progress", conclusion: null }),
+        check(undefined, { id: 18, status: "in_progress", conclusion: null }),
+      ],
+      expectedError: "Multiple active exact-diff coordination checks exist",
+    },
+  ])("rejects exact-diff coordination history with $label", async ({ checks, expectedError }) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(githubResponse(listing(checks)));
+
+    await expect(findCoordinationCheck(identity)).rejects.toThrow(expectedError);
+  });
+
   it("uses the old required-name check during the native-job migration", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);

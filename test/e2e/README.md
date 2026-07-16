@@ -119,8 +119,9 @@ On open, synchronization, reopen, transition out of draft, or base retarget,
 the exact PR head and base commits, including fork heads. The read-only native
 observer starts for every configured non-closed PR event; metadata-only edits
 mirror the existing exact-diff coordination result instead of publishing a
-skipped success. A base retarget fails any earlier coordination result in that
-head's lineage before reserving the new exact-diff identity. The
+skipped success. A base retarget fails any still-active earlier coordination
+result in that head's lineage, preserves completed audit history, and then
+reserves the new exact-diff identity. The
 `CI / Pull Request` run name binds its PR number, head SHA, base SHA, and gate
 eligibility so the trusted controller can authenticate the completed run even
 when a fork `workflow_run` payload omits pull-request metadata. The controller
@@ -208,24 +209,30 @@ duplicate credential-bearing work. Inspect the linked run, then update the PR
 and run fresh CI before authorizing again.
 The native required job treats authorization and running titles as intermediate
 waiting states only while coordination remains in progress. A completed failure
-remains terminal to manual authorization and the native observer. A later
-eligible `CI / Pull Request` run can reopen the same unchanged open head and base
-only when the failed coordination check carries a current-version retry reason:
+remains immutable and terminal to manual authorization. A later eligible
+`CI / Pull Request` run can create a fresh coordination check for the same
+unchanged open head and base only when the newest failed coordination check
+carries a current-version retry reason:
 `prerequisite-ci` after the later CI run succeeds, `child-cancelled` after a
 conclusively cancelled child, or `evidence-download` after a successful child
 whose evidence download failed, was cancelled, or was skipped. The trusted
-controller then clears the prior conclusion, returns coordination to
-`in_progress`, and rebuilds the deterministic plan before exposing a fresh
-authorization state. Selected-job product or assertion failures, evidence
-policy or integrity failures, schema or identity mismatches, traversal or
-provenance failures, reconciliation, controller errors, unknown states, and
-failures recorded before retry reasons existed remain terminal for that exact
-diff. Fork approval failures are not reopened by PR CI; follow the protected or
-manual skip path, or update the PR to create a new head. Update the PR and run
-fresh CI for the other terminal outcomes. The normal wait, evidence download,
-and finish path is the only path that can record success; the authorization
-itself cannot make the gate green. A changed head or base requires a new
-authorization.
+controller leaves the completed check as audit history, creates and validates a
+new `in_progress` check with the same exact-diff external identity, and rebuilds
+the deterministic plan before exposing a fresh authorization state. The
+controller and native observer select the highest check-run ID only when every
+older duplicate is a completed failure with a recognized versioned retry
+marker. An unexpected app or mismatched mutation identity, duplicate ID, older
+unmarked or otherwise non-retryable terminal state, or multiple active
+candidates fails closed. Selected-job product or
+assertion failures, evidence policy or integrity failures, schema or identity
+mismatches, traversal or provenance failures, reconciliation, controller
+errors, unknown states, and failures recorded before retry reasons existed
+remain terminal for that exact diff. Fork approval failures are not retried by
+PR CI; follow the protected or manual skip path, or update the PR to create a
+new head. Update the PR and run fresh CI for the other terminal outcomes. The
+normal wait, evidence download, and finish path is the only path that can record
+success; the authorization itself cannot make the gate green. A changed head or
+base requires a new authorization.
 
 A fork revision that selects jobs completes coordination as failed while the
 native required job waits for the skip-approval flow. The controller does not
@@ -320,9 +327,10 @@ the controller cannot authenticate the child's artifacts. It fails
 coordination closed as
 `Evidence could not be verified` and leaves `E2E / PR Gate Controller` red so
 maintainers inspect that infrastructure failure. This download-only outcome
-records `evidence-download`, so a later successful eligible PR CI run can reopen
-the same exact diff. If the download step succeeds but signals are missing,
-duplicated, skipped, pending, or report a test failure, the controller has
+records `evidence-download`, so a later successful eligible PR CI run can create
+a fresh coordination check for the same exact diff. If the download step
+succeeds but signals are missing, duplicated, skipped, pending, or report a test
+failure, the controller has
 completed its work: it publishes the handled red PR verdict and remains green
 without a retry reason. Malformed or unsafe evidence, schema or exact-identity
 mismatches, and traversal-limit violations remain terminal controller

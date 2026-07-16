@@ -228,6 +228,13 @@ type CheckRun = {
   app?: { id?: number } | null;
 };
 type CheckRunsResponse = { total_count: number; check_runs: CheckRun[] };
+type PrGateCheckContext = {
+  repository: string;
+  checkRunId: number;
+  prNumber: number;
+  headSha: string;
+  baseSha: string;
+};
 type CollaboratorPermission = {
   role_name?: string;
   permission?: string;
@@ -842,6 +849,48 @@ function isPrGateLineage(check: CheckRun, prNumber: number, headSha: string): bo
   );
 }
 
+function retryableFailureMarker(reason: RetryableFailureReason): string {
+  return `${RETRYABLE_FAILURE_MARKER_PREFIX}${reason}${RETRYABLE_FAILURE_MARKER_SUFFIX}`;
+}
+
+function retryableFailureReason(check: CheckRun): RetryableFailureReason | undefined {
+  if (check.status !== "completed" || check.conclusion !== "failure") return undefined;
+  if (NEVER_RETRY_FAILURE_TITLES.has(check.output?.title ?? "")) return undefined;
+  const summary = check.output?.summary;
+  if (typeof summary !== "string") return undefined;
+  const markerBoundary = `\n\n${RETRYABLE_FAILURE_MARKER_PREFIX}`;
+  const markerStart = summary.lastIndexOf(markerBoundary);
+  if (markerStart < 0) return undefined;
+  const marker = summary.slice(markerStart + 2);
+  if (!marker.endsWith(RETRYABLE_FAILURE_MARKER_SUFFIX)) return undefined;
+  const reason = marker.slice(
+    RETRYABLE_FAILURE_MARKER_PREFIX.length,
+    -RETRYABLE_FAILURE_MARKER_SUFFIX.length,
+  );
+  if (!RETRYABLE_FAILURE_REASONS.has(reason as RetryableFailureReason)) return undefined;
+  if (marker !== retryableFailureMarker(reason as RetryableFailureReason)) return undefined;
+  return reason as RetryableFailureReason;
+}
+
+function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
+  if (checks.length === 0) return undefined;
+  const ordered = [...checks].sort((left, right) => left.id - right.id);
+  if (new Set(ordered.map((check) => check.id)).size !== ordered.length) {
+    throw new Error("Duplicate exact-diff PR gate check IDs exist");
+  }
+  const active = ordered.filter((check) => check.status !== "completed");
+  if (active.length > 1) throw new Error("Multiple active exact-diff PR gate checks exist");
+  const history = ordered.slice(0, -1);
+  if (history.some((check) => retryableFailureReason(check) === undefined)) {
+    throw new Error("Exact-diff PR gate history contains a non-retryable older check");
+  }
+  const current = ordered.at(-1)!;
+  if (active[0] && active[0].id !== current.id) {
+    throw new Error("Exact-diff PR gate history contains an older active check");
+  }
+  return current;
+}
+
 async function matchingPrGateChecks(options: {
   repository: string;
   token: string;
@@ -856,7 +905,86 @@ async function matchingPrGateChecks(options: {
   if (sameIdentity.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
     throw new Error("PR gate check identity was claimed by an unexpected GitHub App");
   }
-  return sameIdentity.filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID);
+  const current = currentExactDiffCheck(
+    sameIdentity.filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID),
+  );
+  return current ? [current] : [];
+}
+
+function validatePrGateMutationResponse(
+  value: unknown,
+  expected: {
+    checkRunId?: number;
+    status: string;
+    conclusion: string | null;
+    prNumber?: number;
+    headSha?: string;
+    baseSha?: string;
+    title?: string;
+    summary?: string;
+  },
+): CheckRun {
+  if (!isObjectRecord(value) || !Number.isSafeInteger(value.id) || (value.id as number) < 1) {
+    throw new Error("GitHub returned an invalid PR gate check mutation response");
+  }
+  const check = value as CheckRun;
+  if (
+    (expected.checkRunId !== undefined && check.id !== expected.checkRunId) ||
+    check.name !== CHECK_NAME ||
+    check.app?.id !== GITHUB_ACTIONS_APP_ID ||
+    check.status !== expected.status ||
+    check.conclusion !== expected.conclusion ||
+    (expected.title !== undefined && check.output?.title !== expected.title) ||
+    (expected.summary !== undefined && check.output?.summary !== expected.summary)
+  ) {
+    throw new Error("GitHub did not persist the expected PR gate check state");
+  }
+  if (
+    expected.prNumber !== undefined &&
+    expected.headSha !== undefined &&
+    expected.baseSha !== undefined &&
+    (check.head_sha !== expected.headSha ||
+      check.external_id !== prGateExternalId(expected.prNumber, expected.headSha, expected.baseSha))
+  ) {
+    throw new Error("GitHub returned a mismatched PR gate check identity");
+  }
+  return check;
+}
+
+async function createPrGateCheck(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+  baseSha: string;
+  prNumber: number;
+}): Promise<CheckRun> {
+  const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
+  const title = "Waiting for PR CI";
+  const summary =
+    "This exact PR head and base revision is reserved for deterministic E2E planning after CI completes.";
+  const check = await githubApi<unknown>(`repos/${options.repository}/check-runs`, options.token, {
+    method: "POST",
+    body: {
+      name: CHECK_NAME,
+      head_sha: options.headSha,
+      external_id: externalId,
+      status: "in_progress",
+      output: {
+        title,
+        summary,
+      },
+    },
+    userAgent: USER_AGENT,
+  });
+  return validatePrGateMutationResponse(check, {
+    status: "in_progress",
+    conclusion: null,
+    prNumber: options.prNumber,
+    headSha: options.headSha,
+    baseSha: options.baseSha,
+    title,
+    summary,
+  });
 }
 
 async function ensurePrGateCheck(options: {
@@ -865,6 +993,7 @@ async function ensurePrGateCheck(options: {
   headSha: string;
   baseSha: string;
   prNumber: number;
+  replaceRetryableCompleted?: boolean;
 }): Promise<number> {
   const checks = await listPrGateChecks(options);
   const lineage = checks.filter((check) =>
@@ -875,8 +1004,9 @@ async function ensurePrGateCheck(options: {
   }
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
   const existing = lineage.filter((check) => check.external_id === externalId);
-  if (existing.length > 1) throw new Error("Multiple exact-diff PR gate checks already exist");
+  const current = currentExactDiffCheck(existing);
   for (const stale of lineage.filter((check) => check.external_id !== externalId)) {
+    if (stale.status === "completed") continue;
     await completeCheck({ repository: options.repository, checkRunId: stale.id }, options.token, {
       conclusion: "failure",
       title: "PR base changed",
@@ -884,26 +1014,13 @@ async function ensurePrGateCheck(options: {
         "This check was computed for an earlier PR base and cannot authorize the current diff.",
     });
   }
-  if (existing[0]) return existing[0].id;
-
-  const check = await githubApi<CheckRun>(`repos/${options.repository}/check-runs`, options.token, {
-    method: "POST",
-    body: {
-      name: CHECK_NAME,
-      head_sha: options.headSha,
-      external_id: externalId,
-      status: "in_progress",
-      output: {
-        title: "Waiting for PR CI",
-        summary:
-          "This exact PR head and base revision is reserved for deterministic E2E planning after CI completes.",
-      },
-    },
-    userAgent: USER_AGENT,
-  });
-  if (!Number.isSafeInteger(check.id) || check.id < 1) {
-    throw new Error("GitHub returned an invalid check id");
+  if (
+    current &&
+    !(options.replaceRetryableCompleted && retryableFailureReason(current) !== undefined)
+  ) {
+    return current.id;
   }
+  const check = await createPrGateCheck(options);
   return check.id;
 }
 
@@ -930,39 +1047,30 @@ export async function seedPrGate(
 }
 
 async function markCheckInProgress(
-  context: { repository: string; checkRunId: number },
+  context: PrGateCheckContext,
   token: string,
   title: string,
   summary: string,
 ): Promise<void> {
-  await githubApi(`repos/${context.repository}/check-runs/${context.checkRunId}`, token, {
-    method: "PATCH",
-    body: { status: "in_progress", conclusion: null, output: { title, summary } },
-    userAgent: USER_AGENT,
-  });
-}
-
-function retryableFailureMarker(reason: RetryableFailureReason): string {
-  return `${RETRYABLE_FAILURE_MARKER_PREFIX}${reason}${RETRYABLE_FAILURE_MARKER_SUFFIX}`;
-}
-
-function retryableFailureReason(check: CheckRun): RetryableFailureReason | undefined {
-  if (check.status !== "completed" || check.conclusion !== "failure") return undefined;
-  if (NEVER_RETRY_FAILURE_TITLES.has(check.output?.title ?? "")) return undefined;
-  const summary = check.output?.summary;
-  if (typeof summary !== "string") return undefined;
-  const markerBoundary = `\n\n${RETRYABLE_FAILURE_MARKER_PREFIX}`;
-  const markerStart = summary.lastIndexOf(markerBoundary);
-  if (markerStart < 0) return undefined;
-  const marker = summary.slice(markerStart + 2);
-  if (!marker.endsWith(RETRYABLE_FAILURE_MARKER_SUFFIX)) return undefined;
-  const reason = marker.slice(
-    RETRYABLE_FAILURE_MARKER_PREFIX.length,
-    -RETRYABLE_FAILURE_MARKER_SUFFIX.length,
+  const check = await githubApi<unknown>(
+    `repos/${context.repository}/check-runs/${context.checkRunId}`,
+    token,
+    {
+      method: "PATCH",
+      body: { status: "in_progress", conclusion: null, output: { title, summary } },
+      userAgent: USER_AGENT,
+    },
   );
-  if (!RETRYABLE_FAILURE_REASONS.has(reason as RetryableFailureReason)) return undefined;
-  if (marker !== retryableFailureMarker(reason as RetryableFailureReason)) return undefined;
-  return reason as RetryableFailureReason;
+  validatePrGateMutationResponse(check, {
+    checkRunId: context.checkRunId,
+    status: "in_progress",
+    conclusion: null,
+    prNumber: context.prNumber,
+    headSha: context.headSha,
+    baseSha: context.baseSha,
+    title,
+    summary,
+  });
 }
 
 function assertCheckCanStart(check: CheckRun | undefined, ciConclusion: string): void {
@@ -982,41 +1090,69 @@ async function completeCheck(
   verdict: PrGateVerdict,
   detailsUrl?: string,
 ): Promise<void> {
-  await githubApi(`repos/${context.repository}/check-runs/${context.checkRunId}`, token, {
-    method: "PATCH",
-    body: {
-      status: "completed",
-      conclusion: verdict.conclusion,
-      completed_at: new Date().toISOString(),
-      details_url: detailsUrl,
-      output: {
-        title: verdict.title,
-        summary: verdict.retryableFailureReason
-          ? `${verdict.summary}\n\n${retryableFailureMarker(verdict.retryableFailureReason)}`
-          : verdict.summary,
+  const summary = verdict.retryableFailureReason
+    ? `${verdict.summary}\n\n${retryableFailureMarker(verdict.retryableFailureReason)}`
+    : verdict.summary;
+  const check = await githubApi<unknown>(
+    `repos/${context.repository}/check-runs/${context.checkRunId}`,
+    token,
+    {
+      method: "PATCH",
+      body: {
+        status: "completed",
+        conclusion: verdict.conclusion,
+        completed_at: new Date().toISOString(),
+        details_url: detailsUrl,
+        output: {
+          title: verdict.title,
+          summary,
+        },
       },
+      userAgent: USER_AGENT,
     },
-    userAgent: USER_AGENT,
+  );
+  validatePrGateMutationResponse(check, {
+    checkRunId: context.checkRunId,
+    status: "completed",
+    conclusion: verdict.conclusion,
+    title: verdict.title,
+    summary,
   });
 }
 
 async function updateRunningCheck(
-  context: { repository: string; checkRunId: number },
+  context: PrGateCheckContext,
   token: string,
   options: { childRunId: number; jobs: readonly string[]; planHash: string },
 ): Promise<void> {
   const childRunUrl = `https://github.com/${context.repository}/actions/runs/${options.childRunId}`;
-  await githubApi(`repos/${context.repository}/check-runs/${context.checkRunId}`, token, {
-    method: "PATCH",
-    body: {
-      status: "in_progress",
-      details_url: childRunUrl,
-      output: {
-        title: `Running ${options.jobs.length} E2E ${options.jobs.length === 1 ? "job" : "jobs"}`,
-        summary: `Risk plan ${options.planHash} selected: ${options.jobs.join(", ")}.`,
+  const title = `Running ${options.jobs.length} E2E ${options.jobs.length === 1 ? "job" : "jobs"}`;
+  const summary = `Risk plan ${options.planHash} selected: ${options.jobs.join(", ")}.`;
+  const check = await githubApi<unknown>(
+    `repos/${context.repository}/check-runs/${context.checkRunId}`,
+    token,
+    {
+      method: "PATCH",
+      body: {
+        status: "in_progress",
+        details_url: childRunUrl,
+        output: {
+          title,
+          summary,
+        },
       },
+      userAgent: USER_AGENT,
     },
-    userAgent: USER_AGENT,
+  );
+  validatePrGateMutationResponse(check, {
+    checkRunId: context.checkRunId,
+    status: "in_progress",
+    conclusion: null,
+    prNumber: context.prNumber,
+    headSha: context.headSha,
+    baseSha: context.baseSha,
+    title,
+    summary,
   });
 }
 
@@ -1984,7 +2120,13 @@ async function dispatchSelectedPrGate(options: {
     const serializedState = `${JSON.stringify(state, null, 2)}\n`;
     writePrivateRegularFile(options.paths.statePath, serializedState);
     await updateRunningCheck(
-      { repository: options.repository, checkRunId: options.checkRunId },
+      {
+        repository: options.repository,
+        checkRunId: options.checkRunId,
+        prNumber: options.pull.number,
+        headSha: options.pull.head.sha,
+        baseSha: options.baseSha,
+      },
       options.token,
       {
         childRunId,
@@ -2078,10 +2220,17 @@ export async function startPrGate(
     headSha: command.headSha,
     baseSha: ciIdentity.baseSha,
     prNumber: ciIdentity.prNumber,
+    replaceRetryableCompleted: command.ciConclusion === "success",
   });
   if (checkRunId !== existingCheckRunId) appendOutput("check_id", String(checkRunId));
   await markCheckInProgress(
-    { repository, checkRunId },
+    {
+      repository,
+      checkRunId,
+      prNumber: ciIdentity.prNumber,
+      headSha: command.headSha,
+      baseSha: ciIdentity.baseSha,
+    },
     token,
     "Evaluating PR commit",
     "Validating the exact PR revision and selecting deterministic E2E jobs.",
@@ -2186,7 +2335,13 @@ export async function startPrGate(
     if (controlPlaneFamily && requiresCredentialedE2eAuthorization(plan)) {
       const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW_PATH}`;
       await markCheckInProgress(
-        { repository, checkRunId },
+        {
+          repository,
+          checkRunId,
+          prNumber: ciIdentity.prNumber,
+          headSha: command.headSha,
+          baseSha: ciIdentity.baseSha,
+        },
         token,
         CONTROL_PLANE_AUTHORIZATION_TITLE,
         [
@@ -2328,7 +2483,13 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
     });
     assertPullUnchanged(pull, finalPull);
     await markCheckInProgress(
-      { repository, checkRunId },
+      {
+        repository,
+        checkRunId,
+        prNumber: command.prNumber,
+        headSha: command.headSha,
+        baseSha: command.baseSha,
+      },
       token,
       `E2E execution authorized by @${command.maintainer}`,
       `Running the exact reviewed head and base revision. Review reason: ${reason.replace(/`/gu, "'")}`,
@@ -2362,7 +2523,13 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
         const reason = controllerErrorMessage(error).replace(/`/gu, "'");
         try {
           await markCheckInProgress(
-            { repository, checkRunId },
+            {
+              repository,
+              checkRunId,
+              prNumber: command.prNumber,
+              headSha: command.headSha,
+              baseSha: command.baseSha,
+            },
             token,
             CONTROL_PLANE_AUTHORIZATION_TITLE,
             [

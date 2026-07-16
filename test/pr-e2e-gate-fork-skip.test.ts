@@ -71,6 +71,15 @@ function existingPrGateCheckRunsRoute(overrides: Record<string, unknown> = {}) {
   );
 }
 
+function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Response {
+  return githubResponse(
+    exactPrGateCheck({
+      id,
+      ...(request.body as Record<string, unknown> | undefined),
+    }),
+  );
+}
+
 function mainWorkflowRefRoute(sha = WORKFLOW_SHA) {
   return githubFetchRoute(
     ({ url }) => url.endsWith("/git/ref/heads/main"),
@@ -277,7 +286,7 @@ function successfulApprovedForkRoutes(approvals: unknown) {
     mainWorkflowRefRoute(),
     githubFetchRoute(
       ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-      () => githubResponse({}),
+      (request) => prGateMutationResponse(request),
     ),
   ];
 }
@@ -297,7 +306,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           emptyPrGateCheckRunsRoute(),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
-            () => githubResponse({ id: 17 }),
+            (request) => prGateMutationResponse(request),
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls?state=open&head="),
@@ -313,7 +322,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -355,107 +364,6 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           `fork_skip_base_sha=${BASE_SHA}`,
         ].join("\n"),
       );
-      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
-    } finally {
-      fs.rmSync(workDir, { recursive: true, force: true });
-    }
-  });
-
-  it("reopens a marker-backed infrastructure failure before internal PR code can receive E2E credentials (#7052)", async () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-control-"));
-    const outputPath = path.join(workDir, "github-output");
-    fs.writeFileSync(outputPath, "", { mode: 0o600 });
-    vi.stubEnv("GITHUB_TOKEN", "token");
-    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
-    vi.stubEnv("GITHUB_OUTPUT", outputPath);
-    const requests: RecordedGitHubRequest[] = [];
-    let checkState = {
-      status: "completed",
-      conclusion: "failure" as string | null,
-      output: {
-        title: "Hermes security-posture did not pass",
-        summary:
-          "The selected child was cancelled by external infrastructure.\n\n<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->",
-      },
-    };
-    vi.spyOn(globalThis, "fetch").mockImplementation(
-      createGitHubFetchRouter(
-        [
-          githubFetchRoute(
-            ({ url, method }) =>
-              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
-            () =>
-              githubResponse({
-                total_count: 1,
-                check_runs: [exactPrGateCheck(checkState)],
-              }),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.includes("/pulls?state=open&head="),
-            () => githubResponse([pullRequestListItem()]),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.endsWith("/pulls/42"),
-            () => githubResponse(pullRequest()),
-          ),
-          githubFetchRoute(
-            ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
-          ),
-          githubFetchRoute(
-            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            (request) => {
-              const body = request.body as {
-                status?: string;
-                conclusion?: string | null;
-                output?: { title?: string; summary?: string };
-              };
-              checkState = {
-                status: body.status ?? checkState.status,
-                conclusion: body.conclusion === undefined ? checkState.conclusion : body.conclusion,
-                output: {
-                  title: body.output?.title ?? checkState.output.title,
-                  summary: body.output?.summary ?? checkState.output.summary,
-                },
-              };
-              return githubResponse({});
-            },
-          ),
-        ],
-        requests,
-      ),
-    );
-
-    try {
-      await expect(startPrGate(startCommand(workDir))).resolves.toBeUndefined();
-      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
-      const completion = requests
-        .filter((request) => request.url.endsWith("/check-runs/17"))
-        .at(-1);
-      expect(completion?.body).toMatchObject({
-        status: "in_progress",
-        conclusion: null,
-        output: {
-          title: "Maintainer authorization required to run E2E",
-          summary: expect.stringContaining(
-            "No selected E2E job ran and no repository secret was exposed",
-          ),
-        },
-      });
-      expect(checkState).toMatchObject({
-        status: "in_progress",
-        conclusion: null,
-        output: {
-          title: "Maintainer authorization required to run E2E",
-          summary: expect.stringContaining(
-            "No selected E2E job ran and no repository secret was exposed",
-          ),
-        },
-      });
-      expect(JSON.stringify(completion?.body)).toContain(
-        "run `run-control-plane` with the PR number, exact head and base SHAs",
-      );
-      expect(fs.readFileSync(outputPath, "utf8")).not.toContain("fork_skip_mode=");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -537,6 +445,51 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     }
   });
 
+  it.each([
+    {
+      label: "an older unmarked terminal check",
+      checks: [
+        exactPrGateCheck({
+          status: "completed",
+          conclusion: "failure",
+          output: { title: "Unknown controller failure", summary: "No retry marker." },
+        }),
+        exactPrGateCheck({ id: 18 }),
+      ],
+      expectedError: "history contains a non-retryable older check",
+    },
+    {
+      label: "multiple active current candidates",
+      checks: [exactPrGateCheck(), exactPrGateCheck({ id: 18 })],
+      expectedError: "Multiple active exact-diff PR gate checks exist",
+    },
+  ])("fails closed when exact-diff history contains $label", async ({ checks, expectedError }) => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-history-"));
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: checks.length, check_runs: checks }),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(startPrGate(startCommand(workDir))).rejects.toThrow(expectedError);
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("passes a no-risk fork without executing fork code", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fork-docs-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
@@ -560,7 +513,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -781,7 +734,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           compatibleMainComparisonRoute([{ filename: "docs/get-started/quickstart.mdx" }]),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -844,15 +797,35 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
             ({ url }) => url.includes("/pulls/42/files?"),
             () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
           ),
-          existingPrGateCheckRunsRoute({
-            status: "in_progress",
-            conclusion: null,
-            output: { title: "Maintainer authorization required to run E2E" },
-          }),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () =>
+              githubResponse({
+                total_count: 2,
+                check_runs: [
+                  exactPrGateCheck({
+                    status: "completed",
+                    conclusion: "failure",
+                    output: {
+                      title: "Selected E2E did not pass",
+                      summary:
+                        "The child run was cancelled.\n\n<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->",
+                    },
+                  }),
+                  exactPrGateCheck({
+                    id: 18,
+                    status: "in_progress",
+                    conclusion: null,
+                    output: { title: "Maintainer authorization required to run E2E" },
+                  }),
+                ],
+              }),
+          ),
           mainWorkflowRefRoute(),
           githubFetchRoute(
-            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            ({ url, method }) => url.endsWith("/check-runs/18") && method === "PATCH",
+            (request) => prGateMutationResponse(request, 18),
           ),
           githubFetchRoute(
             ({ url, method }) =>
@@ -907,7 +880,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         },
       });
       const checkUpdates = requests.filter(
-        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+        (request) => request.url.endsWith("/check-runs/18") && request.method === "PATCH",
       );
       expect(checkUpdates).toHaveLength(2);
       expect(checkUpdates[0]?.body).toMatchObject({
@@ -976,7 +949,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
               check = updateFails ? check : { ...check, ...body };
               return updateFails
                 ? githubResponse({ message: "simulated update failure" }, 500)
-                : githubResponse({});
+                : githubResponse(check);
             },
           ),
           githubFetchRoute(
@@ -1243,7 +1216,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
             (request) => {
               const body = request.body as { output?: { title?: string } } | undefined;
               checkTitle = body?.output?.title ?? checkTitle;
-              return githubResponse({});
+              return prGateMutationResponse(request);
             },
           ),
         ],
