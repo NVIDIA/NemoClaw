@@ -3767,6 +3767,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
     errors.push("workflow_dispatch must not expose legacy test_filter input");
   }
+
   const permissions = asRecord(workflow.permissions);
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 

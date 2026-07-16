@@ -9,13 +9,10 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterEach, expect, test, vi } from "vitest";
+import { expect, test } from "vitest";
 
 import { detectVllmProfile } from "../src/lib/inference/vllm";
-import {
-  imageStorageRequirementBytes,
-  probeDockerStorage,
-} from "../src/lib/inference/vllm-storage";
+import { imageStorageRequirementBytes } from "../src/lib/inference/vllm-storage";
 
 const TARGET_ID = "vllm-docker-storage";
 const DOCKER_HOST = "unix:///run/docker.sock";
@@ -29,6 +26,12 @@ interface DockerInfo {
   DockerRootDir?: unknown;
   OSType?: unknown;
   ServerVersion?: unknown;
+}
+
+interface StatfsSample {
+  path: string;
+  bavail: string;
+  bsize: string;
 }
 
 function dockerProxySource(realDockerPath: string, commandLogPath: string): string {
@@ -59,25 +62,30 @@ process.exit(result.status ?? 99);
 `;
 }
 
-function installChildSource(vllmModuleUrl: string): string {
+function installChildSource(
+  onboardModuleUrl: string,
+  statfsLogPath: string,
+  model: string,
+): string {
   return `
-import vllmModule from ${JSON.stringify(vllmModuleUrl)};
-const { detectVllmProfile, installVllm } = vllmModule;
-const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
-if (!profile) throw new Error("managed vLLM has no generic Linux profile");
-process.env.NEMOCLAW_VLLM_MODEL = profile.defaultModel.envValue;
+const fs = (await import("node:fs")).default;
+const originalStatfsSync = fs.statfsSync.bind(fs);
+fs.statfsSync = (...args) => {
+  const sample = originalStatfsSync(...args);
+  fs.appendFileSync(${JSON.stringify(statfsLogPath)}, JSON.stringify({
+    path: String(args[0]),
+    bavail: String(sample.bavail),
+    bsize: String(sample.bsize),
+  }) + "\\n");
+  return sample;
+};
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+process.env.NEMOCLAW_PROVIDER = "install-vllm";
+process.env.NEMOCLAW_VLLM_MODEL = ${JSON.stringify(model)};
 delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
-const result = await installVllm({
-  ...profile,
-  image: "example.invalid/nemoclaw/vllm@sha256:${"0".repeat(64)}",
-  containerName: "nemoclaw-vllm-storage-e2e-" + String(process.pid),
-  pullTimeoutSec: 1,
-}, {
-  hasImage: false,
-  nonInteractive: true,
-  promptFn: async () => "",
-});
-process.stdout.write("\\nNEMOCLAW_INSTALL_RESULT=" + JSON.stringify(result) + "\\n");
+const onboardModule = await import(${JSON.stringify(onboardModuleUrl)});
+const { setupNim } = onboardModule.default ?? onboardModule;
+await setupNim({ platform: "linux", type: "nvidia" }, null, null, false);
 `;
 }
 
@@ -102,13 +110,8 @@ function writeEvidence(evidence: Record<string, unknown>): void {
   persist();
 }
 
-afterEach(() => {
-  vi.restoreAllMocks();
-  vi.unstubAllEnvs();
-});
-
 realDockerTest(
-  "allows non-interactive managed vLLM past the real /run/docker.sock storage gate (#7039)",
+  "allows non-interactive express managed vLLM past the real /run/docker.sock storage gate (#7039)",
   () => {
     expect(process.platform, "this release acceptance requires a native Linux host").toBe("linux");
     expect(
@@ -134,37 +137,15 @@ realDockerTest(
     expect(typeof info.DockerRootDir).toBe("string");
     const dockerRootDir = String(info.DockerRootDir);
     expect(path.isAbsolute(dockerRootDir)).toBe(true);
-    const dockerRootStats = fs.statfsSync(dockerRootDir, { bigint: true });
-    const dockerRootAvailableBytes = dockerRootStats.bavail * dockerRootStats.bsize;
-    expect(dockerRootAvailableBytes).toBeGreaterThan(0n);
-
-    vi.stubEnv("DOCKER_HOST", DOCKER_HOST);
-    vi.stubEnv("DOCKER_CONTEXT", undefined);
-    const capacitySamples = new Map<string, { bavail: bigint; bsize: bigint }>();
-    const probe = probeDockerStorage({
-      statfs: (target) => {
-        const sample = fs.statfsSync(target, { bigint: true });
-        capacitySamples.set(target, sample);
-        return sample;
-      },
-    });
-    expect(probe.ok, probe.ok ? undefined : probe.reason).toBe(true);
-    assert(probe.ok);
-
-    const capacityStats = capacitySamples.get(probe.capacity.path);
-    assert(capacityStats, `the probe did not sample ${probe.capacity.path}`);
-    const measuredAvailableBytes = capacityStats.bavail * capacityStats.bsize;
-    expect(probe.capacity.availableBytes).toBe(measuredAvailableBytes);
-    expect(probe.capacity.availableBytes).toBeGreaterThan(0n);
 
     const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
     assert(profile, "managed vLLM has no generic Linux profile");
     const requiredAvailableBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
-    expect(probe.capacity.availableBytes).toBeGreaterThanOrEqual(requiredAvailableBytes);
 
     const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-storage-"));
     const blockedHome = path.join(fakeBinDir, "blocked-home");
     const commandLogPath = path.join(fakeBinDir, "docker-commands.jsonl");
+    const statfsLogPath = path.join(fakeBinDir, "statfs-samples.jsonl");
     const dockerPathResult = spawnSync("sh", ["-c", "command -v docker"], {
       encoding: "utf8",
       env,
@@ -178,9 +159,27 @@ realDockerTest(
     ).toBe(0);
     const realDockerPath = dockerPathResult.stdout.trim();
     expect(path.isAbsolute(realDockerPath)).toBe(true);
+    const cachedImageResult = spawnSync(
+      realDockerPath,
+      ["image", "inspect", "--format", "{{.Id}}", profile.image],
+      { encoding: "utf8", env, timeout: 10_000 },
+    );
+    expect(
+      cachedImageResult.error,
+      `could not check the managed vLLM image cache: ${cachedImageResult.error?.message}`,
+    ).toBeUndefined();
+    expect(
+      cachedImageResult.status,
+      "the managed vLLM image must be absent so production cannot skip its storage guard",
+    ).not.toBe(0);
     let installDockerCommands: string[] = [];
+    let productionStatfsSamples: StatfsSample[] = [];
+    let measuredPath = "";
+    let measuredAvailableBytes = 0n;
     try {
-      fs.writeFileSync(blockedHome, "not a directory\n");
+      fs.mkdirSync(blockedHome);
+      fs.writeFileSync(path.join(blockedHome, ".cache"), "not a directory\n");
+      fs.writeFileSync(statfsLogPath, "");
       fs.writeFileSync(path.join(fakeBinDir, "nvidia-smi"), "#!/bin/sh\nexit 0\n", {
         mode: 0o755,
       });
@@ -200,7 +199,11 @@ realDockerTest(
           "tsx",
           "--input-type=module",
           "--eval",
-          installChildSource(pathToFileURL(path.resolve("src/lib/inference/vllm.ts")).href),
+          installChildSource(
+            pathToFileURL(path.resolve("src/lib/onboard.ts")).href,
+            statfsLogPath,
+            profile.defaultModel.envValue,
+          ),
         ],
         {
           cwd: process.cwd(),
@@ -216,22 +219,37 @@ realDockerTest(
       ).toBeUndefined();
       expect(
         installResult.status,
-        `managed-vLLM install subprocess failed:\n${installResult.stderr}\n${installResult.stdout}`,
-      ).toBe(0);
-      expect(installResult.stdout).toContain('NEMOCLAW_INSTALL_RESULT={"ok":false}');
+        `managed-vLLM express subprocess did not reach the intentional post-guard abort:\n${installResult.stderr}\n${installResult.stdout}`,
+      ).toBe(1);
       expect(installResult.stderr).toContain("could not create Hugging Face cache directory");
+      expect(installResult.stderr).toContain(
+        "[non-interactive] Aborting: vLLM install failed. See errors above.",
+      );
       expect(installResult.stderr).not.toContain("Docker storage for the managed vLLM image");
+      expect(`${installResult.stdout}\n${installResult.stderr}`).not.toContain("Continue anyway");
       const dockerCommands = fs
         .readFileSync(commandLogPath, "utf8")
         .trim()
         .split(/\r?\n/u)
         .map((line) => JSON.parse(line) as string[]);
-      expect(dockerCommands.map((args) => args.slice(0, 2))).toEqual([
-        ["container", "ls"],
-        ["image", "inspect"],
-        ["info", "--format"],
-      ]);
       installDockerCommands = dockerCommands.map((args) => args.slice(0, 2).join(" "));
+      expect(new Set(installDockerCommands)).toEqual(
+        new Set(["container ls", "image inspect", "info --format"]),
+      );
+
+      const statfsLog = fs.readFileSync(statfsLogPath, "utf8").trim();
+      expect(statfsLog, "production did not consume a filesystem capacity sample").not.toBe("");
+      productionStatfsSamples = statfsLog
+        .split(/\r?\n/u)
+        .map((line) => JSON.parse(line) as StatfsSample);
+      const dockerRootSample = [...productionStatfsSamples]
+        .reverse()
+        .find((sample) => path.resolve(sample.path) === path.resolve(dockerRootDir));
+      assert(dockerRootSample, `production did not sample Docker root ${dockerRootDir}`);
+      measuredPath = dockerRootSample.path;
+      measuredAvailableBytes = BigInt(dockerRootSample.bavail) * BigInt(dockerRootSample.bsize);
+      expect(measuredAvailableBytes).toBeGreaterThan(0n);
+      expect(measuredAvailableBytes).toBeGreaterThanOrEqual(requiredAvailableBytes);
     } finally {
       fs.rmSync(fakeBinDir, { force: true, recursive: true });
     }
@@ -277,10 +295,11 @@ realDockerTest(
       dockerHost: DOCKER_HOST,
       dockerServerVersion: info.ServerVersion,
       dockerRootDir,
-      dockerRootAvailableBytes: String(dockerRootAvailableBytes),
-      measuredPath: probe.capacity.path,
-      measuredSource: probe.capacity.source,
-      measuredAvailableBytes: String(probe.capacity.availableBytes),
+      dockerRootAvailableBytes: String(measuredAvailableBytes),
+      measuredPath,
+      measuredSource: "Docker root directory",
+      measuredAvailableBytes: String(measuredAvailableBytes),
+      productionStatfsSamples,
       imageDownloadSizeBytes: String(profile.imageDownloadSizeBytes),
       requiredAvailableBytes: String(requiredAvailableBytes),
       managedInstallCrossedImageStorageGate: true,
