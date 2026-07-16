@@ -27,6 +27,7 @@ import {
   type OpenShellGatewayAuthContractWorkflow,
   validateOpenShellGatewayAuthContractWorkflow,
 } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
+import { validateOpenShellGatewayUpgradeWorkflow } from "./openshell-gateway-upgrade-workflow-boundary.mts";
 import {
   type OperationsWorkflow,
   validateE2eOperationsWorkflow,
@@ -3739,6 +3740,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
       workflow as unknown as OpenShellGatewayAuthContractWorkflow,
     ),
   );
+  errors.push(...validateOpenShellGatewayUpgradeWorkflow(workflow));
   errors.push(...validateE2eOperationsWorkflow(workflow as unknown as OperationsWorkflow));
   errors.push(...validateSecurityPostureWorkflow(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);

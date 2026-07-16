@@ -3,7 +3,7 @@
 
 import { shellQuote } from "../fixtures/clients/command.ts";
 
-const COMMON_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
+const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
 
 export interface LegacyGatewayUpgradeFixture {
@@ -47,11 +47,14 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
 }
 
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {
-  return [installer, ...COMMON_INSTALLER_ARGS, "--fresh"];
+  return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS, "--fresh"];
 }
 
-export function currentGatewayUpgradeInstallerArgs(installer: string): string[] {
-  return [installer, ...COMMON_INSTALLER_ARGS];
+export function currentGatewayUpgradeInstallerArgs(
+  installer: string,
+  options: { interactive?: boolean } = {},
+): string[] {
+  return options.interactive ? [installer] : [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
 }
 
 export function upgradeGatewayStateCleanupScript(pidFile: string): string {

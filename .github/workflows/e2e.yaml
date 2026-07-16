@@ -3509,24 +3509,34 @@ jobs:
     name: OpenShell gateway upgrade (${{ matrix.legacy.id }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-upgrade,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.legacy.runner }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         legacy:
-          - id: v0.0.36
+          - id: v0.0.36-x86_64
+            runner: ubuntu-latest
             nemoclaw_ref: v0.0.36
             nemoclaw_commit: "3351fbdd4eb7d9b80ec471545083956327da2b10"
             installer_sha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f"
             sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
             openshell_version: 0.0.36
             openclaw_version: 2026.4.24
-          - id: v0.0.55
+          - id: v0.0.55-x86_64
+            runner: ubuntu-latest
             nemoclaw_ref: v0.0.55
             nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
             installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
+            openshell_version: 0.0.44
+            openclaw_version: 2026.5.22
+          - id: v0.0.55-aarch64
+            runner: ubuntu-24.04-arm
+            nemoclaw_ref: v0.0.55
+            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
+            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
             openshell_version: 0.0.44
             openclaw_version: 2026.5.22
     env:
@@ -3557,9 +3567,8 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run OpenShell gateway upgrade live Vitest test
-        # This preserves the legacy ubuntu-latest + Docker/OpenShell runner
-        # lane while covering both the original v0.0.36 fixture and the exact
-        # v0.0.55/OpenShell 0.0.44 source shape from upgrade regression #6114.
+        # Keep the original v0.0.36 fixture on x86_64 and validate the exact
+        # v0.0.55/OpenShell 0.0.44 regression shape on x86_64 and arm64.
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
