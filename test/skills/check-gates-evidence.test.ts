@@ -15,6 +15,7 @@ import {
   exactDiffGateRun,
   HEAD_SHA,
   INCOMPLETE_E2E,
+  installerHashRun,
   prWorkflowJobs,
   prWorkflowRun,
   REQUIRED_CHECK_NAMES,
@@ -111,6 +112,59 @@ describe("maintainer merge-gate contributor compliance", () => {
       mergeable: "MERGEABLE",
       mergeStateStatus: "BEHIND",
     });
+    expect(output.allPass).toBe(false);
+  });
+
+  it.each([
+    ["head", { headRefOid: "c".repeat(40) }],
+    ["base", { baseRefOid: "c".repeat(40) }],
+    ["mergeability", { mergeable: "UNKNOWN" }],
+    ["merge state", { mergeStateStatus: "UNKNOWN" }],
+  ])("fails closed when the PR %s changes during gate evaluation", (_name, finalPr) => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        finalPr,
+      }).stdout,
+    );
+
+    expect(output.gates.conflicts).toMatchObject({
+      pass: false,
+      details: "PR revision or merge state changed during gate evaluation; rerun the gate checker",
+    });
+    expect(output.allPass).toBe(false);
+  });
+
+  it("makes the PR revision snapshot the final remote read", () => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        finalPrAfterCurrentBase: { headRefOid: "c".repeat(40) },
+      }).stdout,
+    );
+
+    expect(output.gates.conflicts).toMatchObject({
+      pass: false,
+      details: "PR revision or merge state changed during gate evaluation; rerun the gate checker",
+    });
+    expect(output.allPass).toBe(false);
+  });
+
+  it.each([
+    ["closes", { state: "CLOSED" }, "PR is no longer open"],
+    ["becomes a draft", { isDraft: true }, "PR became a draft during gate evaluation"],
+  ])("fails closed when the PR %s", (_name, finalPr, details) => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        finalPr,
+      }).stdout,
+    );
+
+    expect(output.gates.conflicts).toMatchObject({ pass: false, details });
     expect(output.allPass).toBe(false);
   });
 
@@ -238,49 +292,17 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
 
-  it.each([
-    ["before", "2026-01-01T00:01:00Z"],
-    ["at the same second as", "2026-01-01T00:02:00Z"],
-  ])("rejects check-hash created %s the latest base retarget", (_relation, createdAt) => {
+  it("accepts immutable installer identity without relying on retarget timestamps", () => {
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
-        issueEventPages: [
-          [{ id: 7000, event: "base_ref_changed", created_at: "2026-01-01T00:02:00Z" }],
-        ],
         actionRunAttempts: {
           "91": {
-            ...exactDiffGateRun("success", [{ id: 1, name: "check-hash" }]),
-            createdAt,
-            event: "pull_request",
-            path: ".github/workflows/installer-hash-check.yaml",
-          },
-        },
-      }).stdout,
-    );
-
-    expect(output.gates.ci).toMatchObject({
-      pass: false,
-      failingChecks: ["check-hash: latest attempt evidence incomplete"],
-    });
-  });
-
-  it("accepts check-hash created after the latest paginated base retarget", () => {
-    const output = JSON.parse(
-      runGate({
-        body: "Signed-off-by: Example User <user@example.com>",
-        verified: true,
-        issueEventPages: [
-          [{ id: 6999, event: "base_ref_changed", created_at: "2026-01-01T00:01:00Z" }],
-          [{ id: 7000, event: "base_ref_changed", created_at: "2026-01-01T00:02:00Z" }],
-        ],
-        actionRunAttempts: {
-          "91": {
-            ...exactDiffGateRun("success", [{ id: 1, name: "check-hash" }]),
-            createdAt: "2026-01-01T00:02:01Z",
-            event: "pull_request",
-            path: ".github/workflows/installer-hash-check.yaml",
+            ...installerHashRun("success", [{ id: 1, name: "check-hash" }], true),
+            createdAt: "2026-01-01T00:02:00Z",
+            updatedAt: "2026-01-01T00:02:00Z",
+            pullRequests: [],
           },
         },
       }).stdout,
@@ -289,21 +311,27 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
   });
 
-  it("uses the latest base retarget across every event page", () => {
+  it.each([
+    ["a stale base", `Installer Hash PR #42 head ${HEAD_SHA} base ${"c".repeat(40)} gate true`],
+    ["a stale head", `Installer Hash PR #42 head ${"c".repeat(40)} base ${BASE_SHA} gate true`],
+    [
+      "an unsafe PR number",
+      `Installer Hash PR #9007199254740993 head ${HEAD_SHA} base ${BASE_SHA} gate true`,
+    ],
+    [
+      "an uppercase SHA",
+      `Installer Hash PR #42 head ${HEAD_SHA.toUpperCase()} base ${BASE_SHA} gate true`,
+    ],
+    ["a malformed title", "Installer Hash current diff"],
+  ])("rejects check-hash with %s in its immutable title", (_name, displayTitle) => {
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
-        issueEventPages: [
-          [{ id: 6999, event: "base_ref_changed", created_at: "2026-01-01T00:01:00Z" }],
-          [{ id: 7000, event: "base_ref_changed", created_at: "2026-01-01T00:03:00Z" }],
-        ],
         actionRunAttempts: {
           "91": {
-            ...exactDiffGateRun("success", [{ id: 1, name: "check-hash" }]),
-            createdAt: "2026-01-01T00:02:00Z",
-            event: "pull_request",
-            path: ".github/workflows/installer-hash-check.yaml",
+            ...installerHashRun("success", [{ id: 1, name: "check-hash" }], true),
+            displayTitle,
           },
         },
       }).stdout,
@@ -315,25 +343,74 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
 
-  it.each([
-    ["an incomplete event response", []],
-    [
-      "a malformed base-retarget timestamp",
-      [[{ id: 7000, event: "base_ref_changed", created_at: "not-a-timestamp" }]],
-    ],
-    [
-      "duplicate base-retarget event IDs",
-      [
-        [{ id: 7000, event: "base_ref_changed", created_at: "2026-01-01T00:00:00Z" }],
-        [{ id: 7000, event: "base_ref_changed", created_at: "2026-01-01T00:01:00Z" }],
-      ],
-    ],
-  ])("fails check-hash closed on %s", (_name, issueEventPages) => {
+  it("does not accept a gate-false installer metadata edit as evidence", () => {
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
-        issueEventPages,
+        actionRunAttempts: {
+          "91": installerHashRun(
+            "skipped",
+            [{ id: 1, name: "check-hash", conclusion: "skipped" }],
+            false,
+          ),
+        },
+      }).stdout,
+    );
+
+    expect(output.gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: ["check-hash: latest attempt evidence incomplete"],
+    });
+  });
+
+  it("ignores a later gate-false installer edit when a substantive exact run exists", () => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: [
+          ...successfulRequiredChecks(),
+          e2eGateCheck([
+            95,
+            2,
+            "SKIPPED",
+            "2026-01-01T00:04:00Z",
+            undefined,
+            "Security / Installer Hash Check",
+            "check-hash",
+          ]),
+        ],
+        actionRunAttempts: {
+          "95": installerHashRun(
+            "skipped",
+            [{ id: 2, name: "check-hash", conclusion: "skipped" }],
+            false,
+          ),
+        },
+      }).stdout,
+    );
+
+    expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
+  });
+
+  it("rejects installer evidence with a contradictory mutable PR association", () => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        actionRunAttempts: {
+          "91": {
+            ...installerHashRun("success", [{ id: 1, name: "check-hash" }], true),
+            pullRequests: [
+              {
+                number: 99,
+                head: { sha: HEAD_SHA },
+                base: { sha: BASE_SHA },
+              },
+            ],
+          },
+        },
       }).stdout,
     );
 
@@ -399,6 +476,10 @@ describe("maintainer merge-gate contributor compliance", () => {
       ],
     ],
     [
+      "reported on another head SHA",
+      [{ total_count: 1, check_runs: [coordinationCheck({ head_sha: "c".repeat(40) })] }],
+    ],
+    [
       "claimed by another GitHub App",
       [{ total_count: 1, check_runs: [coordinationCheck({ app: { id: 1234 } })] }],
     ],
@@ -417,6 +498,24 @@ describe("maintainer merge-gate contributor compliance", () => {
         {
           total_count: 1,
           check_runs: [coordinationCheck({ status: "completed", conclusion: "failure" })],
+        },
+      ],
+    ],
+    [
+      "reported with malformed timing",
+      [{ total_count: 1, check_runs: [coordinationCheck({ started_at: "not-a-time" })] }],
+    ],
+    [
+      "reported with inverted timing",
+      [
+        {
+          total_count: 1,
+          check_runs: [
+            coordinationCheck({
+              started_at: "2026-01-01T00:02:30Z",
+              completed_at: "2026-01-01T00:01:30Z",
+            }),
+          ],
         },
       ],
     ],
@@ -764,7 +863,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       failingChecks: ["E2E / PR Gate: FAILURE"],
     });
   });
-  it("ignores a later all-skipped workflow run for the same exact PR diff", () => {
+  it("uses an envelope-bound E2E run when a later association-less label run is skipped", () => {
     const result = runGate(
       e2eRunFixture(
         [
@@ -772,10 +871,21 @@ describe("maintainer merge-gate contributor compliance", () => {
           [401, 41, "SKIPPED"],
         ],
         {
-          "400": exactDiffGateRun("success", [{ id: 40, name: "E2E / PR Gate" }]),
-          "401": exactDiffGateRun("skipped", [
-            { id: 41, name: "E2E / PR Gate", conclusion: "skipped" },
-          ]),
+          "400": {
+            ...exactDiffGateRun("success", [{ id: 40, name: "E2E / PR Gate" }]),
+            pullRequests: [],
+            createdAt: "2026-01-01T00:01:00Z",
+            updatedAt: "2026-01-01T00:03:00Z",
+          },
+          "401": {
+            ...exactDiffGateRun("skipped", [
+              { id: 41, name: "E2E / PR Gate", conclusion: "skipped" },
+            ]),
+            pullRequests: [],
+            createdAt: "2026-01-01T00:04:00Z",
+            updatedAt: "2026-01-01T00:05:00Z",
+            displayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate false`,
+          },
         },
       ),
     );
@@ -783,6 +893,102 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       allPass: true,
       gates: { ci: { pass: true } },
+    });
+  });
+
+  it("does not discard a skipped E2E run with malformed immutable identity", () => {
+    const result = runGate(
+      e2eRunFixture(
+        [
+          [405, 45, "SUCCESS"],
+          [406, 46, "SKIPPED"],
+        ],
+        {
+          "405": exactDiffGateRun("success", [{ id: 45, name: "E2E / PR Gate" }]),
+          "406": {
+            ...exactDiffGateRun("skipped", [
+              { id: 46, name: "E2E / PR Gate", conclusion: "skipped" },
+            ]),
+            displayTitle: "E2E Gate stale metadata",
+          },
+        },
+      ),
+    );
+
+    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: ["E2E / PR Gate: SKIPPED"],
+    });
+  });
+
+  it.each([
+    [
+      "does not enclose trusted coordination",
+      {
+        createdAt: "2026-01-01T00:02:00Z",
+        updatedAt: "2026-01-01T00:03:00Z",
+      },
+    ],
+    [
+      "names another PR base",
+      {
+        displayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${"c".repeat(40)} gate true`,
+      },
+    ],
+    [
+      "names another PR number",
+      {
+        displayTitle: `E2E Gate PR #43 head ${HEAD_SHA} base ${BASE_SHA} gate true`,
+      },
+    ],
+    ["has another head branch", { headBranch: "other-branch" }],
+    ["has another head repository", { headRepository: "example/fork" }],
+  ])("rejects an association-less E2E run that %s", (_name, overrides) => {
+    const result = runGate(
+      e2eRunFixture(e2eChecks([402, 42, "SUCCESS"]), {
+        "402": {
+          ...exactDiffGateRun("success", [{ id: 42, name: "E2E / PR Gate" }]),
+          pullRequests: [],
+          ...overrides,
+        },
+      }),
+    );
+
+    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: INCOMPLETE_E2E,
+    });
+  });
+
+  it("fails closed when an Actions run timing changes during job collection", () => {
+    const result = runGate(
+      e2eRunFixture(e2eChecks([403, 43, "SUCCESS"]), {
+        "403": {
+          ...exactDiffGateRun("success", [{ id: 43, name: "E2E / PR Gate" }]),
+          nextUpdatedAt: "2026-01-01T00:04:00Z",
+        },
+      }),
+    );
+
+    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: INCOMPLETE_E2E,
+    });
+  });
+
+  it("fails closed when E2E controller identity changes during job collection", () => {
+    const result = runGate(
+      e2eRunFixture(e2eChecks([404, 44, "SUCCESS"]), {
+        "404": {
+          ...exactDiffGateRun("success", [{ id: 44, name: "E2E / PR Gate" }]),
+          nextDisplayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${"c".repeat(40)} gate true`,
+        },
+      }),
+    );
+
+    expect(JSON.parse(result.stdout).gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: INCOMPLETE_E2E,
     });
   });
   it("keeps substantive PR CI ahead of a later metadata-only edit run", () => {

@@ -338,6 +338,20 @@ describe("pull request and main workflow contracts", () => {
     );
 
     expect(installerHashWorkflow.on?.pull_request?.paths).toBeUndefined();
+    expect(installerHashWorkflow.on?.pull_request?.types).toEqual([
+      "opened",
+      "synchronize",
+      "reopened",
+      "edited",
+    ]);
+    expect(installerHashWorkflow["run-name"]).toContain(
+      "Installer Hash PR #{0} head {1} base {2} gate {3}",
+    );
+    expect(installerHashWorkflow["run-name"]).toContain("github.event.pull_request.base.sha");
+    expect(installerHashWorkflow["run-name"]).toContain("github.event.changes.base != null");
+    expect(job.if).toContain("github.repository == 'NVIDIA/NemoClaw'");
+    expect(job.if).toContain("github.event.action != 'edited'");
+    expect(job.if).toContain("github.event.changes.base != null");
     expect(installerHashWorkflow.permissions).toEqual({ contents: "read" });
     expect(parserRuntimeSetup.uses).toBe(trustedSetupNodeAction);
     expect(parserRuntimeSetup.with?.["node-version"]).toBe("22.19.0");
