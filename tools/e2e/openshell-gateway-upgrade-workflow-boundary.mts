@@ -68,16 +68,16 @@ function jobSteps(job: WorkflowRecord): WorkflowStep[] {
 }
 
 function v055Fixtures(job: WorkflowRecord): WorkflowRecord[] {
-  const legacy = record(record(job.strategy).matrix).legacy;
-  return Array.isArray(legacy)
-    ? legacy.map(record).filter((fixture) => fixture.nemoclaw_ref === "v0.0.55")
+  const include = record(record(job.strategy).matrix).include;
+  return Array.isArray(include)
+    ? include.map(record).filter((fixture) => fixture.nemoclaw_ref === "v0.0.55")
     : [];
 }
 
 function v074Fixture(job: WorkflowRecord): WorkflowRecord {
-  const legacy = record(record(job.strategy).matrix).legacy;
-  return Array.isArray(legacy)
-    ? (legacy.map(record).find((fixture) => fixture.nemoclaw_ref === "v0.0.74") ?? {})
+  const include = record(record(job.strategy).matrix).include;
+  return Array.isArray(include)
+    ? (include.map(record).find((fixture) => fixture.nemoclaw_ref === "v0.0.74") ?? {})
     : {};
 }
 
@@ -97,8 +97,8 @@ export function validateOpenShellGatewayUpgradeWorkflow(workflow: WorkflowRecord
   const errors: string[] = [];
   const job = record(record(workflow.jobs)[JOB_NAME]);
 
-  if (job["runs-on"] !== "${{ matrix.legacy.runner }}") {
-    errors.push(`${JOB_NAME} must run on \${{ matrix.legacy.runner }}`);
+  if (job["runs-on"] !== "${{ matrix.runner }}") {
+    errors.push(`${JOB_NAME} must run on \${{ matrix.runner }}`);
   }
   if (!isDeepStrictEqual(v055Fixtures(job), EXPECTED_V055_FIXTURES)) {
     errors.push(`${JOB_NAME} v0.0.55 matrix must pin x86_64 and arm64 upgrade fixtures`);
@@ -106,7 +106,7 @@ export function validateOpenShellGatewayUpgradeWorkflow(workflow: WorkflowRecord
   if (!isDeepStrictEqual(v074Fixture(job), EXPECTED_V074_FIXTURE)) {
     errors.push(`${JOB_NAME} matrix must pin the immediate v0.0.74 x86_64 upgrade fixture`);
   }
-  if (record(job.env).NEMOCLAW_E2E_SHARD !== "${{ matrix.legacy.shard }}") {
+  if (record(job.env).NEMOCLAW_E2E_SHARD !== "${{ matrix.shard }}") {
     errors.push(`${JOB_NAME} must publish one risk-signal shard per legacy fixture`);
   }
 
