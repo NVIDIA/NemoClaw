@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { describe, it, expect } from "vitest";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
 
 import {
-  execTimeout,
   HERMES_CLI,
+  execTimeout,
   isCliErrorCandidate,
   readBufferOrStringProperty,
   readCliErrorOutput,
@@ -174,7 +174,6 @@ describe("CLI dispatch", () => {
     expect(JSON.parse(r.out)).toEqual({
       schemaVersion: 1,
       defaultSandbox: null,
-      readyDefaultSandbox: null,
       recovery: {
         recoveredFromSession: false,
         recoveredFromGateway: 0,
@@ -233,7 +232,6 @@ describe("CLI dispatch", () => {
     expect(JSON.parse(r.out)).toEqual({
       schemaVersion: 1,
       defaultSandbox: "alpha",
-      readyDefaultSandbox: "alpha",
       recovery: {
         recoveredFromSession: false,
         recoveredFromGateway: 0,

@@ -43,11 +43,6 @@ Use JSON output for scripts:
 $$nemoclaw list --json
 ```
 
-The JSON response distinguishes two selectors.
-`defaultSandbox` reflects the documented environment override order used by list output and other host-level selection.
-`readyDefaultSandbox` ignores those overrides and reports the non-pending sandbox that a bare `$$nemoclaw connect` would select from the recovered registry state, or `null` when no registered sandbox is ready.
-Treat `readyDefaultSandbox` as a point-in-time value because a later registry change can change the target before you run `$$nemoclaw connect`.
-
 ## Check Sandbox Health
 
 Check a specific sandbox's health, inference route, active connections, live policy, and update status:

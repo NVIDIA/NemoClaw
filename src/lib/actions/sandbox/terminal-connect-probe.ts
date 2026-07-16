@@ -55,7 +55,5 @@ export function runTerminalAgentConnectProbe({
   }
   const command = agentRuntime.getTerminalCommand(agent);
   const commandText = command ? ` (${command})` : "";
-  console.log(
-    `  Probe complete: ${agentName} terminal smoke checks passed in '${sandboxName}'${commandText}.`,
-  );
+  console.log(`  Probe complete: ${agentName} terminal smoke checks passed${commandText}.`);
 }

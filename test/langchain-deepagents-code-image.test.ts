@@ -799,20 +799,16 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "NEMOCLAW_DCODE_EMPTY_EXIT",
       "login-shell dcode rejects an empty non-interactive prompt with exit 2",
       "direct-exec dcode rejects an empty non-interactive prompt with exit 2",
-      "require_bare_connect_registry_default",
-      '"${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" list --json',
-      "inventory.readyDefaultSandbox",
-      "NEMOCLAW_DCODE_DEFAULT_SANDBOX_OK",
-      "NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:missing",
-      "NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:unparseable",
-      "NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:display-mismatch",
-      "NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:ready-mismatch",
-      "NEMOCLAW_DCODE_CONNECT_FAIL:sandbox-mismatch",
+      "write_openshell_target_shim",
+      "OPENSHELL_NEMOCLAW_REAL_BIN",
+      "OPENSHELL_NEMOCLAW_TARGET_TRACE",
+      "validate_connect_target_trace",
+      "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:missing",
+      "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:mismatch",
       "nemoclaw_connect_probe",
-      "guarded_bare_connect_probe",
-      "expected_connect_output=\"  Probe complete: LangChain Deep Agents Code terminal smoke checks passed in '${SANDBOX_NAME}' (dcode).\"",
-      'grep -Fqx "$expected_connect_output"',
+      "unset SANDBOX_NAME NEMOCLAW_SANDBOX_NAME NEMOCLAW_SANDBOX",
       '"${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" connect --probe-only 2>&1',
+      "bare connect targeted the Deep Agents Code sandbox",
       "direct-exec dcode -n reached managed inference",
       "connect --probe-only accepted the managed inference route",
       'sandbox_login_exec "cd /sandbox',
@@ -848,32 +844,27 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(headlessCheck).not.toContain(
       '"${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" "$SANDBOX_NAME" connect --probe-only',
     );
-    expect(headlessCheck).not.toContain('sandbox_login_exec ". /tmp/nemoclaw-proxy-env.sh');
-    expect(headlessCheck).not.toContain("config_output:0:200");
-    expect(headlessCheck).toMatch(/headless_output=.*sandbox_login_exec.*\|\| true\)"/);
-    const guardedProbe = headlessCheck.slice(
-      headlessCheck.indexOf("guarded_bare_connect_probe() {"),
-      headlessCheck.indexOf("sandbox_login_proxy_contract() {"),
-    );
-    const defaultGuardIndex = guardedProbe.indexOf("require_bare_connect_registry_default");
-    const connectProbeIndex = guardedProbe.indexOf("nemoclaw_connect_probe");
-    const exactOutputIndex = guardedProbe.indexOf('grep -Fqx "$expected_connect_output"');
-    expect(defaultGuardIndex).toBeGreaterThan(-1);
-    expect(connectProbeIndex).toBeGreaterThan(defaultGuardIndex);
-    expect(exactOutputIndex).toBeGreaterThan(connectProbeIndex);
-    expect(headlessCheck).toContain('connect_output="$(guarded_bare_connect_probe 2>&1)"');
     const connectProbe = headlessCheck.slice(
       headlessCheck.indexOf("nemoclaw_connect_probe() {"),
       headlessCheck.indexOf("sandbox_login_proxy_contract() {"),
     );
-    const connectUnsetIndex = connectProbe.indexOf(
+    const shimWriteIndex = connectProbe.indexOf('write_openshell_target_shim "$shim_path"');
+    const aliasUnsetIndex = connectProbe.indexOf(
       "unset SANDBOX_NAME NEMOCLAW_SANDBOX_NAME NEMOCLAW_SANDBOX",
     );
     const connectCommandIndex = connectProbe.indexOf(
       '"${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" connect --probe-only',
     );
-    expect(connectUnsetIndex).toBeGreaterThan(-1);
-    expect(connectCommandIndex).toBeGreaterThan(connectUnsetIndex);
+    const traceValidationIndex = connectProbe.indexOf(
+      'validate_connect_target_trace "$trace_file"',
+    );
+    expect(shimWriteIndex).toBeGreaterThan(-1);
+    expect(aliasUnsetIndex).toBeGreaterThan(shimWriteIndex);
+    expect(connectCommandIndex).toBeGreaterThan(aliasUnsetIndex);
+    expect(traceValidationIndex).toBeGreaterThan(connectCommandIndex);
+    expect(headlessCheck).not.toContain('sandbox_login_exec ". /tmp/nemoclaw-proxy-env.sh');
+    expect(headlessCheck).not.toContain("config_output:0:200");
+    expect(headlessCheck).toMatch(/headless_output=.*sandbox_login_exec.*\|\| true\)"/);
   });
 
   it("binds the live rlimit probe to one exact managed entrypoint process (#6545)", () => {

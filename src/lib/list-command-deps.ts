@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import * as onboardSession from "./state/onboard-session";
+import type { ListSandboxesCommandDeps, SandboxEntry } from "./inventory";
+import { getLiveGatewayInference } from "./inference/live";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { parseSshProcesses, createSystemDeps } from "./state/sandbox-session";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
 import { captureOpenshell } from "./adapters/openshell/runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
-import { getLiveGatewayInference } from "./inference/live";
-import type { ListSandboxesCommandDeps, SandboxEntry } from "./inventory";
 import { recoverRegistryEntries } from "./registry-recovery-action";
-import * as onboardSession from "./state/onboard-session";
 import * as registry from "./state/registry";
-import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 
 interface RecoveredRegistry {
   sandboxes: SandboxEntry[];
@@ -71,9 +71,6 @@ export function buildListCommandDeps(): ListSandboxesCommandDeps {
         () => recoverRegistryEntries(),
         () => registry.listSandboxes(),
       ),
-    // Read after recovery so this is the same non-pending selector that bare
-    // `nemoclaw connect` resolves through registry.getDefault().
-    getReadyDefaultSandbox: () => registry.getDefault(),
     getLiveInference: () => {
       try {
         return getLiveGatewayInference(captureOpenshell, {

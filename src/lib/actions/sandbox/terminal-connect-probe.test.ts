@@ -20,6 +20,7 @@ const otherTerminalAgent = {
   name: "other-terminal-agent",
   runtime: {
     kind: "terminal",
+    interactive_command: "other-agent",
     smoke_commands: [],
   },
 } as unknown as AgentDefinition;
@@ -81,7 +82,7 @@ describe("terminal-agent connect inference route", () => {
     expect(capture).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(
-      "  Probe complete: Other Terminal Agent terminal smoke checks passed in 'other-box'.",
+      "  Probe complete: Other Terminal Agent terminal smoke checks passed (other-agent).",
     );
   });
 
@@ -103,7 +104,7 @@ describe("terminal-agent connect inference route", () => {
     expect(capture).toHaveBeenCalledOnce();
     expect(exitSpy).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(
-      "  Probe complete: LangChain Deep Agents Code terminal smoke checks passed in 'deep-code' (dcode).",
+      "  Probe complete: LangChain Deep Agents Code terminal smoke checks passed (dcode).",
     );
   });
 });

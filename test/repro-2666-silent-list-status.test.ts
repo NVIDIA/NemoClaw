@@ -60,7 +60,6 @@ function buildDepsWithThrowingRecovery(): ListSandboxesCommandDeps {
         return { ...registryFallback, recoveredFromSession: false, recoveredFromGateway: 0 };
       }
     },
-    getReadyDefaultSandbox: () => "my-assist",
     getLiveInference: () => null,
     loadLastSession: () => ({
       sandboxName: "my-assist",
