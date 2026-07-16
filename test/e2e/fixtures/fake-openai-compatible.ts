@@ -26,6 +26,7 @@ export interface FakeOpenAiCompatibleServer {
   readonly baseUrl: string;
   readonly logFile: string;
   readonly requestsFile: string;
+  environmentKeys(): readonly string[];
   requests(): readonly FakeOpenAiCompatibleRequest[];
   close(): Promise<void>;
 }
@@ -119,19 +120,33 @@ function parseRequests(requestsFile: string): FakeOpenAiCompatibleRequest[] {
   }
 }
 
+function parseEnvironmentKeys(environmentFile: string): string[] {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(environmentFile, "utf8")) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((value): value is string => typeof value === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function startFakeOpenAiCompatibleServer(
   options: FakeOpenAiCompatibleServerOptions = {},
 ): Promise<FakeOpenAiCompatibleServer> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openai-"));
+  const environmentFile = path.join(tmpDir, "environment-keys.json");
   const portFile = path.join(tmpDir, "port");
   const logFile = path.join(tmpDir, "server.log");
   const requestsFile = path.join(tmpDir, "requests.jsonl");
   const host = options.host ?? "127.0.0.1";
   const child = spawn(process.execPath, ["--experimental-strip-types", SERVER_SCRIPT], {
     env: {
-      ...process.env,
+      PATH: process.env.PATH ?? "",
+      HOME: process.env.HOME ?? "",
       NEMOCLAW_FAKE_OPENAI_API_KEY: options.apiKey ?? "",
       NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT: options.chatContent ?? "ok",
+      NEMOCLAW_FAKE_OPENAI_ENVIRONMENT_FILE: environmentFile,
       NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),
       NEMOCLAW_FAKE_OPENAI_HOST: host,
       NEMOCLAW_FAKE_OPENAI_LOG_FILE: logFile,
@@ -162,6 +177,7 @@ export async function startFakeOpenAiCompatibleServer(
     baseUrl: `http://${formatHttpHost(publicHost)}:${port}/v1`,
     logFile,
     requestsFile,
+    environmentKeys: () => parseEnvironmentKeys(environmentFile),
     requests: () => parseRequests(requestsFile),
     close: async () => {
       child.kill("SIGTERM");

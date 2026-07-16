@@ -144,6 +144,7 @@ export interface PromptSandboxNameDeps {
   promptOrDefault(question: string, envVar: string, defaultValue: string): Promise<string>;
   cliDisplayName(): string;
   isNonInteractive(): boolean;
+  checkpointSandboxName(sandboxName: string, agent: AgentDefinition | null): void;
   exit(code: number): never;
 }
 
@@ -159,42 +160,46 @@ export function createPromptValidatedSandboxName(deps: PromptSandboxNameDeps) {
       );
       const sandboxName = (nameAnswer || defaultSandboxName).trim();
 
+      let validatedSandboxName: string;
       try {
-        const validatedSandboxName = validateName(sandboxName, "sandbox name");
-        if (RESERVED_SANDBOX_NAMES.has(sandboxName)) {
-          console.error(
-            `  Reserved name: '${sandboxName}' is a ${deps.cliDisplayName()} CLI command.`,
-          );
-          console.error("  Choose a different name to avoid routing conflicts.");
-          if (deps.isNonInteractive()) {
-            deps.exit(1);
-          }
-          if (attempt < MAX_ATTEMPTS - 1) {
-            console.error("  Please try again.\n");
-          }
-          continue;
-        }
-        return validatedSandboxName;
+        validatedSandboxName = validateName(sandboxName, "sandbox name");
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`  ${errorMessage}`);
+        for (const line of getNameValidationGuidance("sandbox name", sandboxName, {
+          includeAllowedFormat: false,
+        })) {
+          console.error(`  ${line}`);
+        }
+
+        // Non-interactive runs cannot re-prompt — abort so the caller can fix the
+        // NEMOCLAW_SANDBOX_NAME env var and retry.
+        if (deps.isNonInteractive()) {
+          deps.exit(1);
+        }
+
+        if (attempt < MAX_ATTEMPTS - 1) {
+          console.error("  Please try again.\n");
+        }
+        continue;
       }
 
-      for (const line of getNameValidationGuidance("sandbox name", sandboxName, {
-        includeAllowedFormat: false,
-      })) {
-        console.error(`  ${line}`);
+      if (RESERVED_SANDBOX_NAMES.has(sandboxName)) {
+        console.error(
+          `  Reserved name: '${sandboxName}' is a ${deps.cliDisplayName()} CLI command.`,
+        );
+        console.error("  Choose a different name to avoid routing conflicts.");
+        if (deps.isNonInteractive()) {
+          deps.exit(1);
+        }
+        if (attempt < MAX_ATTEMPTS - 1) {
+          console.error("  Please try again.\n");
+        }
+        continue;
       }
 
-      // Non-interactive runs cannot re-prompt — abort so the caller can fix the
-      // NEMOCLAW_SANDBOX_NAME env var and retry.
-      if (deps.isNonInteractive()) {
-        deps.exit(1);
-      }
-
-      if (attempt < MAX_ATTEMPTS - 1) {
-        console.error("  Please try again.\n");
-      }
+      deps.checkpointSandboxName(validatedSandboxName, agent);
+      return validatedSandboxName;
     }
 
     console.error("  Too many invalid attempts.");

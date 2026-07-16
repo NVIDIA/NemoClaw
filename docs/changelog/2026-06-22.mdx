@@ -1,0 +1,24 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.66
+
+NemoClaw v0.0.66 improves gateway serving, OpenClaw agent workflows, messaging defaults, local inference setup, and release validation:
+
+- Gateway and recovery paths now fail more clearly while preserving sandbox boundaries.
+  NemoClaw pins OpenClaw gateway hot reload behavior, watches for sustained serving state, auto-detects resumable onboarding sessions, reuses gateway-held NVIDIA credentials during non-interactive recreate flows, enforces the Hermes environment-secret boundary during recovery probes, and hardens temporary-file creation in sandbox helper paths.
+  For more information, refer to [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Credential Storage](/user-guide/openclaw/security/credential-storage), and [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- OpenClaw sandboxes gained new agent workflows.
+  The release adds the LangChain Deep Agents Code harness, `agents.yaml` declarative multi-agent manifests, live `agents apply` reconciliation, and the non-interactive `nemoclaw <name> agent` passthrough command for automation that needs direct OpenClaw agent access.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart), [Declarative Multi-Agent Manifest](/user-guide/openclaw/configure-agents/declarative-agents-manifest), and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Messaging setup has clearer OpenClaw Telegram group defaults.
+  NemoClaw records explicit channel defaults during onboarding, defaults OpenClaw Telegram group access to `TELEGRAM_GROUP_POLICY=open`, and lets operators choose `allowlist` or `disabled` when they need stricter group behavior.
+  For more information, refer to [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels).
+- Day-two CLI operations validate local and sandbox paths earlier.
+  `nemoclaw <name> exec --workdir <dir>` checks that the sandbox directory exists before running the inner command, and `download`, `upload`, and `sessions export` resolve relative host paths from the caller's current working directory.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Understand Sandbox State](/user-guide/openclaw/manage-sandboxes/state-and-backups/understand-sandbox-state).
+- Local inference setup avoids more misleading failures.
+  NemoClaw skips false-negative host verification for local providers when the sandbox-routed endpoint is the source of truth, keeps the first Local Ollama TUI turn under OpenClaw's compaction budget, and refreshes the DGX Spark Qwen3.6 managed-vLLM recipe to match current model-card guidance.
+  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server) and [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider).

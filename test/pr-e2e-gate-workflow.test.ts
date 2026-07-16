@@ -110,6 +110,7 @@ exec "$@"
         ...process.env,
         FAKE_GH_CALL_COUNT: callCountPath,
         FAKE_GH_SCENARIO: scenario,
+        GATE_RUN_URL: "https://github.com/NVIDIA/NemoClaw/actions/runs/17",
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         RUN_ID: options.runId ?? "29110351531",
@@ -120,6 +121,45 @@ exec "$@"
       ...result,
       ghCallCount: Number(fs.readFileSync(callCountPath, "utf8").trim()),
     };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function runEvidenceStep(scenario: "success" | "failure" | "timeout") {
+  const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
+  const evidence = step(workflow.jobs.coordinate, "Download evidence");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-evidence-"));
+  const binDir = path.join(tempDir, "bin");
+  fs.mkdirSync(binDir);
+  fs.writeFileSync(
+    path.join(binDir, "timeout"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "$FAKE_DOWNLOAD_SCENARIO" in
+  success) exit 0 ;;
+  failure) printf 'simulated artifact download failure\n' >&2; exit 2 ;;
+  timeout) exit 124 ;;
+  *) exit 64 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+
+  try {
+    const script = evidence.run!.replaceAll("${{ steps.workspace.outputs.work_dir }}", tempDir);
+    return spawnSync("bash", ["-e", "-o", "pipefail", "-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FAKE_DOWNLOAD_SCENARIO: scenario,
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        RUN_ID: "29110351531",
+        RUN_URL: "https://github.com/NVIDIA/NemoClaw/actions/runs/29110351531",
+      },
+      timeout: 5_000,
+    });
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -358,6 +398,7 @@ describe("PR E2E gate workflow", () => {
   it("limits triggers and job permissions", () => {
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const initialize = workflow.jobs.initialize;
+    const required = workflow.jobs.required;
     const cancel = workflow.jobs["cancel-superseded"];
     const coordinate = workflow.jobs.coordinate;
     const approveForkSkip = workflow.jobs["approve-fork-e2e-skip"];
@@ -425,6 +466,34 @@ describe("PR E2E gate workflow", () => {
     expect(initialize.concurrency?.group).toBe(
       "pr-e2e-gate-${{ github.event.pull_request.head.repo.full_name }}-${{ github.event.pull_request.head.ref }}",
     );
+    expect(required.name).toBe("E2E / PR Gate");
+    expect(required.if).toContain("github.event_name == 'pull_request_target'");
+    expect(required.if).toContain("github.event.action != 'closed'");
+    expect(required.permissions).toEqual({
+      checks: "read",
+      contents: "read",
+      "pull-requests": "read",
+    });
+    expect(required.concurrency).toEqual({
+      group: "pr-e2e-required-${{ github.event.pull_request.number }}",
+      "cancel-in-progress": true,
+    });
+    expect(required["timeout-minutes"]).toBe(170);
+    expect(required.secrets).toBeUndefined();
+    expect(step(required, "Checkout observer").with).toEqual({
+      ref: "${{ github.workflow_sha }}",
+      "persist-credentials": false,
+    });
+    const observer = step(required, "Wait for trusted exact-diff verdict");
+    expect(observer.env).toEqual({
+      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+      GITHUB_TOKEN: "${{ github.token }}",
+      HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+      PR_NUMBER: "${{ github.event.pull_request.number }}",
+    });
+    expect(observer.run).toContain("tools/e2e/pr-e2e-required.mts");
+    expect(observer.run).toContain('--head "$HEAD_SHA"');
+    expect(observer.run).toContain('--base "$BASE_SHA"');
     expect(cancel.if).toContain("github.event_name == 'pull_request_target'");
     expect(cancel.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
@@ -506,6 +575,15 @@ describe("PR E2E gate workflow", () => {
     expect(start.run).toContain("--mode start-control-plane");
     expect(start.run).toContain('--ci-display-title "$CI_DISPLAY_TITLE"');
     expect(start.run).toContain('--gate-run-id "$GATE_RUN_ID"');
+    const wait = step(coordinate, "Wait for E2E run");
+    expect(wait.env?.GATE_RUN_URL).toBe(
+      "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+    );
+    const evidence = step(coordinate, "Download evidence");
+    expect(evidence.env?.RUN_URL).toBe(
+      "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.start.outputs.run_id }}",
+    );
+    expect(evidence.run).toContain('"$RUN_URL" >&2');
     const finish = step(coordinate, "Verify evidence");
     expect(finish.run).toContain('--evidence-outcome "${{ steps.evidence.outcome }}"');
     const approval = step(approveForkSkip, "Record approved credentialed E2E skip");
@@ -555,7 +633,7 @@ describe("PR E2E gate workflow", () => {
       (candidate) => candidate.name === "Install controller dependencies",
     );
 
-    expect(checkouts).toHaveLength(5);
+    expect(checkouts).toHaveLength(6);
     expect(
       checkouts.every(
         (checkout) =>
@@ -563,7 +641,7 @@ describe("PR E2E gate workflow", () => {
           checkout.with?.["persist-credentials"] === false,
       ),
     ).toBe(true);
-    expect(nodeSetups).toHaveLength(5);
+    expect(nodeSetups).toHaveLength(6);
     expect(nodeSetups.every((setup) => setup.with?.["node-version"] === "22")).toBe(true);
     expect(nodeSetups.every((setup) => !("cache" in (setup.with ?? {})))).toBe(true);
     expect(installs).toHaveLength(5);
@@ -694,6 +772,7 @@ describe("PR E2E gate workflow", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("simulated GitHub query failure");
     expect(result.stderr).toContain("::error title=Run status query failed::");
+    expect(result.stderr).toContain("https://github.com/NVIDIA/NemoClaw/actions/runs/29110351531");
   });
 
   it("leaves bounded wait timeouts for finalization to cancel and report", () => {
@@ -701,7 +780,22 @@ describe("PR E2E gate workflow", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("did not complete within 105 minutes");
+    expect(result.stdout).toContain("https://github.com/NVIDIA/NemoClaw/actions/runs/29110351531");
     expect(result.stderr).toBe("");
+  });
+
+  it("links timeout and generic evidence download failures to the child run", () => {
+    const timeout = runEvidenceStep("timeout");
+    const failure = runEvidenceStep("failure");
+    const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/29110351531";
+
+    expect(timeout.status).toBe(124);
+    expect(timeout.stderr).toContain("::error title=Evidence download timed out::");
+    expect(timeout.stderr).toContain(runUrl);
+    expect(failure.status).toBe(2);
+    expect(failure.stderr).toContain("simulated artifact download failure");
+    expect(failure.stderr).toContain("::error title=Evidence download failed::");
+    expect(failure.stderr).toContain(runUrl);
   });
 
   it("rejects an invalid child run ID before querying GitHub", () => {
@@ -710,6 +804,7 @@ describe("PR E2E gate workflow", () => {
     expect(result.status).toBe(1);
     expect(result.ghCallCount).toBe(0);
     expect(result.stderr).toContain("::error title=Invalid run ID::");
+    expect(result.stderr).toContain("https://github.com/NVIDIA/NemoClaw/actions/runs/17");
   });
 
   it("fails closed for an unsupported child state", () => {
@@ -718,5 +813,6 @@ describe("PR E2E gate workflow", () => {
     expect(result.status).toBe(1);
     expect(result.ghCallCount).toBe(1);
     expect(result.stderr).toContain("::error title=Unexpected run state::");
+    expect(result.stderr).toContain("https://github.com/NVIDIA/NemoClaw/actions/runs/29110351531");
   });
 });

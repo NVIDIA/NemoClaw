@@ -7,10 +7,8 @@ import { parse as parseToml } from "smol-toml";
 import { dockerCapture } from "../adapters/docker";
 import { buildVllmDockerEnv } from "./vllm-docker-env";
 
-export const VLLM_STORAGE_OVERRIDE_ENV = "NEMOCLAW_IGNORE_VLLM_DISK_SPACE";
-
 const GIB_BYTES = 1024n ** 3n;
-const IMAGE_PULL_TEMP_HEADROOM_BYTES = 3n * GIB_BYTES;
+const DOWNLOAD_TEMP_HEADROOM_BYTES = 3n * GIB_BYTES;
 const DEFAULT_CONTAINERD_ROOT = "/var/lib/containerd";
 const DEFAULT_CONTAINERD_CONFIG = "/etc/containerd/config.toml";
 const DEFAULT_DOCKER_SOCKET_PATHS = new Set(["/var/run/docker.sock", "/run/docker.sock"]);
@@ -82,8 +80,18 @@ function positiveBytes(value: number, label: string): bigint {
  */
 export function imageStorageRequirementBytes(downloadSizeBytes: number): bigint {
   return (
-    positiveBytes(downloadSizeBytes, "vLLM image download size") * 3n +
-    IMAGE_PULL_TEMP_HEADROOM_BYTES
+    positiveBytes(downloadSizeBytes, "vLLM image download size") * 3n + DOWNLOAD_TEMP_HEADROOM_BYTES
+  );
+}
+
+/**
+ * Hugging Face downloads stream into the target cache before atomically
+ * promoting the completed blobs. Reserve the pinned snapshot size plus the
+ * same fixed staging allowance used by the managed-image guard.
+ */
+export function modelStorageRequirementBytes(downloadSizeBytes: number): bigint {
+  return (
+    positiveBytes(downloadSizeBytes, "vLLM model download size") + DOWNLOAD_TEMP_HEADROOM_BYTES
   );
 }
 
@@ -285,4 +293,173 @@ export function probeDockerStorage(overrides: Partial<StorageProbeDeps> = {}): S
   return limiting
     ? { ok: true, capacity: limiting }
     : { ok: false, reason: "docker info did not report a usable image-storage path" };
+}
+
+interface HostStorageProbeDeps {
+  exists: (target: string) => boolean;
+  statfs: (target: string) => { bavail: bigint; bsize: bigint };
+}
+
+interface DirectorySizeEntry {
+  kind: "directory" | "file" | "symlink" | "other";
+  name: string;
+}
+
+interface WritableTreeDeps {
+  canWrite: (target: string, directory: boolean) => boolean;
+  list: (target: string) => DirectorySizeEntry[];
+}
+
+function defaultWritableTreeDeps(): WritableTreeDeps {
+  return {
+    canWrite: (target, directory) => {
+      try {
+        const mode = fs.constants.R_OK | fs.constants.W_OK | (directory ? fs.constants.X_OK : 0);
+        fs.accessSync(target, mode);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    list: defaultDirectorySizeDeps().list,
+  };
+}
+
+/**
+ * Return the first path in a cache tree that the current host user cannot
+ * read and write. Directories additionally require search permission. This
+ * catches legacy cache trees created by a root-run Docker downloader before
+ * a host-UID downloader is started. Symlinks are not followed because their
+ * targets are checked separately under the cache's blobs directory.
+ */
+export function findUnwritableTreePath(
+  targetPath: string,
+  overrides: Partial<WritableTreeDeps> = {},
+): string | null {
+  const deps = { ...defaultWritableTreeDeps(), ...overrides };
+  const pending = [targetPath];
+  while (pending.length > 0) {
+    const directory = pending.pop()!;
+    if (!deps.canWrite(directory, true)) return directory;
+    let entries: DirectorySizeEntry[];
+    try {
+      entries = deps.list(directory);
+    } catch {
+      return directory;
+    }
+    for (const entry of entries) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.kind === "directory") {
+        pending.push(entryPath);
+      } else if (entry.kind === "file" && !deps.canWrite(entryPath, false)) {
+        return entryPath;
+      }
+    }
+  }
+  return null;
+}
+
+interface DirectorySizeDeps {
+  exists: (target: string) => boolean;
+  list: (target: string) => DirectorySizeEntry[];
+  statFileSize: (target: string) => bigint | null;
+}
+
+function defaultDirectorySizeDeps(): DirectorySizeDeps {
+  return {
+    exists: fs.existsSync,
+    list: (target) =>
+      fs.readdirSync(target, { withFileTypes: true }).map((entry) => ({
+        kind: entry.isDirectory()
+          ? "directory"
+          : entry.isFile()
+            ? "file"
+            : entry.isSymbolicLink()
+              ? "symlink"
+              : "other",
+        name: entry.name,
+      })),
+    statFileSize: (target) => {
+      const stat = fs.statSync(target, { bigint: true });
+      return stat.isFile() ? stat.size : null;
+    },
+  };
+}
+
+/**
+ * Return the logical bytes represented by regular files in a directory tree.
+ * Symlinks are followed only when they resolve to files; directory symlinks
+ * are never traversed, avoiding cycles. Any unreadable or malformed tree
+ * returns zero so callers conservatively plan for a full download.
+ */
+export function measureDirectorySizeBytes(
+  targetPath: string,
+  overrides: Partial<DirectorySizeDeps> = {},
+): bigint {
+  const deps = { ...defaultDirectorySizeDeps(), ...overrides };
+  if (!deps.exists(targetPath)) return 0n;
+  function walk(directory: string): bigint {
+    let total = 0n;
+    for (const entry of deps.list(directory)) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.kind === "directory") {
+        total += walk(entryPath);
+      } else if (entry.kind === "file" || entry.kind === "symlink") {
+        total += deps.statFileSize(entryPath) ?? 0n;
+      }
+    }
+    return total;
+  }
+  try {
+    return walk(targetPath);
+  } catch {
+    return 0n;
+  }
+}
+
+/**
+ * Measure the filesystem that will contain a host cache path. On a fresh
+ * install the cache directory may not exist yet, so walk to its nearest
+ * existing ancestor without creating anything before the capacity decision.
+ */
+export function probeHostStorage(
+  targetPath: string,
+  source: string,
+  overrides: Partial<HostStorageProbeDeps> = {},
+): StorageProbeResult {
+  if (!path.isAbsolute(targetPath)) {
+    return {
+      ok: false,
+      reason: `storage path is not absolute: ${targetPath}`,
+      path: targetPath,
+      source,
+    };
+  }
+  const deps: HostStorageProbeDeps = {
+    exists: fs.existsSync,
+    statfs: (target) => fs.statfsSync(target, { bigint: true }),
+    ...overrides,
+  };
+  let probePath = path.normalize(targetPath);
+  while (!deps.exists(probePath)) {
+    const parent = path.dirname(probePath);
+    if (parent === probePath) break;
+    probePath = parent;
+  }
+  try {
+    const stats = deps.statfs(probePath);
+    const availableBytes = stats.bavail * stats.bsize;
+    if (availableBytes < 0n) throw new Error("filesystem reported negative available space");
+    return {
+      ok: true,
+      capacity: { availableBytes, path: targetPath, source },
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `could not inspect ${probePath}: ${(err as Error).message}`,
+      path: targetPath,
+      source,
+    };
+  }
 }

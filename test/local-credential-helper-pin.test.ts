@@ -7,7 +7,6 @@ import {
   extractCredentialPattern,
   extractEmbeddedFormDigest,
   extractProcessControlRules,
-  extractStarterPrompt,
   extractStringSet,
   verifyFieldSafetySourceParity,
 } from "../scripts/checks/local-credential-helper-pin";
@@ -300,20 +299,5 @@ describe("local credential helper pin predicate parity", () => {
     const source = `${decoy}\nconst EXPECTED_LOCAL_CREDENTIAL_FORM_SHA256 = "${currentDigest}";`;
 
     expect(extractEmbeddedFormDigest(source, "fixture.ts")).toBe(currentDigest);
-  });
-
-  it.each([
-    {
-      decoy: "/* export const STARTER_PROMPT = `stale prompt`; */",
-      label: "block-commented prompt",
-    },
-    {
-      decoy: `const decoy = ${JSON.stringify("export const STARTER_PROMPT = `stale prompt`;")};`,
-      label: "string-embedded prompt",
-    },
-  ])("ignores a $label before the executable starter prompt (#5048)", ({ decoy }) => {
-    const source = `${decoy}\nexport const STARTER_PROMPT = \`current prompt\`;`;
-
-    expect(extractStarterPrompt(source, "fixture.tsx")).toBe("current prompt");
   });
 });

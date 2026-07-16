@@ -699,6 +699,12 @@ describe("handleSandboxState", () => {
     const session = createSession({
       sandboxName: "saved",
       webSearchConfig: { fetchEnabled: true },
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: true,
+        messaging: false,
+        resourceProfile: false,
+      },
     });
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
@@ -721,6 +727,9 @@ describe("handleSandboxState", () => {
     );
     expect(calls.note).toHaveBeenCalledWith(
       "  [resume] Web Search configuration changed; recreating sandbox.",
+    );
+    expect(calls.note).not.toHaveBeenCalledWith(
+      "  [resume] Reusing web search selection: disabled.",
     );
     expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
     expect(calls.createSandbox).toHaveBeenCalled();
@@ -774,6 +783,7 @@ describe("handleSandboxState", () => {
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         extraProviders: [],
+        reuseRegisteredCredentials: true,
       },
     );
     expect(result.webSearchConfigChanged).toBe(true);
@@ -894,6 +904,7 @@ describe("handleSandboxState", () => {
         toolDisclosure: "progressive",
         observabilityEnabled: false,
         extraProviders: [],
+        reuseRegisteredCredentials: true,
       },
     );
     expect(result.webSearchConfig).toBeNull();

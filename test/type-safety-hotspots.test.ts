@@ -11,7 +11,7 @@ import {
   analyzeTypeSafetyHotspots,
   parseArgs,
   renderTextReport,
-} from "../scripts/type-safety-hotspots";
+} from "../scripts/type-safety-hotspots.mts";
 
 const tempDirs: string[] = [];
 

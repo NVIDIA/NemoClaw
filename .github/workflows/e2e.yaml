@@ -19,6 +19,15 @@ on:
         required: false
         default: ""
         type: string
+      inference_mode:
+        description: "Inference adapter mode for compatible Vitest E2E jobs: mock, internal-nvidia, or public-nvidia."
+        required: false
+        default: "mock"
+        type: choice
+        options:
+          - mock
+          - internal-nvidia
+          - public-nvidia
       allow_jetson_runner_queue:
         description: "Repository administrators only: before setting true for jetson-nvmap-gpu, confirm an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
         required: false
@@ -134,10 +143,15 @@ jobs:
       - id: matrix
         name: Generate E2E target matrix
         env:
+          INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
         run: |
           set -euo pipefail
+          case "${INFERENCE_MODE}" in
+            mock|internal-nvidia|public-nvidia) ;;
+            *) echo "::error::Invalid inference_mode: ${INFERENCE_MODE}" >&2; exit 1 ;;
+          esac
           if [ -n "${JOBS}" ] && [ -n "${TARGETS}" ]; then
             echo "::error::Use either targets or jobs, not both." >&2
             exit 1
@@ -295,39 +309,6 @@ jobs:
             echo "::error::Docker Hub login failed after 3 attempts."
             exit 1
           fi
-
-      - name: Set up DCode profile gate Buildx
-        id: dcode-profile-gate-buildx
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-        with:
-          driver-opts: default-load=true
-
-      - name: Route DCode profile gate Docker builds through Buildx
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        env:
-          DCODE_PROFILE_GATE_BUILDER: ${{ steps.dcode-profile-gate-buildx.outputs.name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${DCODE_PROFILE_GATE_BUILDER}"
-          printf 'BUILDX_BUILDER=%s\n' "${DCODE_PROFILE_GATE_BUILDER}" >> "${GITHUB_ENV}"
-
-      - name: Validate DCode profile gate production Docker build args
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        run: scripts/check-production-build-args.sh
-
-      # Import the trusted publisher cache without allowing PR-controlled E2E
-      # builds to replace it. The negative gate still executes every reviewed
-      # Dockerfile and proves the expected production-image failure.
-      - name: Warm DCode profile gate base build cache
-        if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          builder: ${{ steps.dcode-profile-gate-buildx.outputs.name }}
-          context: .
-          file: agents/langchain-deepagents-code/Dockerfile.base
-          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:buildcache
 
       - name: Configure live E2E trace directory
         env:
@@ -607,15 +588,20 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Three destructive agent scenarios each have a 45-minute Vitest budget,
-    # plus pinned OpenShell installation and cold image setup.
-    timeout-minutes: 180
+    # Keep each destructive agent lifecycle on a fresh runner. This bounds the
+    # blast radius of runner loss and gives every adapter independent evidence.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes, deepagents]
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
@@ -685,14 +671,14 @@ jobs:
         if: always()
         run: >-
           npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/mcp-bridge
+          e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-mcp-bridge
-          path: e2e-artifacts/live/mcp-bridge/
+          name: e2e-mcp-bridge-${{ matrix.agent }}
+          path: e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -707,14 +693,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 180
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes, deepagents]
     env:
       E2E_JOB: "1"
       E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "mcp-bridge-dev"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: dev
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
@@ -796,14 +787,14 @@ jobs:
         if: always()
         run: >-
           npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/mcp-bridge-dev
+          e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-mcp-bridge-dev
-          path: e2e-artifacts/live/mcp-bridge-dev/
+          name: e2e-mcp-bridge-dev-${{ matrix.agent }}
+          path: e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -1208,6 +1199,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: "hermes"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.mode }}
       NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       NEMOCLAW_SWITCH_PROVIDER: ${{ matrix.switch_provider }}
       NEMOCLAW_SWITCH_MODEL: ${{ matrix.switch_model }}
@@ -1706,7 +1698,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-e2e
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_E2E_INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -1726,7 +1718,7 @@ jobs:
 
       - name: Run Hermes live Vitest test
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \
@@ -2368,36 +2360,6 @@ jobs:
 
       - *dockerhub-auth
 
-      - &rebuild-buildx
-        name: Set up rebuild Buildx
-        id: rebuild-buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-        with:
-          driver-opts: default-load=true
-
-      - &route-rebuild-builds
-        name: Route rebuild Docker builds through Buildx
-        env:
-          REBUILD_BUILDER: ${{ steps.rebuild-buildx.outputs.name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${REBUILD_BUILDER}"
-          printf 'BUILDX_BUILDER=%s\n' "${REBUILD_BUILDER}" >> "${GITHUB_ENV}"
-
-      - name: Validate OpenClaw rebuild production Docker build args
-        run: scripts/check-production-build-args.sh
-
-      # This job may build PR-controlled source, so it imports the trusted
-      # publisher cache read-only and keeps any new layers job-local.
-      - name: Warm current OpenClaw base build cache
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          builder: ${{ steps.rebuild-buildx.outputs.name }}
-          context: .
-          file: Dockerfile.base
-          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/sandbox-base:buildcache
-
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
@@ -2469,23 +2431,6 @@ jobs:
 
       - *dockerhub-auth
 
-      - *rebuild-buildx
-
-      - *route-rebuild-builds
-
-      - &validate-hermes-rebuild-build-args
-        name: Validate Hermes rebuild production Docker build args
-        run: scripts/check-production-build-args.sh
-
-      - &warm-current-hermes-base
-        name: Warm current Hermes base build cache
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          builder: ${{ steps.rebuild-buildx.outputs.name }}
-          context: .
-          file: agents/hermes/Dockerfile.base
-          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:buildcache
-
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
         with:
@@ -2541,14 +2486,6 @@ jobs:
           persist-credentials: false
 
       - *dockerhub-auth
-
-      - *rebuild-buildx
-
-      - *route-rebuild-builds
-
-      - *validate-hermes-rebuild-build-args
-
-      - *warm-current-hermes-base
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -4350,6 +4287,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: "openclaw"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.mode }}
       NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       NEMOCLAW_SWITCH_PROVIDER: ${{ matrix.switch_provider }}
       NEMOCLAW_SWITCH_MODEL: ${{ matrix.switch_model }}
@@ -4413,6 +4351,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -5301,6 +5240,46 @@ jobs:
             }
 
             const testResults = new Map();
+            const jobLinks = new Map();
+            const wallClockRanges = new Map();
+            const validatedJobUrl = (job) =>
+              Number.isSafeInteger(job.id) && job.id > 0
+                ? `${runUrl}/job/${job.id}`
+                : undefined;
+            const recordJobLink = (name, job) => {
+              const url = validatedJobUrl(job);
+              if (!url) return;
+              const didNotPass =
+                job.status === 'completed' &&
+                !['success', 'skipped', 'neutral'].includes(job.conclusion);
+              const current = jobLinks.get(name);
+              if (!current || (didNotPass && !current.didNotPass)) {
+                jobLinks.set(name, { didNotPass, url });
+              }
+            };
+            const recordWallClockRange = (name, job) => {
+              if (job.conclusion === 'skipped') return;
+              const startedAt = Date.parse(job.started_at || '');
+              const completedAt = Date.parse(job.completed_at || '');
+              if (!Number.isFinite(startedAt) || !Number.isFinite(completedAt) || completedAt < startedAt) {
+                return;
+              }
+              const current = wallClockRanges.get(name);
+              wallClockRanges.set(name, {
+                startedAt: current ? Math.min(current.startedAt, startedAt) : startedAt,
+                completedAt: current ? Math.max(current.completedAt, completedAt) : completedAt,
+              });
+            };
+            const formatWallClockTime = (range) => {
+              if (!range) return '—';
+              const totalSeconds = Math.round((range.completedAt - range.startedAt) / 1000);
+              const hours = Math.floor(totalSeconds / 3600);
+              const minutes = Math.floor((totalSeconds % 3600) / 60);
+              const seconds = totalSeconds % 60;
+              return [hours ? `${hours}h` : '', minutes ? `${minutes}m` : '', `${seconds}s`]
+                .filter(Boolean)
+                .join(' ');
+            };
             let sharedJobResultsLoaded = false;
             try {
               const apiJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
@@ -5311,15 +5290,28 @@ jobs:
                 per_page: 100,
               });
               const selectedTestIds = new Set(testIds);
+              const aggregateJobNames = Object.keys(needs);
               for (const job of apiJobs) {
-                const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(job.name || '');
+                const jobName = job.name || '';
+                const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(jobName);
+                const aggregateJobName = aggregateJobNames.find((name) =>
+                  jobName.startsWith(`${name} (`),
+                );
+                const reportEntryName =
+                  match?.[1] ??
+                  aggregateJobName ??
+                  (/^OpenShell gateway upgrade \(.+\)$/.test(jobName)
+                    ? 'openshell-gateway-upgrade'
+                    : jobName);
+                recordWallClockRange(reportEntryName, job);
+                recordJobLink(reportEntryName, job);
                 if (!match || !selectedTestIds.has(match[1])) continue;
                 const result =
                   job.status === 'completed' &&
                   ['success', 'failure', 'cancelled', 'skipped'].includes(job.conclusion)
                     ? job.conclusion
                     : 'unknown';
-                testResults.set(match[1], { result });
+                testResults.set(match[1], { jobUrl: validatedJobUrl(job), result });
               }
               sharedJobResultsLoaded = true;
             } catch (error) {
@@ -5353,13 +5345,31 @@ jobs:
               core.warning(
                 `Per-test conclusions (${knownTestResults.join(', ')}) contradict shared E2E job aggregate ${sharedJobAggregateResult}; reporting child attribution as unknown.`,
               );
-              for (const id of testIds) testResults.set(id, { result: 'unknown' });
+              for (const id of testIds) {
+                testResults.set(id, { ...testResults.get(id), result: 'unknown' });
+              }
             }
 
-            const allEntries = Object.entries(needs).filter(([name]) => name !== 'shared-e2e');
+            const allEntries = Object.entries(needs)
+              .filter(([name]) => name !== 'shared-e2e')
+              .map(([name, value]) => [
+                name,
+                {
+                  ...value,
+                  jobUrl: jobLinks.get(name)?.url,
+                  wallClockRange: wallClockRanges.get(name),
+                },
+              ]);
             if (needs['shared-e2e']) {
               allEntries.push(
-                ...testIds.map((id) => [id, testResults.get(id) ?? { result: 'unknown' }]),
+                ...testIds.map((id) => [
+                  id,
+                  {
+                    ...(testResults.get(id) ?? { result: 'unknown' }),
+                    jobUrl: testResults.get(id)?.jobUrl ?? jobLinks.get(id)?.url,
+                    wallClockRange: wallClockRanges.get(id),
+                  },
+                ]),
               );
             }
             allEntries.sort(([a], [b]) => a.localeCompare(b));
@@ -5379,10 +5389,13 @@ jobs:
                 ? allEntries.filter(([, { result }]) => result !== 'skipped')
                 : allEntries;
             const rows = reportedEntries.map(
-              ([name, { result }]) => `| ${name} | ${emoji[result] || '❓'} ${result} |`,
+              ([name, { jobUrl, result, wallClockRange }]) => {
+                const label = result === 'failure' ? `[${name}](${jobUrl ?? runUrl})` : name;
+                return `| ${label} | ${emoji[result] || '❓'} ${result} | ${formatWallClockTime(wallClockRange)} |`;
+              },
             );
             for (const name of missingRequestedTestIds) {
-              rows.push(`| ${name} | ❓ not reported |`);
+              rows.push(`| ${name} | ❓ not reported | — |`);
             }
 
             const ran = reportedEntries.filter(([, v]) => v.result !== 'skipped');
@@ -5428,8 +5441,8 @@ jobs:
                   : '**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped, ${unknown.length} unknown`,
               '',
-              '| Test | Result |',
-              '|-----|--------|',
+              '| Test | Result | Total wall clock time |',
+              '|-----|--------|-----------------------|',
               ...rows,
             ];
             if (!selectiveDispatch) {
@@ -5442,8 +5455,10 @@ jobs:
               lines.push('', `> **Explicit-only jobs skipped:** ${skippedJobHints}.`);
             }
             if (failed.length > 0) {
-              const failedNames = failed.map(([name]) => name).join(', ');
-              lines.push('', `> **Failed tests:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);
+              const failedLinks = failed
+                .map(([name, { jobUrl }]) => `[${name}](${jobUrl ?? runUrl})`)
+                .join(', ');
+              lines.push('', `> **Failed tests:** ${failedLinks}. Check [the workflow run](${runUrl}) for all logs and artifacts.`);
             }
             if (missingRequestedTestIds.length > 0) {
               lines.push(

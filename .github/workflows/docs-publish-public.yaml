@@ -47,10 +47,10 @@ jobs:
       - name: Install docs dependencies
         run: npm ci --ignore-scripts
 
-      - name: Generate doc variants and validate Fern docs
+      - name: Prepare and validate Fern docs
         run: |
-          npm run docs:sync-agent-variants
-          npm run docs
+          npm run docs:prepare
+          npm run docs:validate
 
       - name: Publish public docs
         env:

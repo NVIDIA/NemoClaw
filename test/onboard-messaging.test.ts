@@ -532,9 +532,9 @@ registry.registerSandbox({
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get -g nemoclaw my-assistant-discord-bridge")) return { status: 0 };
-  if (normalized.includes("provider get -g nemoclaw my-assistant-slack-bridge")) return { status: 0 };
-  if (normalized.includes("provider get -g nemoclaw my-assistant-slack-app")) return { status: 0 };
+  if (normalized.includes("provider get -g nemoclaw my-assistant-discord-bridge")) return { status: 0, stdout: "Name: my-assistant-discord-bridge\nType: generic\nCredential keys: DISCORD_BOT_TOKEN\nConfig keys: <none>\n" };
+  if (normalized.includes("provider get -g nemoclaw my-assistant-slack-bridge")) return { status: 0, stdout: "Name: my-assistant-slack-bridge\nType: generic\nCredential keys: SLACK_BOT_TOKEN\nConfig keys: <none>\n" };
+  if (normalized.includes("provider get -g nemoclaw my-assistant-slack-app")) return { status: 0, stdout: "Name: my-assistant-slack-app\nType: generic\nCredential keys: SLACK_APP_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
   return { status: 0 };
 };
@@ -694,7 +694,7 @@ registry.registerSandbox({
 runner.run = (command, opts = {}) => {
   const normalized = _n(command);
   commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0 };
+  if (normalized.includes("provider get -g nemoclaw my-assistant-telegram-bridge")) return { status: 0, stdout: "Name: my-assistant-telegram-bridge\nType: generic\nCredential keys: TELEGRAM_BOT_TOKEN\nConfig keys: <none>\n" };
   if (normalized.includes("provider get")) return { status: 1 };
   return { status: 0 };
 };

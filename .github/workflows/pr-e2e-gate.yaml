@@ -83,6 +83,43 @@ jobs:
           --head "$HEAD_SHA"
           --base "$BASE_SHA"
 
+  required:
+    name: E2E / PR Gate
+    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: pr-e2e-required-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout observer
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Wait for trusted exact-diff verdict
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-required.mts
+          --pr "$PR_NUMBER"
+          --head "$HEAD_SHA"
+          --base "$BASE_SHA"
+          --timeout-seconds 9900
+
   cancel-superseded:
     if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.pull_request.head.repo.full_name == github.repository && (github.event.action != 'edited' || github.event.changes.base != null) }}
     runs-on: ubuntu-latest
@@ -222,6 +259,7 @@ jobs:
         if: ${{ steps.start.outputs.dispatched == 'true' }}
         continue-on-error: true
         env:
+          GATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.start.outputs.run_id }}
         run: |
@@ -230,7 +268,8 @@ jobs:
           set -euo pipefail
 
           if [[ ! "$RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
-            printf '::error title=Invalid run ID::The controller did not provide a positive numeric run ID.\n' >&2
+            printf '::error title=Invalid run ID::The controller did not provide a positive numeric run ID. %s\n' \
+              "$GATE_RUN_URL" >&2
             exit 1
           fi
 
@@ -284,7 +323,9 @@ jobs:
           WAIT
 
           if [ "$wait_status" -eq 124 ]; then
-            printf 'Run %s did not complete within 105 minutes; finalization will cancel it and report the PR gate outcome.\n' "$RUN_ID"
+            run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+            printf 'Run %s did not complete within 105 minutes; finalization will cancel it and report the PR gate outcome. %s\n' \
+              "$RUN_ID" "$run_url"
             wait_status=0
           fi
           exit "$wait_status"
@@ -296,6 +337,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ steps.start.outputs.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ steps.start.outputs.run_id }}
         run: |
           set -euo pipefail
           download_status=0
@@ -303,7 +345,11 @@ jobs:
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
               --dir "${{ steps.workspace.outputs.work_dir }}/evidence" || download_status=$?
           if [ "$download_status" -eq 124 ]; then
-            printf '::error title=Evidence download timed out::Artifact download exceeded 10 minutes.\n' >&2
+            printf '::error title=Evidence download timed out::Artifact download exceeded 10 minutes. %s\n' \
+              "$RUN_URL" >&2
+          elif [ "$download_status" -ne 0 ]; then
+            printf '::error title=Evidence download failed::Artifact download exited with status %s. %s\n' \
+              "$download_status" "$RUN_URL" >&2
           fi
           exit "$download_status"
 

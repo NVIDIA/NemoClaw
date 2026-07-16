@@ -100,6 +100,7 @@ function workflowContracts(): Array<{ name: string; workflow: Workflow }> {
 function runBaseImageBuildArgGuard(
   step: WorkflowStep,
   openclawVersion: string,
+  agent = "openclaw",
 ): { output: string; result: ReturnType<typeof spawnSync> } {
   const tmp = mkdtempSync(path.join(tmpdir(), "nemoclaw-base-image-build-args-"));
   const githubOutput = path.join(tmp, "github-output");
@@ -109,6 +110,7 @@ function runBaseImageBuildArgGuard(
       encoding: "utf-8",
       env: {
         ...process.env,
+        AGENT: agent,
         GITHUB_OUTPUT: githubOutput,
         OPENCLAW_VERSION_INPUT: openclawVersion,
       },
@@ -411,6 +413,9 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 		grep -Fq 'nemoclaw: #4434 structured unreachable-inference diagnostic' "$issue_4434_patch"
 		grep -Fq 'COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts' Dockerfile
 		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \\' Dockerfile
+		grep -Fq 'COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts' Dockerfile
+		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \\' Dockerfile
+		! grep -Fq 'patch-openclaw-tool-catalog.js' Dockerfile
 		device_self_approval_patch=${JSON.stringify(DEVICE_SELF_APPROVAL_PATCH)}
 		grep -Fq 'nemoclaw: reach gateway for bounded same-device scope approval' "$device_self_approval_patch"
 		grep -Fq 'nemoclaw: bounded same-device scope approval' "$device_self_approval_patch"
@@ -491,6 +496,12 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       const { output, result } = runBaseImageBuildArgGuard(guard, input);
       expect(result.status, `${JSON.stringify(input)}: ${result.stderr}`).toBe(0);
       expect(output).toBe(expectedOutput);
+    }
+
+    for (const agent of ["hermes", "langchain-deepagents-code"]) {
+      const { output, result } = runBaseImageBuildArgGuard(guard, "2026.6.10", agent);
+      expect(result.status, `${agent}: ${result.stderr}`).toBe(0);
+      expect(output).toBe("openclaw_build_arg=\n");
     }
 
     for (const input of ["v2026.6.10", "2026.6.10-beta.1", "2026.6.10 trailing", "2026.4.24"]) {
