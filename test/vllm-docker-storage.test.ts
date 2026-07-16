@@ -9,10 +9,15 @@ import path from "node:path";
 
 import { afterEach, expect, test, vi } from "vitest";
 
-import { probeDockerStorage } from "../src/lib/inference/vllm-storage";
+import { __test, detectVllmProfile } from "../src/lib/inference/vllm";
+import {
+  imageStorageRequirementBytes,
+  probeDockerStorage,
+} from "../src/lib/inference/vllm-storage";
 
 const TARGET_ID = "vllm-docker-storage";
 const DOCKER_HOST = "unix:///run/docker.sock";
+const RELEASE_CANDIDATE_VERSION = "v0.0.85";
 const RUN_REAL_DOCKER =
   process.env.E2E_TARGET_ID === TARGET_ID ||
   process.env.NEMOCLAW_RUN_VLLM_STORAGE_DOCKER_E2E === "1";
@@ -45,11 +50,45 @@ function writeEvidence(evidence: Record<string, unknown>): void {
   persist();
 }
 
-afterEach(() => vi.unstubAllEnvs());
+function validationSubject(
+  checkoutSha: string,
+  candidateVersion = process.env.NEMOCLAW_CANDIDATE_VERSION,
+):
+  | { kind: "checkout"; checkoutSha: string }
+  | { kind: "release-candidate"; version: string; checkoutSha: string } {
+  if (!candidateVersion) return { kind: "checkout", checkoutSha };
+  if (candidateVersion !== RELEASE_CANDIDATE_VERSION) {
+    throw new Error(
+      `NEMOCLAW_CANDIDATE_VERSION must be exactly ${RELEASE_CANDIDATE_VERSION}; received ${JSON.stringify(candidateVersion)}`,
+    );
+  }
+  return { kind: "release-candidate", version: candidateVersion, checkoutSha };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
+test("distinguishes checkout evidence from exact v0.0.85 release acceptance (#7039)", () => {
+  const checkoutSha = "a".repeat(40);
+  expect(validationSubject(checkoutSha, undefined)).toEqual({ kind: "checkout", checkoutSha });
+  expect(validationSubject(checkoutSha, RELEASE_CANDIDATE_VERSION)).toEqual({
+    kind: "release-candidate",
+    version: RELEASE_CANDIDATE_VERSION,
+    checkoutSha,
+  });
+  expect(() => validationSubject(checkoutSha, "0.0.85")).toThrow(
+    `NEMOCLAW_CANDIDATE_VERSION must be exactly ${RELEASE_CANDIDATE_VERSION}`,
+  );
+  expect(() => validationSubject(checkoutSha, "v0.0.84")).toThrow(
+    `NEMOCLAW_CANDIDATE_VERSION must be exactly ${RELEASE_CANDIDATE_VERSION}`,
+  );
+});
 
 realDockerTest(
-  "measures real Docker storage through the /run/docker.sock alias (#7039)",
-  () => {
+  "accepts a real Linux profile from the measured /run/docker.sock capacity (#7039)",
+  async () => {
     expect(process.platform, "this release acceptance requires a native Linux host").toBe("linux");
     expect(
       fs.statSync("/run/docker.sock").isSocket(),
@@ -95,7 +134,24 @@ realDockerTest(
     assert(capacityStats, `the probe did not sample ${probe.capacity.path}`);
     const measuredAvailableBytes = capacityStats.bavail * capacityStats.bsize;
     expect(probe.capacity.availableBytes).toBe(measuredAvailableBytes);
-    expect(probe.capacity.availableBytes).toBeGreaterThan(0n);
+
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+    assert(profile, "the release acceptance host must support the real Linux vLLM profile");
+    const requiredBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
+    expect(probe.capacity.availableBytes).toBeGreaterThanOrEqual(requiredBytes);
+
+    const promptFn = vi.fn(async () => {
+      throw new Error("the sufficient-capacity path must not prompt");
+    });
+    const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const accepted = await __test.imageStorageAccepted(
+      profile,
+      { hasImage: false, nonInteractive: true, promptFn },
+      probe,
+    );
+    expect(accepted).toBe(true);
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(warning).not.toHaveBeenCalled();
 
     const checkoutResult = spawnSync("git", ["rev-parse", "HEAD"], {
       encoding: "utf8",
@@ -112,6 +168,7 @@ realDockerTest(
     const evidence = {
       schemaVersion: 1,
       checkoutSha,
+      validationSubject: validationSubject(checkoutSha),
       platform: process.platform,
       architecture: process.arch,
       dockerHost: DOCKER_HOST,
@@ -121,6 +178,8 @@ realDockerTest(
       measuredPath: probe.capacity.path,
       measuredSource: probe.capacity.source,
       measuredAvailableBytes: String(probe.capacity.availableBytes),
+      requiredAvailableBytes: String(requiredBytes),
+      imageStorageAccepted: accepted,
     };
     writeEvidence(evidence);
     console.info(`[${TARGET_ID}] ${JSON.stringify(evidence)}`);

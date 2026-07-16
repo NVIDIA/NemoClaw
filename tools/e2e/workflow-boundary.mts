@@ -872,6 +872,12 @@ function validateSharedE2eJob(errors: string[], jobs: WorkflowRecord): void {
   if (runEnv.TEST_PROJECT !== "${{ matrix.project }}") {
     errors.push("shared E2E test step must pass matrix.project through TEST_PROJECT");
   }
+  if (
+    runEnv.NEMOCLAW_CANDIDATE_VERSION !==
+    "${{ matrix.id == 'vllm-docker-storage' && inputs.candidate_version || '' }}"
+  ) {
+    errors.push("shared E2E test step must scope candidate_version to vllm-docker-storage only");
+  }
   requireRunContains(
     errors,
     runVitest,
@@ -3766,6 +3772,14 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
     errors.push("workflow_dispatch must not expose legacy test_filter input");
+  }
+  const candidateVersionInput = requireInput(errors, dispatchInputs, "candidate_version");
+  if (
+    candidateVersionInput.type !== "string" ||
+    candidateVersionInput.required !== false ||
+    candidateVersionInput.default !== ""
+  ) {
+    errors.push("workflow_dispatch candidate_version must be an optional empty string by default");
   }
 
   const permissions = asRecord(workflow.permissions);

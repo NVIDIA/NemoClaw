@@ -19,6 +19,11 @@ on:
         required: false
         default: ""
         type: string
+      candidate_version:
+        description: "Optional exact NemoClaw release-candidate version for vllm-docker-storage evidence. Release acceptance for #7039 requires v0.0.85; empty records only the exact checkout SHA."
+        required: false
+        default: ""
+        type: string
       inference_mode:
         description: "Inference adapter mode for compatible Vitest E2E jobs: mock, internal-nvidia, or public-nvidia."
         required: false
@@ -506,6 +511,7 @@ jobs:
 
       - name: Run tagged credential-free test
         env:
+          NEMOCLAW_CANDIDATE_VERSION: ${{ matrix.id == 'vllm-docker-storage' && inputs.candidate_version || '' }}
           TEST_FILE: ${{ matrix.file }}
           TEST_PROJECT: ${{ matrix.project }}
         run: |
