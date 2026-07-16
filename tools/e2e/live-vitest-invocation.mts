@@ -20,6 +20,18 @@ export interface LiveVitestInvocation {
   project?: string | undefined;
 }
 
+export interface LiveVitestSpawnResult {
+  status: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: Error | undefined;
+}
+
+export type LiveVitestSpawner = (
+  command: string,
+  args: string[],
+  options: { stdio: "inherit" },
+) => LiveVitestSpawnResult;
+
 function assertNoShellMetacharacters(value: string, field: string): void {
   const match = SHELL_METACHARACTER.exec(value);
   if (match) {
@@ -88,24 +100,30 @@ export function buildLiveVitestArgs(invocation: LiveVitestInvocation): string[] 
   ];
 }
 
-function runCli(): void {
-  const args = parseArgs(process.argv.slice(3));
+export function runLiveVitestCli(cliArgs: string[], spawn: LiveVitestSpawner = spawnSync): number {
+  const args = parseArgs(cliArgs);
   const argv = buildLiveVitestArgs({
     testPath: args.testPath,
     selector: args.selector,
     project: args.project,
   });
-  const result = spawnSync("npx", argv, { stdio: "inherit" });
+  const result = spawn("npx", argv, { stdio: "inherit" });
   if (result.error) {
     throw result.error;
   }
-  process.exit(spawnExitCode(result));
+  return spawnExitCode(result);
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href &&
-  process.argv[2] === "run"
-) {
-  runCli();
+export function runLiveVitestCommand(argv: string[], spawn: LiveVitestSpawner = spawnSync): number {
+  const [command, ...cliArgs] = argv;
+  if (command !== "run") {
+    throw new Error(
+      `unsupported live Vitest command ${JSON.stringify(command ?? "")}; expected "run"`,
+    );
+  }
+  return runLiveVitestCli(cliArgs, spawn);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exit(runLiveVitestCommand(process.argv.slice(2)));
 }

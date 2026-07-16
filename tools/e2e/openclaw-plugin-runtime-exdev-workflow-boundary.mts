@@ -167,7 +167,7 @@ export function validateOpenClawPluginRuntimeExdevWorkflow(
     'test -z "${DOCKERHUB_USERNAME:-}"',
     'test -z "${DOCKERHUB_TOKEN:-}"',
     "env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN",
-    "tools/e2e/live-vitest-invocation.mts run",
+    "tools/e2e/live-vitest-invocation.mts run --test-path",
     "test/e2e/live/openclaw-plugin-runtime-exdev.test.ts",
   ]) {
     requireRunContains(errors, run, fragment, runName);

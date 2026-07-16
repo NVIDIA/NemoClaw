@@ -107,11 +107,11 @@ describe("E2E operations workflow boundary", () => {
     const job = workflow.jobs["cloud-onboard"];
     job.env!.E2E_TARGET_ID = "different-job";
     const run = job.steps!.find((step) =>
-      String(step.run ?? "").includes("tools/e2e/live-vitest-invocation.mts run"),
+      String(step.run ?? "").includes("tools/e2e/live-vitest-invocation.mts run --test-path"),
     )!;
     run.run = run.run!.replace(
-      "npx tsx tools/e2e/live-vitest-invocation.mts run",
-      "npx vitest run --project e2e-live",
+      "tools/e2e/live-vitest-invocation.mts run --test-path",
+      "tools/e2e/live-vitest-invocation.mts runx --test-path",
     );
     const upload = job.steps!.find((step) =>
       step.uses?.startsWith("NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@"),

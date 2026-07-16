@@ -393,7 +393,7 @@ function validateJobExecution(
     }
   }
   for (const required of [
-    "tools/e2e/live-vitest-invocation.mts run",
+    "tools/e2e/live-vitest-invocation.mts run --test-path",
     "test/e2e/live/mcp-bridge.test.ts",
   ]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
@@ -401,7 +401,7 @@ function validateJobExecution(
   requireContains(
     errors,
     run.run,
-    "tools/e2e/live-vitest-invocation.mts run",
+    "tools/e2e/live-vitest-invocation.mts run --test-path",
     `${jobName} must publish canonical risk-signal evidence`,
   );
   requireEqual(

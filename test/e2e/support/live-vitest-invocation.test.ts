@@ -1,12 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
 import {
   buildLiveVitestArgs,
   LIVE_VITEST_PROJECT,
+  type LiveVitestSpawner,
   RISK_SIGNAL_REPORTER,
+  runLiveVitestCommand,
   validateLiveProject,
   validateLiveSelector,
   validateLiveTestPath,
@@ -149,5 +153,62 @@ describe("buildLiveVitestArgs (#6961)", () => {
         project: "e2e-live",
       }),
     ).toThrow(/must be under/);
+  });
+});
+
+describe("runLiveVitestCommand (#6961)", () => {
+  const validArgs = ["run", "--test-path", "test/e2e/live/diagnostics.test.ts"];
+
+  it.each([
+    ["child status", { status: 7, signal: null }, 7],
+    ["child signal", { status: null, signal: "SIGTERM" as NodeJS.Signals }, 143],
+    ["missing status and signal", { status: null, signal: null }, 1],
+  ])("preserves %s", (_label, result, expected) => {
+    let spawned: Parameters<LiveVitestSpawner> | undefined;
+    const spawn: LiveVitestSpawner = (...args) => {
+      spawned = args;
+      return result;
+    };
+
+    expect(runLiveVitestCommand(validArgs, spawn)).toBe(expected);
+    expect(spawned).toEqual([
+      "npx",
+      [
+        "vitest",
+        "run",
+        "--project",
+        "e2e-live",
+        "test/e2e/live/diagnostics.test.ts",
+        "--silent=false",
+        "--reporter=default",
+        `--reporter=${RISK_SIGNAL_REPORTER}`,
+      ],
+      { stdio: "inherit" },
+    ]);
+  });
+
+  it("surfaces child launch failures", () => {
+    const launchError = new Error("spawn npx ENOENT");
+    const spawn: LiveVitestSpawner = () => ({
+      status: null,
+      signal: null,
+      error: launchError,
+    });
+
+    expect(() => runLiveVitestCommand(validArgs, spawn)).toThrow(launchError);
+  });
+
+  it.each([
+    ["missing", []],
+    ["unsupported", ["runx"]],
+  ])("fails the direct CLI for a %s subcommand", (_label, args) => {
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", "tools/e2e/live-vitest-invocation.mts", ...args],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('expected "run"');
   });
 });

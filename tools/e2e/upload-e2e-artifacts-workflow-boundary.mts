@@ -283,7 +283,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
             (step) =>
               typeof step.run === "string" &&
               (step.run.includes("--project e2e-live") ||
-                step.run.includes("tools/e2e/live-vitest-invocation.mts run")),
+                step.run.includes("tools/e2e/live-vitest-invocation.mts run --test-path")),
           )
         );
       })

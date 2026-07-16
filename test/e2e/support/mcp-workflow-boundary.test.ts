@@ -26,7 +26,7 @@ describe("MCP workflow artifact boundary", () => {
         (step) => step.name === "Run MCP OpenShell provider live test",
       );
       requireFixture(run?.run, `${jobName} MCP live-test fixture is missing`);
-      const helper = "tools/e2e/live-vitest-invocation.mts run";
+      const helper = "tools/e2e/live-vitest-invocation.mts run --test-path";
       requireFixture(run.run.includes(helper), `${jobName} live-vitest helper fixture is missing`);
       const updatedRun = run.run.replace(helper, "vitest run");
       requireFixture(updatedRun !== run.run, `${jobName} live-vitest helper could not be removed`);
