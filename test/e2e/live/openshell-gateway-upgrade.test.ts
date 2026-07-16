@@ -770,7 +770,9 @@ runLinuxOpenShellGatewayUpgrade(
 
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: "dummy",
+      host: "0.0.0.0",
       model: "test-model",
+      publicHost: "host.openshell.internal",
       responseText: "ok",
     });
     cleanup.add("close compatible endpoint mock", async () => {
