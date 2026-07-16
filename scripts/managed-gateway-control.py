@@ -614,9 +614,18 @@ def _parse_status(raw: bytes, pid: int) -> tuple[tuple[int, int, int, int], int]
     return uid_values, namespace_values[-1]
 
 
-def _parse_cmdline(raw: bytes) -> tuple[bytes, ...]:
+def _parse_cmdline(raw: bytes, state: str) -> tuple[bytes, ...]:
     values = tuple(value for value in raw.split(b"\0") if value)
-    if not values or sum(len(value) for value in values) > MAX_PROC_FILE_BYTES:
+    if sum(len(value) for value in values) > MAX_PROC_FILE_BYTES:
+        raise ControlError("SUPERVISOR_UNAVAILABLE")
+    if not values:
+        # Linux exposes an empty cmdline after a process becomes a zombie. A
+        # twice-captured zombie cannot be a live supervisor or gateway, and all
+        # candidate matchers exclude state=Z while safely handling empty argv.
+        # Keep an empty cmdline terminal for every live state so a malformed or
+        # unreadable live process still makes discovery fail closed.
+        if state == "Z":
+            return ()
         raise ControlError("SUPERVISOR_UNAVAILABLE")
     return values
 
@@ -656,11 +665,15 @@ class ProcReader:
             before = os.fstat(pid_fd)
             first_stat = _parse_stat(_read_at(pid_fd, "stat"))
             first_status = _parse_status(_read_at(pid_fd, "status"), pid)
-            first_cmdline = _parse_cmdline(_read_at(pid_fd, "cmdline"))
+            first_cmdline = _parse_cmdline(
+                _read_at(pid_fd, "cmdline"), first_stat[0]
+            )
             first_namespace = _namespace_inode(pid_fd)
             second_stat = _parse_stat(_read_at(pid_fd, "stat"))
             second_status = _parse_status(_read_at(pid_fd, "status"), pid)
-            second_cmdline = _parse_cmdline(_read_at(pid_fd, "cmdline"))
+            second_cmdline = _parse_cmdline(
+                _read_at(pid_fd, "cmdline"), second_stat[0]
+            )
             second_namespace = _namespace_inode(pid_fd)
             after = os.fstat(pid_fd)
             if (
