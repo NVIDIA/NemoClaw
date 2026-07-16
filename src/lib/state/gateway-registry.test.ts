@@ -69,7 +69,7 @@ describe("host gateway registry index", () => {
     }
   });
 
-  it("treats a zero persisted dashboard port as no dashboard instead of blocking the registry", () => {
+  it("treats a zero persisted dashboard port as no dashboard instead of blocking the registry (#7020)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-index-zero-port-"));
     try {
       const root = path.join(home, ".nemoclaw", "gateways", "9123");
