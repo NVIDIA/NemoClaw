@@ -522,6 +522,12 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain(
       "two immutable URL and digest pairs as one reviewed trust boundary",
     );
+    expect(promptSource).toContain(
+      "before executing the helper, compute the SHA-256 digest of both downloaded files and compare each result with its pinned digest",
+    );
+    expect(promptSource).toContain(
+      "If either digest differs, do not execute the helper; delete both temporary files and stop.",
+    );
     expect(promptSource).toContain("exact environment-variable names and exact command argv");
     expect(promptSource).toContain("--field NAME:type");
     expect(promptSource).toContain("--execution-profile isolated");

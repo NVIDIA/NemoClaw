@@ -164,7 +164,8 @@ Use this reviewed pair without modification:
 - Helper: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/scripts/local-credential-helper.mts` (SHA-256 `1a42bbe8dbc9003cb79d4e641b53760571aacd85293671aee97c09c0746fef33`).
 - Form: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/dd61a307d7ddf7be99de8ff1e2678fb8ef42f8e6/docs/resources/local-credential-form.html` (SHA-256 `5512a256e0ad7c63a26ab82cf4f5924e98652097172ab8a5dc9d9358dd4f6ae8`).
 
-- Treat the two immutable URL and digest pairs as one reviewed trust boundary; stop if either verification fails.
+- Treat the two immutable URL and digest pairs as one reviewed trust boundary; before executing the helper, compute the SHA-256 digest of both downloaded files and compare each result with its pinned digest.
+- If either digest differs, do not execute the helper; delete both temporary files and stop.
 - Store them in a private temporary directory and delete them afterward.
 - The helper requires Node.js 22.19 or newer.
 - If Node is unavailable, use an existing secure local application prompt or secure terminal prompt; never use chat or generated credential code.
