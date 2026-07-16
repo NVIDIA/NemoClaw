@@ -84,6 +84,7 @@ interface GateOutput {
     riskyCodeTested: GateResult & { riskyFiles?: string[]; hasTests?: boolean };
     contributorCompliance: GateResult & {
       dcoDeclarationPresent?: boolean;
+      dcoDeclarationBypassed?: boolean;
       unverifiedCommits?: Array<{ sha: string; reason: string }>;
     };
   };
@@ -831,32 +832,6 @@ function currentCheckRollup(
     run.createdAt <= e2eCoordinationEvidence.startedAt &&
     e2eCoordinationEvidence.completedAt <= run.updatedAt;
 
-  const classifyInstallerMetadataEditRun = (
-    runId: string,
-  ): "recognized" | "invalid" | "not_metadata_edit" => {
-    const run = actionRunMetadata(runId);
-    const jobs = latestAttemptJobs(runId);
-    if (!run || !jobs || jobs.size === 0) return "not_metadata_edit";
-    if (
-      runIdentityEvidence(runId, true) !== "current" ||
-      run.event !== "pull_request" ||
-      run.path !== ".github/workflows/installer-hash-check.yaml" ||
-      run.installerHashGate !== false ||
-      run.status !== "COMPLETED" ||
-      run.conclusion !== "SKIPPED"
-    ) {
-      return "not_metadata_edit";
-    }
-
-    const [job] = [...jobs.values()];
-    return jobs.size === 1 &&
-      job?.name === "check-hash" &&
-      job.status === "COMPLETED" &&
-      job.conclusion === "SKIPPED"
-      ? "recognized"
-      : "invalid";
-  };
-
   const isNonAttemptRun = (runId: string): boolean => {
     const run = actionRunMetadata(runId);
     const jobs = latestAttemptJobs(runId);
@@ -876,10 +851,7 @@ function currentCheckRollup(
         ),
     );
     if (allSkippedTargetRun) return true;
-    return (
-      classifyPrMetadataEditRun(runId) === "recognized" ||
-      classifyInstallerMetadataEditRun(runId) === "recognized"
-    );
+    return classifyPrMetadataEditRun(runId) === "recognized";
   };
 
   const isMeaningfulExactDiffRun = (runId: string, event: string, path: string): boolean => {
@@ -889,7 +861,6 @@ function currentCheckRollup(
       run &&
         jobs &&
         classifyPrMetadataEditRun(runId) === "not_metadata_edit" &&
-        classifyInstallerMetadataEditRun(runId) === "not_metadata_edit" &&
         runIdentityEvidence(runId, true) === "current" &&
         run.event === event &&
         run.path === path &&
@@ -956,7 +927,9 @@ function currentCheckRollup(
         (runMetadata.e2eGateDiff !== true || runMetadata.e2eGateRun !== true)) ||
       runMetadata.status !== "COMPLETED" ||
       runMetadata.conclusion === null ||
-      !PASSING_ACTION_RUN_CONCLUSIONS.has(runMetadata.conclusion)
+      (requiresExactDiff
+        ? runMetadata.conclusion !== "SUCCESS"
+        : !PASSING_ACTION_RUN_CONCLUSIONS.has(runMetadata.conclusion))
     ) {
       incompleteAttemptEvidence.add(checks[0]?.name ?? "(unknown)");
     }
@@ -1071,11 +1044,7 @@ function currentCheckRollup(
     }
     if (group.length === 1) {
       const runId = group[0].__typename !== "StatusContext" ? actionRunId(group[0]) : undefined;
-      if (
-        runId &&
-        (classifyPrMetadataEditRun(runId) === "invalid" ||
-          classifyInstallerMetadataEditRun(runId) === "invalid")
-      ) {
+      if (runId && classifyPrMetadataEditRun(runId) === "invalid") {
         incompleteAttemptEvidence.add(groupName);
       }
       if (runId && isNonAttemptRun(runId)) {
@@ -1141,10 +1110,7 @@ function currentCheckRollup(
           }
           const identityCandidates = currentIdentityRuns.length > 0 ? currentIdentityRuns : runs;
           const candidates = identityCandidates.filter(({ runId }) => {
-            if (
-              classifyPrMetadataEditRun(runId) === "invalid" ||
-              classifyInstallerMetadataEditRun(runId) === "invalid"
-            ) {
+            if (classifyPrMetadataEditRun(runId) === "invalid") {
               incompleteAttemptEvidence.add(group[0]?.name ?? "(unknown)");
               return true;
             }
@@ -1281,12 +1247,10 @@ function checkCi(
     // CheckRun uses `status` and `conclusion`.
     const conclusion = (check.conclusion ?? "").toUpperCase();
     const status = (check.status ?? "").toUpperCase();
+    const requiredCheck = REQUIRED_CHECK_NAMES.includes(checkName);
     if (status !== "COMPLETED") {
       pending.push(checkName);
-    } else if (
-      !passing.has(conclusion) ||
-      (checkName === "E2E / PR Gate" && conclusion !== "SUCCESS")
-    ) {
+    } else if (!passing.has(conclusion) || (requiredCheck && conclusion !== "SUCCESS")) {
       failing.push(`${checkName}: ${conclusion}`);
     }
   }
@@ -1557,6 +1521,7 @@ function checkRiskyCodeTested(
 // ---------------------------------------------------------------------------
 
 const DCO_DECLARATION = /^Signed-off-by:\s+.+\s+<[^<>\s]+@[^<>\s]+>\s*$/mu;
+const DCO_BODY_BYPASS_AUTHORS = new Set(["app/dependabot", "dependabot[bot]"]);
 
 interface CommitVerificationRecord {
   sha: string;
@@ -1589,11 +1554,15 @@ function checkContributorCompliance(
   repo: string,
   number: number,
   body: string,
+  authorLogin: string | null,
 ): GateResult & {
   dcoDeclarationPresent?: boolean;
+  dcoDeclarationBypassed?: boolean;
   unverifiedCommits?: Array<{ sha: string; reason: string }>;
 } {
   const dcoDeclarationPresent = DCO_DECLARATION.test(body ?? "");
+  const dcoDeclarationBypassed =
+    typeof authorLogin === "string" && DCO_BODY_BYPASS_AUTHORS.has(authorLogin.toLowerCase());
   const raw = run("gh", [
     "api",
     `repos/${repo}/pulls/${number}/commits`,
@@ -1607,6 +1576,7 @@ function checkContributorCompliance(
       pass: false,
       details: "Could not verify PR commit signatures (API error — fail-closed)",
       dcoDeclarationPresent,
+      dcoDeclarationBypassed,
     };
   }
 
@@ -1621,6 +1591,7 @@ function checkContributorCompliance(
       pass: false,
       details: "Could not parse PR commit signature data — fail-closed",
       dcoDeclarationPresent,
+      dcoDeclarationBypassed,
     };
   }
 
@@ -1629,15 +1600,18 @@ function checkContributorCompliance(
       pass: false,
       details: "No PR commits returned while checking contributor compliance — fail-closed",
       dcoDeclarationPresent,
+      dcoDeclarationBypassed,
     };
   }
 
   const unverifiedCommits = commits
     .filter((commit) => commit.verified !== true)
     .map(({ sha, reason }) => ({ sha, reason }));
-  if (!dcoDeclarationPresent || unverifiedCommits.length > 0) {
+  if ((!dcoDeclarationPresent && !dcoDeclarationBypassed) || unverifiedCommits.length > 0) {
     const failures = [
-      ...(dcoDeclarationPresent ? [] : ["PR body lacks a valid Signed-off-by declaration"]),
+      ...(dcoDeclarationPresent || dcoDeclarationBypassed
+        ? []
+        : ["PR body lacks a valid Signed-off-by declaration"]),
       ...(unverifiedCommits.length > 0
         ? [`${unverifiedCommits.length} commit(s) are not GitHub Verified`]
         : []),
@@ -1646,14 +1620,16 @@ function checkContributorCompliance(
       pass: false,
       details: failures.join("; "),
       dcoDeclarationPresent,
+      dcoDeclarationBypassed,
       unverifiedCommits,
     };
   }
 
   return {
     pass: true,
-    details: `DCO declaration present; all ${commits.length} commit(s) are GitHub Verified`,
+    details: `${dcoDeclarationBypassed ? `PR-body DCO declaration bypassed for ${authorLogin}` : "DCO declaration present"}; all ${commits.length} commit(s) are GitHub Verified`,
     dcoDeclarationPresent,
+    dcoDeclarationBypassed,
     unverifiedCommits: [],
   };
 }
@@ -1663,6 +1639,8 @@ function checkContributorCompliance(
 // ---------------------------------------------------------------------------
 
 interface PrRevisionSnapshot {
+  title: string;
+  body: string;
   state: string;
   isDraft: boolean;
   mergeable: string;
@@ -1670,6 +1648,7 @@ interface PrRevisionSnapshot {
   headRefOid: string;
   baseRefOid: string;
   headRefName: string;
+  baseRefName: string;
   headRepository: string;
 }
 
@@ -1681,12 +1660,14 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     "--repo",
     repo,
     "--json",
-    "state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,headRepository",
+    "title,body,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository",
   ]);
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   const headRepository = record.headRepository;
   if (
+    typeof record.title !== "string" ||
+    typeof record.body !== "string" ||
     typeof record.state !== "string" ||
     typeof record.isDraft !== "boolean" ||
     typeof record.mergeable !== "string" ||
@@ -1694,6 +1675,7 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     typeof record.headRefOid !== "string" ||
     typeof record.baseRefOid !== "string" ||
     typeof record.headRefName !== "string" ||
+    typeof record.baseRefName !== "string" ||
     typeof headRepository !== "object" ||
     headRepository === null ||
     Array.isArray(headRepository) ||
@@ -1702,6 +1684,8 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     return null;
   }
   return {
+    title: record.title,
+    body: record.body,
     state: record.state,
     isDraft: record.isDraft,
     mergeable: record.mergeable,
@@ -1709,6 +1693,7 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     headRefOid: record.headRefOid,
     baseRefOid: record.baseRefOid,
     headRefName: record.headRefName,
+    baseRefName: record.baseRefName,
     headRepository: (headRepository as Record<string, unknown>).nameWithOwner as string,
   };
 }
@@ -1740,6 +1725,8 @@ function checkFinalRevision(
     };
   }
   const changed =
+    current.title !== captured.title ||
+    current.body !== captured.body ||
     current.state !== captured.state ||
     current.isDraft !== captured.isDraft ||
     current.mergeable !== captured.mergeable ||
@@ -1747,6 +1734,7 @@ function checkFinalRevision(
     current.headRefOid !== captured.headRefOid ||
     current.baseRefOid !== captured.baseRefOid ||
     current.headRefName !== captured.headRefName ||
+    current.baseRefName !== captured.baseRefName ||
     current.headRepository !== captured.headRepository;
   if (changed) {
     return {
@@ -1783,7 +1771,7 @@ function main(): void {
     "--repo",
     repo,
     "--json",
-    "number,title,url,body,files,statusCheckRollup,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,headRepository,author",
+    "number,title,url,body,files,statusCheckRollup,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository,author",
   ]) as {
     number: number;
     title: string;
@@ -1798,6 +1786,7 @@ function main(): void {
     headRefOid: string;
     baseRefOid: string;
     headRefName: string;
+    baseRefName: string;
     headRepository: { nameWithOwner: string };
     author: PrIdentity | null;
   } | null;
@@ -1816,7 +1805,12 @@ function main(): void {
   });
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
-  const contributorCompliance = checkContributorCompliance(repo, prNumber, prData.body ?? "");
+  const contributorCompliance = checkContributorCompliance(
+    repo,
+    prNumber,
+    prData.body ?? "",
+    prData.author?.login ?? null,
+  );
   const contributorApprovalHistory = fetchContributorApprovalHistory(repo, prNumber);
   const contributorApprovalOverlap = checkContributorApprovalOverlap(
     prData,
@@ -1826,6 +1820,8 @@ function main(): void {
   const currentRevision = fetchPrRevisionSnapshot(repo, prNumber);
   const conflicts = checkFinalRevision(
     {
+      title: prData.title,
+      body: prData.body,
       state: prData.state,
       isDraft: prData.isDraft,
       mergeable: prData.mergeable,
@@ -1833,6 +1829,7 @@ function main(): void {
       headRefOid: prData.headRefOid,
       baseRefOid: prData.baseRefOid,
       headRefName: prData.headRefName,
+      baseRefName: prData.baseRefName,
       headRepository: prData.headRepository.nameWithOwner,
     },
     currentRevision,

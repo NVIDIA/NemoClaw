@@ -13,10 +13,9 @@ name: Security / Installer Hash Check
 
 run-name: >-
   ${{ github.event_name == 'pull_request' &&
-  format('Installer Hash PR #{0} head {1} base {2} gate {3}',
+  format('Installer Hash PR #{0} head {1} base {2} gate true',
   github.event.pull_request.number, github.event.pull_request.head.sha,
-  github.event.pull_request.base.sha,
-  github.event.action != 'edited' || github.event.changes.base != null) ||
+  github.event.pull_request.base.sha) ||
   format('Installer Hash {0} {1}', github.event_name, github.sha) }}
 
 on:
@@ -34,11 +33,7 @@ permissions:
 
 jobs:
   check-hash:
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'pull_request' ||
-      github.event.action != 'edited' ||
-      github.event.changes.base != null)
+    if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

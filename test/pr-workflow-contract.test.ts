@@ -276,6 +276,7 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
+  const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
@@ -299,6 +300,33 @@ describe("pull request and main workflow contracts", () => {
       ".github/actions/ci-installer-integration/action.yaml",
     ),
   };
+
+  // source-shape-contract: security -- Base retargets must rerun trusted installer verification without minting skipped required evidence
+  it("reruns installer hash verification after a pull request base retarget", () => {
+    expect(installerHashWorkflow.on?.pull_request?.types).toEqual([
+      "opened",
+      "synchronize",
+      "reopened",
+      "edited",
+    ]);
+    expect(installerHashWorkflow.jobs["check-hash"].if).toBe(
+      "github.repository == 'NVIDIA/NemoClaw'",
+    );
+  });
+
+  // source-shape-contract: security -- Dependabot's bounded DCO exemption must report an explicit successful required check
+  it("records the Dependabot DCO bypass as a successful required job", () => {
+    const job = dcoWorkflow.jobs["dco-check"];
+    const bypass = requiredWorkflowStep(job, "Check DCO bypass list");
+    const declaration = requiredWorkflowStep(job, "Check PR body for Signed-off-by");
+
+    expect(job.if).toBeUndefined();
+    expect(bypass.env?.USERNAME).toBe("${{ github.event.pull_request.user.login }}");
+    expect(bypass.run).toContain('"$USERNAME" == "dependabot[bot]"');
+    expect(bypass.run).toContain('"$USERNAME" == "app/dependabot"');
+    expect(declaration.if).toBe("${{ steps.dco-bypass.outputs.bypass != 'true' }}");
+  });
+
   // source-shape-contract: security -- Installer hashes must be verified by base-trusted or immutable bootstrap code
   it("runs pull request installer verification from immutable trusted code", () => {
     const job = installerHashWorkflow.jobs["check-hash"];
@@ -345,13 +373,11 @@ describe("pull request and main workflow contracts", () => {
       "edited",
     ]);
     expect(installerHashWorkflow["run-name"]).toContain(
-      "Installer Hash PR #{0} head {1} base {2} gate {3}",
+      "Installer Hash PR #{0} head {1} base {2} gate true",
     );
     expect(installerHashWorkflow["run-name"]).toContain("github.event.pull_request.base.sha");
-    expect(installerHashWorkflow["run-name"]).toContain("github.event.changes.base != null");
-    expect(job.if).toContain("github.repository == 'NVIDIA/NemoClaw'");
-    expect(job.if).toContain("github.event.action != 'edited'");
-    expect(job.if).toContain("github.event.changes.base != null");
+    expect(installerHashWorkflow["run-name"]).not.toContain("github.event.changes.base");
+    expect(job.if).toBe("github.repository == 'NVIDIA/NemoClaw'");
     expect(installerHashWorkflow.permissions).toEqual({ contents: "read" });
     expect(parserRuntimeSetup.uses).toBe(trustedSetupNodeAction);
     expect(parserRuntimeSetup.with?.["node-version"]).toBe("22.19.0");

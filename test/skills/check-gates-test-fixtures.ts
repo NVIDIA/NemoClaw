@@ -272,6 +272,7 @@ function runGate(fixture: ComplianceFixture) {
     headRefOid: HEAD_SHA,
     baseRefOid: BASE_SHA,
     headRefName: "feature-branch",
+    baseRefName: "main",
     headRepository: { nameWithOwner: "NVIDIA/NemoClaw" },
     author: { login: fixture.prAuthorLogin ?? "contributor" },
   };

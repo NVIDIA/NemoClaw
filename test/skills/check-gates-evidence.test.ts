@@ -116,8 +116,11 @@ describe("maintainer merge-gate contributor compliance", () => {
   });
 
   it.each([
+    ["title", { title: "fix(policy): changed during review" }],
+    ["body", { body: "DCO declaration removed during review" }],
     ["head", { headRefOid: "c".repeat(40) }],
     ["base", { baseRefOid: "c".repeat(40) }],
+    ["base branch", { baseRefName: "release" }],
     ["mergeability", { mergeable: "UNKNOWN" }],
     ["merge state", { mergeStateStatus: "UNKNOWN" }],
   ])("fails closed when the PR %s changes during gate evaluation", (_name, finalPr) => {
@@ -311,6 +314,42 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
   });
 
+  it.each(["SKIPPED", "NEUTRAL"])("rejects a required Actions run concluded %s", (conclusion) => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        actionRunAttempts: {
+          "91": installerHashRun(conclusion.toLowerCase(), [{ id: 1, name: "check-hash" }], true),
+        },
+      }).stdout,
+    );
+
+    expect(output.gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: ["check-hash: latest attempt evidence incomplete"],
+    });
+    expect(output.allPass).toBe(false);
+  });
+
+  it.each(["SKIPPED", "NEUTRAL"])("rejects a required CheckRun concluded %s", (conclusion) => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: successfulRequiredChecks().map((check) =>
+          check.name === "check-hash" ? { ...check, conclusion } : check,
+        ),
+      }).stdout,
+    );
+
+    expect(output.gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: [`check-hash: ${conclusion}`],
+    });
+    expect(output.allPass).toBe(false);
+  });
+
   it.each([
     ["a stale base", `Installer Hash PR #42 head ${HEAD_SHA} base ${"c".repeat(40)} gate true`],
     ["a stale head", `Installer Hash PR #42 head ${"c".repeat(40)} base ${BASE_SHA} gate true`],
@@ -349,11 +388,7 @@ describe("maintainer merge-gate contributor compliance", () => {
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
         actionRunAttempts: {
-          "91": installerHashRun(
-            "skipped",
-            [{ id: 1, name: "check-hash", conclusion: "skipped" }],
-            false,
-          ),
+          "91": installerHashRun("success", [{ id: 1, name: "check-hash" }], false),
         },
       }).stdout,
     );
@@ -362,36 +397,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       pass: false,
       failingChecks: ["check-hash: latest attempt evidence incomplete"],
     });
-  });
-
-  it("ignores a later gate-false installer edit when a substantive exact run exists", () => {
-    const output = JSON.parse(
-      runGate({
-        body: "Signed-off-by: Example User <user@example.com>",
-        verified: true,
-        statusChecks: [
-          ...successfulRequiredChecks(),
-          e2eGateCheck([
-            95,
-            2,
-            "SKIPPED",
-            "2026-01-01T00:04:00Z",
-            undefined,
-            "Security / Installer Hash Check",
-            "check-hash",
-          ]),
-        ],
-        actionRunAttempts: {
-          "95": installerHashRun(
-            "skipped",
-            [{ id: 2, name: "check-hash", conclusion: "skipped" }],
-            false,
-          ),
-        },
-      }).stdout,
-    );
-
-    expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
   });
 
   it("rejects installer evidence with a contradictory mutable PR association", () => {
@@ -1126,7 +1131,7 @@ describe("maintainer merge-gate contributor compliance", () => {
               (check) => check.name !== "checks" && check.name !== "changes",
             ),
             e2eGateCheck([90, 11, "SUCCESS", undefined, undefined, "CI / Pull Request", "checks"]),
-            e2eGateCheck([90, 1, "SKIPPED", undefined, undefined, "CI / Pull Request", "changes"]),
+            e2eGateCheck([90, 1, "SUCCESS", undefined, undefined, "CI / Pull Request", "changes"]),
           ],
           actionRunAttempts: { "90": prWorkflowRun("success", jobs, false) },
         }).stdout,

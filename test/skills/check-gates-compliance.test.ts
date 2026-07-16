@@ -521,6 +521,43 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.gates.contributorCompliance.details).toContain("lacks a valid Signed-off-by");
   });
 
+  it.each([
+    "app/dependabot",
+    "dependabot[bot]",
+  ])("accepts the explicit PR-body DCO bypass for %s", (prAuthorLogin) => {
+    const output = JSON.parse(
+      runGate({
+        body: "Automated dependency update.",
+        prAuthorLogin,
+        verified: true,
+      }).stdout,
+    );
+
+    expect(output.gates.contributorCompliance).toMatchObject({
+      pass: true,
+      dcoDeclarationPresent: false,
+      dcoDeclarationBypassed: true,
+      unverifiedCommits: [],
+    });
+  });
+
+  it("still rejects an unverified Dependabot commit", () => {
+    const output = JSON.parse(
+      runGate({
+        body: "Automated dependency update.",
+        prAuthorLogin: "app/dependabot",
+        verified: false,
+        reason: "unsigned",
+      }).stdout,
+    );
+
+    expect(output.gates.contributorCompliance).toMatchObject({
+      pass: false,
+      dcoDeclarationBypassed: true,
+      unverifiedCommits: [{ sha: "abc123", reason: "unsigned" }],
+    });
+  });
+
   it("fails closed when any PR commit is not GitHub Verified", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",

@@ -16,7 +16,6 @@ concurrency:
 
 jobs:
   dco-check:
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -30,7 +29,12 @@ jobs:
         env:
           USERNAME: ${{ github.event.pull_request.user.login }}
         run: |
-          if grep -Fxq "$USERNAME" .github/dco-bypass.txt; then
+          # GitHub exposes the same trusted app as dependabot[bot] in event
+          # payloads and app/dependabot through some GraphQL PR surfaces.
+          if [[ "$USERNAME" == "dependabot[bot]" || "$USERNAME" == "app/dependabot" ]]; then
+            echo "bypass=true" >> "$GITHUB_OUTPUT"
+            echo "Dependabot is exempt from the PR-body DCO declaration."
+          elif grep -Fxq "$USERNAME" .github/dco-bypass.txt; then
             echo "bypass=true" >> "$GITHUB_OUTPUT"
             echo "Author is in dco-bypass.txt; skipping DCO sign-off requirement."
           else
