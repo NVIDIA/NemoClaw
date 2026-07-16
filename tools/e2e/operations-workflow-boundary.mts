@@ -16,6 +16,7 @@ const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
 const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
+const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
@@ -231,12 +232,16 @@ function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsW
     if (typeof job.env?.E2E_ARTIFACT_DIR !== "string" || !job.env.E2E_ARTIFACT_DIR) {
       errors.push(`${jobId} must expose an evidence artifact directory`);
     }
-    const vitestSteps = (job.steps ?? []).filter((step) =>
-      String(step.run ?? "").includes("npx vitest"),
-    );
+    const vitestSteps = (job.steps ?? []).filter((step) => {
+      const run = String(step.run ?? "");
+      return run.includes("npx vitest") || run.includes(LIVE_VITEST_HELPER);
+    });
     if (
       vitestSteps.length === 0 ||
-      vitestSteps.some((step) => !String(step.run).includes(PR_GATE_REPORTER))
+      vitestSteps.some((step) => {
+        const run = String(step.run);
+        return !run.includes(LIVE_VITEST_HELPER) && !run.includes(PR_GATE_REPORTER);
+      })
     ) {
       errors.push(`${jobId} must attach the risk-signal reporter to every Vitest invocation`);
     }

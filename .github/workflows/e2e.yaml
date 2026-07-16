@@ -375,7 +375,7 @@ jobs:
           TARGET_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live test/e2e/live/registry-targets.test.ts -t "^${TARGET_ID}$" --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/registry-targets.test.ts --selector "^${TARGET_ID}$"
 
       # The sanitizer reads raw traces only after checking the workflow-owned
       # runner-temp path, then writes the timing-only file into upload roots.
@@ -569,9 +569,7 @@ jobs:
           export OPENSHELL_GATEWAY_BIN
           echo "Using OPENSHELL_GATEWAY_BIN=$OPENSHELL_GATEWAY_BIN"
           "$OPENSHELL_GATEWAY_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/openshell-gateway-auth-source-contract.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openshell-gateway-auth-source-contract.test.ts
 
       - name: Upload OpenShell gateway auth contract artifacts
         if: always()
@@ -662,9 +660,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/mcp-bridge.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
@@ -778,9 +774,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/mcp-bridge.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
@@ -850,9 +844,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/skill-agent.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/skill-agent.test.ts
 
       - name: Upload skill-agent artifacts
         if: always()
@@ -906,9 +898,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-skill-cli.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-skill-cli.test.ts
 
       - name: Upload OpenClaw skill CLI artifacts
         if: always()
@@ -948,9 +938,7 @@ jobs:
         # any future secret-bearing lane must run that file from trusted main.
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/inference-routing.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/inference-routing.test.ts
 
       - name: Upload inference routing artifacts
         if: always()
@@ -995,9 +983,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/cloud-inference.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/cloud-inference.test.ts
 
       - name: Upload cloud inference artifacts
         if: always()
@@ -1054,7 +1040,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/gpu-e2e.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/gpu-e2e.test.ts
       - name: Upload GPU E2E artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1114,7 +1100,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/agent-turn-latency.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/agent-turn-latency.test.ts
       - name: Upload agent turn latency artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1156,7 +1142,7 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell || true)"
-          npx vitest run --project e2e-live             test/e2e/live/kimi-inference-compat.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/kimi-inference-compat.test.ts
       - name: Upload Kimi compatibility artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1225,7 +1211,7 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell || true)"
-          npx vitest run --project e2e-live             test/e2e/live/hermes-inference-switch.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-inference-switch.test.ts
       - name: Upload Hermes inference switch artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1286,7 +1272,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/brave-search.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/brave-search.test.ts
 
       - name: Upload Brave search artifacts
         if: always()
@@ -1325,7 +1311,7 @@ jobs:
       - name: Run Ollama auth proxy live Vitest test
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live             test/e2e/live/ollama-auth-proxy.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/ollama-auth-proxy.test.ts
 
       - name: Upload Ollama auth proxy artifacts
         if: always()
@@ -1383,7 +1369,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/cron-preflight-inference-local.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/cron-preflight-inference-local.test.ts
 
       - name: Upload cron preflight inference.local artifacts
         if: always()
@@ -1465,9 +1451,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/issue-4434-tui-unreachable-inference.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/issue-4434-tui-unreachable-inference.test.ts
 
       - name: "Upload issue #4434 TUI unreachable inference artifacts"
         if: always()
@@ -1512,9 +1496,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/credential-sanitization.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/credential-sanitization.test.ts
 
       - name: Upload credential sanitization artifacts
         if: always()
@@ -1564,9 +1546,7 @@ jobs:
           NEMOCLAW_PREFERRED_API: openai-completions
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/credential-migration.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/credential-migration.test.ts
 
       - name: Upload credential migration artifacts
         if: always()
@@ -1618,9 +1598,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx vitest run --project e2e-live \
-            test/e2e/live/sessions-agents-cli.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sessions-agents-cli.test.ts
 
       - name: Upload sessions/agents CLI artifacts
         if: always()
@@ -1671,9 +1649,7 @@ jobs:
           SLACK_APP_TOKEN: xapp-test-hermes-slack-app-token
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-slack-e2e.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-slack-e2e.test.ts
 
       - name: Upload Hermes Slack artifacts
         if: always()
@@ -1721,9 +1697,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-e2e.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-e2e.test.ts
 
       - name: Upload Hermes live Vitest artifacts
         if: always()
@@ -1922,9 +1896,7 @@ jobs:
               >"$E2E_ARTIFACT_DIR/docker-default-runtime-during.txt"
           fi
 
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-gpu-startup.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-gpu-startup.test.ts
 
       - name: Recover Docker daemon after Hermes GPU fallback fixture
         if: always()
@@ -2029,9 +2001,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-e2e.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-e2e.test.ts
 
       - name: Upload Hermes dashboard live Vitest artifacts
         if: always()
@@ -2081,9 +2051,7 @@ jobs:
           DISCORD_REQUIRE_MENTION: "0"
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-discord.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-discord.test.ts
 
       - name: Upload Hermes Discord artifacts
         if: always()
@@ -2159,9 +2127,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/network-policy.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/network-policy.test.ts
 
       - name: Upload network-policy artifacts
         if: always()
@@ -2230,9 +2196,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/common-egress-agent.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/common-egress-agent.test.ts
 
       - name: Upload common-egress agent artifacts
         if: always()
@@ -2279,9 +2243,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/shields-config.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/shields-config.test.ts
 
       - name: Upload shields-config artifacts
         if: always()
@@ -2327,9 +2289,7 @@ jobs:
         # proves two complete down/up cycles on a fresh non-root Hermes sandbox.
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-shields-config.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-shields-config.test.ts
 
       - name: Upload Hermes shields-config artifacts
         if: always()
@@ -2389,9 +2349,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/rebuild-openclaw.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-openclaw.test.ts
 
       - name: Upload OpenClaw rebuild artifacts
         if: always()
@@ -2444,9 +2402,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/rebuild-hermes.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts
 
       - name: Upload Hermes rebuild artifacts
         if: always()
@@ -2499,9 +2455,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/rebuild-hermes.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts
 
       - name: Upload Hermes stale-base rebuild artifacts
         if: always()
@@ -2562,9 +2516,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/sandbox-rebuild.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-rebuild.test.ts
 
       - name: Upload sandbox rebuild artifacts
         if: always()
@@ -2627,9 +2579,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/sandbox-rlimits-connect.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-rlimits-connect.test.ts
 
       - name: Upload sandbox rlimit connect artifacts
         if: always()
@@ -2673,9 +2623,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/overlayfs-autofix.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/overlayfs-autofix.test.ts
 
       - name: Upload overlayfs autofix artifacts
         if: always()
@@ -2737,9 +2685,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/state-backup-restore.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/state-backup-restore.test.ts
 
       - name: Upload state backup restore artifacts
         if: always()
@@ -2800,9 +2746,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/upgrade-stale-sandbox.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/upgrade-stale-sandbox.test.ts
 
       - name: Upload upgrade stale sandbox artifacts
         if: always()
@@ -2856,9 +2800,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/double-onboard.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/double-onboard.test.ts
 
       - name: Upload double-onboard Vitest artifacts
         if: always()
@@ -2935,9 +2877,7 @@ jobs:
         # sandbox exec, /dev/nvmap, CUDA cuInit(0), and status-proof boundary.
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/jetson-nvmap-gpu.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/jetson-nvmap-gpu.test.ts
 
       - name: Upload Jetson nvmap GPU artifacts
         if: always()
@@ -2991,9 +2931,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/concurrent-gateway-ports.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/concurrent-gateway-ports.test.ts
 
       - name: Upload concurrent gateway ports Vitest artifacts
         if: always()
@@ -3046,9 +2984,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/onboard-resume.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/onboard-resume.test.ts
 
       - name: Upload onboard-resume artifacts
         if: always()
@@ -3104,9 +3040,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/full-e2e.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/full-e2e.test.ts
 
       - name: Upload full-e2e artifacts
         if: always()
@@ -3270,9 +3204,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/cloud-onboard.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/cloud-onboard.test.ts
 
       - name: Build trusted cloud-onboard timing summary
         if: always()
@@ -3359,9 +3291,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/gpu-double-onboard.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/gpu-double-onboard.test.ts
 
       - name: Upload gpu-double-onboard artifacts
         if: always()
@@ -3414,9 +3344,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/onboard-repair.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/onboard-repair.test.ts
 
       - name: Upload onboard-repair artifacts
         if: always()
@@ -3472,9 +3400,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/issue-4462-scope-upgrade-approval.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/issue-4462-scope-upgrade-approval.test.ts
 
       - name: Upload issue-4462-scope-upgrade-approval artifacts
         if: always()
@@ -3523,9 +3449,7 @@ jobs:
           SLACK_APP_TOKEN_B: "xapp-fake-B-rotation-e2e"
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/token-rotation.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/token-rotation.test.ts
 
       - name: Upload token rotation artifacts
         if: always()
@@ -3570,9 +3494,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e"
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/messaging-compatible-endpoint.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/messaging-compatible-endpoint.test.ts
 
       - name: Upload messaging compatible endpoint artifacts
         if: always()
@@ -3643,9 +3565,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx vitest run --project e2e-live \
-            test/e2e/live/openshell-gateway-upgrade.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openshell-gateway-upgrade.test.ts
 
       - name: Upload OpenShell gateway upgrade artifacts
         if: always()
@@ -3702,9 +3622,7 @@ jobs:
           SLACK_CHANNEL_ID_E2E: ${{ secrets.SLACK_CHANNEL_ID_E2E }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/messaging-providers.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/messaging-providers.test.ts
 
       - name: Upload messaging providers artifacts
         if: always()
@@ -3753,9 +3671,7 @@ jobs:
           COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/launchable-smoke.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/launchable-smoke.test.ts
 
       - name: Upload launchable smoke artifacts
         if: always()
@@ -3799,9 +3715,7 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/model-router-provider-routed-inference.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/model-router-provider-routed-inference.test.ts
 
       - name: Upload Model Router provider-routed inference artifacts
         if: always()
@@ -3844,9 +3758,7 @@ jobs:
         # supplies a sandbox-reachable fake OpenAI-compatible endpoint.
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/snapshot-commands.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/snapshot-commands.test.ts
 
       - name: Upload snapshot commands artifacts
         if: always()
@@ -3910,9 +3822,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx vitest run --project e2e-live \
-            test/e2e/live/sandbox-operations.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-operations.test.ts
 
       - name: Upload sandbox operations artifacts
         if: always()
@@ -3958,9 +3868,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/sandbox-survival.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-survival.test.ts
 
       - name: Upload sandbox survival artifacts
         if: always()
@@ -4007,7 +3915,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live             test/e2e/live/diagnostics.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/diagnostics.test.ts
 
       - name: Upload diagnostics artifacts
         if: always()
@@ -4072,10 +3980,7 @@ jobs:
           test -z "${DOCKERHUB_USERNAME:-}"
           test -z "${DOCKERHUB_TOKEN:-}"
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
-            npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
-            --silent=false --reporter=default \
-            --reporter=test/e2e/risk-signal-reporter.ts
+            npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts
 
       - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
         if: always()
@@ -4153,9 +4058,7 @@ jobs:
           COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-tui-chat-correlation.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-tui-chat-correlation.test.ts
 
       - name: Upload OpenClaw TUI chat correlation artifacts
         if: always()
@@ -4315,9 +4218,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-inference-switch.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-inference-switch.test.ts
 
       - name: Upload OpenClaw inference switch artifacts
         if: always()
@@ -4373,9 +4274,7 @@ jobs:
         # leak-scan contract for both OpenClaw and Hermes.
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts
 
       - name: Upload Bedrock Runtime compatible Anthropic artifacts
         if: always()
@@ -4421,9 +4320,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx vitest run --project e2e-live \
-            test/e2e/live/gateway-health-honest.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/gateway-health-honest.test.ts
 
       - name: Upload gateway health honesty artifacts
         if: always()
@@ -4474,7 +4371,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/device-auth-health.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/device-auth-health.test.ts
 
       - name: Upload device auth health artifacts
         if: always()
@@ -4542,9 +4439,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/channels-add-remove.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/channels-add-remove.test.ts
 
       - name: Upload channels add/remove artifacts
         if: always()
@@ -4609,9 +4504,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/telegram-injection.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/telegram-injection.test.ts
 
       - name: Upload Telegram injection artifacts
         if: always()
@@ -4688,9 +4581,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/channels-stop-start.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/channels-stop-start.test.ts
 
       - name: Upload channels stop/start artifacts
         if: always()
@@ -4758,9 +4649,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-slack-pairing.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-slack-pairing.test.ts
 
       - name: Upload OpenClaw Slack pairing artifacts
         if: always()
@@ -4816,9 +4705,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/issue-2478-crash-loop-recovery.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/issue-2478-crash-loop-recovery.test.ts
 
       - name: "Upload issue #2478 crash-loop recovery artifacts"
         if: always()
@@ -4882,9 +4769,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-discord-pairing.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-discord-pairing.test.ts
 
       - name: Upload OpenClaw Discord pairing artifacts
         if: always()
@@ -4959,9 +4844,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/tunnel-lifecycle.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/tunnel-lifecycle.test.ts
 
       - name: Upload tunnel lifecycle artifacts
         if: always()
@@ -5012,9 +4895,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/spark-install.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/spark-install.test.ts
 
       - name: Upload Spark install artifacts
         if: always()

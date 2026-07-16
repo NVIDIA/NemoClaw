@@ -926,7 +926,7 @@ function validateSkillAgentJob(errors: string[], jobs: WorkflowRecord): void {
   );
   requireRunContains(errors, runVitest, 'OPENSHELL_BIN="$(command -v openshell)"');
   requireRunContains(errors, runVitest, "export OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/skill-agent.test.ts");
 }
 
@@ -1032,7 +1032,7 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("network-policy live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/network-policy.test.ts");
 }
 
@@ -1176,7 +1176,7 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("common-egress-agent step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/common-egress-agent.test.ts");
 }
 
@@ -1259,7 +1259,7 @@ function validateShieldsConfigJob(errors: string[], jobs: WorkflowRecord): void 
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("shields-config step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/shields-config.test.ts");
 }
 
@@ -1333,7 +1333,7 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
     errors.push("rebuild-openclaw step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-openclaw.test.ts");
 }
 
@@ -1438,7 +1438,7 @@ function validateRebuildHermesJob(
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
 }
 
@@ -1519,7 +1519,7 @@ function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void
     errors.push("sandbox-rebuild step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/sandbox-rebuild.test.ts");
 }
 
@@ -1611,7 +1611,7 @@ function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): 
     errors.push("state-backup-restore step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/state-backup-restore.test.ts");
 }
 
@@ -1702,7 +1702,7 @@ function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord):
     errors.push("upgrade-stale-sandbox step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/upgrade-stale-sandbox.test.ts");
 }
 
@@ -1783,7 +1783,7 @@ function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void 
       errors.push(`token-rotation step must set ${tokenName}`);
     }
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/token-rotation.test.ts");
 }
 
@@ -1904,7 +1904,7 @@ function validateMessagingCompatibleEndpointJob(errors: string[], jobs: Workflow
   if (runVitestEnv.TELEGRAM_ALLOWED_IDS !== "123456789") {
     errors.push("messaging-compatible-endpoint step must set fake Telegram allowed ids");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/messaging-compatible-endpoint.test.ts");
 }
 
@@ -1969,7 +1969,7 @@ function validateCloudInferenceJob(errors: string[], jobs: WorkflowRecord): void
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("cloud-inference run step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/cloud-inference.test.ts");
 }
 
@@ -2308,7 +2308,7 @@ function validateDoubleOnboardJob(errors: string[], jobs: WorkflowRecord): void 
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run double-onboard live Vitest test");
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/double-onboard.test.ts");
 }
 function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2386,7 +2386,7 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
       "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch without a PR checkout and the inference mode condition",
     );
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/hermes-e2e.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
 }
@@ -2470,7 +2470,7 @@ function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("diagnostics live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/diagnostics.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
 }
@@ -2554,7 +2554,7 @@ function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
     errors.push("spark-install live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "set -euo pipefail");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/spark-install.test.ts");
 }
 
@@ -2638,7 +2638,7 @@ function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): vo
   }
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run snapshot commands live test");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/snapshot-commands.test.ts");
 }
 
@@ -2739,7 +2739,7 @@ function validateModelRouterProviderRoutedInferenceJob(
       "model-router-provider-routed-inference live E2E step must receive NVIDIA_API_KEY from secrets",
     );
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(
     errors,
     runVitest,
@@ -2880,7 +2880,7 @@ function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): voi
       "tunnel-lifecycle live E2E step must not run cloudflared APT installation with NVIDIA_INFERENCE_API_KEY in scope",
     );
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/tunnel-lifecycle.test.ts");
 }
 
@@ -2965,7 +2965,7 @@ function validateIssue2478CrashLoopRecoveryJob(errors: string[], jobs: WorkflowR
     runVitestEnv,
     "NVIDIA_INFERENCE_API_KEY",
   );
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/issue-2478-crash-loop-recovery.test.ts");
 }
 
@@ -3077,7 +3077,7 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("channels-add-remove step must set TELEGRAM_REQUIRE_MENTION");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/channels-add-remove.test.ts");
 }
 
@@ -3150,7 +3150,7 @@ function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecor
   if (runVitestEnv.DISCORD_BOT_TOKEN !== "test-fake-discord-pairing-e2e") {
     errors.push("openclaw-discord-pairing step must use fake Discord token");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/openclaw-discord-pairing.test.ts");
 }
 
@@ -3221,7 +3221,7 @@ function validateOpenClawSlackPairingJob(errors: string[], jobs: WorkflowRecord)
   if (runVitestEnv.SLACK_APP_TOKEN !== "xapp-fake-slack-pairing-e2e") {
     errors.push("openclaw-slack-pairing step must use fake Slack app token");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/openclaw-slack-pairing.test.ts");
 }
 
@@ -3350,7 +3350,7 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("channels-stop-start step must set the fake WeChat token");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/channels-stop-start.test.ts");
 }
 
@@ -3409,7 +3409,7 @@ function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): v
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("telegram-injection step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/telegram-injection.test.ts");
 }
 
@@ -3536,7 +3536,7 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     steps,
     "Run Bedrock Runtime compatible Anthropic live test",
   );
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(
     errors,
     runVitest,
@@ -4005,7 +4005,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
   requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
   requireRunContains(errors, runVitest, '"^${TARGET_ID}$"');
 
