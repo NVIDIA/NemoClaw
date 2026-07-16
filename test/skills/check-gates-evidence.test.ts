@@ -668,7 +668,7 @@ describe("maintainer merge-gate contributor compliance", () => {
           detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/199/job/1",
           startedAt: "2026-01-01T00:00:00Z",
           status: "COMPLETED",
-          conclusion: "FAILURE",
+          conclusion: "SUCCESS",
         },
         {
           __typename: "CheckRun",
