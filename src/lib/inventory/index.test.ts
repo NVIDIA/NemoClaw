@@ -54,6 +54,7 @@ describe("inventory commands", () => {
 
     const inventory = await getSandboxInventory({
       recoverRegistryEntries: async () => ({ sandboxes: [], defaultSandbox: null }),
+      getReadyDefaultSandbox: () => null,
       getLiveInference,
       loadLastSession: () => ({
         sandboxName: "alpha",
@@ -64,6 +65,7 @@ describe("inventory commands", () => {
     expect(inventory).toEqual({
       schemaVersion: 1,
       defaultSandbox: null,
+      readyDefaultSandbox: null,
       recovery: {
         recoveredFromSession: false,
         recoveredFromGateway: 0,
@@ -96,6 +98,7 @@ describe("inventory commands", () => {
         recoveredFromSession: true,
         recoveredFromGateway: 2,
       }),
+      getReadyDefaultSandbox: () => "alpha",
       getLiveInference,
       loadLastSession: () => ({
         sandboxName: "alpha",
@@ -107,6 +110,7 @@ describe("inventory commands", () => {
     expect(inventory).toEqual({
       schemaVersion: 1,
       defaultSandbox: "alpha",
+      readyDefaultSandbox: "alpha",
       recovery: {
         recoveredFromSession: true,
         recoveredFromGateway: 2,
@@ -135,6 +139,29 @@ describe("inventory commands", () => {
     expect(getLiveInference).not.toHaveBeenCalled();
   });
 
+  it("reports the ready bare-connect selector after registry recovery (#7034)", async () => {
+    const calls: string[] = [];
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => {
+        calls.push("recover");
+        return {
+          sandboxes: [{ name: "pending" }, { name: "ready" }],
+          defaultSandbox: "pending",
+        };
+      },
+      getReadyDefaultSandbox: () => {
+        calls.push("ready-default");
+        return "ready";
+      },
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(calls).toEqual(["recover", "ready-default"]);
+    expect(inventory.defaultSandbox).toBe("pending");
+    expect(inventory.readyDefaultSandbox).toBe("ready");
+  });
+
   it("shows agent as 'unknown' instead of the OpenClaw default for a gateway-recovered sandbox (#5714)", async () => {
     const inventory = await getSandboxInventory({
       recoverRegistryEntries: async () => ({
@@ -145,6 +172,7 @@ describe("inventory commands", () => {
         recoveredFromSession: false,
         recoveredFromGateway: 1,
       }),
+      getReadyDefaultSandbox: () => null,
       getLiveInference: () => null,
       loadLastSession: () => null,
     });
@@ -172,6 +200,7 @@ describe("inventory commands", () => {
         recoveredFromSession: false,
         recoveredFromGateway: 1,
       }),
+      getReadyDefaultSandbox: () => null,
       getLiveInference: () => null,
       loadLastSession: () => null,
     });
@@ -204,6 +233,7 @@ describe("inventory commands", () => {
         ],
         defaultSandbox: "blank-provider",
       }),
+      getReadyDefaultSandbox: () => "blank-provider",
       getLiveInference: () => null,
       loadLastSession: () => null,
     });
@@ -256,6 +286,7 @@ describe("inventory commands", () => {
     const lines: string[] = [];
     await listSandboxesCommand({
       recoverRegistryEntries: async () => ({ sandboxes: [], defaultSandbox: null }),
+      getReadyDefaultSandbox: () => null,
       getLiveInference: () => null,
       loadLastSession: () => ({
         sandboxName: "alpha",
@@ -277,6 +308,7 @@ describe("inventory commands", () => {
     const lines: string[] = [];
     await listSandboxesCommand({
       recoverRegistryEntries: async () => ({ sandboxes: [], defaultSandbox: null }),
+      getReadyDefaultSandbox: () => null,
       getLiveInference: () => null,
       loadLastSession: () => ({
         sandboxName: "interrupt-test",
@@ -306,6 +338,7 @@ describe("inventory commands", () => {
         recoveredFromSession: true,
         recoveredFromGateway: 1,
       }),
+      getReadyDefaultSandbox: () => "alpha",
       getLiveInference: () => null,
       loadLastSession: () => null,
       log: (message = "") => lines.push(message),
@@ -335,6 +368,7 @@ describe("inventory commands", () => {
         ],
         defaultSandbox: "hermes",
       }),
+      getReadyDefaultSandbox: () => "hermes",
       getLiveInference: () => null,
       loadLastSession: () => null,
       log: (message = "") => lines.push(message),
@@ -367,6 +401,7 @@ describe("inventory commands", () => {
         ],
         defaultSandbox: "alpha",
       }),
+      getReadyDefaultSandbox: () => "alpha",
       getLiveInference: () => ({ provider: "live-provider", model: "live-model" }),
       loadLastSession: () => null,
       log: (message = "") => lines.push(message),
@@ -405,6 +440,7 @@ describe("inventory commands", () => {
         ],
         defaultSandbox: "alpha",
       }),
+      getReadyDefaultSandbox: () => "alpha",
       getLiveInference: () => ({ provider: "configured-provider", model: "configured-alpha" }),
       loadLastSession: () => null,
       log: (message = "") => lines.push(message),
@@ -431,6 +467,7 @@ describe("inventory commands", () => {
         ],
         defaultSandbox: "alpha",
       }),
+      getReadyDefaultSandbox: () => "alpha",
       getLiveInference: () => null,
       loadLastSession: () => null,
       log: (message = "") => lines.push(message),
@@ -457,6 +494,7 @@ describe("inventory commands", () => {
         ],
         defaultSandbox: "alpha",
       }),
+      getReadyDefaultSandbox: () => "alpha",
       // Only the model changed at the gateway; provider matches onboarded.
       getLiveInference: () => ({ provider: "configured-provider", model: "live-model" }),
       loadLastSession: () => null,
@@ -486,6 +524,7 @@ describe("inventory commands", () => {
         ],
         defaultSandbox: "alpha",
       }),
+      getReadyDefaultSandbox: () => "alpha",
       // Only the provider changed at the gateway; model matches onboarded.
       getLiveInference: () => ({ provider: "live-provider", model: "configured-alpha" }),
       loadLastSession: () => null,
@@ -862,12 +901,14 @@ describe("inventory commands", () => {
           ],
           defaultSandbox: "registry-default",
         }),
+        getReadyDefaultSandbox: () => "registry-default",
         getLiveInference: () => null,
         loadLastSession: () => null,
         getActiveSessionCount: () => 0,
       });
 
       expect(inventory.defaultSandbox).toBe("env-sandbox");
+      expect(inventory.readyDefaultSandbox).toBe("registry-default");
       expect(inventory.sandboxes.find((row) => row.name === "env-sandbox")?.isDefault).toBe(true);
       expect(inventory.sandboxes.find((row) => row.name === "registry-default")?.isDefault).toBe(
         false,
@@ -885,6 +926,7 @@ describe("inventory commands", () => {
           ],
           defaultSandbox: "registry-default",
         }),
+        getReadyDefaultSandbox: () => "registry-default",
         getLiveInference: () => null,
         loadLastSession: () => null,
         log: (message = "") => lines.push(message),

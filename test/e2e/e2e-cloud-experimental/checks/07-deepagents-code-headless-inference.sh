@@ -75,10 +75,82 @@ sandbox_dcode_wrapper_contract() {
   sandbox_exec 'dcode_path="$(command -v dcode 2>/dev/null || true)"; [ "$dcode_path" = /usr/local/bin/dcode ] && [ -x /usr/local/lib/nemoclaw/dcode-launcher.sh ] && [ -x /usr/local/lib/nemoclaw/dcode-managed-exec ] && [ -x /usr/local/lib/nemoclaw/dcode-wrapper.sh ] && cmp -s /usr/local/bin/dcode /usr/local/lib/nemoclaw/dcode-launcher.sh && cmp -s /usr/local/lib/nemoclaw/dcode-managed-exec /usr/local/lib/nemoclaw/dcode-launcher.sh && python3 -c '\''import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("deepagents_code") else 1)'\'' && printf "%s\\n" NEMOCLAW_DCODE_WRAPPER_CHAIN_OK'
 }
 
+require_bare_connect_registry_default() {
+  local inventory_json
+  local parsed_defaults
+  local display_default
+  local ready_default
+  local parse_status
+
+  if ! inventory_json="$(
+    unset SANDBOX_NAME NEMOCLAW_SANDBOX_NAME NEMOCLAW_SANDBOX
+    "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" list --json
+  )"; then
+    printf '%s\n' "NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:list-command"
+    return 1
+  fi
+
+  # The single-quoted JavaScript intentionally contains a template literal.
+  # shellcheck disable=SC2016
+  if parsed_defaults="$(
+    printf '%s' "$inventory_json" \
+      | node -e 'let inventory; try { inventory = JSON.parse(require("node:fs").readFileSync(0, "utf8")); } catch { process.exit(2); } if (!inventory || typeof inventory !== "object" || Array.isArray(inventory)) process.exit(2); const display = inventory.defaultSandbox; const ready = inventory.readyDefaultSandbox; if (typeof display !== "string" || display.length === 0 || typeof ready !== "string" || ready.length === 0) process.exit(3); process.stdout.write(`${display}\t${ready}`);'
+  )"; then
+    IFS=$'\t' read -r display_default ready_default <<<"$parsed_defaults"
+  else
+    parse_status=$?
+    if [ "$parse_status" -eq 3 ]; then
+      printf '%s\n' "NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:missing"
+    else
+      printf '%s\n' "NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:unparseable"
+    fi
+    return 1
+  fi
+
+  if [ "$display_default" != "$SANDBOX_NAME" ]; then
+    printf '%s\n' "NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:display-mismatch"
+    return 1
+  fi
+
+  if [ "$ready_default" != "$SANDBOX_NAME" ]; then
+    printf '%s\n' "NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:ready-mismatch"
+    return 1
+  fi
+
+  printf '%s\n' "NEMOCLAW_DCODE_DEFAULT_SANDBOX_OK"
+}
+
 nemoclaw_connect_probe() {
-  # Exercise the public bare-connect route after DCode onboarding establishes
-  # this sandbox as the registry default.
-  "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" connect --probe-only 2>&1
+  # Exercise the public bare-connect route only through the persisted registry
+  # default, without either sandbox-name environment shortcut.
+  (
+    unset SANDBOX_NAME NEMOCLAW_SANDBOX_NAME NEMOCLAW_SANDBOX
+    "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" connect --probe-only 2>&1
+  )
+}
+
+guarded_bare_connect_probe() {
+  local connect_output
+  local connect_status
+  local expected_connect_output
+
+  require_bare_connect_registry_default || return
+  if connect_output="$(nemoclaw_connect_probe)"; then
+    :
+  else
+    connect_status=$?
+    printf '%s\n' "$connect_output"
+    return "$connect_status"
+  fi
+
+  expected_connect_output="  Probe complete: LangChain Deep Agents Code terminal smoke checks passed in '${SANDBOX_NAME}' (dcode)."
+  if ! printf '%s\n' "$connect_output" | grep -Fqx "$expected_connect_output"; then
+    printf '%s\n' "$connect_output"
+    printf '%s\n' "NEMOCLAW_DCODE_CONNECT_FAIL:sandbox-mismatch"
+    return 1
+  fi
+
+  printf '%s\n' "$connect_output"
 }
 
 sandbox_login_proxy_contract() {
@@ -401,13 +473,24 @@ DCODE_EXIT:${direct_exit}"
     fail_test "direct-exec dcode -n did not exit 0 with PONG (${direct_classification}, exit ${direct_exit})"
   fi
 
-  # 7. The user-facing connect readiness path accepts the same managed route.
-  if connect_output="$(nemoclaw_connect_probe)"; then
+  # 7. The user-facing bare-connect readiness path must resolve this sandbox
+  # from the persisted registry default before it accepts the managed route.
+  connect_output=""
+  if connect_output="$(guarded_bare_connect_probe 2>&1)"; then
     connect_exit=0
+    pass "registry default resolves to the Deep Agents Code sandbox"
     pass "nemoclaw connect --probe-only accepted the managed inference route (direct DNS/hosts ${direct_dns_state})"
   else
     connect_exit=$?
-    fail_test "nemoclaw connect --probe-only rejected the managed inference route (exit ${connect_exit})"
+    default_sandbox_reason="$(printf '%s\n' "$connect_output" | sed -n 's/^NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:\([a-z-]*\)$/\1/p' | tail -n1)"
+    connect_probe_reason="$(printf '%s\n' "$connect_output" | sed -n 's/^NEMOCLAW_DCODE_CONNECT_FAIL:\([a-z-]*\)$/\1/p' | tail -n1)"
+    if [ -n "$default_sandbox_reason" ]; then
+      fail_test "cannot exercise bare connect without the expected registry default (${default_sandbox_reason})"
+    elif [ -n "$connect_probe_reason" ]; then
+      fail_test "bare connect did not confirm the expected sandbox (${connect_probe_reason})"
+    else
+      fail_test "nemoclaw connect --probe-only rejected the managed inference route (exit ${connect_exit})"
+    fi
   fi
 
   # 8. No real secrets in managed config, runtime env files, artifacts, logs, or captured output.

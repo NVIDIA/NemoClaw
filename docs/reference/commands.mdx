@@ -767,12 +767,15 @@ Use `--no-sandbox-gpu`, `--no-gpu`, or `NEMOCLAW_SANDBOX_GPU=0` when you want to
 ### `$$nemoclaw list`
 
 List all registered sandboxes with their model, provider, and policy presets.
-Pass `--json` for machine-readable output that includes a `schemaVersion`, the default sandbox, recovery metadata, and the sandbox inventory.
+Pass `--json` for machine-readable output that includes a `schemaVersion`, the display-selected `defaultSandbox`, the point-in-time `readyDefaultSandbox` for bare `$$nemoclaw connect`, recovery metadata, and the sandbox inventory.
 Sandboxes with an active SSH session are marked with a `●` indicator so you can tell at a glance which sandbox you are already connected to in another terminal.
 <AgentOnly variant="openclaw,hermes">
 When a sandbox has a recorded dashboard port, the output includes its local dashboard URL.
 </AgentOnly>
-The default sandbox in text and JSON output honors the same environment override order as host-level status and tunnel commands: `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
+The JSON `defaultSandbox` and the default marker in text output honor the same environment override order as host-level status and tunnel commands: `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
+The JSON-only `readyDefaultSandbox` ignores those display overrides and reports the non-pending sandbox that a bare `$$nemoclaw connect` would select from the recovered registry state.
+It is `null` when no registered sandbox is ready.
+Bare connect reads the registry again, so a later registry change can produce a different target.
 
 ```bash
 $$nemoclaw list [--json]
@@ -853,6 +856,7 @@ $$nemoclaw connect
 
 The `--probe-only` flag verifies the sandbox is reachable over SSH and exits without opening a shell.
 Use it for health checks and scripted readiness probes.
+For terminal-agent sandboxes, the success line includes the agent and sandbox names so readiness automation can confirm that a bare connect reached the expected registry-selected sandbox.
 
 ### `$$nemoclaw <name> exec`
 

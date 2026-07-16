@@ -13,6 +13,135 @@ import {
 } from "./helpers/langchain-deepagents-code-headless.ts";
 
 describe("LangChain Deep Agents Code headless runtime contracts", () => {
+  it("requires bare connect to resolve the expected registry default (#7034)", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-default-"));
+    const cliFixture = path.join(fixtureDir, "nemoclaw");
+    const callLog = path.join(fixtureDir, "calls.log");
+
+    try {
+      fs.writeFileSync(
+        cliFixture,
+        [
+          "#!/bin/bash",
+          "set -euo pipefail",
+          '[ "${SANDBOX_NAME+x}" != x ]',
+          '[ "${NEMOCLAW_SANDBOX_NAME+x}" != x ]',
+          '[ "${NEMOCLAW_SANDBOX+x}" != x ]',
+          'printf "%s\\n" "$*" >>"$TEST_CALL_LOG"',
+          'if [ "$#" -eq 2 ] && [ "$1" = list ] && [ "$2" = --json ]; then',
+          '  [ "$TEST_LIST_EXIT" = 0 ] || exit "$TEST_LIST_EXIT"',
+          '  printf "%s\\n" "$TEST_LIST_JSON"',
+          "  exit 0",
+          "fi",
+          'if [ "$#" -eq 2 ] && [ "$1" = connect ] && [ "$2" = --probe-only ]; then',
+          '  printf "  Probe complete: LangChain Deep Agents Code terminal smoke checks passed in \'%s\' (dcode).\\n" "$TEST_CONNECT_SANDBOX"',
+          '  [ "$TEST_CONNECT_EXIT" = 0 ] || exit "$TEST_CONNECT_EXIT"',
+          "  exit 0",
+          "fi",
+          "exit 64",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      fs.chmodSync(cliFixture, 0o755);
+
+      const runGuardedProbe = (
+        inventoryJson: string,
+        listExit = 0,
+        connectExit = 0,
+        connectSandbox = "dcode-managed",
+      ) => {
+        fs.writeFileSync(callLog, "", "utf8");
+        const output = runHeadlessCheckSnippet(
+          [
+            'if output="$(guarded_bare_connect_probe 2>&1)"; then',
+            '  printf "pass:%s" "$output"',
+            "else",
+            "  status=$?",
+            '  printf "fail:%s:%s" "$status" "$output"',
+            "fi",
+          ].join("\n"),
+          {
+            NEMOCLAW_CLI_BIN: cliFixture,
+            NEMOCLAW_SANDBOX: "legacy-environment-shortcut",
+            NEMOCLAW_SANDBOX_NAME: "environment-shortcut",
+            SANDBOX_NAME: "dcode-managed",
+            TEST_CALL_LOG: callLog,
+            TEST_CONNECT_EXIT: String(connectExit),
+            TEST_CONNECT_SANDBOX: connectSandbox,
+            TEST_LIST_EXIT: String(listExit),
+            TEST_LIST_JSON: inventoryJson,
+          },
+        );
+        const callText = fs.readFileSync(callLog, "utf8").trim();
+        return { calls: callText ? callText.split("\n") : [], output };
+      };
+
+      const matchingInventory = JSON.stringify({
+        defaultSandbox: "dcode-managed",
+        readyDefaultSandbox: "dcode-managed",
+        sandboxes: [],
+      });
+      expect(runGuardedProbe(matchingInventory)).toEqual({
+        calls: ["list --json", "connect --probe-only"],
+        output:
+          "pass:NEMOCLAW_DCODE_DEFAULT_SANDBOX_OK\n  Probe complete: LangChain Deep Agents Code terminal smoke checks passed in 'dcode-managed' (dcode).",
+      });
+      expect(runGuardedProbe(matchingInventory, 0, 0, "another-sandbox")).toEqual({
+        calls: ["list --json", "connect --probe-only"],
+        output:
+          "fail:1:NEMOCLAW_DCODE_DEFAULT_SANDBOX_OK\n  Probe complete: LangChain Deep Agents Code terminal smoke checks passed in 'another-sandbox' (dcode).\nNEMOCLAW_DCODE_CONNECT_FAIL:sandbox-mismatch",
+      });
+      expect(
+        runGuardedProbe(
+          JSON.stringify({
+            defaultSandbox: "another-sandbox",
+            readyDefaultSandbox: "dcode-managed",
+            sandboxes: [],
+          }),
+        ),
+      ).toEqual({
+        calls: ["list --json"],
+        output: "fail:1:NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:display-mismatch",
+      });
+      expect(
+        runGuardedProbe(
+          JSON.stringify({
+            defaultSandbox: "dcode-managed",
+            readyDefaultSandbox: "another-sandbox",
+            sandboxes: [],
+          }),
+        ),
+      ).toEqual({
+        calls: ["list --json"],
+        output: "fail:1:NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:ready-mismatch",
+      });
+      expect(
+        runGuardedProbe(
+          JSON.stringify({ defaultSandbox: "dcode-managed", readyDefaultSandbox: null }),
+        ),
+      ).toEqual({
+        calls: ["list --json"],
+        output: "fail:1:NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:missing",
+      });
+      expect(runGuardedProbe("not-json")).toEqual({
+        calls: ["list --json"],
+        output: "fail:1:NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:unparseable",
+      });
+      expect(runGuardedProbe(matchingInventory, 71)).toEqual({
+        calls: ["list --json"],
+        output: "fail:1:NEMOCLAW_DCODE_DEFAULT_SANDBOX_FAIL:list-command",
+      });
+      expect(runGuardedProbe(matchingInventory, 0, 72)).toEqual({
+        calls: ["list --json", "connect --probe-only"],
+        output:
+          "fail:72:NEMOCLAW_DCODE_DEFAULT_SANDBOX_OK\n  Probe complete: LangChain Deep Agents Code terminal smoke checks passed in 'dcode-managed' (dcode).",
+      });
+    } finally {
+      fs.rmSync(fixtureDir, { force: true, recursive: true });
+    }
+  });
+
   it("requires exit zero and PONG from Deep Agents Code headless inference (#6191)", () => {
     const classify = (exitCode: string, output: string) =>
       runHeadlessCheckHelper("classify-output", {

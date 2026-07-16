@@ -47,6 +47,8 @@ export interface RecoveryResult {
 
 export interface ListSandboxesCommandDeps {
   recoverRegistryEntries: () => Promise<RecoveryResult>;
+  /** Return the non-pending registry selector used by bare `nemoclaw connect`. */
+  getReadyDefaultSandbox: () => string | null;
   getLiveInference: () => GatewayInference | null;
   /**
    * Returns the last onboard session's sandbox name and step state. The
@@ -90,6 +92,8 @@ export interface SandboxInventoryRow {
 export interface SandboxInventoryResult {
   schemaVersion: 1;
   defaultSandbox: string | null;
+  /** The non-pending registry selector used by bare `nemoclaw connect`. */
+  readyDefaultSandbox: string | null;
   recovery: {
     recoveredFromSession: boolean;
     recoveredFromGateway: number;
@@ -231,6 +235,7 @@ export async function getSandboxInventory(
   const recovery = await deps.recoverRegistryEntries();
   const resolvedDefault =
     resolveDefaultSandboxName(() => ({ defaultSandbox: recovery.defaultSandbox ?? null })) ?? null;
+  const readyDefaultSandbox = deps.getReadyDefaultSandbox();
   const lastSession = deps.loadLastSession();
   // #2753: only surface the last-onboarded name when its sandbox step
   // actually completed. Otherwise an interrupted onboard would leave the
@@ -243,6 +248,7 @@ export async function getSandboxInventory(
   return {
     schemaVersion: 1,
     defaultSandbox: resolvedDefault,
+    readyDefaultSandbox,
     recovery: {
       recoveredFromSession: recovery.recoveredFromSession === true,
       recoveredFromGateway: recovery.recoveredFromGateway || 0,
