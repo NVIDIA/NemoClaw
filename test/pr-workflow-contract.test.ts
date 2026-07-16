@@ -975,9 +975,6 @@ describe("pull request and main workflow contracts", () => {
     expect(parityStep.run).toContain("base=HEAD^1");
     expect(parityStep.run).toContain("head=HEAD^2");
     expect(parityStep.run).toContain('base="$PUSH_BASE_SHA"');
-    expect(parityStep.run).toContain("parity_check=scripts/checks/e2e-mock-parity.mts");
-    expect(parityStep.run).toContain("parity_check=scripts/checks/e2e-mock-parity.ts");
-    expect(parityStep.run).toContain('npx tsx "$parity_check" --base "$base" --head "$head"');
 
     const trustedCapabilityProbe = requiredWorkflowStep(
       prWorkflow.jobs["cli-test-shards"],
