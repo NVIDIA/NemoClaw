@@ -22,6 +22,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 
@@ -1015,9 +1016,24 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
   const taggedOpenShellWrapper = createOpenShellTmpfsWrapper(taggedPinnedOpenshell.cli);
   cleanup.add("remove v0.0.71 EXDEV OpenShell PATH wrapper", taggedOpenShellWrapper.remove);
 
+  // The OpenShell gateway reaches the fixture from its network namespace, so
+  // runner loopback is not routable from the readiness probe.
+  const fake = await startFakeOpenAiCompatibleServer({
+    apiKey: "nemoclaw-exdev-dummy-key",
+    host: "0.0.0.0",
+    model: "nemoclaw-exdev-probe",
+    publicHost: "host.openshell.internal",
+    responseText: "ok",
+  });
+  await artifacts.writeJson("fake-openai-compatible.json", { baseUrl: fake.baseUrl });
+  cleanup.add("close EXDEV compatible endpoint mock", async () => {
+    await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
+    await fake.close();
+  });
+
   const deploymentEnv = liveEnv({
     COMPATIBLE_API_KEY: "nemoclaw-exdev-dummy-key",
-    NEMOCLAW_ENDPOINT_URL: "http://host.openshell.internal:65535/v1",
+    NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
     NEMOCLAW_MODEL: "nemoclaw-exdev-probe",
     NEMOCLAW_PROVIDER_KEY: "nemoclaw-exdev-dummy-key",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
