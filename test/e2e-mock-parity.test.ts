@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   isMockParityRelevantSourceChange,
   type MockParityManifest,
   validateMockParity,
 } from "../scripts/checks/e2e-mock-parity";
+import { type CompositeAction, readYaml } from "./helpers/e2e-workflow-contract";
 
 const live = "test/e2e/live/example.test.ts";
 const fast = "test/e2e/support/example.test.ts";
@@ -106,5 +111,75 @@ describe("changed live E2E mock parity", () => {
         fileExists: exists,
       }),
     ).toEqual([`${live}: liveOnlyReason must be a string`]);
+  });
+});
+
+describe("trusted E2E parity entrypoint selection", () => {
+  const action = readYaml<CompositeAction>(".github/actions/ci-cli-coverage-shard/action.yaml");
+  const parityStep = action.runs.steps.find(
+    (step) => step.name === "Validate changed live E2E mock parity",
+  );
+  if (!parityStep) throw new Error("Missing E2E mock parity action step");
+
+  it("prefers .mts, falls back to .ts, and rejects a missing check (#6921)", () => {
+    const stem = "scripts/checks/e2e-mock-parity";
+    const variants = [
+      { extensions: ["mts", "ts"], expected: `${stem}.mts`, status: 0 },
+      { extensions: ["mts"], expected: `${stem}.mts`, status: 0 },
+      { extensions: ["ts"], expected: `${stem}.ts`, status: 0 },
+      { extensions: [], expected: null, status: 1 },
+    ] as const;
+
+    for (const variant of variants) {
+      const temp = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-parity-entrypoint-"));
+      const fakeBin = join(temp, "bin");
+      const commandLog = join(temp, "command.json");
+      mkdirSync(fakeBin);
+      mkdirSync(join(temp, "scripts", "checks"), { recursive: true });
+      writeFileSync(
+        join(fakeBin, "npx"),
+        [
+          "#!/usr/bin/env node",
+          'const fs = require("node:fs");',
+          "fs.appendFileSync(process.env.COMMAND_LOG, `${JSON.stringify(process.argv.slice(2))}\\n`);",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      for (const extension of variant.extensions) {
+        writeFileSync(join(temp, `${stem}.${extension}`), "// fixture\n");
+      }
+
+      try {
+        const result = spawnSync("bash", ["-c", parityStep.run ?? ""], {
+          cwd: temp,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            ...parityStep.env,
+            COMMAND_LOG: commandLog,
+            EVENT_NAME: "pull_request",
+            PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+            PUSH_BASE_SHA: "unused",
+          },
+          timeout: 5_000,
+        });
+
+        expect(result.status, String(result.stderr)).toBe(variant.status);
+        if (variant.expected) {
+          const commands = readFileSync(commandLog, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+          expect(commands).toEqual([
+            ["tsx", variant.expected, "--base", "HEAD^1", "--head", "HEAD^2"],
+          ]);
+        } else {
+          expect(existsSync(commandLog)).toBe(false);
+          expect(String(result.stdout)).toContain("Missing E2E mock parity entrypoint");
+        }
+      } finally {
+        rmSync(temp, { force: true, recursive: true });
+      }
+    }
   });
 });
