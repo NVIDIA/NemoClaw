@@ -322,11 +322,7 @@ detect_express_platform
     expect(output).not.toMatch(/Run express install/);
   });
 
-  it.each<{
-    name: string;
-    extraEnv: Record<string, string>;
-    entrypointArgs: string[];
-  }>([
+  it.each([
     {
       name: "a Station-only flag on DGX Spark",
       args: ["--station-deepseek"],
@@ -403,7 +399,11 @@ main "$@"
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it.each([
+  it.each<{
+    name: string;
+    extraEnv: Record<string, string>;
+    entrypointArgs: string[];
+  }>([
     {
       name: "environment notice acceptance",
       extraEnv: { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" },
