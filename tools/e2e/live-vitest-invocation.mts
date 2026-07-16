@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 import { spawnExitCode } from "../../src/lib/core/process-exit.ts";
-import { parseArgs } from "../advisors/io.mts";
 
 export const LIVE_VITEST_PROJECT = "e2e-live";
 export const LIVE_TEST_ROOT = "test/e2e/live/";
@@ -31,6 +30,34 @@ export type LiveVitestSpawner = (
   args: string[],
   options: { stdio: "inherit" },
 ) => LiveVitestSpawnResult;
+
+const LIVE_VITEST_OPTIONS = {
+  "--project": "project",
+  "--selector": "selector",
+  "--test-path": "testPath",
+} as const;
+
+function parseLiveVitestArgs(cliArgs: string[]): LiveVitestInvocation {
+  const invocation: LiveVitestInvocation = { testPath: undefined };
+
+  for (let index = 0; index < cliArgs.length; index += 2) {
+    const option = cliArgs[index];
+    const key = LIVE_VITEST_OPTIONS[option as keyof typeof LIVE_VITEST_OPTIONS];
+    if (!key) {
+      throw new Error(`unsupported live Vitest option ${JSON.stringify(option)}`);
+    }
+    const value = cliArgs[index + 1];
+    if (!value || value.startsWith("--")) {
+      throw new Error(`live Vitest option ${option} requires a value`);
+    }
+    if (invocation[key] !== undefined) {
+      throw new Error(`live Vitest option ${option} must not be repeated`);
+    }
+    invocation[key] = value;
+  }
+
+  return invocation;
+}
 
 function assertNoShellMetacharacters(value: string, field: string): void {
   const match = SHELL_METACHARACTER.exec(value);
@@ -101,12 +128,7 @@ export function buildLiveVitestArgs(invocation: LiveVitestInvocation): string[] 
 }
 
 export function runLiveVitestCli(cliArgs: string[], spawn: LiveVitestSpawner = spawnSync): number {
-  const args = parseArgs(cliArgs);
-  const argv = buildLiveVitestArgs({
-    testPath: args.testPath,
-    selector: args.selector,
-    project: args.project,
-  });
+  const argv = buildLiveVitestArgs(parseLiveVitestArgs(cliArgs));
   const result = spawn("npx", argv, { stdio: "inherit" });
   if (result.error) {
     throw result.error;

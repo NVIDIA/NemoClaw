@@ -199,6 +199,23 @@ describe("runLiveVitestCommand (#6961)", () => {
   });
 
   it.each([
+    [
+      "unknown option",
+      ["run", "--test-path", "test/e2e/live/diagnostics.test.ts", "--selctor", "^x$"],
+    ],
+    ["bare selector", [...validArgs, "--selector"]],
+  ])("rejects an %s before spawning Vitest", (_label, args) => {
+    let spawned = false;
+    const spawn: LiveVitestSpawner = () => {
+      spawned = true;
+      return { status: 0 };
+    };
+
+    expect(() => runLiveVitestCommand(args, spawn)).toThrow(/unsupported.*option|requires a value/);
+    expect(spawned).toBe(false);
+  });
+
+  it.each([
     ["missing", []],
     ["unsupported", ["runx"]],
   ])("fails the direct CLI for a %s subcommand", (_label, args) => {
