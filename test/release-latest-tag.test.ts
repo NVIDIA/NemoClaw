@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const latestScriptPath = path.join(repoRoot, "scripts", "release-latest-tag.sh");
@@ -14,6 +14,7 @@ const waitLatestScriptPath = path.join(repoRoot, "scripts", "release-wait-latest
 const planScriptPath = path.join(repoRoot, "scripts", "release-plan.mts");
 const tsxPath = path.join(repoRoot, "node_modules", ".bin", "tsx");
 const tempRoots: string[] = [];
+let fixtureTemplate: Omit<Fixture, "summary"> | undefined;
 
 function baseEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -64,12 +65,10 @@ type Fixture = {
   firstCommit: string;
 };
 
-function createFixture(): Fixture {
+function createFixtureTemplate(): Omit<Fixture, "summary"> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-release-latest-"));
-  tempRoots.push(root);
   const remote = path.join(root, "remote.git");
   const work = path.join(root, "work");
-  const summary = path.join(root, "summary.md");
 
   run(root, ["git", "init", "--bare", remote]);
   fs.mkdirSync(work);
@@ -84,6 +83,23 @@ function createFixture(): Fixture {
   run(work, ["git", "push", "-u", "origin", "main"]);
   const firstCommit = run(work, ["git", "rev-parse", "HEAD"]).trim();
 
+  return { root, work, remote, firstCommit };
+}
+
+function createFixture(): Fixture {
+  if (fixtureTemplate === undefined) {
+    throw new Error("release fixture template is not initialized");
+  }
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-release-latest-"));
+  tempRoots.push(root);
+  const remote = path.join(root, "remote.git");
+  const work = path.join(root, "work");
+  const summary = path.join(root, "summary.md");
+  fs.cpSync(fixtureTemplate.remote, remote, { recursive: true });
+  fs.cpSync(fixtureTemplate.work, work, { recursive: true });
+  run(work, ["git", "remote", "set-url", "origin", remote]);
+
+  const firstCommit = fixtureTemplate.firstCommit;
   return { root, work, remote, summary, firstCommit };
 }
 
@@ -217,9 +233,20 @@ function waitForLatest(fixture: Fixture, planPath: string): ReturnType<typeof sp
   ]);
 }
 
+beforeAll(() => {
+  fixtureTemplate = createFixtureTemplate();
+});
+
 afterEach(() => {
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+afterAll(() => {
+  if (fixtureTemplate !== undefined) {
+    fs.rmSync(fixtureTemplate.root, { force: true, recursive: true });
+    fixtureTemplate = undefined;
   }
 });
 

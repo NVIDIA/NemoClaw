@@ -223,6 +223,7 @@ describe("E2E fixture primitives", () => {
       );
 
       expect(result.exitCode).toBe(0);
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
       expect(result.stdout).toContain("[REDACTED]");
       expect(result.stderr).toContain("[REDACTED]");
       expect(result.stdout).not.toContain(secret);
@@ -231,6 +232,7 @@ describe("E2E fixture primitives", () => {
         artifacts.pathFor("shell/options-redaction-enforced.result.json"),
         "utf8",
       );
+      expect(JSON.parse(written).durationMs).toBe(result.durationMs);
       expect(written).not.toContain(secret);
       expect(
         fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stdout.txt"), "utf8"),

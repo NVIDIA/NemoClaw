@@ -48,7 +48,6 @@
     "test/langchain-deepagents-code-image-credentials.test.ts": 26951,
     "test/langchain-deepagents-code-nemotron-profile-plugin.test.ts": 5557,
     "test/list-command-helper-uses.test.ts": 7276,
-    "test/local-credential-helper-fields.test.ts": 46777,
     "test/local-credential-helper-session.test.ts": 5318,
     "test/mcp-add-crash-consistency.test.ts": 18749,
     "test/mcp-bridge-destroy-marker-recovery.test.ts": 8167,
