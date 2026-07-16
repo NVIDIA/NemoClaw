@@ -50,6 +50,8 @@ OpenClaw config and inference changes are refused while shields are up.
 Run `$$nemoclaw <name> shields down` before the change, then restore lockdown with `$$nemoclaw <name> shields up`.
 
 Host-side OpenClaw config writes run under the per-sandbox transition lock and bind the replacement to the SHA-256 digest of the matching read.
+Before `config set` replaces the live file, NemoClaw validates the complete candidate with the installed OpenClaw runtime.
+If candidate validation fails, the command preserves the existing config and does not reach the gateway restart path.
 The root-only config guard validates bounded JSON input, transactionally publishes fresh config and hash inodes, and restores the prior mutable posture without adopting concurrent path changes.
 
 In the direct root-entrypoint topology, gateway restart performs a read-only config and hash preflight, temporarily seals fresh inodes while the root PID 1 supervisor replaces the gateway child, and then restores the prior shields posture.
