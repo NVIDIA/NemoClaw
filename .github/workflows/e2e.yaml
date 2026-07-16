@@ -3109,9 +3109,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx vitest run --project e2e-live \
-            "${{ matrix.test_file }}" \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path "${{ matrix.test_file }}"
 
       - name: Upload security posture artifacts
         if: always()
