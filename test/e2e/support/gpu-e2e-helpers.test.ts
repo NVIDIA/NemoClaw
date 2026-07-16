@@ -8,7 +8,40 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { env, openClawModelConfigProjectionScript } from "../live/gpu-e2e-helpers.ts";
+import {
+  assertAgentExecutionSucceeded,
+  env,
+  openClawModelConfigProjectionScript,
+} from "../live/gpu-e2e-helpers.ts";
+
+const GPU_MODEL = "qwen3.5:9b";
+
+function agentOutput(attemptResult: "success" | "error"): string {
+  return JSON.stringify({
+    status: "ok",
+    summary: "completed",
+    result: {
+      payloads: [],
+      meta: {
+        aborted: false,
+        agentMeta: { provider: "inference", model: GPU_MODEL },
+        finalAssistantVisibleText: "NO_REPLY",
+        executionTrace: {
+          winnerProvider: "inference",
+          winnerModel: GPU_MODEL,
+          attempts: [
+            {
+              provider: "inference",
+              model: GPU_MODEL,
+              result: attemptResult,
+              stage: "assistant",
+            },
+          ],
+        },
+      },
+    },
+  });
+}
 
 describe("GPU E2E helpers", () => {
   it("forwards the workflow-owned Ollama model pull timeout", () => {
@@ -33,6 +66,18 @@ describe("GPU E2E helpers", () => {
     expect(env({}, { NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-traces" }).NEMOCLAW_TRACE_DIR).toBe(
       "/tmp/nemoclaw-traces",
     );
+  });
+
+  it("accepts successful execution proof when the model suppresses visible text", () => {
+    expect(() =>
+      assertAgentExecutionSucceeded(agentOutput("success"), "inference", GPU_MODEL),
+    ).not.toThrow();
+  });
+
+  it("rejects a recovery trace without a successful assistant attempt", () => {
+    expect(() =>
+      assertAgentExecutionSucceeded(agentOutput("error"), "inference", GPU_MODEL),
+    ).toThrow("execution trace must contain a successful assistant attempt");
   });
 
   it("projects only model evidence before OpenClaw config crosses the artifact boundary", () => {
