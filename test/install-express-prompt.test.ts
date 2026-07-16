@@ -14,6 +14,7 @@ describe("installer express install prompt (sourced)", () => {
     stdinMode: "pipe" | "tty",
     platform = "DGX Spark",
     extraEnv: Record<string, string> = {},
+    entrypoint: "prompt" | "accepted-station-main" = "prompt",
   ) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
     const python =
@@ -32,7 +33,26 @@ installer = sys.argv[1]
 answer = sys.argv[2].encode()
 stdin_mode = sys.argv[3]
 platform = sys.argv[4]
-script = r'''
+entrypoint = sys.argv[5]
+if entrypoint == "accepted-station-main":
+    script = r'''
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
+print_banner() { :; }
+ensure_docker() { :; }
+ensure_openshell_build_deps() { :; }
+# Stop immediately after the real express prompt configures the DeepSeek
+# recipe, before setup-jetson.sh or any installation side effect can run.
+bash() {
+  printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \
+    "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \
+    "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
+  exit 0
+}
+main --station-deepseek
+'''
+else:
+    script = r'''
 source "$INSTALLER_UNDER_TEST" >/dev/null
 detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
 NON_INTERACTIVE="\${NON_INTERACTIVE:-}"
@@ -95,17 +115,21 @@ except OSError:
 sys.stdout.buffer.write(output)
 sys.exit(exit_code)
 `;
-    return spawnSync(python, ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode, platform], {
-      cwd: tmp,
-      encoding: "utf-8",
-      timeout: 15_000,
-      killSignal: "SIGKILL",
-      env: {
-        HOME: tmp,
-        PATH: TEST_SYSTEM_PATH,
-        ...extraEnv,
+    return spawnSync(
+      python,
+      ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode, platform, entrypoint],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        timeout: 15_000,
+        killSignal: "SIGKILL",
+        env: {
+          HOME: tmp,
+          PATH: TEST_SYSTEM_PATH,
+          ...extraEnv,
+        },
       },
-    });
+    );
   }
 
   function detectExpressPlatformForProductName(productName: string) {
@@ -364,48 +388,27 @@ main "$@"
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("proceeds past the express preflight for --station-deepseek with NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 (#7008)", () => {
-    // #7008: accepting the third-party-software notice must NOT imply
-    // --non-interactive when --station-deepseek explicitly selects the
-    // interactive DGX Station express prompt. The two signals are orthogonal.
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-accept3p-"));
-    const result = spawnSync(
-      "bash",
-      [
-        "--noprofile",
-        "--norc",
-        "-c",
-        `
-source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform() { printf "%s" "$EXPRESS_PLATFORM"; }
-print_banner() { :; }
-# Stop main cleanly right after preflight_explicit_express_flags passes, echoing
-# NON_INTERACTIVE so the test can confirm the notice env var did not infer it.
-preflight_usage_notice_prompt() { printf "PROCEEDED NON_INTERACTIVE=%s\\n" "\${NON_INTERACTIVE:-}"; exit 0; }
-main "$@"
-`,
-        "_",
-        "--station-deepseek",
-      ],
+  it("reaches and accepts the DeepSeek express prompt through main after notice acceptance (#7008)", () => {
+    const result = runExpressPromptWithTty(
+      "\n",
+      "pipe",
+      "DGX Station",
       {
-        cwd: tmp,
-        encoding: "utf-8",
-        env: {
-          HOME: tmp,
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-          EXPRESS_PLATFORM: "DGX Station",
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-        },
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
       },
+      "accepted-station-main",
     );
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
-    expect(output).toMatch(/PROCEEDED NON_INTERACTIVE=/);
-    // The notice acceptance must not have flipped the run non-interactive.
-    expect(output).not.toMatch(/PROCEEDED NON_INTERACTIVE=1/);
+    expect(output).toMatch(
+      /Express install will configure managed local vLLM with DeepSeek V4 Flash/,
+    );
+    expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
+    expect(output).toMatch(/Using express install for DGX Station/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
+    );
     expect(output).not.toMatch(/cannot be combined with non-interactive mode/);
-    fs.rmSync(tmp, { recursive: true, force: true });
   });
 
   it.each([
