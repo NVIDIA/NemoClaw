@@ -40,12 +40,17 @@ def write_process(
     environ=b"PATH=/usr/bin\0",
     listener_inode=None,
     state="S",
+    thread_count=1,
 ):
     process_root = os.path.join(proc_root, str(pid))
     os.makedirs(os.path.join(process_root, "ns"))
     os.makedirs(os.path.join(process_root, "fd"))
     os.symlink("../net", os.path.join(process_root, "net"))
-    fields = [state, str(parent_pid)] + (["0"] * 17) + [str(start_time)]
+    fields = (
+        [state, str(parent_pid)]
+        + (["0"] * 15)
+        + [str(thread_count), "0", str(start_time)]
+    )
     with open(os.path.join(process_root, "stat"), "w", encoding="ascii") as stream:
         stream.write(f"{pid} (managed) {' '.join(fields)}\n")
     with open(os.path.join(process_root, "status"), "w", encoding="ascii") as stream:
@@ -162,6 +167,23 @@ with tempfile.TemporaryDirectory() as root:
             "gateway": [candidates[0].pid, candidates[0].start_time, candidates[0].parent_pid],
             "healthy": control._gateway_healthy(reader, candidates[0], hermes),
         }
+        write_process(
+            proc_root,
+            namespace_path,
+            38,
+            199,
+            1,
+            1000,
+            b"",
+            state="Z",
+            thread_count=2,
+        )
+        try:
+            control._discover_supervisor(reader)
+            zombie_leader_with_live_sibling = "accepted"
+        except control.ControlError as error:
+            zombie_leader_with_live_sibling = error.code
+        remove_process(proc_root, 38)
         state_key_behavior = [
             replace(candidates[0], state="R").stable_key()
             == candidates[0].stable_key(),
@@ -732,6 +754,7 @@ with tempfile.TemporaryDirectory() as root:
 
     print(json.dumps({
         "initial": initial_proof,
+        "zombie_leader_with_live_sibling": zombie_leader_with_live_sibling,
         "state_key_behavior": state_key_behavior,
         "mixed_namespace_rejected": mixed_namespace_rejected,
         "transient_supervisor_retry": transient_supervisor_retry,
@@ -791,6 +814,7 @@ describe("managed gateway root control", () => {
         gateway: [41, "333", 40],
         healthy: true,
       },
+      zombie_leader_with_live_sibling: "SUPERVISOR_UNAVAILABLE",
       state_key_behavior: [true, false],
       mixed_namespace_rejected: true,
       transient_supervisor_retry: [40, 2],

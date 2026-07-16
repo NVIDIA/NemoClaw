@@ -581,18 +581,24 @@ def _namespace_inode(pid_fd: int) -> int | None:
         os.close(fd)
 
 
-def _parse_stat(raw: bytes) -> tuple[str, int, str]:
+def _parse_stat(raw: bytes) -> tuple[str, int, str, int]:
     try:
         text = raw.decode("ascii")
         suffix = text.rsplit(") ", 1)[1].split()
         state = suffix[0]
         parent_pid = int(suffix[1], 10)
+        thread_count = int(suffix[17], 10)
         start_time = suffix[19]
     except (IndexError, UnicodeDecodeError, ValueError) as exc:
         raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
-    if not start_time.isascii() or not start_time.isdigit() or len(state) != 1:
+    if (
+        not start_time.isascii()
+        or not start_time.isdigit()
+        or len(state) != 1
+        or thread_count < 1
+    ):
         raise ControlError("SUPERVISOR_UNAVAILABLE")
-    return state, parent_pid, start_time
+    return state, parent_pid, start_time, thread_count
 
 
 def _parse_status(raw: bytes, pid: int) -> tuple[tuple[int, int, int, int], int]:
@@ -614,17 +620,19 @@ def _parse_status(raw: bytes, pid: int) -> tuple[tuple[int, int, int, int], int]
     return uid_values, namespace_values[-1]
 
 
-def _parse_cmdline(raw: bytes, state: str) -> tuple[bytes, ...]:
+def _parse_cmdline(
+    raw: bytes, state: str, thread_count: int
+) -> tuple[bytes, ...]:
     values = tuple(value for value in raw.split(b"\0") if value)
     if sum(len(value) for value in values) > MAX_PROC_FILE_BYTES:
         raise ControlError("SUPERVISOR_UNAVAILABLE")
     if not values:
-        # Linux exposes an empty cmdline after a process becomes a zombie. A
-        # twice-captured zombie cannot be a live supervisor or gateway, and all
-        # candidate matchers exclude state=Z while safely handling empty argv.
-        # Keep an empty cmdline terminal for every live state so a malformed or
-        # unreadable live process still makes discovery fail closed.
-        if state == "Z":
+        # Linux exposes an empty cmdline after a process becomes a zombie, but
+        # a zombie thread-group leader can retain live sibling threads. Accept
+        # only a single-thread zombie; all candidate matchers exclude state=Z
+        # while safely handling empty argv. Keep every other empty cmdline
+        # terminal so discovery remains fail closed.
+        if state == "Z" and thread_count == 1:
             return ()
         raise ControlError("SUPERVISOR_UNAVAILABLE")
     return values
@@ -666,18 +674,18 @@ class ProcReader:
             first_stat = _parse_stat(_read_at(pid_fd, "stat"))
             first_status = _parse_status(_read_at(pid_fd, "status"), pid)
             first_cmdline = _parse_cmdline(
-                _read_at(pid_fd, "cmdline"), first_stat[0]
+                _read_at(pid_fd, "cmdline"), first_stat[0], first_stat[3]
             )
             first_namespace = _namespace_inode(pid_fd)
             second_stat = _parse_stat(_read_at(pid_fd, "stat"))
             second_status = _parse_status(_read_at(pid_fd, "status"), pid)
             second_cmdline = _parse_cmdline(
-                _read_at(pid_fd, "cmdline"), second_stat[0]
+                _read_at(pid_fd, "cmdline"), second_stat[0], second_stat[3]
             )
             second_namespace = _namespace_inode(pid_fd)
             after = os.fstat(pid_fd)
             if (
-                first_stat[1:] != second_stat[1:]
+                first_stat[1:3] != second_stat[1:3]
                 or (first_stat[0] == "Z") != (second_stat[0] == "Z")
                 or first_status != second_status
                 or first_cmdline != second_cmdline
@@ -686,7 +694,7 @@ class ProcReader:
                 or before.st_ino != after.st_ino
             ):
                 raise ControlError("SUPERVISOR_UNAVAILABLE")
-            state, parent_pid, start_time = second_stat
+            state, parent_pid, start_time, _thread_count = second_stat
             uids, namespace_pid = second_status
             return ProcessIdentity(
                 pid=pid,
