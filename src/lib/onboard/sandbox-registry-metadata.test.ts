@@ -127,6 +127,66 @@ describe("sandbox registry metadata", () => {
       }),
     );
   });
+
+  it("persists a reused terminal sandbox without a dashboard port for host allocation (#7020)", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-reuse-terminal-metadata-"));
+    process.env.HOME = tmpDir;
+    vi.resetModules();
+
+    const configDir = join(tmpDir, ".nemoclaw");
+    const registryFile = join(configDir, "sandboxes.json");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      registryFile,
+      JSON.stringify({
+        sandboxes: {
+          "terminal-box": {
+            name: "terminal-box",
+            model: "old-model",
+            provider: "old-provider",
+            dashboardPort: 18789,
+          },
+        },
+        defaultSandbox: "terminal-box",
+      }),
+    );
+
+    const metadata = await import("./sandbox-registry-metadata");
+    const dashboardPorts = await import("./dashboard-port");
+    const gatewayRegistry = await import("../state/gateway-registry");
+    const helpers = metadata.createSandboxRegistryMetadataHelpers({
+      isLinuxDockerDriverGatewayEnabled: () => true,
+      getInstalledOpenshellVersion: () => "0.0.44",
+      runCaptureOpenshell: () => "openshell 0.0.44",
+    });
+
+    helpers.updateReusedSandboxMetadata(
+      "terminal-box",
+      { name: "langchain-deepagents-code" } as AgentDefinition,
+      "new-model",
+      "nvidia-prod",
+      0,
+    );
+
+    const persisted = JSON.parse(readFileSync(registryFile, "utf8"));
+    expect(persisted.sandboxes["terminal-box"].dashboardPort).toBeNull();
+
+    const hostEntries = gatewayRegistry.listHostGatewayRegistryEntries(tmpDir);
+    expect(hostEntries).toHaveLength(1);
+    expect(hostEntries[0].entry.dashboardPort).toBeNull();
+
+    const occupied = dashboardPorts.getRegistryOccupiedDashboardPorts("other-sandbox");
+    expect(occupied.size).toBe(0);
+    expect(
+      dashboardPorts.findAvailableDashboardPort(
+        "other-sandbox",
+        18789,
+        null,
+        () => false,
+        occupied,
+      ),
+    ).toBe(18789);
+  });
 });
 
 describe("getSandboxRuntimeRegistryFields openshellDriver", () => {
