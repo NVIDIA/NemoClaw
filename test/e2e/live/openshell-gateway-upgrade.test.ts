@@ -106,6 +106,11 @@ function liveEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
+function withoutEnvKeys(env: NodeJS.ProcessEnv, keys: readonly string[]): NodeJS.ProcessEnv {
+  const excluded = new Set(keys);
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !excluded.has(key)));
+}
+
 function shellLoginPrefix(hideUserLocalOpenShell = false): string {
   const lines = [
     "set -euo pipefail",
@@ -119,20 +124,20 @@ function shellLoginPrefix(hideUserLocalOpenShell = false): string {
     '  . "$NVM_DIR/nvm.sh"',
     "fi",
   ];
-  if (hideUserLocalOpenShell) {
-    lines.push(
-      '_path_without_user_local=""',
-      "while IFS= read -r _path_entry; do",
-      '  [ "$_path_entry" = "$HOME/.local/bin" ] && continue',
-      '  _path_without_user_local="${_path_without_user_local:+${_path_without_user_local}:}${_path_entry}"',
-      'done < <(tr ":" "\\n" <<<"$PATH")',
-      'export PATH="$_path_without_user_local"',
-      "unset _path_without_user_local _path_entry",
-      "hash -r",
-    );
-  } else {
-    lines.push('export PATH="$HOME/.local/bin:$PATH"');
-  }
+  lines.push(
+    ...(hideUserLocalOpenShell
+      ? [
+          '_path_without_user_local=""',
+          "while IFS= read -r _path_entry; do",
+          '  [ "$_path_entry" = "$HOME/.local/bin" ] && continue',
+          '  _path_without_user_local="${_path_without_user_local:+${_path_without_user_local}:}${_path_entry}"',
+          'done < <(tr ":" "\\n" <<<"$PATH")',
+          'export PATH="$_path_without_user_local"',
+          "unset _path_without_user_local _path_entry",
+          "hash -r",
+        ]
+      : ['export PATH="$HOME/.local/bin:$PATH"']),
+  );
   return lines.join("\n");
 }
 
@@ -614,7 +619,7 @@ async function installCurrentNemoclawUpgrade(
   const resolvedRef = currentRefResult.stdout.trim();
   expect(resolvedRef.length).toBeGreaterThan(0);
   const exerciseOrdinaryUpgrade = OLD_NEMOCLAW_REF === "v0.0.55";
-  const currentEnv = liveEnv({
+  const baseCurrentEnv = liveEnv({
     COMPATIBLE_API_KEY: "dummy",
     GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
     NEMOCLAW_BOOTSTRAP_PAYLOAD: "1",
@@ -628,17 +633,20 @@ async function installCurrentNemoclawUpgrade(
     NEMOCLAW_DASHBOARD_PORT: "",
     CHAT_UI_URL: "",
   });
-  if (exerciseOrdinaryUpgrade) {
-    delete currentEnv.ACCEPT_THIRD_PARTY_SOFTWARE;
-    delete currentEnv.NON_INTERACTIVE;
-    delete currentEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE;
-    delete currentEnv.NEMOCLAW_NON_INTERACTIVE;
-    delete currentEnv.NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE;
-    delete currentEnv.NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE;
-  } else {
-    currentEnv.NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE = "1";
-    currentEnv.NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE = JSON.stringify([SURVIVOR_SANDBOX]);
-  }
+  const currentEnv = exerciseOrdinaryUpgrade
+    ? withoutEnvKeys(baseCurrentEnv, [
+        "ACCEPT_THIRD_PARTY_SOFTWARE",
+        "NON_INTERACTIVE",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        "NEMOCLAW_NON_INTERACTIVE",
+        "NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE",
+        "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE",
+      ])
+    : {
+        ...baseCurrentEnv,
+        NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify([SURVIVOR_SANDBOX]),
+      };
   const redactionValues = [process.env.GITHUB_TOKEN ?? ""].filter(Boolean);
   await runInstallerPayload(
     host,

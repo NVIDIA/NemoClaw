@@ -72,13 +72,13 @@ exit 0
 printf '%s\\n' "$*" >> "${openshellLog}"
 exit 0
 `;
-  if (options.openshellOnPath !== false) {
-    writeExecutable(path.join(bin, "openshell"), openshellScript);
-  }
-  if (options.userLocalOpenshell === true) {
-    const localBin = path.join(home, ".local", "bin");
-    fs.mkdirSync(localBin, { recursive: true });
-    writeExecutable(path.join(localBin, "openshell"), openshellScript);
+  const openshellTargets = [
+    options.openshellOnPath !== false ? path.join(bin, "openshell") : null,
+    options.userLocalOpenshell === true ? path.join(home, ".local", "bin", "openshell") : null,
+  ].filter((target): target is string => target !== null);
+  for (const target of openshellTargets) {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    writeExecutable(target, openshellScript);
   }
   writeExecutable(path.join(bin, "python3"), "#!/usr/bin/env bash\nexit 127\n");
 
