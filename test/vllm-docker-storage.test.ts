@@ -11,6 +11,7 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, expect, test, vi } from "vitest";
 
+import { detectVllmProfile } from "../src/lib/inference/vllm";
 import {
   imageStorageRequirementBytes,
   probeDockerStorage,
@@ -69,7 +70,6 @@ delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
 const result = await installVllm({
   ...profile,
   image: "example.invalid/nemoclaw/vllm@sha256:${"0".repeat(64)}",
-  imageDownloadSizeBytes: 1,
   containerName: "nemoclaw-vllm-storage-e2e-" + String(process.pid),
   pullTimeoutSec: 1,
 }, {
@@ -157,7 +157,10 @@ realDockerTest(
     expect(probe.capacity.availableBytes).toBe(measuredAvailableBytes);
     expect(probe.capacity.availableBytes).toBeGreaterThan(0n);
 
-    expect(probe.capacity.availableBytes).toBeGreaterThanOrEqual(imageStorageRequirementBytes(1));
+    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+    assert(profile, "managed vLLM has no generic Linux profile");
+    const requiredAvailableBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
+    expect(probe.capacity.availableBytes).toBeGreaterThanOrEqual(requiredAvailableBytes);
 
     const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-storage-"));
     const blockedHome = path.join(fakeBinDir, "blocked-home");
@@ -278,6 +281,8 @@ realDockerTest(
       measuredPath: probe.capacity.path,
       measuredSource: probe.capacity.source,
       measuredAvailableBytes: String(probe.capacity.availableBytes),
+      imageDownloadSizeBytes: String(profile.imageDownloadSizeBytes),
+      requiredAvailableBytes: String(requiredAvailableBytes),
       managedInstallCrossedImageStorageGate: true,
       installSubprocessTimeoutMs: INSTALL_SUBPROCESS_TIMEOUT_MS,
       installDockerCommands,
