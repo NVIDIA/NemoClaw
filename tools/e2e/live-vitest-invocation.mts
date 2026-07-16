@@ -4,7 +4,18 @@
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
-import { spawnExitCode } from "../../src/lib/core/process-exit.ts";
+import * as importedProcessExit from "../../src/lib/core/process-exit.ts";
+
+// The root TypeScript package is exposed as CJS under the exact `npx tsx`
+// workflow execution mode, but as an ESM namespace under Vitest. Normalize
+// both representations so the executable and tests share exit handling.
+const processExit = (
+  "default" in importedProcessExit && importedProcessExit.default
+    ? importedProcessExit.default
+    : importedProcessExit
+) as typeof import("../../src/lib/core/process-exit.ts");
+
+const { spawnExitCode } = processExit;
 
 export const LIVE_VITEST_PROJECT = "e2e-live";
 export const LIVE_TEST_ROOT = "test/e2e/live/";
