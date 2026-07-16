@@ -26,6 +26,9 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
       "--non-interactive",
       "--yes-i-accept-third-party-software",
     ]);
+    expect(currentGatewayUpgradeInstallerArgs("current-install.sh", { interactive: true })).toEqual(
+      ["current-install.sh"],
+    );
   });
 
   it("rejects mutable or injectable historical fixture inputs before use (#6114)", () => {

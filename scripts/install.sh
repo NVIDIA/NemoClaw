@@ -2201,6 +2201,11 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
+  if ! command_exists openshell; then
+    # Older installers could place OpenShell here without persisting the PATH
+    # update. Recover that standard location before deciding no gateway exists.
+    prefer_user_local_openshell
+  fi
   command_exists openshell || return 0
 
   if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
