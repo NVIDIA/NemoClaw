@@ -124,8 +124,11 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * Assert that an agent command completed through the expected inference route.
- * Visible assistant text is intentionally not part of this recovery proof.
+ * Assert that upstream `openclaw agent --json` completed through the expected inference route.
+ * NemoClaw preserves that upstream stdout without owning its schema, so the live invocation is the
+ * producer-facing contract check. Visible assistant text is intentionally excluded because OpenClaw
+ * can suppress a successful turn as `NO_REPLY`. Replace this assertion when the pinned OpenClaw
+ * runtime exposes a dedicated stable completion signal.
  */
 export function assertAgentExecutionSucceeded(
   raw: string,
