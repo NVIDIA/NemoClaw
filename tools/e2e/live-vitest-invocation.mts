@@ -4,6 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+import { spawnExitCode } from "../../src/lib/core/process-exit.ts";
 import { parseArgs } from "../advisors/io.mts";
 
 export const LIVE_VITEST_PROJECT = "e2e-live";
@@ -95,7 +96,10 @@ function runCli(): void {
     project: args.project,
   });
   const result = spawnSync("npx", argv, { stdio: "inherit" });
-  process.exit(typeof result.status === "number" ? result.status : 1);
+  if (result.error) {
+    throw result.error;
+  }
+  process.exit(spawnExitCode(result));
 }
 
 if (
