@@ -5,11 +5,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { afterEach, expect, test, vi } from "vitest";
 
-import { __test, detectVllmProfile } from "../src/lib/inference/vllm";
 import {
   imageStorageRequirementBytes,
   probeDockerStorage,
@@ -17,7 +18,7 @@ import {
 
 const TARGET_ID = "vllm-docker-storage";
 const DOCKER_HOST = "unix:///run/docker.sock";
-const RELEASE_CANDIDATE_VERSION = "v0.0.85";
+const INSTALL_SUBPROCESS_TIMEOUT_MS = 15_000;
 const RUN_REAL_DOCKER =
   process.env.E2E_TARGET_ID === TARGET_ID ||
   process.env.NEMOCLAW_RUN_VLLM_STORAGE_DOCKER_E2E === "1";
@@ -29,29 +30,56 @@ interface DockerInfo {
   ServerVersion?: unknown;
 }
 
-type ValidationSubject =
-  | { kind: "checkout"; checkoutSha: string }
-  | { kind: "release-candidate"; version: string; checkoutSha: string };
-
-type ValidationSubjectFactory = (checkoutSha: string) => ValidationSubject;
-
-const checkoutValidationSubject: ValidationSubjectFactory = (checkoutSha) => ({
-  kind: "checkout",
-  checkoutSha,
+function dockerProxySource(realDockerPath: string, commandLogPath: string): string {
+  return `#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(commandLogPath)}, JSON.stringify(args) + "\\n");
+const command = ["container", "image"].includes(args[0])
+  ? args.slice(0, 2).join(" ")
+  : args[0];
+const allowed = new Set(["container ls", "image inspect", "info"]);
+if (!allowed.has(command)) {
+  process.stderr.write("blocked mutating Docker command: " + args.join(" ") + "\\n");
+  process.exit(97);
+}
+const result = spawnSync(${JSON.stringify(realDockerPath)}, args, {
+  env: process.env,
+  stdio: "inherit",
+  timeout: 10000,
+  killSignal: "SIGKILL",
 });
+if (result.error) {
+  process.stderr.write(result.error.message + "\\n");
+  process.exit(98);
+}
+process.exit(result.status ?? 99);
+`;
+}
 
-const validationSubjectFactories = new Map<string | undefined, ValidationSubjectFactory>([
-  [undefined, checkoutValidationSubject],
-  ["", checkoutValidationSubject],
-  [
-    RELEASE_CANDIDATE_VERSION,
-    (checkoutSha) => ({
-      kind: "release-candidate",
-      version: RELEASE_CANDIDATE_VERSION,
-      checkoutSha,
-    }),
-  ],
-]);
+function installChildSource(vllmModuleUrl: string): string {
+  return `
+import vllmModule from ${JSON.stringify(vllmModuleUrl)};
+const { detectVllmProfile, installVllm } = vllmModule;
+const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
+if (!profile) throw new Error("managed vLLM has no generic Linux profile");
+process.env.NEMOCLAW_VLLM_MODEL = profile.defaultModel.envValue;
+delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
+const result = await installVllm({
+  ...profile,
+  image: "example.invalid/nemoclaw/vllm@sha256:${"0".repeat(64)}",
+  imageDownloadSizeBytes: 1,
+  containerName: "nemoclaw-vllm-storage-e2e-" + String(process.pid),
+  pullTimeoutSec: 1,
+}, {
+  hasImage: false,
+  nonInteractive: true,
+  promptFn: async () => "",
+});
+process.stdout.write("\\nNEMOCLAW_INSTALL_RESULT=" + JSON.stringify(result) + "\\n");
+`;
+}
 
 function dockerEnvironment(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, DOCKER_HOST };
@@ -74,43 +102,14 @@ function writeEvidence(evidence: Record<string, unknown>): void {
   persist();
 }
 
-function validationSubject(
-  checkoutSha: string,
-  candidateVersion: string | undefined,
-): ValidationSubject {
-  const factory = validationSubjectFactories.get(candidateVersion);
-  assert(
-    factory,
-    `NEMOCLAW_CANDIDATE_VERSION must be exactly ${RELEASE_CANDIDATE_VERSION}; received ${JSON.stringify(candidateVersion)}`,
-  );
-  return factory(checkoutSha);
-}
-
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
 
-test("distinguishes checkout evidence from exact v0.0.85 release acceptance (#7039)", () => {
-  const checkoutSha = "a".repeat(40);
-  expect(validationSubject(checkoutSha, undefined)).toEqual({ kind: "checkout", checkoutSha });
-  expect(validationSubject(checkoutSha, "")).toEqual({ kind: "checkout", checkoutSha });
-  expect(validationSubject(checkoutSha, RELEASE_CANDIDATE_VERSION)).toEqual({
-    kind: "release-candidate",
-    version: RELEASE_CANDIDATE_VERSION,
-    checkoutSha,
-  });
-  expect(() => validationSubject(checkoutSha, "0.0.85")).toThrow(
-    `NEMOCLAW_CANDIDATE_VERSION must be exactly ${RELEASE_CANDIDATE_VERSION}`,
-  );
-  expect(() => validationSubject(checkoutSha, "v0.0.84")).toThrow(
-    `NEMOCLAW_CANDIDATE_VERSION must be exactly ${RELEASE_CANDIDATE_VERSION}`,
-  );
-});
-
 realDockerTest(
-  "accepts a real Linux profile from the measured /run/docker.sock capacity (#7039)",
-  async () => {
+  "allows non-interactive managed vLLM past the real /run/docker.sock storage gate (#7039)",
+  () => {
     expect(process.platform, "this release acceptance requires a native Linux host").toBe("linux");
     expect(
       fs.statSync("/run/docker.sock").isSocket(),
@@ -156,24 +155,83 @@ realDockerTest(
     assert(capacityStats, `the probe did not sample ${probe.capacity.path}`);
     const measuredAvailableBytes = capacityStats.bavail * capacityStats.bsize;
     expect(probe.capacity.availableBytes).toBe(measuredAvailableBytes);
+    expect(probe.capacity.availableBytes).toBeGreaterThan(0n);
 
-    const profile = detectVllmProfile({ platform: "linux", type: "nvidia" });
-    assert(profile, "the release acceptance host must support the real Linux vLLM profile");
-    const requiredBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
-    expect(probe.capacity.availableBytes).toBeGreaterThanOrEqual(requiredBytes);
+    expect(probe.capacity.availableBytes).toBeGreaterThanOrEqual(imageStorageRequirementBytes(1));
 
-    const promptFn = vi.fn(async () => {
-      throw new Error("the sufficient-capacity path must not prompt");
+    const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-storage-"));
+    const blockedHome = path.join(fakeBinDir, "blocked-home");
+    const commandLogPath = path.join(fakeBinDir, "docker-commands.jsonl");
+    const dockerPathResult = spawnSync("sh", ["-c", "command -v docker"], {
+      encoding: "utf8",
+      env,
+      timeout: 5_000,
     });
-    const warning = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const accepted = await __test.imageStorageAccepted(
-      profile,
-      { hasImage: false, nonInteractive: true, promptFn },
-      probe,
-    );
-    expect(accepted).toBe(true);
-    expect(promptFn).not.toHaveBeenCalled();
-    expect(warning).not.toHaveBeenCalled();
+    expect(
+      dockerPathResult.status,
+      `could not resolve the Docker CLI: ${
+        dockerPathResult.error?.message || dockerPathResult.stderr || dockerPathResult.stdout
+      }`,
+    ).toBe(0);
+    const realDockerPath = dockerPathResult.stdout.trim();
+    expect(path.isAbsolute(realDockerPath)).toBe(true);
+    let installDockerCommands: string[] = [];
+    try {
+      fs.writeFileSync(blockedHome, "not a directory\n");
+      fs.writeFileSync(path.join(fakeBinDir, "nvidia-smi"), "#!/bin/sh\nexit 0\n", {
+        mode: 0o755,
+      });
+      fs.writeFileSync(path.join(fakeBinDir, "curl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(
+        path.join(fakeBinDir, "docker"),
+        dockerProxySource(realDockerPath, commandLogPath),
+        { mode: 0o755 },
+      );
+      const childEnv = dockerEnvironment();
+      childEnv.HOME = blockedHome;
+      childEnv.PATH = `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`;
+      const installResult = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          "--input-type=module",
+          "--eval",
+          installChildSource(pathToFileURL(path.resolve("src/lib/inference/vllm.ts")).href),
+        ],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: childEnv,
+          timeout: INSTALL_SUBPROCESS_TIMEOUT_MS,
+          killSignal: "SIGKILL",
+        },
+      );
+      expect(
+        installResult.error,
+        `managed-vLLM install subprocess failed to complete: ${installResult.error?.message}`,
+      ).toBeUndefined();
+      expect(
+        installResult.status,
+        `managed-vLLM install subprocess failed:\n${installResult.stderr}\n${installResult.stdout}`,
+      ).toBe(0);
+      expect(installResult.stdout).toContain('NEMOCLAW_INSTALL_RESULT={"ok":false}');
+      expect(installResult.stderr).toContain("could not create Hugging Face cache directory");
+      expect(installResult.stderr).not.toContain("Docker storage for the managed vLLM image");
+      const dockerCommands = fs
+        .readFileSync(commandLogPath, "utf8")
+        .trim()
+        .split(/\r?\n/u)
+        .map((line) => JSON.parse(line) as string[]);
+      expect(dockerCommands.map((args) => args.slice(0, 2))).toEqual([
+        ["container", "ls"],
+        ["image", "inspect"],
+        ["info", "--format"],
+      ]);
+      installDockerCommands = dockerCommands.map((args) => args.slice(0, 2).join(" "));
+    } finally {
+      fs.rmSync(fakeBinDir, { force: true, recursive: true });
+    }
 
     const checkoutResult = spawnSync("git", ["rev-parse", "HEAD"], {
       encoding: "utf8",
@@ -187,10 +245,30 @@ realDockerTest(
     ).toBe(0);
     const checkoutSha = checkoutResult.stdout.trim();
     expect(checkoutSha).toMatch(/^[0-9a-f]{40}$/u);
+    const sourceVersionResult = spawnSync("git", ["describe", "--tags", "--always", "--dirty"], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    expect(
+      sourceVersionResult.status,
+      `could not record the validated source version: ${
+        sourceVersionResult.error?.message ||
+        sourceVersionResult.stderr ||
+        sourceVersionResult.stdout
+      }`,
+    ).toBe(0);
+    const releaseCandidateSourceVersion = sourceVersionResult.stdout.trim();
+    expect(releaseCandidateSourceVersion).not.toBe("");
+    const packageMetadata = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
+    ) as { version?: unknown };
+    expect(typeof packageMetadata.version).toBe("string");
+    const packageVersion = String(packageMetadata.version);
     const evidence = {
       schemaVersion: 1,
       checkoutSha,
-      validationSubject: validationSubject(checkoutSha, process.env.NEMOCLAW_CANDIDATE_VERSION),
+      releaseCandidateSourceVersion,
+      packageVersion,
       platform: process.platform,
       architecture: process.arch,
       dockerHost: DOCKER_HOST,
@@ -200,8 +278,9 @@ realDockerTest(
       measuredPath: probe.capacity.path,
       measuredSource: probe.capacity.source,
       measuredAvailableBytes: String(probe.capacity.availableBytes),
-      requiredAvailableBytes: String(requiredBytes),
-      imageStorageAccepted: accepted,
+      managedInstallCrossedImageStorageGate: true,
+      installSubprocessTimeoutMs: INSTALL_SUBPROCESS_TIMEOUT_MS,
+      installDockerCommands,
     };
     writeEvidence(evidence);
     console.info(`[${TARGET_ID}] ${JSON.stringify(evidence)}`);

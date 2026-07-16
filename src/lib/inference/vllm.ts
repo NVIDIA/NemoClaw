@@ -847,9 +847,8 @@ function printModelStorageWarning(
 async function imageStorageAccepted(
   profile: VllmProfile,
   opts: InstallVllmOptions,
-  probeResult: StorageProbeResult = probeDockerStorage(),
 ): Promise<boolean> {
-  const probe = probeResult;
+  const probe = probeDockerStorage();
   const requiredBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
   if (probe.ok && probe.capacity.availableBytes >= requiredBytes) {
     return true;
@@ -867,8 +866,6 @@ async function imageStorageAccepted(
   }
   return isAffirmativeAnswer(await opts.promptFn("  Continue with the pull anyway? [y/N]: "));
 }
-
-export const __test = { imageStorageAccepted };
 
 async function modelStorageAccepted(
   profile: VllmProfile,

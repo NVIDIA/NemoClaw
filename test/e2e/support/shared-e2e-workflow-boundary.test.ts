@@ -16,17 +16,12 @@ import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundar
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 type Workflow = {
-  on: {
-    workflow_dispatch: {
-      inputs: Record<string, { default?: unknown }>;
-    };
-  };
   jobs: Record<
     string,
     {
       env?: Record<string, unknown>;
       needs?: string[];
-      steps?: Array<{ env?: Record<string, unknown>; name?: string; run?: string }>;
+      steps?: Array<{ name?: string; run?: string }>;
     }
   >;
 };
@@ -91,22 +86,5 @@ describe("shared E2E workflow boundary", () => {
     });
 
     expect(errors).toContain("workflow missing shared E2E job");
-  });
-
-  it("keeps release-candidate evidence optional and scoped to the vLLM storage test", () => {
-    const errors = validateMutatedWorkflow((workflow) => {
-      workflow.on.workflow_dispatch.inputs.candidate_version.default = "v0.0.85";
-      const runStep = workflow.jobs["shared-e2e"].steps!.find(
-        (step) => step.name === "Run tagged credential-free test",
-      );
-      runStep!.env!.NEMOCLAW_CANDIDATE_VERSION = "${{ inputs.candidate_version }}";
-    });
-
-    expect(errors).toEqual(
-      expect.arrayContaining([
-        "workflow_dispatch candidate_version must be an optional empty string by default",
-        "shared E2E test step must scope candidate_version to vllm-docker-storage only",
-      ]),
-    );
   });
 });
