@@ -685,8 +685,9 @@ jobs:
           "report-to-pr job must wait for live",
           "report-to-pr step must pass jobs through JOBS env",
           "step 'Post E2E target results to PR' run script must load the trusted report helper from the checked-out workspace",
-          "step 'Post E2E target results to PR' run script must invoke resolveReportPr from the trusted report helper",
-          "step 'Post E2E target results to PR' run script must invoke renderE2eReport from the trusted report helper",
+          "step 'Post E2E target results to PR' run script must assign resolveReportPr's result before use",
+          "step 'Post E2E target results to PR' run script must destructure loadReportJobs's result before use",
+          "step 'Post E2E target results to PR' run script must assign renderE2eReport's result before use",
           "report-to-pr must check out the trusted workflow revision before reporting",
         ]),
       );

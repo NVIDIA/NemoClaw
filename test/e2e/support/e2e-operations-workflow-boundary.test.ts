@@ -183,6 +183,29 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("requires prNumber and report to originate from the trusted resolveReportPr and renderE2eReport calls", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    report.with!.script = String(report.with!.script)
+      .replace(
+        "const prNumber = await resolveReportPr({ github, context, core, env: process.env });",
+        "const prNumber = 5093;",
+      )
+      .replace(
+        /const report = renderE2eReport\([^;]*\);/,
+        "const report = { body: 'fake', warnings: [] };",
+      );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "report-to-pr must derive prNumber from the trusted resolveReportPr call",
+        "report-to-pr must derive report from the trusted renderE2eReport call",
+      ]),
+    );
+  });
+
   it.each([
     ["an aliased issue API", "const issues = github.rest.issues; await issues.create({});"],
     ["a bracketed issue API", 'await github.rest.issues["create"]({});'],

@@ -321,6 +321,20 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function extractCallArguments(script: string, callStart: number): string {
+  const openIndex = script.indexOf("(", callStart);
+  if (openIndex < 0) return "";
+  let depth = 0;
+  for (let index = openIndex; index < script.length; index += 1) {
+    if (script[index] === "(") depth += 1;
+    else if (script[index] === ")") {
+      depth -= 1;
+      if (depth === 0) return script.slice(openIndex + 1, index);
+    }
+  }
+  return script.slice(openIndex + 1);
+}
+
 function splitSelector(value: string): string[] {
   return value
     .split(",")
@@ -4275,12 +4289,46 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
         "step 'Post E2E target results to PR' run script must load the trusted report helper from the checked-out workspace",
       );
     }
-    for (const helper of ["resolveReportPr", "loadReportJobs", "renderE2eReport"]) {
-      if (!reportScript.includes(helper)) {
+    const prNumberAssignment = /\b(?:const|let)\s+(\w+)\s*=\s*await\s+resolveReportPr\(/.exec(
+      reportScript,
+    );
+    if (!prNumberAssignment) {
+      errors.push(
+        "step 'Post E2E target results to PR' run script must assign resolveReportPr's result before use",
+      );
+    } else if (!new RegExp(`issue_number:\\s*${prNumberAssignment[1]}\\b`).test(reportScript)) {
+      errors.push(
+        "step 'Post E2E target results to PR' run script must pass resolveReportPr's result as the comment issue_number",
+      );
+    }
+    const loadJobsAssignment = /\{\s*([^}]+)\}\s*=\s*await\s+loadReportJobs\(/.exec(reportScript);
+    if (!loadJobsAssignment) {
+      errors.push(
+        "step 'Post E2E target results to PR' run script must destructure loadReportJobs's result before use",
+      );
+    } else {
+      const renderCallIndex = reportScript.indexOf("renderE2eReport(");
+      const renderArguments =
+        renderCallIndex >= 0 ? extractCallArguments(reportScript, renderCallIndex) : "";
+      const loadedNames = loadJobsAssignment[1]
+        .split(",")
+        .map((name) => name.split(":").pop()?.trim())
+        .filter((name): name is string => Boolean(name));
+      if (!loadedNames.some((name) => new RegExp(`\\b${name}\\b`).test(renderArguments))) {
         errors.push(
-          `step 'Post E2E target results to PR' run script must invoke ${helper} from the trusted report helper`,
+          "step 'Post E2E target results to PR' run script must pass loadReportJobs's result into renderE2eReport",
         );
       }
+    }
+    const reportAssignment = /\b(?:const|let)\s+(\w+)\s*=\s*renderE2eReport\(/.exec(reportScript);
+    if (!reportAssignment) {
+      errors.push(
+        "step 'Post E2E target results to PR' run script must assign renderE2eReport's result before use",
+      );
+    } else if (!new RegExp(`body:\\s*${reportAssignment[1]}\\.body\\b`).test(reportScript)) {
+      errors.push(
+        "step 'Post E2E target results to PR' run script must pass renderE2eReport's result body as the comment body",
+      );
     }
     if (reportScript.includes("checkout_sha")) {
       errors.push(

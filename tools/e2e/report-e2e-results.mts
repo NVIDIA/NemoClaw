@@ -127,6 +127,12 @@ export async function resolveReportPr(input: {
     core.info(`No open PR found for branch ${workflowBranch} — skipping comment.`);
     return undefined;
   }
+  if (prs.length !== 1) {
+    core.setFailed(
+      `Multiple open PRs found for branch ${workflowBranch}; provide an explicit pr_number.`,
+    );
+    return undefined;
+  }
   return prs[0].number;
 }
 

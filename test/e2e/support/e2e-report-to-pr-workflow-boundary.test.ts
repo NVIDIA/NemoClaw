@@ -171,17 +171,13 @@ async function executeReport(options: {
     apiJobsLoaded: loaded.loaded,
     context: REPORT_CONTEXT,
   });
-  if (report.fatal) {
-    setFailed(report.fatal);
-  } else {
-    for (const message of report.warnings) warning(message);
-    await github.rest.issues.createComment({
-      owner: REPORT_CONTEXT.repo.owner,
-      repo: REPORT_CONTEXT.repo.repo,
-      issue_number: prNumber as number,
-      body: report.body,
-    });
-  }
+  for (const message of report.warnings) warning(message);
+  await github.rest.issues.createComment({
+    owner: REPORT_CONTEXT.repo.owner,
+    repo: REPORT_CONTEXT.repo.repo,
+    issue_number: prNumber as number,
+    body: report.body,
+  });
 
   expect(createComment).toHaveBeenCalledOnce();
   return {
@@ -299,6 +295,22 @@ it("falls back to the workflow branch pull request when pr_number is empty", asy
   });
 });
 
+it("fails closed when multiple open PRs match the workflow branch", async () => {
+  const setFailed = vi.fn();
+  const list = vi.fn(async () => ({ data: [{ number: 7 }, { number: 9 }] }));
+  const prNumber = await resolveReportPr({
+    github: reportGithub({ list }),
+    context: REPORT_CONTEXT,
+    core: { info: vi.fn(), setFailed, warning: vi.fn() },
+    env: { JOB_PR_NUMBER: "" },
+  });
+
+  expect(prNumber).toBeUndefined();
+  expect(setFailed).toHaveBeenCalledWith(
+    "Multiple open PRs found for branch main; provide an explicit pr_number.",
+  );
+});
+
 it("skips commenting when no open PR matches the workflow branch", async () => {
   const info = vi.fn();
   const prNumber = await resolveReportPr({
@@ -356,6 +368,145 @@ it("fails closed on an invalid test matrix without rendering a comment", () => {
 
   expect(report.fatal).toBe("Invalid test matrix: matrix row has an invalid id");
   expect(report.body).toBe("");
+});
+
+it("marks requested targets and test IDs as rejected when selector validation failed", () => {
+  const report = renderE2eReport({
+    needs: {
+      "generate-matrix": { result: "failure" },
+    },
+    env: {
+      EXPLICIT_ONLY_JOBS: "",
+      TEST_MATRIX: "[]",
+      JOB_PR_NUMBER: "42",
+      JOB_TARGETS: "cloud-onboard",
+      JOBS: "alpha",
+    },
+    apiJobs: [],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+
+  expect(report.fatal).toBeUndefined();
+  expect(report.body).toContain(
+    "**Requested targets:** _(selector rejected by workflow validation)_",
+  );
+  expect(report.body).toContain(
+    "**Requested test IDs:** _(selector rejected by workflow validation)_",
+  );
+});
+
+it("reports a requested test ID that never appears among rendered entries as not reported", () => {
+  const report = renderE2eReport({
+    needs: {
+      "generate-matrix": { result: "success" },
+      "shared-e2e": { result: "success" },
+    },
+    env: {
+      EXPLICIT_ONLY_JOBS: "",
+      TEST_MATRIX: JSON.stringify(DEFAULT_TEST_MATRIX.slice(0, 1)),
+      JOB_PR_NUMBER: "42",
+      JOB_TARGETS: "",
+      JOBS: "alpha,ghost",
+    },
+    apiJobs: [
+      {
+        conclusion: "success",
+        name: "Shared E2E (alpha)",
+        status: "completed",
+      },
+    ],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+
+  expect(report.body).toContain("| ghost | ❓ not reported | — |");
+  expect(report.body).toContain(
+    "> **Missing requested test IDs:** ghost. The reporting workflow needs to include these tests.",
+  );
+  expect(report.body).toContain("❌ Some tests failed");
+});
+
+it("reports a cancelled shared-e2e run with no passing tests as no signal", () => {
+  const report = renderE2eReport({
+    needs: {
+      "generate-matrix": { result: "success" },
+      "shared-e2e": { result: "cancelled" },
+    },
+    env: {
+      EXPLICIT_ONLY_JOBS: "",
+      TEST_MATRIX: JSON.stringify(DEFAULT_TEST_MATRIX.slice(0, 1)),
+      JOB_PR_NUMBER: "42",
+      JOB_TARGETS: "",
+      JOBS: "alpha",
+    },
+    apiJobs: [
+      {
+        conclusion: "cancelled",
+        name: "Shared E2E (alpha)",
+        status: "completed",
+      },
+    ],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+
+  expect(report.body).toContain("⚠️ Run cancelled — no signal");
+  expect(report.body).toContain("| alpha | ⚠️ cancelled | — |");
+});
+
+it("reports cancelled tests alongside passing tests as a partial pass", () => {
+  const report = renderE2eReport({
+    needs: {
+      "generate-matrix": { result: "success" },
+      "shared-e2e": { result: "cancelled" },
+    },
+    env: {
+      EXPLICIT_ONLY_JOBS: "",
+      TEST_MATRIX: JSON.stringify(DEFAULT_TEST_MATRIX),
+      JOB_PR_NUMBER: "42",
+      JOB_TARGETS: "",
+      JOBS: "alpha,beta",
+    },
+    apiJobs: [
+      {
+        conclusion: "success",
+        name: "Shared E2E (alpha)",
+        status: "completed",
+      },
+      {
+        conclusion: "cancelled",
+        name: "Shared E2E (beta)",
+        status: "completed",
+      },
+    ],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+
+  expect(report.body).toContain("⚠️ Some tests cancelled — partial pass");
+});
+
+it("lists explicit-only jobs skipped by default dispatch with their selection hints", () => {
+  const report = renderE2eReport({
+    needs: {
+      "generate-matrix": { result: "success" },
+    },
+    env: {
+      EXPLICIT_ONLY_JOBS: "mcp-bridge-dev",
+      TEST_MATRIX: "[]",
+      JOB_PR_NUMBER: "42",
+      JOB_TARGETS: "",
+      JOBS: "",
+    },
+    apiJobs: [],
+    apiJobsLoaded: true,
+    context: REPORT_CONTEXT,
+  });
+
+  expect(report.body).toContain(
+    "> **Explicit-only jobs skipped:** `mcp-bridge-dev` (default dispatch excludes moving OpenShell dev artifacts unless explicitly selected; validate with `jobs=mcp-bridge-dev` or `targets=mcp-bridge-dev`).",
+  );
 });
 
 it("reports matrix children by test ID without fabricating a missing child result", async () => {
@@ -734,6 +885,88 @@ it("rejects a report helper checkout pinned outside the trusted workflow revisio
     expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
       expect.arrayContaining([
         "report-to-pr must pin the report helper checkout to github.workflow_sha",
+      ]),
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+it("rejects a report-to-pr script that references the trusted helpers without invoking them", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
+  const workflowPath = path.join(tmp, "workflow.yaml");
+  const workflow = readWorkflow() as {
+    jobs: Record<string, { steps: Array<{ name?: string; with?: { script?: string } }> }>;
+  };
+  const reportStep = workflow.jobs["report-to-pr"]?.steps?.find(
+    (step) => step.name === "Post E2E target results to PR",
+  );
+  requireFixture(reportStep?.with !== undefined, "missing report-to-pr script step");
+  reportStep!.with!.script = [
+    "const path = require('node:path');",
+    "const { pathToFileURL } = require('node:url');",
+    "const { resolveReportPr, loadReportJobs, renderE2eReport } = await import(",
+    "  pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'tools/e2e/report-e2e-results.mts')).href",
+    ");",
+    "const prNumber = 42;",
+    "const report = { body: 'fake' };",
+    "await github.rest.issues.createComment({",
+    "  owner: context.repo.owner,",
+    "  repo: context.repo.repo,",
+    "  issue_number: prNumber,",
+    "  body: report.body,",
+    "});",
+  ].join("\n");
+  fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+  try {
+    expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+      expect.arrayContaining([
+        "step 'Post E2E target results to PR' run script must assign resolveReportPr's result before use",
+        "step 'Post E2E target results to PR' run script must destructure loadReportJobs's result before use",
+        "step 'Post E2E target results to PR' run script must assign renderE2eReport's result before use",
+      ]),
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+it("rejects a report-to-pr script that resolves the trusted helpers but posts a locally constructed comment", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
+  const workflowPath = path.join(tmp, "workflow.yaml");
+  const workflow = readWorkflow() as {
+    jobs: Record<string, { steps: Array<{ name?: string; with?: { script?: string } }> }>;
+  };
+  const reportStep = workflow.jobs["report-to-pr"]?.steps?.find(
+    (step) => step.name === "Post E2E target results to PR",
+  );
+  requireFixture(reportStep?.with !== undefined, "missing report-to-pr script step");
+  reportStep!.with!.script = [
+    "const path = require('node:path');",
+    "const { pathToFileURL } = require('node:url');",
+    "const { resolveReportPr, loadReportJobs, renderE2eReport } = await import(",
+    "  pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'tools/e2e/report-e2e-results.mts')).href",
+    ");",
+    "const prNumber = await resolveReportPr({ github, context, core, env: process.env });",
+    "const { apiJobs, loaded } = await loadReportJobs({ github, context, core });",
+    "const report = renderE2eReport({ needs: {}, env: process.env, apiJobs, apiJobsLoaded: loaded, context });",
+    "const decoyPrNumber = 42;",
+    "const decoyReport = { body: 'fake' };",
+    "await github.rest.issues.createComment({",
+    "  owner: context.repo.owner,",
+    "  repo: context.repo.repo,",
+    "  issue_number: decoyPrNumber,",
+    "  body: decoyReport.body,",
+    "});",
+  ].join("\n");
+  fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+  try {
+    expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+      expect.arrayContaining([
+        "step 'Post E2E target results to PR' run script must pass resolveReportPr's result as the comment issue_number",
+        "step 'Post E2E target results to PR' run script must pass renderE2eReport's result body as the comment body",
       ]),
     );
   } finally {

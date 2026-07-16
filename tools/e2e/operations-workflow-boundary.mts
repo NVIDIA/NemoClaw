@@ -334,6 +334,12 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
           "report-to-pr must limit issue mutation to one validated PR-scoped createComment call",
         );
       }
+      if (!/\bconst\s+prNumber\s*=\s*await\s+resolveReportPr\(/u.test(reportScript)) {
+        errors.push("report-to-pr must derive prNumber from the trusted resolveReportPr call");
+      }
+      if (!/\bconst\s+report\s*=\s*renderE2eReport\(/u.test(reportScript)) {
+        errors.push("report-to-pr must derive report from the trusted renderE2eReport call");
+      }
       if (
         issueNamespaceReferences?.length !== 1 ||
         ISSUE_MUTATION_BEYOND_COMMENT.test(jobSource) ||
