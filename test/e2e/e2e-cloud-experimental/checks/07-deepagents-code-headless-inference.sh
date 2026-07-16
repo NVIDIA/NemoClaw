@@ -76,7 +76,9 @@ sandbox_dcode_wrapper_contract() {
 }
 
 nemoclaw_connect_probe() {
-  "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" "$SANDBOX_NAME" connect --probe-only 2>&1
+  # Exercise the public bare-connect route after DCode onboarding establishes
+  # this sandbox as the registry default.
+  "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" connect --probe-only 2>&1
 }
 
 sandbox_login_proxy_contract() {

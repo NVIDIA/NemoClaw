@@ -800,8 +800,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "login-shell dcode rejects an empty non-interactive prompt with exit 2",
       "direct-exec dcode rejects an empty non-interactive prompt with exit 2",
       "nemoclaw_connect_probe",
-      "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}",
-      "connect --probe-only 2>&1",
+      '"${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" connect --probe-only 2>&1',
       "direct-exec dcode -n reached managed inference",
       "connect --probe-only accepted the managed inference route",
       'sandbox_login_exec "cd /sandbox',
@@ -834,6 +833,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ]) {
       expect(headlessCheck).toContain(expected);
     }
+    expect(headlessCheck).not.toContain(
+      '"${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" "$SANDBOX_NAME" connect --probe-only',
+    );
     expect(headlessCheck).not.toContain('sandbox_login_exec ". /tmp/nemoclaw-proxy-env.sh');
     expect(headlessCheck).not.toContain("config_output:0:200");
     expect(headlessCheck).toMatch(/headless_output=.*sandbox_login_exec.*\|\| true\)"/);
