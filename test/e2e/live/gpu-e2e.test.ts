@@ -184,7 +184,43 @@ test("GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference", {
   expect(resultText(status)).toMatch(/CUDA verified|CUDA unverified|last CUDA proof failed/i);
   expect(resultText(status)).not.toMatch(/last CUDA proof failed|CUDA unverified/i);
 
-  assertGpuInstallProofs(resultText(install));
+  const installLog = resultText(install);
+  assertGpuInstallProofs(installLog);
+  expect(installLog).toContain(
+    "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
+  );
+  expect(installLog).not.toContain(
+    "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
+  );
+  expect(installLog).not.toContain("Docker GPU mode selected:");
+
+  const sandboxContainers = await host.command(
+    "docker",
+    [
+      "ps",
+      "-a",
+      "--filter",
+      `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      "--format",
+      "{{.Names}}",
+    ],
+    {
+      artifactName: "gpu-native-route-sandbox-containers",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(sandboxContainers.exitCode, resultText(sandboxContainers)).toBe(0);
+  const sandboxContainerNames = sandboxContainers.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  expect(
+    sandboxContainerNames,
+    `native GPU route must retain exactly one sandbox container; got ${sandboxContainers.stdout}`,
+  ).toHaveLength(1);
+  expect(sandboxContainerNames[0]).not.toContain("-nemoclaw-gpu-backup-");
+
   const route = await sandbox.openshell(["inference", "get"], {
     artifactName: "openshell-inference-route",
     env: env(),
