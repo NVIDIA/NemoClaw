@@ -463,6 +463,18 @@ describe("PR E2E gate workflow", () => {
     expect(ciVerification.env?.CI_REQUIRED).toBe(ciRequired);
     expect(ciVerification.run).toContain('if [ "$CI_REQUIRED" != "true" ]; then');
     expect(ciVerification.run).toContain("Metadata-only PR edit");
+    const metadataOnlyGate = spawnSync("bash", ["-c", ciVerification.run ?? ""], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ...ciVerification.env,
+        CHANGES_RESULT: "skipped",
+        CI_REQUIRED: "false",
+        STATIC_RESULT: "failure",
+      },
+    });
+    expect(metadataOnlyGate.status, metadataOnlyGate.stderr).toBe(0);
+    expect(metadataOnlyGate.stdout).toContain("Metadata-only PR edit");
     expect(initialize.if).toContain("github.event_name == 'pull_request_target'");
     expect(initialize.if).toContain("github.event.action != 'closed'");
     expect(initialize.if).toContain("github.event.action != 'edited'");
