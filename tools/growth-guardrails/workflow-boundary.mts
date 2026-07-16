@@ -1,0 +1,151 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Trust-boundary assertions for the codebase growth guardrails workflow.
+//
+// The workflow runs under pull_request_target, so it executes in the base-repo
+// context with a token. It must therefore stay data-only with respect to the
+// pull request: inspect PR metadata and blob text, but never check out or
+// execute pull-request-controlled code. This module parses the workflow and
+// returns a violation string for every broken invariant (empty array = OK), so
+// a regression that weakens the boundary fails a unit test rather than shipping.
+
+import { readFileSync } from "node:fs";
+
+import YAML from "yaml";
+
+/** The only ref a checkout in this workflow may use: the trusted base commit. */
+export const TRUSTED_BASE_REF = "${{ github.event.pull_request.base.sha }}";
+
+/** The trusted tool entrypoints that replace the former inline node heredocs. */
+export const REQUIRED_TOOL_INVOCATIONS = [
+  "node --experimental-strip-types tools/growth-guardrails/test-size-budget.mts",
+  "node --experimental-strip-types tools/growth-guardrails/test-conditionals.mts",
+] as const;
+
+const HEAD_REF_MARKERS = [
+  "github.event.pull_request.head",
+  "github.head_ref",
+  "refs/pull/",
+] as const;
+
+type WorkflowStep = {
+  readonly name?: string;
+  readonly uses?: string;
+  readonly run?: string;
+  readonly with?: Record<string, unknown>;
+};
+
+type WorkflowJob = {
+  readonly steps?: readonly WorkflowStep[];
+};
+
+type WorkflowDoc = {
+  readonly on?: Record<string, unknown>;
+  readonly permissions?: Record<string, unknown>;
+  readonly jobs?: Record<string, WorkflowJob>;
+};
+
+function allSteps(wf: WorkflowDoc): WorkflowStep[] {
+  return Object.values(wf.jobs ?? {}).flatMap((job) => job.steps ?? []);
+}
+
+export function validateGrowthGuardrailsWorkflowBoundary(workflowPath: string): string[] {
+  const violations: string[] = [];
+  const wf = YAML.parse(readFileSync(workflowPath, "utf8")) as WorkflowDoc;
+
+  // 1. Trigger must be pull_request_target (base context) and never the
+  //    untrusted pull_request head context.
+  const on = wf.on ?? {};
+  if (!("pull_request_target" in on)) {
+    violations.push("workflow must trigger on pull_request_target");
+  }
+  if ("pull_request" in on) {
+    violations.push(
+      "workflow must not trigger on pull_request (runs untrusted head code with a token)",
+    );
+  }
+
+  // 2. Permissions must stay read-only: a write scope would let PR-influenced
+  //    logic mutate the repo.
+  const permissions = wf.permissions ?? {};
+  if (Object.keys(permissions).length === 0) {
+    violations.push("workflow must declare explicit read-only permissions");
+  }
+  for (const [scope, value] of Object.entries(permissions)) {
+    if (value !== "read" && value !== "none") {
+      violations.push(`permission ${scope}: ${String(value)} must be read or none, not write`);
+    }
+  }
+
+  const steps = allSteps(wf);
+
+  // 3. Any checkout must pin the trusted base commit and never the PR head.
+  const checkoutSteps = steps.filter((step) => (step.uses ?? "").startsWith("actions/checkout"));
+  if (checkoutSteps.length === 0) {
+    violations.push("workflow must check out the trusted base ref to run the guardrail tools");
+  }
+  for (const step of checkoutSteps) {
+    const ref = step.with?.ref;
+    if (typeof ref !== "string") {
+      violations.push("actions/checkout must pin an explicit ref (the trusted base sha)");
+      continue;
+    }
+    if (ref !== TRUSTED_BASE_REF) {
+      violations.push(`actions/checkout ref must be ${TRUSTED_BASE_REF}, not ${ref}`);
+    }
+    if (HEAD_REF_MARKERS.some((marker) => ref.includes(marker))) {
+      violations.push(`actions/checkout must not reference the PR head ref (${ref})`);
+    }
+  }
+
+  // 4/5/6. Inspect run scripts: no inline node heredoc may survive, dependency
+  //        installs must not run PR install scripts, and each policy must go
+  //        through its pinned trusted tool.
+  const runScripts = steps.map((step) => step.run ?? "");
+  const allRun = runScripts.join("\n");
+
+  if (/node\s+<<'?NODE'?/.test(allRun)) {
+    violations.push("no inline node heredoc may remain; invoke the trusted tools instead");
+  }
+
+  for (const invocation of REQUIRED_TOOL_INVOCATIONS) {
+    if (!allRun.includes(invocation)) {
+      violations.push(`workflow must invoke the trusted tool: ${invocation}`);
+    }
+  }
+
+  for (const script of runScripts) {
+    for (const line of script.split("\n")) {
+      if (/\bnpm (ci|install)\b/.test(line) && !line.includes("--ignore-scripts")) {
+        violations.push(`dependency install must use --ignore-scripts: ${line.trim()}`);
+      }
+      if (
+        /\bgit (checkout|fetch|merge)\b/.test(line) &&
+        HEAD_REF_MARKERS.some((m) => line.includes(m))
+      ) {
+        violations.push(`must not check out PR head code in a run step: ${line.trim()}`);
+      }
+    }
+  }
+
+  return violations;
+}
+
+async function main(): Promise<void> {
+  const workflowPath = process.argv[2] ?? ".github/workflows/codebase-growth-guardrails.yaml";
+  const violations = validateGrowthGuardrailsWorkflowBoundary(workflowPath);
+  if (violations.length > 0) {
+    console.error(`FAIL: ${workflowPath} violates the growth-guardrails trust boundary:`);
+    for (const violation of violations) console.error(`- ${violation}`);
+    process.exit(1);
+  }
+  console.log(`PASS: ${workflowPath} satisfies the growth-guardrails trust boundary.`);
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
