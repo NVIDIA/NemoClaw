@@ -69,6 +69,36 @@ describe("host gateway registry index", () => {
     }
   });
 
+  it("treats a zero persisted dashboard port as no dashboard instead of blocking the registry (#7020)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-index-zero-port-"));
+    try {
+      const root = path.join(home, ".nemoclaw", "gateways", "9123");
+      fs.mkdirSync(root, { recursive: true });
+      fs.writeFileSync(
+        path.join(root, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "instance-a",
+          sandboxes: {
+            "instance-a": {
+              name: "instance-a",
+              gatewayName: "nemoclaw-9123",
+              gatewayPort: 9123,
+              dashboardPort: 0,
+            },
+          },
+        }),
+      );
+
+      const entries = listHostGatewayRegistryEntries(home);
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].entry.name).toBe("instance-a");
+      expect(entries[0].entry.dashboardPort).toBeNull();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects sandbox names that could escape a gateway-owned snapshot directory", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-index-name-"));
     try {

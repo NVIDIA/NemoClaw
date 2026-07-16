@@ -39,12 +39,18 @@ def write_process(
     cmdline,
     environ=b"PATH=/usr/bin\0",
     listener_inode=None,
+    state="S",
+    thread_count=1,
 ):
     process_root = os.path.join(proc_root, str(pid))
     os.makedirs(os.path.join(process_root, "ns"))
     os.makedirs(os.path.join(process_root, "fd"))
     os.symlink("../net", os.path.join(process_root, "net"))
-    fields = ["S", str(parent_pid)] + (["0"] * 17) + [str(start_time)]
+    fields = (
+        [state, str(parent_pid)]
+        + (["0"] * 15)
+        + [str(thread_count), "0", str(start_time)]
+    )
     with open(os.path.join(process_root, "stat"), "w", encoding="ascii") as stream:
         stream.write(f"{pid} (managed) {' '.join(fields)}\n")
     with open(os.path.join(process_root, "status"), "w", encoding="ascii") as stream:
@@ -88,6 +94,16 @@ with tempfile.TemporaryDirectory() as root:
         0,
         0,
         b"/opt/openshell/bin/openshell-sandbox\0--managed\0",
+    )
+    write_process(
+        proc_root,
+        namespace_path,
+        39,
+        200,
+        1,
+        1000,
+        b"",
+        state="Z",
     )
     write_process(
         proc_root,
@@ -141,14 +157,33 @@ with tempfile.TemporaryDirectory() as root:
     os.chmod(boundary_path, 0o755)
 
     with control.ProcReader(proc_root) as reader:
+        zombie = reader.capture(39)
         supervisor = control._discover_supervisor(reader)
         hermes = control._agent_spec("hermes", reader, supervisor)
         candidates = control._gateway_candidates(reader, supervisor, hermes)
         initial_proof = {
+            "stable_zombie": [zombie.state, len(zombie.cmdline)],
             "supervisor": [supervisor.pid, supervisor.start_time, supervisor.parent_pid],
             "gateway": [candidates[0].pid, candidates[0].start_time, candidates[0].parent_pid],
             "healthy": control._gateway_healthy(reader, candidates[0], hermes),
         }
+        write_process(
+            proc_root,
+            namespace_path,
+            38,
+            199,
+            1,
+            1000,
+            b"",
+            state="Z",
+            thread_count=2,
+        )
+        try:
+            control._discover_supervisor(reader)
+            zombie_leader_with_live_sibling = "accepted"
+        except control.ControlError as error:
+            zombie_leader_with_live_sibling = error.code
+        remove_process(proc_root, 38)
         state_key_behavior = [
             replace(candidates[0], state="R").stable_key()
             == candidates[0].stable_key(),
@@ -240,6 +275,21 @@ with tempfile.TemporaryDirectory() as root:
             unreadable_process = error.code
         finally:
             reader.capture = real_capture
+        remove_process(proc_root, 46)
+        write_process(
+            proc_root,
+            namespace_path,
+            46,
+            667,
+            1,
+            1000,
+            b"",
+        )
+        try:
+            control._discover_supervisor(reader)
+            empty_live_process = "accepted"
+        except control.ControlError as error:
+            empty_live_process = error.code
         remove_process(proc_root, 46)
         write_process(
             proc_root,
@@ -345,7 +395,7 @@ with tempfile.TemporaryDirectory() as root:
             control._terminate_gateway(reader, expected_gateway)
 
             with open(os.path.join(proc_root, "41", "stat"), "w", encoding="ascii") as stream:
-                fields = ["S", "40"] + (["0"] * 17) + ["999"]
+                fields = ["S", "40"] + (["0"] * 15) + ["1", "0", "999"]
                 stream.write(f"41 (managed) {' '.join(fields)}\n")
             try:
                 control._terminate_gateway(reader, expected_gateway)
@@ -704,6 +754,7 @@ with tempfile.TemporaryDirectory() as root:
 
     print(json.dumps({
         "initial": initial_proof,
+        "zombie_leader_with_live_sibling": zombie_leader_with_live_sibling,
         "state_key_behavior": state_key_behavior,
         "mixed_namespace_rejected": mixed_namespace_rejected,
         "transient_supervisor_retry": transient_supervisor_retry,
@@ -713,6 +764,7 @@ with tempfile.TemporaryDirectory() as root:
         "missing_supervisor": missing_supervisor,
         "appearing_supervisor": appearing_supervisor,
         "unreadable_process": unreadable_process,
+        "empty_live_process": empty_live_process,
         "duplicate_supervisor": duplicate_supervisor,
         "duplicate": duplicate,
         "signals": sent,
@@ -757,10 +809,12 @@ describe("managed gateway root control", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       initial: {
+        stable_zombie: ["Z", 0],
         supervisor: [40, "222", 1],
         gateway: [41, "333", 40],
         healthy: true,
       },
+      zombie_leader_with_live_sibling: "SUPERVISOR_UNAVAILABLE",
       state_key_behavior: [true, false],
       mixed_namespace_rejected: true,
       transient_supervisor_retry: [40, 2],
@@ -785,6 +839,7 @@ describe("managed gateway root control", () => {
       missing_supervisor: "SUPERVISOR_NOT_RUNNING",
       appearing_supervisor: "SUPERVISOR_UNAVAILABLE",
       unreadable_process: "SUPERVISOR_UNAVAILABLE",
+      empty_live_process: "SUPERVISOR_UNAVAILABLE",
       duplicate_supervisor: "SUPERVISOR_UNAVAILABLE",
       duplicate: "SUPERVISOR_UNAVAILABLE",
       signals: [15, 9],
