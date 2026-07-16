@@ -112,19 +112,19 @@ It cannot inspect daemon storage through a remote endpoint, a named non-default 
 When both `DOCKER_CONTEXT` and `DOCKER_HOST` are set, NemoClaw follows Docker CLI precedence and uses `DOCKER_CONTEXT`.
 Before a registered model with pinned size metadata is downloaded, NemoClaw also checks the filesystem that contains the host Hugging Face cache.
 When a Docker image-storage check is inconclusive, NemoClaw prints the reason, approximate requirement, and diagnostic commands, then continues without claiming that capacity is sufficient.
-An inconclusive model-cache check is guarded like an insufficient result because a registered model download can be hundreds of gigabytes: interactive setup requires explicit confirmation, and non-interactive setup stops unless the disk-space override is set.
+An inconclusive model-cache check remains guarded because a registered model download can be hundreds of gigabytes.
+Interactive setup requires explicit confirmation, and non-interactive setup stops with guidance to rerun interactively.
 
 When verified capacity is insufficient, the warning identifies the image, available capacity, approximate requirement, checked path and source, remediation, and diagnostic commands.
 Interactive setup continues only when you enter `y` or `yes` explicitly.
 Pressing **Enter**, entering `n` or `no`, or entering any other response stops before the guarded image or model download starts.
 
 <Warning>
-`--yes` and `NEMOCLAW_YES=1` do not accept a verified insufficient-storage warning.
-They also do not accept an inconclusive model-cache warning.
-Non-interactive setup stops for verified insufficient capacity or inconclusive model-cache capacity unless you set `NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1` exactly.
-The override applies when NemoClaw verifies that Docker image storage or model-cache storage is insufficient and when model-cache capacity cannot be verified.
-Use it only after you independently verify that the relevant filesystem can complete the download.
-An inconclusive Docker image-storage check retains its existing automatic-continue behavior and does not require the override.
+`--yes` and `NEMOCLAW_YES=1` do not change managed vLLM storage-warning handling.
+Express installation and other non-interactive setup treat a verified warning that Docker image storage or model-cache storage is insufficient as advisory, so NemoClaw prints the warning and continues the guarded download.
+Interactive setup still requires you to enter `y` or `yes` for a verified insufficient-capacity warning.
+An inconclusive model-cache warning also requires explicit confirmation interactively, and non-interactive setup stops with guidance to rerun interactively.
+An inconclusive Docker image-storage check retains its existing automatic-continue behavior.
 </Warning>
 
 <Note>

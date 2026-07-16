@@ -7,8 +7,6 @@ import { parse as parseToml } from "smol-toml";
 import { dockerCapture } from "../adapters/docker";
 import { buildVllmDockerEnv } from "./vllm-docker-env";
 
-export const VLLM_STORAGE_OVERRIDE_ENV = "NEMOCLAW_IGNORE_VLLM_DISK_SPACE";
-
 const GIB_BYTES = 1024n ** 3n;
 const DOWNLOAD_TEMP_HEADROOM_BYTES = 3n * GIB_BYTES;
 const DEFAULT_CONTAINERD_ROOT = "/var/lib/containerd";

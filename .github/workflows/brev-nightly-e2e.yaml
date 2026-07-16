@@ -24,6 +24,7 @@ on:
         default: false
 
 permissions:
+  actions: read
   contents: read
   # GitHub validates a reusable workflow's complete permission ceiling before
   # evaluating skipped jobs. The called workflow explicitly downgrades its
