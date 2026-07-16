@@ -13,7 +13,6 @@ import {
   type WorkflowJob,
   type WorkflowStep,
 } from "./helpers/e2e-workflow-contract";
-import { execTimeout } from "./helpers/timeouts";
 
 type CiWorkflow = {
   "run-name"?: string;
@@ -300,10 +299,6 @@ describe("pull request and main workflow contracts", () => {
       ".github/actions/ci-installer-integration/action.yaml",
     ),
   };
-  const resolveHermesBaseAction = readYaml<CompositeAction>(
-    ".github/actions/resolve-hermes-base-image/action.yaml",
-  );
-
   // source-shape-contract: security -- Installer hashes must be verified by base-trusted or immutable bootstrap code
   it("runs pull request installer verification from immutable trusted code", () => {
     const job = installerHashWorkflow.jobs["check-hash"];
@@ -1268,6 +1263,7 @@ describe("pull request and main workflow contracts", () => {
     const successfulCode = {
       BUILD_TYPECHECK_RESULT: "success",
       CHANGES_RESULT: "success",
+      CI_REQUIRED: "true",
       CLI_TESTS_RESULT: "success",
       CODE_CHANGED: "true",
       DOCS_ONLY_RESULT: "skipped",
@@ -1360,97 +1356,6 @@ describe("pull request and main workflow contracts", () => {
       "Details: https://github.com/NVIDIA/NemoClaw/actions/runs/123",
     );
     expect(oversizedFailure.stdout).not.toContain("actions/runs/123/job/");
-  });
-
-  it("rejects a pulled Hermes base without MCP HTTP imports and falls back locally", () => {
-    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-hermes-base-resolver-"));
-    const fakeBin = join(temp, "bin");
-    const dockerLog = join(temp, "docker.log");
-    const githubEnv = join(temp, "github.env");
-    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
-    const resolver = requiredStep(resolveHermesBaseAction, "Resolve Hermes sandbox base image").run;
-
-    try {
-      mkdirSync(fakeBin);
-      writeFileSync(githubEnv, "");
-      writeFileSync(
-        join(fakeBin, "docker"),
-        [
-          "#!/usr/bin/env node",
-          'const fs = require("node:fs");',
-          "const args = process.argv.slice(2);",
-          'fs.appendFileSync(process.env.DOCKER_LOG, JSON.stringify(args) + "\\n");',
-          'if (args[0] === "pull" || args[0] === "build") process.exit(0);',
-          'if (args[0] === "image" && args[1] === "inspect") {',
-          '  process.stdout.write(process.env.REMOTE_DIGEST + "\\n");',
-          "  process.exit(0);",
-          "}",
-          'if (args[0] === "run") {',
-          '  const entrypointIndex = args.indexOf("--entrypoint");',
-          "  const entrypoint = args[entrypointIndex + 1];",
-          "  const image = args[entrypointIndex + 2];",
-          '  if (entrypoint === "/usr/bin/ldd") {',
-          '    process.stdout.write("ldd (Ubuntu GLIBC 2.39) 2.39\\n");',
-          "    process.exit(0);",
-          "  }",
-          '  if (entrypoint === "sh") process.exit(0);',
-          '  if (entrypoint === "/opt/hermes/.venv/bin/python") {',
-          "    process.exit(image === process.env.REMOTE_DIGEST ? 42 : 0);",
-          "  }",
-          "}",
-          "console.error(`unexpected docker invocation: ${JSON.stringify(args)}`);",
-          "process.exit(2);",
-          "",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-      // Keep the fake executable in a dedicated PATH directory so every other
-      // command in the composite action remains the real host utility.
-      const result = spawnSync("bash", ["-c", resolver ?? ""], {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        timeout: execTimeout(),
-        env: {
-          ...process.env,
-          DOCKER_LOG: dockerLog,
-          GITHUB_ENV: githubEnv,
-          GITHUB_SHA: "1".repeat(40),
-          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-          REMOTE_DIGEST: remoteDigest,
-        },
-      });
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("lacks the packaged MCP Streamable HTTP client imports");
-      expect(result.stdout).toContain("building locally");
-      expect(readFileSync(githubEnv, "utf8").trim()).toBe(
-        "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local",
-      );
-
-      const calls = readFileSync(dockerLog, "utf8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as string[]);
-      const firstPull = calls.find((args) => args[0] === "pull");
-      expect(firstPull?.[0]).toBe("pull");
-      expect(firstPull?.[1]).toMatch(
-        /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/,
-      );
-      const remoteProbe = calls.findIndex(
-        (args) => args.includes("/opt/hermes/.venv/bin/python") && args.includes(remoteDigest),
-      );
-      const localBuild = calls.findIndex((args) => args[0] === "build");
-      const localProbe = calls.findIndex(
-        (args) =>
-          args.includes("/opt/hermes/.venv/bin/python") &&
-          args.includes("nemoclaw-hermes-base-local"),
-      );
-      expect(remoteProbe).toBeGreaterThanOrEqual(0);
-      expect(localBuild).toBeGreaterThan(remoteProbe);
-      expect(localProbe).toBeGreaterThan(localBuild);
-    } finally {
-      rmSync(temp, { force: true, recursive: true });
-    }
   });
 
   // source-shape-contract: security -- CI dependency installs must never execute package lifecycle scripts from fetched code

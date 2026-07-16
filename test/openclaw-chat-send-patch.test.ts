@@ -8,7 +8,12 @@ import path from "node:path";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 
-const PATCH_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "patch-openclaw-chat-send.js");
+const PATCH_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "scripts",
+  "patch-openclaw-chat-send.mts",
+);
 
 function writeChatSendFixture(dist: string): string {
   const fixture = path.join(dist, "chat-fixture.js");
@@ -1106,6 +1111,6 @@ describe("OpenClaw chat.send compatibility patch", () => {
       timeout: 10000,
     });
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain("Usage: patch-openclaw-chat-send.js");
+    expect(result.stderr).toContain("Usage: patch-openclaw-chat-send.mts");
   });
 });

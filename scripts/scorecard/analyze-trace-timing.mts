@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const zlib = require("node:zlib");
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import zlib from "node:zlib";
 
 type SemverTag = { name: string; major: number; minor: number; patch: number; sha?: string };
 type Threshold = { minDeltaMs: number; minPercent: number };
@@ -75,7 +75,7 @@ const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
 const ONBOARD_PERFORMANCE_BUDGET_FILE = "ci/onboard-performance-budget.json";
-const REPO_ROOT = path.resolve(__dirname, "..", "..");
+const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const ONBOARD_PHASE_PREFIX = "nemoclaw.onboard.phase.";
 // Keep this ordered list aligned with the trace span names emitted by
 // src/lib/onboard/tracing.ts.
@@ -835,19 +835,17 @@ async function buildTraceTimingResult(
   }
 }
 
-module.exports = {
-  ONBOARD_PHASE_ORDER,
-  ONBOARD_PERFORMANCE_BUDGET_FILE,
-  TRACE_ARTIFACT_NAME,
-  TRACE_SUMMARY_FILE,
+export {
   buildPhaseRows,
-  buildTraceTimingResult,
   buildTraceSummaryLines,
+  buildTraceTimingResult,
   evaluateOnboardPerformanceBudget,
   exceedsThreshold,
   findLatestCompletedE2eRunForReleaseTag,
-  formatTraceDelta,
   formatTopPhaseChanges,
+  formatTraceDelta,
+  ONBOARD_PERFORMANCE_BUDGET_FILE,
+  ONBOARD_PHASE_ORDER,
   readOnboardPerformanceBudget,
   readTraceSummaryFromRun,
   readValidatedTraceSummaryZip,
@@ -855,4 +853,6 @@ module.exports = {
   resolvePriorReleaseTag,
   sanitizeTraceTimingError,
   selectOnboardTrace,
+  TRACE_ARTIFACT_NAME,
+  TRACE_SUMMARY_FILE,
 };
