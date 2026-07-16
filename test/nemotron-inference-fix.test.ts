@@ -175,7 +175,7 @@ console.log(JSON.stringify(records));
     expect(JSON.parse(records[6].writes[0]).chat_template_kwargs).toBeUndefined();
   });
 
-  it("preload strips the top-level `thinking` field for Ultra, scoped to Ultra (#6913)", () => {
+  it("preload strips the top-level `thinking` field for the Nemotron-3 family, not other models (#6913)", () => {
     const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
     const harness = `
 const http = require('http');
@@ -208,9 +208,11 @@ function send(mod, options, body) {
 // A system message is present so the #4851 tool-less nudge does not fire and
 // the assertions stay focused on the top-level thinking strip.
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
-send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
+send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-super-120b-a12b', messages: [{ role: 'system', content: 'x' }], thinking: { type: 'enabled' } }));
+send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-nano-30b-a3b', messages: [{ role: 'system', content: 'x' }], thinking: true }));
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'nvidia/nemotron-3-ultra-550b-a55b', messages: [{ role: 'system', content: 'x' }] }));
 send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'deepseek-ai/deepseek-v4-pro', messages: [], thinking: { type: 'enabled' } }));
+send(https, { method: 'POST', path: '/v1/chat/completions' }, JSON.stringify({ model: 'openai/gpt-oss-120b', messages: [], thinking: { type: 'enabled' } }));
 console.log(JSON.stringify(records));
 `;
 
@@ -227,21 +229,32 @@ console.log(JSON.stringify(records));
     expect(records[0].removed).toContain("content-length");
     expect(Number(records[0].headers["Content-Length"])).toBeGreaterThan(0);
 
-    // Ultra + boolean-form top-level thinking → also stripped.
-    const ultraBool = JSON.parse(records[1].writes[0]);
-    expect("thinking" in ultraBool).toBe(false);
+    // Super + object-form top-level thinking → also stripped (family-scoped).
+    const superObj = JSON.parse(records[1].writes[0]);
+    expect("thinking" in superObj).toBe(false);
 
-    // Ultra without a thinking field → nothing added; still nemotron, so
+    // Nano + boolean-form top-level thinking → also stripped.
+    const nanoBool = JSON.parse(records[2].writes[0]);
+    expect("thinking" in nanoBool).toBe(false);
+
+    // Nemotron-3 without a thinking field → nothing to strip; still nemotron, so
     // force_nonempty_content is injected by the kwargs rule.
-    const ultraNone = JSON.parse(records[2].writes[0]);
+    const ultraNone = JSON.parse(records[3].writes[0]);
     expect("thinking" in ultraNone).toBe(false);
     expect(ultraNone.chat_template_kwargs.force_nonempty_content).toBe(true);
 
-    // Non-Ultra model → top-level thinking preserved (the strip is Ultra-scoped;
-    // this model gets the chat_template_kwargs.thinking rewrite, not a strip).
-    const deepSeek = JSON.parse(records[3].writes[0]);
+    // deepseek-v4-pro is out of the strip scope → top-level thinking preserved;
+    // it gets the chat_template_kwargs.thinking rewrite instead.
+    const deepSeek = JSON.parse(records[4].writes[0]);
     expect(deepSeek.thinking).toEqual({ type: "enabled" });
     expect(deepSeek.chat_template_kwargs.thinking).toBe(false);
+
+    // gpt-oss-120b accepts top-level thinking on the endpoint, so no rule
+    // matches it and the request passes through completely untouched — proving
+    // the strip is not a blanket rewrite.
+    const gptOss = JSON.parse(records[5].writes[0]);
+    expect(gptOss.thinking).toEqual({ type: "enabled" });
+    expect(gptOss.chat_template_kwargs).toBeUndefined();
   });
 
   it("preload also injects model-specific kwargs for stubbed fetch requests", () => {
