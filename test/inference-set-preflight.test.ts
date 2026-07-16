@@ -13,7 +13,7 @@ const TARGET = {
   configPath: "/sandbox/.openclaw/openclaw.json",
 } as unknown as AgentConfigTarget;
 
-describe("readInSandboxConfigOrFail (#6997 pre-flight gate)", () => {
+describe("readInSandboxConfigOrFail pre-flight gate (#6997)", () => {
   it("returns the config when the sandbox is readable", () => {
     const config = { model: "old" } as unknown as ConfigObject;
     const readSandboxConfig = vi.fn(() => config);
