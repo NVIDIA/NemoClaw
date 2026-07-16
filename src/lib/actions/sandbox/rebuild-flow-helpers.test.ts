@@ -319,6 +319,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
       // that claims otherwise.
       manifest: null,
     });
+    const relockShieldsIfNeeded = vi.fn(() => true);
 
     expect(() =>
       backupSandboxStateForRebuild(
@@ -326,10 +327,12 @@ describe("backupSandboxStateForRebuild with --force", () => {
         makeSandboxEntry(),
         false,
         () => undefined,
-        () => true,
+        relockShieldsIfNeeded,
         makeBail(),
       ),
     ).toThrow("bail: Failed to back up sandbox state.");
+    expect(relockShieldsIfNeeded).toHaveBeenCalledOnce();
+    expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(
