@@ -1268,6 +1268,7 @@ describe("pull request and main workflow contracts", () => {
     const successfulCode = {
       BUILD_TYPECHECK_RESULT: "success",
       CHANGES_RESULT: "success",
+      CI_REQUIRED: "true",
       CLI_TESTS_RESULT: "success",
       CODE_CHANGED: "true",
       DOCS_ONLY_RESULT: "skipped",
