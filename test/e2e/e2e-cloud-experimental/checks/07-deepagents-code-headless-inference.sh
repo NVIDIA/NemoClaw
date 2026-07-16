@@ -187,16 +187,10 @@ nemoclaw_connect_probe() {
     connect_status=$?
   fi
 
-  if [ "$connect_status" -ne 0 ]; then
-    rm -rf -- "$trace_dir"
-    printf '%s\n' "$connect_output"
-    return "$connect_status"
-  fi
-
   if trace_result="$(validate_connect_target_trace "$trace_file")"; then
     rm -rf -- "$trace_dir"
     printf '%s\n' "$connect_output"
-    return 0
+    return "$connect_status"
   else
     connect_status=$?
   fi

@@ -134,6 +134,12 @@ describe("LangChain Deep Agents Code headless runtime contracts", () => {
         openshellCalls: ["sandbox exec -n dcode-managed -- true"],
         output: "fail:72:NEMOCLAW_DCODE_CONNECT_OK",
       });
+      const failedConnectToWrongTarget = runCommandProbe("another-sandbox", 72);
+      expect(failedConnectToWrongTarget).toEqual({
+        cliCalls: ["connect --probe-only"],
+        openshellCalls: ["sandbox exec -n another-sandbox -- true"],
+        output: "fail:1:NEMOCLAW_DCODE_CONNECT_OK\nNEMOCLAW_DCODE_CONNECT_TARGET_FAIL:mismatch",
+      });
     } finally {
       fs.rmSync(fixtureDir, { force: true, recursive: true });
     }
