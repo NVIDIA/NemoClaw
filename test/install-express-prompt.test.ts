@@ -440,34 +440,53 @@ main "$@"
   });
 
   it("errors instead of silently skipping --station-deepseek when no interactive terminal is available (#7014)", () => {
-    // `setsid` runs main in a new session with no controlling terminal, and
-    // stdin is a pipe — so neither `-t 0` nor /dev/tty is available, making the
-    // check deterministic regardless of how the test runner was launched.
+    // Python's start_new_session runs main without a controlling terminal, and
+    // stdin is /dev/null — so neither `-t 0` nor /dev/tty is available. This is
+    // deterministic on both Linux and macOS regardless of the test runner TTY.
     // Docker / build deps are mocked to prove the error fires before any host
     // mutation (the preflight validation path).
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-notty-"));
     const mutationLog = path.join(tmp, "host-mutations.log");
-    const result = spawnSync(
-      "setsid",
-      [
-        "bash",
-        "--noprofile",
-        "--norc",
-        "-c",
-        `
+    const python =
+      spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
+        encoding: "utf-8",
+      }).stdout.trim() || "python3";
+    const shellScript = `
 source "$INSTALLER_UNDER_TEST" >/dev/null
 detect_express_platform() { printf "%s" "$EXPRESS_PLATFORM"; }
 ensure_docker() { printf "ensure_docker\\n" >>"$MUTATION_LOG"; }
 ensure_openshell_build_deps() { printf "ensure_openshell_build_deps\\n" >>"$MUTATION_LOG"; }
 main "$@"
+`;
+    const result = spawnSync(
+      python,
+      [
+        "-c",
+        `
+import os
+import subprocess
+import sys
+
+result = subprocess.run(
+    ["bash", "--noprofile", "--norc", "-c", sys.argv[1], "_", "--station-deepseek"],
+    cwd=os.getcwd(),
+    env=os.environ.copy(),
+    stdin=subprocess.DEVNULL,
+    capture_output=True,
+    start_new_session=True,
+    timeout=10,
+)
+sys.stdout.buffer.write(result.stdout)
+sys.stderr.buffer.write(result.stderr)
+sys.exit(result.returncode)
 `,
-        "_",
-        "--station-deepseek",
+        shellScript,
       ],
       {
         cwd: tmp,
-        input: "",
         encoding: "utf-8",
+        timeout: 15_000,
+        killSignal: "SIGKILL",
         env: {
           HOME: tmp,
           PATH: TEST_SYSTEM_PATH,
@@ -478,6 +497,7 @@ main "$@"
       },
     );
     const output = `${result.stdout}${result.stderr}`;
+    expect(result.error, output).toBeUndefined();
     const mutations = fs.existsSync(mutationLog) ? fs.readFileSync(mutationLog, "utf-8") : "";
     expect(result.status, output).not.toBe(0);
     expect(output).toMatch(/--station-deepseek.*needs an interactive terminal/);
