@@ -2202,8 +2202,10 @@ preinstall_backup_and_retire_legacy_gateway() {
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
   if ! command_exists openshell; then
-    # Older installers could place OpenShell here without persisting the PATH
-    # update. Recover that standard location before deciding no gateway exists.
+    # NemoClaw v0.0.55's OpenShell 0.0.44 layout could install this binary
+    # without persisting ~/.local/bin on PATH. Retain this fallback while direct
+    # v0.0.55 upgrades are supported; remove it only after support for that
+    # source version and its regression fixture are retired together.
     prefer_user_local_openshell
   fi
   command_exists openshell || return 0
