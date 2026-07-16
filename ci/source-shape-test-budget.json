@@ -337,6 +337,11 @@
       "category": "security"
     },
     {
+      "file": "test/pr-e2e-gate-workflow.test.ts",
+      "test": "orders the coordinate steps and always finalizes through the controller",
+      "category": "security"
+    },
+    {
       "file": "test/pr-e2e-gate-shards.test.ts",
       "test": "rejects malformed configured matrix shard selectors",
       "category": "security"
@@ -515,6 +520,11 @@
       "file": "test/vitest-watch-triggers.test.ts",
       "test": "registers the focused mappings at the root configuration boundary (#6692)",
       "category": "compatibility"
+    },
+    {
+      "file": "test/growth-guardrails-workflow-boundary.test.ts",
+      "test": "flags %s",
+      "category": "security"
     },
     {
       "file": "test/wechat-runtime-audit-workflow.test.ts",

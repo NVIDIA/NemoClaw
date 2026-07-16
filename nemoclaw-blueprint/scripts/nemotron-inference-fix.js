@@ -86,6 +86,46 @@
 //   Removal condition: remove the TOOL_LESS_SYSTEM_PROMPT_RULES entry for
 //   Ultra 550B once NVB#6272828 ships and a clean Ultra response to the
 //   #4851 prompt no longer requires the nudge.
+//
+// Source-of-truth / removal contract (NemoClaw#6913):
+//   Invalid state: OpenClaw emits a top-level `thinking` field on every
+//   chat-completions request for a model whose generated config has
+//   `reasoning: true`. NVIDIA Build's OpenAI-compatible endpoint rejects that
+//   field — `400 "Validation: Unsupported parameter(s): thinking"` — in BOTH
+//   its object (`{"type":"enabled"}`) and boolean (`true`) forms. Ultra 550B
+//   is a reasoning model, so a reasoning-enabled Ultra sandbox 400s on every
+//   agent turn (0/20 in the report). The model still reasons without the
+//   field (the endpoint returns `reasoning_content` either way), so the field
+//   carries no behavior to preserve.
+//
+//   Scope: the exact `nvidia/nemotron-3-ultra-550b-a55b` model ID reproduced
+//   in #6913. Prefix collisions and other Nemotron-3 IDs preserve their
+//   top-level `thinking` field unless their own accepted scope establishes the
+//   same endpoint contract.
+//
+//   Source boundary: NemoClaw owns the sandbox preload that wraps outgoing
+//   chat-completions traffic. The `thinking` field originates in OpenClaw's
+//   request builder and the strict validation lives in the NVIDIA Build
+//   endpoint — both outside this repository — so neither end can be fixed
+//   from here without vendoring one of them.
+//
+//   Why not fix only at the origin: the same reason as the kwargs rules above
+//   — the sandbox must sanitize multiple client transports/SDK versions
+//   without vendoring OpenClaw, and the endpoint contract is upstream.
+//   Stripping (not relocating) is correct because both accepted shapes are
+//   rejected and reasoning happens regardless of the field.
+//
+//   Regression proof: test/nemotron-inference-fix.test.ts covers the strip/
+//   skip branches; the http/https/fetch transports share the same
+//   patchJsonBody path already exercised by the kwargs tests. Verified
+//   end-to-end against integrate.api.nvidia.com by replaying an Ultra request
+//   carrying a top-level `thinking` through this preload: 400 without the
+//   strip, 200 with it (both object and boolean forms).
+//
+//   Removal condition: remove STRIP_TOP_LEVEL_THINKING_RE once OpenClaw stops
+//   emitting a top-level `thinking` on the managed Build route (e.g. it moves
+//   the flag into a shape the endpoint accepts) or NVIDIA Build accepts the
+//   field.
 
 (function () {
   'use strict';
@@ -99,6 +139,15 @@
     { pattern: /^deepseek-ai\/deepseek-v4-pro$/i, kwargs: { thinking: false } },
     { pattern: /^moonshotai\/kimi-k2\.6$/i, kwargs: { thinking: false } },
   ];
+
+  // #6913: models whose top-level `thinking` field the NVIDIA Build endpoint
+  // rejects outright. Distinct from the CHAT_TEMPLATE_KWARG_RULES above, which
+  // set `chat_template_kwargs.thinking` (a chat-template arg the endpoint
+  // accepts); this strips the *top-level* `thinking` request field entirely.
+  //
+  // Scope is the exact Ultra model ID accepted by #6913. Do not infer support
+  // for suffix variants or other Nemotron-3 models from this workaround.
+  var STRIP_TOP_LEVEL_THINKING_RE = /^nvidia\/nemotron-3-ultra-550b-a55b$/i;
 
   // #4851: Ultra 550B silently drops intermediate steps from `content` when
   // asked to perform multi-step tasks without execution-capable tools —
@@ -253,11 +302,20 @@
     return true;
   }
 
+  function applyStripTopLevelThinking(body) {
+    if (!body || typeof body.model !== 'string') return false;
+    if (!STRIP_TOP_LEVEL_THINKING_RE.test(body.model)) return false;
+    if (!Object.prototype.hasOwnProperty.call(body, 'thinking')) return false;
+    delete body.thinking;
+    return true;
+  }
+
   function patchJsonBody(raw) {
     try {
       var body = JSON.parse(raw.toString('utf-8'));
       var changed = false;
       if (applyChatTemplateKwargs(body)) changed = true;
+      if (applyStripTopLevelThinking(body)) changed = true;
       if (applyToolLessSystemPrompt(body)) changed = true;
       if (!changed) return null;
       return Buffer.from(JSON.stringify(body), 'utf-8');

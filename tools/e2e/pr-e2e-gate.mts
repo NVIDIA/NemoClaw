@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawn, type SpawnOptions } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -68,6 +69,22 @@ const ACTIVE_WORKFLOW_RUN_STATUSES = [
   "in_progress",
 ] as const;
 const ACTIVE_WORKFLOW_RUN_STATUS_SET = new Set<string>(ACTIVE_WORKFLOW_RUN_STATUSES);
+const TERMINAL_WORKFLOW_RUN_CONCLUSIONS = [
+  "success",
+  "failure",
+  "cancelled",
+  "timed_out",
+  "action_required",
+  "neutral",
+  "skipped",
+  "stale",
+  "startup_failure",
+] as const;
+const TERMINAL_WORKFLOW_RUN_CONCLUSION_SET = new Set<string>(TERMINAL_WORKFLOW_RUN_CONCLUSIONS);
+const WAIT_POLL_INTERVAL_MS = 10_000;
+const WAIT_TIMEOUT_MS = 105 * 60_000;
+const EVIDENCE_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+const EVIDENCE_DOWNLOAD_KILL_GRACE_MS = 30_000;
 const EVIDENCE_LIMITS = {
   maxDepth: 8,
   maxEntries: 4096,
@@ -146,6 +163,8 @@ export type ControllerCommand =
     } & ControllerPaths)
   | { mode: "abandon"; checkRunId: number; childRunId?: number }
   | { mode: "cancel"; prNumber: number }
+  | { mode: "wait"; childRunId: number }
+  | ({ mode: "download"; childRunId: number } & ControllerPaths)
   | ControlPlaneDispatchCommand
   | ManualForkSkipCommand
   | ApprovedForkSkipCommand;
@@ -423,6 +442,19 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
     };
   }
+  if (args.mode === "wait") {
+    return {
+      mode: "wait",
+      childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
+    };
+  }
+  if (args.mode === "download") {
+    return {
+      mode: "download",
+      childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
+      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+    };
+  }
   if (args.mode === "start-control-plane") {
     const maintainer = requiredArgument(args.maintainer, "maintainer");
     if (!MAINTAINER_PATTERN.test(maintainer)) throw new Error("--maintainer is invalid");
@@ -488,7 +520,7 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     };
   }
   throw new Error(
-    "--mode must be seed, start, start-control-plane, finish, abandon, cancel, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
+    "--mode must be seed, start, start-control-plane, finish, abandon, cancel, wait, download, record-fork-e2e-skip, or record-approved-fork-e2e-skip",
   );
 }
 
@@ -1696,6 +1728,146 @@ async function cancelChildRun(repository: string, token: string, runId: number):
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+export async function waitForChildRun(
+  childRunId: number,
+  deps: {
+    sleep?: (ms: number) => Promise<void>;
+    now?: () => number;
+    pollIntervalMs?: number;
+    timeoutMs?: number;
+  } = {},
+): Promise<void> {
+  const { token, repository } = tokenAndRepository();
+  const wait = deps.sleep ?? sleep;
+  const now = deps.now ?? Date.now;
+  const pollIntervalMs = deps.pollIntervalMs ?? WAIT_POLL_INTERVAL_MS;
+  const timeoutMs = deps.timeoutMs ?? WAIT_TIMEOUT_MS;
+  const runUrl = `https://github.com/${repository}/actions/runs/${childRunId}`;
+  const deadline = now() + timeoutMs;
+  let lastState = "";
+  while (true) {
+    let run: WorkflowRun;
+    try {
+      run = await githubApi<WorkflowRun>(`repos/${repository}/actions/runs/${childRunId}`, token, {
+        userAgent: USER_AGENT,
+        signal: AbortSignal.timeout(Math.max(1, deadline - now())),
+      });
+    } catch (error) {
+      throw new Error(
+        `Run status query failed: unable to query run ${childRunId}. ${runUrl} (${controllerErrorMessage(error)})`,
+      );
+    }
+    const conclusion = run.conclusion && run.conclusion.length > 0 ? run.conclusion : "none";
+    const state = `${run.status}:${conclusion}`;
+    const active = ACTIVE_WORKFLOW_RUN_STATUS_SET.has(run.status) && conclusion === "none";
+    const completed =
+      run.status === "completed" && TERMINAL_WORKFLOW_RUN_CONCLUSION_SET.has(conclusion);
+    if (state !== lastState) {
+      if (active) {
+        console.log(`Run ${childRunId} status=${run.status} url=${runUrl}`);
+      } else if (completed) {
+        console.log(`Run ${childRunId} status=completed conclusion=${conclusion} url=${runUrl}`);
+      }
+      lastState = state;
+    }
+    if (completed) return;
+    if (!active) {
+      throw new Error(
+        `Unexpected run state: run ${childRunId} returned an unsupported status/conclusion pair (${state}). ${runUrl}`,
+      );
+    }
+    if (now() >= deadline) {
+      console.log(
+        `Run ${childRunId} did not complete within ${Math.round(timeoutMs / 60_000)} minutes; finalization will cancel it and report the PR gate outcome. ${runUrl}`,
+      );
+      return;
+    }
+    await wait(pollIntervalMs);
+  }
+}
+
+type EvidenceDownloadResult = { code: number | null; timedOut: boolean };
+
+interface SpawnedEvidenceProcess {
+  kill(signal?: NodeJS.Signals | number): boolean;
+  on(event: "error", listener: (error: Error) => void): this;
+  on(event: "close", listener: (code: number | null) => void): this;
+}
+
+type SpawnEvidenceImpl = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => SpawnedEvidenceProcess;
+
+function spawnEvidenceDownload(
+  args: string[],
+  timeoutMs: number,
+  killGraceMs: number,
+  spawnImpl: SpawnEvidenceImpl = spawn,
+): Promise<EvidenceDownloadResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawnImpl("gh", args, {
+      stdio: "inherit",
+      env: { ...process.env, GH_TOKEN: process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "" },
+    });
+    let timedOut = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => child.kill("SIGKILL"), killGraceMs);
+    }, timeoutMs);
+    child.on("error", (error) => {
+      clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+      resolve({ code, timedOut });
+    });
+  });
+}
+
+export async function downloadChildRunEvidence(
+  childRunId: number,
+  evidencePath: string,
+  deps: {
+    timeoutMs?: number;
+    killGraceMs?: number;
+    spawn?: SpawnEvidenceImpl;
+  } = {},
+): Promise<void> {
+  const { repository } = tokenAndRepository();
+  const timeoutMs = deps.timeoutMs ?? EVIDENCE_DOWNLOAD_TIMEOUT_MS;
+  const killGraceMs = deps.killGraceMs ?? EVIDENCE_DOWNLOAD_KILL_GRACE_MS;
+  const runUrl = `https://github.com/${repository}/actions/runs/${childRunId}`;
+  const result = await spawnEvidenceDownload(
+    ["run", "download", String(childRunId), "--repo", repository, "--dir", evidencePath],
+    timeoutMs,
+    killGraceMs,
+    deps.spawn,
+  );
+  if (result.timedOut) {
+    throw new Error(
+      `Evidence download timed out: artifact download for run ${childRunId} exceeded ${Math.round(timeoutMs / 60_000)} minutes. ${runUrl}`,
+    );
+  }
+  if (result.code !== 0) {
+    throw new Error(
+      `Evidence download failed: artifact download for run ${childRunId} exited with status ${result.code}. ${runUrl}`,
+    );
+  }
+}
+
 async function dispatchSelectedPrGate(options: {
   repository: string;
   token: string;
@@ -2723,6 +2895,14 @@ async function main(): Promise<void> {
   }
   if (command.mode === "abandon") {
     await abandonPrGate(command.checkRunId, command.childRunId);
+    return;
+  }
+  if (command.mode === "wait") {
+    await waitForChildRun(command.childRunId);
+    return;
+  }
+  if (command.mode === "download") {
+    await downloadChildRunEvidence(command.childRunId, command.evidencePath);
     return;
   }
   if (command.mode === "record-fork-e2e-skip") {
