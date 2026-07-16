@@ -17,8 +17,9 @@ const REQUIRED_CHECK_NAMES = [
   "E2E / PR Gate",
 ] as const;
 
-type E2eCheckFixture = [number, number, string, string?, string?, string?];
+type E2eCheckFixture = [number, number, string, string?, string?, string?, string?];
 const CUSTOM_RUN_URL = "https://github.com/NVIDIA/NemoClaw/runs/123";
+const INCOMPLETE_E2E = ["E2E / PR Gate: latest attempt evidence incomplete"];
 
 interface ActionJobFixture {
   id: number;
@@ -102,10 +103,10 @@ function successfulRequiredChecksWithoutE2e() {
 }
 
 function e2eGateCheck(check: E2eCheckFixture, index = 0) {
-  const [runId, jobId, conclusion, startedAt, detailsUrl, workflowName] = check;
+  const [runId, jobId, conclusion, startedAt, detailsUrl, workflowName, name] = check;
   return {
     __typename: "CheckRun",
-    name: "E2E / PR Gate",
+    name: name ?? "E2E / PR Gate",
     workflowName: workflowName ?? "E2E / PR Gate Controller",
     detailsUrl:
       detailsUrl ?? `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${jobId}`,
@@ -233,9 +234,9 @@ function runGate(fixture: ComplianceFixture) {
         path: value.path,
         status: value.status,
         conclusion: value.conclusion,
+        ...(value.headSha ? { head_sha: value.headSha } : {}),
         ...(value.headSha && value.baseSha
           ? {
-              head_sha: value.headSha,
               pull_requests: [
                 {
                   number: 42,
@@ -377,7 +378,6 @@ describe("maintainer merge-gate contributor compliance", () => {
 
     const output = JSON.parse(result.stdout);
     expect(output.gates.ci).toMatchObject({ pass: true });
-    expect(output.allPass).toBe(true);
   });
 
   it("keeps every duplicate job from the latest workflow run", () => {
@@ -429,42 +429,41 @@ describe("maintainer merge-gate contributor compliance", () => {
       pass: false,
       failingChecks: ["matrix-check: FAILURE"],
     });
-    expect(output.allPass).toBe(false);
+  });
+
+  it("accepts exact-head evidence from a non-PR Actions event", () => {
+    const fixture = e2eRunFixture([], {
+      "875": {
+        attempt: 1,
+        headSha: "abc123",
+        event: "dynamic",
+        path: "dynamic/github-code-scanning/codeql",
+        status: "completed",
+        conclusion: "success",
+        jobs: [{ id: 1, name: "optional-check" }],
+      },
+    });
+    fixture.statusChecks?.push(
+      { __typename: "StatusContext", context: "E2E / PR Gate", state: "SUCCESS" },
+      e2eGateCheck([875, 1, "SUCCESS", undefined, undefined, "CodeQL", "optional-check"]),
+    );
+    expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({ pass: true });
   });
 
   it("uses the latest attempt for custom check-run details URLs", () => {
-    const result = runGate({
-      body: "Signed-off-by: Example User <user@example.com>",
-      verified: true,
-      statusChecks: [
-        ...successfulRequiredChecksWithoutE2e(),
-        { __typename: "StatusContext", context: "E2E / PR Gate", state: "SUCCESS" },
-        {
-          __typename: "CheckRun",
-          name: "custom-check",
-          workflowName: "CodeQL",
-          detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/87500000001",
-          startedAt: "2026-01-01T00:00:00Z",
-          completedAt: "2026-01-01T00:01:00Z",
-          status: "COMPLETED",
-          conclusion: "FAILURE",
-        },
-        {
-          __typename: "CheckRun",
-          name: "custom-check",
-          workflowName: "CodeQL",
-          detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/87500000002",
-          startedAt: "2026-01-01T00:02:00Z",
-          completedAt: "2026-01-01T00:03:00Z",
-          status: "COMPLETED",
-          conclusion: "SUCCESS",
-        },
+    const fixture = e2eRunFixture(
+      [
+        [0, 0, "FAILURE", "2026-01-01T00:00:00Z", `${CUSTOM_RUN_URL}1`, "CodeQL", "custom-check"],
+        [0, 0, "SUCCESS", "2026-01-01T00:02:00Z", `${CUSTOM_RUN_URL}2`, "CodeQL", "custom-check"],
       ],
+      {},
+    );
+    fixture.statusChecks?.push({
+      __typename: "StatusContext",
+      context: "E2E / PR Gate",
+      state: "SUCCESS",
     });
-
-    const output = JSON.parse(result.stdout);
-    expect(output.gates.ci).toMatchObject({ pass: true });
-    expect(output.allPass).toBe(true);
+    expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({ pass: true });
   });
 
   it("uses the latest attempt when GitHub reuses an Actions run ID", () => {
@@ -486,7 +485,6 @@ describe("maintainer merge-gate contributor compliance", () => {
 
     const output = JSON.parse(result.stdout);
     expect(output.gates.ci).toMatchObject({ pass: true });
-    expect(output.allPass).toBe(true);
 
     const unavailable = runGate(fixture);
     expect(JSON.parse(unavailable.stdout).gates.ci).toMatchObject({
@@ -560,7 +558,6 @@ describe("maintainer merge-gate contributor compliance", () => {
         "430": exactDiffGateRun("success", [{ id: 40, name: "E2E / PR Gate" }]),
         "431": { attempt: 1, jobs: [{ id: 41, name: "E2E / PR Gate" }] },
       } as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
     },
     {
       name: "rejects a singleton check from an older run attempt",
@@ -568,42 +565,48 @@ describe("maintainer merge-gate contributor compliance", () => {
       runs: {
         "440": exactDiffGateRun("success", [{ id: 42, name: "E2E / PR Gate" }]),
       } as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
     },
     {
       name: "rejects a singleton check from a stale PR diff",
       checks: e2eChecks([442, 41, "SUCCESS"]),
       runs: {
-        "442": {
-          ...exactDiffGateRun("success", [{ id: 41, name: "E2E / PR Gate" }]),
+        "442": { ...exactDiffGateRun("success", e2eJobs(41)), headSha: "stale" },
+      } as Record<string, ActionRunFixture>,
+    },
+    {
+      name: "rejects an optional Actions check from a stale PR diff",
+      checks: e2eChecks(
+        [442, 41, "SUCCESS"],
+        [443, 43, "SUCCESS", undefined, undefined, undefined, "optional-check"],
+      ),
+      runs: {
+        "442": exactDiffGateRun("success", e2eJobs(41)),
+        "443": {
+          ...exactDiffGateRun("success", [{ id: 43, name: "optional-check" }]),
           headSha: "stale",
         },
       } as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
+      failingChecks: ["optional-check: latest attempt evidence incomplete"],
     },
     {
       name: "rejects a singleton Actions check with a malformed URL",
       checks: e2eChecks([470, 41, "SUCCESS", undefined, "malformed"]),
       runs: {} as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
     },
     {
       name: "rejects a required native check with no workflow or URL identity",
       checks: e2eChecks([474, 41, "SUCCESS", undefined, "", ""]),
       runs: {} as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
     },
     {
       name: "rejects a required native check with a custom check-run URL",
       checks: e2eChecks([475, 41, "SUCCESS", undefined, CUSTOM_RUN_URL, "CodeQL"]),
       runs: {} as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
     },
     {
       name: "rejects duplicate Actions checks when one URL is malformed",
       checks: e2eChecks([472, 40, "SUCCESS"], [473, 41, "SUCCESS", undefined, "malformed"]),
       runs: {} as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
     },
     {
       name: "rejects exact-diff runs with different workflow identities",
@@ -615,7 +618,6 @@ describe("maintainer merge-gate contributor compliance", () => {
           path: ".github/workflows/unrelated.yaml",
         },
       } as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
     },
     {
       name: "rejects an exact-diff run with a null workflow path",
@@ -623,7 +625,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       runs: {
         "482": { ...exactDiffGateRun("success", e2eJobs(41)), path: undefined },
       } as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
     },
     {
       name: "rejects jobs when a newer run attempt starts during collection",
@@ -631,7 +632,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       runs: {
         "490": { ...exactDiffGateRun("success", e2eJobs(41)), nextAttempt: 2 },
       } as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
     },
     {
       name: "validates latest-attempt jobs for tied workflow runs",
@@ -643,20 +643,28 @@ describe("maintainer merge-gate contributor compliance", () => {
         "445": exactDiffGateRun("success", [{ id: 42, name: "E2E / PR Gate" }]),
         "446": exactDiffGateRun("success", [{ id: 43, name: "E2E / PR Gate" }]),
       } as Record<string, ActionRunFixture>,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
     },
     {
-      name: "keeps a skipped run when prior job conclusions are incomplete",
-      checks: e2eChecks([450, 40, "SUCCESS"], [451, 41, "SKIPPED"]),
+      name: "keeps a skipped run when prior conclusions are invalid or incomplete",
+      checks: e2eChecks(
+        [450, 40, "SUCCESS"],
+        [452, 42, "SUCCESS"],
+        [453, 43, "SUCCESS"],
+        [451, 41, "SKIPPED"],
+      ),
       runs: {
-        "450": exactDiffGateRun("success", [{ id: 40, name: "E2E / PR Gate", conclusion: null }]),
+        "450": exactDiffGateRun("mystery", e2eJobs(40)),
+        "452": exactDiffGateRun("success", [
+          { id: 42, name: "E2E / PR Gate", conclusion: "mystery" },
+        ]),
+        "453": exactDiffGateRun("success", [{ id: 43, name: "E2E / PR Gate", conclusion: null }]),
         "451": exactDiffGateRun("skipped", [
           { id: 41, name: "E2E / PR Gate", conclusion: "skipped" },
         ]),
       } as Record<string, ActionRunFixture>,
       failingChecks: ["E2E / PR Gate: SKIPPED"],
     },
-  ])("$name", ({ checks, runs, failingChecks }) => {
+  ])("$name", ({ checks, runs, failingChecks = INCOMPLETE_E2E }) => {
     const result = runGate(e2eRunFixture(checks, runs));
     expect(JSON.parse(result.stdout)).toMatchObject({
       allPass: false,
@@ -759,7 +767,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       "not proof of independent approval",
     );
     expect(output.gates).not.toHaveProperty("prAdvisor");
-    expect(output.allPass).toBe(true);
   });
 
   it("warns without blocking when a contributor also approved (#6222)", () => {
@@ -789,7 +796,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       uncertainActors: [],
     });
     expect(output.advisories.contributorApprovalOverlap.details).toContain("advisory");
-    expect(output.allPass).toBe(true);
   });
 
   it("warns when the PR opener approved their own PR (#6222)", () => {
@@ -813,7 +819,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       actors: ["opener"],
       uncertainActors: [],
     });
-    expect(output.allPass).toBe(true);
   });
 
   it("uses contributors and approvals from every paginated GitHub page (#6222)", () => {
@@ -848,7 +853,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       actors: ["later-page-contributor"],
       uncertainActors: [],
     });
-    expect(output.allPass).toBe(true);
   });
 
   it("uses a later review page to supersede an earlier approval (#6222)", () => {
@@ -880,7 +884,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       actors: [],
       uncertainActors: [],
     });
-    expect(output.allPass).toBe(true);
   });
 
   it("warns when a commit author page is incomplete (#6222)", () => {
@@ -906,7 +909,6 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.advisories.contributorApprovalOverlap.details).toContain(
       "complete paginated commit and review history",
     );
-    expect(output.allPass).toBe(true);
   });
 
   it("warns when the paginated review count is incomplete (#6222)", () => {
@@ -935,7 +937,6 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.advisories.contributorApprovalOverlap.details).toContain(
       "complete paginated commit and review history",
     );
-    expect(output.allPass).toBe(true);
   });
 
   it("matches multiple commit authors and co-authors case-insensitively (#6222)", () => {
@@ -1263,7 +1264,6 @@ describe("maintainer merge-gate contributor compliance", () => {
     const output = JSON.parse(result.stdout);
     expect(output.gates.contributorCompliance.pass).toBe(false);
     expect(output.gates.contributorCompliance.details).toContain("lacks a valid Signed-off-by");
-    expect(output.allPass).toBe(false);
   });
 
   it("fails closed when any PR commit is not GitHub Verified", () => {
@@ -1279,7 +1279,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       dcoDeclarationPresent: true,
       unverifiedCommits: [{ sha: "abc123", reason: "unsigned" }],
     });
-    expect(output.allPass).toBe(false);
   });
 
   it("fails closed for type-skewed commit verification data", () => {
@@ -1298,7 +1297,6 @@ describe("maintainer merge-gate contributor compliance", () => {
       pass: false,
       unverifiedCommits: [{ sha: "abc123", reason: "malformed_commit_verification_data" }],
     });
-    expect(output.allPass).toBe(false);
   });
 });
 

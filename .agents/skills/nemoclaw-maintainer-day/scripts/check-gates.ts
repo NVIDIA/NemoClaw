@@ -320,9 +320,37 @@ function parseGitHubTimestamp(value: string | undefined): number {
     : Number.NaN;
 }
 
+const ACTION_STATUSES = new Set([
+  "COMPLETED",
+  "IN_PROGRESS",
+  "PENDING",
+  "QUEUED",
+  "REQUESTED",
+  "WAITING",
+]);
+const ACTION_CONCLUSIONS = new Set([
+  "ACTION_REQUIRED",
+  "CANCELLED",
+  "FAILURE",
+  "NEUTRAL",
+  "SKIPPED",
+  "STALE",
+  "STARTUP_FAILURE",
+  "SUCCESS",
+  "TIMED_OUT",
+]);
+const HEAD_BOUND_ACTION_EVENTS = new Set(["dynamic", "push", "workflow_call", "workflow_dispatch"]);
+
+function normalizeActionEnum(value: unknown, allowed: ReadonlySet<string>): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.toUpperCase();
+  return allowed.has(normalized) ? normalized : null;
+}
+
 interface ActionRunMetadata {
   attempt: number;
   exactDiff: boolean | null;
+  exactHead: boolean | null;
   event: string | null;
   path: string | null;
   status: string | null;
@@ -331,7 +359,7 @@ interface ActionRunMetadata {
 
 interface ActionJobMetadata {
   name: string;
-  status: string;
+  status: string | null;
   conclusion: string | null;
 }
 
@@ -397,10 +425,11 @@ function currentCheckRollup(
     return {
       attempt: record.run_attempt as number,
       exactDiff: exactDiffMatch,
+      exactHead: typeof record.head_sha === "string" ? record.head_sha === exactDiff.headSha : null,
       event: typeof record.event === "string" ? record.event : null,
       path: typeof record.path === "string" ? record.path : null,
-      status: typeof record.status === "string" ? record.status.toUpperCase() : null,
-      conclusion: typeof record.conclusion === "string" ? record.conclusion.toUpperCase() : null,
+      status: normalizeActionEnum(record.status, ACTION_STATUSES),
+      conclusion: normalizeActionEnum(record.conclusion, ACTION_CONCLUSIONS),
     };
   };
 
@@ -469,8 +498,8 @@ function currentCheckRollup(
         }
         jobsById.set(String(id), {
           name,
-          status: status.toUpperCase(),
-          conclusion: typeof conclusion === "string" ? conclusion.toUpperCase() : null,
+          status: normalizeActionEnum(status, ACTION_STATUSES),
+          conclusion: normalizeActionEnum(conclusion, ACTION_CONCLUSIONS),
         });
       }
     }
@@ -487,6 +516,7 @@ function currentCheckRollup(
       !refreshed ||
       refreshed.attempt !== metadata.attempt ||
       refreshed.exactDiff !== metadata.exactDiff ||
+      refreshed.exactHead !== metadata.exactHead ||
       refreshed.event !== metadata.event ||
       refreshed.path !== metadata.path
     ) {
@@ -496,6 +526,21 @@ function currentCheckRollup(
     actionRunMetadataById.set(runId, refreshed);
     latestAttemptJobsByRun.set(runId, jobsById);
     return jobsById;
+  };
+
+  const currentRunEvidenceState = (
+    metadata: ActionRunMetadata | null,
+    requiresExactDiff: boolean,
+  ): boolean | null => {
+    if (!metadata?.event || !metadata.path) return null;
+    if (metadata.exactDiff === true) return true;
+    if (requiresExactDiff) return metadata.exactDiff === false ? false : null;
+    if (HEAD_BOUND_ACTION_EVENTS.has(metadata.event)) {
+      if (metadata.exactHead === true) return true;
+      if (metadata.exactHead === false) return false;
+      return null;
+    }
+    return metadata.exactDiff === false ? false : null;
   };
 
   const isAllSkippedNonAttempt = (runId: string): boolean => {
@@ -562,11 +607,7 @@ function currentCheckRollup(
     const selected = checksFromLatestAttempt(runId, checks);
     const runMetadata = actionRunMetadata(runId);
     const requiresExactDiff = REQUIRED_CHECK_NAMES.includes(checks[0]?.name ?? "");
-    if (
-      !selected ||
-      (requiresExactDiff &&
-        (runMetadata?.exactDiff !== true || !runMetadata.event || !runMetadata.path))
-    ) {
+    if (!selected || currentRunEvidenceState(runMetadata, requiresExactDiff) !== true) {
       incompleteAttemptEvidence.add(checks[0]?.name ?? "(unknown)");
     }
     return selected ?? checks;
@@ -645,14 +686,17 @@ function currentCheckRollup(
           };
         });
         if (hasOrderingEvidence) {
-          const exactDiffRuns = runs.filter(
-            ({ runId }) => actionRunMetadata(runId)?.exactDiff === true,
+          const requiresExactDiff = REQUIRED_CHECK_NAMES.includes(groupName);
+          const currentEvidenceRuns = runs.filter(
+            ({ runId }) =>
+              currentRunEvidenceState(actionRunMetadata(runId), requiresExactDiff) === true,
           );
-          const unknownDiffRun = runs.some(
-            ({ runId }) => (actionRunMetadata(runId)?.exactDiff ?? null) === null,
+          const unknownEvidenceRun = runs.some(
+            ({ runId }) =>
+              currentRunEvidenceState(actionRunMetadata(runId), requiresExactDiff) === null,
           );
-          const exactDiffIdentities = new Set(
-            exactDiffRuns.map(({ runId }) => {
+          const currentEvidenceIdentities = new Set(
+            currentEvidenceRuns.map(({ runId }) => {
               const metadata = actionRunMetadata(runId);
               return metadata?.event && metadata.path
                 ? JSON.stringify([metadata.event, metadata.path])
@@ -660,14 +704,14 @@ function currentCheckRollup(
             }),
           );
           if (
-            exactDiffRuns.length === 0 ||
-            unknownDiffRun ||
-            exactDiffIdentities.size !== 1 ||
-            exactDiffIdentities.has(null)
+            currentEvidenceRuns.length === 0 ||
+            unknownEvidenceRun ||
+            currentEvidenceIdentities.size !== 1 ||
+            currentEvidenceIdentities.has(null)
           ) {
             incompleteAttemptEvidence.add(group[0]?.name ?? "(unknown)");
           }
-          const diffCandidates = exactDiffRuns.length > 0 ? exactDiffRuns : runs;
+          const diffCandidates = currentEvidenceRuns.length > 0 ? currentEvidenceRuns : runs;
           const candidates = diffCandidates.filter(({ runId, allSkipped }) => {
             if (!allSkipped || !isAllSkippedNonAttempt(runId)) return true;
             const path = actionRunMetadata(runId)?.path;
