@@ -304,9 +304,35 @@ interface ExactDiffIdentity {
   baseSha: string;
 }
 
+function parseGitHubTimestamp(value: string | undefined): number {
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?Z$/u);
+  if (!match) return Number.NaN;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+  const timestamp = Date.UTC(year, month - 1, day, hour, minute, second);
+  const parsed = new Date(timestamp);
+  return parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day &&
+    parsed.getUTCHours() === hour &&
+    parsed.getUTCMinutes() === minute &&
+    parsed.getUTCSeconds() === second
+    ? Date.parse(match[0])
+    : Number.NaN;
+}
+
 interface ActionRunMetadata {
   attempt: number;
   exactDiff: boolean | null;
+  event: string | null;
+  path: string | null;
+  status: string | null;
+  conclusion: string | null;
+}
+
+interface ActionJobMetadata {
+  name: string;
+  status: string;
+  conclusion: string | null;
 }
 
 interface CurrentCheckRollup {
@@ -320,20 +346,16 @@ function currentCheckRollup(
   exactDiff: ExactDiffIdentity,
 ): CurrentCheckRollup {
   const actionRunMetadataById = new Map<string, ActionRunMetadata | null>();
-  const latestAttemptJobsByRun = new Map<string, Map<string, string> | null>();
+  const latestAttemptJobsByRun = new Map<string, Map<string, ActionJobMetadata> | null>();
   const incompleteAttemptEvidence = new Set<string>();
 
-  const actionRunMetadata = (runId: string): ActionRunMetadata | null => {
-    if (actionRunMetadataById.has(runId)) return actionRunMetadataById.get(runId) ?? null;
-
+  const fetchActionRunMetadata = (runId: string): ActionRunMetadata | null => {
     const runData = ghJson(["api", `repos/${repo}/actions/runs/${runId}`]);
     if (typeof runData !== "object" || runData === null || Array.isArray(runData)) {
-      actionRunMetadataById.set(runId, null);
       return null;
     }
     const record = runData as Record<string, unknown>;
     if (!Number.isSafeInteger(record.run_attempt) || (record.run_attempt as number) < 1) {
-      actionRunMetadataById.set(runId, null);
       return null;
     }
 
@@ -372,12 +394,24 @@ function currentCheckRollup(
       }
     }
 
-    const metadata = { attempt: record.run_attempt as number, exactDiff: exactDiffMatch };
+    return {
+      attempt: record.run_attempt as number,
+      exactDiff: exactDiffMatch,
+      event: typeof record.event === "string" ? record.event : null,
+      path: typeof record.path === "string" ? record.path : null,
+      status: typeof record.status === "string" ? record.status.toUpperCase() : null,
+      conclusion: typeof record.conclusion === "string" ? record.conclusion.toUpperCase() : null,
+    };
+  };
+
+  const actionRunMetadata = (runId: string): ActionRunMetadata | null => {
+    if (actionRunMetadataById.has(runId)) return actionRunMetadataById.get(runId) ?? null;
+    const metadata = fetchActionRunMetadata(runId);
     actionRunMetadataById.set(runId, metadata);
     return metadata;
   };
 
-  const latestAttemptJobs = (runId: string): Map<string, string> | null => {
+  const latestAttemptJobs = (runId: string): Map<string, ActionJobMetadata> | null => {
     if (latestAttemptJobsByRun.has(runId)) return latestAttemptJobsByRun.get(runId) ?? null;
 
     const metadata = actionRunMetadata(runId);
@@ -397,7 +431,7 @@ function currentCheckRollup(
     }
 
     let expectedTotal: number | null = null;
-    const jobsById = new Map<string, string>();
+    const jobsById = new Map<string, ActionJobMetadata>();
     let observedJobs = 0;
     for (const page of pages) {
       if (typeof page !== "object" || page === null || Array.isArray(page)) {
@@ -421,12 +455,23 @@ function currentCheckRollup(
           latestAttemptJobsByRun.set(runId, null);
           return null;
         }
-        const { id, name } = value as Record<string, unknown>;
-        if (!Number.isSafeInteger(id) || (id as number) < 1 || typeof name !== "string" || !name) {
+        const { id, name, status, conclusion } = value as Record<string, unknown>;
+        if (
+          !Number.isSafeInteger(id) ||
+          (id as number) < 1 ||
+          typeof name !== "string" ||
+          !name ||
+          typeof status !== "string" ||
+          (typeof conclusion !== "string" && conclusion !== null)
+        ) {
           latestAttemptJobsByRun.set(runId, null);
           return null;
         }
-        jobsById.set(String(id), name);
+        jobsById.set(String(id), {
+          name,
+          status: status.toUpperCase(),
+          conclusion: typeof conclusion === "string" ? conclusion.toUpperCase() : null,
+        });
       }
     }
     if (
@@ -437,8 +482,54 @@ function currentCheckRollup(
       latestAttemptJobsByRun.set(runId, null);
       return null;
     }
+    const refreshed = fetchActionRunMetadata(runId);
+    if (
+      !refreshed ||
+      refreshed.attempt !== metadata.attempt ||
+      refreshed.exactDiff !== metadata.exactDiff ||
+      refreshed.event !== metadata.event ||
+      refreshed.path !== metadata.path
+    ) {
+      latestAttemptJobsByRun.set(runId, null);
+      return null;
+    }
+    actionRunMetadataById.set(runId, refreshed);
     latestAttemptJobsByRun.set(runId, jobsById);
     return jobsById;
+  };
+
+  const isAllSkippedNonAttempt = (runId: string): boolean => {
+    const run = actionRunMetadata(runId);
+    const jobs = latestAttemptJobs(runId);
+    return Boolean(
+      run?.exactDiff === true &&
+        run.event === "pull_request_target" &&
+        run.path &&
+        run.status === "COMPLETED" &&
+        run.conclusion === "SKIPPED" &&
+        jobs &&
+        jobs.size > 0 &&
+        [...jobs.values()].every(
+          (job) => job.status === "COMPLETED" && job.conclusion === "SKIPPED",
+        ),
+    );
+  };
+
+  const isMeaningfulExactDiffRun = (runId: string, path: string): boolean => {
+    const run = actionRunMetadata(runId);
+    const jobs = latestAttemptJobs(runId);
+    return Boolean(
+      run?.exactDiff === true &&
+        run.event === "pull_request_target" &&
+        run.path === path &&
+        run.status === "COMPLETED" &&
+        run.conclusion !== null &&
+        run.conclusion !== "SKIPPED" &&
+        jobs &&
+        jobs.size > 0 &&
+        [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion !== null) &&
+        [...jobs.values()].some((job) => job.conclusion !== "SKIPPED"),
+    );
   };
 
   const checksFromLatestAttempt = (runId: string, checks: StatusCheck[]): StatusCheck[] | null => {
@@ -447,7 +538,7 @@ function currentCheckRollup(
     if (!checkName || !jobsById) return null;
 
     const expectedIds = new Set(
-      [...jobsById].filter(([, name]) => name === checkName).map(([id]) => id),
+      [...jobsById].filter(([, job]) => job.name === checkName).map(([id]) => id),
     );
     if (expectedIds.size === 0) return null;
 
@@ -467,6 +558,23 @@ function currentCheckRollup(
     return selectedIds.size === expectedIds.size ? selected : null;
   };
 
+  const latestAttemptChecks = (runId: string, checks: StatusCheck[]): StatusCheck[] => {
+    const selected = checksFromLatestAttempt(runId, checks);
+    const runMetadata = actionRunMetadata(runId);
+    const requiresExactDiff = REQUIRED_CHECK_NAMES.includes(checks[0]?.name ?? "");
+    if (
+      !selected ||
+      (requiresExactDiff &&
+        (runMetadata?.exactDiff !== true || !runMetadata.event || !runMetadata.path))
+    ) {
+      incompleteAttemptEvidence.add(checks[0]?.name ?? "(unknown)");
+    }
+    return selected ?? checks;
+  };
+
+  const actionRunId = (check: StatusCheck): string | undefined =>
+    check.detailsUrl?.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
+
   const groups = new Map<string, StatusCheck[]>();
   for (const check of statusCheckRollup) {
     const identity = JSON.stringify([
@@ -481,15 +589,37 @@ function currentCheckRollup(
 
   const current: StatusCheck[] = [];
   for (const group of groups.values()) {
+    const groupName = group[0].name ?? "(unknown)";
+    const nativeRequiredCheck =
+      group[0].__typename !== "StatusContext" && REQUIRED_CHECK_NAMES.includes(groupName);
+    const expectsActionEvidence = group.some(
+      (check) =>
+        check.__typename !== "StatusContext" &&
+        (check.detailsUrl?.includes("/actions/") ||
+          (Boolean(check.workflowName) && !/\/runs\/\d+(?:[/?#]|$)/u.test(check.detailsUrl ?? ""))),
+    );
+    if (
+      (nativeRequiredCheck || expectsActionEvidence) &&
+      group.some((check) => !actionRunId(check))
+    ) {
+      incompleteAttemptEvidence.add(groupName);
+    }
     if (group.length === 1) {
-      current.push(group[0]);
+      const runId = group[0].__typename !== "StatusContext" ? actionRunId(group[0]) : undefined;
+      current.push(...(runId ? latestAttemptChecks(runId, group) : group));
       continue;
     }
 
     if (group[0].__typename !== "StatusContext") {
+      const hasOrderingEvidence = group.every((check) =>
+        Number.isFinite(parseGitHubTimestamp(check.startedAt ?? check.completedAt)),
+      );
+      if (!hasOrderingEvidence) {
+        incompleteAttemptEvidence.add(group[0]?.name ?? "(unknown)");
+      }
       const byRun = new Map<string, StatusCheck[]>();
       for (const check of group) {
-        const runId = check.detailsUrl?.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
+        const runId = actionRunId(check);
         if (!runId) {
           byRun.clear();
           break;
@@ -501,7 +631,7 @@ function currentCheckRollup(
       if (byRun.size > 1) {
         const runs = [...byRun].map(([runId, checks]) => {
           const timestamps = checks.map((check) =>
-            Date.parse(check.startedAt ?? check.completedAt ?? ""),
+            parseGitHubTimestamp(check.startedAt ?? check.completedAt),
           );
           return {
             runId,
@@ -514,30 +644,45 @@ function currentCheckRollup(
             ),
           };
         });
-        if (runs.every(({ timestamp }) => Number.isFinite(timestamp))) {
-          const meaningfulExactDiffRun = runs.some(
-            ({ runId, allSkipped }) => !allSkipped && actionRunMetadata(runId)?.exactDiff === true,
+        if (hasOrderingEvidence) {
+          const exactDiffRuns = runs.filter(
+            ({ runId }) => actionRunMetadata(runId)?.exactDiff === true,
           );
-          const candidates = meaningfulExactDiffRun
-            ? runs.filter(
-                ({ runId, allSkipped }) =>
-                  !(allSkipped && actionRunMetadata(runId)?.exactDiff === true),
+          const unknownDiffRun = runs.some(
+            ({ runId }) => (actionRunMetadata(runId)?.exactDiff ?? null) === null,
+          );
+          const exactDiffIdentities = new Set(
+            exactDiffRuns.map(({ runId }) => {
+              const metadata = actionRunMetadata(runId);
+              return metadata?.event && metadata.path
+                ? JSON.stringify([metadata.event, metadata.path])
+                : null;
+            }),
+          );
+          if (
+            exactDiffRuns.length === 0 ||
+            unknownDiffRun ||
+            exactDiffIdentities.size !== 1 ||
+            exactDiffIdentities.has(null)
+          ) {
+            incompleteAttemptEvidence.add(group[0]?.name ?? "(unknown)");
+          }
+          const diffCandidates = exactDiffRuns.length > 0 ? exactDiffRuns : runs;
+          const candidates = diffCandidates.filter(({ runId, allSkipped }) => {
+            if (!allSkipped || !isAllSkippedNonAttempt(runId)) return true;
+            const path = actionRunMetadata(runId)?.path;
+            return !(
+              path &&
+              runs.some(
+                ({ runId: otherRunId }) =>
+                  otherRunId !== runId && isMeaningfulExactDiffRun(otherRunId, path),
               )
-            : runs;
+            );
+          });
           const latestTimestamp = Math.max(...candidates.map(({ timestamp }) => timestamp));
           const latestRuns = candidates.filter(({ timestamp }) => timestamp === latestTimestamp);
-          if (latestRuns.length === 1) {
-            const latest = latestRuns[0];
-            const selected =
-              latest.checks.length > 1
-                ? checksFromLatestAttempt(latest.runId, latest.checks)
-                : latest.checks;
-            if (!selected) {
-              incompleteAttemptEvidence.add(latest.checks[0]?.name ?? "(unknown)");
-            }
-            current.push(...(selected ?? latest.checks));
-          } else {
-            current.push(...latestRuns.flatMap(({ checks }) => checks));
+          for (const latest of latestRuns) {
+            current.push(...latestAttemptChecks(latest.runId, latest.checks));
           }
           continue;
         }
@@ -545,9 +690,7 @@ function currentCheckRollup(
 
       if (byRun.size === 1) {
         const [runId, checks] = [...byRun][0];
-        const selected = checks.length > 1 ? checksFromLatestAttempt(runId, checks) : checks;
-        if (!selected) incompleteAttemptEvidence.add(checks[0]?.name ?? "(unknown)");
-        current.push(...(selected ?? checks));
+        current.push(...latestAttemptChecks(runId, checks));
         continue;
       }
 
@@ -559,7 +702,7 @@ function currentCheckRollup(
       if (customCheckRuns) {
         const timestamped = group.map((check) => ({
           check,
-          timestamp: Date.parse(check.startedAt ?? check.completedAt ?? ""),
+          timestamp: parseGitHubTimestamp(check.startedAt ?? check.completedAt),
         }));
         if (timestamped.every(({ timestamp }) => Number.isFinite(timestamp))) {
           const latestTimestamp = Math.max(...timestamped.map(({ timestamp }) => timestamp));
@@ -580,7 +723,7 @@ function currentCheckRollup(
 
     const timestamped = group.map((check) => ({
       check,
-      timestamp: Date.parse(check.startedAt ?? check.completedAt ?? ""),
+      timestamp: parseGitHubTimestamp(check.startedAt ?? check.completedAt),
     }));
     if (timestamped.some(({ timestamp }) => !Number.isFinite(timestamp))) {
       current.push(...group);
