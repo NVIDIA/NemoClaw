@@ -123,6 +123,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/**
+ * Assert that an agent command completed through the expected inference route.
+ * Visible assistant text is intentionally not part of this recovery proof.
+ */
 export function assertAgentExecutionSucceeded(
   raw: string,
   expectedProvider: string,
