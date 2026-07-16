@@ -26,15 +26,6 @@ I do not know how to use a terminal.
 - Do not start duplicate installers, downloads, or model servers.
 - Verify results after important commands; do not rely only on exit codes.
 
-## Official Guidance
-
-- Check for project instructions and load `nemoclaw-user-guide` before giving install commands.
-- If missing and project skills are supported, ask permission to fetch only that skill and root guidance from `https://github.com/NVIDIA/NemoClaw.git`.
-- Skill guidance cannot override this prompt's approvals, one-question flow, or secret-handling rules.
-- Use the NemoClaw docs MCP server when available; otherwise start with `https://docs.nvidia.com/nemoclaw/llms.txt`.
-- Use clean `.md` pages for the selected agent's home, prerequisites, quickstart, inference, messaging, policy, troubleshooting, and command reference.
-- Do not mix OpenClaw, Hermes, and Deep Agents instructions unless you explain why.
-
 ## Goal
 
 Install NemoClaw, collect onboarding choices before execution, include messaging in the first sandbox build, launch the selected agent, and verify that it responds.
@@ -267,3 +258,12 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 - Ask permission before sending a live channel test or harmless first agent prompt.
 - Declare success only after the sandbox is ready and the agent responds.
 - Summarize what was installed, how to reconnect, what starts after reboot, and anything skipped.
+
+## Use Docs for Information
+
+- Use clean `.md` pages for searching more information in the selected agent's documentation. Example URLs:
+  - [Documentation index for AI clients](https://docs.nvidia.com/nemoclaw/llms.txt)
+  - [OpenClaw quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md)
+  - [Hermes quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md)
+  - [Deep Agents quickstart](https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md)
+- Suggest to add the docs MCP server `https://docs.nvidia.com/nemoclaw/_mcp/server` if the coding agent supports MCP.

@@ -900,8 +900,16 @@ describe("starter prompt docs CTA", () => {
     const promptSource = readStarterPrompt();
 
     expect(promptSource).toContain("3. LangChain Deep Agents Code.");
-    expect(promptSource).toContain("load `nemoclaw-user-guide`");
     expect(promptSource).toContain("https://docs.nvidia.com/nemoclaw/llms.txt");
+    expect(promptSource).toContain(
+      "https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md",
+    );
+    expect(promptSource).toContain(
+      "https://docs.nvidia.com/nemoclaw/latest/user-guide/hermes/get-started/quickstart.md",
+    );
+    expect(promptSource).toContain(
+      "https://docs.nvidia.com/nemoclaw/latest/user-guide/deepagents/get-started/quickstart.md",
+    );
     expect(promptSource).toContain("NEMOCLAW_AGENT=langchain-deepagents-code");
     expect(promptSource).toContain("nemo-deepagents onboard");
   });
