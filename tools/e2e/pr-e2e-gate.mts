@@ -3,7 +3,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -1756,6 +1756,7 @@ export async function waitForChildRun(
     try {
       run = await githubApi<WorkflowRun>(`repos/${repository}/actions/runs/${childRunId}`, token, {
         userAgent: USER_AGENT,
+        signal: AbortSignal.timeout(Math.max(1, deadline - now())),
       });
     } catch (error) {
       throw new Error(
@@ -1793,13 +1794,26 @@ export async function waitForChildRun(
 
 type EvidenceDownloadResult = { code: number | null; timedOut: boolean };
 
+interface SpawnedEvidenceProcess {
+  kill(signal?: NodeJS.Signals | number): boolean;
+  on(event: "error", listener: (error: Error) => void): this;
+  on(event: "close", listener: (code: number | null) => void): this;
+}
+
+type SpawnEvidenceImpl = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => SpawnedEvidenceProcess;
+
 function spawnEvidenceDownload(
   args: string[],
   timeoutMs: number,
   killGraceMs: number,
+  spawnImpl: SpawnEvidenceImpl = spawn,
 ): Promise<EvidenceDownloadResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn("gh", args, {
+    const child = spawnImpl("gh", args, {
       stdio: "inherit",
       env: { ...process.env, GH_TOKEN: process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "" },
     });
@@ -1829,23 +1843,19 @@ export async function downloadChildRunEvidence(
   deps: {
     timeoutMs?: number;
     killGraceMs?: number;
-    run?: (args: string[]) => Promise<EvidenceDownloadResult>;
+    spawn?: SpawnEvidenceImpl;
   } = {},
 ): Promise<void> {
   const { repository } = tokenAndRepository();
   const timeoutMs = deps.timeoutMs ?? EVIDENCE_DOWNLOAD_TIMEOUT_MS;
   const killGraceMs = deps.killGraceMs ?? EVIDENCE_DOWNLOAD_KILL_GRACE_MS;
   const runUrl = `https://github.com/${repository}/actions/runs/${childRunId}`;
-  const run = deps.run ?? ((args) => spawnEvidenceDownload(args, timeoutMs, killGraceMs));
-  const result = await run([
-    "run",
-    "download",
-    String(childRunId),
-    "--repo",
-    repository,
-    "--dir",
-    evidencePath,
-  ]);
+  const result = await spawnEvidenceDownload(
+    ["run", "download", String(childRunId), "--repo", repository, "--dir", evidencePath],
+    timeoutMs,
+    killGraceMs,
+    deps.spawn,
+  );
   if (result.timedOut) {
     throw new Error(
       `Evidence download timed out: artifact download for run ${childRunId} exceeded ${Math.round(timeoutMs / 60_000)} minutes. ${runUrl}`,
