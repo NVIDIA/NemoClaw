@@ -360,7 +360,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     }
   });
 
-  it("requires authorization before internal PR code can receive E2E credentials", async () => {
+  it("reopens a completed check before internal PR code can receive E2E credentials (#7052)", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-control-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -368,10 +368,23 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     const requests: RecordedGitHubRequest[] = [];
+    let checkState = {
+      status: "completed",
+      conclusion: "failure" as string | null,
+      output: { title: "Selected E2E job failed" },
+    };
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
         [
-          existingPrGateCheckRunsRoute(),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () =>
+              githubResponse({
+                total_count: 1,
+                check_runs: [exactPrGateCheck(checkState)],
+              }),
+          ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls?state=open&head="),
             () => githubResponse([pullRequestListItem()]),
@@ -386,7 +399,19 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => {
+              const body = request.body as {
+                status?: string;
+                conclusion?: string | null;
+                output?: { title?: string };
+              };
+              checkState = {
+                status: body.status ?? checkState.status,
+                conclusion: body.conclusion === undefined ? checkState.conclusion : body.conclusion,
+                output: { title: body.output?.title ?? checkState.output.title },
+              };
+              return githubResponse({});
+            },
           ),
         ],
         requests,
@@ -401,6 +426,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         .at(-1);
       expect(completion?.body).toMatchObject({
         status: "in_progress",
+        conclusion: null,
         output: {
           title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining(
@@ -408,7 +434,11 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           ),
         },
       });
-      expect(JSON.stringify(completion?.body)).not.toContain("conclusion");
+      expect(checkState).toEqual({
+        status: "in_progress",
+        conclusion: null,
+        output: { title: "Maintainer authorization required to run E2E" },
+      });
       expect(JSON.stringify(completion?.body)).toContain(
         "run `run-control-plane` with the PR number, exact head and base SHAs",
       );
@@ -1149,12 +1179,12 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
       expect(restoredAuthorizations).toHaveLength(2);
       expect(restoredAuthorizations[0]?.body).toMatchObject({
         status: "in_progress",
+        conclusion: null,
         output: {
           title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining("launch a fresh first-attempt `run-control-plane`"),
         },
       });
-      expect(JSON.stringify(restoredAuthorizations[0]?.body)).not.toContain("conclusion");
       expect(checkTitle).toBe("Maintainer authorization required to run E2E");
       expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
     } finally {

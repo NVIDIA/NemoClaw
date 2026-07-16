@@ -3,7 +3,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type SpawnOptions } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -921,7 +921,7 @@ async function markCheckInProgress(
 ): Promise<void> {
   await githubApi(`repos/${context.repository}/check-runs/${context.checkRunId}`, token, {
     method: "PATCH",
-    body: { status: "in_progress", output: { title, summary } },
+    body: { status: "in_progress", conclusion: null, output: { title, summary } },
     userAgent: USER_AGENT,
   });
 }
