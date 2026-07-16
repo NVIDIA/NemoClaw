@@ -22,7 +22,6 @@ import {
   resolveReportPr,
 } from "../../../tools/e2e/report-e2e-results.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
-import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { requireFixture } from "./require-fixture";
 
 function readWorkflow(): Record<string, unknown> {
@@ -40,46 +39,6 @@ function generateMatrixScript(): string {
   );
   expect(step?.run).toEqual(expect.any(String));
   return String(step!.run);
-}
-
-function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-planner-schema-"));
-  const binDirectory = path.join(directory, "bin");
-  const fakeNpx = path.join(binDirectory, "npx");
-  const outputPath = path.join(directory, "github-output");
-  fs.mkdirSync(binDirectory);
-  fs.writeFileSync(
-    fakeNpx,
-    [
-      "#!/usr/bin/env bash",
-      '[[ "$#" -eq 4 && "$1" == "tsx" && "$2" == "tools/e2e/workflow-plan.mts" && "$3" == "--jobs" && "$4" == "cloud-onboard" ]] || exit 97',
-      "printf '%s\\n' \"${FAKE_E2E_PLAN}\"",
-      "",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  try {
-    return {
-      result: spawnSync("bash", ["-c", generateMatrixScript()], {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          FAKE_E2E_PLAN: JSON.stringify(plan),
-          GITHUB_OUTPUT: outputPath,
-          GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
-          INFERENCE_MODE: "mock",
-          JOBS: "cloud-onboard",
-          PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
-          TARGETS: "",
-        },
-        timeout: 30_000,
-      }),
-      workflowOutput: fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "",
-    };
-  } finally {
-    fs.rmSync(directory, { force: true, recursive: true });
-  }
 }
 
 const DEFAULT_TEST_MATRIX: CredentialFreeTestMatrixRow[] = [
@@ -814,33 +773,6 @@ it("carries the generated planner matrix through the workflow output and PR repo
     expect(body).toContain(`| ${selected.id} | ✅ success |`);
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
-  }
-});
-
-it("fails closed when planner output violates the workflow schema", () => {
-  const [selected] = discoverCredentialFreeTests();
-  expect(selected).toBeDefined();
-  const validPlan = buildE2eWorkflowPlan();
-  const [registryRow] = validPlan.matrix;
-  expect(registryRow).toBeDefined();
-  const { explicitOnlyJobs: _omitted, ...missingField } = validPlan;
-  const malformedPlans = [
-    ["missing required field", missingField],
-    ["duplicate matrix id", { ...validPlan, matrix: [...validPlan.matrix, { ...registryRow }] }],
-    ["invalid test ID", { ...validPlan, testMatrix: [{ ...selected, id: "invalid_id" }] }],
-    ["nonboolean selection", { ...validPlan, hermesSelected: "false" }],
-  ] as const;
-
-  for (const [label, plan] of malformedPlans) {
-    const generated = executeGenerateMatrixWithPlannerOutput(plan);
-    expect(
-      generated.result.status,
-      `${label}: ${generated.result.stderr || generated.result.stdout}`,
-    ).toBe(1);
-    expect(generated.result.stderr).toContain(
-      "::error::E2E planner returned an invalid output schema",
-    );
-    expect(generated.workflowOutput).toBe("");
   }
 });
 

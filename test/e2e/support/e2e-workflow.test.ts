@@ -55,7 +55,7 @@ describe("e2e workflow boundary", () => {
     }
   });
 
-  it("requires unknown inference modes to be rejected before planning", () => {
+  it("requires matrix generation to use the planner CI-output mode", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
     };
@@ -67,13 +67,10 @@ describe("e2e workflow boundary", () => {
       (() => {
         throw new Error("workflow missing Generate E2E target matrix script");
       })();
-    generate!.run = generateRun.replace(
-      "Invalid inference_mode: ${INFERENCE_MODE}",
-      "Unsupported inference mode",
-    );
+    generate!.run = generateRun.replace("--ci-output", "--plain-output");
 
     expect(validateE2eWorkflow(workflow)).toContain(
-      "step 'Generate E2E target matrix' run script must include Invalid inference_mode: ${INFERENCE_MODE}",
+      "step 'Generate E2E target matrix' run script must include --ci-output",
     );
   });
 
@@ -1084,27 +1081,20 @@ jobs:
     }
   });
 
-  it("rejects raw jobs selector echo from matrix generation", () => {
+  it("rejects matrix generation that bypasses the planner CI-output mode", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = fs.readFileSync(
       path.join(process.cwd(), ".github/workflows/e2e.yaml"),
       "utf8",
     );
-    fs.writeFileSync(
-      workflowPath,
-      workflow.replace(
-        'echo "::error::Invalid ${selector_name,,} input; use comma-separated ids" >&2',
-        'echo "::error::Invalid jobs input: ${JOBS}" >&2',
-      ),
-    );
+    fs.writeFileSync(workflowPath, workflow.replace("--ci-output", "--plain-output"));
 
     try {
       const errors = validateE2eWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
-          "step 'Generate E2E target matrix' run script must include Invalid ${selector_name,,} input; use comma-separated ids",
-          "step 'Generate E2E target matrix' run script must not include Invalid jobs input: ${JOBS}",
+          "step 'Generate E2E target matrix' run script must include --ci-output",
         ]),
       );
     } finally {
