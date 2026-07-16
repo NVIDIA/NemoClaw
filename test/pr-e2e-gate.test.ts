@@ -1077,6 +1077,7 @@ describe("PR E2E controller", () => {
       expect(summary).toContain(
         `[cli-tests](https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/job/102)`,
       );
+      expect(summary).toContain("<!-- nemoclaw-pr-e2e-retry:v1:prerequisite-ci -->");
       expect(summary).toContain(
         `[unsafe\\] ::error::&lt;tag&gt;&amp;](https://github.com/NVIDIA/NemoClaw/actions/runs/${CI_RUN_ID}/job/104)`,
       );

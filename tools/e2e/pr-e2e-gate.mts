@@ -35,6 +35,19 @@ const PR_GATE_APPROVAL_ENVIRONMENT = "approve-credentialed-e2e-skip-for-fork-pr"
 const CHECK_NAME = "E2E / PR Gate Coordination";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const CONTROL_PLANE_AUTHORIZATION_TITLE = "Maintainer authorization required to run E2E";
+const RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
+const RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
+const RETRYABLE_FAILURE_REASONS = new Set([
+  "prerequisite-ci",
+  "child-cancelled",
+  "evidence-download",
+] as const);
+const NEVER_RETRY_FAILURE_TITLES = new Set([
+  "Authorized E2E run requires reconciliation",
+  "PR base changed",
+  "Controller stopped early",
+  "Run could not start",
+]);
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
 const GITHUB_ACTIONS_APP_ID = 15368;
@@ -251,7 +264,10 @@ export type PrGateVerdict = {
   conclusion: CheckConclusion;
   title: string;
   summary: string;
+  retryableFailureReason?: RetryableFailureReason;
 };
+
+type RetryableFailureReason = "prerequisite-ci" | "child-cancelled" | "evidence-download";
 
 class ObsoleteExactDiffError extends Error {
   readonly verdict: PrGateVerdict;
@@ -926,6 +942,40 @@ async function markCheckInProgress(
   });
 }
 
+function retryableFailureMarker(reason: RetryableFailureReason): string {
+  return `${RETRYABLE_FAILURE_MARKER_PREFIX}${reason}${RETRYABLE_FAILURE_MARKER_SUFFIX}`;
+}
+
+function retryableFailureReason(check: CheckRun): RetryableFailureReason | undefined {
+  if (check.status !== "completed" || check.conclusion !== "failure") return undefined;
+  if (NEVER_RETRY_FAILURE_TITLES.has(check.output?.title ?? "")) return undefined;
+  const summary = check.output?.summary;
+  if (typeof summary !== "string") return undefined;
+  const markerBoundary = `\n\n${RETRYABLE_FAILURE_MARKER_PREFIX}`;
+  const markerStart = summary.lastIndexOf(markerBoundary);
+  if (markerStart < 0) return undefined;
+  const marker = summary.slice(markerStart + 2);
+  if (!marker.endsWith(RETRYABLE_FAILURE_MARKER_SUFFIX)) return undefined;
+  const reason = marker.slice(
+    RETRYABLE_FAILURE_MARKER_PREFIX.length,
+    -RETRYABLE_FAILURE_MARKER_SUFFIX.length,
+  );
+  if (!RETRYABLE_FAILURE_REASONS.has(reason as RetryableFailureReason)) return undefined;
+  if (marker !== retryableFailureMarker(reason as RetryableFailureReason)) return undefined;
+  return reason as RetryableFailureReason;
+}
+
+function assertCheckCanStart(check: CheckRun | undefined, ciConclusion: string): void {
+  if (!check) return;
+  if (check.status === "in_progress" && check.conclusion === null) return;
+  const reason = retryableFailureReason(check);
+  if (ciConclusion === "success" && reason) return;
+  const title = normalizedCiMetadata(check.output?.title ?? "untitled", "untitled");
+  throw new Error(
+    `Existing exact-diff PR gate state is not retryable: status=${check.status ?? "unknown"} conclusion=${check.conclusion ?? "none"} title=${title}`,
+  );
+}
+
 async function completeCheck(
   context: { repository: string; checkRunId: number },
   token: string,
@@ -939,7 +989,12 @@ async function completeCheck(
       conclusion: verdict.conclusion,
       completed_at: new Date().toISOString(),
       details_url: detailsUrl,
-      output: { title: verdict.title, summary: verdict.summary },
+      output: {
+        title: verdict.title,
+        summary: verdict.retryableFailureReason
+          ? `${verdict.summary}\n\n${retryableFailureMarker(verdict.retryableFailureReason)}`
+          : verdict.summary,
+      },
     },
     userAgent: USER_AGENT,
   });
@@ -980,7 +1035,12 @@ async function completeFailureAfterControllerError(
   context: { repository: string; checkRunId: number },
   token: string,
   title: string,
-  options: { error: unknown; detailsUrl?: string; recovery?: string },
+  options: {
+    error: unknown;
+    detailsUrl?: string;
+    recovery?: string;
+    retryableFailureReason?: RetryableFailureReason;
+  },
 ): Promise<boolean> {
   const reason = controllerErrorMessage(options.error).replace(/`/gu, "'");
   try {
@@ -997,6 +1057,7 @@ async function completeFailureAfterControllerError(
         ]
           .filter((paragraph): paragraph is string => Boolean(paragraph))
           .join("\n\n"),
+        retryableFailureReason: options.retryableFailureReason,
       },
       options.detailsUrl,
     );
@@ -1389,7 +1450,18 @@ function e2eFailureReport(options: {
     details.reportedJobs.length === 1
       ? `${normalizedCiMetadata(details.reportedJobs[0]!.name, "Selected E2E job")} ${details.reportedJobs[0]!.conclusion === "failure" ? "failed" : "did not pass"}`
       : "Selected E2E did not pass";
-  return { conclusion: "failure", title, summary: summary.join("\n") };
+  const conclusivelyCancelled =
+    options.workflowConclusion === "cancelled" ||
+    (options.jobDetailsAvailable &&
+      options.jobDetailsComplete &&
+      options.jobs.length > 0 &&
+      options.jobs.every((job) => job.conclusion === "cancelled"));
+  return {
+    conclusion: "failure",
+    title,
+    summary: summary.join("\n"),
+    ...(conclusivelyCancelled ? { retryableFailureReason: "child-cancelled" as const } : {}),
+  };
 }
 
 export async function pullChangedFiles(
@@ -1999,6 +2071,7 @@ export async function startPrGate(
   ) {
     throw new Error("PR repository or branch does not match the triggering CI run");
   }
+  assertCheckCanStart(existingChecks[0], command.ciConclusion);
   const checkRunId = await ensurePrGateCheck({
     repository,
     token,
@@ -2051,6 +2124,7 @@ export async function startPrGate(
           conclusion: "failure",
           title: `PR #${ciIdentity.prNumber} CI did not pass`,
           summary: report.summary,
+          retryableFailureReason: "prerequisite-ci",
         },
         report.ciRunUrl,
       );
@@ -2094,7 +2168,7 @@ export async function startPrGate(
           summary: [
             `This fork PR diff (head ${command.headSha}, base ${ciIdentity.baseSha}) selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
             "The selected jobs were not run. No fork code received repository secrets.",
-            `Open ${gateRunLink}, choose Review deployments, and approve the \`${PR_GATE_APPROVAL_ENVIRONMENT}\` environment to record this skip. If Review deployments is absent, the environment is unprotected or the run is no longer waiting; configure it and trigger fresh PR CI. GitHub records the reviewer and optional comment. The manual \`approve-fork-e2e-skip\` workflow operation remains available as fallback.`,
+            `Open ${gateRunLink}, choose Review deployments, and approve the \`${PR_GATE_APPROVAL_ENVIRONMENT}\` environment to record this skip. If Review deployments is absent, the environment is unprotected or the run is no longer waiting; configure it, update the PR to create a new head, and trigger fresh PR CI. GitHub records the reviewer and optional comment. The manual \`approve-fork-e2e-skip\` workflow operation remains available as fallback.`,
           ].join("\n\n"),
         },
         gateRunUrl,
@@ -2439,9 +2513,24 @@ export async function finishPrGate(options: {
     let verdict: PrGateVerdict;
     if (workflowConclusion === "success") {
       if (options.evidenceOutcome !== "success") {
-        throw new Error(
+        const error = new Error(
           `Evidence download did not complete (outcome: ${options.evidenceOutcome}) after selected E2E run ${options.childRunId} succeeded. The controller could not verify its artifacts; inspect the Download evidence step and rerun the gate.`,
         );
+        const closed = await completeFailureAfterControllerError(
+          context,
+          token,
+          "Evidence could not be verified",
+          {
+            error,
+            detailsUrl: childRunUrl,
+            retryableFailureReason: "evidence-download",
+          },
+        );
+        if (closed) {
+          appendOutput("finalized", "true");
+          finalized = true;
+        }
+        throw error;
       }
       const signals = findSignalFiles(options.evidencePath, {
         ...EVIDENCE_LIMITS,
@@ -2558,7 +2647,7 @@ function validateApprovalReview(value: unknown): { maintainer: string; comment: 
   }
   if (value.length === 0) {
     throw new Error(
-      `No required-reviewer approval was recorded for ${PR_GATE_APPROVAL_ENVIRONMENT}. If Review deployments was absent, the environment may be missing or unprotected, or the run may no longer be waiting; configure it, then trigger fresh PR CI, or use the manual approve-fork-e2e-skip fallback.`,
+      `No required-reviewer approval was recorded for ${PR_GATE_APPROVAL_ENVIRONMENT}. If Review deployments was absent, the environment may be missing or unprotected, or the run may no longer be waiting; configure it, update the PR to create a new head, then trigger fresh PR CI, or use the manual approve-fork-e2e-skip fallback.`,
     );
   }
   if (value.length > MAX_APPROVAL_REVIEWS) {
