@@ -84,6 +84,7 @@ interface GateOutput {
     riskyCodeTested: GateResult & { riskyFiles?: string[]; hasTests?: boolean };
     contributorCompliance: GateResult & {
       dcoDeclarationPresent?: boolean;
+      dcoDeclarationBypassed?: boolean;
       unverifiedCommits?: Array<{ sha: string; reason: string }>;
     };
   };
@@ -856,7 +857,9 @@ function currentCheckRollup(
       (expectedWorkflowPath === ".github/workflows/pr.yaml" && runMetadata.prCiGate !== true) ||
       runMetadata.status !== "COMPLETED" ||
       runMetadata.conclusion === null ||
-      !PASSING_ACTION_RUN_CONCLUSIONS.has(runMetadata.conclusion)
+      (requiresExactDiff
+        ? runMetadata.conclusion !== "SUCCESS"
+        : !PASSING_ACTION_RUN_CONCLUSIONS.has(runMetadata.conclusion))
     ) {
       incompleteAttemptEvidence.add(checks[0]?.name ?? "(unknown)");
     }
@@ -1154,12 +1157,10 @@ function checkCi(
     // CheckRun uses `status` and `conclusion`.
     const conclusion = (check.conclusion ?? "").toUpperCase();
     const status = (check.status ?? "").toUpperCase();
+    const requiredCheck = REQUIRED_CHECK_NAMES.includes(checkName);
     if (status !== "COMPLETED") {
       pending.push(checkName);
-    } else if (
-      !passing.has(conclusion) ||
-      (checkName === "E2E / PR Gate" && conclusion !== "SUCCESS")
-    ) {
+    } else if (!passing.has(conclusion) || (requiredCheck && conclusion !== "SUCCESS")) {
       failing.push(`${checkName}: ${conclusion}`);
     }
   }
@@ -1430,6 +1431,7 @@ function checkRiskyCodeTested(
 // ---------------------------------------------------------------------------
 
 const DCO_DECLARATION = /^Signed-off-by:\s+.+\s+<[^<>\s]+@[^<>\s]+>\s*$/mu;
+const DCO_BODY_BYPASS_AUTHORS = new Set(["app/dependabot", "dependabot[bot]"]);
 
 interface CommitVerificationRecord {
   sha: string;
@@ -1462,11 +1464,15 @@ function checkContributorCompliance(
   repo: string,
   number: number,
   body: string,
+  authorLogin: string | null,
 ): GateResult & {
   dcoDeclarationPresent?: boolean;
+  dcoDeclarationBypassed?: boolean;
   unverifiedCommits?: Array<{ sha: string; reason: string }>;
 } {
   const dcoDeclarationPresent = DCO_DECLARATION.test(body ?? "");
+  const dcoDeclarationBypassed =
+    typeof authorLogin === "string" && DCO_BODY_BYPASS_AUTHORS.has(authorLogin.toLowerCase());
   const raw = run("gh", [
     "api",
     `repos/${repo}/pulls/${number}/commits`,
@@ -1480,6 +1486,7 @@ function checkContributorCompliance(
       pass: false,
       details: "Could not verify PR commit signatures (API error — fail-closed)",
       dcoDeclarationPresent,
+      dcoDeclarationBypassed,
     };
   }
 
@@ -1494,6 +1501,7 @@ function checkContributorCompliance(
       pass: false,
       details: "Could not parse PR commit signature data — fail-closed",
       dcoDeclarationPresent,
+      dcoDeclarationBypassed,
     };
   }
 
@@ -1502,15 +1510,18 @@ function checkContributorCompliance(
       pass: false,
       details: "No PR commits returned while checking contributor compliance — fail-closed",
       dcoDeclarationPresent,
+      dcoDeclarationBypassed,
     };
   }
 
   const unverifiedCommits = commits
     .filter((commit) => commit.verified !== true)
     .map(({ sha, reason }) => ({ sha, reason }));
-  if (!dcoDeclarationPresent || unverifiedCommits.length > 0) {
+  if ((!dcoDeclarationPresent && !dcoDeclarationBypassed) || unverifiedCommits.length > 0) {
     const failures = [
-      ...(dcoDeclarationPresent ? [] : ["PR body lacks a valid Signed-off-by declaration"]),
+      ...(dcoDeclarationPresent || dcoDeclarationBypassed
+        ? []
+        : ["PR body lacks a valid Signed-off-by declaration"]),
       ...(unverifiedCommits.length > 0
         ? [`${unverifiedCommits.length} commit(s) are not GitHub Verified`]
         : []),
@@ -1519,14 +1530,16 @@ function checkContributorCompliance(
       pass: false,
       details: failures.join("; "),
       dcoDeclarationPresent,
+      dcoDeclarationBypassed,
       unverifiedCommits,
     };
   }
 
   return {
     pass: true,
-    details: `DCO declaration present; all ${commits.length} commit(s) are GitHub Verified`,
+    details: `${dcoDeclarationBypassed ? `PR-body DCO declaration bypassed for ${authorLogin}` : "DCO declaration present"}; all ${commits.length} commit(s) are GitHub Verified`,
     dcoDeclarationPresent,
+    dcoDeclarationBypassed,
     unverifiedCommits: [],
   };
 }
@@ -1586,7 +1599,12 @@ function main(): void {
   );
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
-  const contributorCompliance = checkContributorCompliance(repo, prNumber, prData.body ?? "");
+  const contributorCompliance = checkContributorCompliance(
+    repo,
+    prNumber,
+    prData.body ?? "",
+    prData.author?.login ?? null,
+  );
   const contributorApprovalHistory = fetchContributorApprovalHistory(repo, prNumber);
   const contributorApprovalOverlap = checkContributorApprovalOverlap(
     prData,

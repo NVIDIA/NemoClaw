@@ -13,7 +13,7 @@ name: Security / Installer Hash Check
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
   schedule:

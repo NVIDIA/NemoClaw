@@ -289,6 +289,46 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
   });
 
+  it.each(["SKIPPED", "NEUTRAL"])("rejects a required Actions run concluded %s", (conclusion) => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        actionRunAttempts: {
+          "91": {
+            ...exactDiffGateRun(conclusion.toLowerCase(), [{ id: 1, name: "check-hash" }]),
+            event: "pull_request",
+            path: ".github/workflows/installer-hash-check.yaml",
+          },
+        },
+      }).stdout,
+    );
+
+    expect(output.gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: ["check-hash: latest attempt evidence incomplete"],
+    });
+    expect(output.allPass).toBe(false);
+  });
+
+  it.each(["SKIPPED", "NEUTRAL"])("rejects a required CheckRun concluded %s", (conclusion) => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        statusChecks: successfulRequiredChecks().map((check) =>
+          check.name === "check-hash" ? { ...check, conclusion } : check,
+        ),
+      }).stdout,
+    );
+
+    expect(output.gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: [`check-hash: ${conclusion}`],
+    });
+    expect(output.allPass).toBe(false);
+  });
+
   it("uses the latest base retarget across every event page", () => {
     const output = JSON.parse(
       runGate({
@@ -920,7 +960,7 @@ describe("maintainer merge-gate contributor compliance", () => {
               (check) => check.name !== "checks" && check.name !== "changes",
             ),
             e2eGateCheck([90, 11, "SUCCESS", undefined, undefined, "CI / Pull Request", "checks"]),
-            e2eGateCheck([90, 1, "SKIPPED", undefined, undefined, "CI / Pull Request", "changes"]),
+            e2eGateCheck([90, 1, "SUCCESS", undefined, undefined, "CI / Pull Request", "changes"]),
           ],
           actionRunAttempts: { "90": prWorkflowRun("success", jobs, false) },
         }).stdout,
