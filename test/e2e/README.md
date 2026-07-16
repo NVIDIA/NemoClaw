@@ -177,8 +177,10 @@ out `checkout_sha`. The same validation verifies that the PR remains open,
 belongs to `NVIDIA/NemoClaw`, and still has both the dispatched head and base
 commits. The dispatch includes selected jobs, allowlisted typed targets, and
 valid plan and correlation metadata. Controller-bound targets are restricted
-to the trusted allowlist; ordinary branch dispatch is not an acceptable
-substitute. The controller uses GitHub's returned run ID for
+to the trusted allowlist, and the trusted workflow requires the generated live
+matrix IDs to exactly match that controller selection before credential-bearing
+jobs can start. Ordinary branch dispatch is not an acceptable substitute. The
+controller uses GitHub's returned run ID for
 waiting, evidence download, and completion, then revalidates that the PR is
 still open with the live head, base, and exact-diff coordination identity before
 recording a final result. The native observer revalidates the live revision

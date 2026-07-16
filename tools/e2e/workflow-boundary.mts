@@ -3795,6 +3795,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   const generateEnv = asRecord(generate?.env);
+  if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
+    errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
+  }
   if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
     errors.push("matrix generation step must pass jobs through JOBS env");
   }
@@ -3824,6 +3827,14 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireRunContains(errors, generate, "expected_hermes_selected=false");
   requireRunContains(errors, generate, "expected_hermes_selected=true");
   requireRunContains(errors, generate, "E2E planner changed the trusted Hermes selection");
+  requireRunContains(errors, generate, 'if [ -n "${CHECKOUT_SHA}" ]');
+  requireRunContains(errors, generate, "expected_target_ids=");
+  requireRunContains(errors, generate, "actual_target_ids=");
+  requireRunContains(
+    errors,
+    generate,
+    "E2E planner matrix does not match controller-selected targets",
+  );
   requireRunContains(
     errors,
     generate,

@@ -144,6 +144,7 @@ jobs:
       - id: matrix
         name: Generate E2E target matrix
         env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
           INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
@@ -224,6 +225,14 @@ jobs:
           matrix="$(jq -c '.matrix' <<< "${plan}")"
           test_matrix="$(jq -c '.testMatrix' <<< "${plan}")"
           explicit_only_jobs_csv="$(jq -r '.explicitOnlyJobs | join(",")' <<< "${plan}")"
+          if [ -n "${CHECKOUT_SHA}" ]; then
+            expected_target_ids="$(jq -cn --arg targets "${TARGETS}" '$targets | if length == 0 then [] else split(",") end | sort')"
+            actual_target_ids="$(jq -c 'map(.id) | sort' <<< "${matrix}")"
+            if [ "${actual_target_ids}" != "${expected_target_ids}" ]; then
+              echo "::error::E2E planner matrix does not match controller-selected targets" >&2
+              exit 1
+            fi
+          fi
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
           echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"
           echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"

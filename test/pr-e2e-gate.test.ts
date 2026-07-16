@@ -406,7 +406,7 @@ describe("PR E2E controller", () => {
     expect(() => expectedSignalShards(["not-a-workflow-job"])).toThrow(/does not define/u);
   });
 
-  it("dispatches selected jobs and the allowlisted target with exact bound metadata", async () => {
+  it("dispatches selected jobs and the allowlisted target with exact bound metadata (#7031)", async () => {
     const jobs = ["onboard-repair", "onboard-resume", "full-e2e", "hermes-e2e"];
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter([

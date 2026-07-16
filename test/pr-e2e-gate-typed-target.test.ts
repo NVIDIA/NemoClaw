@@ -55,7 +55,7 @@ function signal(gate: PrGateState, overrides: Partial<E2eRiskSignal> = {}): E2eR
   };
 }
 
-describe("PR E2E typed-target gate", () => {
+describe("PR E2E typed-target gate (#7031)", () => {
   it("requires complete bound evidence for a target-only state", () => {
     const gate = state();
     const target = signal(gate);

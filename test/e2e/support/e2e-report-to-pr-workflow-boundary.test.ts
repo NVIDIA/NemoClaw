@@ -42,7 +42,10 @@ function generateMatrixScript(): string {
   return String(step!.run);
 }
 
-function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
+function executeGenerateMatrixWithPlannerOutput(
+  plan: unknown,
+  options: { checkoutSha?: string; jobs?: string; targets?: string } = {},
+) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-planner-schema-"));
   const binDirectory = path.join(directory, "bin");
   const fakeNpx = path.join(binDirectory, "npx");
@@ -52,7 +55,12 @@ function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
     fakeNpx,
     [
       "#!/usr/bin/env bash",
-      '[[ "$#" -eq 4 && "$1" == "tsx" && "$2" == "tools/e2e/workflow-plan.mts" && "$3" == "--jobs" && "$4" == "cloud-onboard" ]] || exit 97',
+      "expected=(tsx tools/e2e/workflow-plan.mts)",
+      '[[ -z "${JOBS:-}" ]] || expected+=(--jobs "$JOBS")',
+      '[[ -z "${TARGETS:-}" ]] || expected+=(--targets "$TARGETS")',
+      'actual=("$@")',
+      '[[ "${#actual[@]}" -eq "${#expected[@]}" ]] || exit 97',
+      'for index in "${!expected[@]}"; do [[ "${actual[$index]}" == "${expected[$index]}" ]] || exit 97; done',
       "printf '%s\\n' \"${FAKE_E2E_PLAN}\"",
       "",
     ].join("\n"),
@@ -65,13 +73,14 @@ function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
         encoding: "utf8",
         env: {
           ...process.env,
+          CHECKOUT_SHA: options.checkoutSha ?? "",
           FAKE_E2E_PLAN: JSON.stringify(plan),
           GITHUB_OUTPUT: outputPath,
           GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
           INFERENCE_MODE: "mock",
-          JOBS: "cloud-onboard",
+          JOBS: options.jobs ?? "cloud-onboard",
           PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
-          TARGETS: "",
+          TARGETS: options.targets ?? "",
         },
         timeout: 30_000,
       }),
@@ -780,6 +789,7 @@ it("carries the generated planner matrix through the workflow output and PR repo
       encoding: "utf8",
       env: {
         ...process.env,
+        CHECKOUT_SHA: "",
         GITHUB_OUTPUT: outputPath,
         GITHUB_STEP_SUMMARY: summaryPath,
         INFERENCE_MODE: "mock",
@@ -842,6 +852,38 @@ it("fails closed when planner output violates the workflow schema", () => {
     );
     expect(generated.workflowOutput).toBe("");
   }
+});
+
+it("binds controller matrix IDs to the trusted target selector (#7031)", () => {
+  const target = "ubuntu-repo-cloud-langchain-deepagents-code";
+  const validPlan = buildE2eWorkflowPlan({ jobs: "cloud-onboard", targets: target });
+  const options = {
+    checkoutSha: "a".repeat(40),
+    jobs: "cloud-onboard",
+    targets: target,
+  };
+
+  const matching = executeGenerateMatrixWithPlannerOutput(validPlan, options);
+  expect(matching.result.status, matching.result.stderr || matching.result.stdout).toBe(0);
+
+  const injectedWithoutSelection = executeGenerateMatrixWithPlannerOutput(validPlan, {
+    ...options,
+    targets: "",
+  });
+  expect(injectedWithoutSelection.result.status).toBe(1);
+  expect(injectedWithoutSelection.result.stderr).toContain(
+    "::error::E2E planner matrix does not match controller-selected targets",
+  );
+
+  const mismatchedPlan = {
+    ...validPlan,
+    matrix: validPlan.matrix.map((row) => ({ ...row, id: "ubuntu-repo-cloud-openclaw" })),
+  };
+  const mismatched = executeGenerateMatrixWithPlannerOutput(mismatchedPlan, options);
+  expect(mismatched.result.status).toBe(1);
+  expect(mismatched.result.stderr).toContain(
+    "::error::E2E planner matrix does not match controller-selected targets",
+  );
 });
 
 it("requires the report-to-pr job to check out the trusted workflow revision", () => {

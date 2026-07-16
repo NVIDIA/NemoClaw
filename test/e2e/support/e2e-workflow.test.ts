@@ -105,6 +105,30 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("keeps controller target selection bound to the generated matrix (#7031)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        { steps?: Array<{ env?: Record<string, string>; name?: string; run?: string }> }
+      >;
+    };
+    const generate = workflow.jobs["generate-matrix"]?.steps?.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+    delete generate.env!.CHECKOUT_SHA;
+    generate.run = generate.run!.replace(
+      "E2E planner matrix does not match controller-selected targets",
+      "unchecked planner matrix",
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "matrix generation step must bind controller checkout through CHECKOUT_SHA env",
+        "step 'Generate E2E target matrix' run script must include E2E planner matrix does not match controller-selected targets",
+      ]),
+    );
+  });
+
   type RebuildWorkflowStep = {
     env?: Record<string, string>;
     name?: string;
