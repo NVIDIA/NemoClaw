@@ -56,14 +56,19 @@ interface ActionRunFixture {
   attempt: number;
   nextAttempt?: number;
   nextCreatedAt?: string;
+  nextUpdatedAt?: string;
   nextDisplayTitle?: string;
   nextStatus?: string;
   nextConclusion?: string | null;
   jobs?: ActionJobFixture[];
   jobPages?: ActionJobFixture[][];
   createdAt?: string;
+  updatedAt?: string;
   headSha?: string;
+  headBranch?: string;
+  headRepository?: string;
   pullRequestHeadSha?: string;
+  pullRequests?: unknown[];
   baseSha?: string;
   displayTitle?: string;
   event?: string;
@@ -117,6 +122,8 @@ interface ComplianceFixture {
   issueEventPages?: unknown[];
   coordinationCheckPages?: unknown[];
   legacyCoordinationCheckPages?: unknown[];
+  finalPr?: Record<string, unknown>;
+  finalPrAfterCurrentBase?: Record<string, unknown>;
 }
 
 interface ComparatorFixture extends ComplianceFixture {
@@ -168,12 +175,28 @@ function exactDiffGateRun(result: string, jobs: ActionJobFixture[], attempt = 1)
   return {
     attempt,
     headSha: HEAD_SHA,
+    headBranch: "feature-branch",
+    headRepository: "NVIDIA/NemoClaw",
     baseSha: BASE_SHA,
+    displayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate true`,
     event: "pull_request_target",
     path: ".github/workflows/pr-e2e-gate.yaml",
     status: "completed",
     conclusion: result,
     jobs,
+  };
+}
+
+function installerHashRun(
+  result: string,
+  jobs: ActionJobFixture[],
+  gate: boolean,
+): ActionRunFixture {
+  return {
+    ...exactDiffGateRun(result, jobs),
+    displayTitle: `Installer Hash PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate ${gate}`,
+    event: "pull_request",
+    path: ".github/workflows/installer-hash-check.yaml",
   };
 }
 
@@ -206,6 +229,8 @@ function coordinationCheck(overrides: Record<string, unknown> = {}) {
     external_id: E2E_COORDINATION_EXTERNAL_ID,
     status: "completed",
     conclusion: "success",
+    started_at: "2026-01-01T00:01:30Z",
+    completed_at: "2026-01-01T00:02:30Z",
     app: { id: 15368 },
     ...overrides,
   };
@@ -242,10 +267,17 @@ function runGate(fixture: ComplianceFixture) {
       ),
     mergeable: fixture.mergeable ?? "MERGEABLE",
     mergeStateStatus: fixture.mergeStateStatus ?? "CLEAN",
+    state: "OPEN",
+    isDraft: false,
     headRefOid: HEAD_SHA,
     baseRefOid: BASE_SHA,
+    headRefName: "feature-branch",
+    baseRefName: "main",
+    headRepository: { nameWithOwner: "NVIDIA/NemoClaw" },
     author: { login: fixture.prAuthorLogin ?? "contributor" },
   };
+  const finalPr = { ...pr, ...fixture.finalPr };
+  const finalPrAfterCurrentBase = { ...finalPr, ...fixture.finalPrAfterCurrentBase };
   const contributorCommitPages = (
     fixture.contributorCommitPages ?? [
       [
@@ -325,9 +357,7 @@ function runGate(fixture: ComplianceFixture) {
       true,
     ),
     "91": {
-      ...exactDiffGateRun("success", [{ id: 1, name: "check-hash" }]),
-      event: "pull_request",
-      path: ".github/workflows/installer-hash-check.yaml",
+      ...installerHashRun("success", [{ id: 1, name: "check-hash" }], true),
     },
     "92": {
       ...exactDiffGateRun("success", [{ id: 1, name: "commit-lint" }]),
@@ -354,30 +384,36 @@ function runGate(fixture: ComplianceFixture) {
       const runData = {
         run_attempt: value.attempt,
         created_at: value.createdAt ?? "2026-01-01T00:01:00Z",
+        updated_at: value.updatedAt ?? "2026-01-01T00:03:00Z",
         event: value.event,
         path: value.path,
         status: value.status,
         conclusion: value.conclusion,
         display_title: value.displayTitle,
         ...(value.headSha ? { head_sha: value.headSha } : {}),
-        ...(value.headSha
-          ? {
-              pull_requests: value.baseSha
-                ? [
-                    {
-                      number: 42,
-                      head: { sha: value.pullRequestHeadSha ?? value.headSha },
-                      base: { sha: value.baseSha },
-                    },
-                  ]
-                : [],
-            }
-          : {}),
+        ...(value.headBranch ? { head_branch: value.headBranch } : {}),
+        ...(value.headRepository ? { head_repository: { full_name: value.headRepository } } : {}),
+        ...(value.pullRequests !== undefined
+          ? { pull_requests: value.pullRequests }
+          : value.headSha
+            ? {
+                pull_requests: value.baseSha
+                  ? [
+                      {
+                        number: 42,
+                        head: { sha: value.pullRequestHeadSha ?? value.headSha },
+                        base: { sha: value.baseSha },
+                      },
+                    ]
+                  : [],
+              }
+            : {}),
       };
       const refreshedRunData = {
         ...runData,
         run_attempt: value.nextAttempt ?? value.attempt,
         created_at: value.nextCreatedAt ?? runData.created_at,
+        updated_at: value.nextUpdatedAt ?? runData.updated_at,
         display_title: value.nextDisplayTitle ?? runData.display_title,
         status: value.nextStatus ?? runData.status,
         conclusion: value.nextConclusion === undefined ? runData.conclusion : value.nextConclusion,
@@ -402,10 +438,10 @@ function runGate(fixture: ComplianceFixture) {
     `#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  "pr view"*) printf '%s' ${shellSingleQuote(JSON.stringify(pr))} ;;
+  "pr view"*) if mkdir ${shellSingleQuote(path.join(tmp, "pr-view-seen"))} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(pr))}; elif [ -d ${shellSingleQuote(path.join(tmp, "current-base-seen"))} ]; then printf '%s' ${shellSingleQuote(JSON.stringify(finalPrAfterCurrentBase))}; else printf '%s' ${shellSingleQuote(JSON.stringify(finalPr))}; fi ;;
   *"ContributorCommits"*) printf '%s' ${shellSingleQuote(contributorCommitOutput)} ;;
   *"ContributorReviews"*) printf '%s' ${shellSingleQuote(contributorReviewOutput)} ;;
-  *"CurrentBaseRef"*) printf '%s' ${shellSingleQuote(currentBaseOutput)} ;;
+  *"CurrentBaseRef"*) mkdir -p ${shellSingleQuote(path.join(tmp, "current-base-seen"))}; printf '%s' ${shellSingleQuote(currentBaseOutput)} ;;
   "api graphql"*) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
   "api repos/NVIDIA/NemoClaw/issues/42/comments"*) printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
   "api repos/NVIDIA/NemoClaw/pulls/42/commits"*) printf '%s' ${shellSingleQuote(commitOutput)} ;;
@@ -520,6 +556,7 @@ export {
   exactDiffGateRun,
   HEAD_SHA,
   INCOMPLETE_E2E,
+  installerHashRun,
   prWorkflowJobs,
   prWorkflowRun,
   REQUIRED_CHECK_NAMES,
