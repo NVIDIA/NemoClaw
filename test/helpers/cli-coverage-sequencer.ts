@@ -38,8 +38,8 @@ const cliCoverageProjects = new Set(["cli", "integration", "e2e-support"]);
 // Changing either salt intentionally remaps that lane's tests. These values
 // are calibrated against the timing-hint source profile, then kept fixed so
 // ordinary roster changes preserve ownership between profile refreshes.
-const stableShardSalt = "18758";
-const e2eSupportShardSalt = "19876";
+const stableShardSalt = "6096";
+const e2eSupportShardSalt = "2045";
 // Only measured outliers are stored; new and ordinary files share the
 // conservative fallback used to estimate each stable shard's load.
 const timingHintsUrl = new URL("../../ci/cli-test-timing-hints.json", import.meta.url);
