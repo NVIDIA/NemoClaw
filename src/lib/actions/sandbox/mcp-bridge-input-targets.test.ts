@@ -116,14 +116,6 @@ describe("MCP URL target validation", () => {
     expect(() => normalizeMcpServerUrl("http://host.openshell.internal:31337/mcp")).toThrow(
       /must use https/,
     );
-    // The https rejection explains the managed-vs-agent-native parity so a plain-http
-    // URL an agent-native path accepts does not read as a Hermes-specific limitation (#6971).
-    expect(() => normalizeMcpServerUrl("http://mcp.example.test/mcp")).toThrow(
-      /Managed mcp add enforces this for every agent/,
-    );
-    expect(() => normalizeMcpServerUrl("http://mcp.example.test/mcp")).toThrow(
-      /agent-native registration path/,
-    );
     for (const host of [
       "host.openshell.internal",
       "host.openshell.internal.",
@@ -134,5 +126,16 @@ describe("MCP URL target validation", () => {
         /does not expose an attested driver gateway address/,
       );
     }
+  });
+
+  it("explains managed-vs-agent-native parity in the https rejection (#6971)", () => {
+    // A plain-http URL an agent-native path (OpenClaw mcporter) accepts must not read as a
+    // Hermes-specific limitation; the managed rejection names the shared, every-agent boundary.
+    expect(() => normalizeMcpServerUrl("http://mcp.example.test/mcp")).toThrow(
+      /Managed mcp add enforces this for every agent/,
+    );
+    expect(() => normalizeMcpServerUrl("http://mcp.example.test/mcp")).toThrow(
+      /agent-native registration path/,
+    );
   });
 });
