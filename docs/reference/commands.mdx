@@ -241,7 +241,7 @@ If the session lacks that registration receipt, the provider is missing, or its 
 </AgentOnly>
 
 Completed onboarding sessions are not resumable.
-Use `--resume` only for interrupted `in_progress` sessions, not to change provider, model, agent, or sandbox recreation settings after onboarding has completed.
+Use `--resume` only for resumable interrupted or failed sessions, not to change provider, model, agent, or sandbox recreation settings after onboarding has completed.
 During resume, NemoClaw reruns preflight, gateway, provider, and sandbox repair checks even when the saved session has already reached a later nonterminal onboarding phase.
 If the recorded session conflicts with flags you pass on the recovery run, NemoClaw exits and tells you to either rerun with the original settings or start over.
 

@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   dockerRunDetached: vi.fn(),
   dockerSpawn: vi.fn(),
   dockerStop: vi.fn(),
-  findUnwritableTreePath: vi.fn(),
+  findUnwritableModelCachePath: vi.fn(),
   getGpuIndicesByName: vi.fn<(_pattern: RegExp) => number[]>(() => []),
   measureDirectorySizeBytes: vi.fn(),
   probeDockerStorage: vi.fn(),
@@ -46,7 +46,7 @@ vi.mock("./vllm-storage", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./vllm-storage")>();
   return {
     ...actual,
-    findUnwritableTreePath: mocks.findUnwritableTreePath,
+    findUnwritableModelCachePath: mocks.findUnwritableModelCachePath,
     measureDirectorySizeBytes: mocks.measureDirectorySizeBytes,
     probeDockerStorage: mocks.probeDockerStorage,
     probeHostStorage: mocks.probeHostStorage,
@@ -57,7 +57,7 @@ import { detectVllmProfile, installVllm } from "./vllm";
 
 beforeEach(() => {
   mocks.dockerImageInspectFormat.mockReturnValue("");
-  mocks.findUnwritableTreePath.mockReturnValue(null);
+  mocks.findUnwritableModelCachePath.mockReturnValue(null);
   mocks.measureDirectorySizeBytes.mockReturnValue(0n);
   mocks.probeDockerStorage.mockReturnValue({
     ok: true,
