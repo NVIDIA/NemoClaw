@@ -57,20 +57,10 @@ describe("DGX Station host preparation", () => {
     for (const doc of docs) {
       for (const version of pinnedValues) expect(doc).toContain(version);
       expect(doc).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-      expect(doc).toMatch(/real OpenShell sandbox|full qualification/);
-    }
-  });
-
-  it("documents the failed DGX OS sandbox boundary without implying host probes qualify it", () => {
-    const helper = fs.readFileSync(STATION_PREPARE, "utf-8");
-    const docs = STATION_DOCS.map((doc) => fs.readFileSync(doc, "utf-8"));
-
-    expect(helper).toContain("https://github.com/NVIDIA/OpenShell/issues/2343");
-    expect(helper).toContain("there is no validated in-place conversion");
-    for (const doc of docs) {
-      expect(doc).toContain("NVIDIA/OpenShell#2343");
-      expect(doc).toMatch(/DGX OS 7\.5.*CUDA initialization.*real OpenShell sandbox/);
-      expect(doc).toContain("no validated in-place conversion");
+      for (const version of ["7.2.0", "7.4.0", "7.5.0"]) {
+        expect(doc).toContain(version);
+      }
+      expect(doc).toContain("DGX Server for GALAXY-GB300");
     }
   });
 

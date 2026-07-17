@@ -757,7 +757,7 @@ printf 'PROMPT_REACHED\n'
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
-  it("explains the qualified DGX OS blocker before Station express preparation (#7103)", () => {
+  it("explains the supported boundary for an unrecognized DGX OS before Station preparation", () => {
     const result = spawnSync(
       "bash",
       [
@@ -783,13 +783,9 @@ printf 'PROMPT_REACHED\n'
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("No DGX OS/BaseOS release is currently qualified");
-    expect(output).toContain(
-      "DGX OS 7.5 qualification failed CUDA initialization inside the OpenShell sandbox",
-    );
+    expect(output).toContain("outside the validated Station express boundary");
     expect(output).toContain("generic Ubuntu 24.04 ARM64");
-    expect(output).toContain("there is no validated in-place conversion");
-    expect(output).toContain("https://github.com/NVIDIA/OpenShell/issues/2343");
+    expect(output).toContain("stock DGX OS 7.2.0, 7.4.0, or 7.5.0");
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
