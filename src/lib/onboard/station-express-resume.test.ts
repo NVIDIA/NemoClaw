@@ -16,6 +16,10 @@ const ultraIntent = {
   model: "nemotron-3-ultra-550b-a55b",
   sandboxName: "my-assistant",
 };
+const boundUltraIntent = {
+  ...ultraIntent,
+  servedModel: "nvidia/nemotron-3-ultra-550b-a55b",
+};
 
 function expressEnv(): NodeJS.ProcessEnv {
   return {
@@ -61,6 +65,9 @@ describe("DGX Station Express resume (#7048)", () => {
     expect(
       parseStationExpressResumeIntent({ ...ultraIntent, model: "qwen3.6-35b-a3b-nvfp4" }),
     ).toBeNull();
+    expect(
+      parseStationExpressResumeIntent({ ...ultraIntent, servedModel: "unsafe alias" }),
+    ).toBeNull();
   });
 
   it("restores the saved provider and model for a plain failed-session resume", async () => {
@@ -90,6 +97,30 @@ describe("DGX Station Express resume (#7048)", () => {
     expect(env).toEqual({ NEMOCLAW_PROVIDER: "" });
   });
 
+  it("reuses the exact served alias recorded by a completed provider selection", async () => {
+    const session = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: { ...ultraIntent, servedModel: "nemotron-ultra" },
+      provider: "vllm-local",
+      model: "nemotron-ultra",
+      steps: {
+        provider_selection: {
+          status: "complete",
+          startedAt: "2026-07-16T00:00:00.000Z",
+          completedAt: "2026-07-16T00:01:00.000Z",
+          error: null,
+        },
+      },
+    });
+    session.status = "failed";
+    const deps = resumeDeps(session);
+    const run = vi.fn(async () => undefined);
+
+    await withStationExpressResumeEnvironment(run, deps, {})({ resume: true });
+
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it("also restores an automatically resumed in-progress Express session", async () => {
     const env: NodeJS.ProcessEnv = {};
     const deps = resumeDeps();
@@ -112,7 +143,7 @@ describe("DGX Station Express resume (#7048)", () => {
     };
     const session = createSession({
       mode: "non-interactive",
-      stationExpressIntent: ultraIntent,
+      stationExpressIntent: boundUltraIntent,
       provider: "vllm-local",
       model: "nvidia/nemotron-3-ultra-550b-a55b",
       steps: {
@@ -151,7 +182,7 @@ describe("DGX Station Express resume (#7048)", () => {
   }) => {
     const session = createSession({
       mode: "non-interactive",
-      stationExpressIntent: ultraIntent,
+      stationExpressIntent: boundUltraIntent,
       sandboxName,
       provider,
       model,

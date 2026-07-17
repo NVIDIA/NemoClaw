@@ -3,6 +3,7 @@
 
 import { selectVllmModelFromEnv, type VllmModelDef } from "../inference/vllm-models";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
+import { isSafeModelId } from "../validation";
 
 export const STATION_EXPRESS_ENV = "NEMOCLAW_STATION_EXPRESS";
 export const STATION_EXPRESS_INTENT_VERSION = 1;
@@ -11,6 +12,7 @@ export interface StationExpressResumeIntent {
   version: typeof STATION_EXPRESS_INTENT_VERSION;
   model: string;
   sandboxName: string;
+  servedModel?: string;
 }
 
 export interface StationExpressSessionLike {
@@ -51,6 +53,9 @@ const RESUME_ENV = [
   "NEMOCLAW_VLLM_MODEL",
   "NEMOCLAW_MODEL",
 ] as const;
+const MAX_SERVED_MODEL_LENGTH = 512;
+const UNBOUND_INTENT_KEYS = "model,sandboxName,version";
+const BOUND_INTENT_KEYS = "model,sandboxName,servedModel,version";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -78,16 +83,48 @@ function validSandboxName(value: unknown): value is string {
 
 export function parseStationExpressResumeIntent(value: unknown): StationExpressResumeIntent | null {
   if (!isObject(value)) return null;
-  const keys = Object.keys(value).sort();
-  if (keys.join(",") !== "model,sandboxName,version") return null;
+  const keys = Object.keys(value).sort().join(",");
+  if (keys !== UNBOUND_INTENT_KEYS && keys !== BOUND_INTENT_KEYS) return null;
   if (value.version !== STATION_EXPRESS_INTENT_VERSION) return null;
   const model = stationModel(value.model);
   if (!model || value.model !== model.envValue || !validSandboxName(value.sandboxName)) return null;
+  const servedModelValue = value.servedModel;
+  if (
+    keys === BOUND_INTENT_KEYS &&
+    (typeof servedModelValue !== "string" ||
+      servedModelValue.length === 0 ||
+      servedModelValue.length > MAX_SERVED_MODEL_LENGTH ||
+      servedModelValue.trim() !== servedModelValue ||
+      !isSafeModelId(servedModelValue))
+  ) {
+    return null;
+  }
   return {
     version: STATION_EXPRESS_INTENT_VERSION,
     model: model.envValue,
     sandboxName: value.sandboxName,
+    ...(keys === BOUND_INTENT_KEYS ? { servedModel: servedModelValue as string } : {}),
   };
+}
+
+export function bindStationExpressProviderSelection(
+  intentValue: unknown,
+  provider: unknown,
+  model: unknown,
+): StationExpressResumeIntent {
+  const intent = parseStationExpressResumeIntent(intentValue);
+  if (
+    !intent ||
+    provider !== "vllm-local" ||
+    typeof model !== "string" ||
+    model.length === 0 ||
+    model.length > MAX_SERVED_MODEL_LENGTH ||
+    model.trim() !== model ||
+    !isSafeModelId(model)
+  ) {
+    throw new Error("Cannot record an invalid DGX Station Express provider selection.");
+  }
+  return { ...intent, servedModel: model };
 }
 
 function expectedEnvironment(
@@ -235,9 +272,8 @@ function matchesRecordedStationExpressSelection(
   const providerComplete = session.steps?.provider_selection?.status === "complete";
   if (!providerComplete) return session.provider == null && session.model == null;
 
-  const model = stationModel(intent.model);
   return Boolean(
-    model && session.provider === "vllm-local" && session.model === servedModel(model),
+    intent.servedModel && session.provider === "vllm-local" && session.model === intent.servedModel,
   );
 }
 

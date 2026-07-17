@@ -300,7 +300,57 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(requireLoadedSession(session.loadSession())).toMatchObject({
       provider: "vllm-local",
       model: "nvidia/nemotron-3-ultra-550b-a55b",
+      stationExpressIntent: {
+        ...intent,
+        servedModel: "nvidia/nemotron-3-ultra-550b-a55b",
+      },
+    });
+  });
+
+  it("atomically binds a validated served alias when provider selection completes", () => {
+    const intent = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+    };
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
+    );
+
+    session.markStepComplete("provider_selection", {
+      provider: "vllm-local",
+      model: "nemotron-ultra",
+    });
+
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      provider: "vllm-local",
+      model: "nemotron-ultra",
+      stationExpressIntent: { ...intent, servedModel: "nemotron-ultra" },
+    });
+  });
+
+  it("does not complete Station Express provider selection with an invalid binding", () => {
+    const intent = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+    };
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
+    );
+
+    expect(() =>
+      session.markStepComplete("provider_selection", {
+        provider: "vllm-local",
+        model: "unsafe alias",
+      }),
+    ).toThrow("invalid DGX Station Express provider selection");
+
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      provider: null,
+      model: null,
       stationExpressIntent: intent,
+      steps: { provider_selection: { status: "pending" } },
     });
   });
 });

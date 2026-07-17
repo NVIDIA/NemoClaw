@@ -31,6 +31,7 @@ import {
 } from "../onboard/machine/transitions";
 import type { OnboardMachineState, OnboardNonTerminalMachineState } from "../onboard/machine/types";
 import {
+  bindStationExpressProviderSelection,
   parseStationExpressResumeIntent,
   type StationExpressResumeIntent,
 } from "../onboard/station-express-resume";
@@ -1322,6 +1323,14 @@ function markStepCompleteWithOptions(
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    const stationExpressIntent =
+      stepName === "provider_selection" && session.stationExpressIntent
+        ? bindStationExpressProviderSelection(
+            session.stationExpressIntent,
+            safeUpdates.provider,
+            safeUpdates.model,
+          )
+        : null;
     const now = new Date().toISOString();
     step.status = "complete";
     step.completedAt = now;
@@ -1329,6 +1338,7 @@ function markStepCompleteWithOptions(
     session.lastCompletedStep = stepName;
     session.failure = null;
     Object.assign(session, safeUpdates);
+    if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
     const nextState = nextMachineStateAfterCompletedStep(stepName, session);
     shouldEmit = Boolean(nextState && shouldUpdateMachine(options));
     if (nextState && shouldEmit) transitionMachineSnapshot(session, nextState, now);
