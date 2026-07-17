@@ -117,6 +117,7 @@ describe("Station Express onboarding session state (#7048)", () => {
   });
 
   it("clears resume intent only after successful completion", () => {
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
     session.saveSession(
       session.createSession({
         mode: "non-interactive",
@@ -127,10 +128,36 @@ describe("Station Express onboarding session state (#7048)", () => {
         },
       }),
     );
+    fs.writeFileSync(receipt, "pending Station installer resume\n", { mode: 0o600 });
 
     session.completeSession();
 
     expect(requireLoadedSession(session.loadSession()).stationExpressIntent).toBeNull();
+    expect(fs.existsSync(receipt)).toBe(false);
+  });
+
+  it("does not claim Station Express completion when receipt cleanup is unsafe", () => {
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+    const target = path.join(tmpDir, "receipt-target");
+    const intent = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+    };
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
+    );
+    fs.writeFileSync(target, "preserve\n", { mode: 0o600 });
+    fs.symlinkSync(target, receipt);
+
+    expect(() => session.completeSession()).toThrow("Refusing symbolic link");
+
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      status: "in_progress",
+      resumable: true,
+      stationExpressIntent: intent,
+    });
+    expect(fs.readFileSync(target, "utf8")).toBe("preserve\n");
   });
 
   it("removes the Station installer receipt through the public fresh wrapper", async () => {
@@ -177,6 +204,7 @@ describe("Station Express onboarding session state (#7048)", () => {
       model: "nemotron-3-ultra-550b-a55b",
       sandboxName: "my-assistant",
     };
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
     await prepareOnboardSession(
       {
         resume: false,
@@ -188,6 +216,11 @@ describe("Station Express onboarding session state (#7048)", () => {
         stationExpressIntent: intent,
       },
       bootstrapDeps,
+    );
+    fs.writeFileSync(
+      receipt,
+      "revision=0123456789012345678901234567890123456789\nmodel=nemotron-3-ultra-550b-a55b\n",
+      { mode: 0o600 },
     );
     expect(requireLoadedSession(session.loadSession()).stationExpressIntent).toEqual(intent);
 
@@ -329,9 +362,20 @@ describe("Station Express onboarding session state (#7048)", () => {
         servedModel: "nvidia/nemotron-3-ultra-550b-a55b",
       },
     });
+    expect(fs.existsSync(receipt)).toBe(true);
+
+    await resumedRuntime.completeSession();
+
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      status: "complete",
+      resumable: false,
+      stationExpressIntent: null,
+    });
+    expect(fs.existsSync(receipt)).toBe(false);
   });
 
   it("atomically binds a validated served alias when provider selection completes", () => {
+    const servedAlias = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4";
     const intent = {
       version: 1 as const,
       model: "nemotron-3-ultra-550b-a55b",
@@ -343,13 +387,14 @@ describe("Station Express onboarding session state (#7048)", () => {
 
     session.markStepComplete("provider_selection", {
       provider: "vllm-local",
-      model: "nemotron-ultra",
+      model: servedAlias,
     });
 
     expect(requireLoadedSession(session.loadSession())).toMatchObject({
       provider: "vllm-local",
-      model: "nemotron-ultra",
-      stationExpressIntent: { ...intent, servedModel: "nemotron-ultra" },
+      model: servedAlias,
+      stationExpressIntent: { ...intent, servedModel: servedAlias },
+      steps: { provider_selection: { status: "complete" } },
     });
   });
 
@@ -359,6 +404,7 @@ describe("Station Express onboarding session state (#7048)", () => {
       model: "nemotron-3-ultra-550b-a55b",
       sandboxName: "my-assistant",
     };
+    const expectedIntent = { ...intent };
     session.saveSession(
       session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
     );
@@ -366,15 +412,16 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(() =>
       session.markStepComplete("provider_selection", {
         provider: "vllm-local",
-        model: "unsafe alias",
+        model: "deepseek-ai/DeepSeek-V4-Flash",
       }),
     ).toThrow("invalid DGX Station Express provider selection");
 
-    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded).toMatchObject({
       provider: null,
       model: null,
-      stationExpressIntent: intent,
       steps: { provider_selection: { status: "pending" } },
     });
+    expect(loaded.stationExpressIntent).toEqual(expectedIntent);
   });
 });

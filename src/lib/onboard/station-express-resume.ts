@@ -82,6 +82,13 @@ function servedModel(model: VllmModelDef): string {
   return model.servedModelId ?? model.id;
 }
 
+function identifiesModel(model: VllmModelDef, value: string): boolean {
+  const normalized = value.toLowerCase();
+  return [model.envValue, model.id, model.servedModelId].some(
+    (candidate) => candidate?.toLowerCase() === normalized,
+  );
+}
+
 function validSandboxName(value: unknown): value is string {
   return (
     typeof value === "string" && value.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(value)
@@ -151,7 +158,8 @@ export function parseStationExpressResumeIntent(value: unknown): StationExpressR
       servedModelValue.length === 0 ||
       servedModelValue.length > MAX_SERVED_MODEL_LENGTH ||
       servedModelValue.trim() !== servedModelValue ||
-      !isSafeModelId(servedModelValue))
+      !isSafeModelId(servedModelValue) ||
+      !identifiesModel(model, servedModelValue))
   ) {
     return null;
   }
@@ -169,14 +177,17 @@ export function bindStationExpressProviderSelection(
   model: unknown,
 ): StationExpressResumeIntent {
   const intent = parseStationExpressResumeIntent(intentValue);
+  const selectedModel = intent ? stationModel(intent.model) : null;
   if (
     !intent ||
+    !selectedModel ||
     provider !== "vllm-local" ||
     typeof model !== "string" ||
     model.length === 0 ||
     model.length > MAX_SERVED_MODEL_LENGTH ||
     model.trim() !== model ||
-    !isSafeModelId(model)
+    !isSafeModelId(model) ||
+    !identifiesModel(selectedModel, model)
   ) {
     throw new Error("Cannot record an invalid DGX Station Express provider selection.");
   }

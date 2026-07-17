@@ -32,6 +32,7 @@ import {
 import type { OnboardMachineState, OnboardNonTerminalMachineState } from "../onboard/machine/types";
 import {
   bindStationExpressProviderSelection,
+  clearStationExpressInstallerResume,
   parseStationExpressResumeIntent,
   type StationExpressResumeIntent,
 } from "../onboard/station-express-resume";
@@ -1532,6 +1533,7 @@ export function completeSession(updates: SessionUpdates = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
   let wasComplete = false;
   const updatedSession = updateSession((session) => {
+    if (session.stationExpressIntent) clearStationExpressInstallerResume();
     const now = new Date().toISOString();
     wasComplete = session.status === "complete";
     Object.assign(session, safeUpdates);

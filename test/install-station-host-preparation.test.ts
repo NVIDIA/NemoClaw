@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   clearStationExpressInstallerResume,
   withStationExpressResumeEnvironment,
@@ -40,6 +40,39 @@ function runSourced(script: string, body: string, extraEnv: Record<string, strin
     },
   );
   return { home, result, output: `${result.stdout}${result.stderr}` };
+}
+
+function runNonInteractiveStationSelector(home: string) {
+  const result = spawnSync(
+    "bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-c",
+      `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf 'DGX Station'; }
+station_installer_revision() { printf '${STATION_REVISION}'; }
+NON_INTERACTIVE='1'
+NEMOCLAW_PROVIDER=''
+NEMOCLAW_NO_EXPRESS=''
+maybe_offer_express_install
+printf 'RESULT PROVIDER=%s STATION_EXPRESS=%s\n' "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_STATION_EXPRESS:-}"
+`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        HOME: home,
+        PATH: TEST_SYSTEM_PATH,
+        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+      },
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    },
+  );
+  return { result, output: `${result.stdout}${result.stderr}` };
 }
 
 describe("DGX Station host preparation", () => {
@@ -1224,42 +1257,58 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s
       )({ fresh: true });
       expect(fs.existsSync(receipt)).toBe(false);
 
-      const result = spawnSync(
-        "bash",
-        [
-          "--noprofile",
-          "--norc",
-          "-c",
-          `
-source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform() { printf 'DGX Station'; }
-station_installer_revision() { printf '${STATION_REVISION}'; }
-NON_INTERACTIVE='1'
-NEMOCLAW_PROVIDER=''
-NEMOCLAW_NO_EXPRESS=''
-maybe_offer_express_install
-printf 'RESULT PROVIDER=%s STATION_EXPRESS=%s\n' "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_STATION_EXPRESS:-}"
-`,
-        ],
-        {
-          cwd: REPO_ROOT,
-          encoding: "utf-8",
-          env: {
-            HOME: home,
-            PATH: TEST_SYSTEM_PATH,
-            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-          },
-          timeout: 15_000,
-          killSignal: "SIGKILL",
-        },
-      );
-      const output = `${result.stdout}${result.stderr}`;
+      const { result, output } = runNonInteractiveStationSelector(home);
 
       expect(result.status, output).toBe(0);
       expect(output).toContain("Skipping express prompt (--non-interactive set)");
       expect(output).not.toContain("Resuming the accepted express install");
       expect(output).toContain("RESULT PROVIDER= STATION_EXPRESS=");
     } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not restore the Station recipe after onboarding completes (#7048)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-complete-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    const session = await import("../src/lib/state/onboard-session");
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+
+    try {
+      session.saveSession(
+        session.createSession({
+          mode: "non-interactive",
+          stationExpressIntent: {
+            version: 1,
+            model: "nemotron-3-ultra-550b-a55b",
+            sandboxName: "my-assistant",
+          },
+        }),
+      );
+      fs.writeFileSync(
+        receipt,
+        `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`,
+        { mode: 0o600 },
+      );
+
+      session.completeSession();
+
+      expect(fs.existsSync(receipt)).toBe(false);
+      expect(session.loadSession()).toMatchObject({
+        status: "complete",
+        resumable: false,
+        stationExpressIntent: null,
+      });
+      const { result, output } = runNonInteractiveStationSelector(home);
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Skipping express prompt (--non-interactive set)");
+      expect(output).not.toContain("Resuming the accepted express install");
+      expect(output).toContain("RESULT PROVIDER= STATION_EXPRESS=");
+    } finally {
+      session.clearSession();
+      session.releaseOnboardLock();
+      vi.unstubAllEnvs();
       fs.rmSync(home, { recursive: true, force: true });
     }
   });

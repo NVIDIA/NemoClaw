@@ -73,6 +73,12 @@ describe("DGX Station Express resume (#7048)", () => {
     expect(
       parseStationExpressResumeIntent({ ...ultraIntent, servedModel: "unsafe alias" }),
     ).toBeNull();
+    expect(
+      parseStationExpressResumeIntent({
+        ...ultraIntent,
+        servedModel: "deepseek-ai/DeepSeek-V4-Flash",
+      }),
+    ).toBeNull();
   });
 
   it("restores the saved provider and model for a plain failed-session resume", async () => {
@@ -103,11 +109,12 @@ describe("DGX Station Express resume (#7048)", () => {
   });
 
   it("reuses the exact served alias recorded by a completed provider selection", async () => {
+    const servedAlias = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4";
     const session = createSession({
       mode: "non-interactive",
-      stationExpressIntent: { ...ultraIntent, servedModel: "nemotron-ultra" },
+      stationExpressIntent: { ...ultraIntent, servedModel: servedAlias },
       provider: "vllm-local",
-      model: "nemotron-ultra",
+      model: servedAlias,
       steps: {
         provider_selection: {
           status: "complete",
