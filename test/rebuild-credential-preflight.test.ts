@@ -15,7 +15,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { execTimeout } from "./helpers/timeouts";
+import { execTimeout, testTimeout } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath);
@@ -38,6 +38,7 @@ function createFixture(opts: {
   savedCredential?: { key: string; value: string };
   hermesAuthMethod?: string | null;
   providerRegistered?: boolean;
+  sandboxDeleteExitCode?: number;
   activeSessionCount?: number | null;
   inferenceProbeHttpStatus?: number | null;
 }) {
@@ -48,6 +49,7 @@ function createFixture(opts: {
     savedCredential,
     hermesAuthMethod = null,
     providerRegistered = true,
+    sandboxDeleteExitCode = 0,
     activeSessionCount = 0,
     inferenceProbeHttpStatus = null,
   } = opts;
@@ -166,10 +168,10 @@ const fs = require("fs");
 const a = process.argv.slice(2);
 const hermesProviderStatePath = ${JSON.stringify(hermesProviderStatePath)};
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.72\\n"); process.exit(0); }
+if (a[0] === "-V" || a[0] === "--version") { process.stdout.write("openshell 0.0.85\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "list") { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0] === "sandbox" && a[1] === "ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0] === "sandbox" && a[1] === "delete") { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(0); }
+if (a[0] === "sandbox" && a[1] === "delete") { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(${sandboxDeleteExitCode}); }
 if (a[0] === "sandbox" && a[1] === "exec") {
   const command = a.join(" ");
   if (command.includes("rebuild-atomicity-marker.txt")) {
@@ -225,7 +227,7 @@ process.exit(0);
       path.join(tmpDir, component),
       `#!/usr/bin/env node
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
-if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.72\\n");
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.85\\n");
 process.exit(0);
 `,
       { mode: 0o755 },
@@ -419,13 +421,16 @@ describe("atomic rebuild process contracts (#2273)", () => {
     expect(marker.stdout).toContain("dcode-atomicity-marker");
   });
 
-  it("registers an exported Hermes API key without exposing its name or value", () => {
+  it("registers an exported Hermes API key without exposing its name or value", {
+    timeout: testTimeout(60_000),
+  }, () => {
     const fixture = createFixture({
       agent: "hermes",
       provider: "hermes-provider",
       credentialEnv: "NOUS_API_KEY",
       hermesAuthMethod: "api_key",
       providerRegistered: false,
+      sandboxDeleteExitCode: 1,
     });
 
     const result = runRebuild(fixture, { NOUS_API_KEY: "nous-key-from-env" });

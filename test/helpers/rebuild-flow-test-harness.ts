@@ -140,8 +140,16 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(() => undefined);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
-  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
-  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
+  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
+    agentDef.name === "openclaw" ? null : ({ name: agentDef.name } as never),
+  );
+  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(
+    agentDef.name === "hermes"
+      ? "Hermes Agent"
+      : agentDef.name === "langchain-deepagents-code"
+        ? "Deep Agents Code"
+        : "OpenClaw",
+  );
   const defaultHydrateCredentialEnv =
     onboardCredentialEnv.hydrateCredentialEnv.bind(onboardCredentialEnv);
   const hydrateCredentialEnvSpy = vi
@@ -449,6 +457,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(
       overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
     );
+  const checkAndRecoverSandboxProcessesSpy = vi
+    .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
+    .mockImplementation(
+      overrides.checkAndRecoverSandboxProcesses ??
+        (() => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+          forwardRecovered: false,
+        })),
+    );
   vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
@@ -494,6 +513,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     rebuildSandbox: requireDist(rebuildModulePath).rebuildSandbox,
     applyPresetSpy,
     backupSandboxStateSpy,
+    checkAndRecoverSandboxProcessesSpy,
     errorSpy,
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,

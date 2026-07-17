@@ -27,6 +27,7 @@ import {
   type OpenShellGatewayAuthContractWorkflow,
   validateOpenShellGatewayAuthContractWorkflow,
 } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
+import { validateOpenShellGatewayUpgradeWorkflow } from "./openshell-gateway-upgrade-workflow-boundary.mts";
 import {
   type OperationsWorkflow,
   validateE2eOperationsWorkflow,
@@ -353,9 +354,6 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
   const targets = input.targets ?? "";
   const errors: string[] = [];
 
-  if (jobs && targets) {
-    errors.push("Use either targets or jobs, not both");
-  }
   if (targets && !SELECTOR_PATTERN.test(targets)) {
     errors.push("Invalid target input");
   }
@@ -392,17 +390,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
     };
   }
 
-  if (jobs) {
-    return {
-      valid: true,
-      errors: [],
-      selectedFreeStandingJobs: splitSelector(jobs).sort(),
-      registryTargets: [],
-      liveTargetsRun: false,
-    };
-  }
-
-  const selectedFreeStandingJobs = new Set<string>();
+  const selectedFreeStandingJobs = new Set(splitSelector(jobs));
   const registryTargets: string[] = [];
   for (const target of splitSelector(targets)) {
     const job = freeStandingTargetToJob.get(target);
@@ -3718,7 +3706,7 @@ function validateInferenceModeGeneration(
   if (env.INFERENCE_MODE !== "${{ inputs.inference_mode || 'mock' }}") {
     errors.push("matrix generation step must pass the defaulted inference mode through env");
   }
-  requireRunContains(errors, step, "Invalid inference_mode: ${INFERENCE_MODE}");
+  requireRunContains(errors, step, "--ci-output");
 }
 
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
@@ -3739,6 +3727,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
       workflow as unknown as OpenShellGatewayAuthContractWorkflow,
     ),
   );
+  errors.push(...validateOpenShellGatewayUpgradeWorkflow(workflow));
   errors.push(...validateE2eOperationsWorkflow(workflow as unknown as OperationsWorkflow));
   errors.push(...validateSecurityPostureWorkflow(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
@@ -3782,8 +3771,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("generate-matrix job must run on ubuntu-latest");
   }
   const generateOutputs = asRecord(generateMatrix.outputs);
-  if (generateOutputs.matrix !== "${{ steps.matrix.outputs.matrix }}") {
-    errors.push("generate-matrix job must expose matrix output");
+  if (
+    generateOutputs.matrix !==
+    "${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}"
+  ) {
+    errors.push("generate-matrix job must expose trusted controller matrix output");
   }
   if (generateOutputs.test_matrix !== "${{ steps.matrix.outputs.test_matrix }}") {
     errors.push("generate-matrix job must expose test_matrix output");
@@ -3796,16 +3788,64 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);
+  const controllerMatrix = requireJobStep(
+    errors,
+    "generate-matrix",
+    generateSteps,
+    "Build trusted controller target matrix",
+  );
+  if (controllerMatrix?.id !== "controller_matrix") {
+    errors.push("trusted controller matrix step must use id controller_matrix");
+  }
+  if (controllerMatrix?.if !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("trusted controller matrix step must run only for controller dispatches");
+  }
+  if (controllerMatrix?.shell !== "bash") {
+    errors.push("trusted controller matrix step must use bash");
+  }
+  const controllerMatrixEnv = asRecord(controllerMatrix?.env);
+  if (controllerMatrixEnv.TARGETS !== "${{ inputs.targets }}") {
+    errors.push("trusted controller matrix step must bind targets through TARGETS env");
+  }
+  requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
+  requireRunContains(errors, controllerMatrix, "matrix='[]'");
+  requireRunContains(errors, controllerMatrix, "ubuntu-repo-cloud-langchain-deepagents-code");
+  if (!stringValue(controllerMatrix?.run).includes('"runner":"ubuntu-latest"')) {
+    errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
+  }
+  requireRunContains(
+    errors,
+    controllerMatrix,
+    "PR E2E target is not approved by the trusted controller",
+  );
+  requireRunContains(
+    errors,
+    controllerMatrix,
+    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
+  );
   const generateCheckout = generateSteps.find((step) =>
     stringValue(step.uses).startsWith("actions/checkout@"),
   );
   if (!generateCheckout) errors.push("generate-matrix job missing checkout step");
+  if (
+    controllerMatrix &&
+    generateCheckout &&
+    generateSteps.indexOf(controllerMatrix) >= generateSteps.indexOf(generateCheckout)
+  ) {
+    errors.push("trusted controller matrix step must run before PR checkout");
+  }
   requireFullShaAction(errors, generateCheckout, "generate-matrix checkout");
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
     errors.push("generate-matrix checkout step must set persist-credentials=false");
   }
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   const generateEnv = asRecord(generate?.env);
+  if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
+    errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
+  }
+  if (generateEnv.CONTROLLER_MATRIX !== "${{ steps.controller_matrix.outputs.matrix }}") {
+    errors.push("matrix generation step must receive the trusted controller matrix");
+  }
   if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
     errors.push("matrix generation step must pass jobs through JOBS env");
   }
@@ -3814,41 +3854,17 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   validateInferenceModeGeneration(errors, generate, generateEnv);
   requireRunContains(errors, generate, "npx tsx tools/e2e/workflow-plan.mts");
-  requireRunContains(errors, generate, "Use either targets or jobs, not both");
-  requireRunContains(errors, generate, "for selector_name in JOBS TARGETS");
-  requireRunContains(errors, generate, "Invalid ${selector_name,,} input; use comma-separated ids");
-  requireRunContains(errors, generate, 'planner_args+=(--jobs "${JOBS}")');
-  requireRunContains(errors, generate, 'planner_args+=(--targets "${TARGETS}")');
-  requireRunContains(errors, generate, "--targets");
-  requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
-  requireRunDoesNotContain(errors, generate, "Invalid jobs input: ${JOBS}");
-  requireRunDoesNotContain(errors, generate, "Invalid target input: ${TARGETS}");
-  requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
+  requireRunContains(errors, generate, "--ci-output");
+  requireRunContains(errors, generate, 'if [ -n "${CHECKOUT_SHA}" ]');
+  requireRunContains(errors, generate, "GITHUB_OUTPUT");
+  requireRunContains(errors, generate, "expected_controller_matrix=");
+  requireRunContains(errors, generate, "actual_controller_matrix=");
+  requireRunContains(errors, generate, ': > "${GITHUB_OUTPUT}"');
   requireRunContains(
     errors,
     generate,
-    '(keys | sort) == ["explicitOnlyJobs", "hermesSelected", "matrix", "testMatrix"]',
+    "E2E planner matrix does not match controller-selected targets",
   );
-  requireRunContains(errors, generate, "([.matrix[].id] | unique | length)");
-  requireRunContains(errors, generate, '(keys | sort) == ["file", "id", "project"]');
-  requireRunContains(errors, generate, "([.testMatrix[].id] | unique | length)");
-  requireRunContains(errors, generate, "E2E planner returned an invalid output schema");
-  requireRunContains(errors, generate, "expected_hermes_selected=false");
-  requireRunContains(errors, generate, "expected_hermes_selected=true");
-  requireRunContains(errors, generate, "E2E planner changed the trusted Hermes selection");
-  requireRunContains(
-    errors,
-    generate,
-    'echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"',
-  );
-  requireRunContains(
-    errors,
-    generate,
-    'echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"',
-  );
-  requireRunContains(errors, generate, 'echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"');
-  requireRunContains(errors, generate, "## E2E Execution Plan");
-  requireRunContains(errors, generate, "| Test | Execution | Runner |");
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
@@ -3858,11 +3874,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (liveTargets.needs !== "generate-matrix") {
     errors.push("live job must depend on generate-matrix");
   }
-  if (
-    liveTargets.if !==
-    "${{ (github.event_name != 'workflow_dispatch' || inputs.jobs == '') && needs.generate-matrix.outputs.matrix != '[]' }}"
-  ) {
-    errors.push("live job must not run when a free-standing jobs selector is supplied");
+  if (liveTargets.if !== "${{ needs.generate-matrix.outputs.matrix != '[]' }}") {
+    errors.push("live job must run whenever the trusted planner emits typed targets");
   }
   const strategy = asRecord(liveTargets.strategy);
   if (strategy["fail-fast"] !== false) {
@@ -4013,6 +4026,9 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     errors.push("live DCode profile import gate must run before live E2E tests");
   }
   const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.E2E_TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live E2E step must bind risk-signal identity to matrix.id");
+  }
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
     errors.push("live E2E step must pass matrix.id through TARGET_ID env");
   }
@@ -4142,6 +4158,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     uploadPath,
     "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
   );
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/risk-signal.json");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/actions/");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/logs/");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/shell/");

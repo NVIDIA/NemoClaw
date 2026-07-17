@@ -98,14 +98,17 @@ function parseRegistry(filePath: string, raw: string): GatewayRegistryDocument {
       value.dashboardPort !== null &&
       (typeof value.dashboardPort !== "number" ||
         !Number.isInteger(value.dashboardPort) ||
-        value.dashboardPort < 1 ||
+        value.dashboardPort < 0 ||
         value.dashboardPort > 65535)
     ) {
       throw stateError(
         `${filePath} has an invalid dashboardPort for sandbox ${JSON.stringify(name)}`,
       );
     }
-    sandboxes[name] = value as GatewayRegistryEntry;
+    sandboxes[name] =
+      value.dashboardPort === 0
+        ? { ...(value as GatewayRegistryEntry), dashboardPort: null }
+        : (value as GatewayRegistryEntry);
   }
   return {
     ...parsed,

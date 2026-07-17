@@ -41,6 +41,45 @@ If the group change is not active in the current shell, the installer exits with
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
 
+DGX Station GB300 express install accepts either the generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
+A stock DGX OS image qualifies only when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
+An unknown version, malformed or unsafe marker, NVIDIA BaseOS image, or other Station generation stops before host preparation.
+On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
+
+On the generic Ubuntu path, accepting express install prepares the host with NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
+Preparation probes package and runtime state first, reuses exact matches, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
+It permits only the reviewed factory transition from `dkms` `3.0.11-1ubuntu13` to `1:3.4.0-1ubuntu1`.
+After reboot, preparation enables NVIDIA's packaged CDI refresh path and service, requires the `nvidia.com/gpu=all` device, and verifies it with a real container launch.
+If the packaged refresh fails or does not produce that device, preparation prints service diagnostics and stops for administrator repair.
+It does not bypass the packaged lifecycle with direct CDI generation.
+If the `docker --gpus all` acceptance probe fails, preparation registers the NVIDIA Docker runtime only when `docker info` diagnoses that runtime as absent; any other launch failure stops without changing daemon configuration.
+If registration or a post-change acceptance probe fails, preparation restores the prior Docker daemon configuration; if restoration fails, it reports the backup path and stops.
+After successful registration, the runtime remains configured until the same acceptance probe succeeds through a replacement Docker and NVIDIA runtime integration.
+It requires Secure Boot to be disabled, matching headers for the running kernel, at least 20 GiB free on the root filesystem, and no active agent, inference, or Docker workloads.
+It also stops when systemd reports a failed unit unless the unit matches an exact, condition-qualified state from the generic Station image: the pinned OEM `cloud-init` telemetry failure, a network-wait failure while current network health is established, masked `fwupd`, or an SSSD socket on a host without SSSD configuration.
+Any other failed unit blocks preparation for administrator review.
+It does not install a host CUDA toolkit or Docker Compose.
+If any other existing prerequisite version differs, preparation stops instead of changing it automatically.
+After changing pinned packages, the installer exits with status `10`; reboot, sign in, and run the printed command, which pins the exact accepted NemoClaw commit before resuming express setup.
+
+On a qualifying stock DGX OS image, express install validates the factory stack in place against the local default Docker daemon.
+It requires a loaded GB300 driver with zero volatile corrected and uncorrected ECC errors, active Docker and containerd services, working Docker Buildx, `nvidia-ctk`, the `nvidia.com/gpu=all` CDI device, and successful `nvidia-smi` device-visibility probes through both CDI and `--gpus all`.
+This path does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
+The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
+Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, its only persistent stock-runtime effect is that the digest-pinned visibility-test image can remain in the Docker cache.
+One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
+Repeat qualification from a clean host and CI coverage remain pending.
+On Station GB300 direct GPU sandboxes, NemoClaw validates the vendor and display-class metadata for each NVIDIA PCI device and adds only that device's exact BDF directory as read-only.
+It also adds only the CPU, memory, NUMA topology, and NVIDIA module initialization paths that exist on the host.
+NemoClaw does not add `/sys`, the `/sys/bus/pci/devices` parent subtree, or any sysfs write grant.
+This scoped addition is not applied on WSL, Jetson, or other non-Station hosts.
+In the physical DGX OS `7.5.0` validation, the exact-BDF policy passed sandbox `cuInit(0)` while reads of `/sys/fs/cgroup/cgroup.controllers` and `/sys/class/net/lo/address` remained denied.
+
+<Warning title="DGX Station Support Status">
+DGX Station remains Deferred.
+Repeat qualification from a clean host and CI coverage remain pending before any support-status promotion.
+</Warning>
+
 <Warning title="Docker Group Access">
 NemoClaw needs Docker access.
 On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
