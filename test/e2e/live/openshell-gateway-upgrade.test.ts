@@ -657,6 +657,8 @@ async function installCurrentNemoclawUpgrade(
   const resolvedRef = currentRefResult.stdout.trim();
   expect(resolvedRef.length).toBeGreaterThan(0);
   const exerciseOrdinaryUpgrade = OLD_NEMOCLAW_REF === "v0.0.55";
+  const expectsLegacyManagedConfirmation =
+    expectedLegacyRegistryMetadata(OLD_NEMOCLAW_REF).nemoclawVersion === undefined;
   expect(
     !exerciseOrdinaryUpgrade || Boolean(hiddenOldOpenShellDir),
     "the v0.0.55 fixture must record the original OpenShell directory before hiding it",
@@ -708,11 +710,16 @@ async function installCurrentNemoclawUpgrade(
   );
 
   const currentLog = fs.readFileSync(currentInstallLog, "utf8");
-  expect(currentLog).toContain(
-    exerciseOrdinaryUpgrade
-      ? "Confirmed legacy managed-image recovery"
-      : "Confirmed 1 exact pre-fingerprint sandbox name(s)",
-  );
+  const expectedConfirmation = exerciseOrdinaryUpgrade
+    ? "Confirmed legacy managed-image recovery"
+    : expectsLegacyManagedConfirmation
+      ? "Confirmed 1 exact pre-fingerprint sandbox name(s)"
+      : null;
+  expect(
+    expectedConfirmation === null
+      ? !currentLog.includes("exact pre-fingerprint sandbox name(s)")
+      : currentLog.includes(expectedConfirmation),
+  ).toBe(true);
   expect(currentLog).toContain("Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped");
   expect(currentLog).toContain("Existing sandboxes recovered; skipping generic onboarding");
 

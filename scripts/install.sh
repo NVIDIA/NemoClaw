@@ -2199,6 +2199,54 @@ EOF
   esac
 }
 
+stop_legacy_openshell_gateway_process() {
+  [ "$(uname -s)" = "Linux" ] || return 1
+
+  local gateway_port runtime_dir pid_file pid gateway_exe attempt
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
+  if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
+    runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
+  elif [ "$gateway_port" -eq 8080 ]; then
+    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway"
+  else
+    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway-${gateway_port}"
+  fi
+  pid_file="${runtime_dir}/openshell-gateway.pid"
+  [ -f "$pid_file" ] || return 1
+  [ ! -L "$pid_file" ] && [ -O "$pid_file" ] \
+    || error "Refusing to retire the legacy OpenShell gateway from an untrusted PID file: ${pid_file}"
+
+  IFS= read -r pid <"$pid_file" || return 2
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] \
+    || error "Refusing to retire the legacy OpenShell gateway from an invalid PID file: ${pid_file}"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$pid_file"
+    return 1
+  fi
+
+  gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+  [ "${gateway_exe##*/}" = "openshell-gateway" ] \
+    || error "Refusing to stop PID ${pid}: the recorded process is not openshell-gateway."
+
+  kill "$pid" 2>/dev/null \
+    || error "Could not stop the recorded legacy OpenShell gateway process ${pid}."
+  for attempt in {1..50}; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null \
+      || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
+    for attempt in {1..10}; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+  kill -0 "$pid" 2>/dev/null \
+    && error "The recorded legacy OpenShell gateway process ${pid} did not stop."
+  rm -f "$pid_file"
+}
+
 preinstall_backup_and_retire_legacy_gateway() {
   local reg_file gateway_name
   reg_file="$(nemoclaw_state_dir)/sandboxes.json"
@@ -2266,10 +2314,16 @@ preinstall_backup_and_retire_legacy_gateway() {
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
         || openshell gateway destroy >/dev/null 2>&1 \
-        || warn "Could not destroy the legacy OpenShell gateway before upgrade; onboarding will clean up stale runtime state."
+        || { stop_legacy_openshell_gateway_process \
+          && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
+            || warn "The legacy gateway process stopped, but its OpenShell registration could not be removed; onboarding will replace the stale registration."; }; } \
+        || error "Could not retire the legacy OpenShell gateway after backup. The installer stopped with the sandbox backups preserved."
     else
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
-        || warn "Could not destroy legacy gateway ${gateway_name} before upgrade; onboarding will clean up only that gateway's stale runtime state."
+        || { stop_legacy_openshell_gateway_process \
+          && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
+            || warn "Legacy gateway ${gateway_name} stopped, but its OpenShell registration could not be removed; onboarding will replace only that stale registration."; }; } \
+        || error "Could not retire legacy gateway ${gateway_name} after backup. The installer stopped with the sandbox backups preserved."
     fi
   fi
 }

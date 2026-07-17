@@ -20,6 +20,9 @@ function runPreinstallUpgradeGuard(
     currentBackupSucceeds?: boolean;
     currentCliAvailable?: boolean;
     currentMinOpenshellVersion?: string;
+    gatewayDestroySucceeds?: boolean;
+    gatewayProcessStopSucceeds?: boolean;
+    gatewayRemoveSucceeds?: boolean;
     hasOldCli?: boolean;
     openshellOnPath?: boolean;
     openshellVersion?: string;
@@ -51,6 +54,9 @@ function runPreinstallUpgradeGuard(
   const currentCliAvailable = options.currentCliAvailable === false ? "0" : "1";
   const currentBackupSucceeds = options.currentBackupSucceeds === false ? "0" : "1";
   const openshellVersion = options.openshellVersion ?? "0.0.36";
+  const gatewayDestroySucceeds = options.gatewayDestroySucceeds === true ? "1" : "0";
+  const gatewayProcessStopSucceeds = options.gatewayProcessStopSucceeds === false ? "0" : "1";
+  const gatewayRemoveSucceeds = options.gatewayRemoveSucceeds === false ? "0" : "1";
 
   writeExecutable(
     oldCli,
@@ -77,6 +83,12 @@ exit 0
   );
   const openshellScript = `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "${openshellLog}"
+if [ "\${1:-} \${2:-}" = "gateway remove" ] && [ "${gatewayRemoveSucceeds}" != "1" ]; then
+  exit 4
+fi
+if [ "\${1:-} \${2:-}" = "gateway destroy" ] && [ "${gatewayDestroySucceeds}" != "1" ]; then
+  exit 5
+fi
 exit 0
 `;
   const openshellTargets = [
@@ -101,6 +113,10 @@ exit 0
     HOME="${home}"
     NEMOCLAW_SOURCE_ROOT="${currentSource}"
     installed_openshell_version() { printf '${openshellVersion}'; }
+    stop_legacy_openshell_gateway_process() {
+      printf 'gateway process-stop\n' >> "${openshellLog}"
+      [ "${gatewayProcessStopSucceeds}" = "1" ]
+    }
     resolve_existing_cli_runner() { ${resolveCli}; }
     prepare_current_cli_for_preupgrade_backup() {
       printf 'prepare-current\\n' >> "${cliLog}"
@@ -143,6 +159,37 @@ exit 0
 }
 
 describe("install.sh OpenShell gateway upgrade guard", () => {
+  it.skipIf(process.platform !== "linux")(
+    "stops only the verified gateway process recorded in the owned runtime PID file",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-gateway-stop-"));
+      const runtimeDir = path.join(tmp, "runtime");
+      const gatewayBin = path.join(tmp, "openshell-gateway");
+      fs.mkdirSync(runtimeDir, { recursive: true });
+      fs.copyFileSync("/bin/sleep", gatewayBin);
+      fs.chmodSync(gatewayBin, 0o755);
+
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${runtimeDir}"
+"${gatewayBin}" 60 &
+gateway_pid=$!
+printf '%s\\n' "$gateway_pid" >"${runtimeDir}/openshell-gateway.pid"
+stop_legacy_openshell_gateway_process
+wait "$gateway_pid" 2>/dev/null || true
+if kill -0 "$gateway_pid" 2>/dev/null; then exit 9; fi
+test ! -e "${runtimeDir}/openshell-gateway.pid"`,
+        ],
+        { encoding: "utf-8" },
+      );
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+    },
+  );
+
   it("aborts non-interactive legacy gateway upgrades without explicit opt-in", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard({
       NON_INTERACTIVE: "1",
@@ -222,7 +269,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(cliLog).not.toContain("old:");
-    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
+    expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
   it("aborts before gateway retirement when the current CLI cannot be prepared", () => {
@@ -295,7 +342,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(cliLog).not.toContain("old:");
-    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
+    expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
   it("discovers a v0.0.55 user-local OpenShell before preparing recovery (#6114)", () => {
@@ -318,7 +365,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
-    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
+    expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
   it("leaves recovery preparation untouched when OpenShell is not installed (#6114)", () => {
@@ -351,7 +398,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
-    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
+    expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
   it("keeps a backed-up gateway whose OpenShell version is already supported", () => {
@@ -383,7 +430,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
 
     expect(result.status).toBe(0);
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
-    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
+    expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
   it("fails closed before gateway retirement when the supported range is invalid", () => {
@@ -405,6 +452,53 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     );
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog).toBe("");
+  });
+
+  it("uses a supported legacy destroy verb without stopping a recorded host process", () => {
+    const { result, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        gatewayDestroySucceeds: true,
+        gatewayRemoveSucceeds: false,
+        hasOldCli: false,
+        openshellVersion: "0.0.86",
+        registryJson:
+          '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}',
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
+    expect(openshellLog).not.toContain("gateway process-stop");
+    expect(openshellLog).not.toContain("gateway remove nemoclaw");
+  });
+
+  it("fails closed after backup when no gateway retirement verb succeeds", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        gatewayDestroySucceeds: false,
+        gatewayProcessStopSucceeds: false,
+        gatewayRemoveSucceeds: false,
+        hasOldCli: false,
+        openshellVersion: "0.0.86",
+        registryJson:
+          '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}',
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "Could not retire the legacy OpenShell gateway after backup",
+    );
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(openshellLog.split(/\r?\n/)).toEqual(
+      expect.arrayContaining([
+        "gateway destroy -g nemoclaw",
+        "gateway destroy",
+        "gateway process-stop",
+      ]),
+    );
   });
 
   it("rejects a managed-image confirmation that is not a JSON name array (#6114)", () => {
@@ -519,7 +613,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(result.stdout + result.stderr).not.toContain('"tm"');
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
-    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
+    expect(openshellLog).toContain("gateway remove nemoclaw");
   });
 
   it("continues after the user manually prepared the old gateway state", () => {
