@@ -7,7 +7,11 @@
 
 Use these instructions only after hardware detection confirms DGX Station.
 
-Explain that Express uses the default local inference setup with Nemotron 3 Ultra in vLLM, then ask: "Do you want the recommended Express Install?"
+Explain that Express uses the default local inference setup with Nemotron 3 Ultra in vLLM.
+Disclose that it downloads the pinned vLLM container and approximately 352 GB of model data.
+Verify that the model-cache filesystem and Docker storage have enough capacity before continuing.
+Explain that DGX Station remains an evaluation path with deferred end-to-end validation on physical hardware, so startup may still fail after readiness checks.
+Include the third-party-software notice, then ask: "Do you want the recommended Express Install?"
 Choices:
 
 1. Yes, use the DGX Station Express defaults.

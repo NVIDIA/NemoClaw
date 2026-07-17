@@ -649,6 +649,12 @@ describe("starter prompt docs CTA", () => {
     expect(stationSource).toContain("NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b");
     expect(stationSource).toContain("NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
     expect(stationSource).toContain("default local inference setup with Nemotron 3 Ultra in vLLM");
+    expect(stationSource).toContain("approximately 352 GB of model data");
+    expect(stationSource).toContain("model-cache filesystem and Docker storage");
+    expect(stationSource).toContain("have enough capacity before continuing");
+    expect(stationSource).toContain("evaluation path with deferred end-to-end validation");
+    expect(stationSource).toContain("startup may still fail after readiness checks");
+    expect(stationSource).toContain("third-party-software notice");
     expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
     expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
   });
