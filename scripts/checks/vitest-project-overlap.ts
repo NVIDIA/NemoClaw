@@ -46,6 +46,7 @@ const INSTALLER_INTEGRATION_TESTS = new Set([
   "test/install-openshell-version-check.test.ts",
   "test/install-preflight-docker-bootstrap.test.ts",
   "test/install-preflight.test.ts",
+  "test/install-station-host-preparation.test.ts",
 ]);
 
 function normalizeRepoPath(file: string): string {
