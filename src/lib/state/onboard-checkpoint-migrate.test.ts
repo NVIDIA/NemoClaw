@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { serializeCheckpoint } from "./onboard-checkpoint";
 import { decisionDeclined, decisionSelected, decisionUnset } from "./onboard-checkpoint-decision";
 import {
   deriveCheckpointFromSession,
+  loadResumeCheckpoint,
   resolveCheckpointForResume,
 } from "./onboard-checkpoint-migrate";
 import {
@@ -139,5 +142,24 @@ describe("resolveCheckpointForResume", () => {
       decisionSelected({ name: "my-sandbox", agent: "openclaw" }),
     );
     expect(reloaded?.checkpoint?.webSearch).toEqual(decisionDeclined());
+  });
+});
+
+describe("loadResumeCheckpoint", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("treats an unreadable or malformed session file as corrupt, not missing (#7022)", () => {
+    vi.spyOn(fs, "existsSync").mockReturnValue(true);
+    vi.spyOn(fs, "readFileSync").mockReturnValue("{not valid json");
+
+    expect(loadResumeCheckpoint()).toEqual({ status: "corrupt" });
+  });
+
+  it("returns none only when the session file genuinely does not exist", () => {
+    vi.spyOn(fs, "existsSync").mockReturnValue(false);
+
+    expect(loadResumeCheckpoint()).toEqual({ status: "none" });
   });
 });

@@ -656,7 +656,7 @@ describe("handleSandboxState", () => {
       sandboxName: "saved",
       sandboxPromptProgress: {
         sandboxName: true,
-        webSearch: false,
+        webSearch: true,
         messaging: false,
         resourceProfile: false,
       },
@@ -699,7 +699,7 @@ describe("handleSandboxState", () => {
         sandboxName: true,
         webSearch: true,
         messaging: true,
-        resourceProfile: false,
+        resourceProfile: true,
       },
     });
     session.checkpoint = {

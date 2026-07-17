@@ -285,7 +285,6 @@ function divergedCheckpointChannels(
 
 async function selectionFromDivergedMessagingCheckpoint<Agent>(
   checkpointedChannels: readonly string[],
-  envPlan: SandboxMessagingPlan | null,
   options: ReconcileSandboxMessagingOptions<Agent>,
 ): Promise<SandboxMessagingSelection> {
   if (checkpointedChannels.length === 0) {
@@ -295,8 +294,7 @@ async function selectionFromDivergedMessagingCheckpoint<Agent>(
     return { plan: null, selectedChannels: [] };
   }
   options.deps.note("  [resume] Reconciling messaging selection with the recorded checkpoint.");
-  const registryPlan = options.deps.getRegistrySandboxMessagingPlan(options.sandboxName);
-  return selectionFromRecordedChannels([...checkpointedChannels], envPlan, registryPlan, options);
+  return selectionFromMessagingSetup([...checkpointedChannels], options, true);
 }
 
 async function selectionFromCompletedMessagingCheckpoint<Agent>(
@@ -309,7 +307,7 @@ async function selectionFromCompletedMessagingCheckpoint<Agent>(
   const durablePlan = options.session?.messagingPlan ?? null;
   const diverged = divergedCheckpointChannels(options.session, durablePlan);
   if (diverged) {
-    return selectionFromDivergedMessagingCheckpoint(diverged, envPlan, options);
+    return selectionFromDivergedMessagingCheckpoint(diverged, options);
   }
   if (!durablePlan) {
     options.deps.clearPlanEnv();

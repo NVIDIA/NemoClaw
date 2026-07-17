@@ -185,7 +185,14 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
     note: vi.fn(),
     showMessagingStage: vi.fn(),
     getRecordedMessagingChannelsForResume: vi.fn(() => null),
-    setupMessagingChannels: vi.fn(async () => ["telegram"]),
+    setupMessagingChannels: vi.fn(
+      async (
+        _agent: unknown,
+        _existingChannels: string[] | null,
+        _sandboxName: string,
+        _options?: { readonly selectionCompleted?: boolean },
+      ) => ["telegram"],
+    ),
     readMessagingPlanFromEnv: vi
       .fn()
       .mockReturnValueOnce(plans[0] ?? null)
@@ -400,6 +407,9 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
   it("reconciles the messaging selection with the checkpoint when the durable plan disagrees (#7022)", async () => {
     const persistedPlan = telegramPlan(hashCredential("123456:previous-token") ?? "");
     const deps = reconcileDeps([null]);
+    deps.setupMessagingChannels.mockImplementationOnce(
+      async (_agent: unknown, existing: string[] | null) => existing ?? [],
+    );
     const session = withMessagingCheckpoint(completedCheckpointSession(persistedPlan), ["discord"]);
 
     const result = await reconcileSandboxMessaging({
@@ -412,6 +422,12 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
 
     expect(deps.note).toHaveBeenCalledWith(
       expect.stringContaining("Reconciling messaging selection"),
+    );
+    expect(deps.setupMessagingChannels).toHaveBeenCalledWith(
+      { name: "openclaw" },
+      ["discord"],
+      "alpha",
+      { selectionCompleted: true },
     );
     expect(result.selectedChannels).toEqual(["discord"]);
   });

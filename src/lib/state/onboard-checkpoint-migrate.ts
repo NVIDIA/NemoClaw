@@ -111,11 +111,12 @@ export function resolveCheckpointForResume(rawSession: unknown): CheckpointLoadR
 }
 
 export function loadResumeCheckpoint(): CheckpointLoadResult {
+  if (!fs.existsSync(SESSION_FILE)) return { status: "none" };
+  let raw: unknown;
   try {
-    if (!fs.existsSync(SESSION_FILE)) return { status: "none" };
-    const raw = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
-    return resolveCheckpointForResume(raw);
+    raw = JSON.parse(fs.readFileSync(SESSION_FILE, "utf-8"));
   } catch {
-    return { status: "none" };
+    return { status: "corrupt" };
   }
+  return resolveCheckpointForResume(raw);
 }

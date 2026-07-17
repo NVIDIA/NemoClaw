@@ -3,6 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  type CredentialProviderRegistrationDeps,
+  createCredentialProviderRegistration,
+} from "../../credential-provider-registration";
+import type { MessagingTokenDef } from "../../messaging-prep";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
@@ -38,6 +43,78 @@ function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardC
     bindings: { credentialEnvs: [], registeredProviders: [] },
     ...overrides,
   };
+}
+
+type StubbedRunOpenshellResult = { status: number; stdout: string; stderr: string };
+
+function fakeGatewayRunOpenshell() {
+  const createdProviders = new Map<string, { type: string; credentialEnv: string }>();
+  const runOpenshell = vi.fn((args: string[]): StubbedRunOpenshellResult => {
+    if (args[0] === "provider" && args[1] === "get") {
+      const provider = createdProviders.get(args[args.length - 1]);
+      if (!provider) return { status: 1, stdout: "", stderr: "not found" };
+      return {
+        status: 0,
+        stdout: [
+          `Name: ${args[args.length - 1]}`,
+          `Type: ${provider.type}`,
+          `Credential keys: ${provider.credentialEnv}`,
+          "Config keys: <none>",
+        ].join("\n"),
+        stderr: "",
+      };
+    }
+    if (args[0] === "provider" && args[1] === "create") {
+      createdProviders.set(args[args.indexOf("--name") + 1], {
+        type: args[args.indexOf("--type") + 1] ?? "generic",
+        credentialEnv: args[args.indexOf("--credential") + 1] ?? "",
+      });
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "provider" && args[1] === "update") {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 0, stdout: "", stderr: "" };
+  });
+  return { runOpenshell, createdProviders };
+}
+
+function realStageSandboxCredentialProviders(
+  tokenDefs: MessagingTokenDef[],
+  crashAfterFirstSuccess: boolean,
+) {
+  const { runOpenshell } = fakeGatewayRunOpenshell();
+  const registrationSession = { stagedCredentialProviders: [] as string[] } as Session;
+  const registration = createCredentialProviderRegistration({
+    root: "/repo",
+    runOpenshell: runOpenshell as unknown as CredentialProviderRegistrationDeps["runOpenshell"],
+    redact: (input) => input,
+    getGatewayName: () => "nemoclaw",
+    normalizeCredentialValue: (value) => (typeof value === "string" ? value.trim() : ""),
+    updateSession: (mutator) => (mutator(registrationSession) ?? registrationSession) as Session,
+    stagedLegacyValues: new Map(),
+    migratedLegacyKeys: new Set(),
+    persistMigratedLegacyKeys: vi.fn(),
+  });
+  let crashPending = crashAfterFirstSuccess;
+  return vi.fn(
+    async (input: {
+      sandboxName: string;
+      enabledChannels: readonly string[];
+      webSearchConfig: unknown;
+      agent: unknown;
+    }) => {
+      const staged = await registration.stageSandboxCredentialProviders(
+        input as never,
+        async () => ({ messagingTokenDefs: tokenDefs }),
+      );
+      if (crashPending) {
+        crashPending = false;
+        throw new Error("gateway connection dropped mid-registration");
+      }
+      return staged;
+    },
+  );
 }
 
 function sessionWithCheckpoint(checkpoint: OnboardCheckpoint): Session {
@@ -251,24 +328,22 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     );
   });
 
-  it("safely replays web-search provider registration after a crash between staging and its checkpoint receipt (#7022)", async () => {
-    const stageSandboxCredentialProviders = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("gateway connection dropped mid-registration"))
-      .mockResolvedValueOnce([
-        { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
-      ]);
-    const providerMatchesGatewayCredential = vi.fn(
-      (name: string, type: string, credentialEnv: string) =>
-        name === "my-assistant-brave-search" &&
-        type === "brave" &&
-        credentialEnv === "BRAVE_API_KEY",
+  it("safely replays web-search provider registration through the real adapter after a crash between staging and its checkpoint receipt (#7022)", async () => {
+    const stageSandboxCredentialProviders = realStageSandboxCredentialProviders(
+      [
+        {
+          name: "my-assistant-brave-search",
+          envKey: "BRAVE_API_KEY",
+          token: "brave-secret",
+          providerType: "brave",
+        },
+      ],
+      true,
     );
     const { deps, getSession } = createDeps({
       getSandboxReuseState: () => "missing",
       configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
       stageSandboxCredentialProviders,
-      providerMatchesGatewayCredential,
     });
 
     await expect(handleSandboxState({ ...baseOptions(deps), resume: false })).rejects.toThrow(
@@ -294,29 +369,22 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     ]);
   });
 
-  it("safely replays messaging provider registration after a crash between staging and its checkpoint receipt (#7022)", async () => {
-    const stageSandboxCredentialProviders = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("gateway connection dropped mid-registration"))
-      .mockResolvedValueOnce([
+  it("safely replays messaging provider registration through the real adapter after a crash between staging and its checkpoint receipt (#7022)", async () => {
+    const stageSandboxCredentialProviders = realStageSandboxCredentialProviders(
+      [
         {
           name: "my-assistant-discord-bridge",
-          type: "generic",
-          credentialEnv: "DISCORD_BOT_TOKEN",
+          envKey: "DISCORD_BOT_TOKEN",
+          token: "discord-secret",
         },
-      ]);
-    const providerMatchesGatewayCredential = vi.fn(
-      (name: string, type: string, credentialEnv: string) =>
-        name === "my-assistant-discord-bridge" &&
-        type === "generic" &&
-        credentialEnv === "DISCORD_BOT_TOKEN",
+      ],
+      true,
     );
     const messagingPlan = makeMinimalPlan("my-assistant", "openclaw", ["discord"]);
     const { deps, getSession } = createDeps({
       getSandboxReuseState: () => "missing",
       readMessagingPlanFromEnv: () => messagingPlan,
       stageSandboxCredentialProviders,
-      providerMatchesGatewayCredential,
     });
 
     await expect(handleSandboxState({ ...baseOptions(deps), resume: false })).rejects.toThrow(
