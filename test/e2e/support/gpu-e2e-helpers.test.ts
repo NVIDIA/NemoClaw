@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertAgentExecutionSucceeded,
   env,
+  hasExactReadyPhase,
   openClawModelConfigProjectionScript,
 } from "../live/gpu-e2e-helpers.ts";
 
@@ -137,6 +138,23 @@ describe("GPU E2E helpers", () => {
     expect(env({}, { NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-traces" }).NEMOCLAW_TRACE_DIR).toBe(
       "/tmp/nemoclaw-traces",
     );
+  });
+
+  it("accepts an ANSI-colored exact Ready sandbox phase", () => {
+    expect(hasExactReadyPhase("Sandbox:\n  \u001b[2mPhase:\u001b[0m Ready\n")).toBe(true);
+  });
+
+  it("rejects an ANSI-colored non-Ready sandbox phase", () => {
+    expect(hasExactReadyPhase("Sandbox:\n  \u001b[2mPhase:\u001b[0m Error\n")).toBe(false);
+  });
+
+  it.each([
+    ["Error before Ready", "Phase: Error\nPhase: Ready\n"],
+    ["Ready before Error", "Phase: Ready\nPhase: Error\n"],
+    ["prefixed Ready", "Current Phase: Ready\n"],
+    ["suffixed Ready", "Phase: Ready (stale)\n"],
+  ])("rejects %s output", (_case, output) => {
+    expect(hasExactReadyPhase(output)).toBe(false);
   });
 
   it("accepts successful execution proof when the model suppresses visible text", () => {
