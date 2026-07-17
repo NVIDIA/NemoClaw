@@ -97,17 +97,24 @@ The first run duration depends on image and model size, storage performance, and
 Later runs reuse the cached image and model weights.
 The managed container uses Docker's `--restart unless-stopped` policy, so Docker restarts it unless an operator explicitly stops it.
 
-### Check Storage Before the Image Pull
+### Check Storage Before Downloads
 
-For an uncached pinned image, NemoClaw checks Docker image storage before the watched image pull starts.
-The estimate reserves three times the image's compressed registry size plus `3 GiB` for compressed content, unpacked layers, and pull staging.
+For a cold managed-vLLM install, NemoClaw estimates local storage before the watched image pull starts.
+The estimate adds the pinned image's compressed layer size, the digest catalog's pre-measured unpacked layer size when available, the selected model's Hugging Face file size, a `3 GiB` model-download staging reserve, and a writable allowance.
+For the DGX Station default, that is approximately `393.68 GB`: `9.603 GB` compressed image layers, `27.659 GB` unpacked image layers, `352.381 GB` model files, `3.221 GB` model-download staging, and `0.816 GB` writable allowance.
 
 For Docker's classic image store, NemoClaw checks the absolute `DockerRootDir` reported by `docker info`.
 For Docker's containerd image store, it checks the top-level `root` from `/etc/containerd/config.toml`, or `/var/lib/containerd` when that configuration file is absent, and also checks `DockerRootDir` for pull staging.
-The check uses the location with the least available capacity.
+For model files, NemoClaw checks the filesystem backing `~/.cache/huggingface`.
+The check compares Docker image storage against the image bytes and compares model-cache storage against the model files, download staging, and writable allowance.
+When those paths share a filesystem, NemoClaw compares the shared capacity against the aggregate requirement.
+When NemoClaw cannot determine whether successful checks share a filesystem, it conservatively compares their aggregate requirement against the lowest reported capacity.
+NemoClaw does not move the Hugging Face cache to `/raid` or another fallback mount during this preflight.
 
 NemoClaw recognizes an image cache hit only when Docker contains the exact platform digest.
-A cache hit skips the capacity check, but the explicit watched `docker pull` still runs against that immutable digest.
+A cache hit skips the image portion of the estimate, but still checks the model-cache estimate before `hf download`.
+The explicit watched `docker pull` still runs against that immutable digest.
+After an image pull, NemoClaw checks the model-cache estimate again before `hf download`.
 The model-download helper and the long-lived vLLM container use `--pull=never`, so an implicit pull cannot select another image.
 
 NemoClaw treats `/var/run/docker.sock` and `/run/docker.sock` as the local default Docker socket paths.
@@ -116,9 +123,9 @@ When both `DOCKER_CONTEXT` and `DOCKER_HOST` are set, NemoClaw follows Docker CL
 Before a registered model with pinned size metadata is downloaded, NemoClaw also checks the filesystem that contains the host Hugging Face cache.
 When a Docker image-storage check is inconclusive, NemoClaw prints the reason, approximate requirement, and diagnostic commands, then continues without claiming that capacity is sufficient.
 An inconclusive model-cache check remains guarded because a registered model download can be hundreds of gigabytes.
-Interactive setup requires explicit confirmation, and non-interactive setup stops with guidance to rerun interactively.
+For an inconclusive model-cache check, interactive setup requires explicit confirmation, and non-interactive setup stops with guidance to rerun interactively.
 
-When verified capacity is insufficient, the warning identifies the image, available capacity, approximate requirement, checked path and source, remediation, and diagnostic commands.
+When verified capacity is insufficient, the warning identifies the image, model, available capacity, approximate requirement, checked path and source, remediation, and diagnostic commands.
 Interactive setup continues only when you enter `y` or `yes` explicitly.
 Pressing **Enter**, entering `n` or `no`, or entering any other response stops before the guarded image or model download starts.
 
@@ -134,9 +141,8 @@ An inconclusive Docker image-storage check retains its existing automatic-contin
 The model-cache guard applies when the selected registered recipe declares a pinned snapshot size.
 NemoClaw creates `~/.cache/huggingface` as the host user and runs the one-shot download container with the host UID and GID, avoiding root-owned cache paths.
 Hugging Face credentials are forwarded only to that temporary downloader, not retained by the long-lived vLLM container.
-A legacy root-owned or otherwise unwritable cache stops before the image pull and prints a safe ownership-repair command; NemoClaw never changes its ownership automatically.
+A legacy root-owned or otherwise unwritable required model-cache path stops before the image pull and prints a scoped ownership-repair command; NemoClaw never changes its ownership automatically.
 </Note>
-
 If image pull output stops making progress, a watchdog stops the stalled pull without imposing a fixed wall-clock limit on slow but active downloads.
 If vLLM does not become ready, NemoClaw prints a short tail of the container logs before exiting.
 

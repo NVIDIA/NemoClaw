@@ -8,6 +8,7 @@ import { dockerCapture } from "../adapters/docker";
 import { buildVllmDockerEnv } from "./vllm-docker-env";
 
 const GIB_BYTES = 1024n ** 3n;
+const GB_BYTES = 1000n ** 3n;
 const DOWNLOAD_TEMP_HEADROOM_BYTES = 3n * GIB_BYTES;
 const DEFAULT_CONTAINERD_ROOT = "/var/lib/containerd";
 const DEFAULT_CONTAINERD_CONFIG = "/etc/containerd/config.toml";
@@ -20,6 +21,7 @@ interface StorageProbeDeps {
   exists: (target: string) => boolean;
   platform: NodeJS.Platform;
   readFile: (target: string) => string;
+  stat: (target: string) => { dev: bigint | number };
   statfs: (target: string) => { bavail: bigint; bsize: bigint };
 }
 
@@ -37,12 +39,14 @@ function defaultStorageProbeDeps(): StorageProbeDeps {
     exists: fs.existsSync,
     platform: process.platform,
     readFile: (target) => fs.readFileSync(target, "utf8"),
+    stat: (target) => fs.statSync(target, { bigint: true }),
     statfs: (target) => fs.statfsSync(target, { bigint: true }),
   };
 }
 
 export interface StorageCapacity {
   availableBytes: bigint;
+  filesystemId?: string;
   path: string;
   source: string;
 }
@@ -100,6 +104,60 @@ export function formatStorageBytes(bytes: bigint): string {
   const whole = roundedTenths / 10n;
   const fraction = roundedTenths % 10n;
   return fraction === 0n ? `${String(whole)} GiB` : `${String(whole)}.${String(fraction)} GiB`;
+}
+
+export function formatStorageDecimalBytes(bytes: bigint): string {
+  const roundedThousandths = (bytes * 1000n + GB_BYTES / 2n) / GB_BYTES;
+  const whole = roundedThousandths / 1000n;
+  const fraction = String(roundedThousandths % 1000n)
+    .padStart(3, "0")
+    .replace(/0+$/, "");
+  return fraction ? `${String(whole)}.${fraction} GB` : `${String(whole)} GB`;
+}
+
+export interface ManagedVllmStorageEstimate {
+  imageCompressedBytes: bigint;
+  imageUnpackedBytes: bigint;
+  modelBytes: bigint;
+  modelStagingBytes: bigint;
+  totalBytes: bigint;
+  writableAllowanceBytes: bigint;
+}
+
+export function managedVllmStorageEstimateBytes({
+  imageCompressedBytes,
+  imageUnpackedBytes,
+  includeImage,
+  includeModel = true,
+  modelBytes,
+  writableAllowanceBytes,
+}: {
+  imageCompressedBytes: number;
+  imageUnpackedBytes: number;
+  includeImage: boolean;
+  includeModel?: boolean;
+  modelBytes: number;
+  writableAllowanceBytes: number;
+}): ManagedVllmStorageEstimate {
+  const imageCompressed = includeImage
+    ? positiveBytes(imageCompressedBytes, "vLLM image compressed size")
+    : 0n;
+  const imageUnpacked = includeImage
+    ? positiveBytes(imageUnpackedBytes, "vLLM image unpacked size")
+    : 0n;
+  const model = includeModel ? positiveBytes(modelBytes, "vLLM model file size") : 0n;
+  const modelStaging = includeModel ? modelStorageRequirementBytes(modelBytes) - model : 0n;
+  const writable = includeModel
+    ? positiveBytes(writableAllowanceBytes, "vLLM writable allowance")
+    : 0n;
+  return {
+    imageCompressedBytes: imageCompressed,
+    imageUnpackedBytes: imageUnpacked,
+    modelBytes: model,
+    modelStagingBytes: modelStaging,
+    totalBytes: imageCompressed + imageUnpacked + model + modelStaging + writable,
+    writableAllowanceBytes: writable,
+  };
 }
 
 function parseDockerInfo(raw: string): DockerInfoShape | null {
@@ -260,17 +318,32 @@ export function resolveDockerStorageLocations(
 
 function capacityForLocation(
   location: DockerStorageLocation,
+  stat: StorageProbeDeps["stat"],
   statfs: StorageProbeDeps["statfs"],
+  probePath = location.path,
 ): StorageProbeResult {
   try {
-    const stats = statfs(location.path);
+    const stats = statfs(probePath);
     const availableBytes = stats.bavail * stats.bsize;
     if (availableBytes < 0n) throw new Error("filesystem reported negative available space");
-    return { ok: true, capacity: { ...location, availableBytes } };
+    let filesystemId: string | undefined;
+    try {
+      filesystemId = String(stat(probePath).dev);
+    } catch {
+      filesystemId = undefined;
+    }
+    return {
+      ok: true,
+      capacity: {
+        ...location,
+        availableBytes,
+        ...(filesystemId ? { filesystemId } : {}),
+      },
+    };
   } catch (err) {
     return {
       ok: false,
-      reason: `could not inspect ${location.path}: ${(err as Error).message}`,
+      reason: `could not inspect ${probePath}: ${(err as Error).message}`,
       path: location.path,
       source: location.source,
     };
@@ -284,7 +357,7 @@ export function probeDockerStorage(overrides: Partial<StorageProbeDeps> = {}): S
 
   let limiting: StorageCapacity | null = null;
   for (const location of resolved.locations) {
-    const result = capacityForLocation(location, deps.statfs);
+    const result = capacityForLocation(location, deps.stat, deps.statfs);
     if (!result.ok) return result;
     if (!limiting || result.capacity.availableBytes < limiting.availableBytes) {
       limiting = result.capacity;
@@ -297,6 +370,7 @@ export function probeDockerStorage(overrides: Partial<StorageProbeDeps> = {}): S
 
 interface HostStorageProbeDeps {
   exists: (target: string) => boolean;
+  stat: (target: string) => { dev: bigint | number };
   statfs: (target: string) => { bavail: bigint; bsize: bigint };
 }
 
@@ -337,12 +411,15 @@ function defaultWritableTreeDeps(): WritableTreeDeps {
 export function findUnwritableTreePath(
   targetPath: string,
   overrides: Partial<WritableTreeDeps> = {},
+  options: { recursive?: boolean } = {},
 ): string | null {
   const deps = { ...defaultWritableTreeDeps(), ...overrides };
+  const recursive = options.recursive ?? true;
   const pending = [targetPath];
   while (pending.length > 0) {
     const directory = pending.pop()!;
     if (!deps.canWrite(directory, true)) return directory;
+    if (!recursive) continue;
     let entries: DirectorySizeEntry[];
     try {
       entries = deps.list(directory);
@@ -472,6 +549,7 @@ export function probeHostStorage(
   }
   const deps: HostStorageProbeDeps = {
     exists: fs.existsSync,
+    stat: (target) => fs.statSync(target, { bigint: true }),
     statfs: (target) => fs.statfsSync(target, { bigint: true }),
     ...overrides,
   };
@@ -481,20 +559,5 @@ export function probeHostStorage(
     if (parent === probePath) break;
     probePath = parent;
   }
-  try {
-    const stats = deps.statfs(probePath);
-    const availableBytes = stats.bavail * stats.bsize;
-    if (availableBytes < 0n) throw new Error("filesystem reported negative available space");
-    return {
-      ok: true,
-      capacity: { availableBytes, path: targetPath, source },
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      reason: `could not inspect ${probePath}: ${(err as Error).message}`,
-      path: targetPath,
-      source,
-    };
-  }
+  return capacityForLocation({ path: targetPath, source }, deps.stat, deps.statfs, probePath);
 }
