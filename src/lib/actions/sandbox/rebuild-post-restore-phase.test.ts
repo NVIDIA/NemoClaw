@@ -23,8 +23,8 @@ describe("rebuild post-restore session model reconciliation (#7102)", () => {
     order = [];
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(agentRuntime, "getSessionAgent").mockImplementation(
-      () => ({ name: agentName }) as never,
+    vi.spyOn(agentRuntime, "getSessionAgent").mockImplementation(() =>
+      agentName === "openclaw" ? null : ({ name: agentName } as never),
     );
     vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("test agent");
     vi.spyOn(agentDefs, "loadAgent").mockImplementation(
@@ -57,6 +57,9 @@ describe("rebuild post-restore session model reconciliation (#7102)", () => {
       skipReason: "not-needed",
     } as never);
     vi.spyOn(rebuildMcp, "restoreMcpAfterRebuild").mockResolvedValue(true);
+    vi.spyOn(registry, "getSandbox").mockImplementation(
+      () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
+    );
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
     vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockReturnValue(true);
   });
@@ -68,6 +71,7 @@ describe("rebuild post-restore session model reconciliation (#7102)", () => {
   function input() {
     return {
       sandboxName: "alpha",
+      targetAgentName: agentName,
       sandboxEntry: {} as never,
       messagingPlan: null,
       backupManifest: null,
