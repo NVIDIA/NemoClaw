@@ -12,6 +12,9 @@ const requireSource = createRequire(import.meta.url);
 const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../src/lib/actions/sandbox/process-recovery.js");
+const { ensureSandboxPortForwardForPort } = requireSource(
+  "../src/lib/actions/sandbox/forward-recovery.ts",
+) as typeof import("../src/lib/actions/sandbox/forward-recovery.js");
 
 function checkAndRecoverSandboxProcesses(
   sandboxName: string,
@@ -188,5 +191,72 @@ beta  127.0.0.1  18789  12345  dead`,
       ["forward", "start", "--background", "3978", "beta"],
       { ignoreError: true, stdio: "ignore" },
     );
+  });
+});
+
+describe("ensureSandboxPortForwardForPort already-forwarded idempotency (#7085)", () => {
+  it("accepts an already-active target-owned forward when `forward start` exits non-zero", () => {
+    // Forward visibility is fixed by mocks, so the production settle window is unnecessary.
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.ts");
+    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.ts");
+
+    // The port is listening throughout; OpenShell's forward list only shows the
+    // live owner after the (idempotent) start, modelling the stale-list drift
+    // that makes recovery attempt a stop -> start on an already-active forward.
+    let started = false;
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
+      status: 0,
+      output: started
+        ? `SANDBOX  BIND  PORT  PID  STATUS
+beta  127.0.0.1  18791  12345  running`
+        : `SANDBOX  BIND  PORT  PID  STATUS`,
+    }));
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockImplementation((rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        if (args[0] === "forward" && args[1] === "start") {
+          // OpenShell exits non-zero because the port is already forwarded.
+          started = true;
+          return { status: 1 } as never;
+        }
+        return { status: 0 } as never;
+      });
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, { expectedBind: "127.0.0.1" }),
+      ),
+    ).toBe(true);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "start", "--background", "18791", "beta"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("still fails when `forward start` exits non-zero and no target-owned forward is active", () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.ts");
+    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.ts");
+
+    // No live owner row ever appears: a genuine start failure must not be
+    // masked by the idempotency re-probe.
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(false);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: "SANDBOX  BIND  PORT  PID  STATUS",
+    });
+    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((rawArgs: unknown) => {
+      const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+      return { status: args[0] === "forward" && args[1] === "start" ? 1 : 0 } as never;
+    });
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, { expectedBind: "127.0.0.1" }),
+      ),
+    ).toBe(false);
   });
 });
