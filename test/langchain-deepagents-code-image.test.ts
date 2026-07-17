@@ -799,7 +799,16 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "NEMOCLAW_DCODE_EMPTY_EXIT",
       "login-shell dcode rejects an empty non-interactive prompt with exit 2",
       "direct-exec dcode rejects an empty non-interactive prompt with exit 2",
+      "write_openshell_target_shim",
+      "OPENSHELL_NEMOCLAW_REAL_BIN",
+      "OPENSHELL_NEMOCLAW_TARGET_TRACE",
+      "validate_connect_target_trace",
+      "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:missing",
+      "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:mismatch",
       "nemoclaw_connect_probe",
+      "unset SANDBOX_NAME NEMOCLAW_SANDBOX_NAME NEMOCLAW_SANDBOX",
+      '"${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" connect --probe-only 2>&1',
+      "bare connect targeted the Deep Agents Code sandbox",
       "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}",
       "connect --probe-only 2>&1",
       "dcode_connect_fail_closed_contract",
@@ -836,6 +845,27 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ]) {
       expect(headlessCheck).toContain(expected);
     }
+    expect(headlessCheck).not.toContain(
+      '"${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" "$SANDBOX_NAME" connect --probe-only',
+    );
+    const connectProbe = headlessCheck.slice(
+      headlessCheck.indexOf("nemoclaw_connect_probe() {"),
+      headlessCheck.indexOf("sandbox_login_proxy_contract() {"),
+    );
+    const shimWriteIndex = connectProbe.indexOf('write_openshell_target_shim "$shim_path"');
+    const aliasUnsetIndex = connectProbe.indexOf(
+      "unset SANDBOX_NAME NEMOCLAW_SANDBOX_NAME NEMOCLAW_SANDBOX",
+    );
+    const connectCommandIndex = connectProbe.indexOf(
+      '"${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" connect --probe-only',
+    );
+    const traceValidationIndex = connectProbe.indexOf(
+      'validate_connect_target_trace "$trace_file"',
+    );
+    expect(shimWriteIndex).toBeGreaterThan(-1);
+    expect(aliasUnsetIndex).toBeGreaterThan(shimWriteIndex);
+    expect(connectCommandIndex).toBeGreaterThan(aliasUnsetIndex);
+    expect(traceValidationIndex).toBeGreaterThan(connectCommandIndex);
     expect(headlessCheck).not.toContain('sandbox_login_exec ". /tmp/nemoclaw-proxy-env.sh');
     expect(headlessCheck).not.toContain("config_output:0:200");
     expect(headlessCheck).toMatch(/headless_output=.*sandbox_login_exec.*\|\| true\)"/);
