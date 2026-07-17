@@ -2548,8 +2548,8 @@ run_onboard() {
   elif command_exists node && [[ -f "$session_file" ]]; then
     # Classify the session: "resume" (auto-attach --resume), "fresh-recover"
     # (interrupted before sandbox creation — nothing to resume, start over),
-    # "failed" (last run reported a step failure — user must choose), "skip"
-    # (complete / missing / unreadable — nothing to resume), or "corrupt".
+    # "failed" (last run reported a step failure — user must choose), "complete"
+    # (durably finished), "skip" (missing / non-resumable), or "corrupt".
     local session_state
     session_state="$(
       node -e '
@@ -2557,7 +2557,9 @@ run_onboard() {
         let out = "skip";
         try {
           const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-          if (!data || data.resumable === false || data.status === "complete") {
+          if (data && data.status === "complete" && data.resumable === false) {
+            out = "complete";
+          } else if (!data || data.resumable === false) {
             out = "skip";
           } else if (data.status === "failed" || data.failure) {
             out = "failed";
@@ -2588,6 +2590,13 @@ run_onboard() {
       ' "$session_file" 2>/dev/null || printf "corrupt"
     )"
     case "$session_state" in
+      complete)
+        if [ "${_STATION_EXPRESS_RESUME_LOADED:-}" = "1" ]; then
+          info "Found completed DGX Station Express onboarding — retiring stale reboot resume state."
+          clear_station_express_resume
+          return 0
+        fi
+        ;;
       resume)
         info "Found an interrupted onboarding session — resuming it."
         onboard_cmd+=(--resume)
@@ -2897,6 +2906,7 @@ STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 _SELECTED_EXPRESS_PLATFORM=""
 _STATION_EXPRESS_RESUME_REVISION=""
+_STATION_EXPRESS_RESUME_LOADED=""
 
 normalize_station_vllm_model() {
   printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
@@ -3070,6 +3080,7 @@ load_station_express_resume() {
   if [[ "$current_revision" != "$saved_revision" ]]; then
     error "DGX Station express resume requires NemoClaw revision ${saved_revision}, but this installer is ${current_revision}. Rerun with: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=${saved_revision} bash"
   fi
+  _STATION_EXPRESS_RESUME_LOADED=1
   export NEMOCLAW_VLLM_MODEL
 }
 

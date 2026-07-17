@@ -116,6 +116,43 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(session.normalizeSession(candidate as never)).toBeNull();
   });
 
+  it.each([
+    {
+      name: "complete provider step without a bound intent",
+      intent: {
+        version: 1 as const,
+        model: "nemotron-3-ultra-550b-a55b",
+        sandboxName: "my-assistant",
+      },
+      provider: "vllm-local",
+      model: "nemotron-ultra",
+      providerStatus: "complete" as const,
+    },
+    {
+      name: "bound intent before provider completion",
+      intent: {
+        version: 1 as const,
+        model: "nemotron-3-ultra-550b-a55b",
+        sandboxName: "my-assistant",
+        servedModel: "nemotron-ultra",
+        checkpointModel: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+      },
+      provider: null,
+      model: null,
+      providerStatus: "pending" as const,
+    },
+  ])("rejects $name during normalization", ({ intent, provider, model, providerStatus }) => {
+    const candidate = session.createSession({
+      mode: "non-interactive",
+      stationExpressIntent: intent,
+      provider,
+      model,
+    });
+    candidate.steps.provider_selection.status = providerStatus;
+
+    expect(session.normalizeSession(candidate)).toBeNull();
+  });
+
   it("clears resume intent only after successful completion", () => {
     const receipt = path.join(session.SESSION_DIR, "station-express-resume");
     session.saveSession(
@@ -134,6 +171,32 @@ describe("Station Express onboarding session state (#7048)", () => {
 
     expect(requireLoadedSession(session.loadSession()).stationExpressIntent).toBeNull();
     expect(fs.existsSync(receipt)).toBe(false);
+  });
+
+  it("keeps the installer receipt when durable session completion fails", () => {
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+    const intent = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+    };
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
+    );
+    fs.writeFileSync(receipt, "pending Station installer resume\n", { mode: 0o600 });
+    const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      throw new Error("injected session publish failure");
+    });
+
+    expect(() => session.completeSession()).toThrow("injected session publish failure");
+    rename.mockRestore();
+
+    expect(fs.existsSync(receipt)).toBe(true);
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      status: "in_progress",
+      resumable: true,
+      stationExpressIntent: intent,
+    });
   });
 
   it("does not claim Station Express completion when receipt cleanup is unsafe", () => {
@@ -184,7 +247,7 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(fs.existsSync(receipt)).toBe(false);
   });
 
-  it("persists an injected provider failure and resumes through the real entry wrapper", async () => {
+  it("resumes a provider failure and persists its route-validated arbitrary alias", async () => {
     const { prepareOnboardSession } = await import("../onboard/session-bootstrap");
     const { wrapOnboard } = await import("../onboard/station-express-resume");
     const { handleProviderInferenceState } = await import(
@@ -294,7 +357,7 @@ describe("Station Express onboarding session state (#7048)", () => {
         NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
       });
       return {
-        model: "nvidia/nemotron-3-ultra-550b-a55b",
+        model: "nemotron-ultra",
         provider: "vllm-local",
         endpointUrl: null,
         credentialEnv: null,
@@ -303,6 +366,7 @@ describe("Station Express onboarding session state (#7048)", () => {
         preferredInferenceApi: "openai-responses",
         compatibleEndpointReasoning: null,
         nimContainer: null,
+        vllmModelIdentity: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
       };
     });
     const resumedRuntime = new OnboardRuntime();
@@ -345,7 +409,7 @@ describe("Station Express onboarding session state (#7048)", () => {
       });
       expect(result.session).toMatchObject({
         provider: "vllm-local",
-        model: "nvidia/nemotron-3-ultra-550b-a55b",
+        model: "nemotron-ultra",
         machine: { state: "sandbox" },
       });
     }, session.loadSession);
@@ -356,10 +420,11 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(resumed.calls.promptName).not.toHaveBeenCalled();
     expect(requireLoadedSession(session.loadSession())).toMatchObject({
       provider: "vllm-local",
-      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      model: "nemotron-ultra",
       stationExpressIntent: {
         ...intent,
-        servedModel: "nvidia/nemotron-3-ultra-550b-a55b",
+        servedModel: "nemotron-ultra",
+        checkpointModel: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
       },
     });
     expect(fs.existsSync(receipt)).toBe(true);
@@ -374,8 +439,8 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(fs.existsSync(receipt)).toBe(false);
   });
 
-  it("atomically binds a validated served alias when provider selection completes", () => {
-    const servedAlias = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4";
+  it("atomically binds a route-validated arbitrary alias when provider selection completes", () => {
+    const servedAlias = "nemotron-ultra";
     const intent = {
       version: 1 as const,
       model: "nemotron-3-ultra-550b-a55b",
@@ -388,12 +453,17 @@ describe("Station Express onboarding session state (#7048)", () => {
     session.markStepComplete("provider_selection", {
       provider: "vllm-local",
       model: servedAlias,
+      stationExpressModelIdentity: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
     });
 
     expect(requireLoadedSession(session.loadSession())).toMatchObject({
       provider: "vllm-local",
       model: servedAlias,
-      stationExpressIntent: { ...intent, servedModel: servedAlias },
+      stationExpressIntent: {
+        ...intent,
+        servedModel: servedAlias,
+        checkpointModel: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+      },
       steps: { provider_selection: { status: "complete" } },
     });
   });
@@ -413,6 +483,7 @@ describe("Station Express onboarding session state (#7048)", () => {
       session.markStepComplete("provider_selection", {
         provider: "vllm-local",
         model: "deepseek-ai/DeepSeek-V4-Flash",
+        stationExpressModelIdentity: "deepseek-ai/DeepSeek-V4-Flash",
       }),
     ).toThrow("invalid DGX Station Express provider selection");
 

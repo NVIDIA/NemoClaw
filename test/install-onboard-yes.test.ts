@@ -270,6 +270,49 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
     expect(argv).not.toContain("--resume");
     expect(argv).not.toContain("--fresh");
   });
+
+  it("retires a stale Station reboot receipt after durable onboarding completion", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-complete-receipt-"));
+    const home = path.join(tmp, "home");
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    const argvLog = path.join(tmp, "argv.txt");
+    const stubBin = path.join(tmp, "stub-cli");
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(stateDir, "onboard-session.json"),
+      JSON.stringify({ version: 1, status: "complete", resumable: false }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      receipt,
+      "revision=0123456789012345678901234567890123456789\nmodel=nemotron-3-ultra-550b-a55b\n",
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(stubBin, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\n`, {
+      mode: 0o755,
+    });
+    const snippet = `
+      set -e
+      source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
+      _CLI_BIN="${stubBin}"
+      _STATION_EXPRESS_RESUME_LOADED=1
+      show_usage_notice() { :; }
+      info() { :; }
+      warn() { :; }
+      error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
+      run_onboard
+    `;
+
+    const result = spawnSync("bash", ["-c", snippet], {
+      encoding: "utf-8",
+      env: { ...process.env, HOME: home, NEMOCLAW_GATEWAY_PORT: "8080" },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(receipt)).toBe(false);
+    expect(fs.existsSync(argvLog)).toBe(false);
+  });
 });
 
 describe("install.sh run_onboard — failed-session recovery", () => {

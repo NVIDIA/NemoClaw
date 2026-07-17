@@ -18,6 +18,7 @@ export interface StationExpressResumeIntent {
   model: string;
   sandboxName: string;
   servedModel?: string;
+  checkpointModel?: string;
 }
 
 export interface StationExpressSessionLike {
@@ -61,7 +62,7 @@ const RESUME_ENV = [
 ] as const;
 const MAX_SERVED_MODEL_LENGTH = 512;
 const UNBOUND_INTENT_KEYS = "model,sandboxName,version";
-const BOUND_INTENT_KEYS = "model,sandboxName,servedModel,version";
+const BOUND_INTENT_KEYS = "checkpointModel,model,sandboxName,servedModel,version";
 const STATION_EXPRESS_INSTALLER_RESUME_FILE = "station-express-resume";
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -82,7 +83,7 @@ function servedModel(model: VllmModelDef): string {
   return model.servedModelId ?? model.id;
 }
 
-function identifiesModel(model: VllmModelDef, value: string): boolean {
+function identifiesCheckpoint(model: VllmModelDef, value: string): boolean {
   const normalized = value.toLowerCase();
   return [model.envValue, model.id, model.servedModelId].some(
     (candidate) => candidate?.toLowerCase() === normalized,
@@ -95,7 +96,9 @@ function validSandboxName(value: unknown): value is string {
   );
 }
 
-export function clearStationExpressInstallerResume(env: NodeJS.ProcessEnv = process.env): void {
+export function assertStationExpressInstallerResumeSafe(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
   const stateBase = path.join(resolveHome(env), STATE_DIR_NAME);
   const stateFile = path.join(
     getNemoclawStateRoot(resolveHome(env)),
@@ -106,6 +109,7 @@ export function clearStationExpressInstallerResume(env: NodeJS.ProcessEnv = proc
     throw new Error(`Refusing DGX Station Express resume path outside ${stateBase}.`);
   }
 
+  const uid = process.getuid?.();
   const paths = [stateBase];
   let current = stateBase;
   for (const component of relative.split(path.sep)) {
@@ -118,25 +122,37 @@ export function clearStationExpressInstallerResume(env: NodeJS.ProcessEnv = proc
     try {
       stat = fs.lstatSync(candidate);
     } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") return;
+      if (isErrnoException(error) && error.code === "ENOENT") return null;
       throw error;
     }
     if (stat.isSymbolicLink()) {
       throw new Error(`Refusing symbolic link in DGX Station Express resume path: ${candidate}`);
     }
-    if (candidate !== stateFile && !stat.isDirectory()) {
-      throw new Error(`Refusing invalid DGX Station Express resume directory: ${candidate}`);
-    }
-    if (candidate === stateFile) {
-      const uid = process.getuid?.();
-      if (!stat.isFile() || uid === undefined || stat.uid !== uid) {
+    if (candidate !== stateFile) {
+      if (
+        !stat.isDirectory() ||
+        uid === undefined ||
+        stat.uid !== uid ||
+        (stat.mode & 0o077) !== 0
+      ) {
         throw new Error(
-          `Refusing to remove invalid DGX Station Express resume state: ${stateFile}`,
+          `Refusing non-owner-only DGX Station Express resume directory: ${candidate}`,
         );
       }
+    } else if (!stat.isFile() || uid === undefined || stat.uid !== uid) {
+      throw new Error(`Refusing to remove invalid DGX Station Express resume state: ${stateFile}`);
     }
   }
 
+  return stateFile;
+}
+
+export function clearStationExpressInstallerResume(env: NodeJS.ProcessEnv = process.env): void {
+  const stateFile = assertStationExpressInstallerResumeSafe(env);
+  if (!stateFile) return;
+
+  // Every parent directory was verified as owner-only above. That makes the
+  // current uid the mutation boundary for the pathname between lstat and unlink.
   try {
     fs.unlinkSync(stateFile);
   } catch (error) {
@@ -152,6 +168,7 @@ export function parseStationExpressResumeIntent(value: unknown): StationExpressR
   const model = stationModel(value.model);
   if (!model || value.model !== model.envValue || !validSandboxName(value.sandboxName)) return null;
   const servedModelValue = value.servedModel;
+  const checkpointModelValue = value.checkpointModel;
   if (
     keys === BOUND_INTENT_KEYS &&
     (typeof servedModelValue !== "string" ||
@@ -159,7 +176,8 @@ export function parseStationExpressResumeIntent(value: unknown): StationExpressR
       servedModelValue.length > MAX_SERVED_MODEL_LENGTH ||
       servedModelValue.trim() !== servedModelValue ||
       !isSafeModelId(servedModelValue) ||
-      !identifiesModel(model, servedModelValue))
+      typeof checkpointModelValue !== "string" ||
+      !identifiesCheckpoint(model, checkpointModelValue))
   ) {
     return null;
   }
@@ -167,7 +185,12 @@ export function parseStationExpressResumeIntent(value: unknown): StationExpressR
     version: STATION_EXPRESS_INTENT_VERSION,
     model: model.envValue,
     sandboxName: value.sandboxName,
-    ...(keys === BOUND_INTENT_KEYS ? { servedModel: servedModelValue as string } : {}),
+    ...(keys === BOUND_INTENT_KEYS
+      ? {
+          servedModel: servedModelValue as string,
+          checkpointModel: checkpointModelValue as string,
+        }
+      : {}),
   };
 }
 
@@ -175,23 +198,30 @@ export function bindStationExpressProviderSelection(
   intentValue: unknown,
   provider: unknown,
   model: unknown,
+  checkpointModel: unknown,
 ): StationExpressResumeIntent {
   const intent = parseStationExpressResumeIntent(intentValue);
   const selectedModel = intent ? stationModel(intent.model) : null;
+  if (!intent || !selectedModel) {
+    throw new Error("Cannot record an invalid DGX Station Express provider selection.");
+  }
+  if (intent.servedModel !== undefined) {
+    if (provider === "vllm-local" && model === intent.servedModel) return intent;
+    throw new Error("Cannot record an invalid DGX Station Express provider selection.");
+  }
   if (
-    !intent ||
-    !selectedModel ||
     provider !== "vllm-local" ||
     typeof model !== "string" ||
     model.length === 0 ||
     model.length > MAX_SERVED_MODEL_LENGTH ||
     model.trim() !== model ||
     !isSafeModelId(model) ||
-    !identifiesModel(selectedModel, model)
+    typeof checkpointModel !== "string" ||
+    !identifiesCheckpoint(selectedModel, checkpointModel)
   ) {
     throw new Error("Cannot record an invalid DGX Station Express provider selection.");
   }
-  return { ...intent, servedModel: model };
+  return { ...intent, servedModel: model, checkpointModel: selectedModel.id };
 }
 
 function expectedEnvironment(
@@ -337,6 +367,8 @@ function matchesRecordedStationExpressSelection(
   if (session.sandboxName != null && session.sandboxName !== intent.sandboxName) return false;
 
   const providerComplete = session.steps?.provider_selection?.status === "complete";
+  const providerBound = Boolean(intent.servedModel && intent.checkpointModel);
+  if (providerComplete !== providerBound) return false;
   if (!providerComplete) return session.provider == null && session.model == null;
 
   return Boolean(
@@ -351,6 +383,21 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
 ): (options?: Options) => Promise<void> {
   return async (options) => {
     const session = deps.loadSession();
+    if (
+      options?.fresh !== true &&
+      session?.status === "complete" &&
+      session.resumable === false &&
+      !session.stationExpressIntent
+    ) {
+      try {
+        deps.clearInstallerResume();
+      } catch (error) {
+        deps.error(
+          `  Could not retire completed DGX Station Express installer resume state: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        deps.exitProcess(1);
+      }
+    }
     if (options?.fresh === true) {
       try {
         deps.clearInstallerResume();

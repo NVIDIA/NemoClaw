@@ -31,6 +31,7 @@ import {
 } from "../onboard/machine/transitions";
 import type { OnboardMachineState, OnboardNonTerminalMachineState } from "../onboard/machine/types";
 import {
+  assertStationExpressInstallerResumeSafe,
   bindStationExpressProviderSelection,
   clearStationExpressInstallerResume,
   parseStationExpressResumeIntent,
@@ -262,6 +263,8 @@ export interface SessionUpdates {
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
+  /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
+  stationExpressModelIdentity?: string;
 }
 
 export interface DebugSessionSummary {
@@ -744,6 +747,23 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
       if (Object.prototype.hasOwnProperty.call(normalized.steps, name) && parsedStep) {
         normalized.steps[name] = parsedStep;
       }
+    }
+  }
+
+  if (normalized.stationExpressIntent) {
+    const providerComplete = normalized.steps.provider_selection?.status === "complete";
+    const providerBound = Boolean(
+      normalized.stationExpressIntent.servedModel &&
+        normalized.stationExpressIntent.checkpointModel,
+    );
+    if (
+      providerComplete !== providerBound ||
+      (providerComplete &&
+        (normalized.provider !== "vllm-local" ||
+          normalized.model !== normalized.stationExpressIntent.servedModel)) ||
+      (!providerComplete && (normalized.provider !== null || normalized.model !== null))
+    ) {
+      return null;
     }
   }
 
@@ -1330,6 +1350,7 @@ function markStepCompleteWithOptions(
             session.stationExpressIntent,
             safeUpdates.provider,
             safeUpdates.model,
+            updates.stationExpressModelIdentity,
           )
         : null;
     const now = new Date().toISOString();
@@ -1532,8 +1553,10 @@ export function finalizeIncompleteOnboardStep(
 export function completeSession(updates: SessionUpdates = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
   let wasComplete = false;
+  let retireStationExpressReceipt = false;
   const updatedSession = updateSession((session) => {
-    if (session.stationExpressIntent) clearStationExpressInstallerResume();
+    retireStationExpressReceipt = Boolean(session.stationExpressIntent);
+    if (retireStationExpressReceipt) assertStationExpressInstallerResumeSafe();
     const now = new Date().toISOString();
     wasComplete = session.status === "complete";
     Object.assign(session, safeUpdates);
@@ -1544,6 +1567,7 @@ export function completeSession(updates: SessionUpdates = {}): Session {
     transitionMachineSnapshot(session, "complete", now);
     return session;
   });
+  if (retireStationExpressReceipt) clearStationExpressInstallerResume();
   if (Object.keys(safeUpdates).length > 0) {
     emitOnboardMachineEvent(
       createOnboardMachineEvent({

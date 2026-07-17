@@ -23,6 +23,7 @@ const ultraIntent = {
 const boundUltraIntent = {
   ...ultraIntent,
   servedModel: "nvidia/nemotron-3-ultra-550b-a55b",
+  checkpointModel: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
 };
 
 function expressEnv(): NodeJS.ProcessEnv {
@@ -76,7 +77,8 @@ describe("DGX Station Express resume (#7048)", () => {
     expect(
       parseStationExpressResumeIntent({
         ...ultraIntent,
-        servedModel: "deepseek-ai/DeepSeek-V4-Flash",
+        servedModel: "nemotron-ultra",
+        checkpointModel: "deepseek-ai/DeepSeek-V4-Flash",
       }),
     ).toBeNull();
   });
@@ -108,11 +110,15 @@ describe("DGX Station Express resume (#7048)", () => {
     expect(env).toEqual({ NEMOCLAW_PROVIDER: "" });
   });
 
-  it("reuses the exact served alias recorded by a completed provider selection", async () => {
-    const servedAlias = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4";
+  it("reuses the exact arbitrary alias recorded by a completed provider selection", async () => {
+    const servedAlias = "nemotron-ultra";
     const session = createSession({
       mode: "non-interactive",
-      stationExpressIntent: { ...ultraIntent, servedModel: servedAlias },
+      stationExpressIntent: {
+        ...ultraIntent,
+        servedModel: servedAlias,
+        checkpointModel: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+      },
       provider: "vllm-local",
       model: servedAlias,
       steps: {
@@ -220,6 +226,48 @@ describe("DGX Station Express resume (#7048)", () => {
     expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("state is invalid"));
   });
 
+  it.each([
+    {
+      name: "complete provider step with an unbound intent",
+      intent: ultraIntent,
+      provider: "vllm-local",
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      providerStatus: "complete",
+    },
+    {
+      name: "non-complete provider step with a bound intent",
+      intent: boundUltraIntent,
+      provider: null,
+      model: null,
+      providerStatus: "pending",
+    },
+  ])("fails closed for $name", async ({ intent, provider, model, providerStatus }) => {
+    const malformed = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: intent,
+      provider,
+      model,
+      steps: {
+        provider_selection: {
+          status: providerStatus as "complete" | "pending",
+          startedAt: null,
+          completedAt: null,
+          error: null,
+        },
+      },
+    });
+    malformed.status = "failed";
+    const deps = resumeDeps(malformed);
+    const run = vi.fn(async () => undefined);
+
+    await expect(
+      withStationExpressResumeEnvironment(run, deps, {})({ resume: true }),
+    ).rejects.toThrow("exit 1");
+
+    expect(run).not.toHaveBeenCalled();
+    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("state is invalid"));
+  });
+
   it("requires an explicit choice before replacing a failed Express session", async () => {
     const session = createSession({
       mode: "non-interactive",
@@ -247,6 +295,19 @@ describe("DGX Station Express resume (#7048)", () => {
 
     expect(run).toHaveBeenCalledTimes(1);
     expect(deps.clearInstallerResume).toHaveBeenCalledTimes(1);
+  });
+
+  it("retires a stale installer receipt before continuing from a completed session", async () => {
+    const completed = createSession();
+    completed.status = "complete";
+    completed.resumable = false;
+    const deps = resumeDeps(completed);
+    const run = vi.fn(async () => undefined);
+
+    await withStationExpressResumeEnvironment(run, deps, {})({});
+
+    expect(deps.clearInstallerResume).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when the Station installer resume receipt cannot be discarded", async () => {
@@ -277,6 +338,20 @@ describe("DGX Station Express resume (#7048)", () => {
         "Refusing symbolic link",
       );
       expect(fs.readFileSync(target, "utf8")).toBe("keep");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses receipt cleanup through a group-accessible state directory", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-mode-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(path.join(stateDir, "station-express-resume"), "keep", { mode: 0o600 });
+    fs.chmodSync(stateDir, 0o750);
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("non-owner-only");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

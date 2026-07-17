@@ -71,6 +71,8 @@ export interface ProviderSelectionResult {
   endpointPinnedAddresses?: string[];
   endpointTrustedPrivateCapability?: TrustedPrivateEndpointCapability;
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
+  /** Checkpoint identity proven while validating a local vLLM served alias. */
+  vllmModelIdentity?: string;
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
@@ -351,6 +353,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let endpointPinnedAddresses: string[] | undefined;
   let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
+  let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
@@ -541,6 +544,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       endpointPinnedAddresses = selection.endpointPinnedAddresses;
       endpointTrustedPrivateCapability = selection.endpointTrustedPrivateCapability;
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
+      vllmModelIdentity = selection.vllmModelIdentity;
       shouldRecordProviderSelection = true;
     }
 
@@ -586,6 +590,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             : preferredInferenceApi,
           compatibleEndpointReasoning,
           nimContainer,
+          stationExpressModelIdentity: vllmModelIdentity,
         }),
       );
     }
