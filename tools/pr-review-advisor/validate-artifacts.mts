@@ -5,8 +5,10 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
+
+import { Ajv2020, type AnySchema, type ValidateFunction } from "ajv/dist/2020.js";
 
 type ArtifactValidationInput = {
   repository: string;
@@ -28,6 +30,8 @@ type ArtifactValidationOptions = {
 
 const DECIMAL_PATTERN = /^[0-9]+$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
+const RESULT_SCHEMA_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "schema.json");
+const resultSchemaValidator = compileResultSchema();
 
 export class ValidateAdvisorArtifactsError extends Error {
   constructor(message: string) {
@@ -205,11 +209,27 @@ function readJson(file: string, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function compileResultSchema(): ValidateFunction {
+  const schema = JSON.parse(fs.readFileSync(RESULT_SCHEMA_PATH, "utf8")) as AnySchema;
+  return new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+}
+
+function validateAgainstResultSchema(result: Record<string, unknown>, label: string): void {
+  if (!resultSchemaValidator(result)) {
+    const errors =
+      resultSchemaValidator.errors
+        ?.map((error) => `${error.instancePath || "/"} ${error.message ?? "schema error"}`)
+        .join("; ") ?? "unknown schema error";
+    fail(`${label} does not match the committed advisor result schema: ${errors}`);
+  }
+}
+
 function validateFinalResult(
   result: Record<string, unknown>,
   expectedHeadSha: string,
   label: string,
 ): void {
+  validateAgainstResultSchema(result, label);
   if (result.version !== 1) fail(`${label} version must be 1`);
   if (result.headSha !== expectedHeadSha) {
     fail(`${label} head SHA does not match the triggering PR head`);

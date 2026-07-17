@@ -231,10 +231,68 @@ function runArtifactValidation(
 function validPrimaryResult(): Record<string, unknown> {
   return {
     version: 1,
+    baseRef: "target/base",
+    headRef: "HEAD",
     headSha: HEAD_SHA,
-    summary: { recommendation: "info_only", confidence: "high" },
+    changedFiles: [],
+    summary: validSummary(),
     findings: [],
-    e2e: { coverage: { requiredTests: [] }, targets: { required: [] } },
+    acceptanceCoverage: [],
+    securityCategories: [],
+    sourceOfTruthReview: [],
+    e2e: {
+      coverage: {
+        classifiedDomains: [],
+        requiredTests: [],
+        optionalTests: [],
+        newE2eRecommendations: [],
+        noE2eReason: "No changed files require E2E coverage.",
+        confidence: "high",
+      },
+      targets: {
+        relevantChangedFiles: [],
+        changedCredentialFreeTests: [],
+        required: [],
+        optional: [],
+        noTargetE2eReason: "No changed files require target E2E coverage.",
+        confidence: "high",
+      },
+    },
+    testDepth: {
+      verdict: "unit_sufficient",
+      rationale: "Boundary helper coverage is sufficient for this fixture.",
+      suggestedTests: [],
+    },
+    positives: [],
+    reviewCompleteness: { limitations: [], requiresHumanReview: true },
+  };
+}
+
+function validSummary(
+  overrides: Partial<Record<"recommendation" | "confidence" | "oneLine", string>> = {},
+) {
+  return {
+    recommendation: "info_only",
+    confidence: "high",
+    oneLine: "No actionable findings.",
+    ...overrides,
+  };
+}
+
+function validFinding(overrides: Record<string, unknown> = {}) {
+  return {
+    severity: "warning",
+    category: "acceptance",
+    file: "tools/pr-review-advisor/validate-artifacts.mts",
+    line: 1,
+    title: "Fixture finding",
+    description: "Fixture finding description.",
+    impact: "Fixture impact.",
+    recommendation: "Fixture recommendation.",
+    verificationHint: "Fixture verification.",
+    missingRegressionTest: "Fixture regression test.",
+    evidence: "Fixture evidence.",
+    ...overrides,
   };
 }
 
@@ -869,8 +927,8 @@ process.exitCode = valid ? 0 : 1;`,
   it("accepts a validated partial primary failure for publication", () => {
     const partialPrimary = {
       ...validPrimaryResult(),
-      summary: { recommendation: "info_only", confidence: "low" },
-      findings: [{ severity: "warning", title: "partial primary finding" }],
+      summary: validSummary({ confidence: "low", oneLine: "Partial primary result." }),
+      findings: [validFinding({ title: "partial primary finding" })],
     };
     const result = runArtifactValidation(partialPrimary, {
       analysisResult: {
@@ -891,8 +949,8 @@ process.exitCode = valid ? 0 : 1;`,
   it("accepts failed, partial, skipped, and unavailable second-opinion outcomes", () => {
     const partialSecondary = {
       ...validPrimaryResult(),
-      summary: { recommendation: "info_only", confidence: "low" },
-      findings: [{ severity: "warning", title: "partial second-opinion finding" }],
+      summary: validSummary({ confidence: "low", oneLine: "Partial secondary result." }),
+      findings: [validFinding({ title: "partial second-opinion finding" })],
     };
     const cases = [
       {
@@ -943,11 +1001,14 @@ process.exitCode = valid ? 0 : 1;`,
   });
 
   it("rejects malformed, wrong-head, stale, and symlinked primary artifacts", () => {
+    const missingAcceptanceCoverage = { ...validPrimaryResult() };
+    delete missingAcceptanceCoverage.acceptanceCoverage;
     const cases = [
       { name: "version", artifact: { ...validPrimaryResult(), version: 2 } },
       { name: "head", artifact: { ...validPrimaryResult(), headSha: "d".repeat(40) } },
       { name: "findings", artifact: { ...validPrimaryResult(), findings: null } },
       { name: "e2e", artifact: { ...validPrimaryResult(), e2e: {} } },
+      { name: "schema-required field", artifact: missingAcceptanceCoverage },
       {
         name: "unknown status",
         artifact: validPrimaryResult(),
@@ -1001,7 +1062,7 @@ process.exitCode = valid ? 0 : 1;`,
   it("withholds every invalid secondary artifact without suppressing the primary", () => {
     const mismatchedAnalysisResult = {
       ...validPrimaryResult(),
-      summary: { recommendation: "info_only", confidence: "medium" },
+      summary: validSummary({ confidence: "medium", oneLine: "Mismatched analysis result." }),
     };
     const cases = [
       {
