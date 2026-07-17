@@ -3,14 +3,18 @@
 
 import fs from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
 import { probeProviderHealth, probeRemoteProviderHealth } from "./health";
 
 import { BUILD_ENDPOINT_URL } from "./provider-models";
 
-function httpOk(body = "{}"): {
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+function httpOk(body = '{"choices":[{"message":{"content":"OK"}}]}'): {
   ok: true;
   httpStatus: 200;
   curlStatus: 0;
@@ -19,6 +23,11 @@ function httpOk(body = "{}"): {
   message: string;
 } {
   return { ok: true, httpStatus: 200, curlStatus: 0, body, stderr: "", message: "HTTP 200" };
+}
+
+function curlArgValue(argv: string[], name: string): string | undefined {
+  const index = argv.indexOf(name);
+  return index >= 0 ? argv[index + 1] : undefined;
 }
 
 function httpUnauthorized() {
@@ -57,6 +66,7 @@ function connectionRefused() {
 describe("inference health", () => {
   describe("probeRemoteProviderHealth — Bearer-auth chat-completions family", () => {
     it("invokes chat-completions for openai-api and never leaks the key into argv", () => {
+      vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", "90");
       let capturedArgv: string[] = [];
       let authConfigPath = "";
       let authConfigContent = "";
@@ -77,6 +87,8 @@ describe("inference health", () => {
       expect(result?.providerLabel).toBe("OpenAI");
       expect(result?.endpoint).toBe("https://api.openai.com/v1/chat/completions");
       expect(capturedArgv.at(-1)).toBe("https://api.openai.com/v1/chat/completions");
+      expect(curlArgValue(capturedArgv, "--connect-timeout")).toBe("3");
+      expect(curlArgValue(capturedArgv, "--max-time")).toBe("5");
 
       const joined = capturedArgv.join(" ");
       expect(joined).not.toContain("sk-test-secret");
@@ -208,6 +220,52 @@ describe("inference health", () => {
         max_tokens: 8,
         chat_template_kwargs: { thinking: false },
       });
+      expect(curlArgValue(capturedArgv, "--connect-timeout")).toBe("10");
+      expect(curlArgValue(capturedArgv, "--max-time")).toBe("60");
+    });
+
+    it("preserves DeepSeek V4 Pro's long streaming budget and validates its SSE shape", () => {
+      let capturedArgv: string[] = [];
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model: "deepseek-ai/deepseek-v4-pro",
+        getCredentialImpl: () => "nvapi-test",
+        runCurlProbeImpl: (argv) => {
+          capturedArgv = argv;
+          return httpOk('data: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n');
+        },
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(curlArgValue(capturedArgv, "--connect-timeout")).toBe("20");
+      expect(curlArgValue(capturedArgv, "--max-time")).toBe("120");
+      const payload = JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1]);
+      expect(payload.stream).toBe(true);
+    });
+
+    it("reports a malformed HTTP 200 body as unhealthy", () => {
+      const result = probeRemoteProviderHealth("openai-api", {
+        model: "gpt-4o-mini",
+        getCredentialImpl: () => "sk-test-secret",
+        runCurlProbeImpl: () => httpOk("<html>upstream proxy</html>"),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("not a Chat Completions result");
+    });
+
+    it("reports a provider error envelope returned with HTTP 200 as unhealthy", () => {
+      const result = probeRemoteProviderHealth("openai-api", {
+        model: "gpt-4o-mini",
+        getCredentialImpl: () => "sk-test-secret",
+        runCurlProbeImpl: () => httpOk('{"error":{"message":"model unavailable"}}'),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("error envelope");
     });
 
     it("reports unauthorized (not healthy) on HTTP 401", () => {
@@ -340,6 +398,30 @@ describe("inference health", () => {
 
       expect(result?.ok).toBe(false);
       expect(result?.failureLabel).toBe("unauthorized");
+    });
+
+    it("reports a non-Messages HTTP 200 response as unhealthy", () => {
+      const result = probeRemoteProviderHealth("anthropic-prod", {
+        model: "claude-sonnet-4-6",
+        getCredentialImpl: () => "sk-ant-test-secret",
+        runCurlProbeImpl: () => httpOk('{"message":"OK"}'),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("not an Anthropic Messages result");
+    });
+
+    it("reports an Anthropic error envelope returned with HTTP 200 as unhealthy", () => {
+      const result = probeRemoteProviderHealth("anthropic-prod", {
+        model: "claude-sonnet-4-6",
+        getCredentialImpl: () => "sk-ant-test-secret",
+        runCurlProbeImpl: () => httpOk('{"type":"error","error":{"type":"overloaded_error"}}'),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("error envelope");
     });
   });
 

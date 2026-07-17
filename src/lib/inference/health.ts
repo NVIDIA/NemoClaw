@@ -16,7 +16,11 @@ import { normalizeCredentialValue, resolveProviderCredential } from "../credenti
 import { getProviderSelectionConfig } from "./config";
 import type { LocalProviderHealthProbeOptions } from "./local";
 import { probeLocalProviderHealth } from "./local";
-import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
+import {
+  getChatCompletionsProbeCurlArgs,
+  needsExtendedNvidiaEndpointValidationBudget,
+} from "./onboard-probes";
+import { isDeepSeekV4ProModel, isKimiK26Model } from "./openai-probe-models";
 import { BUILD_ENDPOINT_URL } from "./provider-models";
 
 export interface ProviderHealthStatus {
@@ -95,7 +99,16 @@ function replaceCurlArgValue(argv: string[], name: string, value: string): strin
   return [name, value, ...next];
 }
 
-function useStatusProbeTiming(argv: string[]): string[] {
+function useStatusProbeTiming(argv: string[], preserveModelTiming: boolean): string[] {
+  // Keep status lightweight for ordinary models, but do not erase a model-
+  // specific budget selected by getChatCompletionsProbeCurlArgs. Kimi K2.6,
+  // DeepSeek V4 Pro, and the extended NVIDIA endpoint models can legitimately
+  // take longer than the ordinary validation ceiling to emit their first
+  // token; shortening those probes to five seconds reports supported models
+  // as unreachable. Ordinary models retain the short status budget even when
+  // the separate onboarding-time timeout override is configured.
+  if (preserveModelTiming) return argv;
+
   return replaceCurlArgValue(
     replaceCurlArgValue(argv, "--connect-timeout", HEALTH_PROBE_CONNECT_TIMEOUT_SECONDS),
     "--max-time",
@@ -109,6 +122,10 @@ function buildChatCompletionsStatusProbeCurlArgs(
   authArgs: readonly string[],
   isWsl?: boolean,
 ): string[] {
+  const preserveModelTiming =
+    isDeepSeekV4ProModel(model) ||
+    isKimiK26Model(model) ||
+    needsExtendedNvidiaEndpointValidationBudget(model);
   const args = useStatusProbeTiming(
     getChatCompletionsProbeCurlArgs({
       credentialArgs: [],
@@ -116,6 +133,7 @@ function buildChatCompletionsStatusProbeCurlArgs(
       url: endpoint,
       isWsl,
     }),
+    preserveModelTiming,
   );
   const url = args.pop() || endpoint;
   return [...args, ...authArgs, url];
@@ -145,6 +163,117 @@ function buildAnthropicMessagesProbeCurlArgs(
     }),
     endpoint,
   ];
+}
+
+type ResponseValidation = { ok: true } | { ok: false; reason: string };
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseJsonRecord(body: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    return isJsonRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasProviderErrorEnvelope(payload: Record<string, unknown>): boolean {
+  return (
+    ("error" in payload && payload.error !== null && payload.error !== undefined) ||
+    payload.type === "error"
+  );
+}
+
+function hasChatCompletionsChoice(
+  payload: Record<string, unknown>,
+  allowStreamingDelta: boolean,
+): boolean {
+  if (!Array.isArray(payload.choices) || payload.choices.length === 0) return false;
+  return payload.choices.some((choice) => {
+    if (!isJsonRecord(choice)) return false;
+    const message = choice.message;
+    if (isJsonRecord(message)) {
+      return ["content", "reasoning_content", "refusal", "tool_calls"].some(
+        (field) => field in message,
+      );
+    }
+    const delta = choice.delta;
+    return (
+      allowStreamingDelta &&
+      isJsonRecord(delta) &&
+      ["content", "reasoning_content", "role", "tool_calls"].some((field) => field in delta)
+    );
+  });
+}
+
+function validateChatCompletionsResponse(body: string): ResponseValidation {
+  const parsed = parseJsonRecord(body);
+  if (parsed) {
+    if (hasProviderErrorEnvelope(parsed)) {
+      return { ok: false, reason: "provider returned an error envelope" };
+    }
+    return hasChatCompletionsChoice(parsed, false)
+      ? { ok: true }
+      : { ok: false, reason: "response was not a Chat Completions result" };
+  }
+
+  // DeepSeek V4 Pro's model-specific probe requests streaming output. Accept
+  // only a stream containing at least one structured Chat Completions chunk;
+  // a bare 2xx, malformed SSE, or an SSE error envelope is not health proof.
+  let hasValidChunk = false;
+  for (const line of body.split("\n")) {
+    const match = /^data:\s*(.+)$/i.exec(line.trim());
+    if (!match) continue;
+    const data = match[1].trim();
+    if (data === "[DONE]") continue;
+    const event = parseJsonRecord(data);
+    if (!event) continue;
+    if (hasProviderErrorEnvelope(event)) {
+      return { ok: false, reason: "provider returned an error envelope" };
+    }
+    if (hasChatCompletionsChoice(event, true)) hasValidChunk = true;
+  }
+  return hasValidChunk
+    ? { ok: true }
+    : { ok: false, reason: "response was not a Chat Completions result" };
+}
+
+function validateAnthropicMessagesResponse(body: string): ResponseValidation {
+  const parsed = parseJsonRecord(body);
+  if (!parsed) return { ok: false, reason: "response was not an Anthropic Messages result" };
+  if (hasProviderErrorEnvelope(parsed)) {
+    return { ok: false, reason: "provider returned an error envelope" };
+  }
+  if (!Array.isArray(parsed.content) || parsed.content.length === 0) {
+    return { ok: false, reason: "response was not an Anthropic Messages result" };
+  }
+  const hasContentBlock = parsed.content.some(
+    (block) =>
+      isJsonRecord(block) && typeof block.type === "string" && block.type.trim().length > 0,
+  );
+  return hasContentBlock
+    ? { ok: true }
+    : { ok: false, reason: "response was not an Anthropic Messages result" };
+}
+
+function validateInvocationProbeResult(
+  result: CurlProbeResult,
+  validateResponse: (body: string) => ResponseValidation,
+): CurlProbeResult {
+  if (!result.ok) return result;
+  const validation = validateResponse(result.body);
+  if (validation.ok) return result;
+  return {
+    ok: false,
+    httpStatus: result.httpStatus,
+    curlStatus: result.curlStatus,
+    body: result.body,
+    stderr: result.stderr,
+    message: `HTTP ${result.httpStatus}: ${validation.reason}`,
+  };
 }
 
 function classifyHealthProbeFailureLabel(
@@ -240,7 +369,7 @@ function probeChatCompletionsProviderHealth(
     return credentialErrorHealthStatus(providerLabel, endpoint, credentialEnv, "prepare", error);
   }
 
-  const result = (() => {
+  const rawResult = (() => {
     try {
       return runCurlProbeImpl(
         buildChatCompletionsStatusProbeCurlArgs(model, endpoint, authConfig.args, options.isWsl),
@@ -250,6 +379,7 @@ function probeChatCompletionsProviderHealth(
       authConfig.cleanup();
     }
   })();
+  const result = validateInvocationProbeResult(rawResult, validateChatCompletionsResponse);
   const healthy = result.ok;
 
   return {
@@ -294,7 +424,7 @@ function probeAnthropicMessagesProviderHealth(
     return credentialErrorHealthStatus(providerLabel, endpoint, credentialEnv, "prepare", error);
   }
 
-  const result = (() => {
+  const rawResult = (() => {
     try {
       return runCurlProbeImpl(
         buildAnthropicMessagesProbeCurlArgs(model, endpoint, authConfig.args),
@@ -306,6 +436,7 @@ function probeAnthropicMessagesProviderHealth(
       authConfig.cleanup();
     }
   })();
+  const result = validateInvocationProbeResult(rawResult, validateAnthropicMessagesResponse);
   const healthy = result.ok;
 
   return {

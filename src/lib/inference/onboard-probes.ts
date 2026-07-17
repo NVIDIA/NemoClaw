@@ -507,7 +507,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
 }
 
 // ── OpenAI-like probe ────────────────────────────────────────────
-function needsExtendedNvidiaEndpointValidationBudget(model) {
+export function needsExtendedNvidiaEndpointValidationBudget(model) {
   return EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS.has(String(model || "").toLowerCase());
 }
 
