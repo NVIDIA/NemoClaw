@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: docker-auth-setup
+description: >
+  Isolate a job-scoped Docker config and optionally authenticate to Docker Hub.
+  Credential predicates and secret mapping stay in the calling workflow YAML.
+
+runs:
+  using: composite
+  steps:
+    - name: Authenticate to Docker Hub
+      shell: bash
+      run: bash "${{ github.action_path }}/setup.sh"
