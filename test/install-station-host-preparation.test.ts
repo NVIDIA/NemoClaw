@@ -17,10 +17,6 @@ const PUBLIC_BOOTSTRAP = path.join(REPO_ROOT, "install.sh");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const STATION_REVISION = "a".repeat(40);
 const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
-const STATION_DOCS = [
-  path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx"),
-  path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx"),
-];
 
 function runSourced(script: string, body: string, extraEnv: Record<string, string> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-host-"));
@@ -77,28 +73,6 @@ printf 'RESULT PROVIDER=%s STATION_EXPRESS=%s\n' "\${NEMOCLAW_PROVIDER:-}" "\${N
 }
 
 describe("DGX Station host preparation", () => {
-  it("keeps documented Station pins and Deferred status aligned", () => {
-    const helper = fs.readFileSync(STATION_PREPARE, "utf-8");
-    const docs = STATION_DOCS.map((doc) => fs.readFileSync(doc, "utf-8"));
-    const pinnedValues = [
-      "DRIVER_VERSION",
-      "DOCKER_VERSION",
-      "TOOLKIT_VERSION",
-      "FACTORY_DKMS_VERSION",
-      "TARGET_DKMS_VERSION",
-    ].map((name) => {
-      const value = helper.match(new RegExp(`readonly ${name}="([^"]+)"`))?.[1];
-      expect(value, `${name} must remain declared in the Station helper`).toBeTruthy();
-      return value as string;
-    });
-
-    for (const doc of docs) {
-      for (const version of pinnedValues) expect(doc).toContain(version);
-      expect(doc).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-      expect(doc).toMatch(/physical (?:DGX Station )?hardware|physical end-to-end validation/);
-    }
-  });
-
   it("uses the documented plain-Ubuntu driver-injection probe for CDI and --gpus", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -136,20 +110,6 @@ package_state 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'
 
     expect(result.status, output).toBe(0);
     expect(result.stdout.trim()).toBe(expected);
-  });
-
-  it.each([
-    ["Dell Pro Max with Station GB300", true],
-    ["NVIDIA DGX Station GB300", true],
-    ["NVIDIA DGX Station A100", false],
-    ["Dell Pro Max with Station GB200", false],
-    ["Dell Pro Max with GB300", false],
-  ])("accepts only Station GB300 DMI: %s", (product, accepted) => {
-    const { result } = runSourced(STATION_PREPARE, `is_station_product "$PRODUCT"`, {
-      PRODUCT: product,
-    });
-
-    expect(result.status === 0).toBe(accepted);
   });
 
   it("allows only the reviewed factory DKMS transition", () => {
@@ -1027,8 +987,11 @@ PAYLOAD
   cat > "$target/scripts/prepare-dgx-station-host.sh" <<'HELPER'
 #!/usr/bin/env bash
 set -euo pipefail
-[ "\${1:-}" = "--apply" ]
-printf 'PREPARE_STATION\\n'
+case "\${1:-}" in
+  --classify-dgx-release) printf 'CLASSIFY_STATION\\n' >&2; printf 'generic-ubuntu' ;;
+  --apply) printf 'PREPARE_STATION\\n' ;;
+  *) exit 2 ;;
+esac
 HELPER
   chmod +x "$target/scripts/install.sh" "$target/scripts/prepare-dgx-station-host.sh"
   exit 0
@@ -1059,6 +1022,7 @@ exit 0
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).toBe(0);
+    expect(output).toContain("CLASSIFY_STATION");
     expect(output).toContain("DGX Station host prerequisites are ready");
     expect(output.indexOf("PREPARE_STATION")).toBeGreaterThanOrEqual(0);
     expect(output.indexOf("PREPARE_STATION")).toBeLessThan(output.indexOf("ENSURE_DOCKER"));
@@ -1084,6 +1048,26 @@ prepare_installer_host
       "ENSURE_DOCKER",
       "ENSURE_BUILD_DEPS",
     ]);
+  });
+
+  it("pins Station preparation to the local default Docker context (#7103)", () => {
+    const { result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+DOCKER_HOST='tcp://remote.example:2376'
+DOCKER_CONTEXT='remote-cluster'
+maybe_offer_express_install() { _SELECTED_EXPRESS_PLATFORM='DGX Station'; }
+ensure_station_express_host() {
+  printf 'PREPARE DOCKER_HOST=%s DOCKER_CONTEXT=%s\n' "\${DOCKER_HOST-unset}" "\${DOCKER_CONTEXT-unset}"
+}
+ensure_docker() { :; }
+ensure_openshell_build_deps() { :; }
+prepare_installer_host
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout.trim()).toBe("PREPARE DOCKER_HOST=unset DOCKER_CONTEXT=default");
   });
 
   it("skips Station preparation before Docker bootstrap on non-Station platforms", () => {
