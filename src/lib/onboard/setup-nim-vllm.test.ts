@@ -110,6 +110,38 @@ describe("setupNim vLLM route containment", () => {
     expect(console.error).not.toHaveBeenCalled();
   });
 
+  it("rejects a root-matched served alias during managed install (#7023)", async () => {
+    const validate = vi.fn(async () => ({ ok: true, api: "openai-completions" }));
+    const requestedModel = "nvidia/nemotron-3-ultra-550b-a55b";
+    const selection = state(requestedModel);
+    selection.assertRouteCompatible = () => ({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () =>
+          JSON.stringify({
+            data: [
+              {
+                id: "nemotron-ultra",
+                root: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+              },
+            ],
+          }),
+        validateOpenAiLikeSelection: validate,
+      }),
+    );
+
+    await expect(handler(selection, { managedInstall: true })).rejects.toThrow("exit 1");
+    expect(selection.model).toBe(requestedModel);
+    expect(validate).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      "  Detected vLLM model 'nemotron-ultra' does not match the shared gateway route 'nvidia/nemotron-3-ultra-550b-a55b'.",
+    );
+  });
+
   it("rejects a served alias when its reported root differs from the requested model", async () => {
     const validate = vi.fn(async () => ({ ok: true }));
     const selection = state("nvidia/nemotron-3-ultra-550b-a55b");
