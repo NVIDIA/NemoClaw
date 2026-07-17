@@ -84,6 +84,13 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/e2e/support/e2e-migration-policy.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/actions\/docker-auth-setup\/(?:action\.yaml|setup\.sh)$/,
+    testsToRun: runTests(
+      "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/e2e\.yaml$/,
     testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
   },

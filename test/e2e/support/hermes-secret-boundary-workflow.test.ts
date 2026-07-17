@@ -60,7 +60,8 @@ describe("Hermes image workflow secret boundary", () => {
       ...auth!.env,
       DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
     };
-    auth!.run = auth!.run?.replaceAll("exit 1", "exit 0");
+    auth!.run = "echo inline login";
+    auth!.shell = "bash";
     mainWorkflow.jobs["sandbox-images-and-e2e"].secrets = {
       inherit: true,
     };
@@ -68,7 +69,8 @@ describe("Hermes image workflow secret boundary", () => {
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
         "sandbox image Docker Hub credentials must be gated to trusted main push/manual runs",
-        "sandbox image Docker Hub auth must fail closed on missing credentials and retries",
+        "sandbox image Docker Hub auth step must expose only name, uses, and env",
+        "sandbox image Docker Hub auth must not embed an inline login script; use the pinned docker-auth-setup action",
         "main sandbox image caller must map only the optional Docker Hub secrets explicitly",
       ]),
     );

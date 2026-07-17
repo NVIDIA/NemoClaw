@@ -7,6 +7,12 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
+import {
+  CHECKOUT_LOCAL_DOCKER_AUTH_SETUP_ACTION,
+  DOCKER_AUTH_SETUP_ACTION,
+  validateDockerAuthSetupWorkflowBoundary,
+} from "./docker-auth-setup-workflow-boundary.mts";
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(
   REPO_ROOT,
@@ -189,50 +195,28 @@ function validateMainCaller(errors: string[], mainWorkflow: SandboxImagesWorkflo
 }
 
 function validateCanonicalAuth(errors: string[], auth: SandboxImagesWorkflowStep): void {
-  if (!isDeepStrictEqual(sortedKeys(auth), ["env", "name", "run", "shell"])) {
-    errors.push("sandbox image Docker Hub auth step must expose only name, env, shell, and run");
+  if (!isDeepStrictEqual(sortedKeys(auth), ["env", "name", "uses"])) {
+    errors.push("sandbox image Docker Hub auth step must expose only name, uses, and env");
   }
-  if (auth.shell !== "bash") errors.push("sandbox image Docker Hub auth step must use bash");
+  if (auth.shell !== undefined || auth.run !== undefined) {
+    errors.push(
+      "sandbox image Docker Hub auth must not embed an inline login script; use the pinned docker-auth-setup action",
+    );
+  }
+  if (auth.uses === CHECKOUT_LOCAL_DOCKER_AUTH_SETUP_ACTION) {
+    errors.push(
+      "sandbox image Docker Hub auth must not load docker-auth-setup from the target checkout",
+    );
+  }
+  if (auth.uses !== DOCKER_AUTH_SETUP_ACTION) {
+    errors.push(
+      "sandbox image Docker Hub auth must use the reviewed immutable docker-auth-setup action",
+    );
+  }
   if (!isDeepStrictEqual(record(auth.env), EXPECTED_AUTH_ENV)) {
     errors.push(
       "sandbox image Docker Hub credentials must be gated to trusted main push/manual runs",
     );
-  }
-
-  const run = typeof auth.run === "string" ? auth.run : "";
-  const requiredFragments = [
-    'mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX"',
-    'chmod 700 "${docker_config}"',
-    'printf \'DOCKER_CONFIG=%s\\n\' "${DOCKER_CONFIG}" >> "${GITHUB_ENV}"',
-    'if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]',
-    'if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]',
-    'auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"',
-    ': > "${auth_marker}"',
-    'chmod 600 "${auth_marker}"',
-    "for attempt in 1 2 3; do",
-    `if printf '%s' "\${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "\${DOCKERHUB_USERNAME}" --password-stdin; then`,
-    "Docker Hub login failed after 3 attempts",
-  ];
-  for (const fragment of requiredFragments) {
-    if (!run.includes(fragment)) {
-      errors.push(`sandbox image Docker Hub auth script must include ${fragment}`);
-    }
-  }
-  if (run.includes("GITHUB_WORKSPACE")) {
-    errors.push("sandbox image Docker Hub auth directory must not use the checkout workspace");
-  }
-  if (/--password(?:[=\s]|$)/u.test(run)) {
-    errors.push("sandbox image Docker Hub token must be passed only through --password-stdin");
-  }
-  if ((run.match(/\bexit 1\b/gu) ?? []).length !== 2) {
-    errors.push(
-      "sandbox image Docker Hub auth must fail closed on missing credentials and retries",
-    );
-  }
-  const isolateIndex = run.indexOf("mktemp -d");
-  const trustIndex = run.indexOf('if [[ "${DOCKERHUB_AUTH_REQUIRED}"');
-  if (isolateIndex < 0 || trustIndex < 0 || isolateIndex >= trustIndex) {
-    errors.push("sandbox image Docker config must be isolated before the trust decision");
   }
 }
 
@@ -824,6 +808,7 @@ export function validateSandboxImagesWorkflow(
   mainWorkflow: SandboxImagesWorkflow,
 ): string[] {
   const errors: string[] = [];
+  errors.push(...validateDockerAuthSetupWorkflowBoundary());
   validateTriggersAndPermissions(errors, workflow);
   validateMainCaller(errors, mainWorkflow);
 

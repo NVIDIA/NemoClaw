@@ -58,6 +58,8 @@ const OPAQUE_INPUTS = [
   ".github/workflows/pr-e2e-gate.yaml",
   ".github/workflows/platform-vitest-main.yaml",
   "ci/platform-vitest-macos-requirements.lock",
+  ".github/actions/docker-auth-setup/action.yaml",
+  ".github/actions/docker-auth-setup/setup.sh",
 ] as const;
 
 function triggeredBy(relativePath: string): string[] {
@@ -111,6 +113,14 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
       "test/platform-vitest-main-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/actions/docker-auth-setup/action.yaml")).toEqual([
+      "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
+    ]);
+    expect(triggeredBy(".github/actions/docker-auth-setup/setup.sh")).toEqual([
+      "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+      "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
     ]);
   });
 

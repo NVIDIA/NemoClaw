@@ -224,6 +224,8 @@ describe("deterministic PR risk plan", () => {
     ".github/workflows/pr.yaml",
     ".github/actions/prepare-e2e/action.yaml",
     ".github/actions/upload-e2e-artifacts/action.yaml",
+    ".github/actions/docker-auth-setup/action.yaml",
+    ".github/actions/docker-auth-setup/setup.sh",
     "package-lock.json",
     "package.json",
     "vitest.config.ts",

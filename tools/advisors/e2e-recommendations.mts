@@ -33,7 +33,7 @@ const CLOUD_ONBOARD_E2E_PATTERNS: readonly RegExp[] = [
   /^scripts\/scorecard\/analyze-trace-timing\.ts$/,
   /^ci\/onboard-performance-budget\.json$/,
   /^scripts\/e2e\/sanitize-trace-timing\.py$/,
-  /^\.github\/actions\/(?:prepare-e2e|upload-e2e-artifacts)\//,
+  /^\.github\/actions\/(?:prepare-e2e|upload-e2e-artifacts|docker-auth-setup)\//,
   /^\.github\/workflows\/e2e\.yaml$/,
   /^test\/e2e\/live\/cloud-onboard\.test\.ts$/,
 ];

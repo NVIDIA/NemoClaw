@@ -235,6 +235,7 @@ export const RISK_RULES: readonly RiskRule[] = [
       file === "ci/platform-matrix.json" ||
       file === ".github/workflows/e2e.yaml" ||
       file.startsWith(".github/actions/prepare-e2e/") ||
+      file.startsWith(".github/actions/docker-auth-setup/") ||
       file === "src/lib/trace.ts" ||
       file === "scripts/scorecard/analyze-trace-timing.mts" ||
       file === "scripts/e2e/sanitize-trace-timing.py" ||
@@ -275,7 +276,8 @@ export const RISK_RULES: readonly RiskRule[] = [
       file.startsWith("tools/e2e/") ||
       file.startsWith("test/e2e/") ||
       file.startsWith(".github/actions/prepare-e2e/") ||
-      file.startsWith(".github/actions/upload-e2e-artifacts/"),
+      file.startsWith(".github/actions/upload-e2e-artifacts/") ||
+      file.startsWith(".github/actions/docker-auth-setup/"),
   },
   {
     id: "sandbox-boundary",
