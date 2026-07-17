@@ -10,7 +10,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import {
+  validateDockerHubAuthAction,
+  validateE2eWorkflowBoundary,
+} from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
 const NO_IMAGE_E2E_JOBS = ["gateway-health-honest", "shared-e2e"] as const;
@@ -22,6 +25,13 @@ const AUTH_HELPER_USES =
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const CLEANUP_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-cleanup.sh");
 const AUTH_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-setup.sh");
+const AUTH_ACTION_PATH = path.join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "docker-auth-setup",
+  "action.yaml",
+);
 
 type WorkflowStep = Record<string, unknown> & {
   env?: Record<string, unknown>;
@@ -79,7 +89,62 @@ function writeExecutable(filePath: string, source: string): void {
   fs.chmodSync(filePath, 0o755);
 }
 
+function validateAuthArtifactMutation(options: {
+  mutateAction?: (action: Record<string, unknown>) => void;
+  mutateScript?: (source: string) => string;
+}): string[] {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-auth-action-"));
+  const actionPath = path.join(directory, "action.yaml");
+  const scriptPath = path.join(directory, "docker-auth-setup.sh");
+  try {
+    const actionSource = fs.readFileSync(AUTH_ACTION_PATH, "utf8");
+    if (options.mutateAction) {
+      const action = YAML.parse(actionSource) as Record<string, unknown>;
+      options.mutateAction(action);
+      fs.writeFileSync(actionPath, YAML.stringify(action));
+    } else {
+      fs.writeFileSync(actionPath, actionSource);
+    }
+    const scriptSource = fs.readFileSync(AUTH_HELPER_PATH, "utf8");
+    fs.writeFileSync(scriptPath, options.mutateScript?.(scriptSource) ?? scriptSource);
+    return validateDockerHubAuthAction(actionPath, scriptPath);
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+}
+
 describe("shared Docker Hub authentication workflow boundary", () => {
+  // source-shape-contract: security -- Immutable credential-bearing action bytes must stay bound to reviewed commit provenance.
+  it("binds the composite action and helper to their immutable reviewed revision", () => {
+    expect(validateDockerHubAuthAction()).toEqual([]);
+
+    const mappingErrors = validateAuthArtifactMutation({
+      mutateAction: (action) => {
+        const runs = action.runs as { steps: WorkflowStep[] };
+        runs.steps[0].env = {
+          DOCKERHUB_AUTH_REQUIRED: "${{ inputs.auth-required }}",
+          DOCKERHUB_USERNAME: "${{ inputs.token }}",
+          DOCKERHUB_TOKEN: "${{ inputs.username }}",
+        };
+        runs.steps[0].run = "bash .github/scripts/docker-auth-setup.sh";
+      },
+    });
+    expect(mappingErrors).toContain(
+      "docker-auth-setup action content must match the action reviewed at its immutable commit pin",
+    );
+    expect(mappingErrors).toContain(
+      "docker-auth-setup action must preserve its exact three-input environment mapping and pinned helper invocation",
+    );
+
+    expect(
+      validateAuthArtifactMutation({
+        mutateScript: (source) => `${source}# unreviewed drift\n`,
+      }),
+    ).toContain(
+      "docker-auth-setup script content must match the helper reviewed at its immutable commit pin",
+    );
+  });
+
   it("rejects missing auth and cleanup coverage for every classified image job", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);

@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import {
   CREDENTIAL_FREE_TEST_TAG,
@@ -39,6 +41,19 @@ import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifac
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
+const DEFAULT_DOCKER_HUB_AUTH_ACTION_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "docker-auth-setup",
+  "action.yaml",
+);
+const DEFAULT_DOCKER_HUB_AUTH_SCRIPT_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "scripts",
+  "docker-auth-setup.sh",
+);
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -92,8 +107,13 @@ const NO_IMAGE_E2E_JOBS = new Set(["gateway-health-honest", SHARED_E2E_JOB_ID]);
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
-const DOCKER_HUB_AUTH_USES =
-  "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928";
+const DOCKER_HUB_AUTH_PROVENANCE = {
+  reference:
+    "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928",
+  actionSha256: "cf93dcbd19589a56d1d58225fd6b3f8ad2180705662ff79a3407f340b5dba4c0",
+  scriptSha256: "853a3f742f057c29ed465b63bed1ec8d8f306a1c046877a8556cadf290ef0cb6",
+} as const;
+const DOCKER_HUB_AUTH_USES = DOCKER_HUB_AUTH_PROVENANCE.reference;
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
 // The general E2E workflow runs on schedule/manual dispatch. Its event set is
 // intentionally distinct from the reusable image workflow's push/manual boundary.
@@ -108,6 +128,75 @@ function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as WorkflowRecord)
     : {};
+}
+
+export function validateDockerHubAuthAction(
+  actionPath = DEFAULT_DOCKER_HUB_AUTH_ACTION_PATH,
+  scriptPath = DEFAULT_DOCKER_HUB_AUTH_SCRIPT_PATH,
+): string[] {
+  const actionSource = readFileSync(actionPath, "utf8");
+  const scriptSource = readFileSync(scriptPath, "utf8");
+  const errors: string[] = [];
+
+  if (
+    createHash("sha256").update(actionSource).digest("hex") !==
+    DOCKER_HUB_AUTH_PROVENANCE.actionSha256
+  ) {
+    errors.push(
+      "docker-auth-setup action content must match the action reviewed at its immutable commit pin",
+    );
+  }
+  if (
+    createHash("sha256").update(scriptSource).digest("hex") !==
+    DOCKER_HUB_AUTH_PROVENANCE.scriptSha256
+  ) {
+    errors.push(
+      "docker-auth-setup script content must match the helper reviewed at its immutable commit pin",
+    );
+  }
+
+  const expectedAction = {
+    name: "docker-auth-setup",
+    description: "Authenticate to Docker Hub from an isolated per-job Docker config, fail closed.",
+    inputs: {
+      "auth-required": {
+        description: "Whether trusted Docker Hub credentials are present for this run.",
+        required: true,
+      },
+      username: {
+        description: "Docker Hub username; only populated for trusted runs.",
+        required: false,
+        default: "",
+      },
+      token: {
+        description: "Docker Hub token; only populated for trusted runs.",
+        required: false,
+        default: "",
+      },
+    },
+    runs: {
+      using: "composite",
+      steps: [
+        {
+          name: "Authenticate to Docker Hub",
+          shell: "bash",
+          env: {
+            DOCKERHUB_AUTH_REQUIRED: "${{ inputs.auth-required }}",
+            DOCKERHUB_USERNAME: "${{ inputs.username }}",
+            DOCKERHUB_TOKEN: "${{ inputs.token }}",
+          },
+          run: 'bash "${{ github.action_path }}/../../scripts/docker-auth-setup.sh"',
+        },
+      ],
+    },
+  };
+  if (!isDeepStrictEqual(asRecord(YAML.parse(actionSource)), expectedAction)) {
+    errors.push(
+      "docker-auth-setup action must preserve its exact three-input environment mapping and pinned helper invocation",
+    );
+  }
+
+  return errors;
 }
 
 function collectLiveTestFiles(value: unknown): string[] {
@@ -4345,5 +4434,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 }
 
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
-  return validateE2eWorkflow(readWorkflowRecord(workflowPath));
+  return [
+    ...validateDockerHubAuthAction(),
+    ...validateE2eWorkflow(readWorkflowRecord(workflowPath)),
+  ];
 }
