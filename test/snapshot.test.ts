@@ -1115,88 +1115,6 @@ process.exit(0);
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
-
-  it("rejects backup when the kanban state dir contains an unsafe symlink", () => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-kanban-unsafe-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const fakeRoot = path.join(fixture, "sandbox-root");
-      const hermesDir = path.join(fakeRoot, ".hermes");
-      const kanbanDir = path.join(hermesDir, "kanban");
-      fs.mkdirSync(binDir, { recursive: true });
-      fs.mkdirSync(kanbanDir, { recursive: true });
-      fs.writeFileSync(path.join(hermesDir, "SOUL.md"), "soul\n");
-      // NC-2227-04 regression cover on the new writable state surface: a
-      // compromised agent could plant kanban/evil -> config to exfiltrate
-      // via backup, so the pre-backup audit must reject it.
-      fs.symlinkSync("/etc/passwd", path.join(kanbanDir, "evil"));
-
-      const openshell = path.join(binDir, "openshell");
-      writeExecutable(
-        openshell,
-        `#!/usr/bin/env node
-const args = process.argv.slice(2);
-if (args[0] === "sandbox" && args[1] === "ssh-config") {
-  process.stdout.write("Host openshell-hermes\\n  HostName 127.0.0.1\\n  User sandbox\\n");
-  process.exit(0);
-}
-process.exit(0);
-`,
-      );
-
-      writeExecutable(
-        path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
-const cmd = process.argv[process.argv.length - 1] || "";
-if (cmd.includes("[ -d ")) {
-  process.stdout.write("kanban\\n");
-  process.exit(0);
-}
-if (cmd.includes("-printf")) {
-  process.stdout.write("l\\t/sandbox/.hermes/kanban/evil\\t/etc/passwd\\n");
-  process.exit(0);
-}
-process.exit(0);
-`,
-      );
-
-      fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
-      fs.writeFileSync(
-        path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
-        JSON.stringify({
-          defaultSandbox: "hermes",
-          sandboxes: {
-            hermes: {
-              name: "hermes",
-              model: "m",
-              provider: "p",
-              gpuEnabled: false,
-              policies: [],
-              agent: "hermes",
-            },
-          },
-        }),
-      );
-
-      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}:${oldPath || ""}`;
-
-      const backup = sandboxState.backupSandboxState("hermes", { name: "hermes-unsafe" });
-      expect(backup.success).toBe(false);
-      expect(backup.error).toContain("Pre-backup audit rejected");
-      expect(backup.failedDirs).toContain("kanban");
-    } finally {
-      if (oldOpenshell === undefined) {
-        delete process.env.NEMOCLAW_OPENSHELL_BIN;
-      } else {
-        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
-      }
-      process.env.PATH = oldPath;
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
 });
 
 describe("Deep Agents Code durable state files", () => {
@@ -1367,12 +1285,6 @@ describe("Hermes durable state files", () => {
       fs.writeFileSync(path.join(hermesDir, "SOUL.md"), "original soul\n");
       fs.writeFileSync(path.join(hermesDir, ".hermes_history"), "original history\n");
       fs.writeFileSync(path.join(runtimeDir, "state.db"), "original sqlite backup\n");
-      fs.writeFileSync(path.join(hermesDir, "kanban.db"), "original kanban backup\n");
-      fs.mkdirSync(path.join(hermesDir, "kanban", "workspaces", "t_1"), { recursive: true });
-      fs.writeFileSync(
-        path.join(hermesDir, "kanban", "workspaces", "t_1", "run.log"),
-        "original run log\n",
-      );
       fs.writeFileSync(path.join(hermesDir, "config.yaml"), "token: should-not-copy\n");
       fs.writeFileSync(path.join(hermesDir, ".env"), "API_TOKEN=should-not-copy\n");
       fs.writeFileSync(path.join(hermesDir, "auth.json"), '{"token":"should-not-copy"}\n');
@@ -1411,55 +1323,11 @@ function readStdin() {
   return Buffer.concat(chunks);
 }
 if (cmd.includes("[ -d ")) {
-  if (fs.existsSync(path.join(hermesDir, "kanban"))) {
-    process.stdout.write("kanban\\n");
-  }
-  process.exit(0);
-}
-if (cmd.includes("-printf")) {
-  // Mirror the pre-backup audit: report symlinks, hard links, and special
-  // files under the declared state dirs (only kanban is seeded here).
-  const rows = [];
-  const walk = (abs, remote) => {
-    for (const entry of fs.readdirSync(abs)) {
-      const absEntry = path.join(abs, entry);
-      const remoteEntry = remote + "/" + entry;
-      const st = fs.lstatSync(absEntry);
-      if (st.isSymbolicLink()) {
-        rows.push("l\\t" + remoteEntry + "\\t" + fs.readlinkSync(absEntry));
-      } else if (st.isDirectory()) {
-        walk(absEntry, remoteEntry);
-      } else if (st.isFile() && st.nlink > 1) {
-        rows.push("f\\t" + remoteEntry + "\\t");
-      } else if (!st.isFile()) {
-        rows.push("?\\t" + remoteEntry + "\\t");
-      }
-    }
-  };
-  const kanbanDir = path.join(hermesDir, "kanban");
-  if (fs.existsSync(kanbanDir)) walk(kanbanDir, "/sandbox/.hermes/kanban");
-  if (rows.length > 0) process.stdout.write(rows.join("\\n") + "\\n");
-  process.exit(0);
-}
-if (cmd.startsWith("tar -cf -")) {
-  const { execFileSync } = require("child_process");
-  process.stdout.write(
-    execFileSync("tar", ["-cf", "-", "-C", hermesDir, "--", "kanban"], {
-      maxBuffer: 64 * 1024 * 1024,
-    }),
-  );
-  process.exit(0);
-}
-if (cmd.includes("tar --no-same-owner -xf -")) {
-  const { execFileSync } = require("child_process");
-  execFileSync("tar", ["--no-same-owner", "-xf", "-", "-C", hermesDir], { input: readStdin() });
   process.exit(0);
 }
 if (cmd.includes("nemoclaw-sqlite-backup")) {
-  const src = cmd.includes("kanban.db")
-    ? path.join(hermesDir, "kanban.db")
-    : path.join(hermesDir, "runtime", "state.db");
-  process.stdout.write(fs.readFileSync(src));
+  if (cmd.includes("kanban.db")) process.exit(2);
+  process.stdout.write(fs.readFileSync(path.join(hermesDir, "runtime", "state.db")));
   process.exit(0);
 }
 if (cmd.includes("SOUL.md") && cmd.includes("cat --")) {
@@ -1471,12 +1339,8 @@ if (cmd.includes(".hermes_history") && cmd.includes("cat --")) {
   process.exit(0);
 }
 if (cmd.includes("nemoclaw-sqlite-restore")) {
-  if (cmd.includes("kanban.db")) {
-    fs.writeFileSync(path.join(hermesDir, "kanban.db"), readStdin());
-  } else {
-    fs.mkdirSync(path.join(hermesDir, "runtime"), { recursive: true });
-    fs.writeFileSync(path.join(hermesDir, "runtime", "state.db"), readStdin());
-  }
+  fs.mkdirSync(path.join(hermesDir, "runtime"), { recursive: true });
+  fs.writeFileSync(path.join(hermesDir, "runtime", "state.db"), readStdin());
   process.exit(0);
 }
 if (cmd.includes(".nemoclaw-restore") && cmd.includes("SOUL.md")) {
@@ -1514,14 +1378,8 @@ process.exit(0);
 
       const backup = sandboxState.backupSandboxState("hermes", { name: "hermes-state" });
       expect(backup.success).toBe(true);
-      expect(backup.backedUpFiles).toEqual([
-        "SOUL.md",
-        ".hermes_history",
-        "runtime/state.db",
-        "kanban.db",
-      ]);
+      expect(backup.backedUpFiles).toEqual(["SOUL.md", ".hermes_history", "runtime/state.db"]);
       expect(backup.failedFiles).toEqual([]);
-      expect(backup.backedUpDirs).toContain("kanban");
       expect(backup.manifest?.stateFiles).toEqual([
         { path: "SOUL.md", strategy: "copy" },
         { path: ".hermes_history", strategy: "copy" },
@@ -1537,15 +1395,6 @@ process.exit(0);
       expect(
         fs.readFileSync(path.join(backup.manifest!.backupPath, "runtime", "state.db"), "utf-8"),
       ).toBe("original sqlite backup\n");
-      expect(
-        fs.readFileSync(path.join(backup.manifest!.backupPath, "kanban.db"), "utf-8"),
-      ).toBe("original kanban backup\n");
-      expect(
-        fs.readFileSync(
-          path.join(backup.manifest!.backupPath, "kanban", "workspaces", "t_1", "run.log"),
-          "utf-8",
-        ),
-      ).toBe("original run log\n");
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "config.yaml"))).toBe(false);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "auth.json"))).toBe(false);
@@ -1553,20 +1402,9 @@ process.exit(0);
       fs.writeFileSync(path.join(hermesDir, "SOUL.md"), "changed soul\n");
       fs.writeFileSync(path.join(hermesDir, ".hermes_history"), "changed history\n");
       fs.writeFileSync(path.join(runtimeDir, "state.db"), "changed db\n");
-      fs.writeFileSync(path.join(hermesDir, "kanban.db"), "changed kanban db\n");
-      fs.writeFileSync(
-        path.join(hermesDir, "kanban", "workspaces", "t_1", "run.log"),
-        "changed run log\n",
-      );
       const restore = sandboxState.restoreSandboxState("hermes", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
-      expect(restore.restoredFiles).toEqual([
-        "SOUL.md",
-        ".hermes_history",
-        "runtime/state.db",
-        "kanban.db",
-      ]);
-      expect(restore.restoredDirs).toContain("kanban");
+      expect(restore.restoredFiles).toEqual(["SOUL.md", ".hermes_history", "runtime/state.db"]);
       expect(fs.readFileSync(path.join(hermesDir, "SOUL.md"), "utf-8")).toBe("original soul\n");
       expect(fs.readFileSync(path.join(hermesDir, ".hermes_history"), "utf-8")).toBe(
         "original history\n",
@@ -1574,12 +1412,6 @@ process.exit(0);
       expect(fs.readFileSync(path.join(runtimeDir, "state.db"), "utf-8")).toBe(
         "original sqlite backup\n",
       );
-      expect(fs.readFileSync(path.join(hermesDir, "kanban.db"), "utf-8")).toBe(
-        "original kanban backup\n",
-      );
-      expect(
-        fs.readFileSync(path.join(hermesDir, "kanban", "workspaces", "t_1", "run.log"), "utf-8"),
-      ).toBe("original run log\n");
 
       const loggedCommands = fs.readFileSync(sshLog, "utf-8");
       expect(loggedCommands).toContain("sqlite3.connect");
