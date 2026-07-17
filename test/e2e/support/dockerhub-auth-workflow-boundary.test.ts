@@ -17,7 +17,8 @@ const NO_IMAGE_E2E_JOBS = ["gateway-health-honest", "shared-e2e"] as const;
 const AUTH_STEP_NAME = "Authenticate to Docker Hub";
 const CLEANUP_STEP_NAME = "Clean up Docker auth";
 const CLEANUP_HELPER_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
-const AUTH_HELPER_RUN = "bash .github/scripts/docker-auth-setup.sh";
+const AUTH_HELPER_USES =
+  "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const CLEANUP_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-cleanup.sh");
 const AUTH_HELPER_PATH = path.join(REPO_ROOT, ".github", "scripts", "docker-auth-setup.sh");
@@ -27,6 +28,7 @@ type WorkflowStep = Record<string, unknown> & {
   name?: string;
   run?: string;
   uses?: string;
+  with?: Record<string, unknown>;
 };
 
 type WorkflowJob = {
@@ -156,11 +158,12 @@ describe("shared Docker Hub authentication workflow boundary", () => {
       expect(cleanup).toBeDefined();
 
       auth!.if = "github.event_name == 'schedule'";
-      auth!.env = {
-        ...auth!.env,
-        DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
+      auth!.with = {
+        ...auth!.with,
+        username: "${{ secrets.DOCKERHUB_USERNAME }}",
       };
-      auth!.run = "bash ./unaudited-docker-auth.sh";
+      auth!.uses =
+        "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@0000000000000000000000000000000000000000";
 
       cleanup!.if = "success()";
       cleanup!.run = `${String(cleanup!.run)} || true`;
@@ -177,8 +180,8 @@ describe("shared Docker Hub authentication workflow boundary", () => {
     expect(errors).toEqual(
       expect.arrayContaining([
         "canonical Docker Hub auth step must always run so untrusted refs receive an isolated empty Docker config",
-        "canonical Docker Hub auth must gate DOCKERHUB_USERNAME on the trusted repository, main ref, and scheduled/manual events",
-        `canonical Docker Hub auth step must run only ${AUTH_HELPER_RUN}`,
+        "canonical Docker Hub auth must gate username on the trusted repository, main ref, and scheduled/manual events",
+        `canonical Docker Hub auth step must invoke only ${AUTH_HELPER_USES}`,
         "live Docker Hub cleanup step must contain exactly name, if, shell, and run",
         "live Docker Hub cleanup step must always run",
         `live Docker Hub cleanup step must run only ${CLEANUP_HELPER_RUN}`,
@@ -192,18 +195,18 @@ describe("shared Docker Hub authentication workflow boundary", () => {
       const auth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
       const ungatedPredicate =
         "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')";
-      auth.env = {
-        DOCKERHUB_AUTH_REQUIRED: `\${{ ${ungatedPredicate} && '1' || '0' }}`,
-        DOCKERHUB_USERNAME: `\${{ ${ungatedPredicate} && secrets.DOCKERHUB_USERNAME || '' }}`,
-        DOCKERHUB_TOKEN: `\${{ ${ungatedPredicate} && secrets.DOCKERHUB_TOKEN || '' }}`,
+      auth.with = {
+        "auth-required": `\${{ ${ungatedPredicate} && '1' || '0' }}`,
+        username: `\${{ ${ungatedPredicate} && secrets.DOCKERHUB_USERNAME || '' }}`,
+        token: `\${{ ${ungatedPredicate} && secrets.DOCKERHUB_TOKEN || '' }}`,
       };
     });
 
     expect(errors).toEqual(
       expect.arrayContaining([
-        "canonical Docker Hub auth must gate DOCKERHUB_AUTH_REQUIRED on the trusted repository, main ref, and scheduled/manual events",
-        "canonical Docker Hub auth must gate DOCKERHUB_USERNAME on the trusted repository, main ref, and scheduled/manual events",
-        "canonical Docker Hub auth must gate DOCKERHUB_TOKEN on the trusted repository, main ref, and scheduled/manual events",
+        "canonical Docker Hub auth must gate auth-required on the trusted repository, main ref, and scheduled/manual events",
+        "canonical Docker Hub auth must gate username on the trusted repository, main ref, and scheduled/manual events",
+        "canonical Docker Hub auth must gate token on the trusted repository, main ref, and scheduled/manual events",
       ]),
     );
   });
@@ -247,7 +250,7 @@ describe("shared Docker Hub authentication workflow boundary", () => {
 
   it("executes the shared auth script with isolated config and bounded fail-closed retries", () => {
     const workflow = loadWorkflow();
-    expect(namedStep(workflow.jobs.live, AUTH_STEP_NAME)?.run).toBe(AUTH_HELPER_RUN);
+    expect(namedStep(workflow.jobs.live, AUTH_STEP_NAME)?.uses).toBe(AUTH_HELPER_USES);
     expect(fs.statSync(AUTH_HELPER_PATH).mode & 0o111).not.toBe(0);
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-auth-script-"));
     const fakeBin = path.join(directory, "bin");

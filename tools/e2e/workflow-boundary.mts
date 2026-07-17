@@ -92,7 +92,8 @@ const NO_IMAGE_E2E_JOBS = new Set(["gateway-health-honest", SHARED_E2E_JOB_ID]);
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
-const DOCKER_HUB_AUTH_RUN = "bash .github/scripts/docker-auth-setup.sh";
+const DOCKER_HUB_AUTH_USES =
+  "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928";
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
 // The general E2E workflow runs on schedule/manual dispatch. Its event set is
 // intentionally distinct from the reusable image workflow's push/manual boundary.
@@ -1995,12 +1996,9 @@ function requireCanonicalDockerHubAuthRun(
       "canonical Docker Hub auth step must always run so untrusted refs receive an isolated empty Docker config",
     );
   }
-  if (authStep.shell !== "bash") {
-    errors.push("canonical Docker Hub auth step must use bash");
-  }
-  if (authStep.uses !== undefined) {
+  if (authStep.run !== undefined || authStep.shell !== undefined || authStep.env !== undefined) {
     errors.push(
-      "canonical Docker Hub auth step must invoke the audited setup script, not a composite action",
+      "canonical Docker Hub auth step must invoke the pinned composite action, not an inline script",
     );
   }
   if (authStep["continue-on-error"] !== undefined) {
@@ -2009,31 +2007,31 @@ function requireCanonicalDockerHubAuthRun(
     );
   }
 
-  const authEnv = asRecord(authStep.env);
-  if (authEnv.DOCKERHUB_AUTH_REQUIRED !== GUARDED_DOCKER_HUB_AUTH_REQUIRED) {
-    errors.push(
-      "canonical Docker Hub auth must gate DOCKERHUB_AUTH_REQUIRED on the trusted repository, main ref, and scheduled/manual events",
-    );
-  }
-  if (authEnv.DOCKERHUB_USERNAME !== GUARDED_DOCKER_HUB_USERNAME) {
-    errors.push(
-      "canonical Docker Hub auth must gate DOCKERHUB_USERNAME on the trusted repository, main ref, and scheduled/manual events",
-    );
-  }
-  if (authEnv.DOCKERHUB_TOKEN !== GUARDED_DOCKER_HUB_TOKEN) {
-    errors.push(
-      "canonical Docker Hub auth must gate DOCKERHUB_TOKEN on the trusted repository, main ref, and scheduled/manual events",
-    );
-  }
-  const unexpectedEnv = Object.keys(authEnv).filter(
-    (name) => !["DOCKERHUB_AUTH_REQUIRED", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"].includes(name),
-  );
-  if (unexpectedEnv.length > 0) {
-    errors.push("canonical Docker Hub auth step must expose only its three guarded inputs");
+  if (authStep.uses !== DOCKER_HUB_AUTH_USES) {
+    errors.push(`canonical Docker Hub auth step must invoke only ${DOCKER_HUB_AUTH_USES}`);
   }
 
-  if (stringValue(authStep.run) !== DOCKER_HUB_AUTH_RUN) {
-    errors.push(`canonical Docker Hub auth step must run only ${DOCKER_HUB_AUTH_RUN}`);
+  const authWith = asRecord(authStep.with);
+  if (authWith["auth-required"] !== GUARDED_DOCKER_HUB_AUTH_REQUIRED) {
+    errors.push(
+      "canonical Docker Hub auth must gate auth-required on the trusted repository, main ref, and scheduled/manual events",
+    );
+  }
+  if (authWith.username !== GUARDED_DOCKER_HUB_USERNAME) {
+    errors.push(
+      "canonical Docker Hub auth must gate username on the trusted repository, main ref, and scheduled/manual events",
+    );
+  }
+  if (authWith.token !== GUARDED_DOCKER_HUB_TOKEN) {
+    errors.push(
+      "canonical Docker Hub auth must gate token on the trusted repository, main ref, and scheduled/manual events",
+    );
+  }
+  const unexpectedWith = Object.keys(authWith).filter(
+    (name) => !["auth-required", "username", "token"].includes(name),
+  );
+  if (unexpectedWith.length > 0) {
+    errors.push("canonical Docker Hub auth step must expose only its three guarded inputs");
   }
 }
 
