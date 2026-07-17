@@ -141,15 +141,16 @@ describe("e2e workflow boundary", () => {
     };
     const generateMatrix = workflow.jobs["generate-matrix"]!;
     generateMatrix.outputs.matrix = "${{ steps.matrix.outputs.matrix }}";
-    const trustedIndex = generateMatrix.steps.findIndex((step) => step.id === "controller_matrix");
-    if (trustedIndex < 0) throw new Error("workflow missing trusted controller matrix step");
-    const [trusted] = generateMatrix.steps.splice(trustedIndex, 1);
-    trusted!.run = trusted!.run!.replace('"runner":"ubuntu-latest"', '"runner":"self-hosted"');
-    const checkoutIndex = generateMatrix.steps.findIndex((step) =>
-      step.uses?.startsWith("actions/checkout@"),
+    const [trusted] = generateMatrix.steps.splice(
+      generateMatrix.steps.findIndex((step) => step.id === "controller_matrix"),
+      1,
     );
-    if (checkoutIndex < 0) throw new Error("workflow missing generate-matrix checkout step");
-    generateMatrix.steps.splice(checkoutIndex + 1, 0, trusted!);
+    trusted!.run = trusted!.run!.replace('"runner":"ubuntu-latest"', '"runner":"self-hosted"');
+    generateMatrix.steps.splice(
+      generateMatrix.steps.findIndex((step) => step.uses?.startsWith("actions/checkout@")) + 1,
+      0,
+      trusted!,
+    );
 
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
