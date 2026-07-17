@@ -28,6 +28,12 @@ type ArtifactValidationOptions = {
   appendOutput?: (key: string, value: string) => void;
 };
 
+type GhApiRunner = (
+  command: string,
+  args: string[],
+  options: { encoding: "utf8"; stdio: ["ignore", "pipe", "inherit"] },
+) => string;
+
 const DECIMAL_PATTERN = /^[0-9]+$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const RESULT_SCHEMA_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "schema.json");
@@ -53,6 +59,23 @@ function positiveInt(value: string | undefined, name: string): number {
 function required(value: string | undefined, name: string): string {
   if (!value) fail(`${name} is required`);
   return value;
+}
+
+export function fetchLivePullFromGh(
+  repository: string,
+  prNumber: string,
+  runGhApi: GhApiRunner = (command, args, options) => execFileSync(command, args, options),
+): { headSha: string; baseSha: string } {
+  const pull = JSON.parse(
+    runGhApi("gh", ["api", `repos/${repository}/pulls/${prNumber}`], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+    }),
+  ) as { head?: { sha?: unknown }; base?: { sha?: unknown } };
+  if (typeof pull.head?.sha !== "string" || typeof pull.base?.sha !== "string") {
+    fail("Live PR response did not include head and base SHAs");
+  }
+  return { headSha: pull.head.sha, baseSha: pull.base.sha };
 }
 
 function inputFromEnv(env = process.env): ArtifactValidationInput {
@@ -116,20 +139,7 @@ export function validateAdvisorArtifacts(
     }
   }
 
-  const fetchLivePull =
-    options.fetchLivePull ??
-    ((repository: string, prNumber: string): { headSha: string; baseSha: string } => ({
-      headSha: execFileSync(
-        "gh",
-        ["api", `repos/${repository}/pulls/${prNumber}`, "--jq", ".head.sha"],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
-      ).trim(),
-      baseSha: execFileSync(
-        "gh",
-        ["api", `repos/${repository}/pulls/${prNumber}`, "--jq", ".base.sha"],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
-      ).trim(),
-    }));
+  const fetchLivePull = options.fetchLivePull ?? fetchLivePullFromGh;
   const live = fetchLivePull(input.repository, input.prNumber);
   if (live.headSha !== input.expectedHeadSha) {
     fail("PR head changed after analysis; refusing to publish a stale review");

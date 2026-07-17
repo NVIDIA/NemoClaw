@@ -11,6 +11,11 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review
 const DEFAULT_PACKAGE_LOCK_PATH = join(REPO_ROOT, "package-lock.json");
 const TRUSTED_WORKFLOW_REF = "${{ github.workflow_sha }}";
 const CANONICAL_ADVISOR_NPM_CI = "npm ci --ignore-scripts --no-audit --no-fund";
+const PINNED_SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
+const CANONICAL_PREPARE_TARGET_PR = `node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"`;
+const CANONICAL_RUN_ANALYSIS = `cd "$ADVISOR_WORKDIR"
+node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"`;
+const CANONICAL_VALIDATE_ARTIFACTS = `node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/validate-artifacts.mts"`;
 const FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS = [
   "run-id",
   "github-token",
@@ -106,6 +111,26 @@ function requireRunLine(
   if (!lines.includes(expected)) errors.push(message);
 }
 
+function normalizedRunScript(value: unknown): string {
+  return stringValue(value)
+    .trim()
+    .replace(/\\\r?\n[ \t]*/gu, " ")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .map((line) => line.replace(/[ \t]+/gu, " "))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function requireCanonicalRun(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  expected: string,
+  message: string,
+): void {
+  if (step && normalizedRunScript(step.run) !== expected) errors.push(message);
+}
+
 function requireRunOrder(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -125,8 +150,12 @@ function rejectUntrustedAdvisorHelperExecution(
   errors: string[],
   steps: readonly WorkflowStep[],
 ): void {
+  const untrustedHelperPatterns = [
+    /\$\{?ADVISOR_WORKDIR\}?\/tools\/pr-review-advisor\//u,
+    /(^|[\s"'`])(?:\.\/)?tools\/pr-review-advisor\/[^\s"'`]+\.mts/u,
+  ] as const;
   for (const step of steps) {
-    if (stringValue(step.run).includes("$ADVISOR_WORKDIR/tools/pr-review-advisor/")) {
+    if (untrustedHelperPatterns.some((pattern) => pattern.test(stringValue(step.run)))) {
       errors.push(
         `review step '${step.name ?? "<unnamed>"}' must not execute pr-review-advisor helpers from ADVISOR_WORKDIR`,
       );
@@ -363,11 +392,11 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   // The fetch/validate/checkout logic lives in the trusted, unit-tested helper
   // (prepare-target-pr.mts); the workflow must invoke it from the pinned advisor
   // checkout ($ADVISOR_DIR), never from PR-controlled content.
-  requireRunContains(errors, prepare, "node --experimental-strip-types");
-  requireRunContains(
+  requireCanonicalRun(
     errors,
     prepare,
-    '"$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"',
+    CANONICAL_PREPARE_TARGET_PR,
+    "step 'Prepare isolated analysis workspace' must use the canonical trusted prepare helper command",
   );
   // The base and head must be bound to the immutable SHAs in the triggering
   // event so the helper's fail-closed SHA verification cannot be silently
@@ -439,9 +468,12 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
   requireRunOrder(errors, install, 'cd "$ADVISOR_DIR"', CANONICAL_ADVISOR_NPM_CI);
 
   const analyze = requireStep(errors, steps, "Run PR review advisor");
-  requireRunContains(errors, analyze, 'cd "$ADVISOR_WORKDIR"');
-  requireRunContains(errors, analyze, "node --experimental-strip-types");
-  requireRunContains(errors, analyze, '"$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"');
+  requireCanonicalRun(
+    errors,
+    analyze,
+    CANONICAL_RUN_ANALYSIS,
+    "step 'Run PR review advisor' must use the canonical trusted analysis command",
+  );
   if (analyze && booleanValue(analyze["continue-on-error"]) !== true) {
     errors.push("Run PR review advisor must continue-on-error until artifacts are uploaded");
   }
@@ -545,11 +577,17 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   requireWith(errors, checkout, "lfs", false);
   requireWith(errors, checkout, "submodules", false);
 
+  const setupNode = requireStep(errors, steps, "Setup Node for trusted publisher");
+  if (setupNode && stringValue(setupNode.uses) !== PINNED_SETUP_NODE_ACTION) {
+    errors.push("Setup Node for trusted publisher must use the pinned actions/setup-node action");
+  }
+  requireWith(errors, setupNode, "node-version", "22");
+
   const install = requireStep(errors, steps, "Install trusted publisher dependencies");
   if (install && stringValue(install["working-directory"]) !== "advisor") {
     errors.push("Install trusted publisher dependencies must run in the trusted advisor checkout");
   }
-  requireRunLine(
+  requireCanonicalRun(
     errors,
     install,
     CANONICAL_ADVISOR_NPM_CI,
@@ -600,11 +638,11 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   ) {
     errors.push("Validate advisor artifacts must use the trusted secondary download step outcome");
   }
-  requireRunContains(errors, validate, "node --experimental-strip-types");
-  requireRunContains(
+  requireCanonicalRun(
     errors,
     validate,
-    '"$ADVISOR_DIR/tools/pr-review-advisor/validate-artifacts.mts"',
+    CANONICAL_VALIDATE_ARTIFACTS,
+    "step 'Validate advisor artifacts' must use the canonical trusted validation command",
   );
 
   const comment = requireStep(errors, steps, "Post PR review advisor comment");
@@ -647,6 +685,9 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   const checkoutIndex = steps.findIndex(
     (step) => step.name === "Checkout trusted comment publisher (workflow revision)",
   );
+  const setupNodeIndex = steps.findIndex(
+    (step) => step.name === "Setup Node for trusted publisher",
+  );
   const installIndex = steps.findIndex(
     (step) => step.name === "Install trusted publisher dependencies",
   );
@@ -660,13 +701,15 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   const commentIndex = steps.findIndex((step) => step.name === "Post PR review advisor comment");
   if (
     checkoutIndex < 0 ||
+    setupNodeIndex < 0 ||
     installIndex < 0 ||
     validateIndex < 0 ||
-    checkoutIndex > installIndex ||
+    checkoutIndex > setupNodeIndex ||
+    setupNodeIndex > installIndex ||
     installIndex > validateIndex
   ) {
     errors.push(
-      "trusted publisher dependencies must be installed from the trusted checkout before artifact validation",
+      "trusted publisher Node and dependencies must be installed from the trusted checkout before artifact validation",
     );
   }
   if (

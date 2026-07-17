@@ -214,7 +214,10 @@ export function runPrReviewAdvisorAnalysis(
     "--out-dir",
     input.outDir,
   ];
-  const inheritedEnv = { ...process.env };
+  const inheritedEnv = {
+    ...process.env,
+    PR_REVIEW_ADVISOR_RUN_ANALYSIS: input.runAnalysis,
+  };
   const trustedTextIncludes = (file: string, text: string): boolean => {
     try {
       return readText(file).includes(text);

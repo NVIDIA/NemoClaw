@@ -8,7 +8,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { runPrReviewAdvisorAnalysis } from "../tools/pr-review-advisor/run-analysis.mts";
-import { validateAdvisorArtifacts } from "../tools/pr-review-advisor/validate-artifacts.mts";
+import {
+  fetchLivePullFromGh,
+  validateAdvisorArtifacts,
+} from "../tools/pr-review-advisor/validate-artifacts.mts";
 import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -57,6 +60,10 @@ function writeFakeCommand(binDir: string, name: string): void {
 function writeOptionalFixture(omitted: boolean | undefined, write: () => void): void {
   const selectedWrite = omitted ? undefined : write;
   selectedWrite?.();
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  value === undefined ? delete process.env[key] : (process.env[key] = value);
 }
 
 function canCreateSymlinks(): boolean {
@@ -444,7 +451,20 @@ describe("PR review advisor workflow boundary", () => {
       ),
     );
     expect(droppedHelper).toContain(
-      "step 'Prepare isolated analysis workspace' run script must include \"$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts\"",
+      "step 'Prepare isolated analysis workspace' must use the canonical trusted prepare helper command",
+    );
+
+    const decoyTrustedPrepare = validateMutation((source) =>
+      source.replace(
+        'node --experimental-strip-types \\\n            "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"',
+        'printf "%s\\n" "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"\n          node --experimental-strip-types "${ADVISOR_WORKDIR}/tools/pr-review-advisor/prepare-target-pr.mts"',
+      ),
+    );
+    expect(decoyTrustedPrepare).toEqual(
+      expect.arrayContaining([
+        "review step 'Prepare isolated analysis workspace' must not execute pr-review-advisor helpers from ADVISOR_WORKDIR",
+        "step 'Prepare isolated analysis workspace' must use the canonical trusted prepare helper command",
+      ]),
     );
 
     const droppedHead = validateMutation((source) =>
@@ -482,6 +502,32 @@ describe("PR review advisor workflow boundary", () => {
     );
     expect(errors).toContain(
       "review step 'Run PR review advisor' must not execute pr-review-advisor helpers from ADVISOR_WORKDIR",
+    );
+
+    const bracedWorkdir = validateMutation((source) =>
+      source.replace(
+        '"$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"',
+        '"${ADVISOR_WORKDIR}/tools/pr-review-advisor/run-analysis.mts"',
+      ),
+    );
+    expect(bracedWorkdir).toEqual(
+      expect.arrayContaining([
+        "review step 'Run PR review advisor' must not execute pr-review-advisor helpers from ADVISOR_WORKDIR",
+        "step 'Run PR review advisor' must use the canonical trusted analysis command",
+      ]),
+    );
+
+    const relativeAfterCd = validateMutation((source) =>
+      source.replace(
+        '"$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"',
+        '"tools/pr-review-advisor/run-analysis.mts"',
+      ),
+    );
+    expect(relativeAfterCd).toEqual(
+      expect.arrayContaining([
+        "review step 'Run PR review advisor' must not execute pr-review-advisor helpers from ADVISOR_WORKDIR",
+        "step 'Run PR review advisor' must use the canonical trusted analysis command",
+      ]),
     );
   });
 
@@ -699,7 +745,7 @@ printf 'sudo %s\\n' "$*" >> "$CALL_LOG"
           title: "PR Review Advisor",
           runAnalysis: "1",
         },
-        {},
+        { runGit: () => HEAD_SHA },
       );
       const schemaValidation = spawnSync(
         process.execPath,
@@ -745,9 +791,9 @@ process.exitCode = valid ? 0 : 1;`,
             title: "PR Review Advisor",
             runAnalysis: "1",
           },
-          {},
+          { runGit: () => HEAD_SHA },
         ),
-      ).toThrow();
+      ).toThrow(/EEXIST.*pr-review-advisor-result\.json/u);
       expect(fs.readFileSync(resultPath, "utf8")).toBe("existing artifact\n");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -762,18 +808,24 @@ process.exitCode = valid ? 0 : 1;`,
       env: NodeJS.ProcessEnv;
       cwd: string;
     }> = [];
-    const input = advisorAnalysisInput();
+    const input = advisorAnalysisInput({ runAnalysis: "0" });
     const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
+    const previousRunAnalysis = process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS;
+    process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS = "1";
 
-    runPrReviewAdvisorAnalysis(input, {
-      fileExists: (file) => file === analyzePath,
-      readText: supportedAdvisorReadText(input),
-      runNode: (script, args, env, cwd) => {
-        runCalls.push({ script, args, env, cwd });
-        return 0;
-      },
-      appendEnv: (key, value) => appendedEnv.push([key, value]),
-    });
+    try {
+      runPrReviewAdvisorAnalysis(input, {
+        fileExists: (file) => file === analyzePath,
+        readText: supportedAdvisorReadText(input),
+        runNode: (script, args, env, cwd) => {
+          runCalls.push({ script, args, env, cwd });
+          return 0;
+        },
+        appendEnv: (key, value) => appendedEnv.push([key, value]),
+      });
+    } finally {
+      restoreEnv("PR_REVIEW_ADVISOR_RUN_ANALYSIS", previousRunAnalysis);
+    }
 
     expect(appendedEnv).toEqual([["PR_REVIEW_ADVISOR_SUPPORTED", "1"]]);
     expect(runCalls).toHaveLength(1);
@@ -792,7 +844,7 @@ process.exitCode = valid ? 0 : 1;`,
       cwd: input.advisorWorkdir,
     });
     expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toBeUndefined();
-    expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).not.toBe("0");
+    expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).toBe("0");
   });
 
   it("appends support status only to an existing GitHub env file", () => {
@@ -922,6 +974,17 @@ process.exitCode = valid ? 0 : 1;`,
     } finally {
       result.cleanup();
     }
+  });
+
+  it("fetches live PR head and base from one GitHub response snapshot", () => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const live = fetchLivePullFromGh("NVIDIA/NemoClaw", "6736", (command, args) => {
+      calls.push({ command, args });
+      return JSON.stringify({ head: { sha: HEAD_SHA }, base: { sha: BASE_SHA } });
+    });
+
+    expect(live).toEqual({ headSha: HEAD_SHA, baseSha: BASE_SHA });
+    expect(calls).toEqual([{ command: "gh", args: ["api", "repos/NVIDIA/NemoClaw/pulls/6736"] }]);
   });
 
   it("accepts a validated partial primary failure for publication", () => {
@@ -1159,7 +1222,7 @@ process.exitCode = valid ? 0 : 1;`,
       ),
     );
     expect(missingHelper).toContain(
-      "step 'Validate advisor artifacts' run script must include \"$ADVISOR_DIR/tools/pr-review-advisor/validate-artifacts.mts\"",
+      "step 'Validate advisor artifacts' must use the canonical trusted validation command",
     );
 
     const missingPublisherInstall = validateMutation((source) =>
@@ -1171,8 +1234,18 @@ process.exitCode = valid ? 0 : 1;`,
     expect(missingPublisherInstall).toEqual(
       expect.arrayContaining([
         "missing workflow step: Install trusted publisher dependencies",
-        "trusted publisher dependencies must be installed from the trusted checkout before artifact validation",
+        "trusted publisher Node and dependencies must be installed from the trusted checkout before artifact validation",
       ]),
+    );
+
+    const downgradedPublisherNode = validateMutation((source) =>
+      source.replace(
+        '      - name: Setup Node for trusted publisher\n        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.0.0\n        with:\n          node-version: "22"',
+        '      - name: Setup Node for trusted publisher\n        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.0.0\n        with:\n          node-version: "20"',
+      ),
+    );
+    expect(downgradedPublisherNode).toContain(
+      "step 'Setup Node for trusted publisher' expected with.node-version=22",
     );
   });
 
@@ -1257,6 +1330,16 @@ process.exitCode = valid ? 0 : 1;`,
     );
 
     expect(errors).toContain(
+      "step 'Install trusted publisher dependencies' must use the canonical lockfile-only npm ci command",
+    );
+
+    const extraCommand = validateMutation((source) =>
+      source.replace(
+        "      - name: Install trusted publisher dependencies\n        working-directory: advisor\n        run: npm ci --ignore-scripts --no-audit --no-fund",
+        "      - name: Install trusted publisher dependencies\n        working-directory: advisor\n        run: |\n          npm ci --ignore-scripts --no-audit --no-fund\n          echo done",
+      ),
+    );
+    expect(extraCommand).toContain(
       "step 'Install trusted publisher dependencies' must use the canonical lockfile-only npm ci command",
     );
   });
