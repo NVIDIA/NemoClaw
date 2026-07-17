@@ -27,6 +27,7 @@ export function prepareExactMainMcpProof(
   const { artifacts, cleanup, host, sandbox } = fixture;
   const driverConfig = prepareExactMainDriverConfigProof(fixture, sandboxName);
   return {
+    envOverlay: driverConfig.envOverlay,
     async afterOnboard(): Promise<void> {
       await driverConfig.assertAfterOnboard();
       await assertExactMainOpenShellContracts(host, sandboxName);
