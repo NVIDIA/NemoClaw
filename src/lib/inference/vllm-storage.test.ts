@@ -176,6 +176,41 @@ describe("host cache-storage detection", () => {
     ).toBeNull();
   });
 
+  it("catches a root-owned lock directory for the target model", () => {
+    const target = "/cache/hub/models--org--target";
+    const lockDir = "/cache/hub/.locks/models--org--target";
+    const blocked = `${lockDir}/abc123.lock`;
+    const present = new Set(["/cache", "/cache/hub", target, lockDir]);
+    const entries = new Map([[lockDir, [{ kind: "file" as const, name: "abc123.lock" }]]]);
+
+    expect(
+      findUnwritableModelCachePath("/cache", target, {
+        exists: (path) => present.has(path),
+        canWrite: (path) => path !== blocked,
+        list: (path) => entries.get(path) ?? [],
+      }),
+    ).toBe(blocked);
+  });
+
+  it("ignores a sibling model's root-owned lock directory", () => {
+    const target = "/cache/hub/models--org--target";
+    const siblingLockDir = "/cache/hub/.locks/models--org--other";
+    const present = new Set(["/cache", "/cache/hub", siblingLockDir]);
+    const walked: string[] = [];
+
+    expect(
+      findUnwritableModelCachePath("/cache", target, {
+        exists: (path) => present.has(path),
+        canWrite: (path) => {
+          walked.push(path);
+          return true;
+        },
+        list: () => [],
+      }),
+    ).toBeNull();
+    expect(walked).not.toContain(siblingLockDir);
+  });
+
   it("skips the model subtree when the model cache path is unresolved", () => {
     const walked: string[] = [];
     expect(

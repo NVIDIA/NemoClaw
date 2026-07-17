@@ -364,9 +364,11 @@ export function findUnwritableTreePath(
 /**
  * Return the first path that would block a managed onboard for one model,
  * scoped to what onboard actually writes: the cache root, its `hub`
- * directory, and the target model's own cache subtree. Unrelated sibling
- * model directories are not walked, so a root-owned artifact left by a
- * previous model's download cannot block onboarding a different model.
+ * directory, and the target model's own cache subtree (including the
+ * download lock directory `hub/.locks/<model>` the Hugging Face client
+ * creates alongside it). Unrelated sibling model directories and lock
+ * subtrees are not walked, so a root-owned artifact left by a previous
+ * model's download cannot block onboarding a different model.
  */
 export function findUnwritableModelCachePath(
   cacheDir: string,
@@ -378,8 +380,14 @@ export function findUnwritableModelCachePath(
   const hubDir = path.join(cacheDir, "hub");
   if (!deps.exists(hubDir)) return null;
   if (!deps.canWrite(hubDir, true)) return hubDir;
-  if (modelCacheDir !== null && deps.exists(modelCacheDir)) {
-    return findUnwritableTreePath(modelCacheDir, deps);
+  if (modelCacheDir === null) return null;
+  if (deps.exists(modelCacheDir)) {
+    const blockedPath = findUnwritableTreePath(modelCacheDir, deps);
+    if (blockedPath) return blockedPath;
+  }
+  const lockDir = path.join(hubDir, ".locks", path.basename(modelCacheDir));
+  if (deps.exists(lockDir)) {
+    return findUnwritableTreePath(lockDir, deps);
   }
   return null;
 }
