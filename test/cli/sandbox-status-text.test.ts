@@ -249,7 +249,7 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).toContain("Run `nemoclaw alpha rebuild` to restore.");
   });
 
-  it("sandbox <name> status preserves Inference probe and exits 0 when openshellDriver is not docker", () => {
+  it("sandbox <name> status reports reachable inference and an unprobed upstream when openshellDriver is not docker", () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-non-docker-driver-"),
     );
@@ -299,7 +299,8 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).toContain("Sandbox: alpha");
     expect(r.out).toContain("Provider: openai-api");
     expect(r.out).toContain("Model:    gpt-4o-mini");
-    expect(r.out).toContain("Inference: healthy");
+    expect(r.out).toContain("Inference: reachable (https://inference.local/v1/models)");
+    expect(r.out).toContain("Inference (upstream): not probed");
   });
 
   it("sandbox <name> status surfaces sandbox_container_stopped when the per-sandbox container exists but is not running", () => {

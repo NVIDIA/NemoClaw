@@ -246,7 +246,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     ]);
   });
 
-  it("sandbox status --json ignores failed upstream diagnostics when inference.local is healthy (#6192)", () => {
+  it("sandbox status --json reports a missing upstream credential as not probed when inference.local is reachable (#6192)", () => {
     const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
       routeOutput: "OK 200",
       upstreamHttpStatus: "000",
@@ -266,7 +266,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       endpoint: "https://inference.local/v1/models",
     });
     expect(parsed.inferenceHealth.subprobes).toEqual([
-      expect.objectContaining({ ok: false, probeLabel: "upstream" }),
+      expect.objectContaining({ ok: true, probed: false, probeLabel: "upstream" }),
     ]);
   });
 
