@@ -153,6 +153,15 @@ function baseRunner(
   };
 }
 
+function checkerTreeRunner(result: GitResult): GitRunner {
+  return (args) =>
+    args[0] === "ls-tree"
+      ? result
+      : (() => {
+          throw new Error(`unexpected git arguments: ${args.join(" ")}`);
+        })();
+}
+
 function runFixtureGit(repoRoot: string, args: readonly string[]): string {
   const result = spawnSync("git", [...args], {
     cwd: repoRoot,
@@ -521,7 +530,15 @@ describe("base-trusted createRequire ratchet", () => {
     );
     expect(() =>
       requireSingleBaseChecker(
-        baseRunner({ ts: allowlistSource([], []), mts: allowlistSource([], []) }),
+        checkerTreeRunner({
+          status: 0,
+          stderr: "",
+          stdout: [
+            `100644 blob ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.mts`,
+            `100644 blob ${"1".repeat(40)}\tscripts/checks/test-create-require-budget.ts`,
+            "",
+          ].join("\0"),
+        }),
         BASE_SHA,
       ),
     ).toThrow("trusted base must contain exactly one createRequire budget checker; found 2");
@@ -556,23 +573,15 @@ describe("base-trusted createRequire ratchet", () => {
       "could not read trusted base createRequire budget checker",
     );
 
-    const checkerTreeResult =
-      (result: GitResult): GitRunner =>
-      (args) =>
-        args[0] === "ls-tree"
-          ? result
-          : (() => {
-              throw new Error(`unexpected git arguments: ${args.join(" ")}`);
-            })();
     expect(() =>
       requireSingleBaseChecker(
-        checkerTreeResult({ status: 128, stderr: "unavailable", stdout: "" }),
+        checkerTreeRunner({ status: 128, stderr: "unavailable", stdout: "" }),
         BASE_SHA,
       ),
     ).toThrow("could not enumerate the trusted base createRequire budget checkers");
     expect(() =>
       requireSingleBaseChecker(
-        checkerTreeResult({ status: 0, stderr: "", stdout: "truncated" }),
+        checkerTreeRunner({ status: 0, stderr: "", stdout: "truncated" }),
         BASE_SHA,
       ),
     ).toThrow("trusted base checker tree contains an invalid Git entry");
@@ -582,7 +591,7 @@ describe("base-trusted createRequire ratchet", () => {
     ]) {
       expect(() =>
         requireSingleBaseChecker(
-          checkerTreeResult({ status: 0, stderr: "", stdout: entry }),
+          checkerTreeRunner({ status: 0, stderr: "", stdout: entry }),
           BASE_SHA,
         ),
       ).toThrow("trusted base createRequire budget checker must be a regular file");
@@ -591,18 +600,60 @@ describe("base-trusted createRequire ratchet", () => {
 
   it("allows a clean one-file checker extension migration (#7056)", () => {
     const root = temporaryRepo();
+    const repoRoot = path.join(root, "checkout");
+    const entrypoint = copyTrustedEntrypoint(path.join(root, "trusted-action"));
     const paths = ["src/lib/allowed.test.ts"];
-    writeFixture(root, "scripts/checks/test-create-require-budget.mts", allowlistSource(paths, []));
-    writeFixture(root, paths[0], "createRequire(import.meta.url);");
+    mkdirSync(repoRoot, { recursive: true });
+    runFixtureGit(repoRoot, ["init", "--initial-branch=main"]);
+    writeFixture(
+      repoRoot,
+      "scripts/checks/test-create-require-budget.ts",
+      allowlistSource(paths, []),
+    );
+    writeFixture(repoRoot, paths[0], "createRequire(import.meta.url);");
+    runFixtureGit(repoRoot, ["add", "."]);
+    runFixtureGit(repoRoot, [
+      "-c",
+      "user.name=NemoClaw Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "test: create checker migration base",
+    ]);
+    const baseRevision = runFixtureGit(repoRoot, ["rev-parse", "HEAD"]);
 
-    expect(
-      verifyTrustedCreateRequireRatchet(
-        ts,
-        root,
-        pullRequestEnvironment(root),
-        baseRunner({ ts: allowlistSource(paths, []) }, BASE_SHA, root),
-      ),
-    ).toBeNull();
+    rmSync(path.join(repoRoot, "scripts/checks/test-create-require-budget.ts"));
+    writeFixture(
+      repoRoot,
+      "scripts/checks/test-create-require-budget.mts",
+      allowlistSource(paths, []),
+    );
+    runFixtureGit(repoRoot, ["add", "--all"]);
+    runFixtureGit(repoRoot, [
+      "-c",
+      "user.name=NemoClaw Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "test: migrate checker extension",
+    ]);
+    const headRevision = runFixtureGit(repoRoot, ["rev-parse", "HEAD"]);
+
+    const result = runTrustedEntrypoint(
+      entrypoint,
+      repoRoot,
+      pullRequestEnvironment(repoRoot, baseRevision, headRevision),
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout, `stderr: ${result.stderr}`).toContain(
+      "Base-trusted createRequire allowlist ratchet passed.",
+    );
   });
 
   it("executes the committed Node entrypoint and rejects a static template expansion (#7056)", () => {
