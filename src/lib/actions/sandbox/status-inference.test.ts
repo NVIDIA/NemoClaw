@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { collectSandboxStatusSnapshot, getSandboxStatusInferenceHealth } from "./status";
+import {
+  collectSandboxStatusSnapshot,
+  getSandboxStatusInferenceHealth,
+  getSandboxStatusReport,
+} from "./status";
 
 describe("sandbox status inference.local route health (#6192)", () => {
   function snapshotDeps(options: {
@@ -86,6 +90,9 @@ describe("sandbox status inference.local route health (#6192)", () => {
       expect.objectContaining({ ok: true, probeLabel: "upstream" }),
     ]);
     expect(snapshot.servingProcessHealth).toEqual({ checked: false });
+
+    const report = await getSandboxStatusReport("alpha", deps);
+    expect(report.servingProcessHealth).toEqual({ checked: false });
   });
 
   it("does not invent serving-process health for terminal agents (#7003)", async () => {
@@ -103,6 +110,9 @@ describe("sandbox status inference.local route health (#6192)", () => {
 
     expect(snapshot.servingProcessHealth).toBeNull();
     expect(deps.probeTerminalRuntimeHealth).toHaveBeenCalledWith("alpha");
+
+    const report = await getSandboxStatusReport("alpha", deps);
+    expect(report.servingProcessHealth).toBeNull();
   });
 
   it.each([
