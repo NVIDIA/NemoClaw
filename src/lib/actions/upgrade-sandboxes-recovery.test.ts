@@ -227,6 +227,7 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expectedSequence,
   }) => {
     const sequence: string[] = [];
+    const warningMessages: string[] = [];
     const statePaths = ["/sandbox/.openclaw", "/sandbox/.hermes"];
     const harness = createRecoveryHarness(["openclaw-box", "hermes-box"], {
       manifestAgentTypes: { "openclaw-box": "openclaw", "hermes-box": "hermes" },
@@ -237,6 +238,7 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     });
     vi.mocked(console.log).mockImplementation((...args) => {
       const message = String(args[0]);
+      warningMessages.push(...[message].filter((entry) => entry.includes("⚠ Recovery restores")));
       sequence.push(
         ...statePaths
           .filter((candidate) =>
@@ -251,6 +253,14 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
 
     await expect(harness.upgradeSandboxes(options)).resolves.toBeUndefined();
 
+    expect(warningMessages).toHaveLength(statePaths.length);
+    expect(
+      warningMessages.map((message) =>
+        statePaths.filter((statePath) =>
+          message.includes(`Recovery restores ${JSON.stringify(statePath)} state only`),
+        ),
+      ),
+    ).toEqual(statePaths.map((statePath) => [statePath]));
     for (const statePath of statePaths) {
       expect(console.log).toHaveBeenCalledWith(
         expect.stringContaining(
