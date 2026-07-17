@@ -28,6 +28,7 @@ import {
   assertHermesInspectionRejectsUnmanagedFields,
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
+import { buildMcpBridgeOnboardEnv } from "./mcp-bridge-onboard-env.ts";
 import { retryAfterHermesRestartTransportFailure } from "./mcp-bridge-reliability.ts";
 import {
   buildMcpDnsRebindingProbeScript,
@@ -117,7 +118,12 @@ async function onboardAgent(
   host: HostCliClient,
   cleanup: CleanupRegistry,
   endpointUrl: string,
-  options: { agent: McpAgent; sandboxName: string; artifactName: string },
+  options: {
+    agent: McpAgent;
+    sandboxName: string;
+    artifactName: string;
+    envOverlay?: NodeJS.ProcessEnv;
+  },
 ): Promise<void> {
   cleanup.trackSandbox(host, options.sandboxName, {
     artifactName: "cleanup-destroy-sandbox",
@@ -131,19 +137,14 @@ async function onboardAgent(
     ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
     {
       artifactName: options.artifactName,
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        COMPATIBLE_API_KEY: COMPATIBLE_KEY,
-        NVIDIA_INFERENCE_API_KEY: COMPATIBLE_KEY,
-        NEMOCLAW_AGENT: options.agent,
-        NEMOCLAW_ENDPOINT_URL: endpointUrl,
-        NEMOCLAW_MODEL: COMPATIBLE_MODEL,
-        NEMOCLAW_COMPAT_MODEL: COMPATIBLE_MODEL,
-        NEMOCLAW_PREFERRED_API: "openai-completions",
-        NEMOCLAW_PROVIDER: "custom",
-        NEMOCLAW_SANDBOX_NAME: options.sandboxName,
-        NEMOCLAW_RECREATE_SANDBOX: "1",
-      },
+      env: buildMcpBridgeOnboardEnv({
+        agent: options.agent,
+        compatibleKey: COMPATIBLE_KEY,
+        compatibleModel: COMPATIBLE_MODEL,
+        endpointUrl,
+        envOverlay: options.envOverlay,
+        sandboxName: options.sandboxName,
+      }),
       redactionValues: [COMPATIBLE_KEY],
       timeoutMs: 20 * 60_000,
     },
@@ -1374,6 +1375,7 @@ mcpBridgeShardTest("deepagents")(
       agent: "langchain-deepagents-code",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       artifactName: "onboard-deepagents-mcp-bridge",
+      envOverlay: exactMainProof.envOverlay,
     });
     await exactMainProof.afterOnboard();
     cleanup.add("remove Deep Agents MCP bridge", () =>
