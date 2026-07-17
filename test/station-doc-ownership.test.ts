@@ -27,13 +27,20 @@ describe("DGX Station documentation ownership", () => {
       return value as string;
     });
 
-    for (const version of pinnedValues) expect(prerequisites).toContain(version);
+    for (const version of pinnedValues) {
+      expect(prerequisites).toContain(version);
+      expect(quickstart).not.toContain(version);
+    }
+    for (const version of ["7.2.0", "7.4.0", "7.5.0"]) {
+      expect(prerequisites).toContain(version);
+      expect(quickstart).toContain(version);
+    }
+    expect(prerequisites).toContain("DGX Server for GALAXY-GB300");
+    expect(quickstart).toContain("DGX Server for GALAXY-GB300");
     expect(prerequisites).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-    expect(prerequisites).toMatch(
-      /physical (?:DGX Station )?hardware|physical end-to-end validation/,
-    );
+    expect(prerequisites).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
     expect(quickstart).toContain("prerequisites#dgx-station-express-preparation");
     expect(quickstart).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-    expect(quickstart).toMatch(/physical (?:DGX Station )?hardware|physical end-to-end validation/);
+    expect(quickstart).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
   });
 });

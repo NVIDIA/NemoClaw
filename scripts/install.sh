@@ -2988,8 +2988,20 @@ is_wsl_host() {
 # and Windows WSL from the host environment. Echoes "DGX Spark",
 # "DGX Station", "Windows WSL", or empty. Used to gate the express install
 # prompt; only platforms with a known sensible default are offered.
+is_station_gb300_product() {
+  local product=${1:-}
+  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
+    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
+}
+
+classify_dgx_station_release() {
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
+  bash "$helper" --classify-dgx-release
+}
+
 detect_express_platform() {
-  local model=""
+  local model="" release_state=""
   if is_wsl_host; then
     printf "Windows WSL"
     return
@@ -3001,14 +3013,20 @@ detect_express_platform() {
     model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
   fi
   case "$model" in
-    *DGX*Spark*) printf "DGX Spark" ;;
-    *Station*GB300*)
-      if [ -e /etc/dgx-release ] || [ -L /etc/dgx-release ]; then
-        printf "Unsupported DGX Station OS"
-      else
-        printf "DGX Station"
-      fi
+    *DGX*Spark*)
+      printf "DGX Spark"
+      return
       ;;
+  esac
+  if is_station_gb300_product "$model"; then
+    release_state="$(classify_dgx_station_release)"
+    case "$release_state" in
+      generic-ubuntu | supported-dgx-os) printf "DGX Station" ;;
+      *) printf "Unsupported DGX Station OS" ;;
+    esac
+    return
+  fi
+  case "$model" in
     *DGX*Station*) printf "Unsupported DGX Station generation" ;;
     *) ;;
   esac
@@ -3018,7 +3036,7 @@ validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "DGX OS/BaseOS is outside the validated Station express boundary. Use the generic Ubuntu 24.04 ARM64 image."
+      error "This DGX Station OS image is outside the validated Station express boundary. Use generic Ubuntu 24.04 ARM64 or stock DGX OS 7.2.0, 7.4.0, or 7.5.0 on Station GB300."
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
@@ -3372,7 +3390,11 @@ run_station_host_preparation() {
 ensure_station_express_host() {
   [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
 
-  info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
+  if [[ "$(classify_dgx_station_release)" == "supported-dgx-os" ]]; then
+    info "Validating stock DGX OS GPU device visibility and the local container runtime contract. Host packages and runtime configuration will not be changed."
+  else
+    info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
+  fi
   local status=0
   run_station_host_preparation || status=$?
   case "$status" in
@@ -3397,6 +3419,13 @@ ensure_station_express_host() {
 
 prepare_installer_host() {
   maybe_offer_express_install
+  if [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
+    # Station qualification is deliberately scoped to the local factory
+    # runtime. Normalize the Docker target before any preparation probe so an
+    # ambient remote context can neither satisfy nor be changed by this path.
+    unset DOCKER_HOST
+    export DOCKER_CONTEXT=default
+  fi
   # Intentional ordering: Station preparation owns the reboot boundary before
   # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
   ensure_station_express_host
@@ -3437,9 +3466,13 @@ describe_express_install() {
         inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B"
         inference_disclosure="Managed vLLM pulls the pinned Station image and approximately 352 GB model, then runs a local inference container."
       fi
-      printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
+      if [[ "$(classify_dgx_station_release)" == "supported-dgx-os" ]]; then
+        printf "  Stock DGX OS setup reuses the factory driver and container stack after local GPU device-visibility, CDI, Docker, and Buildx validation. It does not install or replace host packages or rewrite the Docker runtime.\n"
+      else
+        printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
+      fi
       printf "  Host setup may add this trusted local account to the docker group, which grants root-equivalent control. This flow is only for trusted single-user development hosts; shared or managed hosts require an organization-approved Docker access path.\n"
-      printf "  DGX Station remains Deferred; this recipe has not completed end-to-end validation on physical hardware.\n"
+      printf "  DGX Station remains Deferred; one DGX OS 7.5 GB300 physical validation passed, with repeat clean-host qualification and CI coverage still pending.\n"
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")

@@ -474,6 +474,8 @@ describe("Station Express onboarding session state (#7048)", () => {
     );
     const { runOnboardMachine } = await import("../onboard/machine/runner");
     const { OnboardRuntime } = await import("../onboard/machine/runtime");
+    const { completeOnboardMachine } = await import("../onboard/machine/result");
+    const { addOnboardMachineEventListener } = await import("../onboard/machine/events");
     const { registerIncompleteOnboardExitHandlerForSession } = await import(
       "../onboard/onboard-exit-handler"
     );
@@ -648,7 +650,25 @@ describe("Station Express onboarding session state (#7048)", () => {
     });
     expect(fs.existsSync(receipt)).toBe(true);
 
-    await resumedRuntime.completeSession();
+    await resumedRuntime.transition("agent_setup");
+    await resumedRuntime.transition("policies");
+    await resumedRuntime.transition("finalizing");
+    await resumedRuntime.transition("post_verify");
+    const completionEvents: string[] = [];
+    const removeCompletionListener = addOnboardMachineEventListener((event) =>
+      completionEvents.push(event.type),
+    );
+    try {
+      await resumedRuntime.applyResult(
+        completeOnboardMachine({
+          sandboxName: "my-assistant",
+          provider: "vllm-local",
+          model: "nemotron-ultra",
+        }),
+      );
+    } finally {
+      removeCompletionListener();
+    }
 
     expect(requireLoadedSession(session.loadSession())).toMatchObject({
       status: "complete",
@@ -657,6 +677,12 @@ describe("Station Express onboarding session state (#7048)", () => {
       stationExpressReceiptRetirement: null,
     });
     expect(fs.existsSync(receipt)).toBe(false);
+    expect(completionEvents).toEqual([
+      "context.updated",
+      "state.completed",
+      "state.entered",
+      "onboard.completed",
+    ]);
   });
 
   it("atomically binds a route-validated arbitrary alias when provider selection completes", () => {
