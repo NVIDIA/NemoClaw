@@ -164,23 +164,19 @@ function hfDownloadCacheMount(): string {
   return `${hostHfCacheDir()}:${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`;
 }
 
+function hfModelCacheKey(model: VllmModelDef): string | null {
+  const modelParts = model.id.split("/");
+  if (modelParts.some((part) => !HF_CACHE_COMPONENT_PATTERN.test(part))) return null;
+  return `models--${modelParts.join("--")}`;
+}
+
 function hfModelSnapshotDir(model: VllmModelDef): string | null {
   const revision = model.revision;
-  const modelParts = model.id.split("/");
-  if (
-    !revision ||
-    !HF_CACHE_COMPONENT_PATTERN.test(revision) ||
-    modelParts.some((part) => !HF_CACHE_COMPONENT_PATTERN.test(part))
-  ) {
+  const modelCacheKey = hfModelCacheKey(model);
+  if (!revision || !modelCacheKey || !HF_CACHE_COMPONENT_PATTERN.test(revision)) {
     return null;
   }
-  return path.join(
-    hostHfCacheDir(),
-    "hub",
-    `models--${modelParts.join("--")}`,
-    "snapshots",
-    revision,
-  );
+  return path.join(hostHfCacheDir(), "hub", modelCacheKey, "snapshots", revision);
 }
 
 function hostUserIdentity(): string | null {
@@ -850,7 +846,8 @@ function managedStorageRequirements({
     requirements.push({
       label: "Model cache storage",
       probe: modelProbe,
-      requiredBytes: estimate.modelBytes + estimate.writableAllowanceBytes,
+      requiredBytes:
+        estimate.modelBytes + estimate.modelStagingBytes + estimate.writableAllowanceBytes,
     });
   }
   return requirements;
@@ -951,6 +948,7 @@ function printManagedStorageWarning({
   }
   console.error(`  Model:     ${model.id}`);
   console.error(`  Model files:       ${formatStorageDecimalBytes(estimate.modelBytes)}`);
+  console.error(`  Model staging:     ${formatStorageDecimalBytes(estimate.modelStagingBytes)}`);
   console.error(
     `  Writable allowance: ${formatStorageDecimalBytes(estimate.writableAllowanceBytes)}`,
   );
@@ -1082,7 +1080,7 @@ async function managedStorageAccepted(
   );
 }
 
-function ensureHfCacheDir(): { ok: true } | { ok: false; reason: string } {
+function ensureHfCacheDir(model: VllmModelDef): { ok: true } | { ok: false; reason: string } {
   const cacheDir = hostHfCacheDir();
   try {
     fs.mkdirSync(cacheDir, { recursive: true });
@@ -1092,15 +1090,36 @@ function ensureHfCacheDir(): { ok: true } | { ok: false; reason: string } {
       reason: `could not create Hugging Face cache directory ${cacheDir}: ${(err as Error).message}`,
     };
   }
-  const unwritablePath = findUnwritableTreePath(cacheDir);
-  if (unwritablePath) {
+
+  const hubDir = path.join(cacheDir, "hub");
+  const lockDir = path.join(hubDir, ".locks");
+  const modelCacheKey = hfModelCacheKey(model);
+  // Required ancestors must be writable, but traversing them would let an
+  // unrelated model or dataset block this selected model's download.
+  const targets = [
+    { path: cacheDir, recursive: false },
+    { path: hubDir, recursive: false },
+    { path: lockDir, recursive: false },
+    ...(modelCacheKey
+      ? [
+          { path: path.join(hubDir, modelCacheKey), recursive: true },
+          { path: path.join(lockDir, modelCacheKey), recursive: true },
+        ]
+      : []),
+  ];
+  for (const target of targets) {
+    if (target.path !== cacheDir && !fs.existsSync(target.path)) continue;
+    const unwritablePath = findUnwritableTreePath(target.path, {}, { recursive: target.recursive });
+    if (!unwritablePath) continue;
     const identity = hostUserIdentity() ?? "$(id -u):$(id -g)";
+    const repairPath = target.recursive ? target.path : unwritablePath;
+    const recursiveFlag = target.recursive ? " -R" : "";
     return {
       ok: false,
       reason:
         `Hugging Face cache path ${unwritablePath} is not writable by host user ${identity}. ` +
         "It may have been created by an earlier root-run downloader; NemoClaw did not modify it. " +
-        `Repair ownership, then retry: sudo chown -R ${identity} ${shellQuote(cacheDir)}`,
+        `Repair ownership, then retry: sudo chown${recursiveFlag} ${identity} ${shellQuote(repairPath)}`,
     };
   }
   return { ok: true };
@@ -1228,7 +1247,7 @@ export async function installVllm(
     return { ok: false };
   }
 
-  const cacheDir = ensureHfCacheDir();
+  const cacheDir = ensureHfCacheDir(model);
   if (!cacheDir.ok) {
     console.error(`  vLLM install failed: ${cacheDir.reason}`);
     return { ok: false };

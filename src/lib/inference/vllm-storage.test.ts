@@ -71,7 +71,7 @@ describe("managed vLLM image-storage requirements", () => {
     expect(formatStorageDecimalBytes(816_000_000n)).toBe("0.816 GB");
   });
 
-  it("adds image, model, and writable bytes for a cold managed-vLLM estimate (#6858)", () => {
+  it("adds image, model, staging, and writable bytes for a cold managed-vLLM estimate (#6858)", () => {
     expect(
       managedVllmStorageEstimateBytes({
         imageCompressedBytes: 9_603_085_145,
@@ -80,7 +80,7 @@ describe("managed vLLM image-storage requirements", () => {
         modelBytes: 352_381_000_000,
         writableAllowanceBytes: 816_000_000,
       }).totalBytes,
-    ).toBe(390_458_611_865n);
+    ).toBe(393_679_837_337n);
   });
 });
 
@@ -126,6 +126,21 @@ describe("host cache-storage detection", () => {
         list: () => [],
       }),
     ).toBeNull();
+  });
+
+  it("checks a required cache ancestor without traversing unrelated entries", () => {
+    const list = vi.fn(() => [{ kind: "file" as const, name: "unrelated-read-only-entry" }]);
+    expect(
+      findUnwritableTreePath(
+        "/cache/hub",
+        {
+          canWrite: (target) => target !== "/cache/hub/unrelated-read-only-entry",
+          list,
+        },
+        { recursive: false },
+      ),
+    ).toBeNull();
+    expect(list).not.toHaveBeenCalled();
   });
 
   it("counts complete and partial snapshot files without following directory symlinks", () => {

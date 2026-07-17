@@ -71,6 +71,7 @@ import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
 beforeEach(() => {
   mocks.dockerImageInspectFormat.mockReturnValue("");
   mocks.findUnwritableTreePath.mockReturnValue(null);
+  mocks.getGpuIndicesByName.mockReturnValue([]);
   mocks.measureDirectorySizeBytes.mockReturnValue(0n);
   mocks.probeDockerStorage.mockReturnValue({
     ok: true,
@@ -888,7 +889,10 @@ describe("installVllm model resolution", () => {
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
     const cacheDir = path.join(os.homedir(), ".cache", "huggingface");
     const rootOwnedPath = path.join(cacheDir, "hub", ".locks");
-    mocks.findUnwritableTreePath.mockReturnValue(rootOwnedPath);
+    vi.spyOn(fs, "existsSync").mockImplementation((target) => String(target) === rootOwnedPath);
+    mocks.findUnwritableTreePath.mockImplementation((target) =>
+      target === rootOwnedPath ? rootOwnedPath : null,
+    );
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -897,7 +901,12 @@ describe("installVllm model resolution", () => {
     });
 
     expect(result).toEqual({ ok: false });
-    expect(mocks.findUnwritableTreePath).toHaveBeenCalledWith(cacheDir);
+    expect(mocks.findUnwritableTreePath).toHaveBeenCalledWith(cacheDir, {}, { recursive: false });
+    expect(mocks.findUnwritableTreePath).toHaveBeenCalledWith(
+      rootOwnedPath,
+      {},
+      { recursive: false },
+    );
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
     expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
@@ -905,9 +914,44 @@ describe("installVllm model resolution", () => {
     expect(errors).toContain(rootOwnedPath);
     expect(errors).toContain("not writable by host user");
     expect(errors).toContain("NemoClaw did not modify it");
-    expect(errors).toContain("sudo chown -R");
-    expect(errors).toContain(`'${cacheDir}'`);
+    expect(errors).toContain("sudo chown");
+    expect(errors).not.toContain("sudo chown -R");
+    expect(errors).toContain(`'${rootOwnedPath}'`);
     expect(errors).toContain(currentHostIdentity() ?? "$(id -u):$(id -g)");
+  });
+
+  it("checks only the selected model namespace and required cache ancestors (#6858)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+    const cacheDir = path.join(os.homedir(), ".cache", "huggingface");
+    const hubDir = path.join(cacheDir, "hub");
+    const lockDir = path.join(hubDir, ".locks");
+    const modelKey = `models--${profile.defaultModel.id.split("/").join("--")}`;
+    const modelDir = path.join(hubDir, modelKey);
+    const modelLockDir = path.join(lockDir, modelKey);
+    const unrelatedModelDir = path.join(hubDir, "models--unrelated--model");
+    const existing = new Set([hubDir, lockDir, modelDir, modelLockDir, unrelatedModelDir]);
+    vi.spyOn(fs, "existsSync").mockImplementation((target) => existing.has(String(target)));
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: true });
+    for (const target of [cacheDir, hubDir, lockDir]) {
+      expect(mocks.findUnwritableTreePath).toHaveBeenCalledWith(target, {}, { recursive: false });
+    }
+    for (const target of [modelDir, modelLockDir]) {
+      expect(mocks.findUnwritableTreePath).toHaveBeenCalledWith(target, {}, { recursive: true });
+    }
+    expect(mocks.findUnwritableTreePath).not.toHaveBeenCalledWith(
+      unrelatedModelDir,
+      expect.anything(),
+      expect.anything(),
+    );
   });
 
   it("limits the Hugging Face token to the one-shot download container", async () => {

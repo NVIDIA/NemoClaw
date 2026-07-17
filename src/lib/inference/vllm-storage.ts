@@ -119,6 +119,7 @@ export interface ManagedVllmStorageEstimate {
   imageCompressedBytes: bigint;
   imageUnpackedBytes: bigint;
   modelBytes: bigint;
+  modelStagingBytes: bigint;
   totalBytes: bigint;
   writableAllowanceBytes: bigint;
 }
@@ -145,6 +146,7 @@ export function managedVllmStorageEstimateBytes({
     ? positiveBytes(imageUnpackedBytes, "vLLM image unpacked size")
     : 0n;
   const model = includeModel ? positiveBytes(modelBytes, "vLLM model file size") : 0n;
+  const modelStaging = includeModel ? modelStorageRequirementBytes(modelBytes) - model : 0n;
   const writable = includeModel
     ? positiveBytes(writableAllowanceBytes, "vLLM writable allowance")
     : 0n;
@@ -152,7 +154,8 @@ export function managedVllmStorageEstimateBytes({
     imageCompressedBytes: imageCompressed,
     imageUnpackedBytes: imageUnpacked,
     modelBytes: model,
-    totalBytes: imageCompressed + imageUnpacked + model + writable,
+    modelStagingBytes: modelStaging,
+    totalBytes: imageCompressed + imageUnpacked + model + modelStaging + writable,
     writableAllowanceBytes: writable,
   };
 }
@@ -406,12 +409,15 @@ function defaultWritableTreeDeps(): WritableTreeDeps {
 export function findUnwritableTreePath(
   targetPath: string,
   overrides: Partial<WritableTreeDeps> = {},
+  options: { recursive?: boolean } = {},
 ): string | null {
   const deps = { ...defaultWritableTreeDeps(), ...overrides };
+  const recursive = options.recursive ?? true;
   const pending = [targetPath];
   while (pending.length > 0) {
     const directory = pending.pop()!;
     if (!deps.canWrite(directory, true)) return directory;
+    if (!recursive) continue;
     let entries: DirectorySizeEntry[];
     try {
       entries = deps.list(directory);

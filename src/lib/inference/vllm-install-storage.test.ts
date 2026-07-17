@@ -181,14 +181,17 @@ describe("managed vLLM install storage", () => {
       },
     });
     const replies = ["y", storageReply];
+    const promptFn = vi.fn(async () => replies.shift() ?? "");
 
     const result = await installVllm(profile, {
       hasImage: false,
       nonInteractive: false,
-      promptFn: vi.fn(async () => replies.shift() ?? ""),
+      promptFn,
     });
 
     expect(result).toEqual({ ok: false });
+    expect(promptFn).toHaveBeenCalledTimes(2);
+    expect(promptFn).toHaveBeenLastCalledWith("  Continue with the download anyway? [y/N]: ");
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
     const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
@@ -197,7 +200,7 @@ describe("managed vLLM install storage", () => {
     expect(errors).toContain(profile.defaultModel.id);
     expect(errors).toContain("Available:");
     expect(errors).toContain("Required:");
-    expect(errors).toContain("390.459 GB");
+    expect(errors).toContain("393.68 GB");
     expect(errors).toContain("docker system df");
   });
 
@@ -275,6 +278,41 @@ describe("managed vLLM install storage", () => {
     expect(promptFn).toHaveBeenLastCalledWith("  Continue with the download anyway? [y/N]: ");
     expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(pulls);
     expect(mocks.dockerSpawn).toHaveBeenCalledTimes(downloads);
+  });
+
+  it("includes model download staging in the enforced cache requirement (#6858)", async () => {
+    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+    mocks.probeHostStorage.mockReturnValue({
+      ok: true,
+      capacity: {
+        // This exceeds the model files plus writable allowance, but not the
+        // additional 3 GiB required while the download is staged.
+        availableBytes: 354_000_000_000n,
+        filesystemId: "model-fs",
+        path: path.join(os.homedir(), ".cache", "huggingface"),
+        source: "Hugging Face cache",
+      },
+    });
+    const replies = ["y", ""];
+    const promptFn = vi.fn(async () => replies.shift() ?? "");
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: false,
+      promptFn,
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(promptFn).toHaveBeenCalledTimes(2);
+    expect(promptFn).toHaveBeenLastCalledWith("  Continue with the download anyway? [y/N]: ");
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
+    expect(errors).toContain("Model staging:     3.221 GB");
+    expect(errors).toContain("approximately 356.418 GB");
   });
 
   it("fails closed before downloads when non-interactive model-cache capacity is inconclusive", async () => {
@@ -423,9 +461,9 @@ describe("managed vLLM install storage", () => {
     mocks.probeHostStorage.mockReturnValue({
       ok: true,
       capacity: {
-        // 10 GB remains, plus the writable allowance. This is
-        // enough for the remainder but intentionally far below 352 GB.
-        availableBytes: 14_000_000_000n,
+        // This covers the 10 GB remainder, download staging, and writable
+        // allowance while remaining intentionally far below 352 GB.
+        availableBytes: 15_000_000_000n,
         filesystemId: "model-fs",
         path: path.join(os.homedir(), ".cache", "huggingface"),
         source: "Hugging Face cache",
@@ -486,14 +524,20 @@ describe("managed vLLM install storage", () => {
       },
     });
     const replies = ["y", "y"];
+    const promptFn = vi.fn(async () => replies.shift() ?? "");
 
     const result = await installVllm(profile, {
       hasImage: false,
       nonInteractive: false,
-      promptFn: vi.fn(async () => replies.shift() ?? ""),
+      promptFn,
     });
 
     expect(result).toEqual({ ok: true });
+    expect(promptFn).toHaveBeenCalledTimes(2);
+    expect(promptFn).toHaveBeenLastCalledWith("  Continue with the download anyway? [y/N]: ");
+    expect(mocks.dockerPullWithProgressWatchdog.mock.invocationCallOrder[0]).toBeGreaterThan(
+      promptFn.mock.invocationCallOrder[1]!,
+    );
     expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
     expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
   });
@@ -514,7 +558,7 @@ describe("managed vLLM install storage", () => {
     mocks.probeHostStorage.mockReturnValue({
       ok: true,
       capacity: {
-        availableBytes: 354_000_000_000n,
+        availableBytes: 357_000_000_000n,
         filesystemId: "model-fs",
         path: "/models-enough-for-model",
         source: "model cache",
@@ -574,7 +618,7 @@ describe("managed vLLM install storage", () => {
     const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
     expect(errors).toContain("Insufficient storage for managed vLLM cold install");
     expect(errors).toContain("Docker image storage + Model cache storage");
-    expect(errors).toContain("390.459 GB");
+    expect(errors).toContain("393.68 GB");
   });
 
   it("conservatively aggregates storage when filesystem identity is unavailable (#6858)", async () => {
@@ -613,7 +657,7 @@ describe("managed vLLM install storage", () => {
     const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
     expect(errors).toContain("Insufficient storage for managed vLLM cold install");
     expect(errors).toContain("Docker image storage + Model cache storage");
-    expect(errors).toContain("390.459 GB");
+    expect(errors).toContain("393.68 GB");
   });
 
   it("does not let an unknown probe mask verified low model-cache capacity (#6858)", async () => {
@@ -656,11 +700,9 @@ describe("managed vLLM install storage", () => {
     const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
     process.env.NEMOCLAW_VLLM_MODEL = profile.defaultModel.envValue;
     mockSuccessfulVllmInstall(profile.containerName);
-    const fallbackImageRequirement = BigInt(profile.imageDownloadSizeBytes) * 3n + 3n * 1024n ** 3n;
-    const modelRequirement = BigInt(profile.defaultModel.downloadSizeBytes) + 816_000_000n;
-    const sharedAvailableBytes = fallbackImageRequirement + modelRequirement - 1_000_000_000n;
-    expect(sharedAvailableBytes).toBeGreaterThan(fallbackImageRequirement);
-    expect(sharedAvailableBytes).toBeGreaterThan(modelRequirement);
+    // This fixed capacity is larger than either destination's requirement on
+    // supported architectures, but smaller than their aggregate requirement.
+    const sharedAvailableBytes = 35_000_000_000n;
     mocks.probeDockerStorage.mockReturnValue({
       ok: true,
       capacity: {
