@@ -21,18 +21,19 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
+const promptAssetRevision = "e2dffc192a6f8a05b1a2f3afb142d39864a0a688";
 const promptAssets = {
   dgxSpark: {
     path: "docs/resources/prompt-assets/dgx-spark.md",
-    url: "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/prompt-assets/dgx-spark.md",
+    url: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${promptAssetRevision}/docs/resources/prompt-assets/dgx-spark.md`,
   },
   dgxStation: {
     path: "docs/resources/prompt-assets/dgx-station.md",
-    url: "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/prompt-assets/dgx-station.md",
+    url: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${promptAssetRevision}/docs/resources/prompt-assets/dgx-station.md`,
   },
   windowsWsl: {
     path: "docs/resources/prompt-assets/windows-wsl.md",
-    url: "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/prompt-assets/windows-wsl.md",
+    url: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${promptAssetRevision}/docs/resources/prompt-assets/windows-wsl.md`,
   },
 } as const;
 const localCredentialFormSource = path.join(
@@ -631,8 +632,15 @@ describe("starter prompt docs CTA", () => {
     const stationSource = readPromptAsset(promptAssets.dgxStation);
     const windowsSource = readPromptAsset(promptAssets.windowsWsl);
 
+    expect(promptAssetRevision).toMatch(/^[0-9a-f]{40}$/);
     for (const asset of Object.values(promptAssets)) {
       expect(promptSource).toContain(asset.url);
+      const assetUrl = new URL(asset.url);
+      expect(assetUrl.origin).toBe("https://raw.githubusercontent.com");
+      expect(assetUrl.pathname).toMatch(
+        /^\/NVIDIA\/NemoClaw\/[0-9a-f]{40}\/docs\/resources\/prompt-assets\/[^/]+\.md$/,
+      );
+      expect(assetUrl.pathname).toContain(`/${promptAssetRevision}/`);
     }
 
     expect(promptSource).toContain("load exactly one matching instruction asset");
