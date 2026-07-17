@@ -22,6 +22,7 @@ import {
   resolveReportPr,
 } from "../../../tools/e2e/report-e2e-results.mts";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { requireFixture } from "./require-fixture";
 
 function readWorkflow(): Record<string, unknown> {
@@ -39,6 +40,96 @@ function generateMatrixScript(): string {
   );
   expect(step?.run).toEqual(expect.any(String));
   return String(step!.run);
+}
+
+function trustedControllerMatrixScript(): string {
+  const workflow = readWorkflow() as {
+    jobs: Record<string, { steps: Array<{ id?: string; run?: string }> }>;
+  };
+  const step = workflow.jobs["generate-matrix"].steps.find(
+    (candidate) => candidate.id === "controller_matrix",
+  );
+  expect(step?.run).toEqual(expect.any(String));
+  return String(step!.run);
+}
+
+function executeTrustedControllerMatrix(targets: string) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-controller-matrix-"));
+  const outputPath = path.join(directory, "github-output");
+  try {
+    const result = spawnSync("bash", ["-c", trustedControllerMatrixScript()], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: outputPath,
+        TARGETS: targets,
+      },
+      timeout: 30_000,
+    });
+    return {
+      result,
+      workflowOutput: fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "",
+    };
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+}
+
+function executeGenerateMatrixWithPlannerOutput(
+  plan: unknown,
+  options: {
+    checkoutSha?: string;
+    controllerMatrix?: string;
+    jobs?: string;
+    targets?: string;
+  } = {},
+) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-planner-schema-"));
+  const binDirectory = path.join(directory, "bin");
+  const fakeNpx = path.join(binDirectory, "npx");
+  const outputPath = path.join(directory, "github-output");
+  fs.mkdirSync(binDirectory);
+  fs.writeFileSync(
+    fakeNpx,
+    [
+      "#!/usr/bin/env bash",
+      "expected=(tsx tools/e2e/workflow-plan.mts --ci-output)",
+      'actual=("$@")',
+      '[[ "${#actual[@]}" -eq "${#expected[@]}" ]] || exit 97',
+      'for index in "${!expected[@]}"; do [[ "${actual[$index]}" == "${expected[$index]}" ]] || exit 97; done',
+      'printf "matrix=%s\\n" "$(jq -c .matrix <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
+      'printf "test_matrix=%s\\n" "$(jq -c .testMatrix <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
+      'printf "hermes_selected=%s\\n" "$(jq -r .hermesSelected <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
+      'printf "explicit_only_jobs=%s\\n" "$(jq -r ".explicitOnlyJobs | join(\\\",\\\")" <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  try {
+    return {
+      result: spawnSync("bash", ["-c", generateMatrixScript()], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CHECKOUT_SHA: options.checkoutSha ?? "",
+          CONTROLLER_MATRIX: options.controllerMatrix ?? "",
+          FAKE_E2E_PLAN: JSON.stringify(plan),
+          GITHUB_OUTPUT: outputPath,
+          GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
+          INFERENCE_MODE: "mock",
+          JOBS: options.jobs ?? "cloud-onboard",
+          PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
+          TARGETS: options.targets ?? "",
+        },
+        timeout: 30_000,
+      }),
+      workflowOutput: fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "",
+    };
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
 }
 
 const DEFAULT_TEST_MATRIX: CredentialFreeTestMatrixRow[] = [
@@ -739,6 +830,7 @@ it("carries the generated planner matrix through the workflow output and PR repo
       encoding: "utf8",
       env: {
         ...process.env,
+        CHECKOUT_SHA: "",
         GITHUB_OUTPUT: outputPath,
         GITHUB_STEP_SUMMARY: summaryPath,
         INFERENCE_MODE: "mock",
@@ -774,6 +866,75 @@ it("carries the generated planner matrix through the workflow output and PR repo
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
+});
+
+it("builds controller target matrices only from trusted runner mappings (#7031)", () => {
+  const target = "ubuntu-repo-cloud-langchain-deepagents-code";
+
+  const empty = executeTrustedControllerMatrix("");
+  expect(empty.result.status, empty.result.stderr || empty.result.stdout).toBe(0);
+  expect(empty.workflowOutput).toBe("matrix=[]\n");
+
+  const approved = executeTrustedControllerMatrix(target);
+  expect(approved.result.status, approved.result.stderr || approved.result.stdout).toBe(0);
+  expect(parseSimpleOutput(approved.workflowOutput).matrix).toBe(
+    JSON.stringify([{ id: target, runner: "ubuntu-latest", label: target }]),
+  );
+
+  const rejected = executeTrustedControllerMatrix("untrusted-target");
+  expect(rejected.result.status).toBe(1);
+  expect(rejected.result.stderr).toContain(
+    "::error::PR E2E target is not approved by the trusted controller",
+  );
+  expect(rejected.workflowOutput).toBe("");
+});
+
+it("binds controller matrix IDs and runners to the trusted target selector (#7031)", () => {
+  const target = "ubuntu-repo-cloud-langchain-deepagents-code";
+  const validPlan = buildE2eWorkflowPlan({ jobs: "cloud-onboard", targets: target });
+  const trustedControllerMatrix = JSON.stringify([
+    { id: target, runner: "ubuntu-latest", label: target },
+  ]);
+  const options = {
+    checkoutSha: "a".repeat(40),
+    controllerMatrix: trustedControllerMatrix,
+    jobs: "cloud-onboard",
+    targets: target,
+  };
+
+  const matching = executeGenerateMatrixWithPlannerOutput(validPlan, options);
+  expect(matching.result.status, matching.result.stderr || matching.result.stdout).toBe(0);
+
+  const injectedWithoutSelection = executeGenerateMatrixWithPlannerOutput(validPlan, {
+    ...options,
+    controllerMatrix: "[]",
+    targets: "",
+  });
+  expect(injectedWithoutSelection.result.status).toBe(1);
+  expect(injectedWithoutSelection.result.stderr).toContain(
+    "::error::E2E planner matrix does not match controller-selected targets",
+  );
+
+  const mismatchedPlan = {
+    ...validPlan,
+    matrix: validPlan.matrix.map((row) => ({ ...row, id: "ubuntu-repo-cloud-openclaw" })),
+  };
+  const mismatched = executeGenerateMatrixWithPlannerOutput(mismatchedPlan, options);
+  expect(mismatched.result.status).toBe(1);
+  expect(mismatched.result.stderr).toContain(
+    "::error::E2E planner matrix does not match controller-selected targets",
+  );
+
+  const runnerInjectedPlan = {
+    ...validPlan,
+    matrix: validPlan.matrix.map((row) => ({ ...row, runner: "self-hosted" })),
+  };
+  const runnerInjected = executeGenerateMatrixWithPlannerOutput(runnerInjectedPlan, options);
+  expect(runnerInjected.result.status).toBe(1);
+  expect(runnerInjected.result.stderr).toContain(
+    "::error::E2E planner matrix does not match controller-selected targets",
+  );
+  expect(runnerInjected.workflowOutput).toBe("");
 });
 
 it("requires the report-to-pr job to check out the trusted workflow revision", () => {

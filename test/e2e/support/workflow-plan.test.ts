@@ -89,10 +89,13 @@ describe("E2E workflow plan", () => {
     expect(() => buildE2eWorkflowPlan({ [kind]: value })).toThrow(`Invalid ${kind} input`);
   });
 
-  it("rejects simultaneous jobs and targets", () => {
-    expect(() => buildE2eWorkflowPlan({ jobs: "hermes-e2e", targets: "hermes-e2e" })).toThrow(
-      "Use either jobs or targets, not both",
-    );
+  it("combines free-standing jobs and typed targets in one execution plan", () => {
+    const registryId = firstId(buildLiveTargetMatrix(), "supported registry target");
+    const plan = buildE2eWorkflowPlan({ jobs: "hermes-e2e", targets: registryId });
+
+    expect(plan.matrix.map((row) => row.id)).toEqual([registryId]);
+    expect(plan.testMatrix).toEqual([]);
+    expect(plan.hermesSelected).toBe(true);
   });
 
   it("fails closed on malformed planner output", () => {
@@ -154,35 +157,21 @@ describe("E2E workflow plan", () => {
 
   it("rejects an unsupported inference mode before writing CI output", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
     try {
       expect(() =>
         writeE2eWorkflowPlanCiOutput(
           {},
           {
-            GITHUB_OUTPUT: path.join(directory, "github-output"),
-            GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
+            GITHUB_OUTPUT: output,
+            GITHUB_STEP_SUMMARY: summary,
             INFERENCE_MODE: "unsupported",
           },
         ),
       ).toThrow("Invalid inference_mode: unsupported");
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
-  });
-
-  it("fails closed when CI output receives both selector families", () => {
-    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-"));
-    try {
-      expect(() =>
-        writeE2eWorkflowPlanCiOutput(
-          { jobs: "hermes-e2e", targets: "hermes-e2e" },
-          {
-            GITHUB_OUTPUT: path.join(directory, "github-output"),
-            GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
-            INFERENCE_MODE: "mock",
-          },
-        ),
-      ).toThrow("Use either jobs or targets, not both");
+      expect(existsSync(output)).toBe(false);
+      expect(existsSync(summary)).toBe(false);
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
@@ -216,13 +205,13 @@ describe("E2E workflow plan", () => {
   it("reports CLI failures as workflow annotations", () => {
     const result = spawnSync(
       TSX,
-      [PLANNER_CLI, "--jobs", "hermes-e2e", "--targets", "hermes-e2e"],
+      [PLANNER_CLI, "--jobs", "hermes-e2e", "--targets", "definitely-unknown-e2e-target"],
       { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
     );
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("::error::Use either jobs or targets, not both\n");
+    expect(result.stderr).toContain("::error::Unknown target 'definitely-unknown-e2e-target'");
   });
 
   it("writes CI outputs from the selector environment through the CLI", () => {
@@ -262,10 +251,12 @@ describe("E2E workflow plan", () => {
     }
   });
 
-  it("fails closed without writing CI outputs when the selector environment sets both families", () => {
+  it("writes controller-selected jobs and targets through the CI-output path (#7031)", () => {
     const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
     const output = path.join(directory, "github-output");
     const summary = path.join(directory, "summary.md");
+    const target = "ubuntu-repo-cloud-langchain-deepagents-code";
+    const plan = buildE2eWorkflowPlan({ jobs: "cloud-onboard", targets: target });
     try {
       const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
         cwd: REPO_ROOT,
@@ -275,16 +266,23 @@ describe("E2E workflow plan", () => {
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: summary,
           INFERENCE_MODE: "mock",
-          JOBS: "hermes-e2e",
-          TARGETS: "hermes-e2e",
+          JOBS: "cloud-onboard",
+          TARGETS: target,
         },
         timeout: 30_000,
       });
 
-      expect(result.status).toBe(1);
-      expect(result.stderr).toBe("::error::Use either jobs or targets, not both\n");
-      expect(existsSync(output)).toBe(false);
-      expect(existsSync(summary)).toBe(false);
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(
+        [
+          `matrix=${JSON.stringify(plan.matrix)}`,
+          `test_matrix=${JSON.stringify(plan.testMatrix)}`,
+          `hermes_selected=${plan.hermesSelected}`,
+          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          "",
+        ].join("\n"),
+      );
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

@@ -27,10 +27,6 @@ sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
-encode_source() {
-  base64 | tr -d '\n'
-}
-
 profile_contract_source() {
   cat <<'PY'
 import asyncio
@@ -285,9 +281,11 @@ fi
 
 sandbox_exec "test -x /opt/venv/bin/python3" >/dev/null || fail "/opt/venv/bin/python3 is missing"
 
-profile_source="$(profile_contract_source | encode_source)"
-profile_command="printf '%s' ${profile_source@Q} | base64 -d | /opt/venv/bin/python3 -I -"
-profile_output="$(sandbox_exec "$profile_command")" || fail "Nemotron Ultra harness profile contract failed: $profile_output"
+profile_source="$(profile_contract_source)"
+profile_output="$(
+  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    /opt/venv/bin/python3 -I -c "$profile_source" 2>&1
+)" || fail "Nemotron Ultra harness profile contract failed: $profile_output"
 printf '%s\n' "$profile_output" | grep -Fq "NEMOCLAW_NEMOTRON_ULTRA_PROFILE_OK:" || fail "profile verification marker is missing"
 pass "configured ChatOpenAI resolves the complete Nemotron Ultra profile without inference"
 

@@ -66,15 +66,15 @@ export function isExpectedMcpCurlPolicyDenial(
 
 /**
  * Build an MCP request whose curl child retains the selected adapter runtime
- * as an ancestor. OpenShell v0.0.72 attributes policy to /proc/<pid>/exe and
+ * as an ancestor. OpenShell v0.0.85 attributes policy to /proc/<pid>/exe and
  * ancestors, so this exercises the same unavoidable Node/Python identity used
  * by the corresponding adapter instead of an unrelated curl-only identity.
  *
  * Pinned upstream source contract:
- * NVIDIA/OpenShell@8cb16de9eae4c44d7d31e1493747d8c10abb5963,
- * crates/openshell-supervisor-network/src/proxy.rs:2476-2502 resolves once,
- * :2527-2567 validates that address list, :2622-2630 returns it unchanged,
- * and :822-832 passes that same list directly to TcpStream::connect.
+ * NVIDIA/OpenShell@3dee5570a46076a57a3b056f35f35ebc0861ac85,
+ * crates/openshell-supervisor-network/src/proxy.rs:2648-2674 resolves once,
+ * :2699-2739 and :2794-2803 validate and return that same address list,
+ * and :1079-1081 passes it directly to TcpStream::connect.
  */
 export function buildMcpDnsRebindingProbeScript(
   adapter: McpDnsRebindingAdapter,

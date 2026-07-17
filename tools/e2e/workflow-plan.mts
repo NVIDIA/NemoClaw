@@ -130,9 +130,6 @@ function selectTestRows(
 export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2eWorkflowPlan {
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
-  if (jobs.length > 0 && targets.length > 0) {
-    throw new Error("Use either jobs or targets, not both");
-  }
 
   const inventory = readFreeStandingJobsInventory();
   const credentialFreeTests = discoverCredentialFreeTests();
@@ -146,21 +143,14 @@ export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2e
         );
       }
     }
-
-    return {
-      matrix: [],
-      testMatrix: selectTestRows(credentialFreeTests, jobs),
-      hermesSelected: jobs.includes(HERMES_JOB_ID),
-      explicitOnlyJobs: [...inventory.explicitOnlyJobs],
-    };
   }
 
-  if (targets.length > 0) {
+  if (jobs.length > 0 || targets.length > 0) {
     const registryTargets = targets.filter((target) => !inventory.targetToJob.has(target));
     return {
       matrix: registryTargets.length > 0 ? buildLiveTargetMatrix(registryTargets) : [],
-      testMatrix: selectTestRows(credentialFreeTests, targets),
-      hermesSelected: targets.includes(HERMES_JOB_ID),
+      testMatrix: selectTestRows(credentialFreeTests, [...jobs, ...targets]),
+      hermesSelected: [...jobs, ...targets].includes(HERMES_JOB_ID),
       explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     };
   }
@@ -193,8 +183,10 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
 }
 
 function expectedHermesSelection(selectors: WorkflowPlanSelectors): boolean {
-  const selected = selectors.jobs || selectors.targets;
-  return !selected || selected.split(",").includes(HERMES_JOB_ID);
+  const selected = [selectors.jobs, selectors.targets]
+    .filter((value): value is string => !!value)
+    .flatMap((value) => value.split(","));
+  return selected.length === 0 || selected.includes(HERMES_JOB_ID);
 }
 
 export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
