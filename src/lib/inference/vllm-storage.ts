@@ -385,10 +385,12 @@ export function findUnwritableModelCachePath(
     const blockedPath = findUnwritableTreePath(modelCacheDir, deps);
     if (blockedPath) return blockedPath;
   }
-  const lockDir = path.join(hubDir, ".locks", path.basename(modelCacheDir));
+  const locksDir = path.join(hubDir, ".locks");
+  const lockDir = path.join(locksDir, path.basename(modelCacheDir));
   if (deps.exists(lockDir)) {
     return findUnwritableTreePath(lockDir, deps);
   }
+  if (deps.exists(locksDir) && !deps.canWrite(locksDir, true)) return locksDir;
   return null;
 }
 

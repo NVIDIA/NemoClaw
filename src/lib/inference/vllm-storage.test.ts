@@ -211,6 +211,20 @@ describe("host cache-storage detection", () => {
     expect(walked).not.toContain(siblingLockDir);
   });
 
+  it("flags a root-owned locks parent before creating a new target's lock directory", () => {
+    const target = "/cache/hub/models--org--target";
+    const locksDir = "/cache/hub/.locks";
+    const present = new Set(["/cache", "/cache/hub", locksDir]);
+
+    expect(
+      findUnwritableModelCachePath("/cache", target, {
+        exists: (path) => present.has(path),
+        canWrite: (path) => path !== locksDir,
+        list: () => [],
+      }),
+    ).toBe(locksDir);
+  });
+
   it("skips the model subtree when the model cache path is unresolved", () => {
     const walked: string[] = [];
     expect(
