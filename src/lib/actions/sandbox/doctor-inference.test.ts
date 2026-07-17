@@ -164,7 +164,7 @@ describe("doctor inference checks", () => {
     );
   });
 
-  it("includes a serving process check as not checked when no self_report is declared (#7003)", async () => {
+  it("keeps serving-process health explicitly unchecked until a probe contract exists (#7003)", async () => {
     const checks = await collectInferenceChecks(
       "alpha",
       { provider: "nvidia-prod", model: "model" },
@@ -179,12 +179,12 @@ describe("doctor inference checks", () => {
       expect.objectContaining({
         label: "Serving process",
         status: "info",
-        detail: expect.stringContaining("not checked"),
+        detail: "not checked — serving-process self_report probing is not implemented",
       }),
     );
   });
 
-  it("omits the serving process check when the agent has declared self_report (#7003)", async () => {
+  it("omits serving-process health for terminal agents without a gateway process (#7003)", async () => {
     const checks = await collectInferenceChecks(
       "alpha",
       { provider: "nvidia-prod", model: "model" },
@@ -192,7 +192,7 @@ describe("doctor inference checks", () => {
       {
         probeProviderHealthImpl: () => upstream(),
         probeSandboxInferenceGatewayHealthImpl: async () => gateway(true),
-        agentHasSelfReport: true,
+        includeServingProcessCheck: false,
       },
     );
 

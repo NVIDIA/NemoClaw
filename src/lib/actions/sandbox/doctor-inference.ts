@@ -15,8 +15,8 @@ export type DoctorInferenceRoute = {
 type DoctorInferenceDeps = {
   probeProviderHealthImpl?: typeof probeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: typeof probeSandboxInferenceGatewayHealth;
-  /** True when the agent's manifest declares a self_report endpoint; suppresses the "not checked" leg. */
-  agentHasSelfReport?: boolean;
+  /** False for terminal agents that do not have a long-running gateway serving process. */
+  includeServingProcessCheck?: boolean;
 };
 
 function pushInferenceHealthCheck(
@@ -160,13 +160,15 @@ export async function collectInferenceChecks(
   }
   // Serving-process leg: the above probes run in a fresh exec with OpenShell's
   // injected env, so they cannot attest what the long-running gateway process
-  // can reach. Report explicitly when no self-report source is declared (#7003).
-  if (!deps.agentHasSelfReport) {
+  // can reach. A manifest declaration is plumbing only until NemoClaw defines
+  // and implements a self-report response contract, so it must not suppress
+  // this honest result (#7003).
+  if (deps.includeServingProcessCheck !== false) {
     checks.push({
       group: "Inference",
       label: "Serving process",
       status: "info",
-      detail: "not checked — no self_report endpoint declared for this agent",
+      detail: "not checked — serving-process self_report probing is not implemented",
     });
   }
   return checks;

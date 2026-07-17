@@ -53,13 +53,11 @@ type ProbeProviderHealth = (
 type ProbeSandboxInferenceGatewayHealth = typeof probeSandboxInferenceGatewayHealth;
 
 /**
- * Health as reported by the serving process itself. `checked: false` means the
- * agent declared no self_report endpoint so NemoClaw cannot attest what the
- * serving process's environment can reach.
+ * Honest serving-process state while the self-report response and probe
+ * contracts remain undefined. Do not add a checked result until both contracts
+ * and their failure mapping are implemented together.
  */
-export type ServingProcessHealth =
-  | { checked: false }
-  | { checked: true; ok: boolean; detail: string };
+export type ServingProcessHealth = { checked: false };
 
 export function getSandboxStatusInferenceHealth(
   gatewayPresent: boolean,
@@ -170,9 +168,9 @@ export interface SandboxStatusReport {
   failureLayer: SandboxStatusFailureLayer | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   /**
-   * Health sourced from the serving process itself (via its declared self_report
-   * endpoint). Null when the sandbox is not reachable or the agent runtime is not
-   * gateway-based. `checked: false` when the agent declares no self_report.
+   * Whether serving-process health was checked. Null when the sandbox is not
+   * reachable or the agent runtime is not gateway-based. This remains
+   * `checked: false` until a self-report probe contract is implemented.
    */
   servingProcessHealth: ServingProcessHealth | null;
   /**
@@ -403,9 +401,9 @@ export async function collectSandboxStatusSnapshot(
     lookup.state === "present" && statusAgent.agentRuntime === "terminal"
       ? (opts.deps?.probeTerminalRuntimeHealth ?? probeTerminalRuntimeCgroupOom)(sandboxName)
       : null;
-  // The serving process health leg is only meaningful when the gateway is up.
-  // When the agent declares no self_report endpoint, report checked: false so
-  // status shows "not checked" rather than staying silently green (#7003).
+  // The serving-process leg is only meaningful when the gateway is up. A
+  // manifest declaration alone is not evidence: no self-report response/probe
+  // contract exists yet, so status must stay explicitly unchecked (#7003).
   const servingProcessHealth: ServingProcessHealth | null =
     lookup.state === "present" && statusAgent.agentRuntime === "gateway"
       ? { checked: false }

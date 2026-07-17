@@ -408,12 +408,16 @@ describe("agent definitions", () => {
     expect(agent.selfReport).toBeNull();
   });
 
-  it("parses self_report url and explicit timeout from manifests (#7003)", () => {
+  it("parses self_report when health_probe declares its port (#7003)", () => {
     const agentName = `has-self-report-${String(Date.now())}`;
     writeTempAgentManifest(
       agentName,
       [
         `name: ${agentName}`,
+        "health_probe:",
+        '  url: "http://localhost:18789/health"',
+        "  port: 18789",
+        "  timeout_seconds: 10",
         "self_report:",
         '  url: "http://localhost:18789/health/monitor"',
         "  timeout_seconds: 7",
@@ -430,9 +434,13 @@ describe("agent definitions", () => {
     const agentName = `self-report-no-timeout-${String(Date.now())}`;
     writeTempAgentManifest(
       agentName,
-      [`name: ${agentName}`, "self_report:", '  url: "http://localhost:18789/health/monitor"'].join(
-        "\n",
-      ),
+      [
+        `name: ${agentName}`,
+        "forward_ports:",
+        "  - 18789",
+        "self_report:",
+        '  url: "http://localhost:18789/health/monitor"',
+      ].join("\n"),
     );
     const agent = loadAgent(agentName);
     expect(agent.selfReport).toEqual({
@@ -448,5 +456,120 @@ describe("agent definitions", () => {
       [`name: ${agentName}`, "self_report:", "  timeout_seconds: 10"].join("\n"),
     );
     expect(() => loadAgent(agentName)).toThrow(/self_report\.url/);
+  });
+
+  it.each([
+    "http://127.0.0.1:18789/health/monitor",
+    "http://[::1]:18789/health/monitor",
+  ])("accepts an explicit loopback self_report endpoint %s (#7003)", (url) => {
+    const agentName = `self-report-loopback-${String(Date.now())}-${url.length}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "forward_ports:", "  - 18789", "self_report:", `  url: "${url}"`].join(
+        "\n",
+      ),
+    );
+
+    expect(loadAgent(agentName).selfReport).toEqual({ url, timeout_seconds: 10 });
+  });
+
+  it.each([
+    ["malformed", "not-a-url"],
+    ["leading whitespace", " http://127.0.0.1:18789/health"],
+    ["internal whitespace", "http://127.0.0.1:18789/health monitor"],
+    ["unicode whitespace", "http://127.0.0.1:18789/health\u00a0monitor"],
+    ["https", "https://127.0.0.1:18789/health"],
+    ["public host", "http://example.com:18789/health"],
+    ["private host", "http://10.0.0.8:18789/health"],
+    ["credentials", "http://user:pass@127.0.0.1:18789/health"],
+    ["implicit port", "http://127.0.0.1/health"],
+    ["root path", "http://127.0.0.1:18789/"],
+    ["double slash path", "http://127.0.0.1:18789/health//monitor"],
+    ["dot segment", "http://127.0.0.1:18789/health/../monitor"],
+    ["encoded traversal", "http://127.0.0.1:18789/%2e%2e/monitor"],
+    ["encoded control", "http://127.0.0.1:18789/health/%0d%0aheader"],
+    ["backslash path", "http://127.0.0.1:18789/health\\monitor"],
+    ["query", "http://127.0.0.1:18789/health?token=x"],
+    ["fragment", "http://127.0.0.1:18789/health#detail"],
+  ])("rejects a %s self_report URL before it can become a probe target (#7003)", (label, url) => {
+    const agentName = `self-report-bad-url-${label.replaceAll(" ", "-")}-${String(Date.now())}`;
+    const yamlUrl = url.replaceAll("\\", "\\\\");
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "forward_ports:",
+        "  - 18789",
+        "self_report:",
+        `  url: "${yamlUrl}"`,
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/self_report\.url/);
+  });
+
+  it.each([
+    "0",
+    "-1",
+    "0.5",
+    "11",
+    "31",
+    "1000000000",
+    '"7"',
+    ".nan",
+    ".inf",
+  ])("rejects unsafe self_report timeout_seconds %s (#7003)", (timeout) => {
+    const agentName = `self-report-bad-timeout-${timeout.replaceAll(/[^a-z0-9]/gi, "x")}-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "forward_ports:",
+        "  - 18789",
+        "self_report:",
+        '  url: "http://127.0.0.1:18789/health"',
+        `  timeout_seconds: ${timeout}`,
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/self_report\.timeout_seconds.*between 1 and 10/);
+  });
+
+  it("rejects a self_report port not declared by health_probe or forward_ports (#7003)", () => {
+    const agentName = `self-report-undeclared-port-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "forward_ports:",
+        "  - 18789",
+        "self_report:",
+        '  url: "http://127.0.0.1:19000/health"',
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(
+      /self_report\.url.*health_probe\.port or forward_ports/,
+    );
+  });
+
+  it("rejects non-object and unknown self_report fields (#7003)", () => {
+    const scalarName = `self-report-scalar-${String(Date.now())}`;
+    writeTempAgentManifest(scalarName, `name: ${scalarName}\nself_report: disabled\n`);
+    expect(() => loadAgent(scalarName)).toThrow(/self_report.*object/);
+
+    const unknownName = `self-report-unknown-${String(Date.now())}`;
+    writeTempAgentManifest(
+      unknownName,
+      [
+        `name: ${unknownName}`,
+        "forward_ports:",
+        "  - 18789",
+        "self_report:",
+        '  url: "http://127.0.0.1:18789/health"',
+        "  method: GET",
+      ].join("\n"),
+    );
+    expect(() => loadAgent(unknownName)).toThrow(/self_report\.method.*not allowed/);
   });
 });

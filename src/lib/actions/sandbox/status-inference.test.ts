@@ -6,6 +6,7 @@ import { collectSandboxStatusSnapshot, getSandboxStatusInferenceHealth } from ".
 
 describe("sandbox status inference.local route health (#6192)", () => {
   function snapshotDeps(options: {
+    agent?: string;
     provider?: string;
     liveProvider?: string;
     liveModel?: string;
@@ -23,7 +24,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
     const reportInferenceProbeError = vi.fn();
     const sandbox = {
       name: "alpha",
-      agent: "openclaw",
+      agent: options.agent ?? "openclaw",
       model: "nvidia/nemotron",
       provider,
     };
@@ -51,6 +52,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
           ? async () => Promise.reject(new Error("openshell unavailable TOKEN=super-secret"))
           : async () => options.routeHealth,
       ),
+      probeTerminalRuntimeHealth: vi.fn(() => ({ kind: "ok" as const, oomKillCount: 0 as const })),
       reportInferenceProbeError,
     };
   }
@@ -83,6 +85,24 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(snapshot.inferenceHealth?.subprobes).toEqual([
       expect.objectContaining({ ok: true, probeLabel: "upstream" }),
     ]);
+    expect(snapshot.servingProcessHealth).toEqual({ checked: false });
+  });
+
+  it("does not invent serving-process health for terminal agents (#7003)", async () => {
+    const deps = snapshotDeps({
+      agent: "langchain-deepagents-code",
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "route reachable",
+      },
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(snapshot.servingProcessHealth).toBeNull();
+    expect(deps.probeTerminalRuntimeHealth).toHaveBeenCalledWith("alpha");
   });
 
   it.each([

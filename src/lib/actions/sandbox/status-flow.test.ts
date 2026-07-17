@@ -109,6 +109,8 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Model:    nvidia/nemotron");
     expect(output).toContain("Inference: healthy");
     expect(output).toContain("Inference (ollama backend):");
+    expect(output).toContain("Serving process (openclaw gateway):");
+    expect(output).toContain("not checked");
     expect(output).toContain("Host GPU: yes");
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");

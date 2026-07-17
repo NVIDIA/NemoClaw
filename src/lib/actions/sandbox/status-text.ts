@@ -103,15 +103,7 @@ function printServingProcessHealth(
 ): void {
   if (!health) return;
   const label = `Serving process (${statusAgent.agentDisplayName.toLowerCase()} gateway)`;
-  if (!health.checked) {
-    console.log(`    ${label}: ${D}not checked${R}`);
-    return;
-  }
-  if (health.ok) {
-    console.log(`    ${label}: ${G}${health.detail}${R}`);
-    return;
-  }
-  console.log(`    ${label}: ${RD}${health.detail}${R}`);
+  console.log(`    ${label}: ${D}not checked${R}`);
 }
 
 function printInferenceStatus(context: SandboxStatusTextContext): void {
