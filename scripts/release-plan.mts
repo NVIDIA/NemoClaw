@@ -220,7 +220,7 @@ function main(): void {
     planPath,
     confirmationPhrase: `CONFIRM RELEASE ${nextTag} ${originMainCommit}`,
     operations: [
-      `create annotated ${nextTag} tag at ${originMainCommit}`,
+      `create signed annotated ${nextTag} tag at ${originMainCommit}`,
       `push ${nextTag}`,
       "wait for release-latest-tag workflow to move latest",
       "draft release notes from live compare data",

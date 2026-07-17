@@ -41,19 +41,16 @@ If the group change is not active in the current shell, the installer exits with
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
 
-On a DGX Station GB300 running the generic Ubuntu 24.04 ARM64 image, accepting express install uses NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1` as the reviewed versions for missing prerequisites.
-DGX OS, NVIDIA BaseOS images, and other Station generations are outside this automatic preparation boundary and stop before host preparation.
-On those systems, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
-The preparation probes package and runtime state first, retains installed packages, and installs reviewed pinned versions only for missing packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
-When an installed prerequisite or the loaded NVIDIA driver differs from the reviewed version, preparation prints the actual and expected versions as a warning and continues with the installed version.
-During express install, the terminal shows the Station host preparation log path, package and driver version-drift warnings with actual and expected versions, and errors while keeping the complete platform, systemd, Docker pull, NVIDIA-SMI, and status output in that log.
-Running `scripts/prepare-dgx-station-host.sh` directly remains verbose.
-When repository setup is required, a different installed `cuda-keyring` version remains usable only after `dpkg -V` verifies its package files and the CUDA repository signing fingerprint matches the expected NVIDIA fingerprint.
-For new Docker repository setup, preparation writes the reviewed source with `arch=arm64`, the `https://download.docker.com/linux/ubuntu` URL, the `noble` suite, the `stable` component, and the verified dearmored key at `/etc/apt/keyrings/docker.gpg`.
-An existing source that instead uses `/etc/apt/keyrings/docker.asc` is retained only when the source is a root-owned regular file with mode `0644` and exactly matches the reviewed architecture, URL, suite, component, and signing-key path.
-The installed ASCII key must also be a root-owned regular file with mode `0644` and be byte-identical to the fresh download after preparation verifies its pinned SHA-256 and official Docker fingerprint.
-Any other Docker source difference, extra line, symbolic link, unsafe file, or key mismatch stops preparation.
-The Docker `.asc` compatibility path does not relax the generic byte-for-byte exact-file guard for other managed repository files.
+DGX Station GB300 express install accepts either the generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
+A stock DGX OS image qualifies only when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
+An unknown version, malformed or unsafe marker, NVIDIA BaseOS image, or other Station generation stops before host preparation.
+On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
+
+On the generic Ubuntu path, accepting express install prepares the host with NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
+Preparation probes package and runtime state first, reuses exact matches, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
+It permits only the reviewed factory transition from `dkms` `3.0.11-1ubuntu13` to `1:3.4.0-1ubuntu1`.
+An existing Docker APT source is reused only when it exactly matches the reviewed `.gpg` or `.asc` form and its referenced key matches the freshly downloaded, pinned, fingerprint-verified key.
+Any other source or key state stops preparation without overwriting it.
 After reboot, preparation enables NVIDIA's packaged CDI refresh path and service, requires the `nvidia.com/gpu=all` device, and verifies it with a real container launch.
 If the packaged refresh fails or does not produce that device, preparation prints service diagnostics and stops for administrator repair.
 It does not bypass the packaged lifecycle with direct CDI generation.
@@ -64,13 +61,26 @@ It requires Secure Boot to be disabled, matching headers for the running kernel,
 It also stops when systemd reports a failed unit unless the unit matches an exact, condition-qualified state from the generic Station image: the pinned OEM `cloud-init` telemetry failure, a network-wait failure while current network health is established, masked `fwupd`, or an SSSD socket on a host without SSSD configuration.
 Any other failed unit blocks preparation for administrator review.
 It does not install a host CUDA toolkit or Docker Compose.
-Package and driver version warnings do not relax the generic Ubuntu 24.04 ARM64 platform, Station GB300 identity, Secure Boot, kernel, capacity, network, workload, systemd, repository-key, APT simulation, rollback, or file-integrity checks.
-The ECC 0/0 requirement, packaged CDI lifecycle, `nvidia.com/gpu=all` device, Docker CDI launch, and `--gpus all` launch also remain mandatory.
-After installing missing pinned packages, the installer exits with status `10`; reboot, sign in, and run the printed command, which pins the exact accepted NemoClaw commit before resuming express setup.
+If any other existing prerequisite version differs, preparation stops instead of changing it automatically.
+After changing pinned packages, the installer exits with status `10`; reboot, sign in, and run the printed command, which pins the exact accepted NemoClaw commit before resuming express setup.
+
+On a qualifying stock DGX OS image, express install validates the factory stack in place against the local default Docker daemon.
+It requires a loaded GB300 driver with zero volatile corrected and uncorrected ECC errors, active Docker and containerd services, working Docker Buildx, `nvidia-ctk`, the `nvidia.com/gpu=all` CDI device, and successful `nvidia-smi` device-visibility probes through both CDI and `--gpus all`.
+Driver and ECC validation selects GB300 GPUs by PCI identity and skips auxiliary NVIDIA GPUs.
+This path does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
+The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
+Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, its only persistent stock-runtime effect is that the digest-pinned visibility-test image can remain in the Docker cache.
+One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
+Repeat qualification from a clean host and CI coverage remain pending.
+On Station GB300 direct GPU sandboxes, NemoClaw validates the vendor and display-class metadata for each NVIDIA PCI device and adds only that device's exact BDF directory as read-only.
+It also adds only the CPU, memory, NUMA topology, and NVIDIA module initialization paths that exist on the host.
+NemoClaw does not add `/sys`, the `/sys/bus/pci/devices` parent subtree, or any sysfs write grant.
+This scoped addition is not applied on WSL, Jetson, or other non-Station hosts.
+In the physical DGX OS `7.5.0` validation, the exact-BDF policy passed sandbox `cuInit(0)` while reads of `/sys/fs/cgroup/cgroup.controllers` and `/sys/class/net/lo/address` remained denied.
 
 <Warning title="DGX Station Support Status">
 DGX Station remains Deferred.
-Full NemoClaw onboarding with this recipe has not completed end-to-end validation on physical DGX Station hardware.
+Repeat qualification from a clean host and CI coverage remain pending before any support-status promotion.
 </Warning>
 
 <Warning title="Docker Group Access">

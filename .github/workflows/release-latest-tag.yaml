@@ -32,8 +32,57 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Move latest to the release tag commit
+      - name: Verify release tag signature
+        id: verify-release-tag
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        with:
+          script: |
+            const releaseTag = process.env.RELEASE_TAG ?? '';
+            if (!/^v\d+\.\d+\.\d+$/.test(releaseTag)) {
+              throw new Error(`Refusing to verify non-semver tag: ${releaseTag}`);
+            }
+
+            const { owner, repo } = context.repo;
+            const ref = await github.rest.git.getRef({ owner, repo, ref: `tags/${releaseTag}` });
+            if (ref.data.object.type !== 'tag') {
+              throw new Error(`Release tag ${releaseTag} must be annotated`);
+            }
+
+            const tagObjectSha = ref.data.object.sha;
+            let tagObject;
+            for (let attempt = 1; attempt <= 10; attempt += 1) {
+              ({ data: tagObject } = await github.rest.git.getTag({
+                owner,
+                repo,
+                tag_sha: tagObjectSha,
+              }));
+              if (tagObject.verification?.verified === true) break;
+              if (attempt < 10) {
+                core.info(`Waiting for GitHub tag verification (${attempt}/10)`);
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+              }
+            }
+
+            if (tagObject.tag !== releaseTag) {
+              throw new Error(`Tag object ${tagObjectSha} names ${tagObject.tag}, expected ${releaseTag}`);
+            }
+            if (tagObject.object.type !== 'commit') {
+              throw new Error(`Release tag ${releaseTag} must point directly to a commit`);
+            }
+            if (tagObject.verification?.verified !== true) {
+              throw new Error(
+                `Release tag ${releaseTag} is not GitHub-Verified (${tagObject.verification?.reason ?? 'unknown'})`,
+              );
+            }
+
+            core.setOutput('tag_object_sha', tagObjectSha);
+            core.info(`Verified signed release tag ${releaseTag} (${tagObjectSha})`);
+
+      - name: Move latest to the verified release tag object
+        env:
+          EXPECTED_RELEASE_TAG_OBJECT: ${{ steps.verify-release-tag.outputs.tag_object_sha }}
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           PUSH_REMOTE_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
         run: scripts/release-latest-tag.sh

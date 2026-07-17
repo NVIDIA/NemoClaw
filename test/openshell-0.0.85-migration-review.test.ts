@@ -228,8 +228,11 @@ describe("OpenShell 0.0.85 migration review", () => {
     expect(helper).toContain("fs.realpathSync(`/proc/${gatewayPid}/exe`)");
     expect(helper).toContain('["-H", "-ltnp"]');
     expect(helper).toContain('"{{json .HostConfig.Binds}}"');
-    expect(helper).toContain('tmpfsMarker: "present"');
-    expect(helper).toContain('tmpfsMarker: "absent"');
+    expect(helper).not.toContain('tmpfsMarker: "present"');
+    expect(helper.match(/tmpfsMarker: "absent",/gu)).toHaveLength(2);
+    expect(helper).toContain('"same-container-tmpfs-remounted-and-durable-state-retained"');
+    expect(review).toContain("graceful gateway shutdown stops the managed Docker sandbox");
+    expect(review).toContain("tmpfs is remounted empty");
 
     const mcpProof = fs.readFileSync(
       path.join(repoRoot, "test/e2e/live/openshell-exact-main-mcp-proof.ts"),

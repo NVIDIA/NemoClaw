@@ -5,17 +5,18 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  clearStationExpressInstallerResume,
+  withStationExpressResumeEnvironment,
+} from "../src/lib/onboard/station-express-resume";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const PUBLIC_BOOTSTRAP = path.join(REPO_ROOT, "install.sh");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const STATION_REVISION = "a".repeat(40);
-const STATION_DOCS = [
-  path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx"),
-  path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx"),
-];
+const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 
 function runSourced(script: string, body: string, extraEnv: Record<string, string> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-host-"));
@@ -38,23 +39,40 @@ function runSourced(script: string, body: string, extraEnv: Record<string, strin
   return { home, result, output: `${result.stdout}${result.stderr}` };
 }
 
+function runNonInteractiveStationSelector(home: string) {
+  const result = spawnSync(
+    "bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-c",
+      `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf 'DGX Station'; }
+station_installer_revision() { printf '${STATION_REVISION}'; }
+NON_INTERACTIVE='1'
+NEMOCLAW_PROVIDER=''
+NEMOCLAW_NO_EXPRESS=''
+maybe_offer_express_install
+printf 'RESULT PROVIDER=%s STATION_EXPRESS=%s\n' "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_STATION_EXPRESS:-}"
+`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        HOME: home,
+        PATH: TEST_SYSTEM_PATH,
+        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+      },
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    },
+  );
+  return { result, output: `${result.stdout}${result.stderr}` };
+}
+
 describe("DGX Station host preparation", () => {
-  it("keeps documented Station pins and Deferred status aligned", () => {
-    const helper = fs.readFileSync(STATION_PREPARE, "utf-8");
-    const docs = STATION_DOCS.map((doc) => fs.readFileSync(doc, "utf-8"));
-    const pinnedValues = ["DRIVER_VERSION", "DOCKER_VERSION", "TOOLKIT_VERSION"].map((name) => {
-      const value = helper.match(new RegExp(`readonly ${name}="([^"]+)"`))?.[1];
-      expect(value, `${name} must remain declared in the Station helper`).toBeTruthy();
-      return value as string;
-    });
-
-    for (const doc of docs) {
-      for (const version of pinnedValues) expect(doc).toContain(version);
-      expect(doc).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-      expect(doc).toMatch(/physical (?:DGX Station )?hardware|physical end-to-end validation/);
-    }
-  });
-
   it("uses the documented plain-Ubuntu driver-injection probe for CDI and --gpus", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -75,85 +93,69 @@ run_gpus_test_sudo
   });
 
   it.each([
-    ["", false, false],
-    ["5:29.6.1-1~ubuntu.24.04~noble", true, true],
-    ["5:30.0.0-1~ubuntu.24.04~noble", true, false],
-  ])("distinguishes package presence from an exact reviewed version: %s", (actual, installed, exact) => {
+    ["", "missing"],
+    ["5:29.6.1-1~ubuntu.24.04~noble", "exact"],
+    ["5:30.0.0-1~ubuntu.24.04~noble", "mismatch"],
+  ])("classifies an installed package version as %s -> %s", (actual, expected) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 installed_version() {
   if [[ "$1" == "docker-ce" ]]; then printf '%s' "$PACKAGE_ACTUAL"; fi
 }
-if package_is_installed 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'; then
-  printf 'installed=0\n'
-else
-  printf 'installed=1\n'
-fi
-if package_is_exact 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'; then
-  printf 'exact=0\n'
-else
-  printf 'exact=1\n'
-fi
+package_state 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'
 `,
       { PACKAGE_ACTUAL: actual },
     );
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain(`installed=${installed ? 0 : 1}`);
-    expect(output).toContain(`exact=${exact ? 0 : 1}`);
+    expect(result.stdout.trim()).toBe(expected);
   });
 
-  it.each([
-    ["Dell Pro Max with Station GB300", true],
-    ["NVIDIA DGX Station GB300", true],
-    ["NVIDIA DGX Station A100", false],
-    ["Dell Pro Max with Station GB200", false],
-    ["Dell Pro Max with GB300", false],
-  ])("accepts only Station GB300 DMI: %s", (product, accepted) => {
-    const { result } = runSourced(STATION_PREPARE, `is_station_product "$PRODUCT"`, {
-      PRODUCT: product,
-    });
-
-    expect(result.status === 0).toBe(accepted);
-  });
-
-  it.each([
-    "3.0.11-1ubuntu13",
-    "3.2.0-1",
-  ])("retains installed DKMS version drift as advisory: %s", (actual) => {
-    const { result, output } = runSourced(
+  it("allows only the reviewed factory DKMS transition", () => {
+    const approved = runSourced(
       STATION_PREPARE,
       `
 installed_version() {
   if [[ "$1" == "dkms" ]]; then printf '%s' "$DKMS_ACTUAL"; fi
 }
-report_package_version_drift
+package_state 'dkms=1:3.4.0-1ubuntu1'
+assert_no_package_mismatches
 `,
-      { DKMS_ACTUAL: actual },
+      { DKMS_ACTUAL: "3.0.11-1ubuntu13" },
     );
+    expect(approved.result.status, approved.output).toBe(0);
+    expect(approved.output).toContain("approved-transition");
+    expect(approved.output).toContain("status=approved_transition");
 
-    expect(result.status, output).toBe(0);
-    expect(output).toContain(
-      `package=dkms status=version_drift actual=${actual} expected=1:3.4.0-1ubuntu1; retaining installed version`,
+    const arbitrary = runSourced(
+      STATION_PREPARE,
+      `
+installed_version() {
+  if [[ "$1" == "dkms" ]]; then printf '%s' "$DKMS_ACTUAL"; fi
+}
+assert_no_package_mismatches
+`,
+      { DKMS_ACTUAL: "3.2.0-1" },
     );
+    expect(arbitrary.result.status, arbitrary.output).not.toBe(0);
+    expect(arbitrary.output).toMatch(/dkms status=mismatch/);
   });
 
-  it("warns with actual and expected versions for an installed prerequisite drift", () => {
+  it("refuses to change an existing mismatched prerequisite", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 installed_version() {
   if [[ "$1" == "docker-ce" ]]; then printf '5:30.0.0-1~ubuntu.24.04~noble'; fi
 }
-report_package_version_drift
+assert_no_package_mismatches
 `,
     );
 
-    expect(result.status, output).toBe(0);
-    expect(output).toContain(
-      "package=docker-ce status=version_drift actual=5:30.0.0-1~ubuntu.24.04~noble expected=5:29.6.1-1~ubuntu.24.04~noble; retaining installed version",
-    );
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(/docker-ce status=mismatch/);
+    expect(output).toMatch(/refusing to change them automatically/);
   });
 
   it("allows only condition-qualified factory failures and blocks other failed units", () => {
@@ -329,66 +331,6 @@ describe_express_install 'DGX Station'
     expect(output).toContain(
       "shared or managed hosts require an organization-approved Docker access path",
     );
-    expect(output).toContain(
-      "retains installed prerequisite versions with actual-versus-expected warnings",
-    );
-    expect(output).toContain(
-      "installs reviewed driver, Docker, and NVIDIA Container Toolkit versions only when packages are missing",
-    );
-  });
-
-  it("keeps Station preparation details in the log while showing actionable installer output", () => {
-    const { result, output } = runSourced(
-      INSTALLER_PAYLOAD,
-      `
-printf '%s\n' \\
-  '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.2 mode=--apply log=/tmp/station-prepare.log' \\
-  '[station-prepare] 2026-07-17T07:59:07Z platform=Dell Pro Max with Station GB300 os=Ubuntu 24.04.4 LTS' \\
-  '[station-prepare] 2026-07-17T07:59:08Z WARNING: condition-qualified generic-image failed unit: cloud-init.service' \\
-  '[station-prepare] 2026-07-17T07:59:08Z WARNING: package=dkms status=version_drift actual=1:3.4.1-1ubuntu1 expected=1:3.4.0-1ubuntu1; retaining installed version' \\
-  '[station-prepare] 2026-07-17T07:59:09Z WARNING: driver status=version_drift actual=611.0 expected=610.43.02; retaining loaded version' \\
-  'NVIDIA-SMI 610.43.02' \\
-  '[station-prepare] 2026-07-17T07:59:20Z STATION_HOST_READY' \\
-  '[station-prepare] 2026-07-17T07:59:20Z APPLY_RESULT=COMPLETE' \\
-  '[station-prepare] 2026-07-17T07:59:20Z ERROR: example failure' \\
-  | filter_station_host_preparation_output
-`,
-    );
-
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("DGX Station host preparation log: /tmp/station-prepare.log");
-    expect(output).toContain(
-      "package=dkms status=version_drift actual=1:3.4.1-1ubuntu1 expected=1:3.4.0-1ubuntu1; retaining installed version",
-    );
-    expect(output).toContain(
-      "driver status=version_drift actual=611.0 expected=610.43.02; retaining loaded version",
-    );
-    expect(output).toContain("ERROR: example failure");
-    expect(output).not.toMatch(/platform=Dell Pro Max|cloud-init\.service|NVIDIA-SMI/);
-  });
-
-  it("preserves the Station helper exit status while filtering installer output", () => {
-    const { result, output } = runSourced(
-      INSTALLER_PAYLOAD,
-      `
-bash() {
-  printf '%s\n' \\
-    '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.2 mode=--apply log=/tmp/station-prepare.log' \\
-    '[station-prepare] 2026-07-17T07:59:08Z runtime_setup=complete'
-  return 10
-}
-if run_station_host_preparation; then
-  printf 'STATUS=0\n'
-else
-  printf 'STATUS=%s\n' "$?"
-fi
-`,
-    );
-
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("STATUS=10");
-    expect(output).toContain("DGX Station host preparation log: /tmp/station-prepare.log");
-    expect(output).not.toContain("runtime_setup=complete");
   });
 
   it("fails closed when failed-service inspection is unavailable", () => {
@@ -411,10 +353,9 @@ check_failed_units
 common_preflight() { :; }
 require_command() { :; }
 acquire_sudo() { :; }
-all_packages_installed() { return 0; }
+all_packages_exact() { return 0; }
 install_boot_marker_matches_current_boot() { return 1; }
-driver_is_loaded() { return 0; }
-report_package_version_drift() { :; }
+driver_loaded_exact() { return 0; }
 install_packages() { printf 'INSTALL_PACKAGES\n'; }
 finish_runtime() { printf 'FINISH_RUNTIME\n'; }
 verify_apply_state() { printf 'VERIFY_APPLY_STATE\n'; }
@@ -429,14 +370,14 @@ run_apply
     expect(output).toContain("APPLY_RESULT=COMPLETE");
   });
 
-  it("retains factory DKMS drift while installing missing prerequisites", () => {
+  it("applies the reviewed factory DKMS transition and returns the reboot-required contract", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 common_preflight() { :; }
 require_command() { :; }
 acquire_sudo() { :; }
-all_packages_installed() { return 1; }
+all_packages_exact() { return 1; }
 installed_version() {
   if [[ "$1" == "dkms" ]]; then printf '3.0.11-1ubuntu13'; fi
 }
@@ -450,9 +391,7 @@ run_apply
     );
 
     expect(result.status, output).toBe(10);
-    expect(output).toContain(
-      "package=dkms status=version_drift actual=3.0.11-1ubuntu13 expected=1:3.4.0-1ubuntu1; retaining installed version",
-    );
+    expect(output).toContain("package=dkms status=approved_transition");
     expect(output).toContain("INSTALL_PACKAGES");
     expect(output).toContain("ENSURE_DOCKER_GROUP");
     expect(output).toContain("RECHECK_ALL_WORKLOADS");
@@ -461,78 +400,6 @@ run_apply
       "systemctl enable containerd.service docker.service nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
     );
     expect(output).toContain("APPLY_RESULT=REBOOT_REQUIRED");
-  });
-
-  it("passes only missing pinned packages to APT and retains installed drift", () => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-DOCKER_INSTALLED=0
-installed_version() {
-  local name="$1" spec
-  if [[ "$name" == "docker-ce" ]]; then
-    if [[ "$DOCKER_INSTALLED" == "1" ]]; then
-      printf '5:29.6.1-1~ubuntu.24.04~noble'
-    fi
-    return
-  fi
-  if [[ "$name" == "dkms" ]]; then
-    printf '3.0.11-1ubuntu13'
-    return
-  fi
-  for spec in "\${PACKAGE_SPECS[@]}"; do
-    if [[ "$(package_name "$spec")" == "$name" ]]; then
-      package_expected_version "$spec"
-      return
-    fi
-  done
-}
-configure_repositories() { printf 'CONFIGURE_REPOSITORIES\n'; }
-apt-cache() { printf 'APT_CACHE %s\n' "$*" >>"$HOME/apt-cache-calls"; }
-apt-get() { printf 'APT_GET %s\n' "$*"; }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
-sudo() {
-  printf 'SUDO %s\n' "$*"
-  if [[ "$*" == *"apt-get install"* ]]; then DOCKER_INSTALLED=1; fi
-}
-install_packages
-cat "$HOME/apt-cache-calls"
-`,
-    );
-
-    expect(result.status, output).toBe(0);
-    const aptCommands = output
-      .split("\n")
-      .filter((line) =>
-        /^(APT_CACHE show |APT_GET -s install |SUDO env .* apt-get install )/.test(line),
-      )
-      .sort();
-    expect(aptCommands).toEqual([
-      "APT_CACHE show docker-ce=5:29.6.1-1~ubuntu.24.04~noble",
-      "APT_GET -s install --no-install-recommends docker-ce=5:29.6.1-1~ubuntu.24.04~noble",
-      "SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker-ce=5:29.6.1-1~ubuntu.24.04~noble",
-    ]);
-    expect(output).toContain("pinned_packages=installed");
-  });
-
-  it("includes every NVIDIA Container Toolkit package when it is missing", () => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-installed_version() { :; }
-missing_package_specs
-`,
-    );
-
-    expect(result.status, output).toBe(0);
-    for (const spec of [
-      "libnvidia-container-tools=1.19.1-1",
-      "libnvidia-container1=1.19.1-1",
-      "nvidia-container-toolkit=1.19.1-1",
-      "nvidia-container-toolkit-base=1.19.1-1",
-    ]) {
-      expect(output).toContain(spec);
-    }
   });
 
   it("does not refresh CDI when the GPU launch probe already passes", () => {
@@ -647,41 +514,18 @@ check_no_workloads
     expect(output).toMatch(/container state cannot be verified safely/);
   });
 
-  it("retains a verified CUDA keyring version drift and verifies its signing fingerprint", () => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-assert_root_directory_safe() { :; }
-assert_root_regular_file_safe() { :; }
-installed_version() { printf '2.0-1'; }
-dpkg() { :; }
-verify_key_fingerprint() { printf 'VERIFIED_FINGERPRINT\n'; }
-ensure_cuda_keyring "$HOME/cuda-keyring.deb"
-`,
-    );
-
-    expect(result.status, output).toBe(0);
-    expect(output).toContain(
-      "package=cuda-keyring status=version_drift actual=2.0-1 expected=1.1-1; retaining installed version",
-    );
-    expect(output).toContain("VERIFIED_FINGERPRINT");
-  });
-
-  it("rejects CUDA keyring drift when package-file verification reports changes", () => {
+  it("refuses an installed CUDA keyring version that differs from the pin", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 assert_root_directory_safe() { :; }
 installed_version() { printf '2.0-1'; }
-dpkg() { printf '??5?????? c /usr/share/keyrings/cuda-archive-keyring.gpg\n'; }
-verify_key_fingerprint() { printf 'VERIFIED_FINGERPRINT\n'; }
 ensure_cuda_keyring "$HOME/cuda-keyring.deb"
 `,
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/files differ from the package manifest/);
-    expect(output).not.toContain("VERIFIED_FINGERPRINT");
+    expect(output).toMatch(/refusing to upgrade or downgrade it automatically/);
   });
 
   it("reuses an exact verified CUDA keyring without downloading it again", () => {
@@ -779,10 +623,9 @@ assert_root_directory_safe /etc/apt/keyrings test_directory
 common_preflight() { :; }
 require_command() { :; }
 acquire_sudo() { :; }
-all_packages_installed() { return 0; }
+all_packages_exact() { return 0; }
 install_boot_marker_matches_current_boot() { return 1; }
-driver_is_loaded() { return 0; }
-report_package_version_drift() { :; }
+driver_loaded_exact() { return 0; }
 finish_runtime() { DOCKER_GROUP_ADDED=1; printf 'FINISH_RUNTIME\n'; }
 verify_apply_state() { printf 'VERIFY_APPLY_STATE\n'; }
 run_apply
@@ -1038,83 +881,20 @@ main "$READ_MODE"
     expect(fs.existsSync(path.join(home, "station-bootstrap-logs"))).toBe(false);
   });
 
-  it("warns once for package and driver drift during a Station check", () => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-common_preflight() { :; }
-installed_version() {
-  local name="$1" spec
-  if [[ "$name" == "docker-ce" ]]; then
-    printf '5:30.0.0-1~ubuntu.24.04~noble'
-    return
-  fi
-  for spec in "\${PACKAGE_SPECS[@]}"; do
-    if [[ "$(package_name "$spec")" == "$name" ]]; then
-      package_expected_version "$spec"
-      return
-    fi
-  done
-}
-loaded_driver_version() { printf '620.1'; }
-install_boot_marker_matches_current_boot() { return 1; }
-run_check
-`,
-    );
-
-    expect(result.status, output).toBe(0);
-    expect(
-      output.match(
-        /package=docker-ce status=version_drift actual=5:30\.0\.0-1~ubuntu\.24\.04~noble expected=5:29\.6\.1-1~ubuntu\.24\.04~noble/g,
-      ),
-    ).toHaveLength(1);
-    expect(
-      output.match(/driver status=version_drift actual=620\.1 expected=610\.43\.02/g),
-    ).toHaveLength(1);
-    expect(output).toContain("CHECK_RESULT=PACKAGES_AND_DRIVER_PRESENT");
-  });
-
-  it("treats loaded driver version drift as advisory without relaxing ECC checks", () => {
-    const advisory = runSourced(
-      STATION_PREPARE,
-      `
-loaded_driver_version() { printf '620.1'; }
-nvidia-smi() { printf 'NVIDIA GB300, 620.1, 0, 0\n'; }
-report_driver_version_drift
-verify_gpu
-`,
-    );
-    expect(advisory.result.status, advisory.output).toBe(0);
-    expect(advisory.output).toContain(
-      "driver status=version_drift actual=620.1 expected=610.43.02; retaining loaded version",
-    );
-    expect(advisory.output).toContain("gpu=NVIDIA GB300 driver=620.1 ecc_corrected=0");
-
-    const eccFailure = runSourced(
-      STATION_PREPARE,
-      `
-nvidia-smi() { printf 'NVIDIA GB300, 620.1, 1, 0\n'; }
-verify_gpu
-`,
-    );
-    expect(eccFailure.result.status, eccFailure.output).not.toBe(0);
-    expect(eccFailure.output).toMatch(/ECC must be 0\/0/);
-  });
-
-  it("fails verification when prerequisite packages are present but the driver is not loaded", () => {
+  it("fails verification when exact packages are present but the driver is not loaded", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 common_preflight() { :; }
 require_command() { :; }
-all_packages_installed() { return 0; }
-driver_is_loaded() { return 1; }
+all_packages_exact() { return 0; }
+driver_loaded_exact() { return 1; }
 run_verify
 `,
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/NVIDIA driver is not loaded/);
+    expect(output).toMatch(/Pinned driver is not loaded/);
   });
 
   it("rejects a symlinked Station bootstrap state directory", () => {
@@ -1178,9 +958,14 @@ PAYLOAD
   cat > "$target/scripts/prepare-dgx-station-host.sh" <<'HELPER'
 #!/usr/bin/env bash
 set -euo pipefail
-[ "\${1:-}" = "--apply" ]
-printf '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.2 mode=--apply log=/tmp/station-prepare.log\\n'
-printf 'PREPARE_STATION\\n'
+case "\${1:-}" in
+  --classify-dgx-release) printf 'CLASSIFY_STATION\\n' >&2; printf 'generic-ubuntu' ;;
+  --apply)
+    printf '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.4 mode=--apply log=/tmp/station-prepare.log\\n'
+    printf 'PREPARE_STATION\\n'
+    ;;
+  *) exit 2 ;;
+esac
 HELPER
   chmod +x "$target/scripts/install.sh" "$target/scripts/prepare-dgx-station-host.sh"
   exit 0
@@ -1212,9 +997,11 @@ exit 0
     const preparationLogIndex = output.indexOf("DGX Station host preparation log");
 
     expect(result.status, output).toBe(0);
+    expect(output).toContain("CLASSIFY_STATION");
     expect(output).toContain("DGX Station host prerequisites are ready");
     expect(preparationLogIndex).toBeGreaterThanOrEqual(0);
     expect(preparationLogIndex).toBeLessThan(output.indexOf("ENSURE_DOCKER"));
+    expect(output).not.toContain("PREPARE_STATION");
     expect(output.indexOf("ENSURE_DOCKER")).toBeLessThan(output.indexOf("ENSURE_BUILD_DEPS"));
   });
 
@@ -1237,6 +1024,26 @@ prepare_installer_host
       "ENSURE_DOCKER",
       "ENSURE_BUILD_DEPS",
     ]);
+  });
+
+  it("pins Station preparation to the local default Docker context (#7103)", () => {
+    const { result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+DOCKER_HOST='tcp://remote.example:2376'
+DOCKER_CONTEXT='remote-cluster'
+maybe_offer_express_install() { _SELECTED_EXPRESS_PLATFORM='DGX Station'; }
+ensure_station_express_host() {
+  printf 'PREPARE DOCKER_HOST=%s DOCKER_CONTEXT=%s\n' "\${DOCKER_HOST-unset}" "\${DOCKER_CONTEXT-unset}"
+}
+ensure_docker() { :; }
+ensure_openshell_build_deps() { :; }
+prepare_installer_host
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout.trim()).toBe("PREPARE DOCKER_HOST=unset DOCKER_CONTEXT=default");
   });
 
   it("skips Station preparation before Docker bootstrap on non-Station platforms", () => {
@@ -1266,6 +1073,7 @@ prepare_installer_host
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
 station_installer_revision() { printf '${STATION_REVISION}'; }
+station_express_resume_generation() { printf '${STATION_GENERATION}'; }
 run_station_host_preparation() { return 10; }
 ensure_station_express_host
 `,
@@ -1274,7 +1082,7 @@ ensure_station_express_host
 
     expect(result.status, output).toBe(10);
     expect(fs.readFileSync(stateFile, "utf-8")).toBe(
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
     );
     expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
     expect(output).toContain(`NEMOCLAW_INSTALL_TAG=${STATION_REVISION}`);
@@ -1330,7 +1138,7 @@ ensure_station_express_host
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(
       path.join(stateDir, "station-express-resume"),
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
       { mode: 0o600 },
     );
     const result = spawnSync(
@@ -1347,8 +1155,8 @@ NON_INTERACTIVE=''
 NEMOCLAW_PROVIDER=''
 NEMOCLAW_NO_EXPRESS=''
 maybe_offer_express_install
-printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s\n' \
-  "$_SELECTED_EXPRESS_PLATFORM" "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_MODEL:-}" "$NEMOCLAW_VLLM_MODEL"
+printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s RESUME_LOADED=%s GENERATION=%s\n' \
+  "$_SELECTED_EXPRESS_PLATFORM" "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_MODEL:-}" "$NEMOCLAW_VLLM_MODEL" "$NEMOCLAW_STATION_EXPRESS" "$_STATION_EXPRESS_RESUME_LOADED" "$NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION"
 `,
       ],
       {
@@ -1369,8 +1177,109 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s\n' \
     expect(output).toMatch(/Resuming the accepted express install/);
     expect(output).not.toMatch(/Run express install with these settings/);
     expect(output).toMatch(
-      /RESULT PLATFORM=DGX Station PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b/,
+      new RegExp(
+        `RESULT PLATFORM=DGX Station PROVIDER=install-vllm MODEL=nvidia/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b STATION_EXPRESS=1 RESUME_LOADED=1 GENERATION=${STATION_GENERATION}`,
+      ),
     );
+  });
+
+  it("does not restore the Station recipe after an explicit fresh onboard (#7048)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-fresh-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(
+      receipt,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
+      { mode: 0o600 },
+    );
+    const session = {
+      resumable: true,
+      status: "failed",
+      mode: "non-interactive",
+      provider: null,
+      model: null,
+      stationExpressIntent: {
+        version: 1 as const,
+        model: "nemotron-3-ultra-550b-a55b",
+        sandboxName: "my-assistant",
+      },
+    };
+
+    try {
+      await withStationExpressResumeEnvironment(
+        async () => undefined,
+        {
+          loadSession: () => session,
+          clearInstallerResume: () => clearStationExpressInstallerResume({ HOME: home }),
+          cleanupReceiptRetirementClaims: () => undefined,
+          reconcileReceiptRetirement: () => undefined,
+          error: (message) => {
+            throw new Error(message);
+          },
+          exitProcess: (code): never => {
+            throw new Error(`exit ${String(code)}`);
+          },
+        },
+        {},
+      )({ fresh: true });
+      expect(fs.existsSync(receipt)).toBe(false);
+
+      const { result, output } = runNonInteractiveStationSelector(home);
+
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Skipping express prompt (--non-interactive set)");
+      expect(output).not.toContain("Resuming the accepted express install");
+      expect(output).toContain("RESULT PROVIDER= STATION_EXPRESS=");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not restore the Station recipe after onboarding completes (#7048)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-complete-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    const session = await import("../src/lib/state/onboard-session");
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+
+    try {
+      session.saveSession(
+        session.createSession({
+          mode: "non-interactive",
+          stationExpressIntent: {
+            version: 1,
+            model: "nemotron-3-ultra-550b-a55b",
+            sandboxName: "my-assistant",
+            receiptGeneration: STATION_GENERATION,
+          },
+        }),
+      );
+      fs.writeFileSync(
+        receipt,
+        `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
+        { mode: 0o600 },
+      );
+
+      session.completeSession();
+
+      expect(fs.existsSync(receipt)).toBe(false);
+      expect(session.loadSession()).toMatchObject({
+        status: "complete",
+        resumable: false,
+        stationExpressIntent: null,
+      });
+      const { result, output } = runNonInteractiveStationSelector(home);
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Skipping express prompt (--non-interactive set)");
+      expect(output).not.toContain("Resuming the accepted express install");
+      expect(output).toContain("RESULT PROVIDER= STATION_EXPRESS=");
+    } finally {
+      session.clearSession();
+      session.releaseOnboardLock();
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("preserves an explicit provider even when Station resume state exists", () => {
@@ -1403,8 +1312,21 @@ printf 'RESULT PROVIDER=%s\n' "$NEMOCLAW_PROVIDER"
       `
 mkdir -p "$HOME/.nemoclaw"
 chmod 0700 "$HOME/.nemoclaw"
-printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n' >"$HOME/.nemoclaw/station-express-resume"
+printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$HOME/.nemoclaw/station-express-resume"
 chmod 0600 "$HOME/.nemoclaw/station-express-resume"
+claim="$HOME/.nemoclaw/station-express-resume.retiring-${STATION_GENERATION}-ABC123"
+mkdir -m 0700 "$claim"
+printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$claim/receipt"
+: >"$claim/retired"
+chmod 0600 "$claim/receipt" "$claim/retired"
+: >"$claim/unexpected"
+(clear_station_express_resume) && exit 91
+[[ -f "$claim/receipt" ]] || exit 92
+rm "$claim/unexpected"
+chmod 0644 "$claim/retired"
+(clear_station_express_resume) && exit 93
+[[ -f "$claim/receipt" ]] || exit 94
+chmod 0600 "$claim/retired"
 detect_express_platform() { printf 'DGX Station'; }
 NON_INTERACTIVE=''
 NEMOCLAW_PROVIDER=''
@@ -1416,6 +1338,44 @@ maybe_offer_express_install
     expect(result.status, output).toBe(0);
     expect(output).toContain("NEMOCLAW_NO_EXPRESS=1");
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(
+          home,
+          ".nemoclaw",
+          `station-express-resume.retiring-${STATION_GENERATION}-ABC123`,
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses claim-only cleanup through a group-accessible gateway ancestor", () => {
+    const { home, result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+NEMOCLAW_GATEWAY_PORT=28080
+state_dir="$HOME/.nemoclaw/gateways/28080"
+claim="$state_dir/station-express-resume.retiring-${STATION_GENERATION}-ABC123"
+mkdir -p "$claim"
+chmod 0700 "$HOME/.nemoclaw" "$state_dir" "$claim"
+chmod 0770 "$HOME/.nemoclaw/gateways"
+: >"$claim/retired"
+chmod 0600 "$claim/retired"
+clear_station_express_resume
+`,
+    );
+
+    expect(result.status, output).toBe(1);
+    expect(output).toContain("must not be accessible by group or other users");
+    expect(
+      fs.existsSync(
+        path.join(
+          home,
+          ".nemoclaw/gateways/28080",
+          `station-express-resume.retiring-${STATION_GENERATION}-ABC123/retired`,
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("does not load Station resume state on DGX Spark", () => {
@@ -1449,7 +1409,7 @@ printf 'RESULT MODEL=%s\n' "$NEMOCLAW_VLLM_MODEL"
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(
       path.join(stateDir, "station-express-resume"),
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\nunexpected\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\nunexpected\n`,
       { mode: 0o600 },
     );
     const result = spawnSync(
@@ -1486,7 +1446,7 @@ printf 'RESULT MODEL=%s\n' "$NEMOCLAW_VLLM_MODEL"
       `
 mkdir -p "$HOME/.nemoclaw"
 chmod 0700 "$HOME/.nemoclaw"
-printf 'revision=${savedRevision}\nmodel=nemotron-3-ultra-550b-a55b\n' >"$HOME/.nemoclaw/station-express-resume"
+printf 'revision=${savedRevision}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$HOME/.nemoclaw/station-express-resume"
 chmod 0600 "$HOME/.nemoclaw/station-express-resume"
 station_installer_revision() { printf '${currentRevision}'; }
 load_station_express_resume

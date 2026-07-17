@@ -5,9 +5,13 @@
 set -Eeuo pipefail
 umask 077
 
-readonly SCRIPT_VERSION="2026-07-17.2"
+readonly SCRIPT_VERSION="2026-07-17.4"
 readonly REBOOT_REQUIRED_EXIT=10
 readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
+readonly GB300_PCI_VENDOR="0x10de"
+readonly GB300_PCI_DEVICE="0x31c2"
+readonly GB300_PCI_CLASS_PREFIX="0x03"
+STATION_HOST_PROFILE="generic-ubuntu"
 # The qualified generic image currently ships this OEM telemetry bootcmd. Its
 # exception disappears automatically when the file changes or the bootcmd
 # failure is fixed; update the pin only with a newly audited image.
@@ -26,6 +30,7 @@ readonly DOCKER_KEY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 readonly DRIVER_VERSION="610.43.02"
 readonly DOCKER_VERSION="29.6.1"
 readonly TOOLKIT_VERSION="1.19.1"
+readonly FACTORY_DKMS_VERSION="3.0.11-1ubuntu13"
 readonly TARGET_DKMS_VERSION="1:3.4.0-1ubuntu1"
 # Keep this as a plain Ubuntu image: NVIDIA Container Toolkit injects the host
 # driver utility when CDI or --gpus is requested. This intentionally exercises
@@ -48,6 +53,126 @@ readonly -a PACKAGE_SPECS=(
   "nvidia-container-toolkit=1.19.1-1"
   "nvidia-container-toolkit-base=1.19.1-1"
 )
+
+dgx_station_release_path() {
+  printf '%s' /etc/dgx-release
+}
+
+station_os_release_path() {
+  printf '%s' /etc/os-release
+}
+
+station_product_name_path() {
+  printf '%s' /sys/class/dmi/id/product_name
+}
+
+station_pci_devices_path() {
+  printf '%s' /sys/bus/pci/devices
+}
+
+dgx_station_release_file_is_safe() {
+  local path=$1 metadata uid gid mode size
+  [[ -r "$path" && -f "$path" && ! -L "$path" ]] || return 1
+  metadata="$(LC_ALL=C stat -c '%u|%g|%a|%s' -- "$path" 2>/dev/null)" || return 1
+  IFS='|' read -r uid gid mode size <<<"$metadata"
+  [[ "$uid" == "0" && "$gid" == "0" ]] || return 1
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  (((8#$mode & 0022) == 0)) || return 1
+  [[ "$size" =~ ^[0-9]+$ ]] && ((size > 0 && size <= 4096))
+}
+
+dgx_station_release_schema_is_valid() {
+  local path=$1 line key encoded value seen='|' expect_ota_date=0 prior_version
+  local -a ota_versions=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -z "$line" ]]; then
+      ((expect_ota_date == 0)) || return 1
+      continue
+    fi
+    [[ "$line" == *=* ]] || return 1
+    key="${line%%=*}"
+    encoded="${line#*=}"
+    [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]] || return 1
+    [[ ${#encoded} -ge 2 && "$encoded" == \"*\" && "$encoded" == *\" ]] || return 1
+    value="${encoded:1:${#encoded}-2}"
+    [[ "$value" != *\"* ]] || return 1
+    case "$key" in
+      DGX_NAME | DGX_PRETTY_NAME | DGX_SWBUILD_DATE | DGX_SWBUILD_VERSION | DGX_COMMIT_ID | DGX_OTA_PRETTY_NAME | DGX_OTA_VERSION | DGX_OTA_DATE | DGX_PLATFORM | DGX_SERIAL_NUMBER) ;;
+      *) return 1 ;;
+    esac
+    # DGX OS appends unique OTA version/date pairs as release history. Require
+    # each version to be immediately followed by its date; other keys remain
+    # unique, and dgx_station_release_value returns the latest complete OTA.
+    case "$key" in
+      DGX_OTA_VERSION)
+        ((expect_ota_date == 0)) || return 1
+        if ((${#ota_versions[@]} > 0)); then
+          for prior_version in "${ota_versions[@]}"; do
+            [[ "$prior_version" != "$value" ]] || return 1
+          done
+        fi
+        ota_versions+=("$value")
+        expect_ota_date=1
+        ;;
+      DGX_OTA_DATE)
+        ((expect_ota_date == 1)) || return 1
+        expect_ota_date=0
+        ;;
+      *)
+        ((expect_ota_date == 0)) || return 1
+        [[ "$seen" != *"|${key}|"* ]] || return 1
+        ;;
+    esac
+    seen="${seen}${key}|"
+  done <"$path"
+  ((expect_ota_date == 0))
+}
+
+dgx_station_release_value() {
+  local path=$1 wanted=$2 line value="" found=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" == "${wanted}="* ]] || continue
+    value="${line#*=}"
+    [[ ${#value} -ge 2 && "$value" == \"*\" && "$value" == *\" ]] || return 1
+    value="${value:1:${#value}-2}"
+    [[ "$value" != *\"* ]] || return 1
+    found=1
+  done <"$path"
+  ((found == 1)) || return 1
+  printf '%s' "$value"
+}
+
+dgx_station_release_contents_are_supported() {
+  local path=$1 pretty version platform
+  dgx_station_release_schema_is_valid "$path" || return 1
+  pretty="$(dgx_station_release_value "$path" DGX_OTA_PRETTY_NAME)" || return 1
+  [[ "$pretty" == "DGX OS" ]] || return 1
+  version="$(dgx_station_release_value "$path" DGX_OTA_VERSION)" || return 1
+  platform="$(dgx_station_release_value "$path" DGX_PLATFORM)" || return 1
+
+  case "$version" in
+    7.2.0 | 7.4.0 | 7.5.0) ;;
+    *) return 1 ;;
+  esac
+  [[ "$platform" == "DGX Server for GALAXY-GB300" ]]
+}
+
+dgx_station_release_is_supported() {
+  local path=$1
+  dgx_station_release_file_is_safe "$path" \
+    && dgx_station_release_contents_are_supported "$path"
+}
+
+dgx_station_release_state() {
+  local path=${1:-"$(dgx_station_release_path)"}
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    printf '%s' generic-ubuntu
+  elif dgx_station_release_is_supported "$path"; then
+    printf '%s' supported-dgx-os
+  else
+    printf '%s' unsupported-dgx-os
+  fi
+}
 
 MODE=""
 LOG_FILE=""
@@ -81,7 +206,7 @@ usage() {
 Usage: prepare-dgx-station-host.sh --check|--apply|--verify
 
   --check   Read-only eligibility and current-state report.
-  --apply   Install missing reviewed prerequisites or finish post-reboot runtime setup.
+  --apply   Install exact prerequisites or finish post-reboot runtime setup.
   --verify  Read-only host verification plus ephemeral GPU container tests.
 
 Exit 10 from --apply means an operator-controlled reboot is required. After
@@ -91,14 +216,52 @@ EOF
 
 is_valid_mode() {
   case "${1:-}" in
-    --check | --apply | --verify) return 0 ;;
+    --check | --apply | --verify | --classify-dgx-release) return 0 ;;
     *) return 1 ;;
   esac
 }
 
-is_station_product() {
+is_station_gb300_product() {
   local product=${1:-}
-  [[ "$product" == *"Station"* && "$product" == *"GB300"* ]]
+  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
+    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
+}
+
+normalize_nvidia_pci_bus_id() {
+  local bus_id domain rest
+  bus_id="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  bus_id="${bus_id//[[:space:]]/}"
+  [[ "$bus_id" =~ ^([0-9a-f]{4}|[0-9a-f]{8}):[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]] || return 1
+  domain="${bus_id%%:*}"
+  rest="${bus_id#*:}"
+  if ((${#domain} == 8)); then
+    domain="${domain:4}"
+  fi
+  printf '%s:%s' "$domain" "$rest"
+}
+
+station_pci_device_is_gb300() {
+  local bus_id=$1 pci_root=${2:-/sys/bus/pci/devices} pci_path vendor device class
+  bus_id="$(normalize_nvidia_pci_bus_id "$bus_id")" || return 1
+  pci_path="${pci_root}/${bus_id}"
+  [[ -d "$pci_path" &&
+    -r "$pci_path/vendor" &&
+    -r "$pci_path/device" &&
+    -r "$pci_path/class" ]] || return 1
+  IFS= read -r vendor <"$pci_path/vendor" || return 1
+  IFS= read -r device <"$pci_path/device" || return 1
+  IFS= read -r class <"$pci_path/class" || return 1
+  [[ "$vendor" == "$GB300_PCI_VENDOR" &&
+    "$device" == "$GB300_PCI_DEVICE" &&
+    "$class" == "${GB300_PCI_CLASS_PREFIX}"* ]]
+}
+
+station_has_exact_gb300_pci_gpu() {
+  local pci_root=${1:-/sys/bus/pci/devices} pci_path
+  for pci_path in "$pci_root"/*; do
+    station_pci_device_is_gb300 "${pci_path##*/}" "$pci_root" && return 0
+  done
+  return 1
 }
 
 is_preparation_critical_unit() {
@@ -152,6 +315,7 @@ sssd_socket_failure_is_qualified() {
 }
 
 is_qualified_factory_failed_unit() {
+  [[ "$STATION_HOST_PROFILE" == "generic-ubuntu" ]] || return 1
   case "${1:-}" in
     cloud-init.service) cloud_init_failure_is_qualified ;;
     NetworkManager-wait-online.service | systemd-networkd-wait-online.service)
@@ -196,36 +360,48 @@ package_is_exact() {
   [[ "$actual" == "$expected" ]]
 }
 
-package_is_installed() {
+package_state() {
   local spec=$1
-  local name
+  local name expected actual
   name="$(package_name "$spec")"
-  [[ -n "$(installed_version "$name")" ]]
+  expected="$(package_expected_version "$spec")"
+  actual="$(installed_version "$name")"
+  if [[ -z "$actual" ]]; then
+    printf 'missing\n'
+  elif [[ "$actual" == "$expected" ]]; then
+    printf 'exact\n'
+  elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" && "$expected" == "$TARGET_DKMS_VERSION" ]]; then
+    printf 'approved-transition\n'
+  else
+    printf 'mismatch\n'
+  fi
 }
 
-report_package_version_drift() {
-  local spec name expected actual
+assert_no_package_mismatches() {
+  local spec state name expected actual mismatch=0
   for spec in "${PACKAGE_SPECS[@]}"; do
+    state="$(package_state "$spec")"
+    if [[ "$state" == "approved-transition" ]]; then
+      name="$(package_name "$spec")"
+      expected="$(package_expected_version "$spec")"
+      actual="$(installed_version "$name")"
+      info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
+      continue
+    fi
+    [[ "$state" == "mismatch" ]] || continue
     name="$(package_name "$spec")"
     expected="$(package_expected_version "$spec")"
     actual="$(installed_version "$name")"
-    [[ -n "$actual" && "$actual" != "$expected" ]] || continue
-    warn "package=${name} status=version_drift actual=${actual} expected=${expected}; retaining installed version"
+    warn "package=${name} status=mismatch actual=${actual} expected=${expected}"
+    mismatch=1
   done
+  ((mismatch == 0)) || fatal "Existing Station prerequisite versions differ from the validated pins or approved factory transition; refusing to change them automatically"
 }
 
 all_packages_exact() {
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
     package_is_exact "$spec" || return 1
-  done
-  return 0
-}
-
-all_packages_installed() {
-  local spec
-  for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_installed "$spec" || return 1
   done
   return 0
 }
@@ -248,21 +424,34 @@ file_mode() {
 }
 
 check_platform() {
-  local arch product
+  local arch os_release_path product product_name_path release_path release_state
   arch="$(uname -m)"
   [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] || fatal "Expected ARM64, found ${arch}"
 
-  [[ -r /etc/os-release ]] || fatal "/etc/os-release is unavailable"
-  # shellcheck disable=SC1091
-  source /etc/os-release
+  os_release_path="$(station_os_release_path)"
+  [[ -r "$os_release_path" ]] || fatal "/etc/os-release is unavailable"
+  # shellcheck disable=SC1090
+  source "$os_release_path"
   [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]] \
     || fatal "Expected Ubuntu 24.04, found ${PRETTY_NAME:-unknown}"
-  [[ ! -e /etc/dgx-release && ! -L /etc/dgx-release ]] \
-    || fatal "DGX OS/BaseOS is outside this recipe's validated boundary; use the generic Ubuntu 24.04 ARM64 image"
-
-  product="$(</sys/class/dmi/id/product_name)"
-  is_station_product "$product" || fatal "Expected DGX Station GB300 DMI, found ${product}"
-  info "platform=${product} os=${PRETTY_NAME} arch=${arch} kernel=$(uname -r)"
+  product_name_path="$(station_product_name_path)"
+  [[ -r "$product_name_path" ]] || fatal "DGX Station product identity is unavailable"
+  product="$(<"$product_name_path")"
+  is_station_gb300_product "$product" || fatal "Expected DGX Station GB300 DMI, found ${product}"
+  release_path="$(dgx_station_release_path)"
+  release_state="$(dgx_station_release_state "$release_path")"
+  case "$release_state" in
+    generic-ubuntu)
+      station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
+        || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:${GB300_PCI_DEVICE#0x}) before generic Ubuntu preparation"
+      STATION_HOST_PROFILE="generic-ubuntu"
+      ;;
+    supported-dgx-os) STATION_HOST_PROFILE="stock-dgx-os" ;;
+    *)
+      fatal "This DGX Station OS image is outside the validated boundary; use generic Ubuntu 24.04 ARM64 or stock DGX OS 7.2.0, 7.4.0, or 7.5.0 on Station GB300"
+      ;;
+  esac
+  info "platform=${product} profile=${STATION_HOST_PROFILE} os=${PRETTY_NAME} arch=${arch} kernel=$(uname -r)"
 }
 
 check_secure_boot() {
@@ -301,6 +490,38 @@ check_package_managers_idle() {
   active="$(ps -eo pid=,comm= | awk '$2 ~ /^(apt|apt-get|dpkg|unattended-upgrade)$/ {print}')"
   [[ -z "$active" ]] || fatal "A package-manager process is active: ${active}"
   info "package_manager=idle"
+}
+
+check_dgx_os_docker_selection() {
+  [[ -z "${DOCKER_HOST:-}" ]] \
+    || fatal "Stock DGX OS validation requires the local Docker daemon; unset DOCKER_HOST and rerun"
+  [[ -z "${DOCKER_CONTEXT:-}" || "${DOCKER_CONTEXT}" == "default" ]] \
+    || fatal "Stock DGX OS validation requires the default local Docker context; unset DOCKER_CONTEXT and rerun"
+}
+
+station_local_default_docker() (
+  unset DOCKER_HOST DOCKER_CONTEXT
+  docker --context default "$@"
+)
+
+station_sudo_local_default_docker() {
+  sudo -n env -u DOCKER_HOST -u DOCKER_CONTEXT docker --context default "$@"
+}
+
+host_docker() {
+  if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
+    station_local_default_docker "$@"
+  else
+    docker "$@"
+  fi
+}
+
+host_docker_sudo() {
+  if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
+    station_sudo_local_default_docker "$@"
+  else
+    sudo -n docker "$@"
+  fi
 }
 
 check_failed_units() {
@@ -352,9 +573,9 @@ check_no_workloads() {
   [[ -z "$listeners" ]] || fatal "Port 8000 is already listening: ${listeners}"
 
   if command -v docker >/dev/null 2>&1; then
-    if containers="$(docker ps -aq 2>/dev/null)"; then
+    if containers="$(host_docker ps -aq 2>/dev/null)"; then
       :
-    elif [[ "$MODE" == "--apply" ]] && containers="$(sudo -n docker ps -aq 2>/dev/null)"; then
+    elif [[ "$MODE" == "--apply" ]] && containers="$(host_docker_sudo ps -aq 2>/dev/null)"; then
       info "docker_access=sudo_until_group_membership_is_active"
     elif systemctl is-active --quiet docker.service; then
       fatal "Docker is active but inaccessible to this login; start a new login session with docker-group membership"
@@ -367,11 +588,19 @@ check_no_workloads() {
 }
 
 loaded_driver_version() {
-  local loaded
+  local rows row bus_id driver pci_root
   command -v nvidia-smi >/dev/null 2>&1 || return 0
-  loaded="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 | tr -d '[:space:]')" \
+  rows="$(nvidia-smi --query-gpu=pci.bus_id,driver_version --format=csv,noheader 2>/dev/null)" \
     || return 0
-  printf '%s\n' "$loaded"
+  pci_root="$(station_pci_devices_path)"
+  while IFS= read -r row; do
+    [[ -n "${row//[[:space:]]/}" ]] || continue
+    IFS=',' read -r bus_id driver <<<"$row"
+    bus_id="$(normalize_nvidia_pci_bus_id "$bus_id")" || continue
+    station_pci_device_is_gb300 "$bus_id" "$pci_root" || continue
+    printf '%s' "${driver//[[:space:]]/}"
+    return 0
+  done <<<"$rows"
 }
 
 driver_is_loaded() {
@@ -380,13 +609,6 @@ driver_is_loaded() {
 
 driver_loaded_exact() {
   [[ "$(loaded_driver_version)" == "$DRIVER_VERSION" ]]
-}
-
-report_driver_version_drift() {
-  local actual
-  actual="$(loaded_driver_version)"
-  [[ -n "$actual" && "$actual" != "$DRIVER_VERSION" ]] || return 0
-  warn "driver status=version_drift actual=${actual} expected=${DRIVER_VERSION}; retaining loaded version"
 }
 
 assert_station_state_dir_safe() {
@@ -451,8 +673,10 @@ print_package_status() {
       info "package=${name} status=exact version=${actual}"
     elif [[ -z "$actual" ]]; then
       info "package=${name} status=missing expected=${expected}"
+    elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" ]]; then
+      info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
     else
-      warn "package=${name} status=version_drift actual=${actual} expected=${expected}; retaining installed version"
+      warn "package=${name} status=mismatch actual=${actual} expected=${expected}"
     fi
   done
 }
@@ -469,8 +693,13 @@ common_preflight() {
   require_command stat
   require_command systemctl
   check_platform
-  check_secure_boot
-  check_kernel_headers
+  if [[ "$STATION_HOST_PROFILE" == "generic-ubuntu" ]]; then
+    check_secure_boot
+    check_kernel_headers
+  else
+    info "factory_runtime=validation_only package_and_driver_mutation=disabled"
+    check_dgx_os_docker_selection
+  fi
   check_capacity
   check_network
   check_package_managers_idle
@@ -549,15 +778,13 @@ ensure_cuda_keyring() {
     sudo dpkg -i "$cuda_deb"
     package_is_exact "cuda-keyring=${CUDA_KEYRING_PACKAGE_VERSION}" \
       || fatal "Installed cuda-keyring does not match ${CUDA_KEYRING_PACKAGE_VERSION}"
-  else
+  elif [[ "$actual" == "$CUDA_KEYRING_PACKAGE_VERSION" ]]; then
     verification="$(dpkg -V cuda-keyring 2>&1)" \
       || fatal "Unable to verify the installed cuda-keyring package"
     [[ -z "$verification" ]] || fatal "Installed cuda-keyring files differ from the package manifest: ${verification}"
-    if [[ "$actual" == "$CUDA_KEYRING_PACKAGE_VERSION" ]]; then
-      info "cuda_keyring=exact version=${actual}"
-    else
-      warn "package=cuda-keyring status=version_drift actual=${actual} expected=${CUDA_KEYRING_PACKAGE_VERSION}; retaining installed version"
-    fi
+    info "cuda_keyring=exact version=${actual}"
+  else
+    fatal "Existing cuda-keyring version ${actual} differs from validated pin ${CUDA_KEYRING_PACKAGE_VERSION}; refusing to upgrade or downgrade it automatically"
   fi
 
   assert_root_regular_file_safe /usr/share/keyrings/cuda-archive-keyring.gpg 0644 "CUDA repository keyring"
@@ -645,16 +872,9 @@ configure_repositories() {
   info "repository_keys=verified"
 }
 
-missing_package_specs() {
-  local spec
-  for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_installed "$spec" || printf '%s\n' "$spec"
-  done
-}
-
 validate_package_availability() {
   local spec
-  for spec in "$@"; do
+  for spec in "${PACKAGE_SPECS[@]}"; do
     apt-cache show "$spec" >/dev/null 2>&1 || fatal "Exact package version is unavailable: ${spec}"
   done
   info "exact_package_versions=available"
@@ -662,7 +882,7 @@ validate_package_availability() {
 
 simulate_install() {
   local simulation
-  simulation="$(apt-get -s install --no-install-recommends "$@")" \
+  simulation="$(apt-get -s install --no-install-recommends "${PACKAGE_SPECS[@]}")" \
     || fatal "APT simulation failed"
   printf '%s\n' "$simulation"
   if grep -Eq '^(Remv |Purg )' <<<"$simulation"; then
@@ -672,24 +892,18 @@ simulate_install() {
 }
 
 install_packages() {
-  local spec
-  local -a missing_specs=()
-  while IFS= read -r spec; do
-    missing_specs+=("$spec")
-  done < <(missing_package_specs)
-  ((${#missing_specs[@]} > 0)) || fatal "Package installation was requested without a missing prerequisite"
-
   configure_repositories
   info "Refreshing package metadata"
   sudo apt-get update
-  validate_package_availability "${missing_specs[@]}"
-  simulate_install "${missing_specs[@]}"
+  validate_package_availability
+  simulate_install
   check_no_workloads
-  info "Installing missing pinned Station prerequisites"
+  info "Installing pinned Station prerequisites"
   sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    "${missing_specs[@]}"
+    "${PACKAGE_SPECS[@]}"
 
-  for spec in "${missing_specs[@]}"; do
+  local spec
+  for spec in "${PACKAGE_SPECS[@]}"; do
     package_is_exact "$spec" || fatal "Installed package does not match ${spec}"
   done
   info "pinned_packages=installed"
@@ -759,6 +973,21 @@ run_cdi_test_sudo() {
 
 run_gpus_test_sudo() {
   sudo docker run --rm --gpus all "$ACCEPTANCE_IMAGE" nvidia-smi
+}
+
+ensure_dgx_os_acceptance_image() {
+  if ! station_sudo_local_default_docker image inspect "$ACCEPTANCE_IMAGE" >/dev/null 2>&1; then
+    info "Pulling digest-pinned ARM64 acceptance image"
+    station_sudo_local_default_docker pull --platform linux/arm64 "$ACCEPTANCE_IMAGE"
+  fi
+}
+
+run_dgx_os_cdi_test_sudo() {
+  station_sudo_local_default_docker run --rm --device nvidia.com/gpu=all "$ACCEPTANCE_IMAGE" nvidia-smi
+}
+
+run_dgx_os_gpus_test_sudo() {
+  station_sudo_local_default_docker run --rm --gpus all "$ACCEPTANCE_IMAGE" nvidia-smi
 }
 
 docker_has_nvidia_runtime_sudo() {
@@ -869,10 +1098,60 @@ finish_runtime() {
   info "runtime_setup=complete"
 }
 
+check_dgx_os_runtime_commands() {
+  require_command docker
+  require_command nvidia-ctk
+  require_command nvidia-smi
+  driver_is_loaded || fatal "Stock DGX OS did not expose a loaded NVIDIA driver"
+  verify_gpu
+  info "dgx_os_runtime_commands=present"
+}
+
+verify_dgx_os_runtime_sudo() {
+  check_dgx_os_runtime_commands
+  systemctl is-active --quiet containerd.service || fatal "containerd.service is not active on stock DGX OS"
+  systemctl is-active --quiet docker.service || fatal "docker.service is not active on stock DGX OS"
+  station_sudo_local_default_docker info >/dev/null 2>&1 \
+    || fatal "The local Docker daemon is not reachable with sudo on stock DGX OS"
+  station_sudo_local_default_docker buildx version >/dev/null 2>&1 \
+    || fatal "Docker Buildx is unavailable on stock DGX OS"
+  sudo nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all' \
+    || fatal "Stock DGX OS does not advertise the nvidia.com/gpu=all CDI device"
+  ensure_dgx_os_acceptance_image
+  run_dgx_os_cdi_test_sudo \
+    || fatal "Stock DGX OS failed the CDI Docker GPU visibility test; no host runtime configuration was changed"
+  run_dgx_os_gpus_test_sudo \
+    || fatal "Stock DGX OS failed the Docker --gpus all GPU visibility test; no host runtime configuration was changed"
+  [[ -z "$(station_sudo_local_default_docker ps -aq)" ]] \
+    || fatal "DGX OS acceptance tests left a Docker container behind"
+  info "DGX_OS_HOST_READY host_runtime_mutation=container_image_cache_only"
+}
+
+verify_dgx_os_runtime_user() {
+  check_dgx_os_runtime_commands
+  systemctl is-active --quiet containerd.service || fatal "containerd.service is not active on stock DGX OS"
+  systemctl is-active --quiet docker.service || fatal "docker.service is not active on stock DGX OS"
+  station_local_default_docker info >/dev/null 2>&1 \
+    || fatal "The current user cannot access the local Docker daemon; run --apply first"
+  station_local_default_docker buildx version >/dev/null 2>&1 \
+    || fatal "Docker Buildx is unavailable on stock DGX OS"
+  nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all' \
+    || fatal "Stock DGX OS does not advertise the nvidia.com/gpu=all CDI device"
+  station_local_default_docker image inspect "$ACCEPTANCE_IMAGE" >/dev/null 2>&1 \
+    || fatal "Digest-pinned acceptance image is missing; run --apply"
+  station_local_default_docker run --rm --device nvidia.com/gpu=all "$ACCEPTANCE_IMAGE" nvidia-smi >/dev/null \
+    || fatal "Stock DGX OS failed the CDI Docker GPU visibility test"
+  station_local_default_docker run --rm --gpus all "$ACCEPTANCE_IMAGE" nvidia-smi >/dev/null \
+    || fatal "Stock DGX OS failed the Docker --gpus all GPU visibility test"
+  [[ -z "$(station_local_default_docker ps -aq)" ]] \
+    || fatal "DGX OS verification left a Docker container behind"
+  info "DGX_OS_HOST_READY"
+}
+
 verify_apply_state() {
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_installed "$spec" || fatal "Package verification failed: ${spec}"
+    package_is_exact "$spec" || fatal "Package verification failed: ${spec}"
   done
   verify_gpu
   systemctl is-active --quiet nvidia-persistenced.service || fatal "nvidia-persistenced.service is not active"
@@ -886,25 +1165,41 @@ verify_apply_state() {
 }
 
 verify_gpu() {
-  local row name driver corrected uncorrected
-  row="$(nvidia-smi \
-    --query-gpu=name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+  local rows row bus_id name driver corrected uncorrected gb300_count=0 pci_root
+  rows="$(nvidia-smi \
+    --query-gpu=pci.bus_id,name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits)" || fatal "nvidia-smi failed"
-  IFS=',' read -r name driver corrected uncorrected <<<"$row"
-  name="${name#"${name%%[![:space:]]*}"}"
-  driver="${driver//[[:space:]]/}"
-  corrected="${corrected//[[:space:]]/}"
-  uncorrected="${uncorrected//[[:space:]]/}"
-  [[ "$name" == *"GB300"* ]] || fatal "Expected NVIDIA GB300, found ${name}"
-  [[ "$corrected" == "0" && "$uncorrected" == "0" ]] \
-    || fatal "ECC must be 0/0, found corrected=${corrected} uncorrected=${uncorrected}"
-  info "gpu=${name} driver=${driver} ecc_corrected=${corrected} ecc_uncorrected=${uncorrected}"
+  pci_root="$(station_pci_devices_path)"
+  while IFS= read -r row; do
+    [[ -n "${row//[[:space:]]/}" ]] || continue
+    IFS=',' read -r bus_id name driver corrected uncorrected <<<"$row"
+    bus_id="$(normalize_nvidia_pci_bus_id "$bus_id")" \
+      || fatal "nvidia-smi returned an invalid PCI bus ID: ${bus_id}"
+    name="${name#"${name%%[![:space:]]*}"}"
+    driver="${driver//[[:space:]]/}"
+    corrected="${corrected//[[:space:]]/}"
+    uncorrected="${uncorrected//[[:space:]]/}"
+    if ! station_pci_device_is_gb300 "$bus_id" "$pci_root"; then
+      info "gpu_bdf=${bus_id} gpu=${name} role=auxiliary validation=skipped"
+      continue
+    fi
+    [[ -n "$driver" ]] || fatal "NVIDIA driver is not loaded"
+    if [[ "$STATION_HOST_PROFILE" == "generic-ubuntu" ]]; then
+      [[ "$driver" == "$DRIVER_VERSION" ]] \
+        || fatal "Expected driver ${DRIVER_VERSION}, found ${driver}"
+    fi
+    [[ "$corrected" == "0" && "$uncorrected" == "0" ]] \
+      || fatal "ECC must be 0/0, found corrected=${corrected} uncorrected=${uncorrected}"
+    ((gb300_count += 1))
+    info "gpu_bdf=${bus_id} gpu=${name} driver=${driver} ecc_corrected=${corrected} ecc_uncorrected=${uncorrected}"
+  done <<<"$rows"
+  ((gb300_count > 0)) || fatal "nvidia-smi returned no GB300 GPU matching the PCI identity"
 }
 
 verify_host() {
   local spec user_name=${SUDO_USER:-$USER}
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_installed "$spec" || fatal "Package verification failed: ${spec}"
+    package_is_exact "$spec" || fatal "Package verification failed: ${spec}"
   done
   verify_gpu
   systemctl is-active --quiet nvidia-persistenced.service || fatal "nvidia-persistenced.service is not active"
@@ -924,16 +1219,20 @@ verify_host() {
 
 run_check() {
   common_preflight
+  if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
+    check_dgx_os_runtime_commands
+    info "CHECK_RESULT=READY_FOR_RUNTIME_VALIDATION"
+    return 0
+  fi
   print_package_status
-  report_driver_version_drift
-  if all_packages_installed; then
+  if all_packages_exact; then
     if install_boot_marker_matches_current_boot; then
       warn "Package installation completed in the current boot; reboot is required"
       info "CHECK_RESULT=REBOOT_REQUIRED"
-    elif driver_is_loaded; then
+    elif driver_loaded_exact; then
       info "CHECK_RESULT=PACKAGES_AND_DRIVER_PRESENT"
     else
-      warn "Station prerequisite packages are installed but the NVIDIA driver is not loaded; reboot is required"
+      warn "Exact packages are installed but driver ${DRIVER_VERSION} is not loaded; reboot is required"
       info "CHECK_RESULT=REBOOT_REQUIRED"
     fi
   else
@@ -942,6 +1241,18 @@ run_check() {
 }
 
 run_apply() {
+  require_command sudo
+  acquire_sudo
+  common_preflight
+
+  if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
+    [[ ! -e /var/run/reboot-required ]] \
+      || fatal "A reboot is pending on stock DGX OS; reboot before running Station express install"
+    verify_dgx_os_runtime_sudo
+    info "APPLY_RESULT=COMPLETE"
+    return 0
+  fi
+
   require_command apt-cache
   require_command apt-get
   require_command cmp
@@ -951,21 +1262,17 @@ run_apply() {
   require_command grep
   require_command readlink
   require_command sha256sum
-  require_command sudo
-  acquire_sudo
-  common_preflight
-  report_package_version_drift
-  report_driver_version_drift
 
   if [[ -e /var/run/reboot-required ]]; then
-    if all_packages_installed && ! driver_is_loaded; then
+    if all_packages_exact && ! driver_loaded_exact; then
       warn "A reboot is required before runtime setup can continue"
       exit "$REBOOT_REQUIRED_EXIT"
     fi
     fatal "An unrelated reboot is already pending"
   fi
 
-  if ! all_packages_installed; then
+  if ! all_packages_exact; then
+    assert_no_package_mismatches
     install_packages
     ensure_docker_group
     check_no_workloads
@@ -983,8 +1290,8 @@ run_apply() {
     exit "$REBOOT_REQUIRED_EXIT"
   fi
 
-  driver_is_loaded || {
-    warn "Station prerequisite packages are installed but the NVIDIA driver is not loaded; reboot is required"
+  driver_loaded_exact || {
+    warn "Pinned packages are installed but driver ${DRIVER_VERSION} is not loaded"
     info "APPLY_RESULT=REBOOT_REQUIRED"
     info "Run: sudo reboot"
     exit "$REBOOT_REQUIRED_EXIT"
@@ -1007,10 +1314,12 @@ run_verify() {
   require_command docker
   require_command nvidia-ctk
   require_command nvidia-smi
-  all_packages_installed || fatal "Station prerequisite packages are incomplete; run --apply"
-  driver_is_loaded || fatal "NVIDIA driver is not loaded; reboot, then run --apply"
-  report_package_version_drift
-  report_driver_version_drift
+  if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
+    verify_dgx_os_runtime_user
+    return 0
+  fi
+  all_packages_exact || fatal "Pinned prerequisite packages are incomplete; run --apply"
+  driver_loaded_exact || fatal "Pinned driver is not loaded; reboot, then run --apply"
   verify_host
 }
 
@@ -1020,6 +1329,10 @@ main() {
     exit 2
   fi
   MODE=$1
+  if [[ "$MODE" == "--classify-dgx-release" ]]; then
+    dgx_station_release_state
+    return 0
+  fi
   if [[ "$MODE" == "--apply" ]]; then
     setup_log
   else

@@ -21,7 +21,7 @@ while [[ $# -gt 0 ]]; do
       cat <<'USAGE'
 Usage: scripts/release-cut-tag.sh --plan PATH --confirm "CONFIRM RELEASE vX.Y.Z <sha>"
 
-Creates and pushes only the annotated semver tag described by a release plan.
+Creates and pushes only the signed annotated semver tag described by a release plan.
 USAGE
       exit 0
       ;;
@@ -82,7 +82,9 @@ if git ls-remote --exit-code --tags origin "$tag" >/dev/null; then
   fail "Remote tag already exists: $tag"
 fi
 
-git tag -a "$tag" "$target" -m "$tag"
+# Release tags are immutable once pushed. Sign the tag on the release
+# operator's workstation so the private signing key never enters CI.
+git tag -s "$tag" "$target" -m "$tag"
 git push origin "refs/tags/$tag"
 
 remote_peeled="$(git ls-remote --tags origin "refs/tags/$tag^{}" | awk '{print $1}')"
