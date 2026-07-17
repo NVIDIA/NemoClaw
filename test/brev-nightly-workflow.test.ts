@@ -14,6 +14,7 @@ import { readYaml } from "./helpers/e2e-workflow-contract";
 type ReusableCallerJob = {
   env?: Record<string, unknown>;
   if?: string;
+  needs?: string | string[];
   outputs?: Record<string, unknown>;
   permissions?: Record<string, string>;
   "timeout-minutes"?: number;
