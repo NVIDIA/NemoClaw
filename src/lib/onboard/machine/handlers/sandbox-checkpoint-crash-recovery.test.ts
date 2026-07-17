@@ -47,35 +47,46 @@ function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardC
 
 type StubbedRunOpenshellResult = { status: number; stdout: string; stderr: string };
 
+const OK_RESULT: StubbedRunOpenshellResult = { status: 0, stdout: "", stderr: "" };
+
 function fakeGatewayRunOpenshell() {
   const createdProviders = new Map<string, { type: string; credentialEnv: string }>();
-  const runOpenshell = vi.fn((args: string[]): StubbedRunOpenshellResult => {
-    if (args[0] === "provider" && args[1] === "get") {
-      const provider = createdProviders.get(args[args.length - 1]);
-      if (!provider) return { status: 1, stdout: "", stderr: "not found" };
-      return {
-        status: 0,
-        stdout: [
-          `Name: ${args[args.length - 1]}`,
-          `Type: ${provider.type}`,
-          `Credential keys: ${provider.credentialEnv}`,
-          "Config keys: <none>",
-        ].join("\n"),
-        stderr: "",
-      };
-    }
-    if (args[0] === "provider" && args[1] === "create") {
-      createdProviders.set(args[args.indexOf("--name") + 1], {
-        type: args[args.indexOf("--type") + 1] ?? "generic",
-        credentialEnv: args[args.indexOf("--credential") + 1] ?? "",
-      });
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    if (args[0] === "provider" && args[1] === "update") {
-      return { status: 0, stdout: "", stderr: "" };
-    }
-    return { status: 0, stdout: "", stderr: "" };
-  });
+
+  const handleGet = (args: string[]): StubbedRunOpenshellResult => {
+    const name = args[args.length - 1];
+    const provider = createdProviders.get(name);
+    return provider
+      ? {
+          status: 0,
+          stdout: [
+            `Name: ${name}`,
+            `Type: ${provider.type}`,
+            `Credential keys: ${provider.credentialEnv}`,
+            "Config keys: <none>",
+          ].join("\n"),
+          stderr: "",
+        }
+      : { status: 1, stdout: "", stderr: "not found" };
+  };
+
+  const handleCreate = (args: string[]): StubbedRunOpenshellResult => {
+    createdProviders.set(args[args.indexOf("--name") + 1] ?? "", {
+      type: args[args.indexOf("--type") + 1] ?? "generic",
+      credentialEnv: args[args.indexOf("--credential") + 1] ?? "",
+    });
+    return OK_RESULT;
+  };
+
+  const handlersByAction: Record<string, (args: string[]) => StubbedRunOpenshellResult> = {
+    get: handleGet,
+    create: handleCreate,
+    update: () => OK_RESULT,
+  };
+
+  const runOpenshell = vi.fn(
+    (args: string[]): StubbedRunOpenshellResult =>
+      (args[0] === "provider" ? handlersByAction[args[1]] : undefined)?.(args) ?? OK_RESULT,
+  );
   return { runOpenshell, createdProviders };
 }
 
@@ -108,11 +119,11 @@ function realStageSandboxCredentialProviders(
         input as never,
         async () => ({ messagingTokenDefs: tokenDefs }),
       );
-      if (crashPending) {
-        crashPending = false;
-        throw new Error("gateway connection dropped mid-registration");
-      }
-      return staged;
+      const shouldCrash = crashPending;
+      crashPending = false;
+      return shouldCrash
+        ? Promise.reject(new Error("gateway connection dropped mid-registration"))
+        : staged;
     },
   );
 }
