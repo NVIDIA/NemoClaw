@@ -121,6 +121,7 @@ describe("gateway management declaration", () => {
 
   it.each([
     ["a remote host", "http://gateway.example.com:8080"],
+    ["a DNS-resolved localhost name", "http://localhost:8080"],
     ["a cloud metadata address", "http://169.254.169.254:8080"],
     ["a link-local address", "http://169.254.1.1:8080"],
     ["a non-loopback private address", "http://10.0.0.5:8080"],
@@ -130,8 +131,8 @@ describe("gateway management declaration", () => {
     expect(result.ok === false && result.reason).toMatch(/not a supported local gateway origin/);
   });
 
-  it("accepts the supported loopback endpoint hosts (#6576)", () => {
-    for (const endpoint of ["http://127.0.0.1:8080", "http://localhost:8080"]) {
+  it("accepts only numeric loopback endpoint hosts (#6576)", () => {
+    for (const endpoint of ["http://127.0.0.1:8080", "http://[::1]:8080"]) {
       expect(parseGatewayManagementDeclaration(externalDeclaration({ endpoint }))).toMatchObject({
         ok: true,
       });

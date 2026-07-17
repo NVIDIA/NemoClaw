@@ -114,10 +114,12 @@ function requireNonEmptyString(value: unknown, field: string): string | { error:
 }
 
 /**
- * Hosts a declared gateway endpoint may name. The gateway is supervised on this
- * machine, so the endpoint is always loopback.
+ * Numeric hosts a declared gateway endpoint may name. The gateway is supervised
+ * on this machine, so the endpoint is always loopback. DNS names are excluded:
+ * even `localhost` can be redirected by resolver configuration between parsing
+ * and the readiness request.
  */
-const SUPPORTED_GATEWAY_ENDPOINT_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+const SUPPORTED_GATEWAY_ENDPOINT_HOSTS = new Set(["127.0.0.1", "[::1]", "::1"]);
 
 /**
  * The endpoint is persisted, emitted in diagnostics, and — for an externally

@@ -51,7 +51,7 @@ export NEMOCLAW_GATEWAY_MANAGEMENT=/etc/nemoclaw/gateway-management.json
 |---|---|
 | `version` | Contract version. Only `1` is supported; an unrecognized version fails rather than being ignored. |
 | `mode` | `nemoclaw-managed` or `externally-supervised`. |
-| `endpoint` | Bare origin the gateway listens on. It must not embed credentials, a query string, or a path. Its port must be the port this NemoClaw process operates the gateway on — set `NEMOCLAW_GATEWAY_PORT` to match, or onboarding fails rather than validate one gateway and then use another. |
+| `endpoint` | Bare origin the gateway listens on. Use a numeric IPv4 or IPv6 loopback address; DNS names such as `localhost` are rejected so resolver configuration cannot redirect the readiness probe off-host. The origin must not embed credentials, a query string, or a path. Its port must be the port this NemoClaw process operates the gateway on — set `NEMOCLAW_GATEWAY_PORT` to match, or onboarding fails rather than validate one gateway and then use another. |
 | `stateDir` | Absolute path of the gateway state directory. |
 | `supervisor` | Required for `externally-supervised`, and rejected for `nemoclaw-managed`. `kind` is `systemd-system` or `systemd-user`. `serviceName` and an absolute `execPath` are both required — the listening process is checked against them. |
 | `requiredCapabilities` | Capabilities onboarding needs: `gateway.health`, `sandbox.create`, `sandbox.exec`, `gpu.passthrough`. Requesting one this NemoClaw build does not implement fails before any effect. |
