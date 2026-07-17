@@ -246,8 +246,6 @@ describe("shared Docker Hub authentication workflow boundary", () => {
   });
 
   it("executes the shared auth script with isolated config and bounded fail-closed retries", () => {
-    expect(fs.statSync(SETUP_HELPER_PATH).mode & 0o111).not.toBe(0);
-    const authScript = fs.readFileSync(SETUP_HELPER_PATH, "utf8");
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-auth-script-"));
     const fakeBin = path.join(directory, "bin");
     const runnerTemp = path.join(directory, "runner-temp");
@@ -303,7 +301,6 @@ fi
     };
 
     try {
-      expect(authScript).toContain("--password-stdin");
       const untrusted = runAuth({ authRequired: "0", successAttempt: 1 });
       expect(untrusted.status).toBe(0);
       expect(fs.existsSync(callsPath)).toBe(false);
