@@ -13,12 +13,21 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { executeSandboxCommand } from "./process-recovery";
 import {
   buildSessionStoreReplaceCommand,
   reconcilePinnedSessionModels,
+  reconcileStalePinnedSessionModelsAfterRebuild,
 } from "./reconcile-session-models";
+
+vi.mock("./process-recovery", () => ({ executeSandboxCommand: vi.fn() }));
+
+const executeSandboxCommandMock = vi.mocked(executeSandboxCommand);
+
+beforeEach(() => {
+  executeSandboxCommandMock.mockReset();
+});
 
 function store(entries: Record<string, unknown>): string {
   return JSON.stringify(entries);
@@ -195,5 +204,89 @@ describe("buildSessionStoreReplaceCommand", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("reconcileStalePinnedSessionModelsAfterRebuild", () => {
+  const primary = "inference/nvidia/llama-3.3-nemotron-super-49b-v1.5";
+  const config = JSON.stringify({ agents: { defaults: { model: { primary } } } });
+  const staleStore = store({
+    "agent:main:main": {
+      modelProvider: "inference",
+      model: "meta/llama-3.1-8b-instruct",
+    },
+  });
+
+  it("reads restored state and dispatches a guarded write for stale pins (#7102)", () => {
+    executeSandboxCommandMock
+      .mockReturnValueOnce({ status: 0, stdout: config, stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: staleStore, stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "", stderr: "" });
+    const log = vi.fn();
+
+    reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
+
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
+    expect(executeSandboxCommandMock.mock.calls[0]).toEqual([
+      "alpha",
+      "cat /sandbox/.openclaw/openclaw.json 2>/dev/null",
+    ]);
+    expect(executeSandboxCommandMock.mock.calls[1]).toEqual([
+      "alpha",
+      "cat /sandbox/.openclaw/agents/main/sessions/sessions.json 2>/dev/null",
+    ]);
+    const writeCommand = executeSandboxCommandMock.mock.calls[2][1];
+    expect(writeCommand).toContain("python3 -c");
+    expect(writeCommand).toContain("os.O_NOFOLLOW");
+    expect(writeCommand).not.toContain(".nemoclaw-tmp");
+    expect(log).toHaveBeenLastCalledWith(
+      `Session model reconcile: cleared stale pinned model on 1 session(s) so they follow ${primary}`,
+    );
+  });
+
+  it("stops when the restored config has no primary model (#7102)", () => {
+    executeSandboxCommandMock.mockReturnValueOnce({
+      status: 0,
+      stdout: '{"agents":{"defaults":{}}}',
+      stderr: "",
+    });
+    const log = vi.fn();
+
+    reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
+
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenLastCalledWith(
+      "Session model reconcile skipped: could not read agents.defaults.model.primary",
+    );
+  });
+
+  it("stops when the restored session store cannot be read (#7102)", () => {
+    executeSandboxCommandMock
+      .mockReturnValueOnce({ status: 0, stdout: config, stderr: "" })
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "missing" });
+    const log = vi.fn();
+
+    reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
+
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenLastCalledWith(
+      "Session model reconcile skipped: no session store at /sandbox/.openclaw/agents/main/sessions/sessions.json",
+    );
+  });
+
+  it("reports an atomic write failure without retrying or claiming success (#7102)", () => {
+    executeSandboxCommandMock
+      .mockReturnValueOnce({ status: 0, stdout: config, stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: staleStore, stderr: "" })
+      .mockReturnValueOnce({ status: 9, stdout: "", stderr: "refused" });
+    const log = vi.fn();
+
+    reconcileStalePinnedSessionModelsAfterRebuild("alpha", log);
+
+    expect(executeSandboxCommandMock).toHaveBeenCalledTimes(3);
+    expect(log).toHaveBeenLastCalledWith(
+      "Session model reconcile: failed to write /sandbox/.openclaw/agents/main/sessions/sessions.json (status=9)",
+    );
+    expect(log.mock.calls.flat()).not.toContainEqual(expect.stringContaining("cleared stale"));
   });
 });
