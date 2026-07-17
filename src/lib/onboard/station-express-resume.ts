@@ -12,6 +12,8 @@ import { isSafeModelId } from "../validation";
 
 export const STATION_EXPRESS_ENV = "NEMOCLAW_STATION_EXPRESS";
 export const STATION_EXPRESS_RECEIPT_GENERATION_ENV = "NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION";
+export const INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV =
+  "NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION";
 export const STATION_EXPRESS_INTENT_VERSION = 1;
 
 export interface StationExpressResumeIntent {
@@ -492,21 +494,37 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
   return async (options) => {
     const session = deps.loadSession();
     if (options?.fresh === true) {
-      try {
-        deps.clearInstallerResume();
-      } catch (error) {
-        deps.error(
-          `  Could not discard DGX Station Express installer resume state: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        deps.exitProcess(1);
+      const receiptGeneration = env[STATION_EXPRESS_RECEIPT_GENERATION_ENV];
+      const automaticFreshGeneration = env[INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV];
+      // install.sh binds its automatic pre-sandbox reset to the exact loaded
+      // receipt. User-requested --fresh has no binding and keeps the explicit
+      // discard behavior below.
+      const preserveInstallerResume =
+        env[STATION_EXPRESS_ENV] === "1" &&
+        isValidStationExpressReceiptGeneration(receiptGeneration) &&
+        automaticFreshGeneration === receiptGeneration;
+      if (!preserveInstallerResume) {
+        try {
+          deps.clearInstallerResume();
+        } catch (error) {
+          deps.error(
+            `  Could not discard DGX Station Express installer resume state: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          deps.exitProcess(1);
+        }
       }
       const previousReceiptGeneration = env[STATION_EXPRESS_RECEIPT_GENERATION_ENV];
-      delete env[STATION_EXPRESS_RECEIPT_GENERATION_ENV];
+      const previousAutomaticFreshGeneration = env[INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV];
+      if (!preserveInstallerResume) delete env[STATION_EXPRESS_RECEIPT_GENERATION_ENV];
+      delete env[INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV];
       try {
         await run(options);
       } finally {
         if (previousReceiptGeneration !== undefined) {
           env[STATION_EXPRESS_RECEIPT_GENERATION_ENV] = previousReceiptGeneration;
+        }
+        if (previousAutomaticFreshGeneration !== undefined) {
+          env[INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV] = previousAutomaticFreshGeneration;
         }
       }
       return;

@@ -112,9 +112,11 @@ function runOnboardWithSession(
   const argvLog = path.join(tmp, "argv.txt");
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(path.join(home, ".nemoclaw", "onboard-session.json"), JSON.stringify(session));
-  fs.writeFileSync(stubBin, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\nexit 0\n`, {
-    mode: 0o755,
-  });
+  fs.writeFileSync(
+    stubBin,
+    `#!/usr/bin/env bash\nprintf 'AUTO_FRESH=%s\\n' "\${NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION:-}" > "${argvLog}"\nprintf '%s\\n' "$@" >> "${argvLog}"\nexit 0\n`,
+    { mode: 0o755 },
+  );
 
   const snippet = `
     set -e
@@ -215,6 +217,52 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
     expect(argv).toContain("onboard");
     expect(argv).toContain("--fresh");
     expect(argv).not.toContain("--resume");
+  });
+
+  it("marks an automatic fresh reset to preserve a loaded Station receipt", () => {
+    const generation = "0123456789abcdef0123456789abcdef";
+    const argv = runOnboardWithSession(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_STATION_EXPRESS: "1",
+        NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION: generation,
+      },
+      {
+        version: 1,
+        status: "in_progress",
+        resumable: true,
+        sandboxName: null,
+        stationExpressIntent: null,
+        steps: { sandbox: { status: "pending" } },
+      },
+    );
+
+    expect(argv).toContain("--fresh");
+    expect(argv).toContain(`AUTO_FRESH=${generation}`);
+  });
+
+  it("does not mark an explicit fresh reset as receipt-preserving", () => {
+    const generation = "0123456789abcdef0123456789abcdef";
+    const argv = runOnboardWithSession(
+      {
+        FRESH: "1",
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_STATION_EXPRESS: "1",
+        NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION: generation,
+      },
+      {
+        version: 1,
+        status: "in_progress",
+        resumable: true,
+        sandboxName: null,
+        stationExpressIntent: null,
+        steps: { sandbox: { status: "pending" } },
+      },
+    );
+
+    expect(argv).toContain("--fresh");
+    expect(argv).toContain("AUTO_FRESH=");
+    expect(argv).not.toContain(`AUTO_FRESH=${generation}`);
   });
 
   it("still auto-resumes when a sandbox was already created", () => {

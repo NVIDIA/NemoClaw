@@ -11,6 +11,7 @@ import {
   assertStationExpressInstallerResumeMatches,
   clearStationExpressInstallerResume,
   getStationExpressResumeIntent,
+  INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV,
   parseStationExpressResumeIntent,
   retireStationExpressInstallerResume,
   STATION_EXPRESS_ENV,
@@ -324,6 +325,47 @@ describe("DGX Station Express resume (#7048)", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(deps.clearInstallerResume).toHaveBeenCalledTimes(1);
     expect(env[STATION_EXPRESS_RECEIPT_GENERATION_ENV]).toBe(receiptGeneration);
+  });
+
+  it("preserves the loaded receipt during an installer-initiated automatic fresh reset", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-auto-fresh-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(
+      receipt,
+      `revision=${receiptRevision}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${receiptGeneration}\n`,
+      { mode: 0o600 },
+    );
+    const env = expressEnv();
+    env.HOME = home;
+    env[STATION_EXPRESS_RECEIPT_GENERATION_ENV] = receiptGeneration;
+    env[INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV] = receiptGeneration;
+    const deps = resumeDeps(createSession({ mode: "non-interactive" }));
+    deps.clearInstallerResume.mockImplementation(() =>
+      clearStationExpressInstallerResume({ HOME: home }),
+    );
+    const run = vi.fn(async () => {
+      expect(env[INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV]).toBeUndefined();
+      expect(env[STATION_EXPRESS_RECEIPT_GENERATION_ENV]).toBe(receiptGeneration);
+      expect(fs.existsSync(receipt)).toBe(true);
+      expect(getStationExpressResumeIntent(env, "my-assistant")).toEqual({
+        ok: true,
+        intent: { ...ultraIntent, receiptGeneration },
+      });
+    });
+
+    try {
+      await withStationExpressResumeEnvironment(run, deps, env)({ fresh: true });
+
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(deps.clearInstallerResume).not.toHaveBeenCalled();
+      expect(fs.existsSync(receipt)).toBe(true);
+      expect(env[STATION_EXPRESS_RECEIPT_GENERATION_ENV]).toBe(receiptGeneration);
+      expect(env[INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV]).toBe(receiptGeneration);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("does not treat an older completed session as proof of a new installer attempt", async () => {

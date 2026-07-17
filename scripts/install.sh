@@ -2537,6 +2537,7 @@ run_onboard() {
   show_usage_notice
   info "Running ${_CLI_BIN} onboard…"
   local -a onboard_cmd=(onboard)
+  local installer_auto_fresh_receipt_generation=""
   local session_file
   session_file="$(nemoclaw_state_dir)/onboard-session.json"
   # --fresh takes precedence over any session state. We forward --fresh to
@@ -2626,6 +2627,10 @@ run_onboard() {
         # #5626: interrupted before sandbox creation; nothing to resume.
         info "Found an interrupted onboarding session with no sandbox yet — starting fresh."
         onboard_cmd+=(--fresh)
+        # Bind this automatic reset to the loaded Station receipt so the CLI
+        # clears only the unrelated session, not the accepted reboot choice.
+        # An explicit user --fresh never sets this internal child marker.
+        installer_auto_fresh_receipt_generation="${NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION:-}"
         ;;
       failed)
         # #2430: a previous run failed. The user's provider/inference
@@ -2700,12 +2705,15 @@ run_onboard() {
     # forward --yes so the Ollama size-confirmation gate does not abort
     # the unattended download (the size is still printed to logs).
     onboard_cmd+=(--yes)
-    "$cli_invoke" "${onboard_cmd[@]}" || status=$?
+    NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
+      "$cli_invoke" "${onboard_cmd[@]}" || status=$?
   elif [ -t 0 ]; then
-    "$cli_invoke" "${onboard_cmd[@]}" || status=$?
+    NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
+      "$cli_invoke" "${onboard_cmd[@]}" || status=$?
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
-    "$cli_invoke" "${onboard_cmd[@]}" <&3 || status=$?
+    NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
+      "$cli_invoke" "${onboard_cmd[@]}" <&3 || status=$?
     exec 3<&-
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
