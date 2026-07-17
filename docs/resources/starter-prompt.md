@@ -218,8 +218,9 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 - If a loaded platform asset selects Express, follow its policy requirement and skip the policy-tier question.
 - For non-Express installation, ask for Balanced, Restricted, or Open policy.
 - Explain that messaging and web-search selections add required endpoints.
-- Before installation, summarize platform, administrator access, agent, Express choice, provider, exact model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
-- Ask for final permission.
+- Before non-Express installation, summarize platform, administrator access, agent, provider, exact model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
+- Ask for final permission before non-Express installation.
+- For Express, treat the platform asset's confirmation as final permission and do not ask again.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` and `NEMOCLAW_YES=1` only after their approvals.
 - Keep credentials in the approved environment and never display them.
 - Verify the command and version, sandbox status, provider, model, `inference.local`, GPU access when applicable, messaging bridges when configured, and dashboard route when available.

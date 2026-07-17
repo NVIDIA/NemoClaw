@@ -22,19 +22,18 @@ const repoRoot = path.resolve(__dirname, "..");
 
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 const promptAssetRevision = "e2dffc192a6f8a05b1a2f3afb142d39864a0a688";
+
+function definePromptAsset(assetPath: string): { path: string; url: string } {
+  return {
+    path: assetPath,
+    url: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${promptAssetRevision}/${assetPath}`,
+  };
+}
+
 const promptAssets = {
-  dgxSpark: {
-    path: "docs/resources/prompt-assets/dgx-spark.md",
-    url: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${promptAssetRevision}/docs/resources/prompt-assets/dgx-spark.md`,
-  },
-  dgxStation: {
-    path: "docs/resources/prompt-assets/dgx-station.md",
-    url: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${promptAssetRevision}/docs/resources/prompt-assets/dgx-station.md`,
-  },
-  windowsWsl: {
-    path: "docs/resources/prompt-assets/windows-wsl.md",
-    url: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${promptAssetRevision}/docs/resources/prompt-assets/windows-wsl.md`,
-  },
+  dgxSpark: definePromptAsset("docs/resources/prompt-assets/dgx-spark.md"),
+  dgxStation: definePromptAsset("docs/resources/prompt-assets/dgx-station.md"),
+  windowsWsl: definePromptAsset("docs/resources/prompt-assets/windows-wsl.md"),
 } as const;
 const localCredentialFormSource = path.join(
   repoRoot,
@@ -685,6 +684,10 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain(
       "For non-Express installation, ask for Balanced, Restricted, or Open policy.",
     );
+    expect(promptSource).toContain(
+      "For Express, treat the platform asset's confirmation as final permission and do not ask again.",
+    );
+    expect(promptSource).toContain("Ask for final permission before non-Express installation.");
     expect(promptSource).not.toContain("\n- Ask for Balanced, Restricted, or Open policy.\n");
 
     for (const assetSource of expressAssets) {
@@ -700,6 +703,16 @@ describe("starter prompt docs CTA", () => {
       expect(assetSource).toContain(
         "Do not ask again for the agent or ask separate questions for model, sandbox name, web search, messaging, policy, download approval, or final installation approval.",
       );
+      expect(assetSource).toContain(
+        "Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when Express is accepted.",
+      );
+      expect(assetSource).toContain("Treat the Express confirmation as approval");
+      const noticeIndex = assetSource.indexOf("Include the third-party-software notice");
+      const confirmationIndex = assetSource.indexOf("Choices:");
+      const acceptanceIndex = assetSource.indexOf("Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`");
+      expect(noticeIndex).toBeGreaterThan(-1);
+      expect(confirmationIndex).toBeGreaterThan(noticeIndex);
+      expect(acceptanceIndex).toBeGreaterThan(confirmationIndex);
       expect(assetSource).not.toContain("NEMOCLAW_POLICY_TIER=balanced");
     }
   });
