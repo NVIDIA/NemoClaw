@@ -229,6 +229,7 @@ describe("deterministic PR risk plan", () => {
     "package-lock.json",
     "package.json",
     "vitest.config.ts",
+    "scripts/scorecard/coordinate-scorecard.mts",
     "tools/advisors/github.mts",
     "tools/advisors/io.mts",
     "tools/advisors/risk-plan.mts",
