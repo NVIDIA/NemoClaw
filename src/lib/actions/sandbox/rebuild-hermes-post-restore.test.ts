@@ -160,6 +160,27 @@ describe("Hermes rebuild post-restore verification", () => {
     );
   });
 
+  it("fails when the final gateway health probe is unavailable (#7084)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "hermes",
+      checkAndRecoverSandboxProcesses: () => ({
+        checked: false,
+        wasRunning: null,
+        recovered: false,
+        forwardRecovered: false,
+      }),
+      sandboxEntry: { agent: "hermes" },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Hermes post-restore verification failed");
+
+    expect(harness.logSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("rebuilt successfully"),
+    );
+  });
+
   it("fails before recovery when recreated Hermes identity is missing (#7084)", async () => {
     const harness = createRebuildFlowHarness({
       agentName: "hermes",
