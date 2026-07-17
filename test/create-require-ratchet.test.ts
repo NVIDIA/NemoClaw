@@ -95,61 +95,57 @@ function baseRunner(
           ? { status: 0, stderr: "", stdout: `${revision}\n` }
           : { status: 0, stderr: "", stdout: "" };
       case "ls-tree": {
-        if (args[1] === "-z") {
-          const requestedRevision = args[2];
-          const records = ["mts", "ts"].flatMap((extension) => {
-            const relativePath = `scripts/checks/test-create-require-budget.${extension}`;
-            const absolutePath = headRoot ? path.join(headRoot, relativePath) : "";
-            const readsHead = requestedRevision === HEAD_SHA && Boolean(headRoot);
-            const existsAtHead = readsHead && Boolean(absolutePath) && existsSync(absolutePath);
-            if (!(readsHead ? existsAtHead : sources[extension as "mts" | "ts"] !== undefined)) {
-              return [];
-            }
-            const mode =
-              existsAtHead && lstatSync(absolutePath).isSymbolicLink() ? "120000" : "100644";
-            return [`${mode} blob ${"0".repeat(40)}\t${relativePath}`];
-          });
-          return { status: 0, stderr: "", stdout: `${records.join("\0")}\0` };
-        }
-        if (!headRoot || args[3] !== HEAD_SHA) {
-          return { status: 128, stderr: "missing", stdout: "" };
-        }
-        const records: string[] = [];
+        const requestedRevision = args[1] === "-z" ? args[2] : args[3];
+        const checkerRecords = ["mts", "ts"].flatMap((extension) => {
+          const relativePath = `scripts/checks/test-create-require-budget.${extension}`;
+          const absolutePath = headRoot ? path.join(headRoot, relativePath) : "";
+          const readsHead = requestedRevision === HEAD_SHA && Boolean(headRoot);
+          const existsAtHead = readsHead && Boolean(absolutePath) && existsSync(absolutePath);
+          const existsAtRevision = readsHead
+            ? existsAtHead
+            : sources[extension as "mts" | "ts"] !== undefined;
+          const mode =
+            existsAtHead && lstatSync(absolutePath).isSymbolicLink() ? "120000" : "100644";
+          return existsAtRevision ? [`${mode} blob ${"0".repeat(40)}\t${relativePath}`] : [];
+        });
+        const inventoryRecords: string[] = [];
         const walk = (relativeDirectory: string): void => {
-          const directory = path.join(headRoot, relativeDirectory);
-          if (!existsSync(directory)) return;
-          for (const name of readdirSync(directory)) {
+          const directory = path.join(headRoot ?? "", relativeDirectory);
+          const names = existsSync(directory) ? readdirSync(directory) : [];
+          for (const name of names) {
             const relativePath = path.posix.join(relativeDirectory, name);
-            const absolutePath = path.join(headRoot, relativePath);
+            const absolutePath = path.join(headRoot ?? "", relativePath);
             const stats = lstatSync(absolutePath);
-            if (stats.isDirectory()) {
-              walk(relativePath);
-            } else {
-              records.push(
-                `${stats.isSymbolicLink() ? "120000" : "100644"} blob ${"0".repeat(40)}\t${relativePath}`,
-              );
-            }
+            stats.isDirectory()
+              ? walk(relativePath)
+              : inventoryRecords.push(
+                  `${stats.isSymbolicLink() ? "120000" : "100644"} blob ${"0".repeat(40)}\t${relativePath}`,
+                );
           }
         };
-        walk("src");
-        walk("test");
-        return { status: 0, stderr: "", stdout: `${records.join("\0")}\0` };
+        const readsCheckerTree = args[1] === "-z";
+        const readsHeadInventory = Boolean(headRoot) && requestedRevision === HEAD_SHA;
+        readsHeadInventory && !readsCheckerTree && (walk("src"), walk("test"));
+        const records = readsCheckerTree ? checkerRecords : inventoryRecords;
+        return readsCheckerTree || readsHeadInventory
+          ? { status: 0, stderr: "", stdout: `${records.join("\0")}\0` }
+          : { status: 128, stderr: "missing", stdout: "" };
       }
       case "show": {
         const separator = args[1]?.indexOf(":") ?? -1;
         const requestedRevision = args[1]?.slice(0, separator);
         const requestedPath = args[1]?.slice(separator + 1);
-        if (headRoot && requestedRevision === HEAD_SHA && requestedPath) {
-          const absolutePath = path.join(headRoot, requestedPath);
-          return existsSync(absolutePath)
-            ? { status: 0, stderr: "", stdout: readFileSync(absolutePath, "utf8") }
-            : { status: 128, stderr: "missing", stdout: "" };
-        }
+        const readsHead = Boolean(headRoot && requestedRevision === HEAD_SHA && requestedPath);
+        const absolutePath = path.join(headRoot ?? "", requestedPath ?? "");
         const extension = requestedPath?.endsWith(".mts") ? "mts" : "ts";
         const source = sources[extension];
-        return source === undefined
-          ? { status: 128, stderr: "missing", stdout: "" }
-          : { status: 0, stderr: "", stdout: source };
+        return readsHead
+          ? existsSync(absolutePath)
+            ? { status: 0, stderr: "", stdout: readFileSync(absolutePath, "utf8") }
+            : { status: 128, stderr: "missing", stdout: "" }
+          : source === undefined
+            ? { status: 128, stderr: "missing", stdout: "" }
+            : { status: 0, stderr: "", stdout: source };
       }
       default:
         throw new Error(`unexpected git arguments: ${args.join(" ")}`);
@@ -530,20 +526,20 @@ describe("base-trusted createRequire ratchet", () => {
       ),
     ).toThrow("trusted base must contain exactly one createRequire budget checker; found 2");
 
-    const unreadableSecondCandidate: GitRunner = (args) => {
-      if (args[0] === "ls-tree") {
-        return {
-          status: 0,
-          stderr: "",
-          stdout: [
-            `100644 blob ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.mts`,
-            `100644 blob ${"1".repeat(40)}\tscripts/checks/test-create-require-budget.ts`,
-            "",
-          ].join("\0"),
-        };
-      }
-      throw new Error("checker contents must not be read until uniqueness is established");
-    };
+    const unreadableSecondCandidate: GitRunner = (args) =>
+      args[0] === "ls-tree"
+        ? {
+            status: 0,
+            stderr: "",
+            stdout: [
+              `100644 blob ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.mts`,
+              `100644 blob ${"1".repeat(40)}\tscripts/checks/test-create-require-budget.ts`,
+              "",
+            ].join("\0"),
+          }
+        : (() => {
+            throw new Error("checker contents must not be read until uniqueness is established");
+          })();
     expect(() => requireSingleBaseChecker(unreadableSecondCandidate, BASE_SHA)).toThrow(
       "trusted base must contain exactly one createRequire budget checker; found 2",
     );
@@ -562,10 +558,12 @@ describe("base-trusted createRequire ratchet", () => {
 
     const checkerTreeResult =
       (result: GitResult): GitRunner =>
-      (args) => {
-        if (args[0] !== "ls-tree") throw new Error(`unexpected git arguments: ${args.join(" ")}`);
-        return result;
-      };
+      (args) =>
+        args[0] === "ls-tree"
+          ? result
+          : (() => {
+              throw new Error(`unexpected git arguments: ${args.join(" ")}`);
+            })();
     expect(() =>
       requireSingleBaseChecker(
         checkerTreeResult({ status: 128, stderr: "unavailable", stdout: "" }),
