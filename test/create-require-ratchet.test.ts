@@ -656,14 +656,16 @@ describe("base-trusted createRequire ratchet", () => {
           return { status: 0, stderr: "", stdout: "" };
         }
         case "rev-parse":
-          if (args[1] === "--is-shallow-repository") {
-            return { status: 0, stderr: "", stdout: `${String(shallow)}\n` };
+          switch (args[1]) {
+            case "--is-shallow-repository":
+              return { status: 0, stderr: "", stdout: `${String(shallow)}\n` };
+            default:
+              return {
+                status: available ? 0 : 128,
+                stderr: "",
+                stdout: args[2]?.includes("/base") ? `${BASE_SHA}\n` : `${HEAD_SHA}\n`,
+              };
           }
-          return {
-            status: available ? 0 : 128,
-            stderr: "",
-            stdout: args[2]?.includes("/base") ? `${BASE_SHA}\n` : `${HEAD_SHA}\n`,
-          };
         case "merge-base":
           return args[1] === "--all"
             ? { status: 0, stderr: "", stdout: `${BASE_SHA}\n` }
@@ -749,13 +751,18 @@ describe("base-trusted createRequire ratchet", () => {
     const runner =
       (mergeBase: GitResult, ancestorStatus = 0): GitRunner =>
       (args) => {
-        if (args[0] === "rev-parse") return { status: 0, stderr: "", stdout: "false\n" };
-        if (args[0] === "cat-file") return { status: 0, stderr: "", stdout: "" };
-        if (args[0] === "merge-base" && args[1] === "--all") return mergeBase;
-        if (args[0] === "merge-base") {
-          return { status: ancestorStatus, stderr: "", stdout: "" };
+        switch (args[0]) {
+          case "rev-parse":
+            return { status: 0, stderr: "", stdout: "false\n" };
+          case "cat-file":
+            return { status: 0, stderr: "", stdout: "" };
+          case "merge-base":
+            return args[1] === "--all"
+              ? mergeBase
+              : { status: ancestorStatus, stderr: "", stdout: "" };
+          default:
+            throw new Error(`unexpected git arguments: ${args.join(" ")}`);
         }
-        throw new Error(`unexpected git arguments: ${args.join(" ")}`);
       };
 
     expect(() =>
