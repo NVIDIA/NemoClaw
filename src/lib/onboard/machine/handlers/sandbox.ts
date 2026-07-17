@@ -20,6 +20,7 @@ import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { isDecisionSelected } from "../../../state/onboard-checkpoint-decision";
 import type {
   CheckpointEffectGroupName,
+  CheckpointProviderBinding,
   CheckpointResourceProfile,
   CheckpointSandboxIdentity,
   OnboardCheckpoint,
@@ -198,13 +199,12 @@ export interface SandboxStateOptions<
     clearPlanEnv(): void;
     getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
     providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
-    providerExistsInGateway?(name: string, gatewayName: string): boolean;
     stageSandboxCredentialProviders(input: {
       sandboxName: string;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
-    }): Promise<readonly string[]>;
+    }): Promise<readonly CheckpointProviderBinding[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
     stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
@@ -572,7 +572,7 @@ class SandboxStateFlow<
 
     const bindingCheck = revalidateCheckpointBindings(
       checkpoint,
-      this.checkpointBindingAvailability(checkpoint, state),
+      this.checkpointBindingAvailability(checkpoint),
     );
     if (bindingCheck.status === "stale") return this.rejectStaleCheckpointBindings(bindingCheck);
 
@@ -605,34 +605,31 @@ class SandboxStateFlow<
   }
 
   private providerBindingsLive(checkpoint: OnboardCheckpoint): boolean {
-    const providerExistsInGateway = this.deps.providerExistsInGateway;
-    if (!providerExistsInGateway || checkpoint.bindings.registeredProviders.length === 0) {
-      return false;
-    }
-    return checkpoint.bindings.registeredProviders.every((name) =>
-      providerExistsInGateway(name, this.options.gatewayName),
+    if (checkpoint.bindings.registeredProviders.length === 0) return false;
+    return checkpoint.bindings.registeredProviders.every((binding) =>
+      this.deps.providerMatchesGatewayCredential(binding.name, binding.type, binding.credentialEnv),
     );
   }
 
-  private checkpointBindingAvailability(
-    checkpoint: OnboardCheckpoint,
-    state: SandboxStepState<WebSearchConfig>,
-  ): {
+  private checkpointBindingAvailability(checkpoint: OnboardCheckpoint): {
     availableCredentialEnvs: ReadonlySet<string>;
     liveRegisteredProviders: ReadonlySet<string>;
   } {
-    const providerExistsInGateway = this.deps.providerExistsInGateway;
     return {
       availableCredentialEnvs: new Set(
         Object.keys(this.options.env).filter((name) => Boolean(this.options.env[name]?.trim())),
       ),
-      liveRegisteredProviders: providerExistsInGateway
-        ? new Set(
-            checkpoint.bindings.registeredProviders.filter((name) =>
-              providerExistsInGateway(name, this.options.gatewayName),
+      liveRegisteredProviders: new Set(
+        checkpoint.bindings.registeredProviders
+          .filter((binding) =>
+            this.deps.providerMatchesGatewayCredential(
+              binding.name,
+              binding.type,
+              binding.credentialEnv,
             ),
           )
-        : new Set(state.session?.stagedCredentialProviders ?? []),
+          .map((binding) => binding.name),
+      ),
     };
   }
 
@@ -964,7 +961,11 @@ class SandboxStateFlow<
           credentialEnv: this.options.credentialEnv,
           registeredProviders,
         });
-        recordCheckpointEffectGroup(current, group, registeredProviders.join(","));
+        recordCheckpointEffectGroup(
+          current,
+          group,
+          registeredProviders.map((binding) => binding.name).join(","),
+        );
         return current;
       });
     }

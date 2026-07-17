@@ -51,7 +51,7 @@ describe("deriveCheckpointFromSession", () => {
     expect(checkpoint.resourceProfile).toEqual(decisionDeclined());
     expect(checkpoint.bindings).toEqual({
       credentialEnvs: ["OPENAI_API_KEY"],
-      registeredProviders: ["web-search-openclaw"],
+      registeredProviders: [],
     });
   });
 

@@ -35,9 +35,15 @@ export interface CheckpointEffectGroupRecord {
   readonly fingerprint: string;
 }
 
+export interface CheckpointProviderBinding {
+  readonly name: string;
+  readonly type: string;
+  readonly credentialEnv: string;
+}
+
 export interface CheckpointBindings {
   readonly credentialEnvs: readonly string[];
-  readonly registeredProviders: readonly string[];
+  readonly registeredProviders: readonly CheckpointProviderBinding[];
 }
 
 export interface OnboardCheckpoint {

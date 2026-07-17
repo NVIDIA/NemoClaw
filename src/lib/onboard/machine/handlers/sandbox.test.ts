@@ -115,14 +115,16 @@ describe("handleSandboxState", () => {
   it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {
     const { deps } = createDeps({
       configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
-      stageSandboxCredentialProviders: vi.fn(async () => ["my-assistant-brave-search"]),
+      stageSandboxCredentialProviders: vi.fn(async () => [
+        { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+      ]),
       selectResourceProfileForSandbox: vi.fn(async () => ({ cpu: "2", memory: "4Gi" })),
     });
 
     const result = await handleSandboxState(baseOptions(deps));
 
     expect(result.session?.checkpoint?.bindings.registeredProviders).toEqual([
-      "my-assistant-brave-search",
+      { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
     ]);
     expect(result.session?.checkpoint?.resourceProfile).toEqual(
       decisionSelected({ cpu: "2", memory: "4Gi" }),
@@ -146,18 +148,28 @@ describe("handleSandboxState", () => {
           fingerprint: "my-assistant-brave-search",
         },
       },
-      bindings: { credentialEnvs: [], registeredProviders: ["my-assistant-brave-search"] },
+      bindings: {
+        credentialEnvs: [],
+        registeredProviders: [
+          { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+        ],
+      },
     };
     const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
       mutator(session);
       return session;
     });
-    const stageSandboxCredentialProviders = vi.fn(async () => ["my-assistant-brave-search"]);
+    const stageSandboxCredentialProviders = vi.fn(async () => [
+      { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+    ]);
     const { deps } = createDeps({
       updateSession,
       configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
       stageSandboxCredentialProviders,
-      providerExistsInGateway: (name) => name === "my-assistant-brave-search",
+      providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+        name === "my-assistant-brave-search" &&
+        type === "brave" &&
+        credentialEnv === "BRAVE_API_KEY",
     });
 
     await handleSandboxState({ ...baseOptions(deps, session), sandboxName: "my-assistant" });

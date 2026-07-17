@@ -125,7 +125,10 @@ describe("crash-then-resume matrix proves at-most-once destructive create (#6228
 describe("revalidateCheckpointBindings fails closed without leaking values (#6228)", () => {
   it("passes when every binding is currently available", () => {
     const cp = checkpoint({
-      bindings: { credentialEnvs: ["OPENAI_API_KEY"], registeredProviders: ["p1"] },
+      bindings: {
+        credentialEnvs: ["OPENAI_API_KEY"],
+        registeredProviders: [{ name: "p1", type: "generic", credentialEnv: "P1_API_KEY" }],
+      },
     });
     const result = revalidateCheckpointBindings(cp, {
       availableCredentialEnvs: new Set(["OPENAI_API_KEY"]),
@@ -137,7 +140,10 @@ describe("revalidateCheckpointBindings fails closed without leaking values (#622
 
   it("fails closed on a stale binding and reports only names, never values", () => {
     const cp = checkpoint({
-      bindings: { credentialEnvs: ["OPENAI_API_KEY"], registeredProviders: ["p1"] },
+      bindings: {
+        credentialEnvs: ["OPENAI_API_KEY"],
+        registeredProviders: [{ name: "p1", type: "generic", credentialEnv: "P1_API_KEY" }],
+      },
     });
     const result = revalidateCheckpointBindings(cp, {
       availableCredentialEnvs: new Set(),

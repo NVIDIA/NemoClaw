@@ -7,6 +7,7 @@ import { decisionDeclined, decisionSelected } from "../state/onboard-checkpoint-
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import type {
   CheckpointEffectGroupName,
+  CheckpointProviderBinding,
   CheckpointResourceProfile,
   OnboardCheckpoint,
 } from "../state/onboard-checkpoint-types";
@@ -89,14 +90,23 @@ export function recordCheckpointResourceProfile(
 
 export function recordCheckpointBindings(
   session: Session,
-  additions: { credentialEnv?: string | null; registeredProviders?: readonly string[] },
+  additions: {
+    credentialEnv?: string | null;
+    registeredProviders?: readonly CheckpointProviderBinding[];
+  },
 ): void {
   const base = baseCheckpoint(session);
   const credentialEnvs = additions.credentialEnv
     ? [...new Set([...base.bindings.credentialEnvs, additions.credentialEnv])]
     : base.bindings.credentialEnvs;
   const registeredProviders = additions.registeredProviders
-    ? [...new Set([...base.bindings.registeredProviders, ...additions.registeredProviders])]
+    ? [
+        ...new Map(
+          [...base.bindings.registeredProviders, ...additions.registeredProviders].map(
+            (binding) => [binding.name, binding],
+          ),
+        ).values(),
+      ]
     : base.bindings.registeredProviders;
   session.checkpoint = {
     ...base,

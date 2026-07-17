@@ -205,7 +205,6 @@ function createPhases(
       clearPlanEnv: vi.fn(),
       getRegistrySandboxMessagingPlan: () => null,
       providerMatchesGatewayCredential: () => false,
-      providerExistsInGateway: () => false,
       stageSandboxCredentialProviders: vi.fn(async () => []),
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       selectResourceProfileForSandbox: vi.fn(async () => null),

@@ -15,6 +15,7 @@ import {
   type CheckpointEffectGroupName,
   type CheckpointEffectGroupRecord,
   type CheckpointLoadResult,
+  type CheckpointProviderBinding,
   type CheckpointResourceProfile,
   type CheckpointSandboxIdentity,
   type OnboardCheckpoint,
@@ -98,10 +99,30 @@ function parseEffectGroups(
   return groups;
 }
 
+function parseProviderBinding(value: unknown): CheckpointProviderBinding | null {
+  if (!isObjectRecord(value)) return null;
+  const name = readString(value.name);
+  const type = readString(value.type);
+  const credentialEnv = readString(value.credentialEnv);
+  if (!name || !type || !credentialEnv) return null;
+  return { name, type, credentialEnv };
+}
+
+function parseProviderBindings(value: unknown): CheckpointProviderBinding[] | null {
+  if (!Array.isArray(value)) return null;
+  const bindings: CheckpointProviderBinding[] = [];
+  for (const entry of value) {
+    const binding = parseProviderBinding(entry);
+    if (!binding) return null;
+    bindings.push(binding);
+  }
+  return bindings;
+}
+
 function parseBindings(value: unknown): CheckpointBindings | null {
   if (!isObjectRecord(value)) return null;
   const credentialEnvs = readStringArray(value.credentialEnvs);
-  const registeredProviders = readStringArray(value.registeredProviders);
+  const registeredProviders = parseProviderBindings(value.registeredProviders);
   if (credentialEnvs === null || registeredProviders === null) return null;
   return { credentialEnvs, registeredProviders };
 }

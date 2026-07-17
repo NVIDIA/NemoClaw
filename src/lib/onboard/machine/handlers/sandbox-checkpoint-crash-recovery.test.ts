@@ -11,7 +11,7 @@ import {
 import { createSession, type Session } from "../../../state/onboard-session";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { handleSandboxState } from "./sandbox";
-import { baseOptions, createDeps } from "./sandbox-test-fixtures";
+import { baseOptions, createDeps, makeMinimalPlan } from "./sandbox-test-fixtures";
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
@@ -150,11 +150,16 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
   it("rejects reuse when a checkpointed provider is no longer live-registered with the gateway", async () => {
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "missing",
-      providerExistsInGateway: () => false,
+      providerMatchesGatewayCredential: () => false,
     });
     const session = sessionWithCheckpoint(
       crashedCheckpoint({
-        bindings: { credentialEnvs: [], registeredProviders: ["my-assistant-brave-search"] },
+        bindings: {
+          credentialEnvs: [],
+          registeredProviders: [
+            { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+          ],
+        },
       }),
     );
 
@@ -173,11 +178,19 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
   it("accepts a checkpointed provider that is still live-registered with the gateway", async () => {
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      providerExistsInGateway: (name) => name === "my-assistant-brave-search",
+      providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+        name === "my-assistant-brave-search" &&
+        type === "brave" &&
+        credentialEnv === "BRAVE_API_KEY",
     });
     const session = sessionWithCheckpoint(
       crashedCheckpoint({
-        bindings: { credentialEnvs: [], registeredProviders: ["my-assistant-brave-search"] },
+        bindings: {
+          credentialEnvs: [],
+          registeredProviders: [
+            { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+          ],
+        },
       }),
     );
 
@@ -191,26 +204,35 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.recordSkip).toHaveBeenCalled();
   });
 
-  it("falls back to the staged-provider receipt when no live gateway check is wired", async () => {
+  it("rejects reuse when a checkpointed provider name exists live under a different type or credential environment (#7022)", async () => {
     const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      providerExistsInGateway: undefined,
+      getSandboxReuseState: () => "missing",
+      providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+        name === "my-assistant-brave-search" &&
+        type === "generic" &&
+        credentialEnv === "OTHER_API_KEY",
     });
     const session = sessionWithCheckpoint(
       crashedCheckpoint({
-        bindings: { credentialEnvs: [], registeredProviders: ["my-assistant-brave-search"] },
+        bindings: {
+          credentialEnvs: [],
+          registeredProviders: [
+            { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+          ],
+        },
       }),
     );
-    session.stagedCredentialProviders = ["my-assistant-brave-search"];
 
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "my-assistant",
-    });
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("exit 1");
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.recordSkip).toHaveBeenCalled();
+    expect(calls.error.mock.calls.flat().join("\n")).toContain("my-assistant-brave-search");
   });
 
   it("records durable sandbox identity for a non-OpenClaw agent create so a crash can still be recovered", async () => {
@@ -227,6 +249,96 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(getSession().checkpoint?.sandboxIdentity).toEqual(
       decisionSelected({ name: "my-assistant", agent: "hermes" }),
     );
+  });
+
+  it("safely replays web-search provider registration after a crash between staging and its checkpoint receipt (#7022)", async () => {
+    const stageSandboxCredentialProviders = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("gateway connection dropped mid-registration"))
+      .mockResolvedValueOnce([
+        { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+      ]);
+    const providerMatchesGatewayCredential = vi.fn(
+      (name: string, type: string, credentialEnv: string) =>
+        name === "my-assistant-brave-search" &&
+        type === "brave" &&
+        credentialEnv === "BRAVE_API_KEY",
+    );
+    const { deps, getSession } = createDeps({
+      getSandboxReuseState: () => "missing",
+      configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
+      stageSandboxCredentialProviders,
+      providerMatchesGatewayCredential,
+    });
+
+    await expect(handleSandboxState({ ...baseOptions(deps), resume: false })).rejects.toThrow(
+      "gateway connection dropped mid-registration",
+    );
+
+    const crashedSession = getSession();
+    expect(crashedSession.checkpoint?.effectGroups.web_search_provider).toBeUndefined();
+    expect(crashedSession.checkpoint?.bindings.registeredProviders).toEqual([]);
+
+    await handleSandboxState({
+      ...baseOptions(deps, crashedSession),
+      resume: true,
+      sandboxName: "my-assistant",
+      webSearchConfig: { fetchEnabled: true },
+    });
+
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
+    const resumedSession = getSession();
+    expect(resumedSession.checkpoint?.effectGroups.web_search_provider).toBeDefined();
+    expect(resumedSession.checkpoint?.bindings.registeredProviders).toEqual([
+      { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+    ]);
+  });
+
+  it("safely replays messaging provider registration after a crash between staging and its checkpoint receipt (#7022)", async () => {
+    const stageSandboxCredentialProviders = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("gateway connection dropped mid-registration"))
+      .mockResolvedValueOnce([
+        {
+          name: "my-assistant-discord-bridge",
+          type: "generic",
+          credentialEnv: "DISCORD_BOT_TOKEN",
+        },
+      ]);
+    const providerMatchesGatewayCredential = vi.fn(
+      (name: string, type: string, credentialEnv: string) =>
+        name === "my-assistant-discord-bridge" &&
+        type === "generic" &&
+        credentialEnv === "DISCORD_BOT_TOKEN",
+    );
+    const messagingPlan = makeMinimalPlan("my-assistant", "openclaw", ["discord"]);
+    const { deps, getSession } = createDeps({
+      getSandboxReuseState: () => "missing",
+      readMessagingPlanFromEnv: () => messagingPlan,
+      stageSandboxCredentialProviders,
+      providerMatchesGatewayCredential,
+    });
+
+    await expect(handleSandboxState({ ...baseOptions(deps), resume: false })).rejects.toThrow(
+      "gateway connection dropped mid-registration",
+    );
+
+    const crashedSession = getSession();
+    expect(crashedSession.checkpoint?.effectGroups.messaging_providers).toBeUndefined();
+    expect(crashedSession.checkpoint?.bindings.registeredProviders).toEqual([]);
+
+    await handleSandboxState({
+      ...baseOptions(deps, crashedSession),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
+    const resumedSession = getSession();
+    expect(resumedSession.checkpoint?.effectGroups.messaging_providers).toBeDefined();
+    expect(resumedSession.checkpoint?.bindings.registeredProviders).toEqual([
+      { name: "my-assistant-discord-bridge", type: "generic", credentialEnv: "DISCORD_BOT_TOKEN" },
+    ]);
   });
 
   it("rejects reuse when the recorded build/policy fingerprint drifted from the current request (#7022)", async () => {

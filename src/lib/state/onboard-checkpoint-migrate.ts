@@ -73,7 +73,7 @@ export function deriveCheckpointFromSession(session: Session): OnboardCheckpoint
     effectGroups: {},
     bindings: {
       credentialEnvs: session.credentialEnv ? [session.credentialEnv] : [],
-      registeredProviders: [...session.stagedCredentialProviders],
+      registeredProviders: [],
     },
   };
 }

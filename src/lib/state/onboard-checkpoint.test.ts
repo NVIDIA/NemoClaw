@@ -29,7 +29,12 @@ function baseCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardChec
     messaging: decisionUnset(),
     resourceProfile: decisionDeclined(),
     effectGroups: { sandbox_create: { completedAt: ISO, fingerprint: "fp-create" } },
-    bindings: { credentialEnvs: ["OPENAI_API_KEY"], registeredProviders: ["web-search-p"] },
+    bindings: {
+      credentialEnvs: ["OPENAI_API_KEY"],
+      registeredProviders: [
+        { name: "web-search-p", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+      ],
+    },
     ...overrides,
   };
 }
@@ -120,7 +125,18 @@ describe("checkpoint schema inspection", () => {
     const checkpoint = serializeCheckpoint(baseCheckpoint());
     (checkpoint as Record<string, unknown>).bindings = {
       credentialEnvs: ["OPENAI_API_KEY", 42],
-      registeredProviders: ["web-search-p"],
+      registeredProviders: [
+        { name: "web-search-p", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+      ],
+    };
+    expect(inspectCheckpoint(checkpoint)).toEqual({ status: "corrupt" });
+  });
+
+  it("rejects a provider binding missing its type or credential environment instead of silently dropping it", () => {
+    const checkpoint = serializeCheckpoint(baseCheckpoint());
+    (checkpoint as Record<string, unknown>).bindings = {
+      credentialEnvs: ["OPENAI_API_KEY"],
+      registeredProviders: [{ name: "web-search-p", type: "brave" }],
     };
     expect(inspectCheckpoint(checkpoint)).toEqual({ status: "corrupt" });
   });
