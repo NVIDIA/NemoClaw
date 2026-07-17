@@ -57,13 +57,16 @@ export function currentGatewayUpgradeInstallerArgs(
   return options.interactive ? [installer] : [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
 }
 
-export function expectedLegacyRegistryVersion(nemoclawRef: string): string | undefined {
+export function expectedLegacyRegistryMetadata(nemoclawRef: string): {
+  nemoclawVersion: string | undefined;
+  fromDockerfile: null | undefined;
+} {
   switch (nemoclawRef) {
     case "v0.0.36":
     case "v0.0.55":
-      return undefined;
+      return { nemoclawVersion: undefined, fromDockerfile: undefined };
     case "v0.0.74":
-      return "0.0.74";
+      return { nemoclawVersion: "0.0.74", fromDockerfile: null };
     default:
       throw new Error(`Unsupported gateway-upgrade registry fixture: ${nemoclawRef}`);
   }

@@ -34,7 +34,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   currentGatewayUpgradeInstallerArgs,
-  expectedLegacyRegistryVersion,
+  expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
@@ -555,10 +555,13 @@ git -C "$HOME/.nemoclaw/source" rev-parse --verify HEAD`,
     sandboxes?: Record<string, { nemoclawVersion?: unknown; fromDockerfile?: unknown }>;
   };
   expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]).toBeDefined();
+  const expectedRegistryMetadata = expectedLegacyRegistryMetadata(OLD_NEMOCLAW_REF);
   expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.nemoclawVersion).toBe(
-    expectedLegacyRegistryVersion(OLD_NEMOCLAW_REF),
+    expectedRegistryMetadata.nemoclawVersion,
   );
-  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.fromDockerfile).toBeUndefined();
+  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.fromDockerfile).toBe(
+    expectedRegistryMetadata.fromDockerfile,
+  );
 }
 
 async function stageOldOpenShellInUserLocalBin(host: HostCliClient): Promise<string> {
@@ -654,12 +657,12 @@ async function installCurrentNemoclawUpgrade(
   const resolvedRef = currentRefResult.stdout.trim();
   expect(resolvedRef.length).toBeGreaterThan(0);
   const exerciseOrdinaryUpgrade = OLD_NEMOCLAW_REF === "v0.0.55";
-  if (exerciseOrdinaryUpgrade) {
-    expect(
-      hiddenOldOpenShellDir,
-      "the v0.0.55 fixture must record the original OpenShell directory before hiding it",
-    ).toBeTruthy();
-  }
+  const expectsLegacyManagedConfirmation =
+    expectedLegacyRegistryMetadata(OLD_NEMOCLAW_REF).nemoclawVersion === undefined;
+  expect(
+    !exerciseOrdinaryUpgrade || Boolean(hiddenOldOpenShellDir),
+    "the v0.0.55 fixture must record the original OpenShell directory before hiding it",
+  ).toBe(true);
   const baseCurrentEnv = liveEnv({
     COMPATIBLE_API_KEY: "dummy",
     GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
@@ -707,11 +710,16 @@ async function installCurrentNemoclawUpgrade(
   );
 
   const currentLog = fs.readFileSync(currentInstallLog, "utf8");
-  expect(currentLog).toContain(
-    exerciseOrdinaryUpgrade
-      ? "Confirmed legacy managed-image recovery"
-      : "Confirmed 1 exact pre-fingerprint sandbox name(s)",
-  );
+  const expectedConfirmation = exerciseOrdinaryUpgrade
+    ? "Confirmed legacy managed-image recovery"
+    : expectsLegacyManagedConfirmation
+      ? "Confirmed 1 exact pre-fingerprint sandbox name(s)"
+      : null;
+  expect(
+    expectedConfirmation === null
+      ? !currentLog.includes("exact pre-fingerprint sandbox name(s)")
+      : currentLog.includes(expectedConfirmation),
+  ).toBe(true);
   expect(currentLog).toContain("Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped");
   expect(currentLog).toContain("Existing sandboxes recovered; skipping generic onboarding");
 
