@@ -48,8 +48,8 @@ function expressEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function receiptText(generation = receiptGeneration): string {
-  return `revision=${receiptRevision}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${generation}\n`;
+function receiptText(generation = receiptGeneration, model = "nemotron-3-ultra-550b-a55b"): string {
+  return `revision=${receiptRevision}\nmodel=${model}\ngeneration=${generation}\n`;
 }
 
 function retirementClaims(home: string): string[] {
@@ -458,6 +458,64 @@ describe("DGX Station Express resume (#7048)", () => {
     }
   });
 
+  it("leaves a legacy state directory alone when explicit clear has no Station artifacts", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-legacy-clear-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const sessionFile = path.join(stateDir, "onboard-session.json");
+    fs.mkdirSync(stateDir, { mode: 0o755 });
+    fs.writeFileSync(sessionFile, "{}\n", { mode: 0o600 });
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).not.toThrow();
+      expect(fs.readFileSync(sessionFile, "utf8")).toBe("{}\n");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an empty world-writable state directory during explicit clear", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-unsafe-empty-clear-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.chmodSync(stateDir, 0o777);
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("non-owner-only");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symbolic-link state directory during explicit clear without artifacts", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-symlink-empty-clear-"));
+    const target = path.join(home, "state-target");
+    fs.mkdirSync(target, { mode: 0o700 });
+    fs.symlinkSync(target, path.join(home, ".nemoclaw"));
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow(
+        "Refusing symbolic link",
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("still rejects a Station receipt in a legacy state directory during explicit clear", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-legacy-receipt-clear-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o755 });
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("non-owner-only");
+      expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText());
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("still rejects a Station retirement claim in an unsafe state directory", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-unsafe-claim-"));
     const stateDir = path.join(home, ".nemoclaw");
@@ -557,6 +615,47 @@ describe("DGX Station Express resume (#7048)", () => {
 
       retireStationExpressInstallerResume(receiptGeneration, { env: { HOME: home } });
       expect(fs.existsSync(receipt)).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["Nemotron Ultra", "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4"],
+    ["DeepSeek V4 Flash", "deepseek-ai/DeepSeek-V4-Flash"],
+  ])("retires a receipt written with the supported %s Hugging Face model ID", (_name, model) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-hf-id-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receipt, receiptText(receiptGeneration, model), { mode: 0o600 });
+
+    try {
+      expect(() =>
+        retireStationExpressInstallerResume(receiptGeneration, { env: { HOME: home } }),
+      ).not.toThrow();
+      expect(fs.existsSync(receipt)).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an arbitrary served alias in an installer receipt", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-alias-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receipt, receiptText(receiptGeneration, "nvidia/nemotron-3-ultra-550b-a55b"), {
+      mode: 0o600,
+    });
+
+    try {
+      expect(() =>
+        retireStationExpressInstallerResume(receiptGeneration, { env: { HOME: home } }),
+      ).toThrow("installer resume state is malformed");
+      expect(fs.readFileSync(receipt, "utf8")).toBe(
+        receiptText(receiptGeneration, "nvidia/nemotron-3-ultra-550b-a55b"),
+      );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

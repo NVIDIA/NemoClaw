@@ -97,6 +97,11 @@ function stationModel(value: unknown): VllmModelDef | null {
   }
 }
 
+function canonicalStationModelValue(value: string): string | null {
+  if (value.trim() !== value) return null;
+  return stationModel(value)?.envValue ?? null;
+}
+
 function servedModel(model: VllmModelDef): string {
   return model.servedModelId ?? model.id;
 }
@@ -162,10 +167,7 @@ function assertOwnerOnlyDirectory(candidate: string, stat: fs.Stats): void {
   }
 }
 
-function assertStationExpressStateDirectorySafe(
-  env: NodeJS.ProcessEnv,
-): StationExpressReceiptPaths | null {
-  const paths = stationExpressReceiptPaths(env);
+function stationExpressStateDirectories(paths: StationExpressReceiptPaths): string[] {
   const relative = path.relative(paths.stateBase, paths.stateDir);
   if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(`Refusing DGX Station Express resume path outside ${paths.stateBase}.`);
@@ -177,7 +179,33 @@ function assertStationExpressStateDirectorySafe(
     current = path.join(current, component);
     directories.push(current);
   }
-  for (const candidate of directories) {
+  return directories;
+}
+
+function assertStationExpressClearStatePathSafe(paths: StationExpressReceiptPaths): void {
+  for (const candidate of stationExpressStateDirectories(paths)) {
+    const stat = lstatOrNull(candidate);
+    if (!stat) continue;
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Refusing symbolic link in DGX Station Express resume path: ${candidate}`);
+    }
+    const isLegacyStateBase = candidate === paths.stateBase && (stat.mode & 0o7777) === 0o755;
+    if (!isLegacyStateBase) {
+      assertOwnerOnlyDirectory(candidate, stat);
+      continue;
+    }
+    const uid = process.getuid?.();
+    if (!stat.isDirectory() || uid === undefined || stat.uid !== uid) {
+      throw new Error(`Refusing non-owner-only DGX Station Express resume directory: ${candidate}`);
+    }
+  }
+}
+
+function assertStationExpressStateDirectorySafe(
+  env: NodeJS.ProcessEnv,
+): StationExpressReceiptPaths | null {
+  const paths = stationExpressReceiptPaths(env);
+  for (const candidate of stationExpressStateDirectories(paths)) {
     const stat = lstatOrNull(candidate);
     if (!stat) return null;
     if (stat.isSymbolicLink()) {
@@ -223,11 +251,10 @@ function readStationExpressInstallerResumeGeneration(stateFile: string): string 
   const generation = lines[2]?.startsWith("generation=")
     ? lines[2].slice("generation=".length)
     : "";
-  const model = stationModel(modelValue);
+  const canonicalModel = canonicalStationModelValue(modelValue);
   if (
     !STATION_EXPRESS_RECEIPT_REVISION_PATTERN.test(revision) ||
-    !model ||
-    model.envValue !== modelValue ||
+    !canonicalModel ||
     !isValidStationExpressReceiptGeneration(generation)
   ) {
     throw new Error("DGX Station Express installer resume state is malformed.");
@@ -297,6 +324,12 @@ function hasRetirementClaimCandidate(paths: StationExpressReceiptPaths): boolean
     if (isErrnoException(error) && error.code === "ENOENT") return false;
     throw error;
   }
+}
+
+function hasStationExpressInstallerResumeArtifactCandidate(
+  paths: StationExpressReceiptPaths,
+): boolean {
+  return lstatOrNull(paths.stateFile) !== null || hasRetirementClaimCandidate(paths);
 }
 
 function assertRetirementClaimDirectorySafe(claim: StationExpressRetirementClaim): string[] {
@@ -517,6 +550,9 @@ export function reconcileStationExpressInstallerResumeRetirement<T>(
 }
 
 export function clearStationExpressInstallerResume(env: NodeJS.ProcessEnv = process.env): void {
+  const uncheckedPaths = stationExpressReceiptPaths(env);
+  assertStationExpressClearStatePathSafe(uncheckedPaths);
+  if (!hasStationExpressInstallerResumeArtifactCandidate(uncheckedPaths)) return;
   const paths = assertStationExpressStateDirectorySafe(env);
   if (!paths) return;
   const stateFile = assertStationExpressInstallerResumeSafe(env);
