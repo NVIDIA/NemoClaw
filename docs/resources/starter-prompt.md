@@ -13,7 +13,8 @@ I do not know how to use a terminal.
 
 - Ask exactly one question at a time.
 - Use clickable choices when supported; otherwise show one short numbered list and wait.
-- Start by asking: "What computer are you using?" Choices: macOS, Windows, Linux.
+- Detect the operating system and whether it is WSL using read-only checks.
+- Ask which computer I am using only if the environment cannot be determined reliably.
 - Next ask which agent I want: OpenClaw, Hermes, or LangChain Deep Agents Code.
 - Never ask me to run commands myself, except the one workstation-side `ssh -N -L` command needed to open a remote credential form securely.
 - Explain each command in plain language, ask permission, then run it for me.
@@ -47,7 +48,8 @@ Use `NEMOCLAW_AGENT=langchain-deepagents-code` or `nemo-deepagents onboard` for 
 - On Linux, ask permission to run a read-only readiness check before provider selection.
 - Check distribution, architecture, product and firmware identity, GPU and memory, NVIDIA driver, Container Toolkit, Docker, Node.js, disk space, existing NemoClaw, Ollama, vLLM, relevant ports, and administrator access.
 - Classify the computer as DGX Spark, DGX Station, NVIDIA GB300, another NVIDIA computer, ordinary macOS/Linux, or unknown.
-- Do not identify DGX Spark or DGX Station from the GPU name alone; combine product, firmware, architecture, and GPU evidence.
+- Do not identify DGX Spark from the GPU name alone; combine product, firmware, architecture, and GPU evidence.
+- Classify a system as DGX Station when its firmware identifies a Station GB300 platform, or when its exact OEM model is documented by NVIDIA or the manufacturer as based on DGX Station architecture.
 - A confirmed NVIDIA GB300 can independently qualify for expanded local-runtime choices.
 - If uncertain, explain that and let NemoClaw's official preflight make the final platform decision.
 
@@ -66,9 +68,9 @@ Use `NEMOCLAW_AGENT=langchain-deepagents-code` or `nemo-deepagents onboard` for 
 
 After the readiness check, load exactly one matching instruction asset before provider selection:
 
-- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/prompt-assets/dgx-spark.md).
-- Confirmed DGX Station: [DGX Station Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/prompt-assets/dgx-station.md).
-- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/docs/resources/prompt-assets/windows-wsl.md).
+- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/15468e109742817483dbb0c368a47f787b34a892/docs/resources/prompt-assets/dgx-spark.md).
+- Confirmed DGX Station: [DGX Station Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/15468e109742817483dbb0c368a47f787b34a892/docs/resources/prompt-assets/dgx-station.md).
+- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/15468e109742817483dbb0c368a47f787b34a892/docs/resources/prompt-assets/windows-wsl.md).
 
 Read the matching raw Markdown file completely and follow it before continuing.
 Do not load a platform asset for any other computer.
