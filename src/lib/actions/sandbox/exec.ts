@@ -329,6 +329,12 @@ function defaultResolveBinary(): string {
   return getOpenshellBinary();
 }
 
+function defaultSelectGateway(sandboxName: string): void {
+  (require("./gateway-select") as typeof import("./gateway-select")).selectSandboxOwningGateway(
+    sandboxName,
+  );
+}
+
 // Test seams for execSandbox. All default to the production behavior; tests
 // inject them so the dispatch path stays hermetic without spawning a real
 // process or hitting the process-exiting OpenShell binary lookup.
@@ -340,6 +346,8 @@ export type ExecSandboxDeps = {
   run?: SandboxExecRunner;
   policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
+  /** Select the sandbox's owning gateway before the exec talks to OpenShell. */
+  selectGateway?: (sandboxName: string) => void;
 };
 
 export async function execSandbox(
@@ -361,6 +369,7 @@ export async function execSandbox(
     process.exit(2);
   }
   const binary = (deps.resolveBinary ?? defaultResolveBinary)();
+  (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
   }

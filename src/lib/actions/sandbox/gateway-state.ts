@@ -11,7 +11,12 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
-import { gatewayNamePattern, getSandboxTargetGatewayName } from "./gateway-target";
+import { selectSandboxOwningGateway } from "./gateway-select";
+import {
+  gatewayNamePattern,
+  getKnownSandboxTargetGatewayName,
+  getSandboxTargetGatewayName,
+} from "./gateway-target";
 
 const { pruneKnownHostsEntries } = require("../../onboard/known-hosts") as {
   pruneKnownHostsEntries: (contents: string) => string;
@@ -423,6 +428,36 @@ export function printGatewayLifecycleHint(
   }
 }
 
+/**
+ * A `present` lookup is only trustworthy when it came from the sandbox's own
+ * gateway. On a multi-instance host the active OpenShell gateway can be a
+ * sibling that reports a stale or provisioning entry for the same sandbox name,
+ * so a plain `present` masks the real state on the owning gateway. When the
+ * sandbox's gateway is registered but a different gateway is currently active,
+ * select the owning gateway and re-query so the returned state reflects the
+ * gateway the sandbox was onboarded against rather than the last-used one.
+ * Returns `null` when the initial `present` can be trusted as-is (owning
+ * gateway already active, or the sandbox is not registry-known).
+ */
+async function reselectOwningGatewayForPresent(
+  sandboxName: string,
+  getState: SandboxGatewayStateLookup,
+): Promise<SandboxGatewayState | null> {
+  const targetGatewayName = getKnownSandboxTargetGatewayName(sandboxName);
+  if (!targetGatewayName) return null;
+  const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
+  if (lifecycle.state !== "connected_other") return null;
+  selectSandboxOwningGateway(sandboxName);
+  const retry = await getState(sandboxName);
+  if (retry.state === "present") {
+    return { ...retry, recoveredGateway: true, recoveryVia: "select" };
+  }
+  if (retry.state === "missing") {
+    return reconcileMissingAgainstNamedGateway(sandboxName, retry);
+  }
+  return retry;
+}
+
 export async function getReconciledSandboxGatewayState(
   sandboxName: string,
   opts: { getState?: SandboxGatewayStateLookup } = {},
@@ -430,7 +465,7 @@ export async function getReconciledSandboxGatewayState(
   const getState = opts.getState ?? getSandboxGatewayState;
   const lookup = await getState(sandboxName);
   if (lookup.state === "present") {
-    return lookup;
+    return (await reselectOwningGatewayForPresent(sandboxName, getState)) ?? lookup;
   }
   if (lookup.state === "missing") {
     return reconcileMissingAgainstNamedGateway(sandboxName, lookup);
