@@ -35,26 +35,28 @@ describe("execSandbox gateway targeting", () => {
     }) as never);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await execSandbox(
-      "beta",
-      ["hostname"],
-      {},
-      {
-        resolveBinary: () => "openshell",
-        selectGateway,
-        run,
-        cleanupDeps: cleanupSkipped,
-        policyHint: {
-          now: () => 0,
-          env: {},
-          probeLogs: () => "",
-          enableAudit: () => {},
-          sleep: async () => {},
-          attempts: 1,
-          writeStderr: () => {},
+    await expect(
+      execSandbox(
+        "beta",
+        ["hostname"],
+        {},
+        {
+          resolveBinary: () => "openshell",
+          selectGateway,
+          run,
+          cleanupDeps: cleanupSkipped,
+          policyHint: {
+            now: () => 0,
+            env: {},
+            probeLogs: () => "",
+            enableAudit: () => {},
+            sleep: async () => {},
+            attempts: 1,
+            writeStderr: () => {},
+          },
         },
-      },
-    ).catch(() => {});
+      ),
+    ).rejects.toThrow("__exit_0__");
 
     expect(selectGateway).toHaveBeenCalledWith("beta");
     expect(run).toHaveBeenCalled();
@@ -81,27 +83,29 @@ describe("execSandbox gateway targeting", () => {
     }) as never);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await execSandbox(
-      "beta",
-      ["hostname"],
-      { workdir: "/work" },
-      {
-        resolveBinary: () => "openshell",
-        selectGateway,
-        probeWorkdir,
-        run,
-        cleanupDeps: cleanupSkipped,
-        policyHint: {
-          now: () => 0,
-          env: {},
-          probeLogs: () => "",
-          enableAudit: () => {},
-          sleep: async () => {},
-          attempts: 1,
-          writeStderr: () => {},
+    await expect(
+      execSandbox(
+        "beta",
+        ["hostname"],
+        { workdir: "/work" },
+        {
+          resolveBinary: () => "openshell",
+          selectGateway,
+          probeWorkdir,
+          run,
+          cleanupDeps: cleanupSkipped,
+          policyHint: {
+            now: () => 0,
+            env: {},
+            probeLogs: () => "",
+            enableAudit: () => {},
+            sleep: async () => {},
+            attempts: 1,
+            writeStderr: () => {},
+          },
         },
-      },
-    ).catch(() => {});
+      ),
+    ).rejects.toThrow("__exit_0__");
 
     expect(order).toEqual(["select:beta", "probe", "run"]);
   });
@@ -125,18 +129,20 @@ describe("execSandbox gateway targeting", () => {
     }) as never);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await execSandbox(
-      "beta",
-      ["hostname"],
-      { workdir: "/work" },
-      {
-        resolveBinary: () => "openshell",
-        selectGateway,
-        probeWorkdir,
-        run,
-        cleanupDeps: cleanupSkipped,
-      },
-    ).catch(() => {});
+    await expect(
+      execSandbox(
+        "beta",
+        ["hostname"],
+        { workdir: "/work" },
+        {
+          resolveBinary: () => "openshell",
+          selectGateway,
+          probeWorkdir,
+          run,
+          cleanupDeps: cleanupSkipped,
+        },
+      ),
+    ).rejects.toThrow("__exit_1__");
 
     expect(order).toEqual(["select"]);
     expect(probeWorkdir).not.toHaveBeenCalled();
