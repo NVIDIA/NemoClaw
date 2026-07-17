@@ -654,12 +654,10 @@ async function installCurrentNemoclawUpgrade(
   const resolvedRef = currentRefResult.stdout.trim();
   expect(resolvedRef.length).toBeGreaterThan(0);
   const exerciseOrdinaryUpgrade = OLD_NEMOCLAW_REF === "v0.0.55";
-  if (exerciseOrdinaryUpgrade) {
-    expect(
-      hiddenOldOpenShellDir,
-      "the v0.0.55 fixture must record the original OpenShell directory before hiding it",
-    ).toBeTruthy();
-  }
+  expect(
+    !exerciseOrdinaryUpgrade || Boolean(hiddenOldOpenShellDir),
+    "the v0.0.55 fixture must record the original OpenShell directory before hiding it",
+  ).toBe(true);
   const baseCurrentEnv = liveEnv({
     COMPATIBLE_API_KEY: "dummy",
     GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
