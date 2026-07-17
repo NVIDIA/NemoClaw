@@ -159,6 +159,36 @@ print("OK")
     expect(output.trim()).toBe("OK");
   });
 
+  it("rejects unmatched backticks in prerequisite-specific platform notes", () => {
+    const output = runPython(`
+${loadGeneratorAs("g")}
+
+def matrix_with(note):
+    return {
+      "statuses": {"deferred": "Roadmap-only."},
+      "owners": {"engineering": "@NVIDIA/nemoclaw-maintainer"},
+      "project_status": {"stage":"a","label":"b","since":"c","notes":"d"},
+      "platforms": [{
+        "name": "Station", "runtimes": ["Docker"], "status": "deferred",
+        "notes": "full notes", "prerequisites_notes": note
+      }],
+      "providers": [], "agents": [], "integrations": [],
+      "deployment_paths": [], "capabilities": [], "out_of_scope": []
+    }
+
+for label, note in [("unmatched", "unclosed \`code"), ("balanced", "closed \`code\`")]:
+    try:
+        module._validate_matrix(matrix_with(note))
+        print(f"{label}:OK")
+    except ValueError as exc:
+        print(f"{label}:{exc}")
+`);
+    expect(output).toContain(
+      "unmatched:ci/platform-matrix.json: platforms[0].prerequisites_notes has an odd number of backticks",
+    );
+    expect(output).toContain("balanced:OK");
+  });
+
   // PRA-2 on #5712: matrix.get(section, []) used to silently accept a missing
   // top-level section and render an empty table. _validate_matrix now requires
   // each generator-backed section to be present and list-typed before render.
