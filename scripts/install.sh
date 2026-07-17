@@ -2004,6 +2004,19 @@ legacy_openshell_gateway_upgrade_needed() {
   [[ -n "$version" ]] && ! version_gte "$version" "0.0.37"
 }
 
+resolve_current_openshell_version_range() {
+  local source_root="${NEMOCLAW_SOURCE_ROOT:-$(resolve_repo_root)}"
+  local blueprint="${source_root}/nemoclaw-blueprint/blueprint.yaml"
+  local min_version="" max_version=""
+  [ -f "$blueprint" ] || return 1
+  min_version="$(sed -nE 's/^min_openshell_version:[[:space:]]*["'"'"']([0-9]+\.[0-9]+\.[0-9]+)["'"'"'][[:space:]]*$/\1/p' "$blueprint")"
+  max_version="$(sed -nE 's/^max_openshell_version:[[:space:]]*["'"'"']([0-9]+\.[0-9]+\.[0-9]+)["'"'"'][[:space:]]*$/\1/p' "$blueprint")"
+  [[ "$min_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  [[ "$max_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  version_gte "$max_version" "$min_version" || return 1
+  printf '%s %s\n' "$min_version" "$max_version"
+}
+
 installer_non_interactive() {
   [[ "${NON_INTERACTIVE:-}" == "1" || "${NEMOCLAW_NON_INTERACTIVE:-}" == "1" ]]
 }
@@ -2186,6 +2199,55 @@ EOF
   esac
 }
 
+stop_legacy_openshell_gateway_process() {
+  [ "$(uname -s)" = "Linux" ] || return 1
+
+  local gateway_port runtime_dir pid_file pid gateway_exe attempt
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
+  if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
+    runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
+  elif [ "$gateway_port" -eq 8080 ]; then
+    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway"
+  else
+    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway-${gateway_port}"
+  fi
+  pid_file="${runtime_dir}/openshell-gateway.pid"
+  [ -f "$pid_file" ] || return 1
+  if [ -L "$pid_file" ] || ! [ -O "$pid_file" ]; then
+    error "Refusing to retire the legacy OpenShell gateway from an untrusted PID file: ${pid_file}"
+  fi
+
+  IFS= read -r pid <"$pid_file" || return 2
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] \
+    || error "Refusing to retire the legacy OpenShell gateway from an invalid PID file: ${pid_file}"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$pid_file"
+    return 0
+  fi
+
+  gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+  [ "${gateway_exe##*/}" = "openshell-gateway" ] \
+    || error "Refusing to stop PID ${pid}: the recorded process is not openshell-gateway."
+
+  kill "$pid" 2>/dev/null \
+    || error "Could not stop the recorded legacy OpenShell gateway process ${pid}."
+  for attempt in {1..50}; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null \
+      || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
+    for attempt in {1..10}; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+  kill -0 "$pid" 2>/dev/null \
+    && error "The recorded legacy OpenShell gateway process ${pid} did not stop."
+  rm -f "$pid_file"
+}
+
 preinstall_backup_and_retire_legacy_gateway() {
   local reg_file gateway_name
   reg_file="$(nemoclaw_state_dir)/sandboxes.json"
@@ -2239,18 +2301,32 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
-  # Current OpenShell builds are not compatible with pre-0.0.37 gateway state,
-  # and those CLIs no longer have lifecycle verbs for destroying that old gateway.
-  # Retire the old gateway while the old CLI can still do it, after backup.
-  if [[ -n "$old_openshell_version" ]] && ! version_gte "$old_openshell_version" "0.0.37"; then
+  # Retire a backed-up gateway before install-openshell replaces an out-of-range
+  # component set. Leaving the old gateway process alive makes the new CLI's
+  # schema preflight fail before sandbox recovery can recreate it.
+  local supported_range="" min_openshell_version="" max_openshell_version=""
+  if ! supported_range="$(resolve_current_openshell_version_range)"; then
+    error "Could not resolve the current OpenShell version range. Existing gateway and sandbox state were left unchanged after backup."
+  fi
+  read -r min_openshell_version max_openshell_version <<<"$supported_range"
+  [ -n "$old_openshell_version" ] \
+    || error "Could not determine the installed OpenShell version. The installer stopped after backup without retiring the gateway."
+  if ! version_gte "$old_openshell_version" "$min_openshell_version" \
+    || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
         || openshell gateway destroy >/dev/null 2>&1 \
-        || warn "Could not destroy the legacy OpenShell gateway before upgrade; onboarding will clean up stale runtime state."
+        || { stop_legacy_openshell_gateway_process \
+          && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
+            || warn "The legacy gateway process stopped, but its OpenShell registration could not be removed; onboarding will replace the stale registration."; }; } \
+        || error "Could not retire the legacy OpenShell gateway after backup. The installer stopped with the sandbox backups preserved."
     else
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
-        || warn "Could not destroy legacy gateway ${gateway_name} before upgrade; onboarding will clean up only that gateway's stale runtime state."
+        || { stop_legacy_openshell_gateway_process \
+          && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
+            || warn "Legacy gateway ${gateway_name} stopped, but its OpenShell registration could not be removed; onboarding will replace only that stale registration."; }; } \
+        || error "Could not retire legacy gateway ${gateway_name} after backup. The installer stopped with the sandbox backups preserved."
     fi
   fi
 }

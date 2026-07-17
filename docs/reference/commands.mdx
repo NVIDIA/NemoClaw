@@ -378,7 +378,10 @@ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 When existing sandboxes were created with OpenShell earlier than `0.0.37`, the installer prompts before running the new automatic gateway upgrade path.
-For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the installer to prepare the current CLI without replacing OpenShell, back up every registered sandbox with the current state manifest, retire the old gateway, install the supported OpenShell release, and recover the existing sandboxes.
+For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the installer to prepare the current CLI without replacing OpenShell, back up every registered sandbox with the current state manifest, retire an installed gateway whose OpenShell version is outside the current release's supported range, install the supported OpenShell release, and recover the existing sandboxes.
+The installer reads that supported range from the prepared current source and stops without retiring the gateway if the installed version is unknown or the range is missing or invalid.
+When the installed OpenShell version is already supported, the installer keeps the running gateway through the host update.
+If an out-of-range gateway cannot be retired through a supported lifecycle command or the verified NemoClaw-owned gateway PID, the installer stops after backup with the sandbox backups preserved.
 If any registered sandbox cannot be backed up, the installer aborts before it changes the gateway.
 When the registry contains a pre-fingerprint OpenClaw or Hermes entry with no recorded custom-image evidence, an interactive install asks you to confirm that the listed sandbox used a NemoClaw-managed image.
 For a non-interactive install, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after verifying every named sandbox used a managed image.
