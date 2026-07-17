@@ -130,8 +130,8 @@ Use these details when your first-run path needs more control.
     After it changes pinned packages, the installer exits with status `10` at the required reboot boundary; reboot, sign in, and run the printed exact-commit command to resume the accepted recipe without another prompt.
     On stock DGX OS, the installer instead validates the existing GB300 driver and volatile ECC state, local Docker and Buildx, `nvidia-ctk` and CDI, and `nvidia-smi` device visibility through both GPU container launch paths.
     It does not install or replace host packages, enable or restart services, or rewrite the Docker runtime; aside from the private preparation log and separately disclosed `docker`-group membership grant when needed, only the digest-pinned visibility-test image can remain cached.
-    The visibility probes do not replace physical acceptance of the pinned managed-vLLM and Nemotron Ultra recipe.
-    This automation does not change Station's Deferred support status; product validation on physical DGX Station hardware remains pending.
+    One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
+    This automation does not change Station's Deferred support status; repeat qualification from a clean host and CI coverage remain pending.
     Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead.
     The flag selects the interactive express prompt and requires terminal access.
     Refer to [Platform Support](../reference/platform-support) and [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for the current platform behavior.
@@ -213,12 +213,12 @@ Use these details when your first-run path needs more control.
     Changing pinned packages exits with status `10` for a reboot; after you sign in and run the printed exact-commit command, the accepted express recipe resumes without another prompt.
     On stock DGX OS, the path instead validates the existing GB300 driver and zero-error volatile ECC state, local Docker and Buildx, `nvidia-ctk` and CDI, and `nvidia-smi` device visibility through both CDI and `--gpus all`.
     It does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime; aside from the private preparation log and separately disclosed `docker`-group membership grant when needed, only the digest-pinned visibility-test image can remain cached.
-    The visibility probes do not replace physical acceptance of the pinned managed-vLLM and Nemotron Ultra recipe.
-    This automation does not change Station's Deferred support status; product validation remains pending.
+    One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
+    This automation does not change Station's Deferred support status; repeat qualification from a clean host and CI coverage remain pending.
     To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
     The `--station-deepseek` flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
     Without terminal access, the installer stops before it installs Docker or build dependencies instead of ignoring the flag.
-    For a headless or CI install on a prepared DGX Station running the qualified generic Ubuntu 24.04 ARM64 control, omit the flag and select the same managed-vLLM recipe explicitly.
+    For a headless or CI install on a qualifying DGX Station GB300 after host preparation, omit the flag and select the same managed-vLLM recipe explicitly.
 
     ```bash
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
@@ -237,7 +237,7 @@ Use these details when your first-run path needs more control.
 
     <Warning>
     Express install automates the configuration but does not change DGX Station's Deferred support status.
-    Product validation of this express-install boundary is still pending.
+    One physical DGX OS 7.5 GB300 validation completed; repeat qualification from a clean host and CI coverage remain pending.
     </Warning>
 
     The installer auto-launches `nemoclaw onboard` when it can find the new binary.

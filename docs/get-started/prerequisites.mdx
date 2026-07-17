@@ -67,11 +67,14 @@ It requires a loaded GB300 driver with zero volatile corrected and uncorrected E
 This path does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
 The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
 Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, its only persistent stock-runtime effect is that the digest-pinned visibility-test image can remain in the Docker cache.
-These probes establish local container GPU visibility; physical acceptance of the pinned managed-vLLM and Nemotron Ultra recipe remains a separate gate.
+One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
+Repeat qualification from a clean host and CI coverage remain pending.
+For direct GPU sandboxes on both Station images, NemoClaw adds `/sys` to the OpenShell filesystem policy as read-only.
+CUDA uses the visible sysfs metadata during `cuInit(0)`, and the policy does not grant sysfs write access.
 
 <Warning title="DGX Station Support Status">
 DGX Station remains Deferred.
-Product validation of this express-install boundary on physical DGX Station hardware is still pending.
+Repeat qualification from a clean host and CI coverage remain pending before any support-status promotion.
 </Warning>
 
 <Warning title="Docker Group Access">
