@@ -242,9 +242,12 @@ export function ensureSandboxPortForwardForPort(
       stdio: "ignore",
     },
   );
-  // OpenShell exits non-zero when the port is already forwarded. If its local
-  // listener is still reachable, settle against the authoritative forward list
-  // below; otherwise preserve the fast failure for a genuinely absent forward.
+  // OpenShell 0.0.85 returns an error when start preflight finds a validated
+  // live forward for the requested port. Recovery cannot change that upstream
+  // CLI contract, so a reachable listener settles against the authoritative
+  // forward list below; an absent listener still fails fast. Remove this
+  // tolerance once every supported OpenShell release makes `forward start`
+  // idempotent for an already-tracked live forward.
   if (startResult.status !== 0 && !isLocalForwardReachable(port)) return false;
 
   // `forward start --background` can return before its authoritative list

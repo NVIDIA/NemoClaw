@@ -254,6 +254,30 @@ beta  127.0.0.1  18791  12345  running`
     ).toBe(false);
   });
 
+  it("rejects a reachable listener that never gains authoritative ownership", () => {
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
+    let started = false;
+
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => started);
+    const captureOpenshell = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: "SANDBOX  BIND  PORT  PID  STATUS",
+    });
+    vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((rawArgs: unknown) => {
+      const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+      const isForwardStart = args[0] === "forward" && args[1] === "start";
+      started ||= isForwardStart;
+      return { status: Number(isForwardStart) } as never;
+    });
+
+    expect(
+      withFakeOpenshellBinary(() =>
+        ensureSandboxPortForwardForPort("beta", 18791, { expectedBind: "127.0.0.1" }),
+      ),
+    ).toBe(false);
+    expect(captureOpenshell.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("waits for delayed target ownership after a non-zero `forward start`", () => {
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "250");
     let started = false;
