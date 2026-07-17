@@ -101,6 +101,8 @@ A PID namespace inode would not distinguish PID reuse inside the same container 
 
 The managed controller uses a stronger process key because OpenShell remains PID 1 while nonroot children can be replaced.
 Its key includes PID, start identity, parent PID, user IDs, namespace PID and inode, command line, process state, and procfs device and inode metadata.
+It excludes an empty-command-line process only when two descriptor-pinned captures both report zombie state and exactly one thread.
+Every other empty command line, including a zombie capture that reports additional threads, causes discovery to fail closed.
 It verifies listener ownership in the same network namespace and uses a pidfd for signalling where the platform supports it.
 For managed Hermes replacement, the controller binds the exact-exit authorization to the gateway process ID and start identity plus its own process ID and start identity.
 The nonroot supervisor accepts that authorization only while the same root controller with the fixed installed command shape remains live.

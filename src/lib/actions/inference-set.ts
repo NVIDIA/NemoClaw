@@ -34,6 +34,7 @@ import {
   recomputeSandboxConfigHash,
   resolveAgentConfig,
   rewriteConfigUrlsWithDnsPinning,
+  SandboxConfigError,
   seedHermesDashboardConfig,
   writeSandboxConfig,
 } from "../sandbox/config";
@@ -573,6 +574,36 @@ function assertHermesCompatibleAnthropicOpenAiProvider(
   );
 }
 
+/**
+ * Read the in-sandbox agent config, converting a `SandboxConfigError` (the
+ * in-sandbox config could not be read or parsed — most commonly because the
+ * sandbox container is stopped) into a clean `InferenceSetError`. Callers use
+ * this as a pre-flight gate before the gateway route and registry are mutated,
+ * so an unreadable config aborts the command cleanly instead of crashing with a
+ * raw stack after a half-applied switch (#6997).
+ */
+export function readInSandboxConfigOrFail(
+  deps: Pick<InferenceSetDeps, "readSandboxConfig">,
+  sandboxName: string,
+  target: AgentConfigTarget,
+): ConfigObject {
+  try {
+    return deps.readSandboxConfig(sandboxName, target);
+  } catch (error) {
+    if (error instanceof SandboxConfigError) {
+      const lines = [...error.lines];
+      // `readSandboxConfig` also raises this for a corrupt/unparseable config,
+      // which starting the sandbox would NOT fix — only add the start hint for
+      // the stopped-sandbox case (the one that asks "Is the sandbox running?").
+      if (lines.some((line) => /is the sandbox running/i.test(line))) {
+        lines.push("  Start the sandbox and retry.");
+      }
+      throw new InferenceSetError(lines.join("\n"), error.exitCode);
+    }
+    throw error;
+  }
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
@@ -750,6 +781,13 @@ async function runInferenceSetWithoutHostLock(
     deps,
   );
 
+  // Read the in-sandbox config *before* mutating the gateway route or registry.
+  // If it is unreadable (e.g. a stopped sandbox), the mutations below would have
+  // committed the gateway route and registry first (only the in-sandbox layer is
+  // `rebuild`-recoverable), so gate on the read here to abort cleanly instead of
+  // leaving a half-applied switch across the three config layers (#6997).
+  const config = readInSandboxConfigOrFail(deps, sandboxName, target);
+
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
   const setResult = deps.captureOpenshell(
     openshellInferenceSetArgs({
@@ -795,7 +833,6 @@ async function runInferenceSetWithoutHostLock(
     throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
   }
 
-  const config = deps.readSandboxConfig(sandboxName, target);
   const previousOpenClawInferenceApi = readPreviousOpenClawInferenceApi(agentName, config);
   const preferredInferenceApi =
     explicitPreferredInferenceApi ??

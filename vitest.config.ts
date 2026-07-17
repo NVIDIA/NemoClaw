@@ -124,6 +124,7 @@ export default defineConfig({
             "test/install-clone-ref.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
+            "test/install-station-host-preparation.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
         },
@@ -142,6 +143,7 @@ export default defineConfig({
             "test/install-clone-ref.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
+            "test/install-station-host-preparation.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
           // Slow tests that spawn real bash install.sh processes. Explicit

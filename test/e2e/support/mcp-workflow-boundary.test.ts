@@ -26,10 +26,10 @@ describe("MCP workflow artifact boundary", () => {
         (step) => step.name === "Run MCP OpenShell provider live test",
       );
       requireFixture(run?.run, `${jobName} MCP live-test fixture is missing`);
-      const reporter = "--reporter=test/e2e/risk-signal-reporter.ts";
-      requireFixture(run.run.includes(reporter), `${jobName} reporter fixture is missing`);
-      const updatedRun = run.run.replace(` ${reporter}`, "");
-      requireFixture(updatedRun !== run.run, `${jobName} reporter could not be removed`);
+      const helper = "tools/e2e/live-vitest-invocation.mts run --test-path";
+      requireFixture(run.run.includes(helper), `${jobName} live-vitest helper fixture is missing`);
+      const updatedRun = run.run.replace(helper, "vitest run");
+      requireFixture(updatedRun !== run.run, `${jobName} live-vitest helper could not be removed`);
       run.run = updatedRun;
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
@@ -69,6 +69,47 @@ describe("MCP workflow artifact boundary", () => {
           "mcp-bridge must not enable the retired in-process agent matrix",
         ]),
       );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
+    {
+      expected: "mcp-bridge must isolate the credential generation-window proof to one shard",
+      mutate: (run: string) =>
+        run.replace('if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then', "if true; then"),
+      name: "runs on every shard",
+    },
+    {
+      expected: "mcp-bridge must run the credential generation-window lifecycle",
+      mutate: (run: string) =>
+        run.replace("test/e2e/live/openshell-credential-generation-window.test.ts", ""),
+      name: "is missing",
+    },
+    {
+      expected:
+        "mcp-bridge credential generation-window proof must publish canonical risk-signal evidence",
+      mutate: (run: string) => run.replace("--reporter=test/e2e/risk-signal-reporter.ts", ""),
+      name: "omits its risk-signal reporter",
+    },
+  ])("rejects a credential generation-window proof that $name", ({ expected, mutate, name }) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<{ name?: string; run?: string }> }>;
+      };
+      const run = workflow.jobs["mcp-bridge"].steps.find(
+        (step) => step.name === "Run MCP OpenShell provider live test",
+      );
+      requireFixture(run?.run, "MCP stable lifecycle fixture is missing");
+      const updatedRun = mutate(run.run);
+      requireFixture(updatedRun !== run.run, `credential generation-window proof ${name}`);
+      run.run = updatedRun;
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(expected);
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }

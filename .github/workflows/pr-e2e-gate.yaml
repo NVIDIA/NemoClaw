@@ -3,6 +3,14 @@
 
 name: E2E / PR Gate Controller
 
+run-name: >-
+  ${{ github.event_name == 'pull_request_target' &&
+  format('E2E Gate PR #{0} head {1} base {2} gate {3}',
+  github.event.pull_request.number, github.event.pull_request.head.sha,
+  github.event.pull_request.base.sha,
+  github.event.action != 'edited' || github.event.changes.base != null) ||
+  format('E2E Gate {0} {1}', github.event_name, github.run_id) }}
+
 on:
   workflow_run:
     workflows: ["CI / Pull Request"]

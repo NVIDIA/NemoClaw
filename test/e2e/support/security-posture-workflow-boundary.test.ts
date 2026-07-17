@@ -27,6 +27,26 @@ function validateCentralWorkflowMutation(mutate: (source: string) => string): st
 }
 
 describe("security posture workflow boundary", () => {
+  it("requires the validated helper for the templated live test path", () => {
+    const workflow = readSecurityPostureWorkflow();
+    const job = (workflow.jobs as Record<string, Record<string, unknown>>)["security-posture"];
+    const run = (job.steps as Array<Record<string, unknown>>).find(
+      (step) => step.name === "Run security posture live Vitest test",
+    )!;
+    run.run = [
+      "set -euo pipefail",
+      'npx vitest run --project e2e-live "${{ matrix.test_file }}"',
+    ].join("\n");
+
+    const errors = validateSecurityPostureWorkflow(workflow);
+    expect(errors).toContain(
+      "security-posture step 'Run security posture live Vitest test' must run: tools/e2e/live-vitest-invocation.mts run",
+    );
+    expect(errors).toContain(
+      "security-posture step 'Run security posture live Vitest test' must run: --test-path \"${{ matrix.test_file }}\"",
+    );
+  });
+
   it("rejects missing agent coverage, mode drift, and broadly scoped credentials", () => {
     const hermesMatrixEntry = [
       "          - agent: hermes",

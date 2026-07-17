@@ -56,7 +56,11 @@ Do not reuse OpenShell Google Cloud compatibility names such as `GCP_PROJECT_ID`
 NemoClaw rejects them because OpenShell exposes those non-secret configuration names as child-process values.
 
 It also rejects `GCE_METADATA_HOST`, `GCE_METADATA_IP`, and `METADATA_SERVER_DETECTION`, which OpenShell rewrites for its metadata emulator.
-The child-visible compatibility list is pinned to OpenShell `v0.0.72` commit `8cb16de9eae4c44d7d31e1493747d8c10abb5963` and must be reviewed with every OpenShell version change.
+NemoClaw pins the child-visible compatibility list to OpenShell `v0.0.85` commit `3dee5570a46076a57a3b056f35f35ebc0861ac85`.
+Review this list with every OpenShell version change.
+
+OpenShell reserves credential names matching `v[0-9]+_[A-Za-z0-9_]+` for revisioned placeholders.
+NemoClaw rejects names such as `v10_GITHUB_TOKEN` because OpenShell skips them instead of attaching a credential resolver.
 
 NemoClaw rejects host subprocess controls such as `PATH`, proxy or TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys.
 Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_ENV`, `NODE_OPTIONS`, `PYTHONHOME`, `NEMOCLAW_*`, and `OPENCLAW_*` are rejected as well.
@@ -86,8 +90,8 @@ OpenShell re-resolves the hostname for each new connection, requires every curre
 
 A DNS change to a private, special-use, or otherwise unpinned address fails closed instead of widening the route.
 
-Authenticated MCP rejects `host.openshell.internal`, `host.docker.internal`, and `host.containers.internal` on stable OpenShell v0.0.72.
-That release does not expose an attested driver gateway address that NemoClaw can pin.
+Authenticated MCP rejects `host.openshell.internal`, `host.docker.internal`, and `host.containers.internal` on stable OpenShell `v0.0.85`.
+That release has a trusted-gateway branch for one narrow link-local topology, but it does not expose an attested driver gateway address that NemoClaw can pin.
 Use a normal HTTPS DNS endpoint with public address records until OpenShell exposes attested gateway state for exact policy pinning.
 
 ## Understand the Generated Method Profile

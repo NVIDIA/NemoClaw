@@ -52,12 +52,12 @@ RUNTIME_ALLOWED_NONSECRET_KEYS = frozenset(
     }
 )
 RUNTIME_ALLOWED_RAW_SECRET_KEYS = frozenset({"OPENCLAW_GATEWAY_TOKEN"})
-# OpenShell's Docker/Podman supervisor owns this variable and injects a mounted
-# file path, not private-key material. Keep the allowance exact and runtime-only
-# so a caller cannot use the secret-shaped name to smuggle an arbitrary value or
-# persist it in Hermes' mutable .env file.
-RUNTIME_ALLOWED_PLATFORM_PATH_VALUES = frozenset(
-    {("OPENSHELL_TLS_KEY", "/etc/openshell/tls/client/tls.key")}
+# OpenShell 8eacb477 (candidate 0.0.85) makes these supervisor-only identity
+# variables and removes them from entrypoint, exec, and connect children. Their
+# presence in Hermes is therefore contract drift even when the value is only a
+# mounted path.
+OPENSHELL_SUPERVISOR_ONLY_ENV_KEYS = frozenset(
+    {"OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"}
 )
 ALLOWED_LITERALS = frozenset({"", "[STRIPPED_BY_MIGRATION]"})
 MAX_ENV_BYTES = 4 * 1024 * 1024
@@ -451,6 +451,11 @@ def validate_env_file(path: str) -> int:
         key = key.strip()
         if not KEY_NAME_RE.fullmatch(key):
             continue
+        if key in OPENSHELL_SUPERVISOR_ONLY_ENV_KEYS:
+            violation_count += 1
+            if len(violations) < MAX_VIOLATIONS:
+                violations.append(f"{key} (line {lineno})")
+            continue
         if key in ENV_FILE_ALLOWED_NONSECRET_KEYS:
             continue
         if key in ENV_FILE_ALLOWED_RAW_SECRET_KEYS and is_allowed_raw_secret_value(
@@ -468,8 +473,9 @@ def validate_env_file(path: str) -> int:
         return 0
     _emit_violations(
         "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env "
-        "contains raw secret-shaped values. Store credentials in OpenShell "
-        "providers and keep only openshell resolver placeholders in the sandbox.",
+        "contains raw secret-shaped values or OpenShell supervisor-only identity "
+        "variables. Store credentials in OpenShell providers and keep only "
+        "openshell resolver placeholders in the sandbox.",
         violations,
         violation_count - len(violations),
     )
@@ -481,13 +487,16 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     violations: list[str] = []
     violation_count = 0
     for key, value in sorted(source.items()):
+        if key in OPENSHELL_SUPERVISOR_ONLY_ENV_KEYS:
+            violation_count += 1
+            if len(violations) < MAX_VIOLATIONS:
+                violations.append(key)
+            continue
         if key in RUNTIME_ALLOWED_NONSECRET_KEYS:
             continue
         if key in RUNTIME_ALLOWED_RAW_SECRET_KEYS and is_allowed_raw_secret_value(
             key, value
         ):
-            continue
-        if (key, value) in RUNTIME_ALLOWED_PLATFORM_PATH_VALUES:
             continue
         if not KEY_NAME_RE.fullmatch(key):
             continue
@@ -502,8 +511,9 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
         return 0
     _emit_violations(
         "[SECURITY] Refusing Hermes startup because the process environment "
-        "contains raw secret-shaped values. Store credentials in OpenShell "
-        "providers and keep only openshell resolver placeholders in the sandbox.",
+        "contains raw secret-shaped values or OpenShell supervisor-only identity "
+        "variables. Store credentials in OpenShell providers and keep only "
+        "openshell resolver placeholders in the sandbox.",
         violations,
         violation_count - len(violations),
     )

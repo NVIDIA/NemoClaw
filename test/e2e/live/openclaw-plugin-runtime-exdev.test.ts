@@ -25,6 +25,13 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
+import {
+  createOpenShellDriverConfigTestWrapper,
+  type OpenShellComponents,
+  type OpenShellDriverConfigTestWrapper,
+  resolveOpenShellSiblingComponents,
+  withOpenShellDriverConfigWrapperEnv,
+} from "./openshell-driver-config-test-wrapper.ts";
 
 // Keep this contract as a focused live test: build a deterministic custom plugin
 // on top of the complete managed runtime, prove it survives restart/rebuild, then
@@ -60,7 +67,7 @@ assert.equal(
 const NEMOCLAW_RELEASE_TAG = "v0.0.71";
 const NEMOCLAW_RELEASE_COMMIT = "e4b9111f5f0535c2fc3d6fbe8dc8dca101a6fdce";
 const NEMOCLAW_RELEASE_OPENSHELL_VERSION = "0.0.71";
-const CURRENT_OPENSHELL_VERSION = "0.0.72";
+const CURRENT_OPENSHELL_VERSION = "0.0.85";
 const NEMOCLAW_SOURCE_REPOSITORY = "https://github.com/NVIDIA/NemoClaw.git";
 const SANDBOX_BASE_IMAGE_REF = "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.71";
 const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
@@ -170,54 +177,16 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
-type OpenShellTmpfsWrapper = {
-  directory: string;
-  executable: string;
-  remove(): void;
-};
-
-type PinnedOpenShellComponents = {
-  cli: string;
-  gateway: string;
-  sandbox: string;
-};
+type OpenShellTmpfsWrapper = OpenShellDriverConfigTestWrapper;
+type PinnedOpenShellComponents = OpenShellComponents;
 
 function createOpenShellTmpfsWrapper(realOpenshellPath: string): OpenShellTmpfsWrapper {
-  if (!path.isAbsolute(realOpenshellPath)) {
-    throw new Error("real OpenShell path must be absolute");
-  }
-  fs.accessSync(realOpenshellPath, fs.constants.X_OK);
-
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-openshell-wrapper-"));
-  const executable = path.join(directory, "openshell");
-  const delegatedCapabilityComments = REQUIRED_OPENSHELL_MCP_FEATURES.map((marker) => {
-    assert.match(marker, /^[A-Za-z0-9_-]+$/, "delegated OpenShell capability marker must be safe");
-    return `${DELEGATED_CAPABILITY_COMMENT_PREFIX}${marker}`;
-  }).join("\n");
-  const script = `#!/bin/sh
-${delegatedCapabilityComments}
-set -eu
-if [ "$#" -ge 2 ] && [ "$1" = sandbox ] && [ "$2" = create ]; then
-  shift 2
-  for argument in "$@"; do
-    case "$argument" in
-      --driver-config-json|--driver-config-json=*)
-        printf '%s\n' 'refusing duplicate --driver-config-json in EXDEV test wrapper' >&2
-        exit 64
-        ;;
-    esac
-  done
-  exec ${shellQuote(realOpenshellPath)} sandbox create --driver-config-json ${shellQuote(EXDEV_TMPFS_DRIVER_CONFIG)} "$@"
-fi
-exec ${shellQuote(realOpenshellPath)} "$@"
-`;
-  fs.writeFileSync(executable, script, { encoding: "utf8", mode: 0o700 });
-
-  return {
-    directory,
-    executable,
-    remove: () => fs.rmSync(directory, { recursive: true, force: true }),
-  };
+  return createOpenShellDriverConfigTestWrapper({
+    delegatedCapabilityMarkers: REQUIRED_OPENSHELL_MCP_FEATURES,
+    driverConfigJson: EXDEV_TMPFS_DRIVER_CONFIG,
+    label: "exdev",
+    realOpenshellPath,
+  });
 }
 
 function withOpenShellWrapperEnv(
@@ -225,29 +194,11 @@ function withOpenShellWrapperEnv(
   wrapper: OpenShellTmpfsWrapper,
   components: PinnedOpenShellComponents,
 ): NodeJS.ProcessEnv {
-  return {
-    ...env,
-    PATH: `${wrapper.directory}${path.delimiter}${env.PATH ?? ""}`,
-    NEMOCLAW_OPENSHELL_BIN: wrapper.executable,
-    NEMOCLAW_OPENSHELL_GATEWAY_BIN: components.gateway,
-    NEMOCLAW_OPENSHELL_SANDBOX_BIN: components.sandbox,
-  };
+  return withOpenShellDriverConfigWrapperEnv(env, wrapper, components);
 }
 
 function resolvePinnedOpenShellComponents(openshellPath: string): PinnedOpenShellComponents {
-  const cli = fs.realpathSync(openshellPath);
-  fs.accessSync(cli, fs.constants.X_OK);
-  const installDirectory = path.dirname(cli);
-  const canonicalSibling = (name: string): string => {
-    const sibling = fs.realpathSync(path.join(installDirectory, name));
-    fs.accessSync(sibling, fs.constants.X_OK);
-    return sibling;
-  };
-  return {
-    cli,
-    gateway: canonicalSibling("openshell-gateway"),
-    sandbox: canonicalSibling("openshell-sandbox"),
-  };
+  return resolveOpenShellSiblingComponents(openshellPath);
 }
 
 async function installAndResolvePinnedOpenShell(
@@ -639,7 +590,6 @@ type WeatherRuntimeProof = {
 };
 
 function gatewayCatalogCallScript(params: Record<string, unknown>) {
-  const source = Buffer.from(GATEWAY_CATALOG_CALL_SOURCE, "utf8").toString("base64");
   const encodedParams = Buffer.from(JSON.stringify(params), "utf8").toString("base64");
   return trustedSandboxShellScript(`set -eu
 . /tmp/nemoclaw-proxy-env.sh
@@ -647,7 +597,9 @@ export HOME=/sandbox
 export NO_PROXY=127.0.0.1,localhost
 export no_proxy="$NO_PROXY"
 export NEMOCLAW_E2E_GATEWAY_PARAMS_B64='${encodedParams}'
-exec node --input-type=module --eval 'await import("data:text/javascript;base64," + process.argv[1])' '${source}'`);
+exec node --input-type=module <<'NEMOCLAW_GATEWAY_CATALOG_PROBE'
+${GATEWAY_CATALOG_CALL_SOURCE}
+NEMOCLAW_GATEWAY_CATALOG_PROBE`);
 }
 
 async function assertWeatherPluginRuntime(
@@ -886,9 +838,7 @@ replaceNodeModulesDir('/sandbox/.openclaw/plugin-runtime-deps/exdev-guard/node_m
 console.log('runtime deps replacement completed');
 NODE`;
 
-const runtimeDepsReplacementProbe = trustedSandboxShellScript(
-  `printf '%s' '${Buffer.from(runtimeDepsReplacementProbeSource).toString("base64")}' | base64 -d > /tmp/nemoclaw-exdev-guard.sh && sh /tmp/nemoclaw-exdev-guard.sh`,
-);
+const runtimeDepsReplacementProbe = trustedSandboxShellScript(runtimeDepsReplacementProbeSource);
 
 test("a custom OpenClaw plugin survives restart, recreation, and rebuild without EXDEV failures (#6108)", {
   timeout: ONBOARD_TIMEOUT_MS * 3 + REBUILD_TIMEOUT_MS + 15 * 60_000,
@@ -900,7 +850,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     contract: [
       "the exact NemoClaw v0.0.71 checkout installs, builds, and reports its tagged CLI version",
       "the tagged CLI uses OpenShell 0.0.71 with matching source, base image, and OpenClaw runtime",
-      "the current CLI reinstalls OpenShell 0.0.72 before current lifecycle coverage",
+      "the current CLI reinstalls OpenShell 0.0.85 before current lifecycle coverage",
       "release-matched peer/dev dependencies prune private OpenClaw and link the host runtime",
       "gateway log, runtime inspection, tools.catalog, and tools.invoke prove weather/get_weather",
       "custom-plugin v1 survives restart, recreation installs v2, and rebuild installs v3",
@@ -1011,7 +961,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     "v0-0-71",
     NEMOCLAW_RELEASE_OPENSHELL_VERSION,
   );
-  // OpenShell 0.0.71 predates the current 0.0.72 MCP capability marker.
+  // OpenShell 0.0.71 predates the current 0.0.85 MCP capability marker.
   // The tagged CLI's own onboarding preflight below owns this compatibility check.
   const taggedOpenShellWrapper = createOpenShellTmpfsWrapper(taggedPinnedOpenshell.cli);
   cleanup.add("remove v0.0.71 EXDEV OpenShell PATH wrapper", taggedOpenShellWrapper.remove);
