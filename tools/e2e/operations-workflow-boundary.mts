@@ -428,17 +428,15 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   requireNode24GithubScript(errors, generate, "scorecard generator");
   const generateScript = String(generate.with?.script ?? "");
   for (const fragment of [
+    "scripts/scorecard/coordinate-scorecard.mts",
+    "buildScorecard",
     "scripts/scorecard/analyze-trace-timing.mts",
     "traceTiming.buildTraceTimingResult",
     "buildTraceTimingResult({ github, context, core })",
-    "budgetWarningMessage",
-    "core.warning(budgetWarningMessage)",
+    "trace.budgetWarningMessage",
+    "core.warning(trace.budgetWarningMessage)",
     "scripts/scorecard/summarize-jobs.mts",
-    "scorecardJobs.isSelectiveDispatch",
     "scorecardJobs.loadWorkflowRunJobs",
-    "scorecardJobs.summarizeJobs",
-    "scripts/scorecard/build-slack-blocks.mts",
-    "slackBlocks.buildBlocks",
     "core.summary",
     "scorecardData",
     "slackData",

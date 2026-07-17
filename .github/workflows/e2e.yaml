@@ -5154,120 +5154,42 @@ jobs:
         with:
           script: |
             const path = require('path');
-            const traceTiming = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
+            const { buildScorecard } = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/coordinate-scorecard.mts'),
             );
             const scorecardJobs = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.mts'),
             );
-            const slackBlocks = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.mts'),
+            const traceTiming = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
             );
             const needs = ${{ toJSON(needs) }};
-            const safeSelector = /^[A-Za-z0-9_-]+$/;
-            const parseSelectors = (value) =>
-              value.split(',').map((name) => name.trim()).filter((name) => safeSelector.test(name));
-            const rawRequestedJobs = process.env.JOBS || '';
-            const rawRequestedTargets = process.env.TARGETS || '';
-            const requestedJobs = parseSelectors(rawRequestedJobs);
-            const requestedTargets = parseSelectors(rawRequestedTargets);
-            const isDispatch = context.eventName === 'workflow_dispatch';
-            const isSelectiveDispatch = scorecardJobs.isSelectiveDispatch(
-              context.eventName,
-              rawRequestedJobs,
-              rawRequestedTargets,
-            );
-            const runMode = isSelectiveDispatch
-              ? 'Selective dispatch'
-              : isDispatch
-                ? 'Manual full run'
-                : 'Scheduled E2E';
-            const metaJobs = [
-              'generate-matrix',
-              'report-to-pr',
-              'scorecard',
-            ];
-            const explicitOnly = parseSelectors(process.env.EXPLICIT_ONLY_JOBS || '');
-            const explicitlySelected = [...requestedJobs, ...requestedTargets];
 
             // GitHub's jobs API is the canonical source because `needs.live`
             // collapses every matrix target into one result and has no job URL.
             // The typed helper owns and tests the degraded `needs` fallback.
             const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
+            const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
+            if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
 
-            const { cancelled, failedJobs, failure, ran, skipped, success, total } =
-              scorecardJobs.summarizeJobs({
-                apiJobs,
-                explicitOnlyJobNames: explicitOnly,
-                explicitlySelected,
-                metaJobNames: metaJobs,
-                needs,
-              });
-            const perfect = ran > 0 && failure === 0 && cancelled === 0;
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const today = new Date().toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            });
-            const { budgetWarningMessage, traceTimingLine, traceSummaryLines } =
-              await traceTiming.buildTraceTimingResult({ github, context, core });
-            if (budgetWarningMessage) core.warning(budgetWarningMessage);
-            const lines = [
-              `## 🌅 NemoClaw E2E Scorecard — ${today}`,
-              '',
-              `**Run mode:** ${runMode}`,
-            ];
-            if (requestedJobs.length > 0) {
-              lines.push(`**Requested jobs:** ${requestedJobs.map((name) => `\`${name}\``).join(', ')}`);
-            }
-            if (requestedTargets.length > 0) {
-              lines.push(`**Requested targets:** ${requestedTargets.map((name) => `\`${name}\``).join(', ')}`);
-            }
-            lines.push(
-              `**Jobs run:** ${ran} of ${total}`,
-              `  ✅ ${success} passed`,
-              `  ❌ ${failure} failed`,
-              `  🚫 ${cancelled} cancelled`,
-              `  ⏭️ ${skipped} skipped`,
-            );
-            if (failedJobs.length > 0) {
-              lines.push('', '**Failed jobs:**');
-              for (const job of failedJobs) {
-                lines.push(job.url ? `  - [${job.name}](${job.url})` : `  - \`${job.name}\``);
-              }
-            }
-            if (perfect) lines.push('', '🎉 **All jobs passed!**');
-            lines.push('', traceTimingLine, ...traceSummaryLines, '', `🔗 [Full run details](${runUrl})`);
-            await core.summary.addRaw(lines.join('\n')).write();
-            const scorecardData = {
-              today,
-              runMode,
+            const { summaryMarkdown, scorecardData, slackData } = buildScorecard({
+              eventName: context.eventName,
               actor: context.actor || '',
-              isSelectiveDispatch,
-              requestedJobs,
-              requestedTargets,
-              total,
-              ran,
-              success,
-              failure,
-              cancelled,
-              skipped,
-              perfect,
-              failedJobs,
-              traceTimingLine,
-              runUrl,
-            };
+              serverUrl: context.serverUrl,
+              repo: context.repo,
+              runId: context.runId,
+              rawJobs: process.env.JOBS || '',
+              rawTargets: process.env.TARGETS || '',
+              rawExplicitOnly: process.env.EXPLICIT_ONLY_JOBS || '',
+              needs,
+              apiJobs,
+              trace,
+              today: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            });
+
+            await core.summary.addRaw(summaryMarkdown).write();
             core.setOutput('scorecardData', JSON.stringify(scorecardData));
-            core.setOutput('slackData', JSON.stringify({
-              channel: slackBlocks.getSlackChannel(scorecardData),
-              payload: {
-                text: slackBlocks.buildFallbackText(scorecardData),
-                attachments: [{
-                  color: slackBlocks.getStatusColor(scorecardData),
-                  blocks: slackBlocks.buildBlocks(scorecardData),
-                }],
-              },
-            }));
+            core.setOutput('slackData', JSON.stringify(slackData));
 
       - name: Post scorecard to Slack
         # Webhook secrets never enter branch-dispatched runs. The payload is
@@ -5290,7 +5212,22 @@ jobs:
               preview: 'SLACK_WEBHOOK_URL_PREVIEW',
             };
             const channel = data?.channel;
-            if (!Object.hasOwn(envByChannel, channel) || !data.payload || typeof data.payload !== 'object') {
+            const payload = data?.payload;
+            const attachments = payload?.attachments;
+            const validPayload =
+              Object.hasOwn(envByChannel, channel) &&
+              payload !== null &&
+              typeof payload === 'object' &&
+              typeof payload.text === 'string' &&
+              Array.isArray(attachments) &&
+              attachments.every(
+                (attachment) =>
+                  attachment !== null &&
+                  typeof attachment === 'object' &&
+                  typeof attachment.color === 'string' &&
+                  Array.isArray(attachment.blocks),
+              );
+            if (!validPayload) {
               core.setFailed('Invalid precomputed Slack payload');
               return;
             }
