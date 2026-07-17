@@ -190,6 +190,29 @@ test ! -e "${runtimeDir}/openshell-gateway.pid"`,
     },
   );
 
+  it.skipIf(process.platform !== "linux")(
+    "clears a stale owned gateway PID file and continues retirement",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stale-gateway-pid-"));
+      const pidFile = path.join(tmp, "openshell-gateway.pid");
+      fs.writeFileSync(pidFile, "999999999\n");
+
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR="${tmp}"
+stop_legacy_openshell_gateway_process
+test ! -e "${pidFile}"`,
+        ],
+        { encoding: "utf-8" },
+      );
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+    },
+  );
+
   it("aborts non-interactive legacy gateway upgrades without explicit opt-in", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard({
       NON_INTERACTIVE: "1",
@@ -449,6 +472,25 @@ test ! -e "${runtimeDir}/openshell-gateway.pid"`,
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain(
       "Could not resolve the current OpenShell version range",
+    );
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(openshellLog).toBe("");
+  });
+
+  it("fails closed after backup when the installed OpenShell version is unknown", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        hasOldCli: false,
+        openshellVersion: "",
+        registryJson:
+          '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}',
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "Could not determine the installed OpenShell version",
     );
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog).toBe("");

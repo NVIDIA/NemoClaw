@@ -2213,15 +2213,16 @@ stop_legacy_openshell_gateway_process() {
   fi
   pid_file="${runtime_dir}/openshell-gateway.pid"
   [ -f "$pid_file" ] || return 1
-  [ ! -L "$pid_file" ] && [ -O "$pid_file" ] \
-    || error "Refusing to retire the legacy OpenShell gateway from an untrusted PID file: ${pid_file}"
+  if [ -L "$pid_file" ] || ! [ -O "$pid_file" ]; then
+    error "Refusing to retire the legacy OpenShell gateway from an untrusted PID file: ${pid_file}"
+  fi
 
   IFS= read -r pid <"$pid_file" || return 2
   [[ "$pid" =~ ^[1-9][0-9]*$ ]] \
     || error "Refusing to retire the legacy OpenShell gateway from an invalid PID file: ${pid_file}"
   if ! kill -0 "$pid" 2>/dev/null; then
     rm -f "$pid_file"
-    return 1
+    return 0
   fi
 
   gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
@@ -2308,6 +2309,8 @@ preinstall_backup_and_retire_legacy_gateway() {
     error "Could not resolve the current OpenShell version range. Existing gateway and sandbox state were left unchanged after backup."
   fi
   read -r min_openshell_version max_openshell_version <<<"$supported_range"
+  [ -n "$old_openshell_version" ] \
+    || error "Could not determine the installed OpenShell version. The installer stopped after backup without retiring the gateway."
   if ! version_gte "$old_openshell_version" "$min_openshell_version" \
     || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
