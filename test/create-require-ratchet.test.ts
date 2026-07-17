@@ -219,6 +219,45 @@ describe("base-trusted createRequire ratchet", () => {
     ).toBe(false);
   });
 
+  it("detects quoted node-module bindings without flagging unrelated properties (#7056)", () => {
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        [
+          'import * as nodeModule from "node:module";',
+          'const { "createRequire": load } = nodeModule;',
+          "load(import.meta.url);",
+        ].join("\n"),
+        "example.ts",
+      ),
+    ).toBe(true);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        'import { "createRequire" as load } from "node:module";\nload(import.meta.url);',
+        "example.ts",
+      ),
+    ).toBe(true);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        [
+          'import * as fixture from "./fixture.js";',
+          'const { "createRequire": load } = fixture;',
+          "load();",
+        ].join("\n"),
+        "example.ts",
+      ),
+    ).toBe(false);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        'import { "createRequire" as load } from "./fixture.js";\nload();',
+        "example.ts",
+      ),
+    ).toBe(false);
+  });
+
   it("fails closed on symbolic links under scoped scan roots (#7056)", () => {
     const root = temporaryRepo();
     writeFixture(root, "payload.ts", "createRequire(import.meta.url);");
@@ -408,6 +447,61 @@ describe("base-trusted createRequire ratchet", () => {
       "createRequire allowlists must not expand relative to the trusted base.",
     );
     expect(failing.stderr).toContain(`- CLI_CREATE_REQUIRE_FILES: ${expandedPath}`);
+  });
+
+  it("executes the committed entrypoint against quoted node-module bindings (#7056)", () => {
+    const root = temporaryRepo();
+    const repoRoot = path.join(root, "checkout");
+    const entrypoint = copyTrustedEntrypoint(path.join(root, "trusted-action"));
+    mkdirSync(repoRoot, { recursive: true });
+    runFixtureGit(repoRoot, ["init", "--initial-branch=main"]);
+    writeFixture(repoRoot, "scripts/checks/test-create-require-budget.ts", allowlistSource([], []));
+    writeFixture(
+      repoRoot,
+      "src/lib/fixture-property.ts",
+      [
+        'const fixture = { "createRequire": () => undefined };',
+        'const { "createRequire": load } = fixture;',
+        "load();",
+      ].join("\n"),
+    );
+    runFixtureGit(repoRoot, ["add", "."]);
+    runFixtureGit(repoRoot, [
+      "-c",
+      "user.name=NemoClaw Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "test: create fixture base",
+    ]);
+    const baseRevision = runFixtureGit(repoRoot, ["rev-parse", "HEAD"]);
+    const environment = pullRequestEnvironment(repoRoot, baseRevision);
+
+    const passing = runTrustedEntrypoint(entrypoint, repoRoot, environment);
+    expect(passing.status, passing.stderr).toBe(0);
+    expect(passing.stdout, `stderr: ${passing.stderr}`).toContain(
+      "Base-trusted createRequire allowlist ratchet passed.",
+    );
+
+    writeFixture(
+      repoRoot,
+      "src/lib/node-module-boundary.ts",
+      [
+        'import * as nodeModule from "node:module";',
+        'const { "createRequire": load } = nodeModule;',
+        "export const requireFromHere = load(import.meta.url);",
+      ].join("\n"),
+    );
+    const failing = runTrustedEntrypoint(entrypoint, repoRoot, environment);
+    expect(failing.status).toBe(1);
+    expect(failing.stderr).toContain(
+      "Production TypeScript must not introduce createRequire boundaries",
+    );
+    expect(failing.stderr).toContain("- src/lib/node-module-boundary.ts");
+    expect(failing.stderr).not.toContain("src/lib/fixture-property.ts");
   });
 
   it("accepts only a validated base revision from the pull-request event (#7056)", () => {

@@ -39,6 +39,7 @@ const ALLOWLIST_EXPORTS = {
 } as const;
 
 const COMMIT_SHA_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const NODE_MODULE_SPECIFIERS = new Set(["module", "node:module"]);
 const TEST_FILE_PATTERN = /\.test\.(?:[cm]?ts|tsx)$/;
 const TYPESCRIPT_PATTERN = /\.(?:[cm]?ts|tsx)$/;
 
@@ -272,19 +273,117 @@ function isComputedCreateRequireName(ts: TypeScriptApi, node: TypeScript.Node): 
   );
 }
 
+function isNodeModuleSpecifier(ts: TypeScriptApi, node: TypeScript.Node | undefined): boolean {
+  return Boolean(node && ts.isStringLiteralLike(node) && NODE_MODULE_SPECIFIERS.has(node.text));
+}
+
+function collectNodeModuleObjectBindings(
+  ts: TypeScriptApi,
+  sourceFile: TypeScript.SourceFile,
+): Set<string> {
+  const bindings = new Set<string>();
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement) && isNodeModuleSpecifier(ts, statement.moduleSpecifier)) {
+      const importClause = statement.importClause;
+      if (importClause?.name) bindings.add(importClause.name.text);
+      if (importClause?.namedBindings && ts.isNamespaceImport(importClause.namedBindings)) {
+        bindings.add(importClause.namedBindings.name.text);
+      }
+    } else if (
+      ts.isImportEqualsDeclaration(statement) &&
+      ts.isExternalModuleReference(statement.moduleReference) &&
+      isNodeModuleSpecifier(ts, statement.moduleReference.expression)
+    ) {
+      bindings.add(statement.name.text);
+    }
+  }
+  return bindings;
+}
+
+function isNodeModuleObjectExpression(
+  ts: TypeScriptApi,
+  expression: TypeScript.Expression,
+  nodeModuleBindings: ReadonlySet<string>,
+): boolean {
+  let candidate = expression;
+  while (
+    ts.isAsExpression(candidate) ||
+    ts.isSatisfiesExpression(candidate) ||
+    ts.isParenthesizedExpression(candidate) ||
+    ts.isTypeAssertionExpression(candidate) ||
+    ts.isAwaitExpression(candidate)
+  ) {
+    candidate = candidate.expression;
+  }
+  if (ts.isIdentifier(candidate)) return nodeModuleBindings.has(candidate.text);
+  if (!ts.isCallExpression(candidate) || candidate.arguments.length !== 1) return false;
+  if (!isNodeModuleSpecifier(ts, candidate.arguments[0])) return false;
+  return (
+    (ts.isIdentifier(candidate.expression) && candidate.expression.text === "require") ||
+    candidate.expression.kind === ts.SyntaxKind.ImportKeyword
+  );
+}
+
+function isNodeModuleStringNamedImport(ts: TypeScriptApi, node: TypeScript.Node): boolean {
+  if (
+    !ts.isImportSpecifier(node) ||
+    !node.propertyName ||
+    !ts.isStringLiteralLike(node.propertyName) ||
+    node.propertyName.text !== "createRequire"
+  ) {
+    return false;
+  }
+  const namedImports = node.parent;
+  const importClause = namedImports.parent;
+  const declaration = importClause.parent;
+  return (
+    ts.isNamedImports(namedImports) &&
+    ts.isImportClause(importClause) &&
+    ts.isImportDeclaration(declaration) &&
+    isNodeModuleSpecifier(ts, declaration.moduleSpecifier)
+  );
+}
+
+function isNodeModuleStringBinding(
+  ts: TypeScriptApi,
+  node: TypeScript.Node,
+  nodeModuleBindings: ReadonlySet<string>,
+): boolean {
+  if (
+    !ts.isBindingElement(node) ||
+    !node.propertyName ||
+    !ts.isStringLiteralLike(node.propertyName) ||
+    node.propertyName.text !== "createRequire" ||
+    !ts.isObjectBindingPattern(node.parent)
+  ) {
+    return false;
+  }
+  const declaration = node.parent.parent;
+  return (
+    ts.isVariableDeclaration(declaration) &&
+    Boolean(
+      declaration.initializer &&
+        isNodeModuleObjectExpression(ts, declaration.initializer, nodeModuleBindings),
+    )
+  );
+}
+
 export function containsCreateRequireIdentifier(
   ts: TypeScriptApi,
   sourceText: string,
   fileName: string,
 ): boolean {
   const sourceFile = parseSourceFile(ts, sourceText, fileName);
+  const nodeModuleBindings = collectNodeModuleObjectBindings(ts, sourceFile);
   let found = false;
 
   function visit(node: TypeScript.Node): void {
     if (found) return;
     if (
       (ts.isIdentifier(node) && node.text === "createRequire") ||
-      isComputedCreateRequireName(ts, node)
+      isComputedCreateRequireName(ts, node) ||
+      isNodeModuleStringNamedImport(ts, node) ||
+      isNodeModuleStringBinding(ts, node, nodeModuleBindings)
     ) {
       found = true;
       return;
