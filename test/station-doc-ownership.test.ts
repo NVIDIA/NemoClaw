@@ -7,13 +7,22 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
-const STATION_PREREQUISITES = path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx");
+const PREREQUISITES = path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx");
+const STATION_PREPARATION = path.join(
+  REPO_ROOT,
+  "docs",
+  "get-started",
+  "dgx-station-preparation.mdx",
+);
 const STATION_QUICKSTART = path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx");
+const WINDOWS_PREPARATION = path.join(REPO_ROOT, "docs", "get-started", "windows-preparation.mdx");
+const DOCS_INDEX = path.join(REPO_ROOT, "docs", "index.yml");
 
 describe("DGX Station documentation ownership", () => {
-  it("keeps Station prerequisites canonical and links to them from quickstart", () => {
+  it("keeps Station preparation canonical and links to it from prerequisite entry points", () => {
     const helper = fs.readFileSync(STATION_PREPARE, "utf-8");
-    const prerequisites = fs.readFileSync(STATION_PREREQUISITES, "utf-8");
+    const prerequisites = fs.readFileSync(PREREQUISITES, "utf-8");
+    const stationPreparation = fs.readFileSync(STATION_PREPARATION, "utf-8");
     const quickstart = fs.readFileSync(STATION_QUICKSTART, "utf-8");
     const pinnedValues = [
       "DRIVER_VERSION",
@@ -28,19 +37,36 @@ describe("DGX Station documentation ownership", () => {
     });
 
     for (const version of pinnedValues) {
-      expect(prerequisites).toContain(version);
+      expect(stationPreparation).toContain(version);
+      expect(prerequisites).not.toContain(version);
       expect(quickstart).not.toContain(version);
     }
     for (const version of ["7.2.0", "7.4.0", "7.5.0"]) {
-      expect(prerequisites).toContain(version);
+      expect(stationPreparation).toContain(version);
       expect(quickstart).toContain(version);
     }
-    expect(prerequisites).toContain("DGX Server for GALAXY-GB300");
+    expect(stationPreparation).toContain("DGX Server for GALAXY-GB300");
     expect(quickstart).toContain("DGX Server for GALAXY-GB300");
-    expect(prerequisites).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-    expect(prerequisites).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
-    expect(quickstart).toContain("prerequisites#dgx-station-express-preparation");
+    expect(stationPreparation).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
+    expect(stationPreparation).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
+    expect(prerequisites).toContain("### DGX Station Express Preparation");
+    expect(prerequisites).toContain("prerequisites/dgx-station-preparation");
+    expect(quickstart).toContain("prerequisites/dgx-station-preparation");
+    expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
     expect(quickstart).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
     expect(quickstart).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
+  });
+
+  it("labels platform-specific prerequisite pages as additional setup", () => {
+    const stationPreparation = fs.readFileSync(STATION_PREPARATION, "utf-8");
+    const windowsPreparation = fs.readFileSync(WINDOWS_PREPARATION, "utf-8");
+    const docsIndex = fs.readFileSync(DOCS_INDEX, "utf-8");
+
+    expect(stationPreparation).toContain('title: "Prepare DGX Station for NemoClaw"');
+    expect(stationPreparation).toContain('sidebar-title: "Additional Setup for DGX Station"');
+    expect(windowsPreparation).toContain('title: "Prepare Windows for NemoClaw"');
+    expect(windowsPreparation).toContain('sidebar-title: "Additional Setup for Windows"');
+    expect(docsIndex.match(/page: "Additional Setup for DGX Station"/g)).toHaveLength(3);
+    expect(docsIndex.match(/page: "Additional Setup for Windows"/g)).toHaveLength(3);
   });
 });

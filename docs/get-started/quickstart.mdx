@@ -122,7 +122,7 @@ Use these details when your first-run path needs more control.
     DGX Spark, qualifying Station GB300 hosts, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
     Station accepts the generic Ubuntu 24.04 ARM64 image and stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
     On a qualifying Station, accepting the prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
-    [Prerequisites](prerequisites#dgx-station-express-preparation) defines Station qualification, generic Ubuntu preparation, stock DGX OS validation, repair limits, and reboot handoff.
+    [Prepare DGX Station for NemoClaw](prerequisites/dgx-station-preparation) defines Station qualification, generic Ubuntu preparation, stock DGX OS validation, repair limits, and reboot handoff.
     Unknown versions, unsafe release markers, NVIDIA BaseOS images, and other Station generations stop before host preparation; set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to bypass Station host automation.
     One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
     Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead; the flag selects the interactive prompt and requires terminal access.
@@ -194,7 +194,7 @@ Use these details when your first-run path needs more control.
     After you confirm the interactive express prompt, the installer switches the remaining onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
     DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default.
     DGX Station express install explicitly selects `nemotron-3-ultra-550b-a55b` instead of the Station managed-vLLM profile default, `deepseek-v4-flash`, and discloses the approximately `352 GB` model download before confirmation.
-    If the host does not meet the [Station prerequisites](prerequisites#dgx-station-express-preparation), the installer stops before host preparation.
+    If the host does not meet the [Station prerequisites](prerequisites/dgx-station-preparation), the installer stops before host preparation.
     Generic Ubuntu preparation can change pinned packages and then exits with status `10`; reboot, sign in, and run the printed exact-commit command to resume the accepted express recipe.
     Stock DGX OS validation checks the factory stack in place without installing packages, restarting services, or rewriting the Docker runtime.
     One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
