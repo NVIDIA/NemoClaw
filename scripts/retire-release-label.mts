@@ -45,6 +45,9 @@ function main(): void {
     console.log(JSON.stringify(output, null, 2));
     return;
   }
+  if (remoteReleaseTagExists(repo, to)) {
+    throw new Error(`Refusing to use release target ${to}; the remote tag already exists`);
+  }
   ensureReleaseLabel(repo, to);
 
   // Move open PRs
@@ -107,7 +110,14 @@ function validateVersion(value: string, description: string): void {
 }
 
 function nextPatch(version: string): string {
-  const [major, minor, patch] = version.slice(1).split(".").map(Number);
+  const parts = version.slice(1).split(".").map(Number);
+  if (!parts.every((part) => Number.isSafeInteger(part))) {
+    throw new Error(`Release version exceeds the supported numeric range: ${version}`);
+  }
+  const [major, minor, patch] = parts;
+  if (patch === Number.MAX_SAFE_INTEGER) {
+    throw new Error(`Cannot increment release version ${version} safely`);
+  }
   return `v${major}.${minor}.${patch + 1}`;
 }
 
@@ -164,6 +174,11 @@ function releaseLabelExists(repo: string, label: string): boolean {
     { emptyOutputIsEmptyArray: true },
   );
   return labels.some((entry) => entry.name === label);
+}
+
+function remoteReleaseTagExists(repo: string, tag: string): boolean {
+  const refs = ghJsonArray<{ ref: string }>(["api", `repos/${repo}/git/matching-refs/tags/${tag}`]);
+  return refs.some((entry) => entry.ref === `refs/tags/${tag}`);
 }
 
 function ghJsonArray<T>(

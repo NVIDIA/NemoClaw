@@ -35,6 +35,8 @@ describe("released label retirement", () => {
     const result = runRetireReleaseLabel(`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  "api repos/NVIDIA/NemoClaw/git/matching-refs/tags/v1.2.4")
+    printf '[{"ref":"refs/tags/v1.2.40"}]' ;;
   "label list"*"--search v1.2.4"*) printf '[]' ;;
   "label create v1.2.4"*) ;;
   "label list"*"--search v1.2.3"*)
@@ -88,6 +90,7 @@ esac
     const result = runRetireReleaseLabel(`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  "api repos/NVIDIA/NemoClaw/git/matching-refs/tags/v1.2.4") printf '[]' ;;
   "label list"*"--search v1.2.4"*) printf '[{"name":"v1.2.4"}]' ;;
   "label list"*"--search v1.2.3"*) printf '[{"name":"v1.2.3"}]' ;;
   "pr list"*) printf '[{"number":42,"title":"still labeled"}]' ;;
@@ -108,6 +111,7 @@ esac
     const result = runRetireReleaseLabel(`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  "api repos/NVIDIA/NemoClaw/git/matching-refs/tags/v1.2.4") printf '[]' ;;
   "label list"*"--search v1.2.4"*) printf '[{"name":"v1.2.4"}]' ;;
   "label list"*"--search v1.2.3"*) printf '[{"name":"v1.2.3"}]' ;;
   "pr list"*|"issue list"*) printf '[]' ;;
@@ -125,6 +129,7 @@ esac
     const result = runRetireReleaseLabel(`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  "api repos/NVIDIA/NemoClaw/git/matching-refs/tags/v1.2.4") printf '[]' ;;
   "label list"*"--search v1.2.4"*) printf '[{"name":"v1.2.4"}]' ;;
   "label list"*"--search v1.2.3"*) printf '[{"name":"v1.2.3"}]' ;;
   "pr list"*|"issue list"*) printf '[]' ;;
@@ -147,6 +152,36 @@ esac
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(error);
+  });
+
+  it("rejects an unincrementable version before calling GitHub", () => {
+    const result = runRetireReleaseLabel(
+      "#!/usr/bin/env bash\necho 'gh must not run' >&2\nexit 9\n",
+      [`v1.2.${Number.MAX_SAFE_INTEGER}`],
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Cannot increment release version");
+    expect(result.stderr).not.toContain("gh must not run");
+  });
+
+  it("refuses to carry work to a version whose remote tag already exists", () => {
+    const result = runRetireReleaseLabel(`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "label list"*"--search v1.2.3"*) printf '[{"name":"v1.2.3"}]' ;;
+  "api repos/NVIDIA/NemoClaw/git/matching-refs/tags/v1.2.4")
+    printf '[{"ref":"refs/tags/v1.2.4"}]' ;;
+  "label list"*"--search v1.2.4"*|"label create"*)
+    echo 'target label lookup or creation must not run' >&2; exit 9 ;;
+  *) echo "unexpected gh args: $*" >&2; exit 9 ;;
+esac
+`);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Refusing to use release target v1.2.4");
+    expect(result.stderr).not.toContain("target label lookup or creation must not run");
+    expect(result.stdout).toBe("");
   });
 
   it("fails visibly when a label lookup fails", () => {

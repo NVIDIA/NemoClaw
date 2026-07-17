@@ -161,9 +161,16 @@ The `release-latest-tag` workflow continues after moving `latest`: it moves ever
 Find the workflow run started by Step 3 and wait for it to finish:
 
 ```bash
-gh run list --repo NVIDIA/NemoClaw --workflow release-latest-tag.yaml --limit 20 \
-  --json databaseId,event,headBranch,status,conclusion,url
-gh run watch <run-id> --repo NVIDIA/NemoClaw --exit-status
+RELEASE_SHA="<full-origin-main-sha>"
+mapfile -t RELEASE_RUN_IDS < <(
+  gh run list --repo NVIDIA/NemoClaw --workflow release-latest-tag.yaml --limit 20 \
+    --event push --commit "$RELEASE_SHA" --json databaseId --jq '.[].databaseId'
+)
+if (( ${#RELEASE_RUN_IDS[@]} != 1 )); then
+  echo "Expected exactly one release-latest-tag push run for $RELEASE_SHA" >&2
+  exit 1
+fi
+gh run watch "${RELEASE_RUN_IDS[0]}" --repo NVIDIA/NemoClaw --exit-status
 ```
 
 This automatic post-tag housekeeping is covered by the release plan and confirmation in Step 2. Do not run `scripts/retire-release-label.mts` directly; doing so would bypass the coordination boundary.

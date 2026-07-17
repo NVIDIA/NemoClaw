@@ -77,6 +77,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain("retire the released label");
     expect(release).toContain("release-latest-tag");
     expect(release).toContain("Do not run the retirement script directly");
+    expect(release).toContain('--event push --commit "$RELEASE_SHA"');
+    expect(release).toContain("Expected exactly one release-latest-tag push run");
     expect(morning).toContain("post-tag housekeeping was interrupted");
     expect(priorities).toContain("automatically carry stragglers to the next patch");
     expect(priorities).toContain("delete the released label");
