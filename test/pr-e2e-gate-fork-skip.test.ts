@@ -887,6 +887,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         status: "in_progress",
         output: { title: "E2E execution authorized by @maintainer" },
       });
+      expect(checkUpdates[0]?.body).not.toHaveProperty("conclusion");
       expect(checkUpdates[1]?.body).toMatchObject({
         status: "in_progress",
         output: { title: "Running 3 E2E jobs" },
@@ -1240,12 +1241,12 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
       expect(restoredAuthorizations).toHaveLength(2);
       expect(restoredAuthorizations[0]?.body).toMatchObject({
         status: "in_progress",
-        conclusion: null,
         output: {
           title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining("launch a fresh first-attempt `run-control-plane`"),
         },
       });
+      expect(restoredAuthorizations[0]?.body).not.toHaveProperty("conclusion");
       expect(checkTitle).toBe("Maintainer authorization required to run E2E");
       expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
     } finally {

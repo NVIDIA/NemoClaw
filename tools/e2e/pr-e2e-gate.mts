@@ -1057,7 +1057,7 @@ async function markCheckInProgress(
     token,
     {
       method: "PATCH",
-      body: { status: "in_progress", conclusion: null, output: { title, summary } },
+      body: { status: "in_progress", output: { title, summary } },
       userAgent: USER_AGENT,
     },
   );
