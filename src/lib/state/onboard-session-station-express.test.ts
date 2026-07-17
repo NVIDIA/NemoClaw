@@ -142,14 +142,18 @@ describe("Station Express onboarding session state (#7048)", () => {
     const { baseOptions, createDeps } = await import(
       "../onboard/machine/handlers/provider-inference.test-support"
     );
-    const { LEGACY_MACHINE_STEP_MUTATION_OPTIONS } = await import("./onboard-step-mutation");
+    const { runOnboardMachine } = await import("../onboard/machine/runner");
+    const { OnboardRuntime } = await import("../onboard/machine/runtime");
+    const { registerIncompleteOnboardExitHandlerForSession } = await import(
+      "../onboard/onboard-exit-handler"
+    );
     const bootstrapDeps = await realBootstrapDeps();
     const intent = {
       version: 1 as const,
       model: "nemotron-3-ultra-550b-a55b",
       sandboxName: "my-assistant",
     };
-    const checkpoint = await prepareOnboardSession(
+    await prepareOnboardSession(
       {
         resume: false,
         fresh: false,
@@ -163,25 +167,44 @@ describe("Station Express onboarding session state (#7048)", () => {
     );
     expect(requireLoadedSession(session.loadSession()).stationExpressIntent).toEqual(intent);
 
+    const failingRuntime = new OnboardRuntime();
+    await failingRuntime.transition("preflight");
+    await failingRuntime.transition("gateway");
+    await failingRuntime.transition("provider_selection");
+    const exitListeners: Array<(code: number) => void> = [];
+    registerIncompleteOnboardExitHandlerForSession(session, () => false, {
+      once: (_event, listener) => exitListeners.push(listener),
+    });
     const injectedFailure = new Error("injected managed vLLM download failure");
     const failing = createDeps({
       setupNim: vi.fn(async () => {
         throw injectedFailure;
       }),
       startRecordedStep: vi.fn(async (stepName: string) => {
-        session.markStepStarted(stepName, LEGACY_MACHINE_STEP_MUTATION_OPTIONS);
+        await failingRuntime.markStepStarted(stepName);
       }),
       recordStepComplete: vi.fn(async (stepName, updates) =>
-        session.markStepComplete(stepName, updates, LEGACY_MACHINE_STEP_MUTATION_OPTIONS),
+        failingRuntime.markStepComplete(stepName, updates),
       ),
     });
     await expect(
-      handleProviderInferenceState({
-        ...baseOptions(failing.deps, checkpoint.session),
-        sandboxName: "my-assistant",
+      runOnboardMachine({
+        context: {},
+        runtime: failingRuntime,
+        handlers: {
+          provider_selection: async () => {
+            const result = await handleProviderInferenceState({
+              ...baseOptions(failing.deps, requireLoadedSession(session.loadSession())),
+              sandboxName: "my-assistant",
+            });
+            return result.stateResults;
+          },
+        },
+        stopStates: ["sandbox"],
       }),
     ).rejects.toThrow(injectedFailure.message);
-    session.finalizeIncompleteOnboardStep("provider_selection", injectedFailure.message);
+    expect(exitListeners).toHaveLength(1);
+    exitListeners[0]!(1);
 
     const failedSession = requireLoadedSession(session.loadSession());
     expect(failedSession).toMatchObject({
@@ -225,13 +248,14 @@ describe("Station Express onboarding session state (#7048)", () => {
         nimContainer: null,
       };
     });
+    const resumedRuntime = new OnboardRuntime();
     const resumed = createDeps({
       setupNim: resumedSetup,
       startRecordedStep: vi.fn(async (stepName: string) => {
-        session.markStepStarted(stepName, LEGACY_MACHINE_STEP_MUTATION_OPTIONS);
+        await resumedRuntime.markStepStarted(stepName);
       }),
       recordStepComplete: vi.fn(async (stepName, updates) =>
-        session.markStepComplete(stepName, updates, LEGACY_MACHINE_STEP_MUTATION_OPTIONS),
+        resumedRuntime.markStepComplete(stepName, updates),
       ),
     });
     const wrapped = wrapOnboard(async () => {
@@ -246,15 +270,26 @@ describe("Station Express onboarding session state (#7048)", () => {
         },
         bootstrapDeps,
       );
-      const result = await handleProviderInferenceState({
-        ...baseOptions(resumed.deps, resumedBootstrap.session),
-        resume: true,
-        sandboxName: process.env.NEMOCLAW_SANDBOX_NAME || null,
-        env: process.env,
+      const result = await runOnboardMachine({
+        context: {},
+        runtime: resumedRuntime,
+        handlers: {
+          provider_selection: async () => {
+            const providerResult = await handleProviderInferenceState({
+              ...baseOptions(resumed.deps, resumedBootstrap.session),
+              resume: true,
+              sandboxName: process.env.NEMOCLAW_SANDBOX_NAME || null,
+              env: process.env,
+            });
+            return providerResult.stateResults;
+          },
+        },
+        stopStates: ["sandbox"],
       });
-      expect(result).toMatchObject({
+      expect(result.session).toMatchObject({
         provider: "vllm-local",
         model: "nvidia/nemotron-3-ultra-550b-a55b",
+        machine: { state: "sandbox" },
       });
     }, session.loadSession);
 
