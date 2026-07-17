@@ -496,6 +496,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         deps.repairLocalInferenceSystemdOverrideOrExit(localInferenceRepairOptions);
       }
     } else {
+      // An incomplete Station Express resume intentionally retries setupNim here. The outer
+      // Station resume wrapper restores the exact provider/model as non-interactive env input,
+      // so this re-runs the failed managed install without presenting selection prompts and
+      // obtains a fresh checkpoint identity before the provider step is committed.
       await deps.startRecordedStep("provider_selection");
       const recoverRecordedProvider = providerRecovery.shouldRecover();
       const selection = await withProviderSelectionTrace(
