@@ -2579,14 +2579,28 @@ run_onboard() {
               data.steps.sandbox.status === "complete";
             const installerGeneration =
               process.env.NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION || "";
+            const stationIntentHasGeneration =
+              data.stationExpressIntent &&
+              Object.prototype.hasOwnProperty.call(
+                data.stationExpressIntent,
+                "receiptGeneration",
+              );
             const exactStationAttempt =
               /^[0-9a-f]{32}$/.test(installerGeneration) &&
-              data.stationExpressIntent &&
+              stationIntentHasGeneration &&
               data.stationExpressIntent.receiptGeneration === installerGeneration;
+            const conflictingStationAttempt =
+              /^[0-9a-f]{32}$/.test(installerGeneration) &&
+              stationIntentHasGeneration &&
+              !exactStationAttempt;
             // A Station session carries its sandbox name in the correlated
             // intent, so it can safely resume even before sandbox creation.
             // Using --fresh here would discard the still-needed receipt.
-            out = sandboxCreated || exactStationAttempt ? "resume" : "fresh-recover";
+            out = conflictingStationAttempt
+              ? "station-mismatch"
+              : sandboxCreated || exactStationAttempt
+                ? "resume"
+                : "fresh-recover";
           } else {
             // Unknown or missing status — do not auto-resume a file we
             // cannot classify against what onboard-session.ts actually
@@ -2601,6 +2615,9 @@ run_onboard() {
     )"
     case "$session_state" in
       complete) ;;
+      station-mismatch)
+        error "DGX Station Express resume state belongs to a different installer receipt. Refusing to discard either attempt automatically. Run '${_CLI_BIN} onboard --fresh' only if you intend to discard the saved Station recovery state."
+        ;;
       resume)
         info "Found an interrupted onboarding session — resuming it."
         onboard_cmd+=(--resume)
