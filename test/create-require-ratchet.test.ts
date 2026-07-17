@@ -2,7 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -71,6 +82,7 @@ function pullRequestEnvironment(
 function baseRunner(
   sources: Partial<Record<"mts" | "ts", string>>,
   revision = BASE_SHA,
+  headRoot?: string,
 ): GitRunner {
   return (args) => {
     switch (args[0]) {
@@ -82,8 +94,57 @@ function baseRunner(
         return args[1] === "--all"
           ? { status: 0, stderr: "", stdout: `${revision}\n` }
           : { status: 0, stderr: "", stdout: "" };
+      case "ls-tree": {
+        if (args[1] === "-z") {
+          const requestedRevision = args[2];
+          const records = ["mts", "ts"].flatMap((extension) => {
+            const relativePath = `scripts/checks/test-create-require-budget.${extension}`;
+            const absolutePath = headRoot ? path.join(headRoot, relativePath) : "";
+            const readsHead = requestedRevision === HEAD_SHA && Boolean(headRoot);
+            const existsAtHead = readsHead && Boolean(absolutePath) && existsSync(absolutePath);
+            if (!(readsHead ? existsAtHead : sources[extension as "mts" | "ts"] !== undefined)) {
+              return [];
+            }
+            const mode =
+              existsAtHead && lstatSync(absolutePath).isSymbolicLink() ? "120000" : "100644";
+            return [`${mode} blob ${"0".repeat(40)}\t${relativePath}`];
+          });
+          return { status: 0, stderr: "", stdout: `${records.join("\0")}\0` };
+        }
+        if (!headRoot || args[3] !== HEAD_SHA) {
+          return { status: 128, stderr: "missing", stdout: "" };
+        }
+        const records: string[] = [];
+        const walk = (relativeDirectory: string): void => {
+          const directory = path.join(headRoot, relativeDirectory);
+          if (!existsSync(directory)) return;
+          for (const name of readdirSync(directory)) {
+            const relativePath = path.posix.join(relativeDirectory, name);
+            const absolutePath = path.join(headRoot, relativePath);
+            const stats = lstatSync(absolutePath);
+            if (stats.isDirectory()) {
+              walk(relativePath);
+            } else {
+              records.push(
+                `${stats.isSymbolicLink() ? "120000" : "100644"} blob ${"0".repeat(40)}\t${relativePath}`,
+              );
+            }
+          }
+        };
+        walk("src");
+        walk("test");
+        return { status: 0, stderr: "", stdout: `${records.join("\0")}\0` };
+      }
       case "show": {
-        const requestedPath = args[1]?.slice(revision.length + 1);
+        const separator = args[1]?.indexOf(":") ?? -1;
+        const requestedRevision = args[1]?.slice(0, separator);
+        const requestedPath = args[1]?.slice(separator + 1);
+        if (headRoot && requestedRevision === HEAD_SHA && requestedPath) {
+          const absolutePath = path.join(headRoot, requestedPath);
+          return existsSync(absolutePath)
+            ? { status: 0, stderr: "", stdout: readFileSync(absolutePath, "utf8") }
+            : { status: 128, stderr: "missing", stdout: "" };
+        }
         const extension = requestedPath?.endsWith(".mts") ? "mts" : "ts";
         const source = sources[extension];
         return source === undefined
@@ -399,7 +460,7 @@ describe("base-trusted createRequire ratchet", () => {
       ts,
       root,
       pullRequestEnvironment(root),
-      baseRunner({ ts: allowlistSource([], []) }),
+      baseRunner({ ts: allowlistSource([], []) }, BASE_SHA, root),
     );
     expect(failure).toContain("src/lib/hidden.test.ts");
   });
@@ -424,6 +485,14 @@ describe("base-trusted createRequire ratchet", () => {
     );
     expect(failure).toContain("Production TypeScript must not introduce createRequire boundaries");
     expect(failure).toContain("TEST_SUPPORT_CREATE_REQUIRE_FILES omits actual createRequire use");
+
+    const forgedPath = "src/lib/forged\n::error::injected.test.ts";
+    const forgedFailure = createRequireInventoryFailure(
+      { cli: [forgedPath], production: [], testSupport: [] },
+      { cli: [], testSupport: [] },
+    );
+    expect(forgedFailure).toContain("src/lib/forged\\n::error::injected.test.ts");
+    expect(forgedFailure).not.toContain("\n::error::injected");
   });
 
   it("rejects additions relative to the trusted base while permitting removals (#7056)", () => {
@@ -460,6 +529,66 @@ describe("base-trusted createRequire ratchet", () => {
         BASE_SHA,
       ),
     ).toThrow("trusted base must contain exactly one createRequire budget checker; found 2");
+
+    const unreadableSecondCandidate: GitRunner = (args) => {
+      if (args[0] === "ls-tree") {
+        return {
+          status: 0,
+          stderr: "",
+          stdout: [
+            `100644 blob ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.mts`,
+            `100644 blob ${"1".repeat(40)}\tscripts/checks/test-create-require-budget.ts`,
+            "",
+          ].join("\0"),
+        };
+      }
+      throw new Error("checker contents must not be read until uniqueness is established");
+    };
+    expect(() => requireSingleBaseChecker(unreadableSecondCandidate, BASE_SHA)).toThrow(
+      "trusted base must contain exactly one createRequire budget checker; found 2",
+    );
+
+    const failedRead: GitRunner = (args) =>
+      args[0] === "ls-tree"
+        ? {
+            status: 0,
+            stderr: "",
+            stdout: `100644 blob ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.ts\0`,
+          }
+        : { status: null, stderr: "spawnSync git ENOBUFS", stdout: "partial" };
+    expect(() => requireSingleBaseChecker(failedRead, BASE_SHA)).toThrow(
+      "could not read trusted base createRequire budget checker",
+    );
+
+    const checkerTreeResult =
+      (result: GitResult): GitRunner =>
+      (args) => {
+        if (args[0] !== "ls-tree") throw new Error(`unexpected git arguments: ${args.join(" ")}`);
+        return result;
+      };
+    expect(() =>
+      requireSingleBaseChecker(
+        checkerTreeResult({ status: 128, stderr: "unavailable", stdout: "" }),
+        BASE_SHA,
+      ),
+    ).toThrow("could not enumerate the trusted base createRequire budget checkers");
+    expect(() =>
+      requireSingleBaseChecker(
+        checkerTreeResult({ status: 0, stderr: "", stdout: "truncated" }),
+        BASE_SHA,
+      ),
+    ).toThrow("trusted base checker tree contains an invalid Git entry");
+    for (const entry of [
+      `120000 blob ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.ts\0`,
+      `160000 commit ${"0".repeat(40)}\tscripts/checks/test-create-require-budget.ts\0`,
+    ]) {
+      expect(() =>
+        requireSingleBaseChecker(
+          checkerTreeResult({ status: 0, stderr: "", stdout: entry }),
+          BASE_SHA,
+        ),
+      ).toThrow("trusted base createRequire budget checker must be a regular file");
+    }
   });
 
   it("allows a clean one-file checker extension migration (#7056)", () => {
@@ -473,7 +602,7 @@ describe("base-trusted createRequire ratchet", () => {
         ts,
         root,
         pullRequestEnvironment(root),
-        baseRunner({ ts: allowlistSource(paths, []) }),
+        baseRunner({ ts: allowlistSource(paths, []) }, BASE_SHA, root),
       ),
     ).toBeNull();
   });
@@ -519,7 +648,24 @@ describe("base-trusted createRequire ratchet", () => {
       allowlistSource([originalPath, expandedPath], []),
     );
     writeFixture(repoRoot, expandedPath, 'nodeModule[`create${"Require"}`](import.meta.url);');
-    const failing = runTrustedEntrypoint(entrypoint, repoRoot, environment);
+    runFixtureGit(repoRoot, ["add", "."]);
+    runFixtureGit(repoRoot, [
+      "-c",
+      "user.name=NemoClaw Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "test: expand fixture head",
+    ]);
+    const headRevision = runFixtureGit(repoRoot, ["rev-parse", "HEAD"]);
+    const failing = runTrustedEntrypoint(
+      entrypoint,
+      repoRoot,
+      pullRequestEnvironment(repoRoot, baseRevision, headRevision),
+    );
     expect(failing.status).toBe(1);
     expect(failing.stderr).toContain(
       "createRequire allowlists must not expand relative to the trusted base.",
@@ -583,7 +729,24 @@ describe("base-trusted createRequire ratchet", () => {
         "export const requireFromHere = load(import.meta.url);",
       ].join("\n"),
     );
-    const failing = runTrustedEntrypoint(entrypoint, repoRoot, environment);
+    runFixtureGit(repoRoot, ["add", "."]);
+    runFixtureGit(repoRoot, [
+      "-c",
+      "user.name=NemoClaw Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "test: add alias boundary head",
+    ]);
+    const headRevision = runFixtureGit(repoRoot, ["rev-parse", "HEAD"]);
+    const failing = runTrustedEntrypoint(
+      entrypoint,
+      repoRoot,
+      pullRequestEnvironment(repoRoot, baseRevision, headRevision),
+    );
     expect(failing.status).toBe(1);
     expect(failing.stderr).toContain(
       "Production TypeScript must not introduce createRequire boundaries",
@@ -732,6 +895,42 @@ describe("base-trusted createRequire ratchet", () => {
     expect(runFixtureGit(checkout, ["rev-parse", "--is-shallow-repository"])).toBe("false");
     expect(
       verifyTrustedCreateRequireRatchet(ts, checkout, pullRequestEnvironment(checkout, base, head)),
+    ).toBeNull();
+  });
+
+  it("reads the event head when the merge checkout contains a base-only addition (#7056)", () => {
+    const root = temporaryRepo();
+    runFixtureGit(root, ["init", "--initial-branch=main"]);
+    runFixtureGit(root, ["config", "user.name", "NemoClaw Test"]);
+    runFixtureGit(root, ["config", "user.email", "test@example.invalid"]);
+    writeFixture(root, "scripts/checks/test-create-require-budget.ts", allowlistSource([], []));
+    writeFixture(root, "README.md", "common\n");
+    runFixtureGit(root, ["add", "."]);
+    runFixtureGit(root, ["commit", "-m", "test: common ancestor"]);
+    runFixtureGit(root, ["branch", "feature"]);
+
+    const baseOnlyPath = "src/lib/base-only.test.ts";
+    writeFixture(
+      root,
+      "scripts/checks/test-create-require-budget.ts",
+      allowlistSource([baseOnlyPath], []),
+    );
+    writeFixture(root, baseOnlyPath, "createRequire(import.meta.url);\n");
+    runFixtureGit(root, ["add", "."]);
+    runFixtureGit(root, ["commit", "-m", "test: add base-only boundary"]);
+    const base = runFixtureGit(root, ["rev-parse", "HEAD"]);
+
+    runFixtureGit(root, ["switch", "feature"]);
+    writeFixture(root, "head.txt", "pull request\n");
+    runFixtureGit(root, ["add", "head.txt"]);
+    runFixtureGit(root, ["commit", "-m", "test: advance head"]);
+    const head = runFixtureGit(root, ["rev-parse", "HEAD"]);
+
+    runFixtureGit(root, ["switch", "main"]);
+    runFixtureGit(root, ["merge", "--no-ff", "feature", "-m", "test: synthetic merge"]);
+    expect(collectCreateRequireInventory(ts, root).cli).toContain(baseOnlyPath);
+    expect(
+      verifyTrustedCreateRequireRatchet(ts, root, pullRequestEnvironment(root, base, head)),
     ).toBeNull();
   });
 

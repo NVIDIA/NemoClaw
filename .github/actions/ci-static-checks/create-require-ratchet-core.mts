@@ -33,6 +33,11 @@ export type PullRequestRevisions = Readonly<{
   head: string;
 }>;
 
+type PullRequestComparison = PullRequestRevisions &
+  Readonly<{
+    mergeBase: string;
+  }>;
+
 export const ALLOWLIST_PATHS = [
   "scripts/checks/test-create-require-budget.mts",
   "scripts/checks/test-create-require-budget.ts",
@@ -45,8 +50,18 @@ const ALLOWLIST_EXPORTS = {
 
 const COMMIT_SHA_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const NODE_MODULE_SPECIFIERS = new Set(["module", "node:module"]);
+const REGULAR_BLOB_MODES = new Set(["100644", "100755"]);
 const TEST_FILE_PATTERN = /\.test\.(?:[cm]?ts|tsx)$/;
 const TYPESCRIPT_PATTERN = /\.(?:[cm]?ts|tsx)$/;
+
+function diagnosticPath(value: string): string {
+  const serialized = JSON.stringify(value);
+  const escaped = serialized
+    .slice(1, -1)
+    .replaceAll("\u2028", "\\u2028")
+    .replaceAll("\u2029", "\\u2029");
+  return escaped.startsWith("::") ? `\\${escaped}` : escaped;
+}
 
 export function createGitRunner(repoRoot: string): GitRunner {
   return (args, timeoutMs = 5_000) => {
@@ -82,7 +97,7 @@ function parseSourceFile(
     const detail = diagnostics
       .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"))
       .join("; ");
-    throw new Error(`${fileName} has TypeScript parse diagnostics: ${detail}`);
+    throw new Error(`${diagnosticPath(fileName)} has TypeScript parse diagnostics: ${detail}`);
   }
   return sourceFile;
 }
@@ -167,20 +182,34 @@ export function requireSingleCurrentChecker(repoRoot: string): {
   };
 }
 
+function requireSingleRevisionChecker(
+  runGit: GitRunner,
+  revision: string,
+  label: "pull-request head" | "trusted base",
+): { path: (typeof ALLOWLIST_PATHS)[number]; source: string } {
+  const matches = revisionCheckerEntries(runGit, revision, label);
+  if (matches.length !== 1) {
+    throw new Error(
+      `${label} must contain exactly one createRequire budget checker; found ${matches.length}`,
+    );
+  }
+  const relativePath = matches[0].path as (typeof ALLOWLIST_PATHS)[number];
+  return {
+    path: relativePath,
+    source: revisionFileSource(
+      runGit,
+      revision,
+      relativePath,
+      `${label} createRequire budget checker`,
+    ),
+  };
+}
+
 export function requireSingleBaseChecker(
   runGit: GitRunner,
   revision: string,
 ): { path: (typeof ALLOWLIST_PATHS)[number]; source: string } {
-  const matches = ALLOWLIST_PATHS.flatMap((relativePath) => {
-    const result = runGit(["show", `${revision}:${relativePath}`]);
-    return result.status === 0 ? [{ path: relativePath, source: result.stdout }] : [];
-  });
-  if (matches.length !== 1) {
-    throw new Error(
-      `trusted base must contain exactly one createRequire budget checker; found ${matches.length}`,
-    );
-  }
-  return matches[0];
+  return requireSingleRevisionChecker(runGit, revision, "trusted base");
 }
 
 function parsePullRequestEvent(eventSource: string): {
@@ -302,11 +331,11 @@ function uniqueMergeBase(runGit: GitRunner, revisions: PullRequestRevisions): st
   return revision;
 }
 
-export function resolveBaseRevision(
+function resolvePullRequestComparison(
   repoRoot: string,
   environment: NodeJS.ProcessEnv = process.env,
   runGit: GitRunner = createGitRunner(repoRoot),
-): string | null {
+): PullRequestComparison | null {
   if (!environment.GITHUB_BASE_REF?.trim()) return null;
 
   const eventPath = environment.GITHUB_EVENT_PATH?.trim();
@@ -322,13 +351,23 @@ export function resolveBaseRevision(
   }
   requireExactRevision(runGit, revisions.base, "base");
   requireExactRevision(runGit, revisions.head, "head");
-  return uniqueMergeBase(runGit, revisions);
+  return { ...revisions, mergeBase: uniqueMergeBase(runGit, revisions) };
+}
+
+export function resolveBaseRevision(
+  repoRoot: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  runGit: GitRunner = createGitRunner(repoRoot),
+): string | null {
+  return resolvePullRequestComparison(repoRoot, environment, runGit)?.mergeBase ?? null;
 }
 
 function* walkTypeScriptFiles(directory: string): Generator<string> {
   if (!existsSync(directory)) return;
   if (lstatSync(directory).isSymbolicLink()) {
-    throw new Error(`createRequire inventory does not permit scoped symbolic links: ${directory}`);
+    throw new Error(
+      `createRequire inventory does not permit scoped symbolic links: ${diagnosticPath(directory)}`,
+    );
   }
 
   for (const entry of readdirSync(directory)) {
@@ -336,7 +375,7 @@ function* walkTypeScriptFiles(directory: string): Generator<string> {
     const stats = lstatSync(absolutePath);
     if (stats.isSymbolicLink()) {
       throw new Error(
-        `createRequire inventory does not permit scoped symbolic links: ${absolutePath}`,
+        `createRequire inventory does not permit scoped symbolic links: ${diagnosticPath(absolutePath)}`,
       );
     }
     if (stats.isDirectory()) {
@@ -584,6 +623,124 @@ export function collectCreateRequireInventory(
   };
 }
 
+type RevisionTreeEntry = Readonly<{
+  mode: string;
+  path: string;
+  type: string;
+}>;
+
+function parseRevisionTreeEntries(source: string, label: string): RevisionTreeEntry[] {
+  if (source && !source.endsWith("\0")) {
+    throw new Error(`${label} contains an invalid Git entry`);
+  }
+  const records = source ? source.slice(0, -1).split("\0") : [];
+  if (records.some((record) => !record)) {
+    throw new Error(`${label} contains an invalid Git entry`);
+  }
+  return records.map((record) => {
+    const match =
+      /^(?<mode>[0-7]{6}) (?<type>blob|commit|tree) (?:[0-9a-f]{40}|[0-9a-f]{64})\t(?<path>[\s\S]+)$/u.exec(
+        record,
+      );
+    if (!match?.groups) {
+      throw new Error(`${label} contains an invalid Git entry`);
+    }
+    return {
+      mode: match.groups.mode,
+      path: match.groups.path,
+      type: match.groups.type,
+    };
+  });
+}
+
+function revisionCheckerEntries(
+  runGit: GitRunner,
+  revision: string,
+  label: "pull-request head" | "trusted base",
+): RevisionTreeEntry[] {
+  const result = runGit(["ls-tree", "-z", revision, "--", ...ALLOWLIST_PATHS]);
+  if (result.status !== 0) {
+    throw new Error(`could not enumerate the ${label} createRequire budget checkers`);
+  }
+  const entries = parseRevisionTreeEntries(result.stdout, `${label} checker tree`);
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (!(ALLOWLIST_PATHS as readonly string[]).includes(entry.path) || seen.has(entry.path)) {
+      throw new Error(`${label} checker tree contains an invalid path`);
+    }
+    seen.add(entry.path);
+    if (entry.type !== "blob" || !REGULAR_BLOB_MODES.has(entry.mode)) {
+      throw new Error(
+        `${label} createRequire budget checker must be a regular file: ${diagnosticPath(entry.path)}`,
+      );
+    }
+  }
+  return entries;
+}
+
+function revisionTreeEntries(runGit: GitRunner, revision: string): RevisionTreeEntry[] {
+  const result = runGit(["ls-tree", "-r", "-z", revision, "--", "src", "test"]);
+  if (result.status !== 0) {
+    throw new Error("could not enumerate the pull-request head TypeScript tree");
+  }
+  return parseRevisionTreeEntries(result.stdout, "pull-request head tree").map((entry) => {
+    if (!entry.path.startsWith("src/") && !entry.path.startsWith("test/")) {
+      throw new Error("pull-request head tree contains an out-of-scope path");
+    }
+    if (entry.type !== "blob" || !REGULAR_BLOB_MODES.has(entry.mode)) {
+      throw new Error(
+        `createRequire inventory does not permit scoped symbolic links, submodules, or non-regular files: ${diagnosticPath(entry.path)}`,
+      );
+    }
+    return entry;
+  });
+}
+
+function revisionFileSource(
+  runGit: GitRunner,
+  revision: string,
+  relativePath: string,
+  label = "pull-request head file",
+): string {
+  const result = runGit(["show", `${revision}:${relativePath}`]);
+  if (result.status !== 0) {
+    throw new Error(`could not read ${label}: ${diagnosticPath(relativePath)}`);
+  }
+  return result.stdout;
+}
+
+function collectCreateRequireInventoryAtRevision(
+  ts: TypeScriptApi,
+  runGit: GitRunner,
+  revision: string,
+): CreateRequireInventory {
+  const typeScriptFiles = revisionTreeEntries(runGit, revision)
+    .map((entry) => entry.path)
+    .filter((relativePath) => TYPESCRIPT_PATTERN.test(relativePath));
+  const collect = (include: (relativePath: string) => boolean): string[] =>
+    typeScriptFiles
+      .filter(include)
+      .filter((relativePath) =>
+        containsCreateRequireIdentifier(
+          ts,
+          revisionFileSource(runGit, revision, relativePath),
+          relativePath,
+        ),
+      )
+      .sort();
+  return {
+    cli: collect(
+      (relativePath) => relativePath.startsWith("src/") && TEST_FILE_PATTERN.test(relativePath),
+    ),
+    production: collect(
+      (relativePath) => relativePath.startsWith("src/") && !TEST_FILE_PATTERN.test(relativePath),
+    ),
+    testSupport: collect(
+      (relativePath) => relativePath.startsWith("test/") && !TEST_FILE_PATTERN.test(relativePath),
+    ),
+  };
+}
+
 function difference(left: readonly string[], right: readonly string[]): string[] {
   const rightSet = new Set(right);
   return left.filter((entry) => !rightSet.has(entry)).sort();
@@ -597,7 +754,7 @@ export function createRequireInventoryFailure(
   if (actual.production.length > 0) {
     lines.push(
       "Production TypeScript must not introduce createRequire boundaries:",
-      ...actual.production.map((file) => `- ${file}`),
+      ...actual.production.map((file) => `- ${diagnosticPath(file)}`),
     );
   }
 
@@ -610,13 +767,13 @@ export function createRequireInventoryFailure(
     if (undeclared.length > 0) {
       lines.push(
         `${label} omits actual createRequire use:`,
-        ...undeclared.map((file) => `- ${file}`),
+        ...undeclared.map((file) => `- ${diagnosticPath(file)}`),
       );
     }
     if (stale.length > 0) {
       lines.push(
         `${label} contains paths without actual createRequire use:`,
-        ...stale.map((file) => `- ${file}`),
+        ...stale.map((file) => `- ${diagnosticPath(file)}`),
       );
     }
   }
@@ -635,8 +792,10 @@ export function trustedCreateRequireExpansionFailure(
 
   return [
     "createRequire allowlists must not expand relative to the trusted base.",
-    ...cliAdditions.map((file) => `- CLI_CREATE_REQUIRE_FILES: ${file}`),
-    ...supportAdditions.map((file) => `- TEST_SUPPORT_CREATE_REQUIRE_FILES: ${file}`),
+    ...cliAdditions.map((file) => `- CLI_CREATE_REQUIRE_FILES: ${diagnosticPath(file)}`),
+    ...supportAdditions.map(
+      (file) => `- TEST_SUPPORT_CREATE_REQUIRE_FILES: ${diagnosticPath(file)}`,
+    ),
   ].join("\n");
 }
 
@@ -646,11 +805,11 @@ export function verifyTrustedCreateRequireRatchet(
   environment: NodeJS.ProcessEnv = process.env,
   runGit: GitRunner = createGitRunner(repoRoot),
 ): string | null {
-  const revision = resolveBaseRevision(repoRoot, environment, runGit);
-  if (!revision) return null;
+  const comparison = resolvePullRequestComparison(repoRoot, environment, runGit);
+  if (!comparison) return null;
 
-  const currentChecker = requireSingleCurrentChecker(repoRoot);
-  const baselineChecker = requireSingleBaseChecker(runGit, revision);
+  const currentChecker = requireSingleRevisionChecker(runGit, comparison.head, "pull-request head");
+  const baselineChecker = requireSingleBaseChecker(runGit, comparison.mergeBase);
   const current = extractTrustedCreateRequireAllowlists(
     ts,
     currentChecker.source,
@@ -661,7 +820,7 @@ export function verifyTrustedCreateRequireRatchet(
     baselineChecker.source,
     baselineChecker.path,
   );
-  const actual = collectCreateRequireInventory(ts, repoRoot);
+  const actual = collectCreateRequireInventoryAtRevision(ts, runGit, comparison.head);
   const failures = [
     createRequireInventoryFailure(actual, current),
     trustedCreateRequireExpansionFailure(current, baseline),
