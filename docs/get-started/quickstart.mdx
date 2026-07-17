@@ -119,8 +119,15 @@ Use these details when your first-run path needs more control.
     If the installer adds you to the `docker` group, run the printed `newgrp docker` command before you rerun it.
     On macOS, start Docker Desktop or Colima first.
 
-    DGX Spark, DGX Station, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
-    On DGX Station, accepting the express prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
+    DGX Spark, Station GB300 hosts running the generic Ubuntu 24.04 ARM64 image, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
+    On that Station configuration, accepting the express prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
+    DGX OS, NVIDIA BaseOS images, and other Station generations stop before host preparation.
+    Set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue on an unqualified Station without host automation.
+    It probes the pinned driver, Docker, Buildx, and NVIDIA Container Toolkit versions, reuses exact matches, installs missing pins, and permits only the reviewed factory `dkms` transition.
+    It establishes NVIDIA CDI through the packaged refresh service, then proves both CDI and `--gpus all` with real container launches.
+    If the packaged refresh fails or does not advertise `nvidia.com/gpu=all`, preparation prints service diagnostics and stops for administrator repair instead of generating CDI configuration directly.
+    After it changes pinned packages, the installer exits with status `10` at the required reboot boundary; reboot, sign in, and run the printed exact-commit command to resume the accepted recipe without another prompt.
+    This automation does not change Station's Deferred support status; physical end-to-end validation remains open.
     Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead.
     Refer to [Platform Support](../reference/platform-support) and [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for the current platform behavior.
 
@@ -186,10 +193,19 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
 
-    On DGX Spark, DGX Station, and Windows WSL, interactive installation offers express install after you accept the third-party software notice.
+    On DGX Spark, Station GB300 hosts running the generic Ubuntu 24.04 ARM64 image, and Windows WSL, interactive installation offers express install after you accept the third-party software notice.
     Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
     DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default.
     DGX Station express install explicitly selects `nemotron-3-ultra-550b-a55b` instead of the Station managed-vLLM profile default, `deepseek-v4-flash`, and discloses the approximately `352 GB` model download before confirmation.
+    Before onboarding, the Station path requires Station GB300 with the generic Ubuntu 24.04 ARM64 image and checks for NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
+    DGX OS, NVIDIA BaseOS images, and other Station generations are outside this automatic preparation boundary.
+    Set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to continue without Station host automation.
+    Preparation reuses exact versions, installs missing pinned packages, permits only the reviewed `dkms` transition from `3.0.11-1ubuntu13` to `1:3.4.0-1ubuntu1`, and refuses every other mismatched version.
+    It requires the packaged NVIDIA CDI refresh service to advertise `nvidia.com/gpu=all`, and verifies CDI and `--gpus all` with real container launches.
+    If the packaged refresh fails or omits that device, preparation prints service diagnostics and stops for administrator repair instead of generating CDI configuration directly.
+    If NVIDIA Docker runtime registration or a post-change acceptance probe fails, preparation restores the prior Docker daemon configuration.
+    Changing pinned packages exits with status `10` for a reboot; after you sign in and run the printed exact-commit command, the accepted express recipe resumes without another prompt.
+    This automation does not change Station's Deferred support status; physical end-to-end validation remains open.
     To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
     Unless `NEMOCLAW_POLICY_TIER` is set, express install applies policy in `suggested` mode with the `balanced` tier, including the base sandbox policy and supported package, model, web-search, and local-inference presets.
     Express install uses `my-assistant` as the sandbox name across all platforms unless `NEMOCLAW_SANDBOX_NAME` is set.

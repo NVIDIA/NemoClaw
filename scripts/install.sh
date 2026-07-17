@@ -2866,8 +2866,28 @@ detect_express_platform() {
   fi
   case "$model" in
     *DGX*Spark*) printf "DGX Spark" ;;
-    *DGX*Station* | *Station*GB300*) printf "DGX Station" ;;
+    *Station*GB300*)
+      if [ -e /etc/dgx-release ] || [ -L /etc/dgx-release ]; then
+        printf "Unsupported DGX Station OS"
+      else
+        printf "DGX Station"
+      fi
+      ;;
+    *DGX*Station*) printf "Unsupported DGX Station generation" ;;
     *) ;;
+  esac
+}
+
+validate_express_platform_boundary() {
+  case "${1:-}" in
+    "Unsupported DGX Station OS")
+      if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
+      error "DGX OS/BaseOS is outside the validated Station express boundary. Use the generic Ubuntu 24.04 ARM64 image."
+      ;;
+    "Unsupported DGX Station generation")
+      if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
+      error "This DGX Station generation is outside the validated Station GB300 express boundary."
+      ;;
   esac
 }
 
@@ -2875,6 +2895,8 @@ STATION_ULTRA_VLLM_MODEL="nemotron-3-ultra-550b-a55b"
 STATION_ULTRA_SERVED_MODEL="nvidia/nemotron-3-ultra-550b-a55b"
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
+_SELECTED_EXPRESS_PLATFORM=""
+_STATION_EXPRESS_RESUME_REVISION=""
 
 normalize_station_vllm_model() {
   printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
@@ -2921,6 +2943,7 @@ validate_station_deepseek_override() {
 preflight_explicit_express_flags() {
   local platform
   platform="$(detect_express_platform)"
+  validate_express_platform_boundary "$platform"
   validate_station_deepseek_override "$platform"
 }
 
@@ -2956,6 +2979,178 @@ configure_station_express_model() {
   fi
 }
 
+station_express_resume_file() {
+  local state_dir
+  state_dir="$(nemoclaw_state_dir)" || return 1
+  printf '%s/station-express-resume' "$state_dir"
+}
+
+validate_station_express_resume_model() {
+  local model="${1:-}"
+  [[ ${#model} -le 255 && "$model" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]
+}
+
+validate_station_express_resume_revision() {
+  [[ "${1:-}" =~ ^[0-9a-f]{40}$ ]]
+}
+
+station_installer_revision() {
+  local revision
+  revision="$(git -C "${SCRIPT_DIR}/.." rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" \
+    || error "Could not resolve the exact NemoClaw revision for DGX Station reboot resume."
+  validate_station_express_resume_revision "$revision" \
+    || error "Resolved NemoClaw revision is invalid: ${revision}"
+  printf '%s' "$revision"
+}
+
+portable_file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
+assert_station_express_resume_file_safe() {
+  local state_file=$1 state_dir mode
+  state_dir="$(dirname "$state_file")"
+  [[ -d "$state_dir" && -O "$state_dir" ]] \
+    || error "DGX Station express resume directory is not owned by the current user: ${state_dir}"
+  mode="$(portable_file_mode "$state_dir")" \
+    || error "Could not inspect DGX Station express resume directory permissions: ${state_dir}"
+  (((8#$mode & 0077) == 0)) \
+    || error "DGX Station express resume directory must not be accessible by group or other users: ${state_dir}"
+  [[ -f "$state_file" && -O "$state_file" ]] \
+    || error "DGX Station express resume state must be a regular file owned by the current user: ${state_file}"
+  mode="$(portable_file_mode "$state_file")" \
+    || error "Could not inspect DGX Station express resume state permissions: ${state_file}"
+  [[ "$mode" == "600" ]] || error "DGX Station express resume state must have mode 0600: ${state_file}"
+}
+
+load_station_express_resume() {
+  local state_file revision_line model_line line_count saved_revision current_revision
+  state_file="$(station_express_resume_file)" || return 1
+  assert_nemoclaw_state_path_safe "$state_file"
+  [[ -e "$state_file" || -L "$state_file" ]] || return 1
+  assert_station_express_resume_file_safe "$state_file"
+  line_count="$(wc -l <"$state_file" | tr -d '[:space:]')"
+  revision_line="$(sed -n '1p' "$state_file")"
+  model_line="$(sed -n '2p' "$state_file")"
+  saved_revision="${revision_line#revision=}"
+  NEMOCLAW_VLLM_MODEL="${model_line#model=}"
+  if [[ "$line_count" != "2" || "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${NEMOCLAW_VLLM_MODEL}" ]] \
+    || ! validate_station_express_resume_revision "$saved_revision" \
+    || ! validate_station_express_resume_model "$NEMOCLAW_VLLM_MODEL"; then
+    error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
+  fi
+  current_revision="$(station_installer_revision)"
+  if [[ "$current_revision" != "$saved_revision" ]]; then
+    error "DGX Station express resume requires NemoClaw revision ${saved_revision}, but this installer is ${current_revision}. Rerun with: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=${saved_revision} bash"
+  fi
+  export NEMOCLAW_VLLM_MODEL
+}
+
+save_station_express_resume() {
+  local state_file state_dir temp_file revision model="${NEMOCLAW_VLLM_MODEL:-}"
+  validate_station_express_resume_model "$model" || error "Cannot save an invalid DGX Station express model selector."
+  revision="$(station_installer_revision)"
+  state_file="$(station_express_resume_file)" || error "Could not resolve NemoClaw state for DGX Station express resume."
+  state_dir="$(ensure_nemoclaw_state_dir)" || error "Could not prepare NemoClaw state for DGX Station express resume."
+  assert_nemoclaw_state_path_safe "$state_file"
+  temp_file="$(mktemp "${state_file}.tmp.XXXXXX")" || error "Could not create DGX Station express resume state under ${state_dir}."
+  chmod 600 "$temp_file" || {
+    rm -f "$temp_file"
+    error "Could not secure DGX Station express resume state under ${state_dir}."
+  }
+  if ! printf 'revision=%s\nmodel=%s\n' "$revision" "$model" >"$temp_file"; then
+    rm -f "$temp_file"
+    error "Could not write DGX Station express resume state under ${state_dir}."
+  fi
+  if ! mv -f "$temp_file" "$state_file"; then
+    rm -f "$temp_file"
+    error "Could not publish DGX Station express resume state under ${state_dir}."
+  fi
+  assert_station_express_resume_file_safe "$state_file"
+  _STATION_EXPRESS_RESUME_REVISION="$revision"
+}
+
+clear_station_express_resume() {
+  local state_file
+  state_file="$(station_express_resume_file)" || return 0
+  assert_nemoclaw_state_path_safe "$state_file"
+  [[ -e "$state_file" || -L "$state_file" ]] || return 0
+  [[ -f "$state_file" && -O "$state_file" ]] \
+    || error "Refusing to remove invalid DGX Station express resume state: ${state_file}"
+  rm -f "$state_file"
+}
+
+activate_express_install() {
+  local platform="$1"
+  _SELECTED_EXPRESS_PLATFORM="$platform"
+  NON_INTERACTIVE=1
+  export NEMOCLAW_NON_INTERACTIVE=1
+  export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
+  export NEMOCLAW_YES=1
+  export NEMOCLAW_POLICY_MODE=suggested
+  case "$platform" in
+    "DGX Spark")
+      export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      export NEMOCLAW_PROVIDER=install-vllm
+      if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+        export NEMOCLAW_VLLM_MODEL
+      fi
+      ;;
+    "DGX Station")
+      export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      export NEMOCLAW_PROVIDER=install-vllm
+      configure_station_express_model
+      ;;
+    "Windows WSL")
+      export NEMOCLAW_PROVIDER=install-windows-ollama
+      ;;
+  esac
+}
+
+run_station_host_preparation() {
+  # Public curl|bash starts in the root bootstrap, which clones the complete
+  # selected ref before executing this payload. Keep the sibling lookup and
+  # fail-closed check so Station preparation cannot drift from that ref.
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
+  bash "$helper" --apply
+}
+
+ensure_station_express_host() {
+  [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
+
+  info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
+  local status=0
+  run_station_host_preparation || status=$?
+  case "$status" in
+    0)
+      ok "DGX Station host prerequisites are ready"
+      ;;
+    10)
+      save_station_express_resume
+      local revision
+      revision="${_STATION_EXPRESS_RESUME_REVISION}"
+      warn "DGX Station host prerequisites were installed and require a reboot."
+      info "Run: sudo reboot"
+      info "After signing in again, rerun the accepted revision:"
+      info "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=${revision} bash"
+      exit 10
+      ;;
+    *)
+      error "DGX Station host preparation failed. Review the station-bootstrap log above, correct the reported host state, and rerun the installer."
+      ;;
+  esac
+}
+
+prepare_installer_host() {
+  maybe_offer_express_install
+  # Intentional ordering: Station preparation owns the reboot boundary before
+  # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
+  ensure_station_express_host
+  ensure_docker
+  ensure_openshell_build_deps
+}
+
 # Prompt the user to opt into express install on supported platforms. Sets the
 # non-interactive + provider/model env vars when accepted. Skipped when
 # the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
@@ -2989,6 +3184,9 @@ describe_express_install() {
         inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B"
         inference_disclosure="Managed vLLM pulls the pinned Station image and approximately 352 GB model, then runs a local inference container."
       fi
+      printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
+      printf "  Host setup may add this trusted local account to the docker group, which grants root-equivalent control. This flow is only for trusted single-user development hosts; shared or managed hosts require an organization-approved Docker access path.\n"
+      printf "  DGX Station remains Deferred; this recipe has not completed end-to-end validation on physical hardware.\n"
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
@@ -3031,6 +3229,7 @@ describe_express_install() {
 maybe_offer_express_install() {
   local platform
   platform="$(detect_express_platform)"
+  validate_express_platform_boundary "$platform"
   validate_station_deepseek_override "$platform"
   # Not on a platform we have an express recipe for — say nothing.
   if [ -z "$platform" ]; then
@@ -3039,15 +3238,22 @@ maybe_offer_express_install() {
   # On a supported platform but a skip condition applies — explain why so
   # the user understands they could have gotten express otherwise.
   if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    if [ "$platform" = "DGX Station" ]; then clear_station_express_resume; fi
     info "Detected ${platform}. Skipping express prompt (NEMOCLAW_NO_EXPRESS=1)."
+    return 0
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    if [ "$platform" = "DGX Station" ]; then clear_station_express_resume; fi
+    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
+    return 0
+  fi
+  if [ "$platform" = "DGX Station" ] && load_station_express_resume; then
+    info "Detected DGX Station. Resuming the accepted express install after host preparation."
+    activate_express_install "$platform"
     return 0
   fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     info "Detected ${platform}. Skipping express prompt (--non-interactive set)."
-    return 0
-  fi
-  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
-    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
     return 0
   fi
   local reply=""
@@ -3077,28 +3283,7 @@ maybe_offer_express_install() {
   case "$reply" in
     "" | y | yes)
       info "Using express install for ${platform}."
-      NON_INTERACTIVE=1
-      export NEMOCLAW_NON_INTERACTIVE=1
-      export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
-      export NEMOCLAW_YES=1
-      export NEMOCLAW_POLICY_MODE=suggested
-      case "$platform" in
-        "DGX Spark")
-          export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
-          export NEMOCLAW_PROVIDER=install-vllm
-          if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
-            export NEMOCLAW_VLLM_MODEL
-          fi
-          ;;
-        "DGX Station")
-          export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
-          export NEMOCLAW_PROVIDER=install-vllm
-          configure_station_express_model
-          ;;
-        "Windows WSL")
-          export NEMOCLAW_PROVIDER=install-windows-ollama
-          ;;
-      esac
+      activate_express_install "$platform"
       ;;
     *)
       info "Skipping express install. Continuing with interactive flow."
@@ -3196,15 +3381,13 @@ main() {
   # still collect acceptance before Node.js or the CLI are installed.
   preflight_usage_notice_prompt
 
-  ensure_docker
-  ensure_openshell_build_deps
-
   # Offer express install on supported platforms (DGX Spark / Station / WSL).
   # Runs AFTER the third-party notice so the user has explicitly accepted the
   # license before opting into the unattended path. Express only sets the
   # provider/model/policy + non-interactive vars; license acceptance is
-  # already recorded by preflight above.
-  maybe_offer_express_install
+  # already recorded by preflight above. Station selection runs its pinned
+  # host prerequisite preparation before the generic Docker bootstrap.
+  prepare_installer_host
 
   _INSTALL_START=$SECONDS
   bash "${SCRIPT_DIR}/setup-jetson.sh"
@@ -3273,6 +3456,9 @@ main() {
   fi
 
   finalize_install
+  if [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
+    clear_station_express_resume
+  fi
 }
 
 # Print the completion summary, then propagate a fatal/non-zero result when the
