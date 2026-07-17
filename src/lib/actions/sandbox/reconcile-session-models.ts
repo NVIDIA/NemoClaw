@@ -4,11 +4,13 @@
 import { createHash } from "node:crypto";
 import { shellQuote } from "../../core/shell-quote";
 import { MANAGED_PROVIDER_ID } from "../../inference/config";
+import { isSafeModelId } from "../../validation";
 import { executeSandboxCommand } from "./process-recovery";
 import type { RebuildLog } from "./rebuild-credential-preflight";
 import { DEFAULT_AGENT_ID } from "./sessions/paths";
 
 const OPENCLAW_CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
+const MAX_PRIMARY_MODEL_REF_LENGTH = 512;
 
 const SESSION_STORE_REPLACE_PYTHON = String.raw`
 import base64
@@ -22,8 +24,8 @@ target_path = sys.argv[1]
 payload = base64.b64decode(sys.argv[2], validate=True)
 expected_sha256 = sys.argv[3]
 parent_path, target_name = os.path.split(target_path)
-if not parent_path or not target_name:
-    raise ValueError("session store path must have a parent and basename")
+if not os.path.isabs(target_path) or not parent_path or not target_name:
+    raise ValueError("session store path must be absolute with a parent and basename")
 for flag_name in ("O_DIRECTORY", "O_NOFOLLOW"):
     if not hasattr(os, flag_name):
         raise OSError(f"{flag_name} is required for safe session store replacement")
@@ -35,10 +37,14 @@ staged_name = ""
 staged_identity = None
 installed = False
 try:
-    parent_fd = os.open(
-        parent_path,
-        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+    directory_flags = (
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
     )
+    parent_fd = os.open(os.sep, directory_flags)
+    for component in (part for part in parent_path.split(os.sep) if part):
+        next_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+        os.close(parent_fd)
+        parent_fd = next_fd
     source_fd = os.open(
         target_name,
         os.O_RDONLY
@@ -145,6 +151,7 @@ export function buildSessionStoreReplaceCommand(
   const expectedSha256 = createHash("sha256").update(expectedSource).digest("hex");
   return [
     "python3",
+    "-I",
     "-c",
     shellQuote(SESSION_STORE_REPLACE_PYTHON),
     shellQuote(sessionsPath),
@@ -222,7 +229,13 @@ function readPrimaryModelRef(sandboxName: string): string | null {
       agents?: { defaults?: { model?: { primary?: unknown } } };
     };
     const primary = config.agents?.defaults?.model?.primary;
-    return typeof primary === "string" ? primary : null;
+    if (typeof primary !== "string") return null;
+    const normalized = primary.trim();
+    return normalized.length > 0 &&
+      normalized.length <= MAX_PRIMARY_MODEL_REF_LENGTH &&
+      isSafeModelId(normalized)
+      ? normalized
+      : null;
   } catch {
     return null;
   }
