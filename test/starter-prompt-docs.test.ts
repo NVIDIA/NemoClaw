@@ -21,7 +21,7 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
-const promptAssetRevision = "e2dffc192a6f8a05b1a2f3afb142d39864a0a688";
+const promptAssetRevision = "c96d984fc49e338d8319d262bc36ff16a24dcbbb";
 
 function definePromptAsset(assetPath: string): { path: string; url: string } {
   return {

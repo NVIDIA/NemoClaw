@@ -68,9 +68,9 @@ Use `NEMOCLAW_AGENT=langchain-deepagents-code` or `nemo-deepagents onboard` for 
 
 After the readiness check, load exactly one matching instruction asset before provider selection:
 
-- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/e2dffc192a6f8a05b1a2f3afb142d39864a0a688/docs/resources/prompt-assets/dgx-spark.md).
-- Confirmed DGX Station: [DGX Station Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/e2dffc192a6f8a05b1a2f3afb142d39864a0a688/docs/resources/prompt-assets/dgx-station.md).
-- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/e2dffc192a6f8a05b1a2f3afb142d39864a0a688/docs/resources/prompt-assets/windows-wsl.md).
+- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c96d984fc49e338d8319d262bc36ff16a24dcbbb/docs/resources/prompt-assets/dgx-spark.md).
+- Confirmed DGX Station: [DGX Station Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c96d984fc49e338d8319d262bc36ff16a24dcbbb/docs/resources/prompt-assets/dgx-station.md).
+- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c96d984fc49e338d8319d262bc36ff16a24dcbbb/docs/resources/prompt-assets/windows-wsl.md).
 
 Read the matching raw Markdown file completely and follow it before continuing.
 Do not load a platform asset for any other computer.
