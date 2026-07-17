@@ -9,6 +9,7 @@ import * as registry from "../../state/registry";
 import * as messagingHostForward from "./messaging-host-forward-lifecycle";
 import * as processRecovery from "./process-recovery";
 import * as rebuildConfigHash from "./rebuild-config-hash";
+import * as rebuildHermesPostRestore from "./rebuild-hermes-post-restore";
 import * as rebuildMcp from "./rebuild-mcp-phase";
 import * as rebuildMessaging from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
@@ -57,6 +58,10 @@ describe("rebuild post-restore session model reconciliation (#7102)", () => {
       skipReason: "not-needed",
     } as never);
     vi.spyOn(rebuildMcp, "restoreMcpAfterRebuild").mockResolvedValue(true);
+    vi.spyOn(rebuildHermesPostRestore, "ensureHermesGatewayAfterStateRestore").mockImplementation(
+      (_sandboxName, targetAgentName) =>
+        targetAgentName === "hermes" ? "healthy" : "not-applicable",
+    );
     vi.spyOn(registry, "getSandbox").mockImplementation(
       () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
     );
@@ -101,9 +106,11 @@ describe("rebuild post-restore session model reconciliation (#7102)", () => {
 
   it("does not run OpenClaw session reconciliation for another agent", async () => {
     agentName = "hermes";
+    const args = input();
 
-    await runRebuildPostRestorePhase(input());
+    await runRebuildPostRestorePhase(args);
 
+    expect(args.bail).not.toHaveBeenCalled();
     expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
     expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
   });
