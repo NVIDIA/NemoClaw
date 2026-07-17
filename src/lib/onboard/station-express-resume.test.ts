@@ -444,6 +444,39 @@ describe("DGX Station Express resume (#7048)", () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
+  it("leaves a legacy state directory alone when no Station retirement claim exists", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-legacy-state-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o755 });
+    fs.writeFileSync(path.join(stateDir, "onboard-session.json"), "{}\n", { mode: 0o600 });
+
+    try {
+      expect(() => cleanupStationExpressReceiptRetirementClaims({ HOME: home })).not.toThrow();
+      expect(fs.readFileSync(path.join(stateDir, "onboard-session.json"), "utf8")).toBe("{}\n");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("still rejects a Station retirement claim in an unsafe state directory", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-unsafe-claim-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const claim = path.join(
+      stateDir,
+      `station-express-resume.retiring-${receiptGeneration}-candidate`,
+    );
+    fs.mkdirSync(claim, { recursive: true, mode: 0o700 });
+    fs.chmodSync(stateDir, 0o755);
+
+    try {
+      expect(() => cleanupStationExpressReceiptRetirementClaims({ HOME: home })).toThrow(
+        "non-owner-only",
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("reconciles a durable matching retirement marker without replaying onboarding", async () => {
     const completed = createSession();
     completed.status = "complete";

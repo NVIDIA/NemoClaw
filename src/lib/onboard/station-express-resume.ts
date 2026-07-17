@@ -288,6 +288,17 @@ function listRetirementClaims(
   return claims;
 }
 
+function hasRetirementClaimCandidate(paths: StationExpressReceiptPaths): boolean {
+  try {
+    return fs
+      .readdirSync(paths.stateDir)
+      .some((name) => name.startsWith(STATION_EXPRESS_RETIREMENT_CLAIM_PREFIX));
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 function assertRetirementClaimDirectorySafe(claim: StationExpressRetirementClaim): string[] {
   const stat = lstatOrNull(claim.directory);
   if (!stat) return [];
@@ -521,6 +532,12 @@ export function clearStationExpressInstallerResume(env: NodeJS.ProcessEnv = proc
 export function cleanupStationExpressReceiptRetirementClaims(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
+  const uncheckedPaths = stationExpressReceiptPaths(env);
+  // Ordinary and legacy onboarding runs can use a state directory created
+  // before Station Express required owner-only permissions. Inspect names
+  // without mutating anything, and enforce the strict path boundary only
+  // when there is an Express retirement artifact to reconcile.
+  if (!hasRetirementClaimCandidate(uncheckedPaths)) return;
   const paths = assertStationExpressStateDirectorySafe(env);
   if (!paths) return;
   for (const claim of listRetirementClaims(paths)) {
