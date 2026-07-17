@@ -79,7 +79,7 @@ afterEach(() => {
 });
 
 describe("initial sandbox policy helpers", () => {
-  it("removes /proc from direct GPU create policy so OpenShell can own GPU enrichment", () => {
+  it("prepares sysfs read access and lets OpenShell own /proc GPU enrichment", () => {
     const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE);
     const baseDoc = YAML.parse(BASE_POLICY_FIXTURE);
     const gpuDoc = YAML.parse(gpuPolicy);
@@ -88,6 +88,7 @@ describe("initial sandbox policy helpers", () => {
     // create-time must not pre-declare it.
     expect(baseDoc.filesystem_policy.read_only).toContain("/proc");
     expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
+    expect(gpuDoc.filesystem_policy.read_only).toContain("/sys");
     expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
     expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
   });
@@ -97,6 +98,7 @@ describe("initial sandbox policy helpers", () => {
     const gpuDoc = YAML.parse(gpuPolicy);
 
     expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
+    expect(gpuDoc.filesystem_policy.read_only).toContain("/sys");
     expect(gpuDoc.filesystem_policy.read_write).toContain("/proc");
     expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
   });
@@ -123,8 +125,24 @@ network_policies:
 `);
     const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(gpuDoc.filesystem_policy.read_only).toEqual(["/usr"]);
+    expect(gpuDoc.filesystem_policy.read_only).toEqual(["/usr", "/sys"]);
     expect(gpuDoc.filesystem_policy.read_write).toEqual(["/tmp"]);
+  });
+
+  it("preserves an existing sysfs policy entry without duplication", () => {
+    const gpuPolicy = buildDirectGpuPolicyYaml(`
+version: 1
+filesystem_policy:
+  read_only:
+    - /usr
+    - /sys
+  read_write:
+    - /tmp
+network_policies: {}
+`);
+    const gpuDoc = YAML.parse(gpuPolicy);
+
+    expect(gpuDoc.filesystem_policy.read_only).toEqual(["/usr", "/sys"]);
   });
 
   it("builds direct sandbox GPU proof commands", () => {

@@ -26,6 +26,7 @@ const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "h
 
 const PROC_PATH = "/proc";
 const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
+const SYSFS_PATH = "/sys";
 
 function isProcEntryOwnedByOpenShell(entry: string): boolean {
   return entry === PROC_PATH || PROC_COMM_READ_WRITE_PATHS.includes(entry);
@@ -55,6 +56,12 @@ export function buildDirectGpuPolicyYaml(
     ? fsPolicy.read_write.map((entry: unknown) => String(entry))
     : [];
   fsPolicy.read_write = readWrite.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
+  if (!fsPolicy.read_only.includes(SYSFS_PATH) && !fsPolicy.read_write.includes(SYSFS_PATH)) {
+    // CUDA discovers GPU topology and device metadata through sysfs during
+    // cuInit(). Keep the container's existing read-only sysfs mount visible
+    // through Landlock; no GPU path needs sysfs write access.
+    fsPolicy.read_only.push(SYSFS_PATH);
+  }
   if (options.procReadWrite && !fsPolicy.read_write.includes(PROC_PATH)) {
     // Linux Docker-driver GPU patching recreates the container with GPU flags
     // after `openshell sandbox create`, so OpenShell never sees `--gpu` and
