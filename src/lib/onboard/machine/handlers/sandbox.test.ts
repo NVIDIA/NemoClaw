@@ -4,7 +4,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hashCredential } from "../../../security/credential-hash";
-import { decisionUnset } from "../../../state/onboard-checkpoint-decision";
+import {
+  decisionDeclined,
+  decisionSelected,
+  decisionUnset,
+} from "../../../state/onboard-checkpoint-decision";
 import { CHECKPOINT_SCHEMA_VERSION } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
@@ -104,6 +108,25 @@ describe("handleSandboxState", () => {
       updates: undefined,
       metadata: { state: "sandbox", sandboxName: "my-assistant", agent: "openclaw" },
     });
+    expect(result.session?.checkpoint?.webSearch).toEqual(decisionSelected({ fetchEnabled: true }));
+    expect(result.session?.checkpoint?.messaging).toEqual(decisionDeclined());
+  });
+
+  it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {
+    const { deps } = createDeps({
+      configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
+      stageSandboxCredentialProviders: vi.fn(async () => ["my-assistant-brave-search"]),
+      selectResourceProfileForSandbox: vi.fn(async () => ({ cpu: "2", memory: "4Gi" })),
+    });
+
+    const result = await handleSandboxState(baseOptions(deps));
+
+    expect(result.session?.checkpoint?.bindings.registeredProviders).toEqual([
+      "my-assistant-brave-search",
+    ]);
+    expect(result.session?.checkpoint?.resourceProfile).toEqual(
+      decisionSelected({ cpu: "2", memory: "4Gi" }),
+    );
   });
 
   it("does not auto-enable web search from ambient credentials during authoritative rebuild", async () => {
@@ -513,7 +536,10 @@ describe("handleSandboxState", () => {
   });
 
   it("treats checkpoint machine-state progress past sandbox as step-complete even when the legacy step status is stale (#6228)", async () => {
-    const session = createSession({ sandboxName: "saved" });
+    const session = createSession({
+      sandboxName: "saved",
+      machine: { version: 1, state: "agent_setup", stateEnteredAt: null, revision: 1 },
+    });
     session.checkpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
       sessionId: session.sessionId,

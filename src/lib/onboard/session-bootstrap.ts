@@ -203,8 +203,7 @@ function assertRecoverableResumeSandboxName(
 ): void {
   const checkpoint = session?.checkpoint ?? null;
   const nameRecoverable = checkpoint
-    ? checkpointProvesSandboxStepComplete(checkpoint) ||
-      isDecisionSelected(checkpoint.sandboxIdentity)
+    ? checkpointProvesSandboxStepComplete(session) || isDecisionSelected(checkpoint.sandboxIdentity)
     : session?.steps?.sandbox?.status === "complete" ||
       ((!session?.agent || session.agent === "openclaw") &&
         session?.sandboxPromptProgress?.sandboxName === true);

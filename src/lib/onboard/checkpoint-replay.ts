@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ONBOARD_MACHINE_STATES } from "./machine/types";
+import type { OnboardMachineState } from "./machine/types";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import type {
   CheckpointEffectGroupName,
@@ -9,12 +10,17 @@ import type {
   OnboardCheckpoint,
 } from "../state/onboard-checkpoint-types";
 
+export interface CheckpointedMachineSession {
+  readonly checkpoint: OnboardCheckpoint | null;
+  readonly machine: { readonly state: OnboardMachineState };
+}
+
 export function checkpointProvesSandboxStepComplete(
-  checkpoint: OnboardCheckpoint | null | undefined,
+  session: CheckpointedMachineSession | null | undefined,
 ): boolean {
-  if (!checkpoint) return false;
+  if (!session?.checkpoint) return false;
   const sandboxIndex = ONBOARD_MACHINE_STATES.indexOf("sandbox");
-  const stateIndex = ONBOARD_MACHINE_STATES.indexOf(checkpoint.machineState);
+  const stateIndex = ONBOARD_MACHINE_STATES.indexOf(session.machine.state);
   return stateIndex > sandboxIndex;
 }
 

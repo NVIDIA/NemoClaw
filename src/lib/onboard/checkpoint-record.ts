@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { decisionSelected } from "../state/onboard-checkpoint-decision";
+import type { WebSearchConfig } from "../inference/web-search";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
+import { decisionDeclined, decisionSelected } from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import type {
   CheckpointEffectGroupName,
+  CheckpointResourceProfile,
   OnboardCheckpoint,
 } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
@@ -42,5 +45,63 @@ export function recordCheckpointEffectGroup(
       ...base.effectGroups,
       [group]: { completedAt: now, fingerprint },
     },
+  };
+}
+
+export function recordCheckpointWebSearch(
+  session: Session,
+  webSearchConfig: WebSearchConfig | null,
+): void {
+  const base = baseCheckpoint(session);
+  session.checkpoint = {
+    ...base,
+    machineState: session.machine.state,
+    updatedAt: new Date().toISOString(),
+    webSearch: webSearchConfig ? decisionSelected(webSearchConfig) : decisionDeclined(),
+  };
+}
+
+export function recordCheckpointMessaging(
+  session: Session,
+  messagingPlan: SandboxMessagingPlan | null,
+): void {
+  const base = baseCheckpoint(session);
+  session.checkpoint = {
+    ...base,
+    machineState: session.machine.state,
+    updatedAt: new Date().toISOString(),
+    messaging: messagingPlan ? decisionSelected(messagingPlan) : decisionDeclined(),
+  };
+}
+
+export function recordCheckpointResourceProfile(
+  session: Session,
+  resourceProfile: CheckpointResourceProfile | null,
+): void {
+  const base = baseCheckpoint(session);
+  session.checkpoint = {
+    ...base,
+    machineState: session.machine.state,
+    updatedAt: new Date().toISOString(),
+    resourceProfile: resourceProfile ? decisionSelected(resourceProfile) : decisionDeclined(),
+  };
+}
+
+export function recordCheckpointBindings(
+  session: Session,
+  additions: { credentialEnv?: string | null; registeredProviders?: readonly string[] },
+): void {
+  const base = baseCheckpoint(session);
+  const credentialEnvs = additions.credentialEnv
+    ? [...new Set([...base.bindings.credentialEnvs, additions.credentialEnv])]
+    : base.bindings.credentialEnvs;
+  const registeredProviders = additions.registeredProviders
+    ? [...new Set([...base.bindings.registeredProviders, ...additions.registeredProviders])]
+    : base.bindings.registeredProviders;
+  session.checkpoint = {
+    ...base,
+    machineState: session.machine.state,
+    updatedAt: new Date().toISOString(),
+    bindings: { credentialEnvs, registeredProviders },
   };
 }

@@ -19,6 +19,7 @@ import {
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { isDecisionSelected } from "../../../state/onboard-checkpoint-decision";
 import type {
+  CheckpointResourceProfile,
   CheckpointSandboxIdentity,
   OnboardCheckpoint,
 } from "../../../state/onboard-checkpoint-types";
@@ -32,8 +33,12 @@ import type { SandboxEntry } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import {
+  recordCheckpointBindings,
   recordCheckpointEffectGroup,
+  recordCheckpointMessaging,
+  recordCheckpointResourceProfile,
   recordCheckpointSandboxIdentity,
+  recordCheckpointWebSearch,
 } from "../../checkpoint-record";
 import {
   checkpointProvesSandboxStepComplete,
@@ -497,7 +502,7 @@ class SandboxStateFlow<
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
       sandboxStepComplete: state.session?.checkpoint
-        ? checkpointProvesSandboxStepComplete(state.session.checkpoint)
+        ? checkpointProvesSandboxStepComplete(state.session)
         : state.session?.steps?.sandbox?.status === "complete",
       sandboxReuseState,
       inferenceRouteConfigChanged: hasHermesCompatibleAnthropicInferenceRouteDrift({
@@ -813,6 +818,10 @@ class SandboxStateFlow<
     const session = this.deps.updateSession((current) => {
       current.webSearchConfig = webSearchConfig as unknown as Session["webSearchConfig"];
       current.sandboxPromptProgress.webSearch = true;
+      recordCheckpointWebSearch(
+        current,
+        webSearchConfig as unknown as SharedWebSearchConfig | null,
+      );
       return current;
     });
     return { ...state, session, webSearchConfig };
@@ -873,6 +882,7 @@ class SandboxStateFlow<
     const session = this.deps.updateSession((current) => {
       current.messagingPlan = messaging.plan;
       current.sandboxPromptProgress.messaging = true;
+      recordCheckpointMessaging(current, messaging.plan);
       return current;
     });
     return {
@@ -900,6 +910,13 @@ class SandboxStateFlow<
     );
     if (registeredProviders.length > 0) {
       this.deps.note("  ✓ Registered selected credentials with OpenShell for resume.");
+      this.deps.updateSession((current) => {
+        recordCheckpointBindings(current, {
+          credentialEnv: this.options.credentialEnv,
+          registeredProviders,
+        });
+        return current;
+      });
     }
   }
 
@@ -927,6 +944,7 @@ class SandboxStateFlow<
     const session = this.deps.updateSession((current) => {
       current.resourceProfile = resourceProfile as SessionResourceProfile | null;
       current.sandboxPromptProgress.resourceProfile = true;
+      recordCheckpointResourceProfile(current, resourceProfile as CheckpointResourceProfile | null);
       return current;
     });
     return { state: { ...state, session }, resourceProfile };
