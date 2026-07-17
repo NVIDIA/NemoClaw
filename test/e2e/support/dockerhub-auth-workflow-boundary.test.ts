@@ -187,6 +187,27 @@ describe("shared Docker Hub authentication workflow boundary", () => {
     );
   });
 
+  it("rejects Docker Hub credentials mapped without the checkout_sha guard", () => {
+    const errors = validateMutation((workflow) => {
+      const auth = namedStep(workflow.jobs.live, AUTH_STEP_NAME)!;
+      const ungatedPredicate =
+        "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')";
+      auth.env = {
+        DOCKERHUB_AUTH_REQUIRED: `\${{ ${ungatedPredicate} && '1' || '0' }}`,
+        DOCKERHUB_USERNAME: `\${{ ${ungatedPredicate} && secrets.DOCKERHUB_USERNAME || '' }}`,
+        DOCKERHUB_TOKEN: `\${{ ${ungatedPredicate} && secrets.DOCKERHUB_TOKEN || '' }}`,
+      };
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "canonical Docker Hub auth must gate DOCKERHUB_AUTH_REQUIRED on the trusted repository, main ref, and scheduled/manual events",
+        "canonical Docker Hub auth must gate DOCKERHUB_USERNAME on the trusted repository, main ref, and scheduled/manual events",
+        "canonical Docker Hub auth must gate DOCKERHUB_TOKEN on the trusted repository, main ref, and scheduled/manual events",
+      ]),
+    );
+  });
+
   it("rejects uniform unsafe cleanup drift without trusting the live job as canonical", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);

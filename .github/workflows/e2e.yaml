@@ -302,9 +302,9 @@ jobs:
       - &dockerhub-auth
         name: Authenticate to Docker Hub
         env:
-          DOCKERHUB_AUTH_REQUIRED: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
-          DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_USERNAME || '' }}
-          DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_TOKEN || '' }}
+          DOCKERHUB_AUTH_REQUIRED: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && '1' || '0' }}
+          DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_USERNAME || '' }}
+          DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_TOKEN || '' }}
         shell: bash
         run: bash .github/scripts/docker-auth-setup.sh
 

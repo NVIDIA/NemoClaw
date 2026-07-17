@@ -97,7 +97,7 @@ const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
 // The general E2E workflow runs on schedule/manual dispatch. Its event set is
 // intentionally distinct from the reusable image workflow's push/manual boundary.
 const TRUSTED_DOCKER_HUB_PREDICATE =
-  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')";
+  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == ''";
 const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && '1' || '0' }}`;
 const GUARDED_DOCKER_HUB_USERNAME = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_USERNAME || '' }}`;
 const GUARDED_DOCKER_HUB_TOKEN = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`;
