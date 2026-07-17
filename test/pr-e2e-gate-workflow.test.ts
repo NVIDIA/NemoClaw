@@ -26,6 +26,7 @@ type CoordinatorJob = WorkflowJob & {
 
 type TriggeredWorkflow = Omit<Workflow, "jobs"> & {
   name: string;
+  "run-name": string;
   on: {
     workflow_run: { workflows: string[]; types: string[] };
     pull_request_target: { types: string[] };
@@ -304,6 +305,11 @@ describe("PR E2E gate workflow", () => {
     const recordForkSkip = workflow.jobs["record-fork-e2e-skip"];
 
     expect(workflow.name).toBe("E2E / PR Gate Controller");
+    expect(workflow["run-name"]).toContain("E2E Gate PR #{0} head {1} base {2} gate {3}");
+    expect(workflow["run-name"]).toContain("github.event.pull_request.number");
+    expect(workflow["run-name"]).toContain("github.event.pull_request.head.sha");
+    expect(workflow["run-name"]).toContain("github.event.pull_request.base.sha");
+    expect(workflow["run-name"]).toContain("github.event.changes.base != null");
     expect(workflow.on).toEqual({
       workflow_run: {
         workflows: ["CI / Pull Request"],
