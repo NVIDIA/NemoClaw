@@ -16,11 +16,7 @@ import { normalizeCredentialValue, resolveProviderCredential } from "../credenti
 import { getProviderSelectionConfig } from "./config";
 import type { LocalProviderHealthProbeOptions } from "./local";
 import { probeLocalProviderHealth } from "./local";
-import {
-  getChatCompletionsProbeCurlArgs,
-  needsExtendedNvidiaEndpointValidationBudget,
-} from "./onboard-probes";
-import { isDeepSeekV4ProModel, isKimiK26Model } from "./openai-probe-models";
+import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
 import { BUILD_ENDPOINT_URL } from "./provider-models";
 
 export interface ProviderHealthStatus {
@@ -74,7 +70,9 @@ const GEMINI_CHAT_COMPLETIONS_ENDPOINT =
   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 const ANTHROPIC_MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION_HEADER = "anthropic-version: 2023-06-01";
-const ANTHROPIC_HEALTH_MAX_TOKENS = 8;
+const HEALTH_PROBE_MAX_TOKENS = 8;
+const CURL_TIMEOUT_STATUS = 28;
+const NODE_SPAWN_TIMEOUT_STATUS = -110;
 
 function normalizeModel(model: string | null | undefined): string | null {
   if (typeof model !== "string") return null;
@@ -99,21 +97,26 @@ function replaceCurlArgValue(argv: string[], name: string, value: string): strin
   return [name, value, ...next];
 }
 
-function useStatusProbeTiming(argv: string[], preserveModelTiming: boolean): string[] {
-  // Keep status lightweight for ordinary models, but do not erase a model-
-  // specific budget selected by getChatCompletionsProbeCurlArgs. Kimi K2.6,
-  // DeepSeek V4 Pro, and the extended NVIDIA endpoint models can legitimately
-  // take longer than the ordinary validation ceiling to emit their first
-  // token; shortening those probes to five seconds reports supported models
-  // as unreachable. Ordinary models retain the short status budget even when
-  // the separate onboarding-time timeout override is configured.
-  if (preserveModelTiming) return argv;
-
+function useStatusProbeTiming(argv: string[]): string[] {
   return replaceCurlArgValue(
     replaceCurlArgValue(argv, "--connect-timeout", HEALTH_PROBE_CONNECT_TIMEOUT_SECONDS),
     "--max-time",
     HEALTH_PROBE_MAX_TIME_SECONDS,
   );
+}
+
+function capStatusProbeOutput(argv: string[]): string[] {
+  const next = [...argv];
+  const dataIndex = next.indexOf("-d");
+  if (dataIndex < 0 || dataIndex + 1 >= next.length) return next;
+  const payload = parseJsonRecord(next[dataIndex + 1]);
+  if (!payload) return next;
+  if ("max_tokens" in payload) payload.max_tokens = HEALTH_PROBE_MAX_TOKENS;
+  if ("max_completion_tokens" in payload) {
+    payload.max_completion_tokens = HEALTH_PROBE_MAX_TOKENS;
+  }
+  next[dataIndex + 1] = JSON.stringify(payload);
+  return next;
 }
 
 function buildChatCompletionsStatusProbeCurlArgs(
@@ -122,18 +125,15 @@ function buildChatCompletionsStatusProbeCurlArgs(
   authArgs: readonly string[],
   isWsl?: boolean,
 ): string[] {
-  const preserveModelTiming =
-    isDeepSeekV4ProModel(model) ||
-    isKimiK26Model(model) ||
-    needsExtendedNvidiaEndpointValidationBudget(model);
-  const args = useStatusProbeTiming(
-    getChatCompletionsProbeCurlArgs({
-      credentialArgs: [],
-      model,
-      url: endpoint,
-      isWsl,
-    }),
-    preserveModelTiming,
+  const args = capStatusProbeOutput(
+    useStatusProbeTiming(
+      getChatCompletionsProbeCurlArgs({
+        credentialArgs: [],
+        model,
+        url: endpoint,
+        isWsl,
+      }),
+    ),
   );
   const url = args.pop() || endpoint;
   return [...args, ...authArgs, url];
@@ -158,7 +158,7 @@ function buildAnthropicMessagesProbeCurlArgs(
     "-d",
     JSON.stringify({
       model,
-      max_tokens: ANTHROPIC_HEALTH_MAX_TOKENS,
+      max_tokens: HEALTH_PROBE_MAX_TOKENS,
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
     }),
     endpoint,
@@ -187,6 +187,59 @@ function hasProviderErrorEnvelope(payload: Record<string, unknown>): boolean {
   );
 }
 
+function isValidChatContentPart(value: unknown): boolean {
+  if (!isJsonRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "text") return typeof value.text === "string";
+  if (value.type === "refusal") return typeof value.refusal === "string";
+  return false;
+}
+
+function isValidChatContent(value: unknown): boolean {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    (Array.isArray(value) && value.length > 0 && value.every(isValidChatContentPart))
+  );
+}
+
+function isValidChatToolCall(value: unknown): boolean {
+  if (!isJsonRecord(value) || value.type !== "function" || typeof value.id !== "string") {
+    return false;
+  }
+  const fn = value.function;
+  return isJsonRecord(fn) && typeof fn.name === "string" && typeof fn.arguments === "string";
+}
+
+function hasValidChatMessageFields(
+  message: Record<string, unknown>,
+  allowStreamingDelta: boolean,
+): boolean {
+  let recognizedField = false;
+  for (const field of ["content", "reasoning_content", "refusal"] as const) {
+    if (!(field in message)) continue;
+    recognizedField = true;
+    const value = message[field];
+    const valid =
+      field === "content" ? isValidChatContent(value) : value === null || typeof value === "string";
+    if (!valid) return false;
+  }
+  if ("tool_calls" in message) {
+    recognizedField = true;
+    if (
+      !Array.isArray(message.tool_calls) ||
+      message.tool_calls.length === 0 ||
+      !message.tool_calls.every(isValidChatToolCall)
+    ) {
+      return false;
+    }
+  }
+  if (allowStreamingDelta && "role" in message) {
+    recognizedField = true;
+    if (message.role !== "assistant") return false;
+  }
+  return recognizedField;
+}
+
 function hasChatCompletionsChoice(
   payload: Record<string, unknown>,
   allowStreamingDelta: boolean,
@@ -196,17 +249,26 @@ function hasChatCompletionsChoice(
     if (!isJsonRecord(choice)) return false;
     const message = choice.message;
     if (isJsonRecord(message)) {
-      return ["content", "reasoning_content", "refusal", "tool_calls"].some(
-        (field) => field in message,
-      );
+      return hasValidChatMessageFields(message, false);
     }
     const delta = choice.delta;
-    return (
-      allowStreamingDelta &&
-      isJsonRecord(delta) &&
-      ["content", "reasoning_content", "role", "tool_calls"].some((field) => field in delta)
-    );
+    return allowStreamingDelta && isJsonRecord(delta) && hasValidChatMessageFields(delta, true);
   });
+}
+
+function isValidAnthropicContentBlock(value: unknown): boolean {
+  if (!isJsonRecord(value) || typeof value.type !== "string") return false;
+  if (value.type === "text") return typeof value.text === "string";
+  if (value.type === "thinking") {
+    return typeof value.thinking === "string" && typeof value.signature === "string";
+  }
+  if (value.type === "redacted_thinking") return typeof value.data === "string";
+  if (value.type === "tool_use") {
+    return (
+      typeof value.id === "string" && typeof value.name === "string" && isJsonRecord(value.input)
+    );
+  }
+  return false;
 }
 
 function validateChatCompletionsResponse(body: string): ResponseValidation {
@@ -250,10 +312,7 @@ function validateAnthropicMessagesResponse(body: string): ResponseValidation {
   if (!Array.isArray(parsed.content) || parsed.content.length === 0) {
     return { ok: false, reason: "response was not an Anthropic Messages result" };
   }
-  const hasContentBlock = parsed.content.some(
-    (block) =>
-      isJsonRecord(block) && typeof block.type === "string" && block.type.trim().length > 0,
-  );
+  const hasContentBlock = parsed.content.some(isValidAnthropicContentBlock);
   return hasContentBlock
     ? { ok: true }
     : { ok: false, reason: "response was not an Anthropic Messages result" };
@@ -274,6 +333,13 @@ function validateInvocationProbeResult(
     stderr: result.stderr,
     message: `HTTP ${result.httpStatus}: ${validation.reason}`,
   };
+}
+
+function isHealthProbeTimeout(result: CurlProbeResult): boolean {
+  return (
+    !result.ok &&
+    (result.curlStatus === CURL_TIMEOUT_STATUS || result.curlStatus === NODE_SPAWN_TIMEOUT_STATUS)
+  );
 }
 
 function classifyHealthProbeFailureLabel(
@@ -314,6 +380,24 @@ function missingCredentialHealthStatus(
     detail:
       `${providerLabel} health requires ${credentialEnv}; ` +
       "skipping model-invocation probe instead of reporting endpoint reachability as healthy.",
+  };
+}
+
+function timedOutHealthStatus(
+  providerLabel: string,
+  endpoint: string,
+  credentialEnv: string,
+  result: CurlProbeResult,
+): ProviderHealthStatus {
+  return {
+    ok: true,
+    probed: false,
+    providerLabel,
+    endpoint,
+    detail:
+      `${providerLabel} model-invocation probe did not finish within the ` +
+      `${HEALTH_PROBE_MAX_TIME_SECONDS}s status budget; model health was not verified. ` +
+      `Check your network connection or ${credentialEnv}. (${result.message})`,
   };
 }
 
@@ -379,6 +463,9 @@ function probeChatCompletionsProviderHealth(
       authConfig.cleanup();
     }
   })();
+  if (isHealthProbeTimeout(rawResult)) {
+    return timedOutHealthStatus(providerLabel, endpoint, credentialEnv, rawResult);
+  }
   const result = validateInvocationProbeResult(rawResult, validateChatCompletionsResponse);
   const healthy = result.ok;
 
@@ -436,6 +523,9 @@ function probeAnthropicMessagesProviderHealth(
       authConfig.cleanup();
     }
   })();
+  if (isHealthProbeTimeout(rawResult)) {
+    return timedOutHealthStatus(providerLabel, endpoint, credentialEnv, rawResult);
+  }
   const result = validateInvocationProbeResult(rawResult, validateAnthropicMessagesResponse);
   const healthy = result.ok;
 

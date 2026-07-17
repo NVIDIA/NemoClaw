@@ -30,6 +30,17 @@ function curlArgValue(argv: string[], name: string): string | undefined {
   return index >= 0 ? argv[index + 1] : undefined;
 }
 
+function httpTimeout() {
+  return {
+    ok: false as const,
+    httpStatus: 0,
+    curlStatus: 28,
+    body: "",
+    stderr: "Operation timed out",
+    message: "curl failed (exit 28): Operation timed out",
+  };
+}
+
 function httpUnauthorized() {
   return {
     ok: false,
@@ -220,11 +231,11 @@ describe("inference health", () => {
         max_tokens: 8,
         chat_template_kwargs: { thinking: false },
       });
-      expect(curlArgValue(capturedArgv, "--connect-timeout")).toBe("10");
-      expect(curlArgValue(capturedArgv, "--max-time")).toBe("60");
+      expect(curlArgValue(capturedArgv, "--connect-timeout")).toBe("3");
+      expect(curlArgValue(capturedArgv, "--max-time")).toBe("5");
     });
 
-    it("preserves DeepSeek V4 Pro's long streaming budget and validates its SSE shape", () => {
+    it("uses a lightweight DeepSeek V4 Pro status payload and validates its SSE shape", () => {
       let capturedArgv: string[] = [];
       const result = probeRemoteProviderHealth("nvidia-prod", {
         model: "deepseek-ai/deepseek-v4-pro",
@@ -236,10 +247,27 @@ describe("inference health", () => {
       });
 
       expect(result?.ok).toBe(true);
-      expect(curlArgValue(capturedArgv, "--connect-timeout")).toBe("20");
-      expect(curlArgValue(capturedArgv, "--max-time")).toBe("120");
+      expect(curlArgValue(capturedArgv, "--connect-timeout")).toBe("3");
+      expect(curlArgValue(capturedArgv, "--max-time")).toBe("5");
       const payload = JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1]);
-      expect(payload.stream).toBe(true);
+      expect(payload).toMatchObject({ max_tokens: 8, stream: true });
+    });
+
+    it.each([
+      "deepseek-ai/deepseek-v4-pro",
+      "qwen/qwen3.5-397b-a17b",
+      "deepseek-ai/deepseek-v4-flash",
+    ])("reports the short status timeout as unverified for slow model %s", (model) => {
+      const result = probeRemoteProviderHealth("nvidia-prod", {
+        model,
+        getCredentialImpl: () => "nvapi-test",
+        runCurlProbeImpl: () => httpTimeout(),
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(false);
+      expect(result?.failureLabel).toBeUndefined();
+      expect(result?.detail).toContain("model health was not verified");
     });
 
     it("reports a malformed HTTP 200 body as unhealthy", () => {
@@ -247,6 +275,27 @@ describe("inference health", () => {
         model: "gpt-4o-mini",
         getCredentialImpl: () => "sk-test-secret",
         runCurlProbeImpl: () => httpOk("<html>upstream proxy</html>"),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("not a Chat Completions result");
+    });
+
+    it.each([
+      ["numeric content", '{"choices":[{"message":{"content":123}}]}'],
+      ["numeric refusal", '{"choices":[{"message":{"refusal":123}}]}'],
+      [
+        "malformed tool call",
+        '{"choices":[{"message":{"tool_calls":[{"type":"function","function":{"name":"probe","arguments":7}}]}}]}',
+      ],
+      ["numeric streaming delta", 'data: {"choices":[{"delta":{"content":123}}]}\n'],
+    ])("rejects a Chat Completions response with %s", (_description, body) => {
+      const result = probeRemoteProviderHealth("openai-api", {
+        model: "gpt-4o-mini",
+        getCredentialImpl: () => "sk-test-secret",
+        runCurlProbeImpl: () => httpOk(body),
       });
 
       expect(result?.ok).toBe(false);
@@ -266,6 +315,21 @@ describe("inference health", () => {
       expect(result?.probed).toBe(true);
       expect(result?.failureLabel).toBe("unhealthy");
       expect(result?.detail).toContain("error envelope");
+    });
+
+    it.each([
+      ["gemini-api", "gemini-2.5-flash", "{}"],
+      ["nvidia-prod", "meta/llama-3.3-70b-instruct", '{"error":{"message":"model unavailable"}}'],
+    ])("rejects malformed HTTP 200 responses from %s", (provider, model, body) => {
+      const result = probeRemoteProviderHealth(provider, {
+        model,
+        getCredentialImpl: () => "test-secret",
+        runCurlProbeImpl: () => httpOk(body),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBe("unhealthy");
     });
 
     it("reports unauthorized (not healthy) on HTTP 401", () => {
@@ -422,6 +486,36 @@ describe("inference health", () => {
       expect(result?.ok).toBe(false);
       expect(result?.failureLabel).toBe("unhealthy");
       expect(result?.detail).toContain("error envelope");
+    });
+
+    it.each([
+      ["an unknown block type", '{"content":[{"type":"bogus","text":"OK"}]}'],
+      ["numeric text", '{"content":[{"type":"text","text":123}]}'],
+      ["incomplete thinking", '{"content":[{"type":"thinking","thinking":"OK"}]}'],
+    ])("rejects an Anthropic response with %s", (_description, body) => {
+      const result = probeRemoteProviderHealth("anthropic-prod", {
+        model: "claude-sonnet-4-6",
+        getCredentialImpl: () => "sk-ant-test-secret",
+        runCurlProbeImpl: () => httpOk(body),
+      });
+
+      expect(result?.ok).toBe(false);
+      expect(result?.probed).toBe(true);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("not an Anthropic Messages result");
+    });
+
+    it("reports the short status timeout as unverified", () => {
+      const result = probeRemoteProviderHealth("anthropic-prod", {
+        model: "claude-sonnet-4-6",
+        getCredentialImpl: () => "sk-ant-test-secret",
+        runCurlProbeImpl: () => httpTimeout(),
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(false);
+      expect(result?.failureLabel).toBeUndefined();
+      expect(result?.detail).toContain("model health was not verified");
     });
   });
 
