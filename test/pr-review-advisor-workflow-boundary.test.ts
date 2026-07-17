@@ -252,6 +252,37 @@ function advisorAnalysisInput(overrides: Record<string, string> = {}) {
   };
 }
 
+function throwReadTextError(error: Error): never {
+  throw error;
+}
+
+function readTextBySuffix(
+  entries: ReadonlyArray<readonly [suffix: string, text: string | Error]>,
+): (file: string) => string {
+  return (file: string): string => {
+    const text = entries.find(([suffix]) => file.endsWith(suffix))?.[1];
+    return text instanceof Error
+      ? throwReadTextError(text)
+      : (text ?? throwReadTextError(new Error(`unexpected read: ${file}`)));
+  };
+}
+
+function supportedAdvisorReadText(input: ReturnType<typeof advisorAnalysisInput>) {
+  return readTextBySuffix([
+    ["session.mts", input.model],
+    ["analyze.mts", "PR_REVIEW_ADVISOR_MODEL"],
+    ["comment.mts", "PR_REVIEW_ADVISOR_COMMENT_MARKER"],
+  ]);
+}
+
+function missingSessionReadText() {
+  return readTextBySuffix([
+    ["session.mts", new Error("missing session.mts")],
+    ["analyze.mts", "PR_REVIEW_ADVISOR_MODEL"],
+    ["comment.mts", "PR_REVIEW_ADVISOR_COMMENT_MARKER"],
+  ]);
+}
+
 describe("PR review advisor workflow boundary", () => {
   it("keeps the target-event workflow inside the split privilege boundary", () => {
     expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
@@ -396,29 +427,31 @@ describe("PR review advisor workflow boundary", () => {
     );
   });
 
-  it("removes worktree symlinks without touching their targets", () => {
-    if (!CAN_CREATE_SYMLINKS || !CAN_RUN_BASH) return;
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-symlinks-"));
-    const workdir = path.join(tmp, "workdir");
-    const outside = path.join(tmp, "outside.txt");
-    fs.mkdirSync(workdir);
-    fs.writeFileSync(outside, "runner state");
-    fs.writeFileSync(path.join(workdir, "regular.txt"), "repository data");
-    fs.symlinkSync(outside, path.join(workdir, "escape"));
-    try {
-      const result = spawnSync(
-        "/bin/bash",
-        ["-c", workflowStepScript("review", "Remove symlinks from analysis workspace")],
-        { encoding: "utf8", env: { ...process.env, ADVISOR_WORKDIR: workdir } },
-      );
-      expect(result.status, result.stderr).toBe(0);
-      expect(fs.existsSync(path.join(workdir, "escape"))).toBe(false);
-      expect(fs.readFileSync(outside, "utf8")).toBe("runner state");
-      expect(fs.readFileSync(path.join(workdir, "regular.txt"), "utf8")).toBe("repository data");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
+  it.skipIf(!CAN_CREATE_SYMLINKS || !CAN_RUN_BASH)(
+    "removes worktree symlinks without touching their targets",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-symlinks-"));
+      const workdir = path.join(tmp, "workdir");
+      const outside = path.join(tmp, "outside.txt");
+      fs.mkdirSync(workdir);
+      fs.writeFileSync(outside, "runner state");
+      fs.writeFileSync(path.join(workdir, "regular.txt"), "repository data");
+      fs.symlinkSync(outside, path.join(workdir, "escape"));
+      try {
+        const result = spawnSync(
+          "/bin/bash",
+          ["-c", workflowStepScript("review", "Remove symlinks from analysis workspace")],
+          { encoding: "utf8", env: { ...process.env, ADVISOR_WORKDIR: workdir } },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        expect(fs.existsSync(path.join(workdir, "escape"))).toBe(false);
+        expect(fs.readFileSync(outside, "utf8")).toBe("runner state");
+        expect(fs.readFileSync(path.join(workdir, "regular.txt"), "utf8")).toBe("repository data");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   // source-shape-contract: security -- Symlink cleanup must remove only intended links after every untrusted workspace selection and before model credentials
   it("rejects deleting or weakening analysis-workspace symlink removal", () => {
@@ -519,8 +552,7 @@ describe("PR review advisor workflow boundary", () => {
     }
   });
 
-  it("installs and verifies the pinned search tools", () => {
-    if (!CAN_RUN_BASH) return;
+  it.skipIf(!CAN_RUN_BASH)("installs and verifies the pinned search tools", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-install-"));
     const binDir = path.join(tmp, "bin");
     const callLog = path.join(tmp, "calls.log");
@@ -677,12 +709,7 @@ process.exitCode = valid ? 0 : 1;`,
 
     runPrReviewAdvisorAnalysis(input, {
       fileExists: (file) => file === analyzePath,
-      readText: (file) => {
-        if (file.endsWith("session.mts")) return input.model;
-        if (file.endsWith("analyze.mts")) return "PR_REVIEW_ADVISOR_MODEL";
-        if (file.endsWith("comment.mts")) return "PR_REVIEW_ADVISOR_COMMENT_MARKER";
-        throw new Error(`unexpected read: ${file}`);
-      },
+      readText: supportedAdvisorReadText(input),
       runNode: (script, args, env, cwd) => {
         runCalls.push({ script, args, env, cwd });
         return 0;
@@ -719,12 +746,7 @@ process.exitCode = valid ? 0 : 1;`,
       fs.writeFileSync(envFile, "");
       runPrReviewAdvisorAnalysis(input, {
         fileExists: (file) => file === analyzePath,
-        readText: (file) => {
-          if (file.endsWith("session.mts")) return input.model;
-          if (file.endsWith("analyze.mts")) return "PR_REVIEW_ADVISOR_MODEL";
-          if (file.endsWith("comment.mts")) return "PR_REVIEW_ADVISOR_COMMENT_MARKER";
-          throw new Error(`unexpected read: ${file}`);
-        },
+        readText: supportedAdvisorReadText(input),
         runNode: () => 0,
       });
 
@@ -733,12 +755,7 @@ process.exitCode = valid ? 0 : 1;`,
       expect(() =>
         runPrReviewAdvisorAnalysis(input, {
           fileExists: (file) => file === analyzePath,
-          readText: (file) => {
-            if (file.endsWith("session.mts")) return input.model;
-            if (file.endsWith("analyze.mts")) return "PR_REVIEW_ADVISOR_MODEL";
-            if (file.endsWith("comment.mts")) return "PR_REVIEW_ADVISOR_COMMENT_MARKER";
-            throw new Error(`unexpected read: ${file}`);
-          },
+          readText: supportedAdvisorReadText(input),
           runNode: () => 0,
         }),
       ).toThrow();
@@ -755,12 +772,7 @@ process.exitCode = valid ? 0 : 1;`,
     expect(() =>
       runPrReviewAdvisorAnalysis(input, {
         fileExists: (file) => file === analyzePath,
-        readText: (file) => {
-          if (file.endsWith("session.mts")) return input.model;
-          if (file.endsWith("analyze.mts")) return "PR_REVIEW_ADVISOR_MODEL";
-          if (file.endsWith("comment.mts")) return "PR_REVIEW_ADVISOR_COMMENT_MARKER";
-          throw new Error(`unexpected read: ${file}`);
-        },
+        readText: supportedAdvisorReadText(input),
         runNode: () => 17,
       }),
     ).toThrow("analyze.mts exited with status 17");
@@ -816,12 +828,7 @@ process.exitCode = valid ? 0 : 1;`,
 
     runPrReviewAdvisorAnalysis(input, {
       fileExists: (file) => file === analyzePath,
-      readText: (file) => {
-        if (file.endsWith("session.mts")) throw new Error("missing session.mts");
-        if (file.endsWith("analyze.mts")) return "PR_REVIEW_ADVISOR_MODEL";
-        if (file.endsWith("comment.mts")) return "PR_REVIEW_ADVISOR_COMMENT_MARKER";
-        throw new Error(`unexpected read: ${file}`);
-      },
+      readText: missingSessionReadText(),
       runNode: (_script, _args, env) => {
         runCalls.push({ env });
         return 0;

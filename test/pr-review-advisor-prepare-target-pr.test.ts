@@ -33,15 +33,13 @@ type GitCall = string[];
 function harness(shas: { base?: string; head?: string } = {}) {
   const gitCalls: GitCall[] = [];
   const env: Array<[string, string]> = [];
+  const commandOutputs = new Map([
+    [["rev-parse", "refs/remotes/target/base"].join("\0"), shas.base ?? ""],
+    [["rev-parse", "HEAD"].join("\0"), shas.head ?? ""],
+  ]);
   const runGit = (args: string[]): string => {
     gitCalls.push(args);
-    if (args.includes("rev-parse") && args.includes("refs/remotes/target/base")) {
-      return shas.base ?? "";
-    }
-    if (args.includes("rev-parse") && args.includes("HEAD")) {
-      return shas.head ?? "";
-    }
-    return "";
+    return commandOutputs.get(args.slice(-2).join("\0")) ?? "";
   };
   const appendEnv = (key: string, value: string): void => {
     env.push([key, value]);
