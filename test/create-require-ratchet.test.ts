@@ -258,6 +258,70 @@ describe("base-trusted createRequire ratchet", () => {
     ).toBe(false);
   });
 
+  it("resolves node-module object aliases without trusting shadowed or cyclic decoys (#7056)", () => {
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        [
+          'const moduleObject = await import("node:module");',
+          'const { "createRequire": load } = moduleObject;',
+          "export const requireFromHere = load(import.meta.url);",
+        ].join("\n"),
+        "dynamic-alias.ts",
+      ),
+    ).toBe(true);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        [
+          'import * as nodeModule from "node:module";',
+          "const moduleObject = nodeModule;",
+          'const { "createRequire": load } = moduleObject;',
+          "export const requireFromHere = load(import.meta.url);",
+        ].join("\n"),
+        "namespace-alias.ts",
+      ),
+    ).toBe(true);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        [
+          'import * as nodeModule from "node:module";',
+          "function inspect(nodeModule: object) {",
+          "  const moduleObject = nodeModule;",
+          '  const { "createRequire": load } = moduleObject;',
+          "  return load;",
+          "}",
+        ].join("\n"),
+        "shadowed-alias.ts",
+      ),
+    ).toBe(false);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        [
+          'const fixture = { "createRequire": () => undefined };',
+          "const moduleObject = fixture;",
+          'const { "createRequire": load } = moduleObject;',
+          "load();",
+        ].join("\n"),
+        "unrelated-alias.ts",
+      ),
+    ).toBe(false);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        [
+          "const first = second;",
+          "const second = first;",
+          'const { "createRequire": load } = first;',
+          "load();",
+        ].join("\n"),
+        "cyclic-alias.ts",
+      ),
+    ).toBe(false);
+  });
+
   it("fails closed on symbolic links under scoped scan roots (#7056)", () => {
     const root = temporaryRepo();
     writeFixture(root, "payload.ts", "createRequire(import.meta.url);");
@@ -449,7 +513,7 @@ describe("base-trusted createRequire ratchet", () => {
     expect(failing.stderr).toContain(`- CLI_CREATE_REQUIRE_FILES: ${expandedPath}`);
   });
 
-  it("executes the committed entrypoint against quoted node-module bindings (#7056)", () => {
+  it("executes the committed entrypoint against node-module object aliases (#7056)", () => {
     const root = temporaryRepo();
     const repoRoot = path.join(root, "checkout");
     const entrypoint = copyTrustedEntrypoint(path.join(root, "trusted-action"));
@@ -488,10 +552,20 @@ describe("base-trusted createRequire ratchet", () => {
 
     writeFixture(
       repoRoot,
-      "src/lib/node-module-boundary.ts",
+      "src/lib/dynamic-alias-boundary.ts",
+      [
+        'const moduleObject = await import("node:module");',
+        'const { "createRequire": load } = moduleObject;',
+        "export const requireFromHere = load(import.meta.url);",
+      ].join("\n"),
+    );
+    writeFixture(
+      repoRoot,
+      "src/lib/namespace-alias-boundary.ts",
       [
         'import * as nodeModule from "node:module";',
-        'const { "createRequire": load } = nodeModule;',
+        "const moduleObject = nodeModule;",
+        'const { "createRequire": load } = moduleObject;',
         "export const requireFromHere = load(import.meta.url);",
       ].join("\n"),
     );
@@ -500,7 +574,8 @@ describe("base-trusted createRequire ratchet", () => {
     expect(failing.stderr).toContain(
       "Production TypeScript must not introduce createRequire boundaries",
     );
-    expect(failing.stderr).toContain("- src/lib/node-module-boundary.ts");
+    expect(failing.stderr).toContain("- src/lib/dynamic-alias-boundary.ts");
+    expect(failing.stderr).toContain("- src/lib/namespace-alias-boundary.ts");
     expect(failing.stderr).not.toContain("src/lib/fixture-property.ts");
   });
 

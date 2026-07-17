@@ -277,33 +277,53 @@ function isNodeModuleSpecifier(ts: TypeScriptApi, node: TypeScript.Node | undefi
   return Boolean(node && ts.isStringLiteralLike(node) && NODE_MODULE_SPECIFIERS.has(node.text));
 }
 
-function collectNodeModuleObjectBindings(
+function createSingleFileTypeChecker(
   ts: TypeScriptApi,
   sourceFile: TypeScript.SourceFile,
-): Set<string> {
-  const bindings = new Set<string>();
-  for (const statement of sourceFile.statements) {
-    if (ts.isImportDeclaration(statement) && isNodeModuleSpecifier(ts, statement.moduleSpecifier)) {
-      const importClause = statement.importClause;
-      if (importClause?.name) bindings.add(importClause.name.text);
-      if (importClause?.namedBindings && ts.isNamespaceImport(importClause.namedBindings)) {
-        bindings.add(importClause.namedBindings.name.text);
-      }
-    } else if (
-      ts.isImportEqualsDeclaration(statement) &&
-      ts.isExternalModuleReference(statement.moduleReference) &&
-      isNodeModuleSpecifier(ts, statement.moduleReference.expression)
-    ) {
-      bindings.add(statement.name.text);
-    }
+): TypeScript.TypeChecker {
+  const fileName = sourceFile.fileName;
+  const host: TypeScript.CompilerHost = {
+    fileExists: (candidate) => candidate === fileName,
+    getCanonicalFileName: (candidate) => candidate,
+    getCurrentDirectory: () => path.dirname(fileName),
+    getDefaultLibFileName: () => "",
+    getNewLine: () => "\n",
+    getSourceFile: (candidate) => (candidate === fileName ? sourceFile : undefined),
+    readFile: (candidate) => (candidate === fileName ? sourceFile.text : undefined),
+    useCaseSensitiveFileNames: () => true,
+    writeFile: () => undefined,
+  };
+  return ts
+    .createProgram(
+      [fileName],
+      { noLib: true, noResolve: true, target: ts.ScriptTarget.Latest },
+      host,
+    )
+    .getTypeChecker();
+}
+
+function isNodeModuleObjectDeclaration(
+  ts: TypeScriptApi,
+  declaration: TypeScript.Declaration,
+): boolean {
+  if (ts.isNamespaceImport(declaration)) {
+    return isNodeModuleSpecifier(ts, declaration.parent.parent.moduleSpecifier);
   }
-  return bindings;
+  if (ts.isImportClause(declaration)) {
+    return isNodeModuleSpecifier(ts, declaration.parent.moduleSpecifier);
+  }
+  return (
+    ts.isImportEqualsDeclaration(declaration) &&
+    ts.isExternalModuleReference(declaration.moduleReference) &&
+    isNodeModuleSpecifier(ts, declaration.moduleReference.expression)
+  );
 }
 
 function isNodeModuleObjectExpression(
   ts: TypeScriptApi,
   expression: TypeScript.Expression,
-  nodeModuleBindings: ReadonlySet<string>,
+  checker: TypeScript.TypeChecker,
+  seenSymbols: ReadonlySet<TypeScript.Symbol> = new Set(),
 ): boolean {
   let candidate = expression;
   while (
@@ -315,7 +335,24 @@ function isNodeModuleObjectExpression(
   ) {
     candidate = candidate.expression;
   }
-  if (ts.isIdentifier(candidate)) return nodeModuleBindings.has(candidate.text);
+  if (ts.isIdentifier(candidate)) {
+    const symbol = checker.getSymbolAtLocation(candidate);
+    if (!symbol || seenSymbols.has(symbol)) return false;
+    const nextSeen = new Set(seenSymbols).add(symbol);
+    return (symbol.declarations ?? []).some((declaration) => {
+      if (isNodeModuleObjectDeclaration(ts, declaration)) return true;
+      return (
+        ts.isVariableDeclaration(declaration) &&
+        ts.isIdentifier(declaration.name) &&
+        Boolean(
+          declaration.initializer &&
+            ts.isVariableDeclarationList(declaration.parent) &&
+            (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+            isNodeModuleObjectExpression(ts, declaration.initializer, checker, nextSeen),
+        )
+      );
+    });
+  }
   if (!ts.isCallExpression(candidate) || candidate.arguments.length !== 1) return false;
   if (!isNodeModuleSpecifier(ts, candidate.arguments[0])) return false;
   return (
@@ -347,7 +384,7 @@ function isNodeModuleStringNamedImport(ts: TypeScriptApi, node: TypeScript.Node)
 function isNodeModuleStringBinding(
   ts: TypeScriptApi,
   node: TypeScript.Node,
-  nodeModuleBindings: ReadonlySet<string>,
+  checker: TypeScript.TypeChecker,
 ): boolean {
   if (
     !ts.isBindingElement(node) ||
@@ -362,8 +399,7 @@ function isNodeModuleStringBinding(
   return (
     ts.isVariableDeclaration(declaration) &&
     Boolean(
-      declaration.initializer &&
-        isNodeModuleObjectExpression(ts, declaration.initializer, nodeModuleBindings),
+      declaration.initializer && isNodeModuleObjectExpression(ts, declaration.initializer, checker),
     )
   );
 }
@@ -374,7 +410,7 @@ export function containsCreateRequireIdentifier(
   fileName: string,
 ): boolean {
   const sourceFile = parseSourceFile(ts, sourceText, fileName);
-  const nodeModuleBindings = collectNodeModuleObjectBindings(ts, sourceFile);
+  const checker = createSingleFileTypeChecker(ts, sourceFile);
   let found = false;
 
   function visit(node: TypeScript.Node): void {
@@ -383,7 +419,7 @@ export function containsCreateRequireIdentifier(
       (ts.isIdentifier(node) && node.text === "createRequire") ||
       isComputedCreateRequireName(ts, node) ||
       isNodeModuleStringNamedImport(ts, node) ||
-      isNodeModuleStringBinding(ts, node, nodeModuleBindings)
+      isNodeModuleStringBinding(ts, node, checker)
     ) {
       found = true;
       return;
