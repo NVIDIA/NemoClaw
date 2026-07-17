@@ -242,18 +242,10 @@ export function ensureSandboxPortForwardForPort(
       stdio: "ignore",
     },
   );
-  // A non-zero `forward start` exit is not authoritative: OpenShell exits
-  // non-zero when the port is already forwarded, which is a benign no-op for
-  // recovery. Trust the live forward list, not the exit code (mirrors
-  // src/lib/onboard/forward-start.ts). Re-probe on failure: an already-active,
-  // target-owned forward is accepted as success; a genuinely absent forward
-  // still fails here, so a real start failure is not masked (#7085).
-  if (startResult.status !== 0) {
-    if (isSandboxPortForwardHealthy(sandboxName, port, expectedBind) === true) {
-      return acceptSuccessfulForward();
-    }
-    return false;
-  }
+  // OpenShell exits non-zero when the port is already forwarded. If its local
+  // listener is still reachable, settle against the authoritative forward list
+  // below; otherwise preserve the fast failure for a genuinely absent forward.
+  if (startResult.status !== 0 && !isLocalForwardReachable(port)) return false;
 
   // `forward start --background` can return before its authoritative list
   // entry becomes visible. Poll for the exact live sandbox+port owner instead
