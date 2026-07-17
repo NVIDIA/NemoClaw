@@ -15,7 +15,7 @@ export type DoctorInferenceRoute = {
 type DoctorInferenceDeps = {
   probeProviderHealthImpl?: typeof probeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: typeof probeSandboxInferenceGatewayHealth;
-  /** True when the agent has declared a self_report endpoint; suppresses the "not checked" leg. */
+  /** True when the agent's manifest declares a self_report endpoint; suppresses the "not checked" leg. */
   agentHasSelfReport?: boolean;
 };
 
