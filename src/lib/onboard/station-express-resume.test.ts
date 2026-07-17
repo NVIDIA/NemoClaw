@@ -595,12 +595,13 @@ describe("DGX Station Express resume (#7048)", () => {
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
     const originalRename = fs.renameSync.bind(fs);
-    const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
-      if (rename.mock.calls.length === 1) {
+    const rename = vi
+      .spyOn(fs, "renameSync")
+      .mockImplementationOnce((from, to) => {
         fs.rmdirSync(path.dirname(String(to)));
-      }
-      originalRename(from, to);
-    });
+        originalRename(from, to);
+      })
+      .mockImplementation((from, to) => originalRename(from, to));
 
     try {
       expect(() =>

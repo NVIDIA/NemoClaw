@@ -10,6 +10,19 @@ import { describe, expect, it } from "vitest";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 
+function writePendingStationReceiptRetirement(tmp: string): void {
+  fs.writeFileSync(
+    path.join(tmp, ".nemoclaw", "onboard-session.json"),
+    JSON.stringify({
+      version: 1,
+      status: "complete",
+      resumable: false,
+      stationExpressIntent: null,
+      stationExpressReceiptRetirement: "0123456789abcdef0123456789abcdef",
+    }),
+  );
+}
+
 function runRecoveryBeforeOnboard(
   preexistingCount: number,
   recoveryExitCode: number,
@@ -17,7 +30,7 @@ function runRecoveryBeforeOnboard(
     registryJson?: string;
     singleSession?: boolean;
     stationResumeLoaded?: boolean;
-    stationRetirementPending?: boolean;
+    prepareState?: (tmp: string) => void;
   } = {},
 ): { status: number | null; calls: string[]; output: string } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-recovery-order-"));
@@ -30,18 +43,7 @@ function runRecoveryBeforeOnboard(
     path.join(tmp, ".nemoclaw", "sandboxes.json"),
     options.registryJson ?? '{"sandboxes":{}}',
   );
-  if (options.stationRetirementPending) {
-    fs.writeFileSync(
-      path.join(tmp, ".nemoclaw", "onboard-session.json"),
-      JSON.stringify({
-        version: 1,
-        status: "complete",
-        resumable: false,
-        stationExpressIntent: null,
-        stationExpressReceiptRetirement: "0123456789abcdef0123456789abcdef",
-      }),
-    );
-  }
+  options.prepareState?.(tmp);
   fs.writeFileSync(path.join(payloadDir, "setup-jetson.sh"), "#!/usr/bin/env bash\nexit 0\n", {
     mode: 0o755,
   });
@@ -123,7 +125,10 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
 
   it.each([
     ["a loaded Station receipt", { stationResumeLoaded: true }],
-    ["a pending Station receipt retirement", { stationRetirementPending: true }],
+    [
+      "a pending Station receipt retirement",
+      { prepareState: writePendingStationReceiptRetirement },
+    ],
   ])("invokes the CLI reconciler after recovery when there is %s", (_name, options) => {
     const result = runRecoveryBeforeOnboard(2, 0, options);
 
