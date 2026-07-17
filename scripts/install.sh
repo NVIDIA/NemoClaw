@@ -2930,9 +2930,8 @@ is_wsl_host() {
 # prompt; only platforms with a known sensible default are offered.
 is_station_gb300_product() {
   local product=${1:-}
-  [[ "$product" =~ (^|[^[:alnum:]])[Pp]3830([^[:alnum:]]|$) ]] \
-    || [[ "$product" == *[Ss][Tt][Aa][Tt][Ii][Oo][Nn]* &&
-      "$product" == *[Gg][Bb]300* ]]
+  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
+    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
 }
 
 classify_dgx_station_release() {

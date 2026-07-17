@@ -5,9 +5,12 @@
 set -Eeuo pipefail
 umask 077
 
-readonly SCRIPT_VERSION="2026-07-17.2"
+readonly SCRIPT_VERSION="2026-07-17.3"
 readonly REBOOT_REQUIRED_EXIT=10
 readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
+readonly GB300_PCI_VENDOR="0x10de"
+readonly GB300_PCI_DEVICE="0x31c2"
+readonly GB300_PCI_CLASS_PREFIX="0x03"
 STATION_HOST_PROFILE="generic-ubuntu"
 # The qualified generic image currently ships this OEM telemetry bootcmd. Its
 # exception disappears automatically when the file changes or the bootcmd
@@ -53,6 +56,18 @@ readonly -a PACKAGE_SPECS=(
 
 dgx_station_release_path() {
   printf '%s' /etc/dgx-release
+}
+
+station_os_release_path() {
+  printf '%s' /etc/os-release
+}
+
+station_product_name_path() {
+  printf '%s' /sys/class/dmi/id/product_name
+}
+
+station_pci_devices_path() {
+  printf '%s' /sys/bus/pci/devices
 }
 
 dgx_station_release_file_is_safe() {
@@ -128,14 +143,10 @@ dgx_station_release_value() {
 }
 
 dgx_station_release_contents_are_supported() {
-  local path=$1 pretty="" version platform
+  local path=$1 pretty version platform
   dgx_station_release_schema_is_valid "$path" || return 1
-  if pretty="$(dgx_station_release_value "$path" DGX_OTA_PRETTY_NAME)"; then
-    [[ "$pretty" == "DGX OS" ]] || return 1
-  else
-    pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
-    [[ "$pretty" == "NVIDIA DGX "* ]] || return 1
-  fi
+  pretty="$(dgx_station_release_value "$path" DGX_OTA_PRETTY_NAME)" || return 1
+  [[ "$pretty" == "DGX OS" ]] || return 1
   version="$(dgx_station_release_value "$path" DGX_OTA_VERSION)" || return 1
   platform="$(dgx_station_release_value "$path" DGX_PLATFORM)" || return 1
 
@@ -212,9 +223,25 @@ is_valid_mode() {
 
 is_station_gb300_product() {
   local product=${1:-}
-  [[ "$product" =~ (^|[^[:alnum:]])[Pp]3830([^[:alnum:]]|$) ]] \
-    || [[ "$product" == *[Ss][Tt][Aa][Tt][Ii][Oo][Nn]* &&
-      "$product" == *[Gg][Bb]300* ]]
+  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
+    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
+}
+
+station_has_exact_gb300_pci_gpu() {
+  local pci_root=${1:-/sys/bus/pci/devices} pci_path vendor device class
+  for pci_path in "$pci_root"/*; do
+    [[ -d "$pci_path" &&
+      -r "$pci_path/vendor" &&
+      -r "$pci_path/device" &&
+      -r "$pci_path/class" ]] || continue
+    IFS= read -r vendor <"$pci_path/vendor" || continue
+    IFS= read -r device <"$pci_path/device" || continue
+    IFS= read -r class <"$pci_path/class" || continue
+    [[ "$vendor" == "$GB300_PCI_VENDOR" &&
+      "$device" == "$GB300_PCI_DEVICE" &&
+      "$class" == "${GB300_PCI_CLASS_PREFIX}"* ]] && return 0
+  done
+  return 1
 }
 
 is_preparation_critical_unit() {
@@ -377,21 +404,28 @@ file_mode() {
 }
 
 check_platform() {
-  local arch product release_path release_state
+  local arch os_release_path product product_name_path release_path release_state
   arch="$(uname -m)"
   [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] || fatal "Expected ARM64, found ${arch}"
 
-  [[ -r /etc/os-release ]] || fatal "/etc/os-release is unavailable"
-  # shellcheck disable=SC1091
-  source /etc/os-release
+  os_release_path="$(station_os_release_path)"
+  [[ -r "$os_release_path" ]] || fatal "/etc/os-release is unavailable"
+  # shellcheck disable=SC1090
+  source "$os_release_path"
   [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]] \
     || fatal "Expected Ubuntu 24.04, found ${PRETTY_NAME:-unknown}"
-  product="$(</sys/class/dmi/id/product_name)"
+  product_name_path="$(station_product_name_path)"
+  [[ -r "$product_name_path" ]] || fatal "DGX Station product identity is unavailable"
+  product="$(<"$product_name_path")"
   is_station_gb300_product "$product" || fatal "Expected DGX Station GB300 DMI, found ${product}"
   release_path="$(dgx_station_release_path)"
   release_state="$(dgx_station_release_state "$release_path")"
   case "$release_state" in
-    generic-ubuntu) STATION_HOST_PROFILE="generic-ubuntu" ;;
+    generic-ubuntu)
+      station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
+        || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:${GB300_PCI_DEVICE#0x}) before generic Ubuntu preparation"
+      STATION_HOST_PROFILE="generic-ubuntu"
+      ;;
     supported-dgx-os) STATION_HOST_PROFILE="stock-dgx-os" ;;
     *)
       fatal "This DGX Station OS image is outside the validated boundary; use generic Ubuntu 24.04 ARM64 or stock DGX OS 7.2.0, 7.4.0, or 7.5.0 on Station GB300"

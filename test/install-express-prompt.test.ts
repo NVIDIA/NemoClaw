@@ -213,11 +213,15 @@ detect_express_platform
     return detectExpressPlatform(productName, releasePath);
   }
 
-  function stockDgxRelease(version: string, platform = "DGX Server for GALAXY-GB300") {
+  function stockDgxRelease(
+    version: string,
+    platform = "DGX Server for GALAXY-GB300",
+    otaPrettyName: string | null = "DGX OS",
+  ) {
     return [
       'DGX_NAME="DGX Server"',
       'DGX_PRETTY_NAME="NVIDIA DGX Server"',
-      'DGX_OTA_PRETTY_NAME="DGX OS"',
+      ...(otaPrettyName === null ? [] : [`DGX_OTA_PRETTY_NAME="${otaPrettyName}"`]),
       `DGX_OTA_VERSION="${version}"`,
       'DGX_OTA_DATE="Mon Jul 13 21:29:13 UTC 2026"',
       `DGX_PLATFORM="${platform}"`,
@@ -677,9 +681,8 @@ detect_express_platform
   });
 
   it.each([
-    "P3830",
-    "NVIDIA P3830 Rev A",
     "Dell Pro Max with Station GB300",
+    "NVIDIA DGX Station GB300",
   ])("recognizes supported Station GB300 firmware as DGX Station: %s", (productName) => {
     const result = detectExpressPlatformForProductName(productName);
 
@@ -700,6 +703,8 @@ detect_express_platform
   it.each([
     ["unreviewed version", stockDgxRelease("7.6.0")],
     ["wrong DGX platform", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB200")],
+    ["missing DGX_OTA_PRETTY_NAME", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", null)],
+    ["BaseOS identity", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", "NVIDIA BaseOS")],
     [
       "duplicate non-history field",
       `${stockDgxRelease("7.5.0")}DGX_PLATFORM="DGX Server for GALAXY-GB300"\n`,
@@ -712,17 +717,19 @@ detect_express_platform
     expect(result.stdout).toBe("Unsupported DGX Station OS");
   });
 
-  it("rejects partial and unsupported Station product identifiers", () => {
-    for (const productName of [
-      "Acme XP3830 Workstation",
-      "Dell Pro Max with Station GB200",
-      "Dell Pro Max with GB300",
-    ]) {
-      const result = detectExpressPlatformForProductName(productName);
+  it.each([
+    ["P3830", ""],
+    ["NVIDIA P3830 Rev A", ""],
+    ["Acme XP3830 Workstation", ""],
+    ["Acme Workstation GB300", ""],
+    ["NVIDIA DGX Station GB300X", "Unsupported DGX Station generation"],
+    ["Dell Pro Max with Station GB200", ""],
+    ["Dell Pro Max with GB300", ""],
+  ])("rejects partial or unsupported Station product identifier: %s (#7103)", (productName, expected) => {
+    const result = detectExpressPlatformForProductName(productName);
 
-      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-      expect(result.stdout).toBe("");
-    }
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe(expected);
   });
 
   it("classifies older DGX Station generations as unsupported", () => {

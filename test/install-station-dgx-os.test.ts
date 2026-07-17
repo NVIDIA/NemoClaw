@@ -32,7 +32,11 @@ function runSourced(script: string, body: string, extraEnv: Record<string, strin
   return { result, output: `${result.stdout}${result.stderr}` };
 }
 
-function writeDgxReleaseFixture(version = "7.5.0", extraLine = "") {
+function writeDgxReleaseFixture(
+  version = "7.5.0",
+  extraLine = "",
+  otaPrettyName: string | null = "DGX OS",
+) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-release-"));
   const target = path.join(dir, "dgx-release");
   fs.writeFileSync(
@@ -40,7 +44,7 @@ function writeDgxReleaseFixture(version = "7.5.0", extraLine = "") {
     [
       'DGX_NAME="DGX Server"',
       'DGX_PRETTY_NAME="NVIDIA DGX Server"',
-      'DGX_OTA_PRETTY_NAME="DGX OS"',
+      ...(otaPrettyName === null ? [] : [`DGX_OTA_PRETTY_NAME="${otaPrettyName}"`]),
       `DGX_OTA_VERSION="${version}"`,
       'DGX_OTA_DATE="Mon Jul 13 21:29:13 UTC 2026"',
       'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
@@ -61,6 +65,7 @@ function writeDgxReleaseHistory(historyLines: string[]) {
       'DGX_SWBUILD_DATE="2026-01-01-00-00-00"',
       'DGX_SWBUILD_VERSION="7.2.0"',
       'DGX_COMMIT_ID="abcdef0"',
+      'DGX_OTA_PRETTY_NAME="DGX OS"',
       'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
       'DGX_SERIAL_NUMBER="Unknown"',
       "",
@@ -89,6 +94,8 @@ describe("DGX Station stock DGX OS classification", () => {
 
   it.each([
     ["unreviewed version", writeDgxReleaseFixture("7.6.0")],
+    ["missing DGX_OTA_PRETTY_NAME", writeDgxReleaseFixture("7.5.0", "", null)],
+    ["BaseOS identity", writeDgxReleaseFixture("7.5.0", "", "NVIDIA BaseOS")],
     ["unknown field", writeDgxReleaseFixture("7.5.0", 'PAYLOAD="$(touch /tmp/nope)"')],
     [
       "duplicate non-history field",

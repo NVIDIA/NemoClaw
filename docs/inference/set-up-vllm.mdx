@@ -159,7 +159,9 @@ The container publishes port `8000` through Docker, so apply the firewall guidan
 <Warning>
 DGX Station remains Deferred.
 The Station path accepts a clean generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` when its release marker and factory GPU runtime pass validation.
-For a direct GPU sandbox, NemoClaw adds `/sys` to the OpenShell filesystem policy as read-only so CUDA can inspect GPU topology and device metadata during `cuInit(0)` without granting sysfs write access.
+On Station GB300 only, a direct GPU sandbox receives the exact read-only BDF directory for each host-discovered NVIDIA display-class PCI device, plus the existing CPU, memory, NUMA topology, and NVIDIA module initialization paths.
+The policy does not grant `/sys`, the PCI parent subtree, or sysfs write access.
+In the physical DGX OS `7.5.0` validation, this exact-BDF policy passed sandbox `cuInit(0)` while reads of `/sys/fs/cgroup/cgroup.controllers` and `/sys/class/net/lo/address` remained denied.
 One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
 DGX Station remains Deferred pending repeat qualification from a clean host and CI coverage.
 </Warning>

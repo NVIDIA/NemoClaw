@@ -69,8 +69,11 @@ The preparation helper writes a private audit log under `~/station-bootstrap-log
 Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, its only persistent stock-runtime effect is that the digest-pinned visibility-test image can remain in the Docker cache.
 One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
 Repeat qualification from a clean host and CI coverage remain pending.
-For direct GPU sandboxes on both Station images, NemoClaw adds `/sys` to the OpenShell filesystem policy as read-only.
-CUDA uses the visible sysfs metadata during `cuInit(0)`, and the policy does not grant sysfs write access.
+On Station GB300 direct GPU sandboxes, NemoClaw validates the vendor and display-class metadata for each NVIDIA PCI device and adds only that device's exact BDF directory as read-only.
+It also adds only the CPU, memory, NUMA topology, and NVIDIA module initialization paths that exist on the host.
+NemoClaw does not add `/sys`, the `/sys/bus/pci/devices` parent subtree, or any sysfs write grant.
+This scoped addition is not applied on WSL, Jetson, or other non-Station hosts.
+In the physical DGX OS `7.5.0` validation, the exact-BDF policy passed sandbox `cuInit(0)` while reads of `/sys/fs/cgroup/cgroup.controllers` and `/sys/class/net/lo/address` remained denied.
 
 <Warning title="DGX Station Support Status">
 DGX Station remains Deferred.
