@@ -12,6 +12,7 @@ const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor a
 ) => (...args: unknown[]) => Promise<unknown>;
 
 type AutoLabelWorkflow = {
+  concurrency?: { group?: string; queue?: string };
   on?: {
     pull_request_target?: {
       branches?: string[];
@@ -20,6 +21,12 @@ type AutoLabelWorkflow = {
     schedule?: Array<{ cron: string }>;
     workflow_dispatch?: unknown;
   };
+  permissions?: Record<string, string>;
+  jobs: Record<string, WorkflowJob>;
+};
+
+type ReleaseLatestWorkflow = {
+  concurrency?: { group?: string; queue?: string };
   permissions?: Record<string, string>;
   jobs: Record<string, WorkflowJob>;
 };
@@ -36,11 +43,17 @@ type TagFixture = {
 };
 
 const WORKFLOW_PATH = ".github/workflows/label-merged-pr-release-target.yaml";
+const RELEASE_WORKFLOW_PATH = ".github/workflows/release-latest-tag.yaml";
 const MERGE_SHA = "f".repeat(40);
 const workflow = readYaml<AutoLabelWorkflow>(WORKFLOW_PATH);
 const job = workflow.jobs["label-release-target"];
 const actionStep = job.steps?.find((step) => step.name === "Apply release target to merged PRs");
 const script = actionStep?.with?.script;
+const releaseWorkflow = readYaml<ReleaseLatestWorkflow>(RELEASE_WORKFLOW_PATH);
+const releaseJob = releaseWorkflow.jobs["update-latest"];
+const retirementStep = releaseJob.steps?.find(
+  (step) => step.name === "Retire the released target label",
+);
 
 function sha(index: number): string {
   return index.toString(16).padStart(40, "0");
@@ -167,8 +180,12 @@ async function runScript(harness: ReturnType<typeof createHarness>): Promise<voi
 }
 
 describe("merged PR release target workflow", () => {
-  // source-shape-contract: security -- Pull-request-target labeling must never execute or checkout untrusted contributor code
+  // source-shape-contract: security -- Privileged label writes must stay metadata-only and serialize retirement with assignment
   it("keeps fork-safe labeling inside the trusted metadata boundary", () => {
+    const coordination = {
+      group: "release-target-label-operations",
+      queue: "max",
+    };
     expect(workflow.on?.pull_request_target).toEqual({
       branches: ["main"],
       types: ["closed"],
@@ -176,6 +193,13 @@ describe("merged PR release target workflow", () => {
     expect(workflow.on).toHaveProperty("workflow_dispatch");
     expect(workflow.permissions).toEqual({
       contents: "read",
+      issues: "write",
+      "pull-requests": "write",
+    });
+    expect(workflow.concurrency).toEqual(coordination);
+    expect(releaseWorkflow.concurrency).toEqual(coordination);
+    expect(releaseWorkflow.permissions).toEqual({
+      contents: "write",
       issues: "write",
       "pull-requests": "write",
     });
@@ -188,6 +212,18 @@ describe("merged PR release target workflow", () => {
     expect(job.steps?.some((step) => typeof step.run === "string")).toBe(false);
     expect(script).not.toContain("containing release");
     expect(script).not.toContain("RECONCILIATION_WINDOW_MS");
+    expect(retirementStep?.env).toMatchObject({
+      GH_TOKEN: "${{ github.token }}",
+    });
+    expect(retirementStep?.run).toContain("scripts/retire-release-label.mts");
+    const latestIndex = releaseJob.steps?.findIndex(
+      (step) => step.name === "Move latest to the release tag commit",
+    );
+    const retirementIndex = releaseJob.steps?.findIndex(
+      (step) => step.name === "Retire the released target label",
+    );
+    expect(latestIndex).toBeGreaterThanOrEqual(0);
+    expect(retirementIndex).toBeGreaterThan(latestIndex ?? -1);
   });
 
   it.each([

@@ -22,6 +22,12 @@ permissions:
   # targets a pull request; issues:write alone returns 403.
   pull-requests: write
 
+# Serialize assignment with tag-triggered label retirement. queue:max keeps
+# every merge event while the release workflow owns the same coordination lock.
+concurrency:
+  group: release-target-label-operations
+  queue: max
+
 jobs:
   label-release-target:
     if: ${{ github.event_name != 'pull_request_target' || github.event.pull_request.merged == true }}

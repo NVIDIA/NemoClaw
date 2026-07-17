@@ -11,6 +11,7 @@ Daily release labels coordinate release work. They do not classify issues and th
 - Engineers and agents may add the current `v0.0.x` label to open PRs to activate them for day work.
 - After a PR merges to `main`, the trusted post-merge workflow adds the next patch label only when the merge is ahead of the latest release tag. A merge already contained in a release tag receives no release label.
 - A scheduled and manually dispatchable reconciliation pass repairs missed or failed merge events only across the untagged interval from the latest release tag to `main`.
+- Post-merge assignment and tag-triggered label retirement share one queued GitHub Actions concurrency group. Authorized automation cannot add a released label during the retirement verification-and-delete window.
 - Issues may also carry daily version labels when they need a PR, fix, or regression follow-up for the daily tag.
 - Applying a daily version label is not a readiness claim.
 - Release includes PRs that both carry the daily version label and are merged by cutoff.
@@ -62,7 +63,7 @@ Every test must have either green evidence or an itemized maintainer exception b
 
 Open PRs and issues that miss the cutoff remain active carry-forward work, but their target changes after the release succeeds. Post-tag housekeeping creates the next patch label if needed, removes the released-version label from every open straggler, adds the next patch label, verifies no open item remains on the released label, and deletes the released label.
 
-Run the automatic carry-forward only after both the semver tag and workflow-managed `latest` resolve to the confirmed release commit. The release confirmation must include the housekeeping plan, so the post-tag label writes remain inside the authorized release operation.
+The `release-latest-tag` workflow runs automatic carry-forward after moving `latest`. It shares the release-label coordination queue with post-merge assignment and must complete before housekeeping is considered successful. The release confirmation must include the housekeeping plan, so the post-tag label writes remain inside the authorized release operation. Do not run the retirement script directly or manually add a label whose semver tag already exists.
 
 Maintainers may:
 
@@ -78,5 +79,6 @@ Release labels are temporary planning state. Retire one only when all conditions
 2. Every open PR and issue has moved to the next patch label or explicitly left the daily release cycle.
 3. A final query finds no open item carrying the released label.
 4. The release confirmation explicitly authorizes deletion of that released label.
+5. Retirement runs inside the shared release-label coordination queue.
 
 Delete the repository label after those checks. Deletion removes it from merged and closed items without preserving a second, mutable release-membership signal. Never rename a released label into a future version, and never recreate a label whose semver tag already exists.

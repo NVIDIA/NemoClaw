@@ -75,19 +75,16 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
     expect(evening).toContain("automatically carry stragglers to the next patch");
     expect(evening).toContain("retire the released label");
-    expect(release).toContain("scripts/retire-release-label.ts");
-    expect(release).toContain("Do not run it before Step 4");
+    expect(release).toContain("release-latest-tag");
+    expect(release).toContain("Do not run the retirement script directly");
     expect(morning).toContain("post-tag housekeeping was interrupted");
     expect(priorities).toContain("automatically carry stragglers to the next patch");
     expect(priorities).toContain("delete the released label");
     expect(policy).toContain("automatically move every open straggler to the next patch label");
     expect(policy).toContain("delete the released version label");
     expect(policy).toContain("never renamed or reused");
-    expect(
-      fs.existsSync(
-        path.join(root, ".agents/skills/nemoclaw-maintainer-day/scripts/retire-release-label.ts"),
-      ),
-    ).toBe(true);
+    expect(policy).toContain("shared release-label coordination queue");
+    expect(fs.existsSync(path.join(root, "scripts/retire-release-label.mts"))).toBe(true);
   });
 
   it("keeps release labels temporary and limits post-merge assignment to untagged work", () => {

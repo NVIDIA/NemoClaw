@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-function runRetireReleaseLabel(fakeGh: string, versions = ["v1.2.3", "v1.2.4"]) {
+function runRetireReleaseLabel(fakeGh: string, args = ["v1.2.3"]) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "retire-release-label-"));
   const bin = path.join(tmp, "bin");
   fs.mkdirSync(bin);
@@ -18,12 +18,7 @@ function runRetireReleaseLabel(fakeGh: string, versions = ["v1.2.3", "v1.2.4"]) 
   try {
     return spawnSync(
       process.execPath,
-      [
-        "--experimental-strip-types",
-        "--no-warnings",
-        ".agents/skills/nemoclaw-maintainer-day/scripts/retire-release-label.ts",
-        ...versions,
-      ],
+      ["--experimental-strip-types", "--no-warnings", "scripts/retire-release-label.mts", ...args],
       {
         cwd: process.cwd(),
         encoding: "utf-8",
@@ -144,12 +139,11 @@ esac
   });
 
   it.each([
-    [["1.2.3", "v1.2.4"], "Invalid released version"],
-    [["v1.2.3", "next"], "Invalid next version"],
-    [["v1.2.3", "v1.2.3"], "Next version after v1.2.3 must be v1.2.4"],
-    [["v1.2.3", "v1.3.0"], "Next version after v1.2.3 must be v1.2.4"],
-  ])("rejects invalid version arguments", (versions, error) => {
-    const result = runRetireReleaseLabel("#!/usr/bin/env bash\nexit 9\n", versions);
+    [["1.2.3"], "Invalid released version"],
+    [["v1.2.3", "--repo", "invalid"], "Invalid --repo value"],
+    [[], "Usage: retire-release-label.mts"],
+  ])("rejects invalid arguments", (args, error) => {
+    const result = runRetireReleaseLabel("#!/usr/bin/env bash\nexit 9\n", args);
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(error);

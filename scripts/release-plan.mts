@@ -224,8 +224,8 @@ function main(): void {
       `create annotated ${nextTag} tag at ${originMainCommit}`,
       `push ${nextTag}`,
       "wait for release-latest-tag workflow to move latest",
-      `carry open ${nextTag} items forward to ${followingTag}`,
-      `delete released ${nextTag} label after carry-forward succeeds`,
+      `have release-latest-tag workflow carry open ${nextTag} items forward to ${followingTag}`,
+      `have release-latest-tag workflow delete released ${nextTag} label after carry-forward succeeds`,
       "draft release notes from live compare data",
     ],
     forbiddenOperations: [

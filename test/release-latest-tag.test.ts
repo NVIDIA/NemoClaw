@@ -185,8 +185,12 @@ function createPlan(
   expect(plan.previousTag).toBe("v0.0.1");
   expect(plan.nextTag).toBe("v0.0.2");
   expect(plan.originMainCommit).toBe(releaseCommit);
-  expect(plan.operations).toContain("carry open v0.0.2 items forward to v0.0.3");
-  expect(plan.operations).toContain("delete released v0.0.2 label after carry-forward succeeds");
+  expect(plan.operations).toContain(
+    "have release-latest-tag workflow carry open v0.0.2 items forward to v0.0.3",
+  );
+  expect(plan.operations).toContain(
+    "have release-latest-tag workflow delete released v0.0.2 label after carry-forward succeeds",
+  );
   expect(plan.confirmationPhrase).toBe(`CONFIRM RELEASE v0.0.2 ${releaseCommit}`);
   return { plan, result };
 }

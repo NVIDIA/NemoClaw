@@ -6,13 +6,13 @@
  *
  * Creates the next target label if needed, moves all open PRs and issues,
  * verifies the released label has no open items, then deletes it.
+ * Run only inside the release-latest-tag workflow, which serializes this
+ * operation with every authorized release-label assignment.
  *
- * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/retire-release-label.ts <released-version> <next-version> [--repo OWNER/REPO]
+ * Usage: node --experimental-strip-types --no-warnings scripts/retire-release-label.mts <released-version> [--repo OWNER/REPO]
  */
 
 import { execFileSync } from "node:child_process";
-
-import { parseStringArg } from "./shared.ts";
 
 interface MovedItem {
   number: number;
@@ -30,21 +30,14 @@ interface RetireOutput {
 function main(): void {
   const args = process.argv.slice(2);
   const from = args[0];
-  const to = args[1];
-  if (!from || !to) {
-    console.error(
-      "Usage: retire-release-label.ts <released-version> <next-version> [--repo OWNER/REPO]",
-    );
+  if (!from) {
+    console.error("Usage: retire-release-label.mts <released-version> [--repo OWNER/REPO]");
     process.exit(1);
   }
   validateVersion(from, "released version");
-  validateVersion(to, "next version");
-  const expectedNext = nextPatch(from);
-  if (to !== expectedNext) {
-    throw new Error(`Next version after ${from} must be ${expectedNext}, got ${to}`);
-  }
+  const to = nextPatch(from);
 
-  const repo = parseStringArg(args, "--repo", "NVIDIA/NemoClaw");
+  const repo = parseRepository(args);
 
   const moved: MovedItem[] = [];
   if (!releaseLabelExists(repo, from)) {
@@ -116,6 +109,16 @@ function validateVersion(value: string, description: string): void {
 function nextPatch(version: string): string {
   const [major, minor, patch] = version.slice(1).split(".").map(Number);
   return `v${major}.${minor}.${patch + 1}`;
+}
+
+function parseRepository(args: string[]): string {
+  const index = args.indexOf("--repo");
+  if (index === -1) return "NVIDIA/NemoClaw";
+  const repo = args[index + 1];
+  if (!repo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+    throw new Error(`Invalid --repo value: ${repo ?? ""}`);
+  }
+  return repo;
 }
 
 function listOpenItems(
