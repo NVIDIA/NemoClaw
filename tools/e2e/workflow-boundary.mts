@@ -92,6 +92,7 @@ const NO_IMAGE_E2E_JOBS = new Set(["gateway-health-honest", SHARED_E2E_JOB_ID]);
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
+const DOCKER_HUB_AUTH_RUN = "bash .github/scripts/docker-auth-setup.sh";
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
 // The general E2E workflow runs on schedule/manual dispatch. Its event set is
 // intentionally distinct from the reusable image workflow's push/manual boundary.
@@ -1998,7 +1999,9 @@ function requireCanonicalDockerHubAuthRun(
     errors.push("canonical Docker Hub auth step must use bash");
   }
   if (authStep.uses !== undefined) {
-    errors.push("canonical Docker Hub auth step must use the audited inline retry script");
+    errors.push(
+      "canonical Docker Hub auth step must invoke the audited setup script, not a composite action",
+    );
   }
   if (authStep["continue-on-error"] !== undefined) {
     errors.push(
@@ -2029,85 +2032,8 @@ function requireCanonicalDockerHubAuthRun(
     errors.push("canonical Docker Hub auth step must expose only its three guarded inputs");
   }
 
-  const runScript = stringValue(authStep.run);
-  for (const fragment of [
-    'mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX"',
-    'chmod 700 "${docker_config}"',
-    'export DOCKER_CONFIG="${docker_config}"',
-    'if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then',
-    "continuing with anonymous pulls",
-    'if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then',
-    'auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"',
-    ': > "${auth_marker}"',
-    'chmod 600 "${auth_marker}"',
-    "for attempt in 1 2 3; do",
-    "timeout 30s docker login docker.io",
-    '--username "${DOCKERHUB_USERNAME}"',
-    "--password-stdin",
-    "Docker Hub login failed after 3 attempts",
-  ]) {
-    if (!runScript.includes(fragment)) {
-      errors.push(`canonical Docker Hub auth run script must include ${fragment}`);
-    }
-  }
-  if (
-    !runScript.includes("printf 'DOCKER_CONFIG=%s\\n'") ||
-    !runScript.includes('"${DOCKER_CONFIG}"') ||
-    !runScript.includes('>> "${GITHUB_ENV}"')
-  ) {
-    errors.push(
-      "canonical Docker Hub auth run script must persist the isolated DOCKER_CONFIG through GITHUB_ENV",
-    );
-  }
-  if (runScript.includes("${{ github.workspace }}") || runScript.includes("GITHUB_WORKSPACE")) {
-    errors.push("canonical Docker Hub auth directory must not use the checkout workspace");
-  }
-  if (/--password(?:=|\s)(?!-stdin\b)/u.test(runScript)) {
-    errors.push("canonical Docker Hub auth must pass the token only through --password-stdin");
-  }
-
-  const configIndex = runScript.indexOf(
-    'mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX"',
-  );
-  const trustIndex = runScript.indexOf('if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then');
-  const loginIndex = runScript.indexOf("docker login docker.io");
-  if (configIndex < 0 || trustIndex <= configIndex || loginIndex <= trustIndex) {
-    errors.push(
-      "canonical Docker Hub auth must isolate Docker config before evaluating trust and authenticating",
-    );
-  }
-  const missingCredentialsIndex = runScript.indexOf(
-    'if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then',
-  );
-  const missingCredentialsEndIndex = runScript.indexOf("\nfi", missingCredentialsIndex);
-  const markerPathIndex = runScript.indexOf(
-    'auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"',
-  );
-  const markerCreateIndex = runScript.indexOf(': > "${auth_marker}"');
-  const markerChmodIndex = runScript.indexOf('chmod 600 "${auth_marker}"');
-  const retryIndex = runScript.indexOf("for attempt in 1 2 3; do");
-  const missingCredentialsBlock =
-    missingCredentialsIndex >= 0 && retryIndex > missingCredentialsIndex
-      ? runScript.slice(missingCredentialsIndex, retryIndex)
-      : "";
-  if (!missingCredentialsBlock.includes("exit 1")) {
-    errors.push("canonical Docker Hub auth must fail when trusted credentials are missing");
-  }
-  if (
-    missingCredentialsEndIndex < 0 ||
-    markerPathIndex <= missingCredentialsEndIndex ||
-    markerCreateIndex <= markerPathIndex ||
-    markerChmodIndex <= markerCreateIndex ||
-    retryIndex <= markerChmodIndex ||
-    loginIndex <= retryIndex
-  ) {
-    errors.push(
-      "canonical Docker Hub auth must create and protect its login-attempt marker after trusted credential validation and before login",
-    );
-  }
-  const exhaustedLoginIndex = runScript.indexOf("Docker Hub login failed after 3 attempts");
-  if (exhaustedLoginIndex < 0 || !runScript.slice(exhaustedLoginIndex).includes("exit 1")) {
-    errors.push("canonical Docker Hub auth must fail after exhausting login retries");
+  if (stringValue(authStep.run) !== DOCKER_HUB_AUTH_RUN) {
+    errors.push(`canonical Docker Hub auth step must run only ${DOCKER_HUB_AUTH_RUN}`);
   }
 }
 
