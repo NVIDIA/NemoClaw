@@ -376,7 +376,6 @@ describe("PR E2E controller", () => {
   it("binds every signal to the revision, plan, correlation, job, and shard", () => {
     const gate = state();
     const valid = signal(gate, "onboard-repair");
-
     expect(validateSignal(valid, gate)).toEqual(valid);
     expect(() => validateSignal({ ...valid, testedSha: BASE_SHA }, gate)).toThrow(/tested SHA/u);
     expect(() => validateSignal({ ...valid, planHash: "c".repeat(64) }, gate)).toThrow(
@@ -400,7 +399,8 @@ describe("PR E2E controller", () => {
       "hermes-inference-switch": ["hosted", "anthropic"],
       "openclaw-inference-switch": ["hosted", "anthropic"],
     });
-    expect(expectedSignalShards([], ".github/workflows/e2e.yaml", [DCODE_TARGET])).toEqual({
+    expect(expectedSignalShards(["openshell-gateway-upgrade"], undefined, [DCODE_TARGET])).toEqual({
+      "openshell-gateway-upgrade": ["v0-0-36-x86-64", "v0-0-55-x86-64", "v0-0-55-aarch64"],
       [DCODE_TARGET]: ["default"],
     });
     const broadPlan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: BROAD_FILES });
