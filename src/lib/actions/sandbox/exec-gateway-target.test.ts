@@ -24,6 +24,7 @@ describe("execSandbox gateway targeting", () => {
     const order: string[] = [];
     const selectGateway = vi.fn((name: string) => {
       order.push(`select:${name}`);
+      return { outcome: "selected" as const, gatewayName: name };
     });
     const run = vi.fn(async () => {
       order.push("run");
@@ -59,5 +60,86 @@ describe("execSandbox gateway targeting", () => {
     expect(run).toHaveBeenCalled();
     expect(order.indexOf("select:beta")).toBeGreaterThanOrEqual(0);
     expect(order.indexOf("select:beta")).toBeLessThan(order.indexOf("run"));
+  });
+
+  it("selects the owning gateway before the workdir probe when a workdir is set", async () => {
+    const order: string[] = [];
+    const selectGateway = vi.fn((name: string) => {
+      order.push(`select:${name}`);
+      return { outcome: "selected" as const, gatewayName: name };
+    });
+    const probeWorkdir = vi.fn(() => {
+      order.push("probe");
+      return { status: 0, error: undefined };
+    });
+    const run = vi.fn(async () => {
+      order.push("run");
+      return { status: 0 };
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`__exit_${code ?? 0}__`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await execSandbox(
+      "beta",
+      ["hostname"],
+      { workdir: "/work" },
+      {
+        resolveBinary: () => "openshell",
+        selectGateway,
+        probeWorkdir,
+        run,
+        cleanupDeps: cleanupSkipped,
+        policyHint: {
+          now: () => 0,
+          env: {},
+          probeLogs: () => "",
+          enableAudit: () => {},
+          sleep: async () => {},
+          attempts: 1,
+          writeStderr: () => {},
+        },
+      },
+    ).catch(() => {});
+
+    expect(order).toEqual(["select:beta", "probe", "run"]);
+  });
+
+  it("aborts before the workdir probe and exec when gateway selection fails", async () => {
+    const order: string[] = [];
+    const selectGateway = vi.fn(() => {
+      order.push("select");
+      return { outcome: "failed" as const, gatewayName: "nemoclaw-8091" };
+    });
+    const probeWorkdir = vi.fn(() => {
+      order.push("probe");
+      return { status: 0, error: undefined };
+    });
+    const run = vi.fn(async () => {
+      order.push("run");
+      return { status: 0 };
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`__exit_${code ?? 0}__`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await execSandbox(
+      "beta",
+      ["hostname"],
+      { workdir: "/work" },
+      {
+        resolveBinary: () => "openshell",
+        selectGateway,
+        probeWorkdir,
+        run,
+        cleanupDeps: cleanupSkipped,
+      },
+    ).catch(() => {});
+
+    expect(order).toEqual(["select"]);
+    expect(probeWorkdir).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
   });
 });

@@ -10,6 +10,7 @@ import type {
 import type { SandboxEntry } from "../../state/registry";
 import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
 import { buildSandboxExecStdio } from "./exec-stdio";
+import type { GatewaySelectResult } from "./gateway-select";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 export { buildSandboxExecStdio, shouldInheritSandboxExecStdin } from "./exec-stdio";
@@ -329,10 +330,10 @@ function defaultResolveBinary(): string {
   return getOpenshellBinary();
 }
 
-function defaultSelectGateway(sandboxName: string): void {
-  (require("./gateway-select") as typeof import("./gateway-select")).selectSandboxOwningGateway(
-    sandboxName,
-  );
+function defaultSelectGateway(sandboxName: string): GatewaySelectResult {
+  return (
+    require("./gateway-select") as typeof import("./gateway-select")
+  ).selectSandboxOwningGateway(sandboxName);
 }
 
 // Test seams for execSandbox. All default to the production behavior; tests
@@ -347,7 +348,7 @@ export type ExecSandboxDeps = {
   policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
   /** Select the sandbox's owning gateway before the exec talks to OpenShell. */
-  selectGateway?: (sandboxName: string) => void;
+  selectGateway?: (sandboxName: string) => GatewaySelectResult;
 };
 
 export async function execSandbox(
@@ -369,7 +370,13 @@ export async function execSandbox(
     process.exit(2);
   }
   const binary = (deps.resolveBinary ?? defaultResolveBinary)();
-  (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
+  const gatewaySelection = (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
+  if (gatewaySelection.outcome === "failed") {
+    console.error(
+      `  Failed to select gateway '${gatewaySelection.gatewayName}' for sandbox '${sandboxName}'.`,
+    );
+    process.exit(1);
+  }
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
   }

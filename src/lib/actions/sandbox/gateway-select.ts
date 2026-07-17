@@ -7,15 +7,23 @@ import { getKnownSandboxTargetGatewayName } from "./gateway-target";
 
 export type GatewaySelectRunner = typeof runOpenshell;
 
+export type GatewaySelectResult =
+  | { outcome: "selected"; gatewayName: string }
+  | { outcome: "failed"; gatewayName: string }
+  | { outcome: "unregistered"; gatewayName: null };
+
 export function selectSandboxOwningGateway(
   sandboxName: string,
   run: GatewaySelectRunner = runOpenshell,
-): string | null {
+): GatewaySelectResult {
   const targetGatewayName = getKnownSandboxTargetGatewayName(sandboxName);
-  if (!targetGatewayName) return null;
-  run(["gateway", "select", targetGatewayName], {
+  if (!targetGatewayName) return { outcome: "unregistered", gatewayName: null };
+  const result = run(["gateway", "select", targetGatewayName], {
     ignoreError: true,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
-  return targetGatewayName;
+  if (result.error || result.status !== 0) {
+    return { outcome: "failed", gatewayName: targetGatewayName };
+  }
+  return { outcome: "selected", gatewayName: targetGatewayName };
 }

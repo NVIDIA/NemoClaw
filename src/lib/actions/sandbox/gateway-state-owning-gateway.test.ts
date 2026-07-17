@@ -22,7 +22,7 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     } as never);
     const selectSpy = vi
       .spyOn(gatewaySelect, "selectSandboxOwningGateway")
-      .mockReturnValue("nemoclaw-8091");
+      .mockReturnValue({ outcome: "selected", gatewayName: "nemoclaw-8091" });
 
     const getState = vi
       .fn()
@@ -39,6 +39,33 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
       recoveredGateway: true,
       recoveryVia: "select",
     });
+  });
+
+  it("reports wrong_gateway_active and does not re-query when owning-gateway selection fails", async () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
+    vi.spyOn(gatewayRuntime, "getNamedGatewayLifecycleState").mockReturnValue({
+      state: "connected_other",
+      status: "some status",
+      activeGateway: "nemoclaw",
+    } as never);
+    const selectSpy = vi
+      .spyOn(gatewaySelect, "selectSandboxOwningGateway")
+      .mockReturnValue({ outcome: "failed", gatewayName: "nemoclaw-8091" });
+
+    const getState = vi
+      .fn()
+      .mockResolvedValueOnce({ state: "present", output: "Phase: Provisioning" });
+
+    const result = await getReconciledSandboxGatewayState("beta", { getState });
+
+    expect(getState).toHaveBeenCalledTimes(1);
+    expect(selectSpy).toHaveBeenCalledWith("beta");
+    expect(result).toMatchObject({
+      state: "wrong_gateway_active",
+      activeGateway: "nemoclaw",
+      output: "some status",
+    });
+    expect(result.recoveredGateway).toBeUndefined();
   });
 
   it("trusts a present from the owning gateway without reselecting", async () => {

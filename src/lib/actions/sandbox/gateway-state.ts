@@ -447,7 +447,18 @@ async function reselectOwningGatewayForPresent(
   if (!targetGatewayName) return null;
   const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
   if (lifecycle.state !== "connected_other") return null;
-  selectSandboxOwningGateway(sandboxName);
+  const selection = selectSandboxOwningGateway(sandboxName);
+  if (selection.outcome !== "selected") {
+    // Selection failed: the prior gateway is still active, so the
+    // original `present` result cannot be trusted as the sandbox's own
+    // state. Report the wrong-gateway condition instead of retrying
+    // against an unselected gateway or labelling a stale result recovered.
+    return {
+      state: "wrong_gateway_active",
+      activeGateway: lifecycle.activeGateway,
+      output: lifecycle.status,
+    };
+  }
   const retry = await getState(sandboxName);
   if (retry.state === "present") {
     return { ...retry, recoveredGateway: true, recoveryVia: "select" };
