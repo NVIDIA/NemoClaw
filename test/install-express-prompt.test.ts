@@ -146,13 +146,28 @@ sys.exit(exit_code)
     );
   }
 
-  function detectExpressPlatformForProductName(productName: string) {
+  function detectExpressPlatformForProductName(productName: string, dgxRelease?: string) {
+    const releasePath = dgxRelease
+      ? path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dgx-release-")), "dgx-release")
+      : "";
+    if (dgxRelease !== undefined) fs.writeFileSync(releasePath, dgxRelease);
     return spawnSync(
       "bash",
       [
         "-c",
         `
 source "$INSTALLER_UNDER_TEST" >/dev/null
+classify_dgx_station_release() {
+  if [[ -z "$EXPRESS_DGX_RELEASE_PATH" ]]; then
+    bash "$STATION_PREPARE" --classify-dgx-release
+    return
+  fi
+  bash -c '
+    source "$STATION_PREPARE" >/dev/null
+    dgx_station_release_file_is_safe() { return 0; }
+    dgx_station_release_state "$EXPRESS_DGX_RELEASE_PATH"
+  '
+}
 function [ {
   if [[ "$#" -eq 3 && "$1" = "-r" && "$2" = "/sys/class/dmi/id/product_name" && "$3" = "]" ]]; then
     return 0
@@ -177,10 +192,29 @@ detect_express_platform
           HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-platform-detect-")),
           PATH: TEST_SYSTEM_PATH,
           INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          STATION_PREPARE: path.join(
+            path.resolve(import.meta.dirname, ".."),
+            "scripts",
+            "prepare-dgx-station-host.sh",
+          ),
           EXPRESS_PRODUCT_NAME: productName,
+          EXPRESS_DGX_RELEASE_PATH: releasePath,
         },
       },
     );
+  }
+
+  function stockDgxRelease(version: string, platform = "DGX Server for GALAXY-GB300") {
+    return [
+      'DGX_NAME="DGX Server"',
+      'DGX_PRETTY_NAME="NVIDIA DGX Server"',
+      'DGX_OTA_PRETTY_NAME="DGX OS"',
+      `DGX_OTA_VERSION="${version}"`,
+      'DGX_OTA_DATE="Mon Jul 13 21:29:13 UTC 2026"',
+      `DGX_PLATFORM="${platform}"`,
+      'DGX_SERIAL_NUMBER="Unknown"',
+      "",
+    ].join("\n");
   }
 
   it("parses and documents the DGX Station DeepSeek override", () => {
@@ -633,15 +667,48 @@ detect_express_platform
     expect(result.stdout).toBe("Windows WSL");
   });
 
-  it("recognizes Station GB300 OEM firmware as DGX Station", () => {
-    const result = detectExpressPlatformForProductName("Dell Pro Max with Station GB300");
+  it.each([
+    "P3830",
+    "NVIDIA P3830 Rev A",
+    "Dell Pro Max with Station GB300",
+  ])("recognizes supported Station GB300 firmware as DGX Station: %s", (productName) => {
+    const result = detectExpressPlatformForProductName(productName);
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it("requires both Station and GB300 for the OEM firmware match", () => {
-    for (const productName of ["Dell Pro Max with Station GB200", "Dell Pro Max with GB300"]) {
+  it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s on Station GB300", (version) => {
+    const result = detectExpressPlatformForProductName(
+      "DGX Station GB300",
+      stockDgxRelease(version),
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
+
+  it.each([
+    ["unreviewed version", stockDgxRelease("7.6.0")],
+    ["wrong DGX platform", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB200")],
+    [
+      "duplicate non-history field",
+      `${stockDgxRelease("7.5.0")}DGX_PLATFORM="DGX Server for GALAXY-GB300"\n`,
+    ],
+    ["shell payload", `${stockDgxRelease("7.5.0")}PAYLOAD="$(touch /tmp/nope)"\n`],
+  ])("rejects a stock DGX OS marker with %s", (_scenario, marker) => {
+    const result = detectExpressPlatformForProductName("DGX Station GB300", marker);
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("Unsupported DGX Station OS");
+  });
+
+  it("rejects partial and unsupported Station product identifiers", () => {
+    for (const productName of [
+      "Acme XP3830 Workstation",
+      "Dell Pro Max with Station GB200",
+      "Dell Pro Max with GB300",
+    ]) {
       const result = detectExpressPlatformForProductName(productName);
 
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
