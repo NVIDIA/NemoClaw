@@ -28,6 +28,11 @@ export type GitResult = Readonly<{
 
 export type GitRunner = (args: readonly string[], timeoutMs?: number) => GitResult;
 
+export type PullRequestRevisions = Readonly<{
+  base: string;
+  head: string;
+}>;
+
 export const ALLOWLIST_PATHS = [
   "scripts/checks/test-create-require-budget.mts",
   "scripts/checks/test-create-require-budget.ts",
@@ -178,19 +183,123 @@ export function requireSingleBaseChecker(
   return matches[0];
 }
 
-export function extractPullRequestBaseSha(eventSource: string): string {
-  const event = JSON.parse(eventSource) as {
-    pull_request?: { base?: { sha?: unknown } };
-  };
-  const revision = event.pull_request?.base?.sha;
-  if (typeof revision !== "string" || !COMMIT_SHA_PATTERN.test(revision)) {
-    throw new Error("pull-request event does not contain a valid base commit SHA");
+function parsePullRequestEvent(eventSource: string): {
+  pull_request?: { base?: { sha?: unknown }; head?: { sha?: unknown } };
+} {
+  let event: unknown;
+  try {
+    event = JSON.parse(eventSource);
+  } catch {
+    throw new Error("pull-request event is not valid JSON");
   }
-  return revision;
+  if (typeof event !== "object" || event === null || Array.isArray(event)) {
+    throw new Error("pull-request event must be a JSON object");
+  }
+  return event as {
+    pull_request?: { base?: { sha?: unknown }; head?: { sha?: unknown } };
+  };
+}
+
+function requireCommitSha(value: unknown, label: "base" | "head"): string {
+  if (typeof value !== "string" || !COMMIT_SHA_PATTERN.test(value)) {
+    throw new Error(`pull-request event does not contain a valid ${label} commit SHA`);
+  }
+  return value;
+}
+
+export function extractPullRequestBaseSha(eventSource: string): string {
+  return requireCommitSha(parsePullRequestEvent(eventSource).pull_request?.base?.sha, "base");
+}
+
+export function extractPullRequestRevisions(eventSource: string): PullRequestRevisions {
+  const pullRequest = parsePullRequestEvent(eventSource).pull_request;
+  const revisions = {
+    base: requireCommitSha(pullRequest?.base?.sha, "base"),
+    head: requireCommitSha(pullRequest?.head?.sha, "head"),
+  };
+  if (revisions.base.length !== revisions.head.length) {
+    throw new Error("pull-request head and base commits must use the same object format");
+  }
+  return revisions;
 }
 
 function revisionAvailable(runGit: GitRunner, revision: string): boolean {
   return runGit(["cat-file", "-e", `${revision}^{commit}`]).status === 0;
+}
+
+function repositoryIsShallow(runGit: GitRunner): boolean {
+  const result = runGit(["rev-parse", "--is-shallow-repository"]);
+  const value = result.stdout.trim();
+  if (result.status !== 0 || (value !== "true" && value !== "false")) {
+    throw new Error("could not determine whether the pull-request checkout is shallow");
+  }
+  return value === "true";
+}
+
+const FETCHED_BASE_REF = "refs/nemoclaw/create-require-ratchet/base";
+const FETCHED_HEAD_REF = "refs/nemoclaw/create-require-ratchet/head";
+
+function fetchedRevision(runGit: GitRunner, reference: string): string | null {
+  const result = runGit(["rev-parse", "--verify", `${reference}^{commit}`]);
+  const revision = result.stdout.trim();
+  return result.status === 0 && COMMIT_SHA_PATTERN.test(revision) ? revision : null;
+}
+
+function fetchPullRequestHistory(
+  runGit: GitRunner,
+  revisions: PullRequestRevisions,
+  shallow: boolean,
+): void {
+  const args = ["fetch", "--no-tags", "--no-recurse-submodules", "--force"];
+  if (shallow) args.push("--unshallow");
+  args.push(
+    "origin",
+    `${revisions.base}:${FETCHED_BASE_REF}`,
+    `${revisions.head}:${FETCHED_HEAD_REF}`,
+  );
+  const fetch = runGit(args, 120_000);
+  if (fetch.status !== 0) {
+    throw new Error("could not fetch the exact pull-request head and base histories");
+  }
+  if (
+    fetchedRevision(runGit, FETCHED_BASE_REF) !== revisions.base ||
+    fetchedRevision(runGit, FETCHED_HEAD_REF) !== revisions.head
+  ) {
+    throw new Error("fetched pull-request refs do not match the event head and base commits");
+  }
+  if (shallow && repositoryIsShallow(runGit)) {
+    throw new Error("pull-request checkout remained shallow after fetching complete history");
+  }
+}
+
+function requireExactRevision(
+  runGit: GitRunner,
+  revision: string,
+  label: "base" | "head" | "merge-base",
+): void {
+  if (!revisionAvailable(runGit, revision)) {
+    throw new Error(`pull-request ${label} commit is unavailable after fetching history`);
+  }
+}
+
+function uniqueMergeBase(runGit: GitRunner, revisions: PullRequestRevisions): string {
+  const result = runGit(["merge-base", "--all", revisions.head, revisions.base]);
+  if (result.status !== 0) {
+    throw new Error("could not compute the pull-request head/base merge base");
+  }
+  const candidates = result.stdout.split(/\s+/).filter(Boolean);
+  if (candidates.length !== 1 || !COMMIT_SHA_PATTERN.test(candidates[0])) {
+    throw new Error("pull-request head and base must have exactly one valid merge base");
+  }
+
+  const revision = candidates[0];
+  requireExactRevision(runGit, revision, "merge-base");
+  for (const descendant of [revisions.head, revisions.base]) {
+    if (runGit(["merge-base", "--is-ancestor", revision, descendant]).status !== 0) {
+      throw new Error("computed merge base is not an ancestor of the pull-request head and base");
+    }
+  }
+  return revision;
 }
 
 export function resolveBaseRevision(
@@ -202,14 +311,18 @@ export function resolveBaseRevision(
 
   const eventPath = environment.GITHUB_EVENT_PATH?.trim();
   if (!eventPath) throw new Error("GITHUB_EVENT_PATH is required for pull-request ratchet checks");
-  const revision = extractPullRequestBaseSha(readFileSync(eventPath, "utf8"));
-  if (revisionAvailable(runGit, revision)) return revision;
-
-  const fetch = runGit(["fetch", "--no-tags", "--depth=1", "origin", revision], 30_000);
-  if (fetch.status !== 0 || !revisionAvailable(runGit, revision)) {
-    throw new Error(`could not fetch the pull-request base commit ${revision}`);
+  const revisions = extractPullRequestRevisions(readFileSync(eventPath, "utf8"));
+  const shallow = repositoryIsShallow(runGit);
+  if (
+    shallow ||
+    !revisionAvailable(runGit, revisions.base) ||
+    !revisionAvailable(runGit, revisions.head)
+  ) {
+    fetchPullRequestHistory(runGit, revisions, shallow);
   }
-  return revision;
+  requireExactRevision(runGit, revisions.base, "base");
+  requireExactRevision(runGit, revisions.head, "head");
+  return uniqueMergeBase(runGit, revisions);
 }
 
 function* walkTypeScriptFiles(directory: string): Generator<string> {

@@ -14,7 +14,9 @@ import {
   containsCreateRequireIdentifier,
   createRequireInventoryFailure,
   extractPullRequestBaseSha,
+  extractPullRequestRevisions,
   extractTrustedCreateRequireAllowlists,
+  type GitResult,
   type GitRunner,
   requireSingleBaseChecker,
   requireSingleCurrentChecker,
@@ -24,6 +26,7 @@ import {
 } from "../.github/actions/ci-static-checks/create-require-ratchet-core.mts";
 
 const BASE_SHA = "a".repeat(40);
+const HEAD_SHA = "b".repeat(40);
 const temporaryRoots: string[] = [];
 
 function temporaryRepo(): string {
@@ -50,9 +53,18 @@ function allowlistSource(
   ].join("\n");
 }
 
-function pullRequestEnvironment(root: string, revision = BASE_SHA): NodeJS.ProcessEnv {
+function pullRequestEnvironment(
+  root: string,
+  baseRevision = BASE_SHA,
+  headRevision = HEAD_SHA,
+): NodeJS.ProcessEnv {
   const eventPath = path.join(root, "event.json");
-  writeFileSync(eventPath, JSON.stringify({ pull_request: { base: { sha: revision } } }));
+  writeFileSync(
+    eventPath,
+    JSON.stringify({
+      pull_request: { base: { sha: baseRevision }, head: { sha: headRevision } },
+    }),
+  );
   return { GITHUB_BASE_REF: "main", GITHUB_EVENT_PATH: eventPath };
 }
 
@@ -63,11 +75,13 @@ function baseRunner(
   return (args) => {
     switch (args[0]) {
       case "cat-file":
-        return {
-          status: args[2] === `${revision}^{commit}` ? 0 : 128,
-          stderr: "",
-          stdout: "",
-        };
+        return { status: 0, stderr: "", stdout: "" };
+      case "rev-parse":
+        return { status: 0, stderr: "", stdout: "false\n" };
+      case "merge-base":
+        return args[1] === "--all"
+          ? { status: 0, stderr: "", stdout: `${revision}\n` }
+          : { status: 0, stderr: "", stdout: "" };
       case "show": {
         const requestedPath = args[1]?.slice(revision.length + 1);
         const extension = requestedPath?.endsWith(".mts") ? "mts" : "ts";
@@ -491,7 +505,7 @@ describe("base-trusted createRequire ratchet", () => {
       "test: create fixture base",
     ]);
     const baseRevision = runFixtureGit(repoRoot, ["rev-parse", "HEAD"]);
-    const environment = pullRequestEnvironment(repoRoot, baseRevision);
+    const environment = pullRequestEnvironment(repoRoot, baseRevision, baseRevision);
 
     const passing = runTrustedEntrypoint(entrypoint, repoRoot, environment);
     expect(passing.status, passing.stderr).toBe(0);
@@ -542,7 +556,7 @@ describe("base-trusted createRequire ratchet", () => {
       "test: create fixture base",
     ]);
     const baseRevision = runFixtureGit(repoRoot, ["rev-parse", "HEAD"]);
-    const environment = pullRequestEnvironment(repoRoot, baseRevision);
+    const environment = pullRequestEnvironment(repoRoot, baseRevision, baseRevision);
 
     const passing = runTrustedEntrypoint(entrypoint, repoRoot, environment);
     expect(passing.status, passing.stderr).toBe(0);
@@ -579,52 +593,191 @@ describe("base-trusted createRequire ratchet", () => {
     expect(failing.stderr).not.toContain("src/lib/fixture-property.ts");
   });
 
-  it("accepts only a validated base revision from the pull-request event (#7056)", () => {
+  it("accepts only validated exact revisions from the pull-request event (#7056)", () => {
     expect(
       extractPullRequestBaseSha(JSON.stringify({ pull_request: { base: { sha: BASE_SHA } } })),
     ).toBe(BASE_SHA);
+    expect(
+      extractPullRequestRevisions(
+        JSON.stringify({
+          pull_request: { base: { sha: BASE_SHA }, head: { sha: HEAD_SHA } },
+        }),
+      ),
+    ).toEqual({ base: BASE_SHA, head: HEAD_SHA });
     expect(() => extractPullRequestBaseSha('{"pull_request":{"base":{"sha":"HEAD^"}}}')).toThrow(
       "pull-request event does not contain a valid base commit SHA",
     );
+    expect(() =>
+      extractPullRequestRevisions(
+        JSON.stringify({
+          pull_request: { base: { sha: BASE_SHA }, head: { sha: "refs/pull/1/head" } },
+        }),
+      ),
+    ).toThrow("pull-request event does not contain a valid head commit SHA");
+    expect(() => extractPullRequestRevisions("not JSON")).toThrow(
+      "pull-request event is not valid JSON",
+    );
+    expect(() => extractPullRequestRevisions("null")).toThrow(
+      "pull-request event must be a JSON object",
+    );
+    expect(() =>
+      extractPullRequestRevisions(
+        JSON.stringify({
+          pull_request: { base: { sha: BASE_SHA }, head: { sha: "b".repeat(64) } },
+        }),
+      ),
+    ).toThrow("pull-request head and base commits must use the same object format");
   });
 
-  it("fetches one exact missing base revision in a shallow checkout (#7056)", () => {
+  it("keeps the ratchet disabled outside pull-request jobs (#7056)", () => {
+    let called = false;
+    expect(
+      resolveBaseRevision(temporaryRepo(), {}, () => {
+        called = true;
+        throw new Error("git must not run");
+      }),
+    ).toBeNull();
+    expect(called).toBe(false);
+  });
+
+  it("unshallows exact head and base histories before computing the merge base (#7056)", () => {
     const root = temporaryRepo();
     const calls: Array<{ args: readonly string[]; timeoutMs: number | undefined }> = [];
     let available = false;
+    let shallow = true;
     const runner: GitRunner = (args, timeoutMs) => {
       calls.push({ args, timeoutMs });
       switch (args[0]) {
         case "cat-file":
           return { status: available ? 0 : 128, stderr: "", stdout: "" };
-        case "fetch":
+        case "fetch": {
           available = true;
+          shallow = false;
           return { status: 0, stderr: "", stdout: "" };
+        }
+        case "rev-parse":
+          if (args[1] === "--is-shallow-repository") {
+            return { status: 0, stderr: "", stdout: `${String(shallow)}\n` };
+          }
+          return {
+            status: available ? 0 : 128,
+            stderr: "",
+            stdout: args[2]?.includes("/base") ? `${BASE_SHA}\n` : `${HEAD_SHA}\n`,
+          };
+        case "merge-base":
+          return args[1] === "--all"
+            ? { status: 0, stderr: "", stdout: `${BASE_SHA}\n` }
+            : { status: 0, stderr: "", stdout: "" };
         default:
           throw new Error(`unexpected git arguments: ${args.join(" ")}`);
       }
     };
 
     expect(resolveBaseRevision(root, pullRequestEnvironment(root), runner)).toBe(BASE_SHA);
-    expect(calls).toEqual([
-      { args: ["cat-file", "-e", `${BASE_SHA}^{commit}`], timeoutMs: undefined },
-      {
-        args: ["fetch", "--no-tags", "--depth=1", "origin", BASE_SHA],
-        timeoutMs: 30_000,
-      },
-      { args: ["cat-file", "-e", `${BASE_SHA}^{commit}`], timeoutMs: undefined },
-    ]);
+    const fetch = calls.find((call) => call.args[0] === "fetch");
+    expect(fetch).toEqual({
+      args: [
+        "fetch",
+        "--no-tags",
+        "--no-recurse-submodules",
+        "--force",
+        "--unshallow",
+        "origin",
+        `${BASE_SHA}:refs/nemoclaw/create-require-ratchet/base`,
+        `${HEAD_SHA}:refs/nemoclaw/create-require-ratchet/head`,
+      ],
+      timeoutMs: 120_000,
+    });
   });
 
-  it("fails closed when an exact shallow-base fetch cannot complete (#7056)", () => {
+  it("uses the common ancestor for stale and diverged shallow pull requests (#7056)", () => {
     const root = temporaryRepo();
-    const runner: GitRunner = (args) => ({
-      status: args[0] === "fetch" ? 128 : 1,
-      stderr: "unavailable",
-      stdout: "",
-    });
-    expect(() => resolveBaseRevision(root, pullRequestEnvironment(root), runner)).toThrow(
-      `could not fetch the pull-request base commit ${BASE_SHA}`,
+    const source = path.join(root, "source");
+    const checkout = path.join(root, "checkout");
+    mkdirSync(source);
+    runFixtureGit(source, ["init", "--initial-branch=main"]);
+    runFixtureGit(source, ["config", "user.name", "NemoClaw Test"]);
+    runFixtureGit(source, ["config", "user.email", "test@example.invalid"]);
+    const allowedPath = "src/lib/allowed.test.ts";
+    writeFixture(
+      source,
+      "scripts/checks/test-create-require-budget.ts",
+      allowlistSource([allowedPath], []),
     );
+    writeFixture(source, allowedPath, "createRequire(import.meta.url);\n");
+    runFixtureGit(source, ["add", "."]);
+    runFixtureGit(source, ["commit", "-m", "test: common ancestor"]);
+    const mergeBase = runFixtureGit(source, ["rev-parse", "HEAD"]);
+    runFixtureGit(source, ["branch", "feature"]);
+
+    writeFixture(source, "scripts/checks/test-create-require-budget.ts", allowlistSource([], []));
+    rmSync(path.join(source, allowedPath));
+    runFixtureGit(source, ["add", "."]);
+    runFixtureGit(source, ["commit", "-m", "test: advance base"]);
+    const base = runFixtureGit(source, ["rev-parse", "HEAD"]);
+
+    runFixtureGit(source, ["switch", "feature"]);
+    writeFixture(source, "head.txt", "pull request\n");
+    runFixtureGit(source, ["add", "head.txt"]);
+    runFixtureGit(source, ["commit", "-m", "test: advance head"]);
+    const head = runFixtureGit(source, ["rev-parse", "HEAD"]);
+
+    runFixtureGit(root, ["clone", "--depth=1", "--branch=feature", `file://${source}`, checkout]);
+    expect(runFixtureGit(checkout, ["rev-parse", "--is-shallow-repository"])).toBe("true");
+    expect(resolveBaseRevision(checkout, pullRequestEnvironment(checkout, base, head))).toBe(
+      mergeBase,
+    );
+    expect(runFixtureGit(checkout, ["rev-parse", "--is-shallow-repository"])).toBe("false");
+    expect(
+      verifyTrustedCreateRequireRatchet(ts, checkout, pullRequestEnvironment(checkout, base, head)),
+    ).toBeNull();
+  });
+
+  it("fails closed when exact pull-request history cannot be fetched (#7056)", () => {
+    const root = temporaryRepo();
+    const runner: GitRunner = (args) =>
+      args[0] === "rev-parse"
+        ? { status: 0, stderr: "", stdout: "true\n" }
+        : { status: 128, stderr: "unavailable", stdout: "" };
+    expect(() => resolveBaseRevision(root, pullRequestEnvironment(root), runner)).toThrow(
+      "could not fetch the exact pull-request head and base histories",
+    );
+  });
+
+  it("fails closed on missing, ambiguous, or invalid merge-base results (#7056)", () => {
+    const root = temporaryRepo();
+    const runner =
+      (mergeBase: GitResult, ancestorStatus = 0): GitRunner =>
+      (args) => {
+        if (args[0] === "rev-parse") return { status: 0, stderr: "", stdout: "false\n" };
+        if (args[0] === "cat-file") return { status: 0, stderr: "", stdout: "" };
+        if (args[0] === "merge-base" && args[1] === "--all") return mergeBase;
+        if (args[0] === "merge-base") {
+          return { status: ancestorStatus, stderr: "", stdout: "" };
+        }
+        throw new Error(`unexpected git arguments: ${args.join(" ")}`);
+      };
+
+    expect(() =>
+      resolveBaseRevision(
+        root,
+        pullRequestEnvironment(root),
+        runner({ status: 1, stderr: "unrelated", stdout: "" }),
+      ),
+    ).toThrow("could not compute the pull-request head/base merge base");
+    expect(() =>
+      resolveBaseRevision(
+        root,
+        pullRequestEnvironment(root),
+        runner({ status: 0, stderr: "", stdout: `${BASE_SHA}\n${HEAD_SHA}\n` }),
+      ),
+    ).toThrow("pull-request head and base must have exactly one valid merge base");
+    expect(() =>
+      resolveBaseRevision(
+        root,
+        pullRequestEnvironment(root),
+        runner({ status: 0, stderr: "", stdout: `${BASE_SHA}\n` }, 1),
+      ),
+    ).toThrow("computed merge base is not an ancestor");
   });
 });
