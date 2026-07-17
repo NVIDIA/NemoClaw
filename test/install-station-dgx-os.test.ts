@@ -51,6 +51,26 @@ function writeDgxReleaseFixture(version = "7.5.0", extraLine = "") {
   return target;
 }
 
+function writeDgxReleaseHistory(historyLines: string[]) {
+  const release = writeDgxReleaseFixture();
+  fs.writeFileSync(
+    release,
+    [
+      'DGX_NAME="DGX Server"',
+      'DGX_PRETTY_NAME="NVIDIA DGX Server"',
+      'DGX_SWBUILD_DATE="2026-01-01-00-00-00"',
+      'DGX_SWBUILD_VERSION="7.2.0"',
+      'DGX_COMMIT_ID="abcdef0"',
+      'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
+      'DGX_SERIAL_NUMBER="Unknown"',
+      "",
+      ...historyLines,
+      "",
+    ].join("\n"),
+  );
+  return release;
+}
+
 describe("DGX Station stock DGX OS classification", () => {
   it.each([
     "7.2.0",
@@ -85,25 +105,12 @@ describe("DGX Station stock DGX OS classification", () => {
   });
 
   it("accepts the documented DGX release history schema and uses its latest OTA", () => {
-    const release = writeDgxReleaseFixture();
-    fs.writeFileSync(
-      release,
-      [
-        'DGX_NAME="DGX Server"',
-        'DGX_PRETTY_NAME="NVIDIA DGX Server"',
-        'DGX_SWBUILD_DATE="2026-01-01-00-00-00"',
-        'DGX_SWBUILD_VERSION="7.2.0"',
-        'DGX_COMMIT_ID="abcdef0"',
-        'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
-        'DGX_SERIAL_NUMBER="Unknown"',
-        "",
-        'DGX_OTA_VERSION="7.4.0"',
-        'DGX_OTA_DATE="Thu Apr 16 04:55:25 PM PDT 2026"',
-        'DGX_OTA_VERSION="7.5.0"',
-        'DGX_OTA_DATE="Mon Jul 13 21:29:13 UTC 2026"',
-        "",
-      ].join("\n"),
-    );
+    const release = writeDgxReleaseHistory([
+      'DGX_OTA_VERSION="7.4.0"',
+      'DGX_OTA_DATE="Thu Apr 16 04:55:25 PM PDT 2026"',
+      'DGX_OTA_VERSION="7.5.0"',
+      'DGX_OTA_DATE="Mon Jul 13 21:29:13 UTC 2026"',
+    ]);
     const { result, output } = runSourced(
       STATION_PREPARE,
       `dgx_station_release_contents_are_supported "$DGX_RELEASE"`,
@@ -111,6 +118,51 @@ describe("DGX Station stock DGX OS classification", () => {
     );
 
     expect(result.status, output).toBe(0);
+  });
+
+  it.each([
+    ["orphan date", writeDgxReleaseHistory(['DGX_OTA_DATE="Mon Jul 13 21:29:13 UTC 2026"'])],
+    [
+      "consecutive versions",
+      writeDgxReleaseHistory([
+        'DGX_OTA_VERSION="7.4.0"',
+        'DGX_OTA_VERSION="7.5.0"',
+        'DGX_OTA_DATE="Mon Jul 13 21:29:13 UTC 2026"',
+      ]),
+    ],
+    [
+      "duplicate version",
+      writeDgxReleaseHistory([
+        'DGX_OTA_VERSION="7.4.0"',
+        'DGX_OTA_DATE="Thu Apr 16 04:55:25 PM PDT 2026"',
+        'DGX_OTA_VERSION="7.4.0"',
+        'DGX_OTA_DATE="Mon Jul 13 21:29:13 UTC 2026"',
+      ]),
+    ],
+    [
+      "dangling final version",
+      writeDgxReleaseHistory([
+        'DGX_OTA_VERSION="7.4.0"',
+        'DGX_OTA_DATE="Thu Apr 16 04:55:25 PM PDT 2026"',
+        'DGX_OTA_VERSION="7.5.0"',
+      ]),
+    ],
+    [
+      "blank line between version and date",
+      writeDgxReleaseHistory([
+        'DGX_OTA_VERSION="7.5.0"',
+        "",
+        'DGX_OTA_DATE="Mon Jul 13 21:29:13 UTC 2026"',
+      ]),
+    ],
+  ])("rejects malformed OTA history with %s (#7103)", (_scenario, release) => {
+    const { result } = runSourced(
+      STATION_PREPARE,
+      `dgx_station_release_schema_is_valid "$DGX_RELEASE"`,
+      { DGX_RELEASE: release },
+    );
+
+    expect(result.status).not.toBe(0);
   });
 
   it.each([

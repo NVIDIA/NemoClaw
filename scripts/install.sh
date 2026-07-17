@@ -3270,13 +3270,16 @@ ensure_station_express_host() {
 
 prepare_installer_host() {
   maybe_offer_express_install
-  # Intentional ordering: Station preparation owns the reboot boundary before
-  # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
-  ensure_station_express_host
   if [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
+    # Station qualification is deliberately scoped to the local factory
+    # runtime. Normalize the Docker target before any preparation probe so an
+    # ambient remote context can neither satisfy nor be changed by this path.
     unset DOCKER_HOST
     export DOCKER_CONTEXT=default
   fi
+  # Intentional ordering: Station preparation owns the reboot boundary before
+  # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
+  ensure_station_express_host
   ensure_docker
   ensure_openshell_build_deps
 }
@@ -3320,7 +3323,7 @@ describe_express_install() {
         printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
       fi
       printf "  Host setup may add this trusted local account to the docker group, which grants root-equivalent control. This flow is only for trusted single-user development hosts; shared or managed hosts require an organization-approved Docker access path.\n"
-      printf "  DGX Station remains Deferred; this recipe has not completed end-to-end validation on physical hardware.\n"
+      printf "  DGX Station remains Deferred; one DGX OS 7.5 GB300 physical validation passed, with repeat clean-host qualification and CI coverage still pending.\n"
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")

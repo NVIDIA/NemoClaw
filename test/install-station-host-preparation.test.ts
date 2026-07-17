@@ -1058,6 +1058,26 @@ prepare_installer_host
     ]);
   });
 
+  it("pins Station preparation to the local default Docker context (#7103)", () => {
+    const { result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+DOCKER_HOST='tcp://remote.example:2376'
+DOCKER_CONTEXT='remote-cluster'
+maybe_offer_express_install() { _SELECTED_EXPRESS_PLATFORM='DGX Station'; }
+ensure_station_express_host() {
+  printf 'PREPARE DOCKER_HOST=%s DOCKER_CONTEXT=%s\n' "\${DOCKER_HOST-unset}" "\${DOCKER_CONTEXT-unset}"
+}
+ensure_docker() { :; }
+ensure_openshell_build_deps() { :; }
+prepare_installer_host
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout.trim()).toBe("PREPARE DOCKER_HOST=unset DOCKER_CONTEXT=default");
+  });
+
   it("skips Station preparation before Docker bootstrap on non-Station platforms", () => {
     const { result, output } = runSourced(
       INSTALLER_PAYLOAD,

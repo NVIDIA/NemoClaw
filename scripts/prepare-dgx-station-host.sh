@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly SCRIPT_VERSION="2026-07-17.1"
+readonly SCRIPT_VERSION="2026-07-17.2"
 readonly REBOOT_REQUIRED_EXIT=10
 readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
 STATION_HOST_PROFILE="generic-ubuntu"
@@ -67,9 +67,13 @@ dgx_station_release_file_is_safe() {
 }
 
 dgx_station_release_schema_is_valid() {
-  local path=$1 line key encoded value seen='|'
+  local path=$1 line key encoded value seen='|' expect_ota_date=0 prior_version
+  local -a ota_versions=()
   while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ -n "$line" ]] || continue
+    if [[ -z "$line" ]]; then
+      ((expect_ota_date == 0)) || return 1
+      continue
+    fi
     [[ "$line" == *=* ]] || return 1
     key="${line%%=*}"
     encoded="${line#*=}"
@@ -81,13 +85,32 @@ dgx_station_release_schema_is_valid() {
       DGX_NAME | DGX_PRETTY_NAME | DGX_SWBUILD_DATE | DGX_SWBUILD_VERSION | DGX_COMMIT_ID | DGX_OTA_PRETTY_NAME | DGX_OTA_VERSION | DGX_OTA_DATE | DGX_PLATFORM | DGX_SERIAL_NUMBER) ;;
       *) return 1 ;;
     esac
-    # DGX OS appends OTA version/date pairs as release history. Other keys
-    # remain unique, and dgx_station_release_value returns the latest OTA.
-    if [[ "$key" != "DGX_OTA_VERSION" && "$key" != "DGX_OTA_DATE" ]]; then
-      [[ "$seen" != *"|${key}|"* ]] || return 1
-    fi
+    # DGX OS appends unique OTA version/date pairs as release history. Require
+    # each version to be immediately followed by its date; other keys remain
+    # unique, and dgx_station_release_value returns the latest complete OTA.
+    case "$key" in
+      DGX_OTA_VERSION)
+        ((expect_ota_date == 0)) || return 1
+        if ((${#ota_versions[@]} > 0)); then
+          for prior_version in "${ota_versions[@]}"; do
+            [[ "$prior_version" != "$value" ]] || return 1
+          done
+        fi
+        ota_versions+=("$value")
+        expect_ota_date=1
+        ;;
+      DGX_OTA_DATE)
+        ((expect_ota_date == 1)) || return 1
+        expect_ota_date=0
+        ;;
+      *)
+        ((expect_ota_date == 0)) || return 1
+        [[ "$seen" != *"|${key}|"* ]] || return 1
+        ;;
+    esac
     seen="${seen}${key}|"
   done <"$path"
+  ((expect_ota_date == 0))
 }
 
 dgx_station_release_value() {

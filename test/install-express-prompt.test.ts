@@ -146,11 +146,7 @@ sys.exit(exit_code)
     );
   }
 
-  function detectExpressPlatformForProductName(productName: string, dgxRelease?: string) {
-    const releasePath = dgxRelease
-      ? path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dgx-release-")), "dgx-release")
-      : "";
-    if (dgxRelease !== undefined) fs.writeFileSync(releasePath, dgxRelease);
+  function detectExpressPlatform(productName: string, releasePath: string) {
     return spawnSync(
       "bash",
       [
@@ -202,6 +198,19 @@ detect_express_platform
         },
       },
     );
+  }
+
+  function detectExpressPlatformForProductName(productName: string) {
+    return detectExpressPlatform(productName, "");
+  }
+
+  function detectExpressPlatformForStockDgxRelease(productName: string, dgxRelease: string) {
+    const releasePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dgx-release-")),
+      "dgx-release",
+    );
+    fs.writeFileSync(releasePath, dgxRelease);
+    return detectExpressPlatform(productName, releasePath);
   }
 
   function stockDgxRelease(version: string, platform = "DGX Server for GALAXY-GB300") {
@@ -679,7 +688,7 @@ detect_express_platform
   });
 
   it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s on Station GB300", (version) => {
-    const result = detectExpressPlatformForProductName(
+    const result = detectExpressPlatformForStockDgxRelease(
       "DGX Station GB300",
       stockDgxRelease(version),
     );
@@ -697,7 +706,7 @@ detect_express_platform
     ],
     ["shell payload", `${stockDgxRelease("7.5.0")}PAYLOAD="$(touch /tmp/nope)"\n`],
   ])("rejects a stock DGX OS marker with %s", (_scenario, marker) => {
-    const result = detectExpressPlatformForProductName("DGX Station GB300", marker);
+    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", marker);
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("Unsupported DGX Station OS");

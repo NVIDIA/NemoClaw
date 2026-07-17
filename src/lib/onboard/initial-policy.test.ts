@@ -79,7 +79,7 @@ afterEach(() => {
 });
 
 describe("initial sandbox policy helpers", () => {
-  it("prepares sysfs read access and lets OpenShell own /proc GPU enrichment", () => {
+  it("prepares sysfs read access and lets OpenShell own /proc GPU enrichment (#7103)", () => {
     const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE);
     const baseDoc = YAML.parse(BASE_POLICY_FIXTURE);
     const gpuDoc = YAML.parse(gpuPolicy);
@@ -93,7 +93,7 @@ describe("initial sandbox policy helpers", () => {
     expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
   });
 
-  it("adds /proc read-write when Docker GPU patch must own GPU enrichment", () => {
+  it("adds /proc read-write when Docker GPU patch must own GPU enrichment (#7103)", () => {
     const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE, { procReadWrite: true });
     const gpuDoc = YAML.parse(gpuPolicy);
 
@@ -125,7 +125,8 @@ network_policies:
 `);
     const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(gpuDoc.filesystem_policy.read_only).toEqual(["/usr", "/sys"]);
+    expect(gpuDoc.filesystem_policy.read_only).toHaveLength(2);
+    expect(gpuDoc.filesystem_policy.read_only).toEqual(expect.arrayContaining(["/usr", "/sys"]));
     expect(gpuDoc.filesystem_policy.read_write).toEqual(["/tmp"]);
   });
 
@@ -142,7 +143,26 @@ network_policies: {}
 `);
     const gpuDoc = YAML.parse(gpuPolicy);
 
-    expect(gpuDoc.filesystem_policy.read_only).toEqual(["/usr", "/sys"]);
+    expect(gpuDoc.filesystem_policy.read_only).toHaveLength(2);
+    expect(gpuDoc.filesystem_policy.read_only).toEqual(expect.arrayContaining(["/usr", "/sys"]));
+  });
+
+  it("preserves writable sysfs without adding a read-only duplicate (#7103)", () => {
+    const gpuPolicy = buildDirectGpuPolicyYaml(`
+version: 1
+filesystem_policy:
+  read_only:
+    - /usr
+  read_write:
+    - /tmp
+    - /sys
+network_policies: {}
+`);
+    const gpuDoc = YAML.parse(gpuPolicy);
+
+    expect(gpuDoc.filesystem_policy.read_only).not.toContain("/sys");
+    expect(gpuDoc.filesystem_policy.read_write).toHaveLength(2);
+    expect(gpuDoc.filesystem_policy.read_write).toEqual(expect.arrayContaining(["/tmp", "/sys"]));
   });
 
   it("builds direct sandbox GPU proof commands", () => {
