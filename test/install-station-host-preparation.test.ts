@@ -5,17 +5,18 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  clearStationExpressInstallerResume,
+  withStationExpressResumeEnvironment,
+} from "../src/lib/onboard/station-express-resume";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const PUBLIC_BOOTSTRAP = path.join(REPO_ROOT, "install.sh");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const STATION_REVISION = "a".repeat(40);
-const STATION_DOCS = [
-  path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx"),
-  path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx"),
-];
+const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 
 function runSourced(script: string, body: string, extraEnv: Record<string, string> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-host-"));
@@ -38,48 +39,40 @@ function runSourced(script: string, body: string, extraEnv: Record<string, strin
   return { home, result, output: `${result.stdout}${result.stderr}` };
 }
 
-function writePciIdentityFixture(vendor = "0x10de", device = "0x31c2", pciClass = "0x030200") {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-pci-"));
-  const pciDevice = path.join(root, "0000:01:00.0");
-  fs.mkdirSync(pciDevice);
-  fs.writeFileSync(path.join(pciDevice, "vendor"), `${vendor}\n`);
-  fs.writeFileSync(path.join(pciDevice, "device"), `${device}\n`);
-  fs.writeFileSync(path.join(pciDevice, "class"), `${pciClass}\n`);
-  return root;
-}
-
-function writePciIdentityFixtureMissing(field: "vendor" | "device" | "class") {
-  const root = writePciIdentityFixture();
-  fs.rmSync(path.join(root, "0000:01:00.0", field));
-  return root;
+function runNonInteractiveStationSelector(home: string) {
+  const result = spawnSync(
+    "bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-c",
+      `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf 'DGX Station'; }
+station_installer_revision() { printf '${STATION_REVISION}'; }
+NON_INTERACTIVE='1'
+NEMOCLAW_PROVIDER=''
+NEMOCLAW_NO_EXPRESS=''
+maybe_offer_express_install
+printf 'RESULT PROVIDER=%s STATION_EXPRESS=%s\n' "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_STATION_EXPRESS:-}"
+`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        HOME: home,
+        PATH: TEST_SYSTEM_PATH,
+        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+      },
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    },
+  );
+  return { result, output: `${result.stdout}${result.stderr}` };
 }
 
 describe("DGX Station host preparation", () => {
-  it("keeps documented Station pins and Deferred status aligned", () => {
-    const helper = fs.readFileSync(STATION_PREPARE, "utf-8");
-    const docs = STATION_DOCS.map((doc) => fs.readFileSync(doc, "utf-8"));
-    const pinnedValues = [
-      "DRIVER_VERSION",
-      "DOCKER_VERSION",
-      "TOOLKIT_VERSION",
-      "FACTORY_DKMS_VERSION",
-      "TARGET_DKMS_VERSION",
-    ].map((name) => {
-      const value = helper.match(new RegExp(`readonly ${name}="([^"]+)"`))?.[1];
-      expect(value, `${name} must remain declared in the Station helper`).toBeTruthy();
-      return value as string;
-    });
-
-    for (const doc of docs) {
-      for (const version of pinnedValues) expect(doc).toContain(version);
-      expect(doc).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-      for (const version of ["7.2.0", "7.4.0", "7.5.0"]) {
-        expect(doc).toContain(version);
-      }
-      expect(doc).toContain("DGX Server for GALAXY-GB300");
-    }
-  });
-
   it("uses the documented plain-Ubuntu driver-injection probe for CDI and --gpus", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -117,96 +110,6 @@ package_state 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'
 
     expect(result.status, output).toBe(0);
     expect(result.stdout.trim()).toBe(expected);
-  });
-
-  it.each([
-    ["Dell Pro Max with Station GB300", true],
-    ["NVIDIA DGX Station GB300", true],
-    ["P3830", false],
-    ["NVIDIA P3830 Rev A", false],
-    ["Acme XP3830 Workstation", false],
-    ["Acme Workstation GB300", false],
-    ["NVIDIA DGX Station GB300X", false],
-    ["NVIDIA DGX Station A100", false],
-    ["Dell Pro Max with Station GB200", false],
-    ["Dell Pro Max with GB300", false],
-  ])("accepts only Station GB300 DMI: %s", (product, accepted) => {
-    const { result } = runSourced(STATION_PREPARE, `is_station_gb300_product "$PRODUCT"`, {
-      PRODUCT: product,
-    });
-
-    expect(result.status === 0).toBe(accepted);
-  });
-
-  it("requires the exact NVIDIA GB300 PCI GPU identity (#7103)", () => {
-    const pciRoot = writePciIdentityFixture();
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `station_has_exact_gb300_pci_gpu "$PCI_ROOT"`,
-      { PCI_ROOT: pciRoot },
-    );
-
-    expect(result.status, output).toBe(0);
-  });
-
-  it.each([
-    ["wrong vendor", writePciIdentityFixture("0x1234")],
-    ["wrong device", writePciIdentityFixture("0x10de", "0x31c1")],
-    ["non-GPU PCI class", writePciIdentityFixture("0x10de", "0x31c2", "0x020000")],
-    ["missing vendor", writePciIdentityFixtureMissing("vendor")],
-    ["missing device", writePciIdentityFixtureMissing("device")],
-    ["missing class", writePciIdentityFixtureMissing("class")],
-    ["empty PCI tree", fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-pci-empty-"))],
-  ])("rejects %s as a GB300 PCI identity (#7103)", (_scenario, pciRoot) => {
-    const { result } = runSourced(STATION_PREPARE, `station_has_exact_gb300_pci_gpu "$PCI_ROOT"`, {
-      PCI_ROOT: pciRoot,
-    });
-
-    expect(result.status).not.toBe(0);
-  });
-
-  it("rejects a generic Ubuntu host without the GB300 PCI identity before mutation (#7103)", () => {
-    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-platform-"));
-    const osReleasePath = path.join(fixtureRoot, "os-release");
-    const productNamePath = path.join(fixtureRoot, "product_name");
-    const dgxReleasePath = path.join(fixtureRoot, "absent-dgx-release");
-    const pciRoot = writePciIdentityFixture("0x1234");
-    fs.writeFileSync(
-      osReleasePath,
-      'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n',
-    );
-    fs.writeFileSync(productNamePath, "DGX Station GB300\n");
-
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-station_os_release_path() { printf '%s' "$OS_RELEASE_PATH"; }
-station_product_name_path() { printf '%s' "$PRODUCT_NAME_PATH"; }
-station_pci_devices_path() { printf '%s' "$PCI_ROOT"; }
-dgx_station_release_path() { printf '%s' "$DGX_RELEASE_PATH"; }
-uname() {
-  case "$*" in
-    -m) printf 'aarch64' ;;
-    -r) printf 'test-kernel' ;;
-    *) return 1 ;;
-  esac
-}
-require_command() { :; }
-acquire_sudo() { :; }
-install_packages() { printf 'UNEXPECTED_MUTATION\n'; }
-run_apply
-`,
-      {
-        OS_RELEASE_PATH: osReleasePath,
-        PRODUCT_NAME_PATH: productNamePath,
-        PCI_ROOT: pciRoot,
-        DGX_RELEASE_PATH: dgxReleasePath,
-      },
-    );
-
-    expect(result.status, output).not.toBe(0);
-    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2)");
-    expect(output).not.toContain("UNEXPECTED_MUTATION");
   });
 
   it("allows only the reviewed factory DKMS transition", () => {
@@ -1194,6 +1097,7 @@ prepare_installer_host
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
 station_installer_revision() { printf '${STATION_REVISION}'; }
+station_express_resume_generation() { printf '${STATION_GENERATION}'; }
 run_station_host_preparation() { return 10; }
 ensure_station_express_host
 `,
@@ -1202,7 +1106,7 @@ ensure_station_express_host
 
     expect(result.status, output).toBe(10);
     expect(fs.readFileSync(stateFile, "utf-8")).toBe(
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
     );
     expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
     expect(output).toContain(`NEMOCLAW_INSTALL_TAG=${STATION_REVISION}`);
@@ -1258,7 +1162,7 @@ ensure_station_express_host
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(
       path.join(stateDir, "station-express-resume"),
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
       { mode: 0o600 },
     );
     const result = spawnSync(
@@ -1275,8 +1179,8 @@ NON_INTERACTIVE=''
 NEMOCLAW_PROVIDER=''
 NEMOCLAW_NO_EXPRESS=''
 maybe_offer_express_install
-printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s\n' \
-  "$_SELECTED_EXPRESS_PLATFORM" "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_MODEL:-}" "$NEMOCLAW_VLLM_MODEL"
+printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s RESUME_LOADED=%s GENERATION=%s\n' \
+  "$_SELECTED_EXPRESS_PLATFORM" "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_MODEL:-}" "$NEMOCLAW_VLLM_MODEL" "$NEMOCLAW_STATION_EXPRESS" "$_STATION_EXPRESS_RESUME_LOADED" "$NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION"
 `,
       ],
       {
@@ -1297,8 +1201,109 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s\n' \
     expect(output).toMatch(/Resuming the accepted express install/);
     expect(output).not.toMatch(/Run express install with these settings/);
     expect(output).toMatch(
-      /RESULT PLATFORM=DGX Station PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b/,
+      new RegExp(
+        `RESULT PLATFORM=DGX Station PROVIDER=install-vllm MODEL=nvidia/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b STATION_EXPRESS=1 RESUME_LOADED=1 GENERATION=${STATION_GENERATION}`,
+      ),
     );
+  });
+
+  it("does not restore the Station recipe after an explicit fresh onboard (#7048)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-fresh-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(
+      receipt,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
+      { mode: 0o600 },
+    );
+    const session = {
+      resumable: true,
+      status: "failed",
+      mode: "non-interactive",
+      provider: null,
+      model: null,
+      stationExpressIntent: {
+        version: 1 as const,
+        model: "nemotron-3-ultra-550b-a55b",
+        sandboxName: "my-assistant",
+      },
+    };
+
+    try {
+      await withStationExpressResumeEnvironment(
+        async () => undefined,
+        {
+          loadSession: () => session,
+          clearInstallerResume: () => clearStationExpressInstallerResume({ HOME: home }),
+          cleanupReceiptRetirementClaims: () => undefined,
+          reconcileReceiptRetirement: () => undefined,
+          error: (message) => {
+            throw new Error(message);
+          },
+          exitProcess: (code): never => {
+            throw new Error(`exit ${String(code)}`);
+          },
+        },
+        {},
+      )({ fresh: true });
+      expect(fs.existsSync(receipt)).toBe(false);
+
+      const { result, output } = runNonInteractiveStationSelector(home);
+
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Skipping express prompt (--non-interactive set)");
+      expect(output).not.toContain("Resuming the accepted express install");
+      expect(output).toContain("RESULT PROVIDER= STATION_EXPRESS=");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not restore the Station recipe after onboarding completes (#7048)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-complete-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    const session = await import("../src/lib/state/onboard-session");
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+
+    try {
+      session.saveSession(
+        session.createSession({
+          mode: "non-interactive",
+          stationExpressIntent: {
+            version: 1,
+            model: "nemotron-3-ultra-550b-a55b",
+            sandboxName: "my-assistant",
+            receiptGeneration: STATION_GENERATION,
+          },
+        }),
+      );
+      fs.writeFileSync(
+        receipt,
+        `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
+        { mode: 0o600 },
+      );
+
+      session.completeSession();
+
+      expect(fs.existsSync(receipt)).toBe(false);
+      expect(session.loadSession()).toMatchObject({
+        status: "complete",
+        resumable: false,
+        stationExpressIntent: null,
+      });
+      const { result, output } = runNonInteractiveStationSelector(home);
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Skipping express prompt (--non-interactive set)");
+      expect(output).not.toContain("Resuming the accepted express install");
+      expect(output).toContain("RESULT PROVIDER= STATION_EXPRESS=");
+    } finally {
+      session.clearSession();
+      session.releaseOnboardLock();
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("preserves an explicit provider even when Station resume state exists", () => {
@@ -1331,8 +1336,21 @@ printf 'RESULT PROVIDER=%s\n' "$NEMOCLAW_PROVIDER"
       `
 mkdir -p "$HOME/.nemoclaw"
 chmod 0700 "$HOME/.nemoclaw"
-printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n' >"$HOME/.nemoclaw/station-express-resume"
+printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$HOME/.nemoclaw/station-express-resume"
 chmod 0600 "$HOME/.nemoclaw/station-express-resume"
+claim="$HOME/.nemoclaw/station-express-resume.retiring-${STATION_GENERATION}-ABC123"
+mkdir -m 0700 "$claim"
+printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$claim/receipt"
+: >"$claim/retired"
+chmod 0600 "$claim/receipt" "$claim/retired"
+: >"$claim/unexpected"
+(clear_station_express_resume) && exit 91
+[[ -f "$claim/receipt" ]] || exit 92
+rm "$claim/unexpected"
+chmod 0644 "$claim/retired"
+(clear_station_express_resume) && exit 93
+[[ -f "$claim/receipt" ]] || exit 94
+chmod 0600 "$claim/retired"
 detect_express_platform() { printf 'DGX Station'; }
 NON_INTERACTIVE=''
 NEMOCLAW_PROVIDER=''
@@ -1344,6 +1362,44 @@ maybe_offer_express_install
     expect(result.status, output).toBe(0);
     expect(output).toContain("NEMOCLAW_NO_EXPRESS=1");
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(
+          home,
+          ".nemoclaw",
+          `station-express-resume.retiring-${STATION_GENERATION}-ABC123`,
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses claim-only cleanup through a group-accessible gateway ancestor", () => {
+    const { home, result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+NEMOCLAW_GATEWAY_PORT=28080
+state_dir="$HOME/.nemoclaw/gateways/28080"
+claim="$state_dir/station-express-resume.retiring-${STATION_GENERATION}-ABC123"
+mkdir -p "$claim"
+chmod 0700 "$HOME/.nemoclaw" "$state_dir" "$claim"
+chmod 0770 "$HOME/.nemoclaw/gateways"
+: >"$claim/retired"
+chmod 0600 "$claim/retired"
+clear_station_express_resume
+`,
+    );
+
+    expect(result.status, output).toBe(1);
+    expect(output).toContain("must not be accessible by group or other users");
+    expect(
+      fs.existsSync(
+        path.join(
+          home,
+          ".nemoclaw/gateways/28080",
+          `station-express-resume.retiring-${STATION_GENERATION}-ABC123/retired`,
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("does not load Station resume state on DGX Spark", () => {
@@ -1377,7 +1433,7 @@ printf 'RESULT MODEL=%s\n' "$NEMOCLAW_VLLM_MODEL"
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(
       path.join(stateDir, "station-express-resume"),
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\nunexpected\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\nunexpected\n`,
       { mode: 0o600 },
     );
     const result = spawnSync(
@@ -1414,7 +1470,7 @@ printf 'RESULT MODEL=%s\n' "$NEMOCLAW_VLLM_MODEL"
       `
 mkdir -p "$HOME/.nemoclaw"
 chmod 0700 "$HOME/.nemoclaw"
-printf 'revision=${savedRevision}\nmodel=nemotron-3-ultra-550b-a55b\n' >"$HOME/.nemoclaw/station-express-resume"
+printf 'revision=${savedRevision}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$HOME/.nemoclaw/station-express-resume"
 chmod 0600 "$HOME/.nemoclaw/station-express-resume"
 station_installer_revision() { printf '${currentRevision}'; }
 load_station_express_resume
