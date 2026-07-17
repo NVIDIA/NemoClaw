@@ -265,6 +265,10 @@ export class OnboardRuntime {
     if (updated.machine.state !== "complete") {
       const enteredAt = this.deps.now();
       updated = this.deps.updateSession((session) => {
+        Object.assign(session, safeUpdates);
+        session.status = "complete";
+        session.resumable = false;
+        session.failure = null;
         session.machine = snapshotFor("complete", enteredAt, session.machine.revision + 1);
         return session;
       });
