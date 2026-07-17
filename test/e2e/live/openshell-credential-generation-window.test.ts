@@ -344,7 +344,7 @@ test("openshell-credential-generation-window", { timeout: 60 * 60_000 }, async (
       "OpenShell f27ff150 retained credential generations",
       "NemoClaw MCP detach, restart, and rebuild lifecycle",
     ],
-    sourceRevision: "94cdd697c55aedb571f177ec13cfa54a8e213919",
+    sourceRevision: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
   });
 
   const compatibleMock = await startCompatibleMock({

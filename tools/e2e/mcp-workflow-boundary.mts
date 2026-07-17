@@ -19,15 +19,15 @@ const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
 const CREDENTIAL_WINDOW_ID = "openshell-credential-generation-window";
 const CREDENTIAL_WINDOW_FILE = `test/e2e/live/${CREDENTIAL_WINDOW_ID}.test.ts`;
 const CREDENTIAL_WINDOW_SHARD = "deepagents";
-const STABLE_RELEASE_SOURCE_SHA = "94cdd697c55aedb571f177ec13cfa54a8e213919";
+const STABLE_RELEASE_SOURCE_SHA = "3dee5570a46076a57a3b056f35f35ebc0861ac85";
 const STABLE_RELEASE_SUPERVISOR_INDEX =
-  "790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365";
+  "f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9";
 const STABLE_RELEASE_PROVENANCE_TOKENS = [
-  'releaseTag: "v0.0.82"',
+  'releaseTag: "v0.0.85"',
   STABLE_RELEASE_SOURCE_SHA,
-  "9375f54f809f8b4301f1da562d64d509851be5889ef3a1bcf50c64e1280399e9",
-  "31adba5b7608db538ab4f72808f0dddcfa97ede8e357a7674a454427b31886bc",
-  "145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09",
+  "222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8",
+  "33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f",
+  "863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2",
   "mcp-bridge-deepagents/openshell-exact-main-provenance.json",
 ] as const;
 const DEV_COMPATIBILITY_RUN = [

@@ -44,9 +44,9 @@ describe("docker-driver-gateway auth contract", () => {
     expect(compatibilityReview).toContain("_provider_*");
     expect(compatibilityReview).toContain("protocol: mcp");
     expect(compatibilityReview).toContain("protocol: json-rpc");
-    expect(migrationReview).toContain("94cdd697c55aedb571f177ec13cfa54a8e213919");
+    expect(migrationReview).toContain("3dee5570a46076a57a3b056f35f35ebc0861ac85");
     expect(migrationReview).toContain(
-      "sha256:790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365",
+      "sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9",
     );
 
     expect(inheritedAuthReview).toContain("openshell_server::config_file::load()");
@@ -68,7 +68,7 @@ describe("docker-driver-gateway auth contract", () => {
     expect(inheritedAuthReview).toContain("valid sandbox JWT access from Docker origin");
   });
 
-  it("emits an OpenShell 0.0.82-compatible sandbox JWT bundle and TTL contract", () => {
+  it("emits an OpenShell 0.0.85-compatible sandbox JWT bundle and TTL contract", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);
@@ -166,7 +166,7 @@ describe("docker-driver-gateway auth contract", () => {
     }
   });
 
-  it("emits the complete OpenShell 0.0.82 gateway auth TOML schema", () => {
+  it("emits the complete OpenShell 0.0.85 gateway auth TOML schema", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);

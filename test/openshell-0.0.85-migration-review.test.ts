@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const review = fs.readFileSync(
-  path.join(repoRoot, "docs", "security", "openshell-0.0.82-migration-review.md"),
+  path.join(repoRoot, "docs", "security", "openshell-0.0.85-migration-review.md"),
   "utf8",
 );
 
@@ -22,6 +22,9 @@ const adjacentRanges = [
   { from: "v0.0.79", to: "v0.0.80", commits: 5, paths: 15 },
   { from: "v0.0.80", to: "v0.0.81", commits: 4, paths: 9 },
   { from: "v0.0.81", to: "v0.0.82", commits: 12, paths: 76 },
+  { from: "v0.0.82", to: "v0.0.83", commits: 8, paths: 20 },
+  { from: "v0.0.83", to: "v0.0.84", commits: 7, paths: 110 },
+  { from: "v0.0.84", to: "v0.0.85", commits: 5, paths: 29 },
 ] as const;
 
 const auditedCommits = [
@@ -72,11 +75,31 @@ const auditedCommits = [
   "40194f93",
   "bb72d012",
   "94cdd697",
+  "88f2656f",
+  "0fe24a4c",
+  "9ad53b3f",
+  "4e1ffef8",
+  "fcc9db30",
+  "ee9b4551",
+  "df062867",
+  "e3d26dd3",
+  "97e10513",
+  "a41cd125",
+  "96fd31fc",
+  "e8c16eb1",
+  "994750e3",
+  "83003e80",
+  "e6f319c7",
+  "80293213",
+  "392ad639",
+  "b4be33e5",
+  "21aaa895",
+  "3dee5570",
 ] as const;
 
-describe("OpenShell 0.0.82 migration review", () => {
-  it("records every adjacent release range and all 47 audited commits", () => {
-    expect(adjacentRanges.reduce((total, range) => total + range.commits, 0)).toBe(47);
+describe("OpenShell 0.0.85 migration review", () => {
+  it("records every adjacent release range and all 67 audited commits", () => {
+    expect(adjacentRanges.reduce((total, range) => total + range.commits, 0)).toBe(67);
     for (const range of adjacentRanges) {
       expect(review).toContain(
         `| \`${range.from} -> ${range.to}\` | ${range.commits} | ${range.paths} |`,
@@ -85,23 +108,25 @@ describe("OpenShell 0.0.82 migration review", () => {
     for (const commit of auditedCommits) {
       expect(review, `missing audited OpenShell commit ${commit}`).toContain(commit);
     }
-    expect(review).toContain("175 distinct changed paths");
+    expect(review).toContain("283 distinct changed paths");
   });
 
   it("keeps source ancestry, release publication, and artifact provenance as separate gates", () => {
-    expect(review).toContain("published stable tag `v0.0.82` at verified commit");
+    expect(review).toContain("published stable tag `v0.0.85` at verified commit");
     expect(review).toContain("v0.0.81` is a source tag");
     expect(review).toContain("it has no GitHub release");
     expect(review).toContain("failed the Ubuntu 26.04 rootless-Podman E2E job");
+    expect(review).toContain("v0.0.84` is a verified source tag");
+    expect(review).toContain("failed the Linux arm64 snap build");
     expect(review).toContain("no verifiable source-to-image attestation");
     expect(review).toContain("reject archive traversal, links, devices, duplicates");
-    expect(review).toContain("29260186856");
+    expect(review).toContain("29507522595");
     expect(review).toContain(
-      "sha256:790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365",
+      "sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9",
     );
     expect(review).toContain("SLSA-bound release archives");
-    expect(review).toContain("9375f54f809f8b4301f1da562d64d509851be5889ef3a1bcf50c64e1280399e9");
-    expect(review).toContain("31adba5b7608db538ab4f72808f0dddcfa97ede8e357a7674a454427b31886bc");
+    expect(review).toContain("222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8");
+    expect(review).toContain("33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f");
   });
 
   it("records exact development identities without treating them as a stable release", () => {
@@ -122,7 +147,7 @@ describe("OpenShell 0.0.82 migration review", () => {
 
   it("tracks every material migration concern and refuses false-green evidence", () => {
     for (let number = 1; number <= 17; number += 1) {
-      const id = `OS82-${String(number).padStart(2, "0")}`;
+      const id = `OS85-${String(number).padStart(2, "0")}`;
       expect(review.split(`| \`${id}\` |`), `${id} concern row`).toHaveLength(2);
     }
     expect(review).toContain("An unresolved critical or high concern blocks");
@@ -171,7 +196,12 @@ describe("OpenShell 0.0.82 migration review", () => {
     expect(mcpProof).toContain("assertExactMainMcpLogPrivacy({");
     expect(review).toContain("capctl 0.2.4");
     expect(review).toContain("4a6e71767585f51c2a33fed6d67147ec0343725fc3c03bf4b89fe67fede56aa5");
+    expect(review).toContain("prost-reflect 0.16.5");
+    expect(review).toContain("01b80ea363c31af2de2b92e3c07ed1156628f7838c4afb4df75ee78a37fedbd1");
+    expect(review).toContain("tomli 2.4.1");
+    expect(review).toContain("7c7e1a961a0b2f2472c1ac5b69affa0ae1132c39adcb67aba98568702b9cc23f");
     expect(review).toContain("THIRD-PARTY-NOTICES");
+    expect(review).toMatch(/byte-identical between `v0\.0\.82`\s+and `v0\.0\.85`/u);
     expect(review).toContain("Alpine `3.22.5`");
     expect(review).toContain("29 installed APK records");
     expect(review).toContain("executes only the extracted binary");
@@ -223,16 +253,16 @@ describe("OpenShell 0.0.82 migration review", () => {
           "lib",
           "actions",
           "sandbox",
-          "openshell-child-visible-credentials.v0.0.82.json",
+          "openshell-child-visible-credentials.v0.0.85.json",
         ),
         "utf8",
       ),
     ) as { openshellVersion: string };
 
-    expect(blueprint).toContain('min_openshell_version: "0.0.82"');
-    expect(blueprint).toContain('max_openshell_version: "0.0.82"');
-    expect(manifest.openshellVersion).toBe("0.0.82");
-    expect(review).toContain("binds NemoClaw's `0.0.82` selectors");
+    expect(blueprint).toContain('min_openshell_version: "0.0.85"');
+    expect(blueprint).toContain('max_openshell_version: "0.0.85"');
+    expect(manifest.openshellVersion).toBe("0.0.85");
+    expect(review).toContain("binds NemoClaw's `0.0.85` selectors");
     expect(review).toContain("physical Docker 27 DGX Spark");
     expect(review).toContain("loopback first-byte test");
     expect(review).not.toContain("did not add a true connection-level test");

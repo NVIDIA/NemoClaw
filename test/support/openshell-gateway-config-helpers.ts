@@ -30,7 +30,7 @@ export const GATEWAY_MIGRATION_REVIEW_NOTE = path.join(
   REPO_ROOT,
   "docs",
   "security",
-  "openshell-0.0.82-migration-review.md",
+  "openshell-0.0.85-migration-review.md",
 );
 const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";
 
@@ -46,7 +46,7 @@ export function baseGatewayEnv(stateDir: string): Record<string, string> {
     OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
     OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
-      "ghcr.io/nvidia/openshell/supervisor@sha256:790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365",
+      "ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9",
   };
 }
 

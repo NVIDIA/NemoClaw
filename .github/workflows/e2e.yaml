@@ -534,7 +534,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.82"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -603,7 +603,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: stable
       NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -652,12 +652,12 @@ jobs:
             jq -n '{
               schemaVersion: 1,
               sourceRepository: "NVIDIA/OpenShell",
-              releaseTag: "v0.0.82",
-              sourceSha: "94cdd697c55aedb571f177ec13cfa54a8e213919",
+              releaseTag: "v0.0.85",
+              sourceSha: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
               artifacts: {
-                cli: {binarySha256: "9375f54f809f8b4301f1da562d64d509851be5889ef3a1bcf50c64e1280399e9"},
-                gateway: {binarySha256: "31adba5b7608db538ab4f72808f0dddcfa97ede8e357a7674a454427b31886bc"},
-                standaloneSandbox: {binarySha256: "145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09"}
+                cli: {binarySha256: "222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8"},
+                gateway: {binarySha256: "33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f"},
+                standaloneSandbox: {binarySha256: "863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2"}
               }
             }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
           fi

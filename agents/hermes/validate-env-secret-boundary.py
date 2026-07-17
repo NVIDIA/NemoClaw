@@ -52,7 +52,7 @@ RUNTIME_ALLOWED_NONSECRET_KEYS = frozenset(
     }
 )
 RUNTIME_ALLOWED_RAW_SECRET_KEYS = frozenset({"OPENCLAW_GATEWAY_TOKEN"})
-# OpenShell 8eacb477 (candidate 0.0.82) makes these supervisor-only identity
+# OpenShell 8eacb477 (candidate 0.0.85) makes these supervisor-only identity
 # variables and removes them from entrypoint, exec, and connect children. Their
 # presence in Hermes is therefore contract drift even when the value is only a
 # mounted path.

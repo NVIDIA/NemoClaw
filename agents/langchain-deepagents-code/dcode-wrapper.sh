@@ -350,7 +350,7 @@ has_credential_name_context() {
   return 1
 }
 
-# OpenShell 8eacb477 (candidate 0.0.82) strips these supervisor identity
+# OpenShell 8eacb477 (candidate 0.0.85) strips these supervisor identity
 # variables from entrypoint, exec, and connect children. Reject their presence
 # regardless of value so a runtime regression cannot silently expose mounted
 # mTLS identity to dcode.

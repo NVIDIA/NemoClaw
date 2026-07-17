@@ -115,7 +115,7 @@ export function buildRawOpenShellAllowedIpsRebindingPolicy(
  * This intentionally bypasses every NemoClaw MCP command and agent adapter.
  *
  * Pinned resolve-validate-connect implementation:
- * https://github.com/NVIDIA/OpenShell/blob/94cdd697c55aedb571f177ec13cfa54a8e213919/crates/openshell-supervisor-network/src/proxy.rs#L2648-L2674
+ * https://github.com/NVIDIA/OpenShell/blob/3dee5570a46076a57a3b056f35f35ebc0861ac85/crates/openshell-supervisor-network/src/proxy.rs#L2648-L2674
  * resolves once, #L2699-L2739 plus #L2794-L2803 validate and return that
  * address list, and #L4093-L4100 plus #L4340-L4342 carry that same list through
  * the explicit HTTP-forward connection path used by this probe.

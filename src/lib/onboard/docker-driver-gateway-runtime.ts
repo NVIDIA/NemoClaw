@@ -32,7 +32,7 @@ import * as vmDriverProcess from "./vm-driver-process";
 
 const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
   "0.0.72": "sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
-  "0.0.82": "sha256:790485a36adc43ff4562b92de5387cebfb05b5c1e27b62738779b37f01939365",
+  "0.0.85": "sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9",
 };
 
 export type DockerDriverGatewayRuntimeDrift = { reason: string };

@@ -167,8 +167,8 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     }
   });
 
-  it("pins the resolve-validate-connect source contract to OpenShell v0.0.82", () => {
-    const commit = "94cdd697c55aedb571f177ec13cfa54a8e213919";
+  it("pins the resolve-validate-connect source contract to OpenShell v0.0.85", () => {
+    const commit = "3dee5570a46076a57a3b056f35f35ebc0861ac85";
     const sourcePath = "crates/openshell-supervisor-network/src/proxy.rs";
     const citations = [
       `${sourcePath}:2648-2674`,
@@ -181,7 +181,7 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
 
     for (const docsPath of [
       "docs/deployment/set-up-mcp-bridge.mdx",
-      "docs/security/openshell-0.0.82-migration-review.md",
+      "docs/security/openshell-0.0.85-migration-review.md",
     ]) {
       const docs = fs.readFileSync(docsPath, "utf8");
       expect(docs, docsPath).toContain(commit);
@@ -296,7 +296,7 @@ network_policies:
       contractSource.indexOf("} finally {"),
     );
     expect(contractSource).toContain(
-      "https://github.com/NVIDIA/OpenShell/blob/94cdd697c55aedb571f177ec13cfa54a8e213919/",
+      "https://github.com/NVIDIA/OpenShell/blob/3dee5570a46076a57a3b056f35f35ebc0861ac85/",
     );
     expect(contractSource).not.toContain("host.nemoclaw");
     expect(contractSource).not.toContain("assertAdapterDnsRebindingDenied");

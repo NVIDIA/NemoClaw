@@ -33,9 +33,9 @@ readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
   "0.0.72|openshell-checksums-sha256.txt|0049181983eaf925ef9510382f75348229a9511d02e27196107782e7c3259ae1"
   "0.0.72|openshell-gateway-checksums-sha256.txt|3c454dc15154b8c700ec820628559ea8964c6e552d9c5f8af78b6ee19cf34547"
   "0.0.72|openshell-sandbox-checksums-sha256.txt|d38507501338576437cf3e554df71fefe927dc0d72758f88e260069527ed9ccc"
-  "0.0.82|openshell-checksums-sha256.txt|74ba77d368744f412b2dd246099b63b38937962807333ded2b6284580a2d014e"
-  "0.0.82|openshell-gateway-checksums-sha256.txt|c0a369ba2c66bcde3c18ce2753b04ff942d1fe1b5f3e4656de520f6d4b175477"
-  "0.0.82|openshell-sandbox-checksums-sha256.txt|3300b9856cdbe8e3f9b0f8068bbad93673739c4cfd3212c80dc0675168ee2b8d"
+  "0.0.85|openshell-checksums-sha256.txt|6554b3f96c04006d661519786d40d17e34c7860b7aac8fd35259ef2aea01567f"
+  "0.0.85|openshell-gateway-checksums-sha256.txt|cc4f32afed376ebe9b43cccdb4d2a77b2524b57132a6b56bb88d705e02420f86"
+  "0.0.85|openshell-sandbox-checksums-sha256.txt|b6ac353c933fa4cf9a3ef11d66cce6635f39ecc2e928d9c8ff1783ca797308b3"
 )
 
 case "${1:-}" in

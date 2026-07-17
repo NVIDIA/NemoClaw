@@ -66,12 +66,12 @@ export function isExpectedMcpCurlPolicyDenial(
 
 /**
  * Build an MCP request whose curl child retains the selected adapter runtime
- * as an ancestor. OpenShell v0.0.82 attributes policy to /proc/<pid>/exe and
+ * as an ancestor. OpenShell v0.0.85 attributes policy to /proc/<pid>/exe and
  * ancestors, so this exercises the same unavoidable Node/Python identity used
  * by the corresponding adapter instead of an unrelated curl-only identity.
  *
  * Pinned upstream source contract:
- * NVIDIA/OpenShell@94cdd697c55aedb571f177ec13cfa54a8e213919,
+ * NVIDIA/OpenShell@3dee5570a46076a57a3b056f35f35ebc0861ac85,
  * crates/openshell-supervisor-network/src/proxy.rs:2648-2674 resolves once,
  * :2699-2739 and :2794-2803 validate and return that same address list,
  * and :1079-1081 passes it directly to TcpStream::connect.

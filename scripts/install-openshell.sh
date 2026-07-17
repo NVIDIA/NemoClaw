@@ -37,16 +37,16 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 # round-trippable base policies: WebSocket text frames, provider-shaped
 # aliases, REST request bodies, MCP/JSON-RPC L7 enforcement, and
 # `policy get --base` for MCP/JSON-RPC-safe read-modify-write operations.
-MIN_VERSION="0.0.82"
+MIN_VERSION="0.0.85"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.82"
+MAX_VERSION="0.0.85"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
-DEV_MIN_VERSION="0.0.82"
+DEV_MIN_VERSION="0.0.85"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -140,29 +140,29 @@ fi
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.82:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "d3d73904bd6e2f81f5913ca2347eb0e772eb45d82fbee9880be3e0c416eaf802"
+    v0.0.85:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "078fa086f506832c3d47d992e6109f26074bdd55916ce268e47c3971423459eb"
       ;;
-    v0.0.82:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "f1113a9cfed452860d62658da67f48a657f502e23f1117b38111867ba13521ca"
+    v0.0.85:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "3cf353e7994d5835a233fe0641f9a860779190b054d0f90a04c897be782734b8"
       ;;
-    v0.0.82:openshell-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "ce70f93fa079e939712e7c34e29814181d78a984d9ddfcfd4f64f6d30b9a706a"
+    v0.0.85:openshell-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "522c963f9515c7325b978e89022de76227ac245eefe1371292af1424434e2067"
       ;;
-    v0.0.82:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "999c6ce18b7ae3a23a7d5c22136a79cfb9c7e45ed6a5777db49229e3fb0e6255"
+    v0.0.85:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "718cc9f942f88565cacb13c39717b128d6acc8d336212d42d26243f36ab19ece"
       ;;
-    v0.0.82:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "9851da7d3bdd1d679917a56e560024ee1d6ffc8635cef1adfdadb34f1b7ddc37"
+    v0.0.85:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "09f2823f6e9c5f70f4482b200206eac455d789618da4ebe4acff042d794e7162"
       ;;
-    v0.0.82:openshell-gateway-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "0b31e3a36a7a997db82814a026b6371a31ed8f40ff6449bf74fea803df7bf930"
+    v0.0.85:openshell-gateway-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "5de3e08ad1bdb0cdd01373999f537edca3d8aca22ae1c29bc9926969fe401e45"
       ;;
-    v0.0.82:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "90437f9de79d0cd6f1a2d2c5d7d20a52c0c7c7552ffcb003314ed1811e54e8dc"
+    v0.0.85:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "94306f057d862cd5c34a0daa7692491733bc5ca528a7b92f9f62f717fb70a9be"
       ;;
-    v0.0.82:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "0fc3f9213aee418fe240690748387652567e0b42e37412232f943dc857fc01b5"
+    v0.0.85:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "2c52b2971aecf125e41ed160d8d2f2addf04031906ca88f120ae3d436dd6b8f7"
       ;;
     *)
       return 1
@@ -280,10 +280,10 @@ pinned_sandbox_build_version() {
       32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f)
       printf '%s\n' "0.0.72"
       ;;
-    # OpenShell v0.0.82 standalone sandbox binaries.
-    145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09 | \
-      76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500)
-      printf '%s\n' "0.0.82"
+    # OpenShell v0.0.85 standalone sandbox binaries.
+    863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2 | \
+      680115dbc2affde0e88261ab09f4044726d1cc9e01de55dc5077d1118f52968d)
+      printf '%s\n' "0.0.85"
       ;;
     *)
       return 1
