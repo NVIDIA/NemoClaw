@@ -247,6 +247,11 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-final-image-layout.test.ts",
+      "test": "keeps security entrypoint hashes synchronized with the copied files",
+      "category": "security"
+    },
+    {
       "file": "test/hermes-runtime-config-guard-topology.test.ts",
       "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
       "category": "security"
