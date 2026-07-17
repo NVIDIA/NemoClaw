@@ -151,6 +151,7 @@ export function recreateOpenShellDockerSandboxContainer(
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
     openshellSandboxCommand?: readonly string[] | null;
+    requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
     expectedOldContainerId?: string | null;
     backend?: "generic" | "jetson";
     dockerDesktopWsl?: boolean;
@@ -228,6 +229,7 @@ export function recreateOpenShellDockerSandboxContainer(
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
     cloneOptions.image = image;
     cloneOptions.openshellSandboxCommand = options.openshellSandboxCommand ?? null;
+    cloneOptions.requiredUlimits = options.requiredUlimits ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
     if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
     if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {

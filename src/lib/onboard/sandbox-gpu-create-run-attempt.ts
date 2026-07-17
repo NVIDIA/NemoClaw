@@ -77,6 +77,7 @@ export function createSandboxGpuCreateAttemptRunner(
       sandboxName: input.sandboxName,
       gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
       openshellSandboxCommand: input.sandboxStartupCommand,
+      requiredUlimits: input.requiredUlimits,
       timeoutSecs: input.sandboxReadyTimeoutSecs,
       backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
       deps,
