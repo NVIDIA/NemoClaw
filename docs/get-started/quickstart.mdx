@@ -125,6 +125,7 @@ Use these details when your first-run path needs more control.
     Set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue on an unqualified Station without host automation.
     It uses NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1` as the reviewed versions for missing prerequisites.
     Preparation retains installed packages, installs reviewed pinned versions only for missing packages, and warns with actual and expected versions when an installed prerequisite or the loaded NVIDIA driver differs.
+    Express install shows the Station host preparation log path, these version-drift warnings, and errors while keeping detailed helper output in that log.
     A different installed `cuda-keyring` version remains usable only when `dpkg -V` verifies its package files and the CUDA repository signing fingerprint matches the expected NVIDIA fingerprint.
     New Docker repository setup uses the reviewed `arch=arm64`, `https://download.docker.com/linux/ubuntu`, `noble`, and `stable` source with the verified dearmored `/etc/apt/keyrings/docker.gpg` key.
     An existing source using `/etc/apt/keyrings/docker.asc` is retained only when its safe root-owned regular source file exactly matches the reviewed architecture, URL, suite, component, and signing-key path.
@@ -209,6 +210,9 @@ Use these details when your first-run path needs more control.
     DGX OS, NVIDIA BaseOS images, and other Station generations are outside this automatic preparation boundary.
     Set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to continue without Station host automation.
     Preparation retains installed packages, installs reviewed pinned versions only for missing packages, and warns with actual and expected versions when an installed prerequisite or the loaded NVIDIA driver differs.
+    During express install, the terminal shows the Station host preparation log path, package and driver version-drift warnings with actual and expected versions, and errors.
+    The full platform, systemd, Docker pull, NVIDIA-SMI, and status output remains in that log.
+    Running `scripts/prepare-dgx-station-host.sh` directly retains the verbose output.
     A different installed `cuda-keyring` version remains usable only when `dpkg -V` verifies its package files and the CUDA repository signing fingerprint matches the expected NVIDIA fingerprint.
     New Docker repository setup uses the reviewed `arch=arm64`, `https://download.docker.com/linux/ubuntu`, `noble`, and `stable` source with the verified dearmored `/etc/apt/keyrings/docker.gpg` key.
     An existing source using `/etc/apt/keyrings/docker.asc` is retained only when its root-owned regular source file has mode `0644` and exactly matches the reviewed architecture, URL, suite, component, and signing-key path.

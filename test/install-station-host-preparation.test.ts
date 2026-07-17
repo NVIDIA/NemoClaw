@@ -337,6 +337,60 @@ describe_express_install 'DGX Station'
     );
   });
 
+  it("keeps Station preparation details in the log while showing actionable installer output", () => {
+    const { result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+printf '%s\n' \\
+  '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.2 mode=--apply log=/tmp/station-prepare.log' \\
+  '[station-prepare] 2026-07-17T07:59:07Z platform=Dell Pro Max with Station GB300 os=Ubuntu 24.04.4 LTS' \\
+  '[station-prepare] 2026-07-17T07:59:08Z WARNING: condition-qualified generic-image failed unit: cloud-init.service' \\
+  '[station-prepare] 2026-07-17T07:59:08Z WARNING: package=dkms status=version_drift actual=1:3.4.1-1ubuntu1 expected=1:3.4.0-1ubuntu1; retaining installed version' \\
+  '[station-prepare] 2026-07-17T07:59:09Z WARNING: driver status=version_drift actual=611.0 expected=610.43.02; retaining loaded version' \\
+  'NVIDIA-SMI 610.43.02' \\
+  '[station-prepare] 2026-07-17T07:59:20Z STATION_HOST_READY' \\
+  '[station-prepare] 2026-07-17T07:59:20Z APPLY_RESULT=COMPLETE' \\
+  '[station-prepare] 2026-07-17T07:59:20Z ERROR: example failure' \\
+  | filter_station_host_preparation_output
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("DGX Station host preparation log: /tmp/station-prepare.log");
+    expect(output).toContain(
+      "package=dkms status=version_drift actual=1:3.4.1-1ubuntu1 expected=1:3.4.0-1ubuntu1; retaining installed version",
+    );
+    expect(output).toContain(
+      "driver status=version_drift actual=611.0 expected=610.43.02; retaining loaded version",
+    );
+    expect(output).toContain("ERROR: example failure");
+    expect(output).not.toMatch(/platform=Dell Pro Max|cloud-init\.service|NVIDIA-SMI/);
+  });
+
+  it("preserves the Station helper exit status while filtering installer output", () => {
+    const { result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+bash() {
+  printf '%s\n' \\
+    '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.2 mode=--apply log=/tmp/station-prepare.log' \\
+    '[station-prepare] 2026-07-17T07:59:08Z runtime_setup=complete'
+  return 10
+}
+if run_station_host_preparation; then
+  printf 'STATUS=0\n'
+else
+  printf 'STATUS=%s\n' "$?"
+fi
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("STATUS=10");
+    expect(output).toContain("DGX Station host preparation log: /tmp/station-prepare.log");
+    expect(output).not.toContain("runtime_setup=complete");
+  });
+
   it("fails closed when failed-service inspection is unavailable", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -1125,6 +1179,7 @@ PAYLOAD
 #!/usr/bin/env bash
 set -euo pipefail
 [ "\${1:-}" = "--apply" ]
+printf '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.2 mode=--apply log=/tmp/station-prepare.log\\n'
 printf 'PREPARE_STATION\\n'
 HELPER
   chmod +x "$target/scripts/install.sh" "$target/scripts/prepare-dgx-station-host.sh"
@@ -1154,11 +1209,12 @@ exit 0
       killSignal: "SIGKILL",
     });
     const output = `${result.stdout}${result.stderr}`;
+    const preparationLogIndex = output.indexOf("DGX Station host preparation log");
 
     expect(result.status, output).toBe(0);
     expect(output).toContain("DGX Station host prerequisites are ready");
-    expect(output.indexOf("PREPARE_STATION")).toBeGreaterThanOrEqual(0);
-    expect(output.indexOf("PREPARE_STATION")).toBeLessThan(output.indexOf("ENSURE_DOCKER"));
+    expect(preparationLogIndex).toBeGreaterThanOrEqual(0);
+    expect(preparationLogIndex).toBeLessThan(output.indexOf("ENSURE_DOCKER"));
     expect(output.indexOf("ENSURE_DOCKER")).toBeLessThan(output.indexOf("ENSURE_BUILD_DEPS"));
   });
 

@@ -3216,7 +3216,25 @@ run_station_host_preparation() {
   # fail-closed check so Station preparation cannot drift from that ref.
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
-  bash "$helper" --apply
+  bash "$helper" --apply 2>&1 | filter_station_host_preparation_output
+}
+
+filter_station_host_preparation_output() {
+  local line detail
+  while IFS= read -r line; do
+    case "$line" in
+      *" version="*" log="*)
+        info "DGX Station host preparation log: ${line##* log=}"
+        ;;
+      *" WARNING: package="*" status=version_drift "* | *" WARNING: driver status=version_drift "*)
+        detail="${line#* WARNING: }"
+        warn "$detail"
+        ;;
+      *" ERROR: "*)
+        printf '%s\n' "$line" >&2
+        ;;
+    esac
+  done
 }
 
 ensure_station_express_host() {

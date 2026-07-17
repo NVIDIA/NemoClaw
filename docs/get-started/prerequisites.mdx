@@ -46,6 +46,8 @@ DGX OS, NVIDIA BaseOS images, and other Station generations are outside this aut
 On those systems, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
 The preparation probes package and runtime state first, retains installed packages, and installs reviewed pinned versions only for missing packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
 When an installed prerequisite or the loaded NVIDIA driver differs from the reviewed version, preparation prints the actual and expected versions as a warning and continues with the installed version.
+During express install, the terminal shows the Station host preparation log path, package and driver version-drift warnings with actual and expected versions, and errors while keeping the complete platform, systemd, Docker pull, NVIDIA-SMI, and status output in that log.
+Running `scripts/prepare-dgx-station-host.sh` directly remains verbose.
 When repository setup is required, a different installed `cuda-keyring` version remains usable only after `dpkg -V` verifies its package files and the CUDA repository signing fingerprint matches the expected NVIDIA fingerprint.
 For new Docker repository setup, preparation writes the reviewed source with `arch=arm64`, the `https://download.docker.com/linux/ubuntu` URL, the `noble` suite, the `stable` component, and the verified dearmored key at `/etc/apt/keyrings/docker.gpg`.
 An existing source that instead uses `/etc/apt/keyrings/docker.asc` is retained only when the source is a root-owned regular file with mode `0644` and exactly matches the reviewed architecture, URL, suite, component, and signing-key path.
