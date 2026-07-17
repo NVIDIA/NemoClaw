@@ -11,12 +11,14 @@ import { getNemoclawStateRoot, resolveHome, STATE_DIR_NAME } from "../state/stat
 import { isSafeModelId } from "../validation";
 
 export const STATION_EXPRESS_ENV = "NEMOCLAW_STATION_EXPRESS";
+export const STATION_EXPRESS_RECEIPT_GENERATION_ENV = "NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION";
 export const STATION_EXPRESS_INTENT_VERSION = 1;
 
 export interface StationExpressResumeIntent {
   version: typeof STATION_EXPRESS_INTENT_VERSION;
   model: string;
   sandboxName: string;
+  receiptGeneration?: string;
   servedModel?: string;
   checkpointModel?: string;
 }
@@ -29,6 +31,7 @@ export interface StationExpressSessionLike {
   provider?: string | null;
   model?: string | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
+  stationExpressReceiptRetirement?: string | null;
   steps?: { provider_selection?: { status?: string | null } | null } | null;
 }
 
@@ -40,6 +43,7 @@ interface ResumeOptionsLike {
 interface StationExpressResumeDeps {
   loadSession(): StationExpressSessionLike | null;
   clearInstallerResume(): void;
+  reconcileReceiptRetirement(generation: string): void;
   error(message: string): void;
   exitProcess(code: number): never;
 }
@@ -59,11 +63,17 @@ const RESUME_ENV = [
   "NEMOCLAW_PROVIDER",
   "NEMOCLAW_VLLM_MODEL",
   "NEMOCLAW_MODEL",
+  STATION_EXPRESS_RECEIPT_GENERATION_ENV,
 ] as const;
 const MAX_SERVED_MODEL_LENGTH = 512;
 const UNBOUND_INTENT_KEYS = "model,sandboxName,version";
+const UNBOUND_RECEIPT_INTENT_KEYS = "model,receiptGeneration,sandboxName,version";
 const BOUND_INTENT_KEYS = "checkpointModel,model,sandboxName,servedModel,version";
+const BOUND_RECEIPT_INTENT_KEYS =
+  "checkpointModel,model,receiptGeneration,sandboxName,servedModel,version";
 const STATION_EXPRESS_INSTALLER_RESUME_FILE = "station-express-resume";
+const STATION_EXPRESS_RECEIPT_GENERATION_PATTERN = /^[0-9a-f]{32}$/;
+const STATION_EXPRESS_RECEIPT_REVISION_PATTERN = /^[0-9a-f]{40}$/;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -94,6 +104,10 @@ function validSandboxName(value: unknown): value is string {
   return (
     typeof value === "string" && value.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(value)
   );
+}
+
+export function isValidStationExpressReceiptGeneration(value: unknown): value is string {
+  return typeof value === "string" && STATION_EXPRESS_RECEIPT_GENERATION_PATTERN.test(value);
 }
 
 export function assertStationExpressInstallerResumeSafe(
@@ -139,12 +153,80 @@ export function assertStationExpressInstallerResumeSafe(
           `Refusing non-owner-only DGX Station Express resume directory: ${candidate}`,
         );
       }
-    } else if (!stat.isFile() || uid === undefined || stat.uid !== uid) {
+    } else if (
+      !stat.isFile() ||
+      uid === undefined ||
+      stat.uid !== uid ||
+      (stat.mode & 0o777) !== 0o600
+    ) {
       throw new Error(`Refusing to remove invalid DGX Station Express resume state: ${stateFile}`);
     }
   }
 
   return stateFile;
+}
+
+function readStationExpressInstallerResumeGeneration(stateFile: string): string {
+  const lines = fs.readFileSync(stateFile, "utf8").split("\n");
+  if (lines.length !== 4 || lines[3] !== "") {
+    throw new Error("DGX Station Express installer resume state is malformed.");
+  }
+  const revision = lines[0]?.startsWith("revision=") ? lines[0].slice("revision=".length) : "";
+  const modelValue = lines[1]?.startsWith("model=") ? lines[1].slice("model=".length) : "";
+  const generation = lines[2]?.startsWith("generation=")
+    ? lines[2].slice("generation=".length)
+    : "";
+  const model = stationModel(modelValue);
+  if (
+    !STATION_EXPRESS_RECEIPT_REVISION_PATTERN.test(revision) ||
+    !model ||
+    model.envValue !== modelValue ||
+    !isValidStationExpressReceiptGeneration(generation)
+  ) {
+    throw new Error("DGX Station Express installer resume state is malformed.");
+  }
+  return generation;
+}
+
+export function assertStationExpressInstallerResumeMatches(
+  expectedGeneration: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (!isValidStationExpressReceiptGeneration(expectedGeneration)) {
+    throw new Error("DGX Station Express receipt generation is invalid.");
+  }
+  const stateFile = assertStationExpressInstallerResumeSafe(env);
+  if (!stateFile) {
+    throw new Error("Required DGX Station Express installer resume state is missing.");
+  }
+  if (readStationExpressInstallerResumeGeneration(stateFile) !== expectedGeneration) {
+    throw new Error("DGX Station Express installer resume state belongs to another attempt.");
+  }
+}
+
+export function retireStationExpressInstallerResume(
+  expectedGeneration: string,
+  options: { allowMissing?: boolean; env?: NodeJS.ProcessEnv } = {},
+): void {
+  if (!isValidStationExpressReceiptGeneration(expectedGeneration)) {
+    throw new Error("DGX Station Express receipt generation is invalid.");
+  }
+  const stateFile = assertStationExpressInstallerResumeSafe(options.env ?? process.env);
+  if (!stateFile) {
+    if (options.allowMissing === true) return;
+    throw new Error("Required DGX Station Express installer resume state is missing.");
+  }
+  if (readStationExpressInstallerResumeGeneration(stateFile) !== expectedGeneration) {
+    throw new Error("DGX Station Express installer resume state belongs to another attempt.");
+  }
+
+  try {
+    fs.unlinkSync(stateFile);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT" || options.allowMissing !== true) {
+      throw error;
+    }
+  }
 }
 
 export function clearStationExpressInstallerResume(env: NodeJS.ProcessEnv = process.env): void {
@@ -163,21 +245,31 @@ export function clearStationExpressInstallerResume(env: NodeJS.ProcessEnv = proc
 export function parseStationExpressResumeIntent(value: unknown): StationExpressResumeIntent | null {
   if (!isObject(value)) return null;
   const keys = Object.keys(value).sort().join(",");
-  if (keys !== UNBOUND_INTENT_KEYS && keys !== BOUND_INTENT_KEYS) return null;
+  if (
+    keys !== UNBOUND_INTENT_KEYS &&
+    keys !== UNBOUND_RECEIPT_INTENT_KEYS &&
+    keys !== BOUND_INTENT_KEYS &&
+    keys !== BOUND_RECEIPT_INTENT_KEYS
+  ) {
+    return null;
+  }
   if (value.version !== STATION_EXPRESS_INTENT_VERSION) return null;
   const model = stationModel(value.model);
   if (!model || value.model !== model.envValue || !validSandboxName(value.sandboxName)) return null;
   const servedModelValue = value.servedModel;
   const checkpointModelValue = value.checkpointModel;
+  const hasReceipt = keys === UNBOUND_RECEIPT_INTENT_KEYS || keys === BOUND_RECEIPT_INTENT_KEYS;
+  const isBound = keys === BOUND_INTENT_KEYS || keys === BOUND_RECEIPT_INTENT_KEYS;
   if (
-    keys === BOUND_INTENT_KEYS &&
-    (typeof servedModelValue !== "string" ||
-      servedModelValue.length === 0 ||
-      servedModelValue.length > MAX_SERVED_MODEL_LENGTH ||
-      servedModelValue.trim() !== servedModelValue ||
-      !isSafeModelId(servedModelValue) ||
-      typeof checkpointModelValue !== "string" ||
-      !identifiesCheckpoint(model, checkpointModelValue))
+    (hasReceipt && !isValidStationExpressReceiptGeneration(value.receiptGeneration)) ||
+    (isBound &&
+      (typeof servedModelValue !== "string" ||
+        servedModelValue.length === 0 ||
+        servedModelValue.length > MAX_SERVED_MODEL_LENGTH ||
+        servedModelValue.trim() !== servedModelValue ||
+        !isSafeModelId(servedModelValue) ||
+        typeof checkpointModelValue !== "string" ||
+        !identifiesCheckpoint(model, checkpointModelValue)))
   ) {
     return null;
   }
@@ -185,7 +277,8 @@ export function parseStationExpressResumeIntent(value: unknown): StationExpressR
     version: STATION_EXPRESS_INTENT_VERSION,
     model: model.envValue,
     sandboxName: value.sandboxName,
-    ...(keys === BOUND_INTENT_KEYS
+    ...(hasReceipt ? { receiptGeneration: value.receiptGeneration as string } : {}),
+    ...(isBound
       ? {
           servedModel: servedModelValue as string,
           checkpointModel: checkpointModelValue as string,
@@ -237,6 +330,9 @@ function expectedEnvironment(
     NEMOCLAW_POLICY_MODE: "suggested",
     NEMOCLAW_SANDBOX_NAME: intent.sandboxName,
   };
+  if (intent.receiptGeneration) {
+    expected[STATION_EXPRESS_RECEIPT_GENERATION_ENV] = intent.receiptGeneration;
+  }
   if (includeProviderSelection) {
     expected.NEMOCLAW_PROVIDER = "install-vllm";
     expected.NEMOCLAW_VLLM_MODEL = model.envValue;
@@ -294,7 +390,19 @@ export function getStationExpressResumeIntent(
     version: STATION_EXPRESS_INTENT_VERSION,
     model: model.envValue,
     sandboxName,
+    ...(isValidStationExpressReceiptGeneration(env[STATION_EXPRESS_RECEIPT_GENERATION_ENV])
+      ? { receiptGeneration: env[STATION_EXPRESS_RECEIPT_GENERATION_ENV] }
+      : {}),
   };
+  if (
+    env[STATION_EXPRESS_RECEIPT_GENERATION_ENV] !== undefined &&
+    !isValidStationExpressReceiptGeneration(env[STATION_EXPRESS_RECEIPT_GENERATION_ENV])
+  ) {
+    return {
+      ok: false,
+      message: `DGX Station Express has an invalid ${STATION_EXPRESS_RECEIPT_GENERATION_ENV} value.`,
+    };
+  }
   const expected = expectedEnvironment(intent);
   if (!expected) {
     return { ok: false, message: "DGX Station Express model state is invalid." };
@@ -383,21 +491,6 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
 ): (options?: Options) => Promise<void> {
   return async (options) => {
     const session = deps.loadSession();
-    if (
-      options?.fresh !== true &&
-      session?.status === "complete" &&
-      session.resumable === false &&
-      !session.stationExpressIntent
-    ) {
-      try {
-        deps.clearInstallerResume();
-      } catch (error) {
-        deps.error(
-          `  Could not retire completed DGX Station Express installer resume state: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        deps.exitProcess(1);
-      }
-    }
     if (options?.fresh === true) {
       try {
         deps.clearInstallerResume();
@@ -407,6 +500,39 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
         );
         deps.exitProcess(1);
       }
+      const previousReceiptGeneration = env[STATION_EXPRESS_RECEIPT_GENERATION_ENV];
+      delete env[STATION_EXPRESS_RECEIPT_GENERATION_ENV];
+      try {
+        await run(options);
+      } finally {
+        if (previousReceiptGeneration !== undefined) {
+          env[STATION_EXPRESS_RECEIPT_GENERATION_ENV] = previousReceiptGeneration;
+        }
+      }
+      return;
+    }
+    const receiptRetirement = session?.stationExpressReceiptRetirement;
+    if (receiptRetirement != null) {
+      if (
+        !isValidStationExpressReceiptGeneration(receiptRetirement) ||
+        session?.status !== "complete" ||
+        session.resumable !== false ||
+        session.stationExpressIntent
+      ) {
+        deps.error(
+          "  DGX Station Express completion state is invalid. Run nemoclaw onboard --fresh to start again.",
+        );
+        deps.exitProcess(1);
+      }
+      try {
+        deps.reconcileReceiptRetirement(receiptRetirement);
+      } catch (error) {
+        deps.error(
+          `  Could not retire completed DGX Station Express installer resume state: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        deps.exitProcess(1);
+      }
+      return;
     }
     if (requiresExplicitFailedSessionChoice(options, session)) {
       deps.error(
@@ -468,10 +594,12 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
 export function wrapOnboard<Options extends ResumeOptionsLike>(
   run: (options?: Options) => Promise<void>,
   loadSession: StationExpressResumeDeps["loadSession"],
+  reconcileReceiptRetirement: StationExpressResumeDeps["reconcileReceiptRetirement"],
 ): (options?: Options) => Promise<void> {
   return withStationExpressResumeEnvironment(run, {
     loadSession,
     clearInstallerResume: clearStationExpressInstallerResume,
+    reconcileReceiptRetirement,
     error: (message) => console.error(message),
     exitProcess: (code) => process.exit(code),
   });

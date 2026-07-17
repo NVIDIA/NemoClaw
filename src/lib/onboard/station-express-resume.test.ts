@@ -8,12 +8,19 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../state/onboard-session";
 import {
+  assertStationExpressInstallerResumeMatches,
   clearStationExpressInstallerResume,
   getStationExpressResumeIntent,
   parseStationExpressResumeIntent,
+  retireStationExpressInstallerResume,
   STATION_EXPRESS_ENV,
+  STATION_EXPRESS_RECEIPT_GENERATION_ENV,
   withStationExpressResumeEnvironment,
 } from "./station-express-resume";
+
+const receiptGeneration = "0123456789abcdef0123456789abcdef";
+const otherReceiptGeneration = "fedcba9876543210fedcba9876543210";
+const receiptRevision = "0123456789abcdef0123456789abcdef01234567";
 
 const ultraIntent = {
   version: 1 as const,
@@ -45,6 +52,7 @@ function resumeDeps(
   return {
     loadSession: vi.fn(() => session),
     clearInstallerResume: vi.fn(),
+    reconcileReceiptRetirement: vi.fn(),
     error: vi.fn(),
     exitProcess: vi.fn((code: number): never => {
       throw new Error(`exit ${String(code)}`);
@@ -58,6 +66,23 @@ describe("DGX Station Express resume (#7048)", () => {
       ok: true,
       intent: ultraIntent,
     });
+  });
+
+  it("carries the installer receipt generation in the persisted intent", () => {
+    const env = expressEnv();
+    env[STATION_EXPRESS_RECEIPT_GENERATION_ENV] = receiptGeneration;
+
+    expect(getStationExpressResumeIntent(env, "my-assistant")).toEqual({
+      ok: true,
+      intent: { ...ultraIntent, receiptGeneration },
+    });
+    expect(parseStationExpressResumeIntent({ ...ultraIntent, receiptGeneration })).toEqual({
+      ...ultraIntent,
+      receiptGeneration,
+    });
+    expect(
+      parseStationExpressResumeIntent({ ...ultraIntent, receiptGeneration: "not-a-generation" }),
+    ).toBeNull();
   });
 
   it("ignores ordinary onboarding without the Station Express marker", () => {
@@ -285,19 +310,23 @@ describe("DGX Station Express resume (#7048)", () => {
   });
 
   it("does not restore discarded intent for --fresh", async () => {
-    const env: NodeJS.ProcessEnv = {};
+    const env: NodeJS.ProcessEnv = {
+      [STATION_EXPRESS_RECEIPT_GENERATION_ENV]: receiptGeneration,
+    };
     const deps = resumeDeps();
     const run = vi.fn(async () => {
       expect(env.NEMOCLAW_PROVIDER).toBeUndefined();
+      expect(env[STATION_EXPRESS_RECEIPT_GENERATION_ENV]).toBeUndefined();
     });
 
     await withStationExpressResumeEnvironment(run, deps, env)({ fresh: true });
 
     expect(run).toHaveBeenCalledTimes(1);
     expect(deps.clearInstallerResume).toHaveBeenCalledTimes(1);
+    expect(env[STATION_EXPRESS_RECEIPT_GENERATION_ENV]).toBe(receiptGeneration);
   });
 
-  it("retires a stale installer receipt before continuing from a completed session", async () => {
+  it("does not treat an older completed session as proof of a new installer attempt", async () => {
     const completed = createSession();
     completed.status = "complete";
     completed.resumable = false;
@@ -306,8 +335,23 @@ describe("DGX Station Express resume (#7048)", () => {
 
     await withStationExpressResumeEnvironment(run, deps, {})({});
 
-    expect(deps.clearInstallerResume).toHaveBeenCalledTimes(1);
+    expect(deps.clearInstallerResume).not.toHaveBeenCalled();
+    expect(deps.reconcileReceiptRetirement).not.toHaveBeenCalled();
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles a durable matching retirement marker without replaying onboarding", async () => {
+    const completed = createSession();
+    completed.status = "complete";
+    completed.resumable = false;
+    completed.stationExpressReceiptRetirement = receiptGeneration;
+    const deps = resumeDeps(completed);
+    const run = vi.fn(async () => undefined);
+
+    await withStationExpressResumeEnvironment(run, deps, {})({});
+
+    expect(deps.reconcileReceiptRetirement).toHaveBeenCalledWith(receiptGeneration);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("fails closed when the Station installer resume receipt cannot be discarded", async () => {
@@ -352,6 +396,30 @@ describe("DGX Station Express resume (#7048)", () => {
 
     try {
       expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow("non-owner-only");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("retires only the exact matching installer receipt generation", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-match-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(
+      receipt,
+      `revision=${receiptRevision}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${receiptGeneration}\n`,
+      { mode: 0o600 },
+    );
+
+    try {
+      expect(() =>
+        assertStationExpressInstallerResumeMatches(otherReceiptGeneration, { HOME: home }),
+      ).toThrow("another attempt");
+      expect(fs.existsSync(receipt)).toBe(true);
+
+      retireStationExpressInstallerResume(receiptGeneration, { env: { HOME: home } });
+      expect(fs.existsSync(receipt)).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

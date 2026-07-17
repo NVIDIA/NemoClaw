@@ -13,7 +13,12 @@ const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "scripts", "insta
 function runRecoveryBeforeOnboard(
   preexistingCount: number,
   recoveryExitCode: number,
-  options: { registryJson?: string; singleSession?: boolean } = {},
+  options: {
+    registryJson?: string;
+    singleSession?: boolean;
+    stationResumeLoaded?: boolean;
+    stationRetirementPending?: boolean;
+  } = {},
 ): { status: number | null; calls: string[]; output: string } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-recovery-order-"));
   const cli = path.join(tmp, "nemoclaw");
@@ -25,6 +30,18 @@ function runRecoveryBeforeOnboard(
     path.join(tmp, ".nemoclaw", "sandboxes.json"),
     options.registryJson ?? '{"sandboxes":{}}',
   );
+  if (options.stationRetirementPending) {
+    fs.writeFileSync(
+      path.join(tmp, ".nemoclaw", "onboard-session.json"),
+      JSON.stringify({
+        version: 1,
+        status: "complete",
+        resumable: false,
+        stationExpressIntent: null,
+        stationExpressReceiptRetirement: "0123456789abcdef0123456789abcdef",
+      }),
+    );
+  }
   fs.writeFileSync(path.join(payloadDir, "setup-jetson.sh"), "#!/usr/bin/env bash\nexit 0\n", {
     mode: 0o755,
   });
@@ -48,6 +65,7 @@ exit 0
     source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
     _CLI_BIN=nemoclaw
     _UPGRADE_SANDBOXES_FAILED=false
+    _STATION_EXPRESS_RESUME_LOADED=${options.stationResumeLoaded ? "1" : ""}
     SCRIPT_DIR="${payloadDir}"
     info() { printf 'INFO:%s\n' "$*"; }
     warn() { printf 'WARN:%s\n' "$*"; }
@@ -101,6 +119,22 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
     ]);
     expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
+  });
+
+  it.each([
+    ["a loaded Station receipt", { stationResumeLoaded: true }],
+    ["a pending Station receipt retirement", { stationRetirementPending: true }],
+  ])("invokes the CLI reconciler after recovery when there is %s", (_name, options) => {
+    const result = runRecoveryBeforeOnboard(2, 0, options);
+
+    expect(result.status, result.output).toBe(0);
+    expect(result.calls).toEqual([
+      'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "restore=1 confirmed= argv=onboard",
+    ]);
+    expect(result.output).toContain(
+      "Existing sandboxes recovered; reconciling DGX Station Express onboarding state",
+    );
   });
 
   it("stops before onboarding when any automatic recovery fails", () => {

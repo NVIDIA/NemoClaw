@@ -12,6 +12,13 @@ type OnboardSessionModule = typeof import("./onboard-session");
 type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
 let session: OnboardSessionModule;
 let tmpDir: string;
+const receiptRevision = "0123456789abcdef0123456789abcdef01234567";
+const receiptGeneration = "0123456789abcdef0123456789abcdef";
+const otherReceiptGeneration = "fedcba9876543210fedcba9876543210";
+
+function receiptText(generation = receiptGeneration): string {
+  return `revision=${receiptRevision}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${generation}\n`;
+}
 
 function requireLoadedSession(
   loaded: ReturnType<OnboardSessionModule["loadSession"]>,
@@ -64,6 +71,7 @@ describe("Station Express onboarding session state (#7048)", () => {
       version: 1 as const,
       model: "nemotron-3-ultra-550b-a55b",
       sandboxName: "my-assistant",
+      receiptGeneration,
     };
     session.saveSession(
       session.createSession({ mode: "non-interactive", stationExpressIntent: stationExpress }),
@@ -78,6 +86,7 @@ describe("Station Express onboarding session state (#7048)", () => {
   it("accepts legacy sessions without resume state and rejects malformed state", () => {
     const legacy = session.createSession() as unknown as Record<string, unknown>;
     delete legacy.stationExpressIntent;
+    delete legacy.stationExpressReceiptRetirement;
     expect(
       requireLoadedSession(session.normalizeSession(legacy as never)).stationExpressIntent,
     ).toBeNull();
@@ -162,15 +171,45 @@ describe("Station Express onboarding session state (#7048)", () => {
           version: 1,
           model: "nemotron-3-ultra-550b-a55b",
           sandboxName: "my-assistant",
+          receiptGeneration,
         },
       }),
     );
-    fs.writeFileSync(receipt, "pending Station installer resume\n", { mode: 0o600 });
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
 
     session.completeSession();
 
-    expect(requireLoadedSession(session.loadSession()).stationExpressIntent).toBeNull();
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      stationExpressIntent: null,
+      stationExpressReceiptRetirement: null,
+    });
     expect(fs.existsSync(receipt)).toBe(false);
+  });
+
+  it("accepts receipt retirement state only for a completed non-resumable session", () => {
+    const valid = session.createSession();
+    valid.status = "complete";
+    valid.resumable = false;
+    valid.stationExpressReceiptRetirement = receiptGeneration;
+    expect(session.normalizeSession(valid)?.stationExpressReceiptRetirement).toBe(
+      receiptGeneration,
+    );
+
+    for (const candidate of [
+      { ...valid, status: "in_progress" },
+      { ...valid, resumable: true },
+      {
+        ...valid,
+        stationExpressIntent: {
+          version: 1 as const,
+          model: "nemotron-3-ultra-550b-a55b",
+          sandboxName: "my-assistant",
+        },
+      },
+      { ...valid, stationExpressReceiptRetirement: "invalid" },
+    ]) {
+      expect(session.normalizeSession(candidate as never)).toBeNull();
+    }
   });
 
   it("keeps the installer receipt when durable session completion fails", () => {
@@ -179,11 +218,12 @@ describe("Station Express onboarding session state (#7048)", () => {
       version: 1 as const,
       model: "nemotron-3-ultra-550b-a55b",
       sandboxName: "my-assistant",
+      receiptGeneration,
     };
     session.saveSession(
       session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
     );
-    fs.writeFileSync(receipt, "pending Station installer resume\n", { mode: 0o600 });
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
     const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
       throw new Error("injected session publish failure");
     });
@@ -196,6 +236,127 @@ describe("Station Express onboarding session state (#7048)", () => {
       status: "in_progress",
       resumable: true,
       stationExpressIntent: intent,
+      stationExpressReceiptRetirement: null,
+    });
+  });
+
+  it("durably records retirement when receipt deletion fails, then reconciles", () => {
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+    const intent = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+      receiptGeneration,
+    };
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
+    );
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
+    const unlink = vi.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
+      throw new Error("injected receipt deletion failure");
+    });
+
+    expect(() => session.completeSession()).toThrow("injected receipt deletion failure");
+    unlink.mockRestore();
+
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      status: "complete",
+      resumable: false,
+      stationExpressIntent: null,
+      stationExpressReceiptRetirement: receiptGeneration,
+    });
+    expect(fs.existsSync(receipt)).toBe(true);
+
+    session.reconcileStationExpressReceiptRetirement(receiptGeneration);
+    expect(requireLoadedSession(session.loadSession()).stationExpressReceiptRetirement).toBeNull();
+    expect(fs.existsSync(receipt)).toBe(false);
+  });
+
+  it("recovers idempotently when deletion succeeds but the final session save fails", () => {
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+    const intent = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+      receiptGeneration,
+    };
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
+    );
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
+    const originalRename = fs.renameSync.bind(fs);
+    const rename = vi
+      .spyOn(fs, "renameSync")
+      .mockImplementationOnce((from, to) => originalRename(from, to))
+      .mockImplementationOnce(() => {
+        throw new Error("injected retirement publish failure");
+      });
+
+    expect(() => session.completeSession()).toThrow("injected retirement publish failure");
+    rename.mockRestore();
+
+    expect(fs.existsSync(receipt)).toBe(false);
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      status: "complete",
+      resumable: false,
+      stationExpressReceiptRetirement: receiptGeneration,
+    });
+
+    session.reconcileStationExpressReceiptRetirement(receiptGeneration);
+    expect(requireLoadedSession(session.loadSession()).stationExpressReceiptRetirement).toBeNull();
+  });
+
+  it("preserves a mismatched receipt and the in-progress session", () => {
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+    const intent = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+      receiptGeneration,
+    };
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
+    );
+    fs.writeFileSync(receipt, receiptText(otherReceiptGeneration), { mode: 0o600 });
+
+    expect(() => session.completeSession()).toThrow("another attempt");
+
+    expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText(otherReceiptGeneration));
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      status: "in_progress",
+      resumable: true,
+      stationExpressIntent: intent,
+      stationExpressReceiptRetirement: null,
+    });
+  });
+
+  it("fails closed if the receipt is replaced after durable completion", () => {
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+    const intent = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+      receiptGeneration,
+    };
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
+    );
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
+    const originalRename = fs.renameSync.bind(fs);
+    const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce((from, to) => {
+      originalRename(from, to);
+      fs.writeFileSync(receipt, receiptText(otherReceiptGeneration), { mode: 0o600 });
+    });
+
+    expect(() => session.completeSession()).toThrow("another attempt");
+    rename.mockRestore();
+
+    expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText(otherReceiptGeneration));
+    expect(requireLoadedSession(session.loadSession())).toMatchObject({
+      status: "complete",
+      resumable: false,
+      stationExpressIntent: null,
+      stationExpressReceiptRetirement: receiptGeneration,
     });
   });
 
@@ -206,6 +367,7 @@ describe("Station Express onboarding session state (#7048)", () => {
       version: 1 as const,
       model: "nemotron-3-ultra-550b-a55b",
       sandboxName: "my-assistant",
+      receiptGeneration,
     };
     session.saveSession(
       session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
@@ -234,14 +396,16 @@ describe("Station Express onboarding session state (#7048)", () => {
     session.saveSession(
       session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
     );
-    fs.writeFileSync(
-      receipt,
-      "revision=0123456789012345678901234567890123456789\nmodel=nemotron-3-ultra-550b-a55b\n",
-      { mode: 0o600 },
-    );
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
     const run = vi.fn(async () => undefined);
 
-    await wrapOnboard(run, session.loadSession)({ fresh: true });
+    await wrapOnboard(
+      run,
+      session.loadSession,
+      session.reconcileStationExpressReceiptRetirement,
+    )({
+      fresh: true,
+    });
 
     expect(run).toHaveBeenCalledWith({ fresh: true });
     expect(fs.existsSync(receipt)).toBe(false);
@@ -266,6 +430,7 @@ describe("Station Express onboarding session state (#7048)", () => {
       version: 1 as const,
       model: "nemotron-3-ultra-550b-a55b",
       sandboxName: "my-assistant",
+      receiptGeneration,
     };
     const receipt = path.join(session.SESSION_DIR, "station-express-resume");
     await prepareOnboardSession(
@@ -280,11 +445,7 @@ describe("Station Express onboarding session state (#7048)", () => {
       },
       bootstrapDeps,
     );
-    fs.writeFileSync(
-      receipt,
-      "revision=0123456789012345678901234567890123456789\nmodel=nemotron-3-ultra-550b-a55b\n",
-      { mode: 0o600 },
-    );
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
     expect(requireLoadedSession(session.loadSession()).stationExpressIntent).toEqual(intent);
 
     const failingRuntime = new OnboardRuntime();
@@ -344,6 +505,7 @@ describe("Station Express onboarding session state (#7048)", () => {
       "NEMOCLAW_PROVIDER",
       "NEMOCLAW_VLLM_MODEL",
       "NEMOCLAW_MODEL",
+      "NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION",
     ]) {
       vi.stubEnv(name, "");
     }
@@ -355,6 +517,7 @@ describe("Station Express onboarding session state (#7048)", () => {
         NEMOCLAW_PROVIDER: "install-vllm",
         NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
         NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+        NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION: receiptGeneration,
       });
       return {
         model: "nemotron-ultra",
@@ -379,40 +542,44 @@ describe("Station Express onboarding session state (#7048)", () => {
         resumedRuntime.markStepComplete(stepName, updates),
       ),
     });
-    const wrapped = wrapOnboard(async () => {
-      const resumedBootstrap = await prepareOnboardSession(
-        {
-          resume: true,
-          fresh: false,
-          requestedFromDockerfile: null,
-          requestedSandboxName: process.env.NEMOCLAW_SANDBOX_NAME || null,
-          cannotPrompt: true,
-          nonInteractive: true,
-        },
-        bootstrapDeps,
-      );
-      const result = await runOnboardMachine({
-        context: {},
-        runtime: resumedRuntime,
-        handlers: {
-          provider_selection: async () => {
-            const providerResult = await handleProviderInferenceState({
-              ...baseOptions(resumed.deps, resumedBootstrap.session),
-              resume: true,
-              sandboxName: process.env.NEMOCLAW_SANDBOX_NAME || null,
-              env: process.env,
-            });
-            return providerResult.stateResults;
+    const wrapped = wrapOnboard(
+      async () => {
+        const resumedBootstrap = await prepareOnboardSession(
+          {
+            resume: true,
+            fresh: false,
+            requestedFromDockerfile: null,
+            requestedSandboxName: process.env.NEMOCLAW_SANDBOX_NAME || null,
+            cannotPrompt: true,
+            nonInteractive: true,
           },
-        },
-        stopStates: ["sandbox"],
-      });
-      expect(result.session).toMatchObject({
-        provider: "vllm-local",
-        model: "nemotron-ultra",
-        machine: { state: "sandbox" },
-      });
-    }, session.loadSession);
+          bootstrapDeps,
+        );
+        const result = await runOnboardMachine({
+          context: {},
+          runtime: resumedRuntime,
+          handlers: {
+            provider_selection: async () => {
+              const providerResult = await handleProviderInferenceState({
+                ...baseOptions(resumed.deps, resumedBootstrap.session),
+                resume: true,
+                sandboxName: process.env.NEMOCLAW_SANDBOX_NAME || null,
+                env: process.env,
+              });
+              return providerResult.stateResults;
+            },
+          },
+          stopStates: ["sandbox"],
+        });
+        expect(result.session).toMatchObject({
+          provider: "vllm-local",
+          model: "nemotron-ultra",
+          machine: { state: "sandbox" },
+        });
+      },
+      session.loadSession,
+      session.reconcileStationExpressReceiptRetirement,
+    );
 
     await wrapped({ resume: true });
 
@@ -435,6 +602,7 @@ describe("Station Express onboarding session state (#7048)", () => {
       status: "complete",
       resumable: false,
       stationExpressIntent: null,
+      stationExpressReceiptRetirement: null,
     });
     expect(fs.existsSync(receipt)).toBe(false);
   });

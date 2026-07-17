@@ -31,10 +31,11 @@ import {
 } from "../onboard/machine/transitions";
 import type { OnboardMachineState, OnboardNonTerminalMachineState } from "../onboard/machine/types";
 import {
-  assertStationExpressInstallerResumeSafe,
+  assertStationExpressInstallerResumeMatches,
   bindStationExpressProviderSelection,
-  clearStationExpressInstallerResume,
+  isValidStationExpressReceiptGeneration,
   parseStationExpressResumeIntent,
+  retireStationExpressInstallerResume,
   type StationExpressResumeIntent,
 } from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
@@ -162,6 +163,8 @@ export interface Session {
   model: string | null;
   /** Secret-free installer choices needed to retry an interrupted DGX Station Express run. */
   stationExpressIntent: StationExpressResumeIntent | null;
+  /** Receipt generation durably awaiting exact-match retirement after Station completion. */
+  stationExpressReceiptRetirement: string | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
@@ -643,6 +646,11 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
     stationExpressIntent: parseStationExpressResumeIntent(overrides.stationExpressIntent),
+    stationExpressReceiptRetirement: isValidStationExpressReceiptGeneration(
+      overrides.stationExpressReceiptRetirement,
+    )
+      ? overrides.stationExpressReceiptRetirement
+      : null,
     endpointUrl: overrides.endpointUrl ?? null,
     credentialEnv: overrides.credentialEnv ?? null,
     hermesAuthMethod: overrides.hermesAuthMethod ?? null,
@@ -692,6 +700,18 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     !stationExpressIntent
   )
     return null;
+  const stationExpressReceiptRetirement = isValidStationExpressReceiptGeneration(
+    data.stationExpressReceiptRetirement,
+  )
+    ? data.stationExpressReceiptRetirement
+    : null;
+  if (
+    hasOwn(data, "stationExpressReceiptRetirement") &&
+    data.stationExpressReceiptRetirement !== null &&
+    !stationExpressReceiptRetirement
+  ) {
+    return null;
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -703,6 +723,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     provider: readString(data.provider),
     model: readString(data.model),
     stationExpressIntent,
+    stationExpressReceiptRetirement,
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
     credentialEnv: readString(data.credentialEnv),
     hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
@@ -737,6 +758,14 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     (data.resumable !== true ||
       normalized.mode !== "non-interactive" ||
       (data.status !== "in_progress" && data.status !== "failed"))
+  ) {
+    return null;
+  }
+  if (
+    normalized.stationExpressReceiptRetirement &&
+    (normalized.status !== "complete" ||
+      normalized.resumable !== false ||
+      normalized.stationExpressIntent !== null)
   ) {
     return null;
   }
@@ -1553,21 +1582,27 @@ export function finalizeIncompleteOnboardStep(
 export function completeSession(updates: SessionUpdates = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
   let wasComplete = false;
-  let retireStationExpressReceipt = false;
-  const updatedSession = updateSession((session) => {
-    retireStationExpressReceipt = Boolean(session.stationExpressIntent);
-    if (retireStationExpressReceipt) assertStationExpressInstallerResumeSafe();
+  let receiptGeneration: string | null = null;
+  let updatedSession = updateSession((session) => {
+    const intentReceiptGeneration = session.stationExpressIntent?.receiptGeneration ?? null;
+    receiptGeneration = session.stationExpressReceiptRetirement ?? intentReceiptGeneration;
+    if (intentReceiptGeneration) {
+      assertStationExpressInstallerResumeMatches(intentReceiptGeneration);
+    }
     const now = new Date().toISOString();
     wasComplete = session.status === "complete";
     Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
     session.stationExpressIntent = null;
+    session.stationExpressReceiptRetirement = receiptGeneration;
     session.failure = null;
     transitionMachineSnapshot(session, "complete", now);
     return session;
   });
-  if (retireStationExpressReceipt) clearStationExpressInstallerResume();
+  if (receiptGeneration) {
+    updatedSession = reconcileStationExpressReceiptRetirement(receiptGeneration);
+  }
   if (Object.keys(safeUpdates).length > 0) {
     emitOnboardMachineEvent(
       createOnboardMachineEvent({
@@ -1588,6 +1623,34 @@ export function completeSession(updates: SessionUpdates = {}): Session {
     );
   }
   return updatedSession;
+}
+
+function assertStationExpressReceiptRetirementSession(
+  session: Session | null,
+  expectedGeneration: string,
+): asserts session is Session {
+  if (
+    !session ||
+    session.stationExpressReceiptRetirement !== expectedGeneration ||
+    session.status !== "complete" ||
+    session.resumable !== false ||
+    session.stationExpressIntent !== null
+  ) {
+    throw new Error("DGX Station Express receipt retirement state does not match this attempt.");
+  }
+}
+
+export function reconcileStationExpressReceiptRetirement(expectedGeneration: string): Session {
+  if (!isValidStationExpressReceiptGeneration(expectedGeneration)) {
+    throw new Error("DGX Station Express receipt generation is invalid.");
+  }
+  assertStationExpressReceiptRetirementSession(loadSession(), expectedGeneration);
+  retireStationExpressInstallerResume(expectedGeneration, { allowMissing: true });
+  return updateSession((session) => {
+    assertStationExpressReceiptRetirementSession(session, expectedGeneration);
+    session.stationExpressReceiptRetirement = null;
+    return session;
+  });
 }
 
 export function summarizeForDebug(

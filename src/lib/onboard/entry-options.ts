@@ -74,8 +74,13 @@ export function withNonInteractiveEnvironment<Options extends NonInteractiveEntr
 export function wrapOnboard<Options extends ResumableEntryOptions>(
   run: (options?: Options) => Promise<void>,
   loadSession: () => StationExpressSessionLike | null,
+  reconcileStationExpressReceiptRetirement: (generation: string) => void,
 ): (options?: Options) => Promise<void> {
-  return wrapStationExpressOnboard(withNonInteractiveEnvironment(run), loadSession);
+  return wrapStationExpressOnboard(
+    withNonInteractiveEnvironment(run),
+    loadSession,
+    reconcileStationExpressReceiptRetirement,
+  );
 }
 
 export function prepareSessionInput<RuntimeControlRequests extends object>(

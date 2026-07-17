@@ -16,6 +16,7 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const PUBLIC_BOOTSTRAP = path.join(REPO_ROOT, "install.sh");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const STATION_REVISION = "a".repeat(40);
+const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 const STATION_DOCS = [
   path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx"),
   path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx"),
@@ -1112,6 +1113,7 @@ prepare_installer_host
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
 station_installer_revision() { printf '${STATION_REVISION}'; }
+station_express_resume_generation() { printf '${STATION_GENERATION}'; }
 run_station_host_preparation() { return 10; }
 ensure_station_express_host
 `,
@@ -1120,7 +1122,7 @@ ensure_station_express_host
 
     expect(result.status, output).toBe(10);
     expect(fs.readFileSync(stateFile, "utf-8")).toBe(
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
     );
     expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
     expect(output).toContain(`NEMOCLAW_INSTALL_TAG=${STATION_REVISION}`);
@@ -1176,7 +1178,7 @@ ensure_station_express_host
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(
       path.join(stateDir, "station-express-resume"),
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
       { mode: 0o600 },
     );
     const result = spawnSync(
@@ -1193,8 +1195,8 @@ NON_INTERACTIVE=''
 NEMOCLAW_PROVIDER=''
 NEMOCLAW_NO_EXPRESS=''
 maybe_offer_express_install
-printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s RESUME_LOADED=%s\n' \
-  "$_SELECTED_EXPRESS_PLATFORM" "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_MODEL:-}" "$NEMOCLAW_VLLM_MODEL" "$NEMOCLAW_STATION_EXPRESS" "$_STATION_EXPRESS_RESUME_LOADED"
+printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s RESUME_LOADED=%s GENERATION=%s\n' \
+  "$_SELECTED_EXPRESS_PLATFORM" "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_MODEL:-}" "$NEMOCLAW_VLLM_MODEL" "$NEMOCLAW_STATION_EXPRESS" "$_STATION_EXPRESS_RESUME_LOADED" "$NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION"
 `,
       ],
       {
@@ -1215,7 +1217,9 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s
     expect(output).toMatch(/Resuming the accepted express install/);
     expect(output).not.toMatch(/Run express install with these settings/);
     expect(output).toMatch(
-      /RESULT PLATFORM=DGX Station PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b STATION_EXPRESS=1 RESUME_LOADED=1/,
+      new RegExp(
+        `RESULT PLATFORM=DGX Station PROVIDER=install-vllm MODEL=nvidia/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b STATION_EXPRESS=1 RESUME_LOADED=1 GENERATION=${STATION_GENERATION}`,
+      ),
     );
   });
 
@@ -1224,9 +1228,11 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s
     const stateDir = path.join(home, ".nemoclaw");
     const receipt = path.join(stateDir, "station-express-resume");
     fs.mkdirSync(stateDir, { mode: 0o700 });
-    fs.writeFileSync(receipt, `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`, {
-      mode: 0o600,
-    });
+    fs.writeFileSync(
+      receipt,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
+      { mode: 0o600 },
+    );
     const session = {
       resumable: true,
       status: "failed",
@@ -1246,6 +1252,7 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s
         {
           loadSession: () => session,
           clearInstallerResume: () => clearStationExpressInstallerResume({ HOME: home }),
+          reconcileReceiptRetirement: () => undefined,
           error: (message) => {
             throw new Error(message);
           },
@@ -1283,12 +1290,13 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s
             version: 1,
             model: "nemotron-3-ultra-550b-a55b",
             sandboxName: "my-assistant",
+            receiptGeneration: STATION_GENERATION,
           },
         }),
       );
       fs.writeFileSync(
         receipt,
-        `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`,
+        `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
         { mode: 0o600 },
       );
 
@@ -1343,7 +1351,7 @@ printf 'RESULT PROVIDER=%s\n' "$NEMOCLAW_PROVIDER"
       `
 mkdir -p "$HOME/.nemoclaw"
 chmod 0700 "$HOME/.nemoclaw"
-printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n' >"$HOME/.nemoclaw/station-express-resume"
+printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$HOME/.nemoclaw/station-express-resume"
 chmod 0600 "$HOME/.nemoclaw/station-express-resume"
 detect_express_platform() { printf 'DGX Station'; }
 NON_INTERACTIVE=''
@@ -1389,7 +1397,7 @@ printf 'RESULT MODEL=%s\n' "$NEMOCLAW_VLLM_MODEL"
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(
       path.join(stateDir, "station-express-resume"),
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\nunexpected\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\nunexpected\n`,
       { mode: 0o600 },
     );
     const result = spawnSync(
@@ -1426,7 +1434,7 @@ printf 'RESULT MODEL=%s\n' "$NEMOCLAW_VLLM_MODEL"
       `
 mkdir -p "$HOME/.nemoclaw"
 chmod 0700 "$HOME/.nemoclaw"
-printf 'revision=${savedRevision}\nmodel=nemotron-3-ultra-550b-a55b\n' >"$HOME/.nemoclaw/station-express-resume"
+printf 'revision=${savedRevision}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$HOME/.nemoclaw/station-express-resume"
 chmod 0600 "$HOME/.nemoclaw/station-express-resume"
 station_installer_revision() { printf '${currentRevision}'; }
 load_station_express_resume

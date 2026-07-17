@@ -2549,7 +2549,8 @@ run_onboard() {
     # Classify the session: "resume" (auto-attach --resume), "fresh-recover"
     # (interrupted before sandbox creation — nothing to resume, start over),
     # "failed" (last run reported a step failure — user must choose), "complete"
-    # (durably finished), "skip" (missing / non-resumable), or "corrupt".
+    # (durably finished; the CLI may still have Station receipt retirement to
+    # reconcile), "skip" (missing / non-resumable), or "corrupt".
     local session_state
     session_state="$(
       node -e '
@@ -2576,7 +2577,16 @@ run_onboard() {
               data.steps &&
               data.steps.sandbox &&
               data.steps.sandbox.status === "complete";
-            out = sandboxCreated ? "resume" : "fresh-recover";
+            const installerGeneration =
+              process.env.NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION || "";
+            const exactStationAttempt =
+              /^[0-9a-f]{32}$/.test(installerGeneration) &&
+              data.stationExpressIntent &&
+              data.stationExpressIntent.receiptGeneration === installerGeneration;
+            // A Station session carries its sandbox name in the correlated
+            // intent, so it can safely resume even before sandbox creation.
+            // Using --fresh here would discard the still-needed receipt.
+            out = sandboxCreated || exactStationAttempt ? "resume" : "fresh-recover";
           } else {
             // Unknown or missing status — do not auto-resume a file we
             // cannot classify against what onboard-session.ts actually
@@ -2590,13 +2600,7 @@ run_onboard() {
       ' "$session_file" 2>/dev/null || printf "corrupt"
     )"
     case "$session_state" in
-      complete)
-        if [ "${_STATION_EXPRESS_RESUME_LOADED:-}" = "1" ]; then
-          info "Found completed DGX Station Express onboarding — retiring stale reboot resume state."
-          clear_station_express_resume
-          return 0
-        fi
-        ;;
+      complete) ;;
       resume)
         info "Found an interrupted onboarding session — resuming it."
         onboard_cmd+=(--resume)
@@ -2690,6 +2694,28 @@ run_onboard() {
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
   fi
   return "$status"
+}
+
+station_express_receipt_retirement_pending() {
+  command_exists node || return 1
+  local session_file
+  session_file="$(nemoclaw_state_dir)/onboard-session.json"
+  [[ -f "$session_file" ]] || return 1
+  node -e '
+    const fs = require("fs");
+    try {
+      const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      process.exit(
+        data &&
+          Object.prototype.hasOwnProperty.call(data, "stationExpressReceiptRetirement") &&
+          data.stationExpressReceiptRetirement !== null
+          ? 0
+          : 1,
+      );
+    } catch {
+      process.exit(1);
+    }
+  ' "$session_file" >/dev/null 2>&1
 }
 
 # Make sure Docker is installed and the current user can run it without
@@ -2907,6 +2933,7 @@ STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 _SELECTED_EXPRESS_PLATFORM=""
 _STATION_EXPRESS_RESUME_REVISION=""
 _STATION_EXPRESS_RESUME_LOADED=""
+_STATION_EXPRESS_RESUME_GENERATION=""
 
 normalize_station_vllm_model() {
   printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
@@ -3031,6 +3058,22 @@ validate_station_express_resume_revision() {
   [[ "${1:-}" =~ ^[0-9a-f]{40}$ ]]
 }
 
+validate_station_express_resume_generation() {
+  [[ "${1:-}" =~ ^[0-9a-f]{32}$ ]]
+}
+
+station_express_resume_generation() {
+  local generation
+  [[ -r /proc/sys/kernel/random/uuid ]] \
+    || error "Could not generate a DGX Station express resume receipt identity."
+  IFS= read -r generation </proc/sys/kernel/random/uuid \
+    || error "Could not generate a DGX Station express resume receipt identity."
+  generation="${generation//-/}"
+  validate_station_express_resume_generation "$generation" \
+    || error "Generated DGX Station express resume receipt identity is invalid."
+  printf '%s' "$generation"
+}
+
 station_installer_revision() {
   local revision
   revision="$(git -C "${SCRIPT_DIR}/.." rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" \
@@ -3061,7 +3104,7 @@ assert_station_express_resume_file_safe() {
 }
 
 load_station_express_resume() {
-  local state_file revision_line model_line line_count saved_revision current_revision
+  local state_file revision_line model_line generation_line line_count saved_revision current_revision
   state_file="$(station_express_resume_file)" || return 1
   assert_nemoclaw_state_path_safe "$state_file"
   [[ -e "$state_file" || -L "$state_file" ]] || return 1
@@ -3069,11 +3112,14 @@ load_station_express_resume() {
   line_count="$(wc -l <"$state_file" | tr -d '[:space:]')"
   revision_line="$(sed -n '1p' "$state_file")"
   model_line="$(sed -n '2p' "$state_file")"
+  generation_line="$(sed -n '3p' "$state_file")"
   saved_revision="${revision_line#revision=}"
   NEMOCLAW_VLLM_MODEL="${model_line#model=}"
-  if [[ "$line_count" != "2" || "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${NEMOCLAW_VLLM_MODEL}" ]] \
+  _STATION_EXPRESS_RESUME_GENERATION="${generation_line#generation=}"
+  if [[ "$line_count" != "3" || "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${NEMOCLAW_VLLM_MODEL}" || "$generation_line" != "generation=${_STATION_EXPRESS_RESUME_GENERATION}" ]] \
     || ! validate_station_express_resume_revision "$saved_revision" \
-    || ! validate_station_express_resume_model "$NEMOCLAW_VLLM_MODEL"; then
+    || ! validate_station_express_resume_model "$NEMOCLAW_VLLM_MODEL" \
+    || ! validate_station_express_resume_generation "$_STATION_EXPRESS_RESUME_GENERATION"; then
     error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
   fi
   current_revision="$(station_installer_revision)"
@@ -3082,21 +3128,26 @@ load_station_express_resume() {
   fi
   _STATION_EXPRESS_RESUME_LOADED=1
   export NEMOCLAW_VLLM_MODEL
+  export NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION="$_STATION_EXPRESS_RESUME_GENERATION"
 }
 
 save_station_express_resume() {
-  local state_file state_dir temp_file revision model="${NEMOCLAW_VLLM_MODEL:-}"
+  local state_file state_dir temp_file revision generation model="${NEMOCLAW_VLLM_MODEL:-}"
   validate_station_express_resume_model "$model" || error "Cannot save an invalid DGX Station express model selector."
   revision="$(station_installer_revision)"
   state_file="$(station_express_resume_file)" || error "Could not resolve NemoClaw state for DGX Station express resume."
   state_dir="$(ensure_nemoclaw_state_dir)" || error "Could not prepare NemoClaw state for DGX Station express resume."
   assert_nemoclaw_state_path_safe "$state_file"
+  generation="${_STATION_EXPRESS_RESUME_GENERATION:-}"
+  if ! validate_station_express_resume_generation "$generation"; then
+    generation="$(station_express_resume_generation)"
+  fi
   temp_file="$(mktemp "${state_file}.tmp.XXXXXX")" || error "Could not create DGX Station express resume state under ${state_dir}."
   chmod 600 "$temp_file" || {
     rm -f "$temp_file"
     error "Could not secure DGX Station express resume state under ${state_dir}."
   }
-  if ! printf 'revision=%s\nmodel=%s\n' "$revision" "$model" >"$temp_file"; then
+  if ! printf 'revision=%s\nmodel=%s\ngeneration=%s\n' "$revision" "$model" "$generation" >"$temp_file"; then
     rm -f "$temp_file"
     error "Could not write DGX Station express resume state under ${state_dir}."
   fi
@@ -3106,6 +3157,7 @@ save_station_express_resume() {
   fi
   assert_station_express_resume_file_safe "$state_file"
   _STATION_EXPRESS_RESUME_REVISION="$revision"
+  _STATION_EXPRESS_RESUME_GENERATION="$generation"
 }
 
 clear_station_express_resume() {
@@ -3137,6 +3189,11 @@ activate_express_install() {
       ;;
     "DGX Station")
       export NEMOCLAW_STATION_EXPRESS=1
+      if [ -n "${_STATION_EXPRESS_RESUME_GENERATION:-}" ]; then
+        export NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION="$_STATION_EXPRESS_RESUME_GENERATION"
+      else
+        unset NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION
+      fi
       export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       export NEMOCLAW_PROVIDER=install-vllm
       configure_station_express_model
@@ -3484,6 +3541,11 @@ main() {
         if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
           # #6520: do not claim recovery when recorded sandboxes are stranded.
           warn "Some recorded sandboxes could not be recovered; skipping generic onboarding."
+        elif [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
+          || station_express_receipt_retirement_pending; then
+          info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
+          run_onboard || error "Onboarding did not complete successfully."
+          ONBOARD_RAN=true
         else
           info "Existing sandboxes recovered; skipping generic onboarding."
         fi
@@ -3502,9 +3564,6 @@ main() {
   fi
 
   finalize_install
-  if [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
-    clear_station_express_resume
-  fi
 }
 
 # Print the completion summary, then propagate a fatal/non-zero result when the

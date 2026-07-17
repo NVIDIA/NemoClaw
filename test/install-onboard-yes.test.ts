@@ -234,6 +234,32 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
     expect(argv).not.toContain("--fresh");
   });
 
+  it("resumes the exact Station receipt attempt before sandbox creation", () => {
+    const generation = "0123456789abcdef0123456789abcdef";
+    const argv = runOnboardWithSession(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION: generation,
+      },
+      {
+        version: 1,
+        status: "in_progress",
+        resumable: true,
+        sandboxName: null,
+        stationExpressIntent: {
+          version: 1,
+          model: "nemotron-3-ultra-550b-a55b",
+          sandboxName: "my-assistant",
+          receiptGeneration: generation,
+        },
+        steps: { sandbox: { status: "pending" } },
+      },
+    );
+
+    expect(argv).toContain("--resume");
+    expect(argv).not.toContain("--fresh");
+  });
+
   it.each([
     {
       name: "sandbox name without completed sandbox step",
@@ -271,7 +297,7 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
     expect(argv).not.toContain("--fresh");
   });
 
-  it("retires a stale Station reboot receipt after durable onboarding completion", () => {
+  it("runs onboarding for a new Station receipt despite an older completed session", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-complete-receipt-"));
     const home = path.join(tmp, "home");
     const stateDir = path.join(home, ".nemoclaw");
@@ -286,7 +312,7 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
     );
     fs.writeFileSync(
       receipt,
-      "revision=0123456789012345678901234567890123456789\nmodel=nemotron-3-ultra-550b-a55b\n",
+      "revision=0123456789012345678901234567890123456789\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=0123456789abcdef0123456789abcdef\n",
       { mode: 0o600 },
     );
     fs.writeFileSync(stubBin, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\n`, {
@@ -297,6 +323,7 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
       source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
       _CLI_BIN="${stubBin}"
       _STATION_EXPRESS_RESUME_LOADED=1
+      NON_INTERACTIVE=1
       show_usage_notice() { :; }
       info() { :; }
       warn() { :; }
@@ -310,8 +337,8 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
     });
 
     expect(result.status, result.stderr).toBe(0);
-    expect(fs.existsSync(receipt)).toBe(false);
-    expect(fs.existsSync(argvLog)).toBe(false);
+    expect(fs.existsSync(receipt)).toBe(true);
+    expect(fs.readFileSync(argvLog, "utf8").split("\n")).toContain("onboard");
   });
 });
 
