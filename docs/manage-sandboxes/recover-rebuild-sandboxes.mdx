@@ -103,7 +103,11 @@ The rebuild command preserves the mounted workspace and registered policies whil
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-The rebuild command preserves Hermes state and registered policies while recreating the container.
+The rebuild command preserves Hermes state, registered policies, and managed MCP configuration while recreating the container.
+Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
+After state restore, NemoClaw restores managed MCP configuration through the normal lifecycle, then re-proves or recovers gateway health and performs final MCP reconciliation.
+`rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state.
+Follow the printed recovery guidance, using `$$nemoclaw <sandbox-name> recover` for gateway health and `$$nemoclaw <sandbox-name> mcp restart` for incomplete managed MCP restoration.
 </AgentOnly>
 
 <AgentOnly variant="deepagents">

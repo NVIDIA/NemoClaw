@@ -76,6 +76,9 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain("automatically carry stragglers to the next patch");
     expect(evening).toContain("retire the released label");
     expect(release).toContain("release-latest-tag");
+    expect(release).toContain("signed annotated semver tag");
+    expect(release).toContain("GitHub-Verified");
+    expect(release).toContain("same tag object");
     expect(release).toContain("Do not run the retirement script directly");
     expect(release).toContain('--event push --commit "$RELEASE_SHA"');
     expect(release).toContain("Expected exactly one release-latest-tag push run");

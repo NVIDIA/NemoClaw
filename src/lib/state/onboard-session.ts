@@ -1579,7 +1579,14 @@ export function finalizeIncompleteOnboardStep(
   return updatedSession;
 }
 
-export function completeSession(updates: SessionUpdates = {}): Session {
+export interface CompleteSessionOptions {
+  emitEvents?: boolean;
+}
+
+export function completeSession(
+  updates: SessionUpdates = {},
+  options: CompleteSessionOptions = {},
+): Session {
   const safeUpdates = filterSafeUpdates(updates);
   let wasComplete = false;
   let receiptGeneration: string | null = null;
@@ -1603,7 +1610,7 @@ export function completeSession(updates: SessionUpdates = {}): Session {
   if (receiptGeneration) {
     updatedSession = reconcileStationExpressReceiptRetirement(receiptGeneration);
   }
-  if (Object.keys(safeUpdates).length > 0) {
+  if (options.emitEvents !== false && Object.keys(safeUpdates).length > 0) {
     emitOnboardMachineEvent(
       createOnboardMachineEvent({
         type: "context.updated",
@@ -1613,7 +1620,7 @@ export function completeSession(updates: SessionUpdates = {}): Session {
       }),
     );
   }
-  if (!wasComplete) {
+  if (options.emitEvents !== false && !wasComplete) {
     emitOnboardMachineEvent(
       createOnboardMachineEvent({
         type: "onboard.completed",

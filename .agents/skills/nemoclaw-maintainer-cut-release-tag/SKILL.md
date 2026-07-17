@@ -11,7 +11,7 @@ user_invocable: true
 
 Use the release scripts for normal release operations. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
 
-The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`, carries remaining open issues/PRs to the next patch label, and deletes the released label while holding the shared release-label coordination queue; release admins promote `lkg` manually after validation. After the workflow is verified, draft release notes, then verify the maintainer-published Announcement before final handoff.
+The release is one signed annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow requires that tag to be GitHub-Verified, points `latest` at the exact verified tag object, carries remaining open issues/PRs to the next patch label, and deletes the released label while holding the shared release-label coordination queue; release admins promote `lkg` manually after validation. After the workflow is verified, draft release notes, then verify the maintainer-published Announcement before final handoff.
 
 ## LKG Production Image Dispatch
 
@@ -130,7 +130,7 @@ Run the cut script with the plan and the maintainer's phrase:
 npm run release:cut -- --plan <plan.json> --confirm "CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>"
 ```
 
-The script verifies a clean worktree, unchanged `origin/main`, tag availability, target reachability, and remote peeled tag state. It writes:
+The script verifies a clean worktree, unchanged `origin/main`, tag availability, target reachability, and remote peeled tag state, then creates and pushes the signed annotated tag using the configured signing key. It writes:
 
 ```text
 <release-dir>/cut-result.json
@@ -146,7 +146,7 @@ Run:
 npm run release:wait-latest -- --plan <plan.json>
 ```
 
-The script waits until `vX.Y.Z^{}` and `latest^{}` both peel to the planned commit and verifies `lkg` did not change from the plan. It writes:
+The script waits until `vX.Y.Z` and `latest` reference the same tag object, verifies both peel to the planned commit, and verifies `lkg` did not change from the plan. It writes:
 
 ```text
 <release-dir>/latest-result.json

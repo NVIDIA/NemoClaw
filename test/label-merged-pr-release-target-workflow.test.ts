@@ -217,7 +217,7 @@ describe("merged PR release target workflow", () => {
     });
     expect(retirementStep?.run).toContain("scripts/retire-release-label.mts");
     const latestIndex = releaseJob.steps?.findIndex(
-      (step) => step.name === "Move latest to the release tag commit",
+      (step) => step.name === "Move latest to the verified release tag object",
     );
     const retirementIndex = releaseJob.steps?.findIndex(
       (step) => step.name === "Retire the released target label",

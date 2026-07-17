@@ -654,7 +654,7 @@ Commits: `80293213`, `392ad639`, `b4be33e5`, `21aaa895`, `3dee5570`.
 | `OS85-10` | Medium-high | Supervisor TLS identity variables are no longer child environment. Stale tests/comments can normalize a credential leak. | Assert absence from entrypoint, exec, and connect children and update the source-of-truth rationale. | Hermes and Deep Agents now reject all three variables; the stable entrypoint, exec, and connect probes require their absence, with exact-head execution pending. |
 | `OS85-11` | Medium-high | Live `/proc/<pid>/exe` identity changes replacement-time policy behavior. | Prove old process survives replacement and a new altered process at the same path is denied. | The stable release proof runs both processes against the real proxy and requires old=200 before/after replacement, distinct live/path hashes, and new=403; exact-head runtime result pending. |
 | `OS85-12` | Medium | OpenShell declares Docker 28.0+ while #6379 is on Docker 27 and NemoClaw marks DGX Spark tested. | Either validate and document a precise downstream exception from physical proof or raise the supported floor and preflight it. | Open product/platform decision. |
-| `OS85-13` | Low | Mount parsing/SELinux changes could affect the test-only tmpfs path. | Rerun the EXDEV tmpfs fixture and retain production no-mount evidence. | The stable release proof injects only the reviewed tmpfs config, requires Docker's structured tmpfs representation plus `noexec`/01777 at runtime, retains it across gateway restart, and requires a fresh remount after rebuild. The wrapper is disabled outside the explicit proof lane and production still supplies no driver mounts. Exact-head, Podman, and enforcing-SELinux results remain open. |
+| `OS85-13` | Low | Mount parsing/SELinux changes could affect the test-only tmpfs path. | Rerun the EXDEV tmpfs fixture and retain production no-mount evidence. | The stable release proof injects only the reviewed tmpfs config, requires Docker's structured tmpfs representation plus `noexec`/01777 at runtime, requires an empty remount after graceful gateway restart with the same container/config/auth and retained durable state, and requires another fresh remount after rebuild. The wrapper is disabled outside the explicit proof lane and production still supplies no driver mounts. Exact-head, Podman, and enforcing-SELinux results remain open. |
 | `OS85-14` | Low | Sanitized MCP tool names are newly present in logs. | Record the additive observability/privacy behavior; ensure no downstream parser assumes the old shape. | The stable release check requires the real `fake_echo` tool name and rejects argument/result canaries or an `arguments` field in JSON-RPC policy logs; exact-head runtime result pending. |
 | `OS85-15` | High | The installer-hash workflow executes its checker and parser from the PR base SHA. One PR cannot safely teach that trusted base about a new release and consume the release; using the head checker would let reviewed code define its own trust rules. | First land archive safety, normalized full-script template validation, and multi-release trust while selectors remain `0.0.72`; prove the old base rejects a new release and the new base permits only structured release-data changes; then land the exact `0.0.85` manifest identities before refreshing this selector PR. | Base trust landed in #7069. #6778 and #6779 established base-owned structured manifest and sandbox-map validation; #7069 added only the three exact `0.0.85` release identities while retaining `0.0.72` and `0.0.82`. This selector PR must be based on that trusted state and pass the checker without relying on its head copy. |
 | `OS85-16` | High | Capability clearing now depends on `capctl 0.2.4` and `bitflags 1.3.2`, but upstream notices are unchanged and the consumed binaries have no published SBOM or attestation covering this dependency graph. | Bind crate checksums and source identities to the stable lock and binaries; review the unsafe syscall boundary and advisories; update notices/licenses; retain a generated SBOM and provenance for every consumed binary. | The stable lock, crate checksums, source identities, licenses, unsafe boundary, current RustSec absence, and SLSA-bound archives are recorded. Upstream still publishes no binary SBOM and its unchanged notices omit the new graph; that limitation remains explicit rather than being presented as complete attribution. |
@@ -740,15 +740,17 @@ The proof does not treat successful onboarding as evidence by itself. It:
    `Type=tmpfs` mount and must not appear in `HostConfig.Binds`, which is the
    representation changed for SELinux-labelled bind mounts. Inside the sandbox,
    `/proc/mounts` must report `tmpfs,noexec`, mode 01777, and a writable marker.
-5. Stops and recovers the actual host OpenShell gateway through NemoClaw. The
-   gateway PID must change, the rendered-config digest and sandbox container ID
-   must not, the release binary/listeners/auth path must still match, and both
-   the tmpfs marker and a Deep Agents durable-state marker must remain.
+5. Stops and recovers the actual host OpenShell gateway through NemoClaw. A
+   graceful gateway shutdown stops the managed Docker sandbox, and startup
+   resumes that same container. The gateway PID must change, the rendered-config
+   digest and sandbox container ID must not, and the release
+   binary/listeners/auth path must still match. The tmpfs is remounted empty,
+   while the Deep Agents marker under durable `/sandbox` state must remain.
 6. Runs the existing managed MCP rebuild with the same test-only wrapper. A new
-   Docker container is required, the tmpfs must be mounted again with the same
-   representation/options but without its old volatile marker, and the backed-up
-   Deep Agents state marker must be restored. This distinguishes a fresh tmpfs
-   mount from an accidentally retained container.
+   Docker container is required, the tmpfs must again have the same
+   representation/options and no volatile marker, and the backed-up Deep Agents
+   state marker must be restored. The new container identity plus the fresh tmpfs
+   mount prove that the driver config was reapplied during rebuild.
 
 The proof is intentionally Linux amd64 Docker-bridge evidence. It does not
 isolate Docker Desktop/Colima, WSL, DGX Spark's Docker 27 host-gateway route,
