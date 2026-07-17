@@ -2004,6 +2004,19 @@ legacy_openshell_gateway_upgrade_needed() {
   [[ -n "$version" ]] && ! version_gte "$version" "0.0.37"
 }
 
+resolve_current_openshell_version_range() {
+  local source_root="${NEMOCLAW_SOURCE_ROOT:-$(resolve_repo_root)}"
+  local blueprint="${source_root}/nemoclaw-blueprint/blueprint.yaml"
+  local min_version="" max_version=""
+  [ -f "$blueprint" ] || return 1
+  min_version="$(sed -nE 's/^min_openshell_version:[[:space:]]*["'"'"']([0-9]+\.[0-9]+\.[0-9]+)["'"'"'][[:space:]]*$/\1/p' "$blueprint")"
+  max_version="$(sed -nE 's/^max_openshell_version:[[:space:]]*["'"'"']([0-9]+\.[0-9]+\.[0-9]+)["'"'"'][[:space:]]*$/\1/p' "$blueprint")"
+  [[ "$min_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  [[ "$max_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  version_gte "$max_version" "$min_version" || return 1
+  printf '%s %s\n' "$min_version" "$max_version"
+}
+
 installer_non_interactive() {
   [[ "${NON_INTERACTIVE:-}" == "1" || "${NEMOCLAW_NON_INTERACTIVE:-}" == "1" ]]
 }
@@ -2239,10 +2252,16 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
-  # Current OpenShell builds are not compatible with pre-0.0.37 gateway state,
-  # and those CLIs no longer have lifecycle verbs for destroying that old gateway.
-  # Retire the old gateway while the old CLI can still do it, after backup.
-  if [[ -n "$old_openshell_version" ]] && ! version_gte "$old_openshell_version" "0.0.37"; then
+  # Retire a backed-up gateway before install-openshell replaces an out-of-range
+  # component set. Leaving the old gateway process alive makes the new CLI's
+  # schema preflight fail before sandbox recovery can recreate it.
+  local supported_range="" min_openshell_version="" max_openshell_version=""
+  if ! supported_range="$(resolve_current_openshell_version_range)"; then
+    error "Could not resolve the current OpenShell version range. Existing gateway and sandbox state were left unchanged after backup."
+  fi
+  read -r min_openshell_version max_openshell_version <<<"$supported_range"
+  if ! version_gte "$old_openshell_version" "$min_openshell_version" \
+    || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \

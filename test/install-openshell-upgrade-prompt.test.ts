@@ -19,6 +19,7 @@ function runPreinstallUpgradeGuard(
   options: {
     currentBackupSucceeds?: boolean;
     currentCliAvailable?: boolean;
+    currentMinOpenshellVersion?: string;
     hasOldCli?: boolean;
     openshellOnPath?: boolean;
     openshellVersion?: string;
@@ -34,9 +35,15 @@ function runPreinstallUpgradeGuard(
   const oldCli = path.join(bin, "nemoclaw");
   const currentCli = path.join(bin, "nemoclaw-current");
   const preparedFlag = path.join(tmp, "prepared-current-cli");
+  const currentSource = path.join(tmp, "current-source");
 
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
+  fs.mkdirSync(path.join(currentSource, "nemoclaw-blueprint"), { recursive: true });
   fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(
+    path.join(currentSource, "nemoclaw-blueprint", "blueprint.yaml"),
+    `min_openshell_version: "${options.currentMinOpenshellVersion ?? "0.0.85"}"\nmax_openshell_version: "0.0.85"\n`,
+  );
   fs.writeFileSync(
     path.join(home, ".nemoclaw", "sandboxes.json"),
     options.registryJson ?? '{"sandboxes":{"alpha":{"name":"alpha"}}}',
@@ -92,6 +99,7 @@ exit 0
     warn() { printf '[WARN] %s\\n' "$*"; }
     _CLI_BIN=nemoclaw
     HOME="${home}"
+    NEMOCLAW_SOURCE_ROOT="${currentSource}"
     installed_openshell_version() { printf '${openshellVersion}'; }
     resolve_existing_cli_runner() { ${resolveCli}; }
     prepare_current_cli_for_preupgrade_backup() {
@@ -287,7 +295,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
     expect(cliLog).not.toContain("old:");
-    expect(openshellLog).toBe("");
+    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
   });
 
   it("discovers a v0.0.55 user-local OpenShell before preparing recovery (#6114)", () => {
@@ -310,7 +318,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
-    expect(openshellLog).toBe("");
+    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
   });
 
   it("leaves recovery preparation untouched when OpenShell is not installed (#6114)", () => {
@@ -342,6 +350,59 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('CONFIRMED_NAMES=["alpha"]');
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
+  });
+
+  it("keeps a backed-up gateway whose OpenShell version is already supported", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        hasOldCli: false,
+        openshellVersion: "0.0.85",
+        registryJson:
+          '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}',
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(openshellLog).toBe("");
+  });
+
+  it("retires a backed-up gateway whose OpenShell version is above the supported range", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      { NON_INTERACTIVE: "1" },
+      {
+        hasOldCli: false,
+        openshellVersion: "0.0.86",
+        registryJson:
+          '{"sandboxes":{"alpha":{"name":"alpha","nemoclawVersion":"0.0.85","fromDockerfile":false}}}',
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
+  });
+
+  it("fails closed before gateway retirement when the supported range is invalid", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: '["alpha"]',
+      },
+      {
+        currentMinOpenshellVersion: "latest",
+        hasOldCli: false,
+        openshellVersion: "0.0.44",
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "Could not resolve the current OpenShell version range",
+    );
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog).toBe("");
   });
@@ -458,7 +519,7 @@ describe("install.sh OpenShell gateway upgrade guard", () => {
     expect(result.stdout + result.stderr).not.toContain('"tm"');
     expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(cliLog).toContain("require-all-env=1");
-    expect(openshellLog).toBe("");
+    expect(openshellLog).toContain("gateway destroy -g nemoclaw");
   });
 
   it("continues after the user manually prepared the old gateway state", () => {
