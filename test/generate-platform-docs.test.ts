@@ -275,6 +275,23 @@ print(module.generate_platform_table_full(platforms))
     expect(full).toContain("WSL");
   });
 
+  it("prerequisites platform block links the validated subset to the complete matrix", () => {
+    const output = runPython(`
+${loadGeneratorAs("g")}
+
+platforms = [
+  {"name": "Linux", "runtimes": ["Docker"], "status": "tested", "notes": "ready"},
+  {"name": "Station", "runtimes": ["Docker"], "status": "deferred", "notes": "later"}
+]
+print(module.generate_platform_prerequisites_block(platforms))
+`);
+    expect(output).toContain("Linux");
+    expect(output).not.toContain("Station");
+    expect(output).toContain(
+      "To find the complete platform support matrix, including deferred platforms, refer to [Platform Support](../reference/platform-support).",
+    );
+  });
+
   it("exits non-zero for --check on a placeholder owner in the real matrix", () => {
     const tmp = mkdtempSync(path.join(tmpdir(), "genplatform-"));
     const matrixPath = path.join(tmp, "matrix.json");

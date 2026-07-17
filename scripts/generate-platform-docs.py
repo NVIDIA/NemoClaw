@@ -31,7 +31,7 @@ MATRIX_PATH = REPO_ROOT / "ci" / "platform-matrix.json"
 TABLES = [
     (
         "platform-matrix",
-        "platforms",
+        "platforms_prerequisites",
         [
             REPO_ROOT / "docs" / "get-started" / "prerequisites.mdx",
         ],
@@ -320,6 +320,16 @@ def generate_platform_table(platforms: list[dict]) -> str:
     return "\n".join([header, separator, *rows])
 
 
+def generate_platform_prerequisites_block(platforms: list[dict]) -> str:
+    """Render the validated platform subset and link to the complete matrix."""
+    table = generate_platform_table(platforms)
+    reference = (
+        "To find the complete platform support matrix, including deferred platforms, "
+        "refer to [Platform Support](../reference/platform-support)."
+    )
+    return f"{table}\n\n{reference}"
+
+
 def generate_provider_table(providers: list[dict]) -> str:
     """Build a markdown table from provider entries.
 
@@ -490,6 +500,7 @@ def generate_status_vocabulary_table(statuses: dict) -> str:
 
 TABLE_GENERATORS = {
     "platforms": generate_platform_table,
+    "platforms_prerequisites": generate_platform_prerequisites_block,
     "providers": generate_provider_table,
     "platforms_full": generate_platform_table_full,
     "providers_full": generate_provider_table_full,
@@ -506,6 +517,7 @@ TABLE_GENERATORS = {
 # The generator key isn't always the matrix dict key. The "full" tables
 # read the same JSON arrays as the partial views but render them differently.
 GENERATOR_MATRIX_KEY = {
+    "platforms_prerequisites": "platforms",
     "platforms_full": "platforms",
     "providers_full": "providers",
     "status_vocabulary": "statuses",
