@@ -174,7 +174,7 @@ function assertExactAssetSet(
 // whyNotSourceFix: OpenShell can attest its release but cannot keep NemoClaw's
 // blueprint, installer selector, Brev selector, and embedded tables coherent.
 // regressionTest: test/installer-hash-check.test.ts moves all runtime consumers
-// to 0.0.82 while leaving both valid pin tables at 0.0.72 and requires failure.
+// to 0.0.85 while leaving both valid pin tables at 0.0.72 and requires failure.
 // removalCondition: remove these comparisons only when one base-trusted,
 // machine-readable pin manifest directly drives every runtime consumer.
 function extractSingleVersion(

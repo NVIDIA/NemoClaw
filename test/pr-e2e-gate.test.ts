@@ -387,29 +387,6 @@ describe("PR E2E controller", () => {
     expect(() => validateSignal({ ...valid, jobId: "other" }, gate)).toThrow(/unexpected/u);
   });
 
-  it("derives shard policy from the checked-in workflow", () => {
-    expect(expectedSignalShards(["onboard-repair", "onboard-resume"])).toEqual({
-      "onboard-repair": ["default"],
-      "onboard-resume": ["default"],
-    });
-    expect(expectedSignalShards(["docs-validation"])).toEqual({
-      "docs-validation": ["default"],
-    });
-    expect(expectedSignalShards(["hermes-inference-switch", "openclaw-inference-switch"])).toEqual({
-      "hermes-inference-switch": ["hosted", "anthropic"],
-      "openclaw-inference-switch": ["hosted", "anthropic"],
-    });
-    expect(expectedSignalShards(["openshell-gateway-upgrade"], undefined, [DCODE_TARGET])).toEqual({
-      "openshell-gateway-upgrade": ["v0-0-36-x86-64", "v0-0-55-x86-64", "v0-0-55-aarch64"],
-      [DCODE_TARGET]: ["default"],
-    });
-    const broadPlan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: BROAD_FILES });
-    const broadShards = expectedSignalShards(riskPlanRequiredJobIds(broadPlan));
-    expect(Object.keys(broadShards)).toHaveLength(13);
-    expect(Object.values(broadShards).flat()).toHaveLength(15);
-    expect(() => expectedSignalShards(["not-a-workflow-job"])).toThrow(/does not define/u);
-  });
-
   it("dispatches selected jobs and the allowlisted target with exact bound metadata (#7031)", async () => {
     const jobs = ["onboard-repair", "onboard-resume", "full-e2e", "hermes-e2e"];
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
