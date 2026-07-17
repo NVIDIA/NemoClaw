@@ -900,7 +900,7 @@ process.exitCode = valid ? 0 : 1;`,
     expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON).toContain(input.model);
   });
 
-  it("preserves unsupported-model rollout skip even when unavailable artifact generation fails", () => {
+  it("fails unavailable artifact generation for unsupported model rollout skew", () => {
     const appendedEnv: Array<[string, string]> = [];
     expect(() =>
       runPrReviewAdvisorAnalysis(advisorAnalysisInput(), {
@@ -910,7 +910,7 @@ process.exitCode = valid ? 0 : 1;`,
         runNode: () => 17,
         appendEnv: (key, value) => appendedEnv.push([key, value]),
       }),
-    ).not.toThrow();
+    ).toThrow("PR review advisor unavailable-result generation exited with status 17");
     expect(appendedEnv).toEqual([["PR_REVIEW_ADVISOR_SUPPORTED", "0"]]);
   });
 
@@ -1161,6 +1161,19 @@ process.exitCode = valid ? 0 : 1;`,
     expect(missingHelper).toContain(
       "step 'Validate advisor artifacts' run script must include \"$ADVISOR_DIR/tools/pr-review-advisor/validate-artifacts.mts\"",
     );
+
+    const missingPublisherInstall = validateMutation((source) =>
+      source.replace(
+        "\n      - name: Install trusted publisher dependencies\n        working-directory: advisor\n        run: npm ci --ignore-scripts --no-audit --no-fund\n",
+        "\n",
+      ),
+    );
+    expect(missingPublisherInstall).toEqual(
+      expect.arrayContaining([
+        "missing workflow step: Install trusted publisher dependencies",
+        "trusted publisher dependencies must be installed from the trusted checkout before artifact validation",
+      ]),
+    );
   });
 
   it("keeps publication best-effort while preserving the primary analysis failure", () => {
@@ -1232,6 +1245,19 @@ process.exitCode = valid ? 0 : 1;`,
 
     expect(errors).toContain(
       "step 'Install Pi SDK' must use the canonical lockfile-only npm ci command",
+    );
+  });
+
+  it("rejects decoy publisher dependency install text outside the npm invocation", () => {
+    const errors = validateMutation((source) =>
+      source.replace(
+        "      - name: Install trusted publisher dependencies\n        working-directory: advisor\n        run: npm ci --ignore-scripts --no-audit --no-fund",
+        "      - name: Install trusted publisher dependencies\n        working-directory: advisor\n        run: |\n          npm install --ignore-scripts\n          printf '%s\\n' 'npm ci --ignore-scripts --no-audit --no-fund' >/dev/null",
+      ),
+    );
+
+    expect(errors).toContain(
+      "step 'Install trusted publisher dependencies' must use the canonical lockfile-only npm ci command",
     );
   });
 

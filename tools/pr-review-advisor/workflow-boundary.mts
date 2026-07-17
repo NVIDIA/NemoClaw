@@ -545,6 +545,17 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   requireWith(errors, checkout, "lfs", false);
   requireWith(errors, checkout, "submodules", false);
 
+  const install = requireStep(errors, steps, "Install trusted publisher dependencies");
+  if (install && stringValue(install["working-directory"]) !== "advisor") {
+    errors.push("Install trusted publisher dependencies must run in the trusted advisor checkout");
+  }
+  requireRunLine(
+    errors,
+    install,
+    CANONICAL_ADVISOR_NPM_CI,
+    "step 'Install trusted publisher dependencies' must use the canonical lockfile-only npm ci command",
+  );
+
   const download = requireStep(errors, steps, "Download primary advisor artifact");
   requireWith(errors, download, "name", "pr-review-advisor");
   requireWith(errors, download, "path", "publish-artifacts/pr-review-advisor");
@@ -633,6 +644,12 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
     '--second-opinion-result "$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"',
   );
   requireRunContains(errors, comment, '"${SECONDARY_ARGS[@]}"');
+  const checkoutIndex = steps.findIndex(
+    (step) => step.name === "Checkout trusted comment publisher (workflow revision)",
+  );
+  const installIndex = steps.findIndex(
+    (step) => step.name === "Install trusted publisher dependencies",
+  );
   const primaryDownloadIndex = steps.findIndex(
     (step) => step.name === "Download primary advisor artifact",
   );
@@ -641,6 +658,17 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   );
   const validateIndex = steps.findIndex((step) => step.name === "Validate advisor artifacts");
   const commentIndex = steps.findIndex((step) => step.name === "Post PR review advisor comment");
+  if (
+    checkoutIndex < 0 ||
+    installIndex < 0 ||
+    validateIndex < 0 ||
+    checkoutIndex > installIndex ||
+    installIndex > validateIndex
+  ) {
+    errors.push(
+      "trusted publisher dependencies must be installed from the trusted checkout before artifact validation",
+    );
+  }
   if (
     primaryDownloadIndex < 0 ||
     secondaryDownloadIndex < 0 ||

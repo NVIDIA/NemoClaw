@@ -293,6 +293,10 @@ jobs:
           lfs: false
           submodules: false
 
+      - name: Install trusted publisher dependencies
+        working-directory: advisor
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       # With no run-id or repository override, download-artifact can only read
       # the named artifact produced by this same workflow run.
       - name: Download primary advisor artifact

@@ -245,8 +245,8 @@ export function runPrReviewAdvisorAnalysis(
       input.advisorWorkdir,
     );
     if (code !== 0) {
-      console.error(
-        `PR review advisor unavailable-result generation exited with status ${code}; preserving rollout-skew skip semantics`,
+      throw new RunAnalysisError(
+        `PR review advisor unavailable-result generation exited with status ${code}`,
       );
     }
     return;
