@@ -5,6 +5,7 @@ import type { GatewayReuseState } from "../state/gateway";
 import { destroyGatewayForReuse } from "./gateway-cleanup";
 import type { GatewayContainerState } from "./gateway-container-running";
 import type { CheckPortOpts, PortProbeResult } from "./preflight";
+import type { PreflightPortKind } from "./preflight-ports";
 
 export type GatewayPortReuseDecision = "stale" | "reuse" | "skip";
 
@@ -40,13 +41,14 @@ export function classifyGatewayPortReuse(input: GatewayPortReuseInput): GatewayP
 }
 
 export interface HealthyPortReuseInput {
+  kind: PreflightPortKind;
   port: number;
-  gatewayPort: number;
   dashboardPort: number;
   label: string;
   runtimeDisplayName: string;
   gatewayName: string;
   gatewayReuseState: GatewayReuseState;
+  externallySupervised: boolean;
   portCheckOptions: CheckPortOpts | undefined;
   supportsLifecycleCommands: boolean;
   destroyGateway: () => boolean;
@@ -69,14 +71,22 @@ export type HealthyPortReuseOutcome =
 export async function applyHealthyPortReuse(
   input: HealthyPortReuseInput,
 ): Promise<HealthyPortReuseOutcome | null> {
-  const { port, gatewayPort, dashboardPort, label, runtimeDisplayName, gatewayName } = input;
+  const { kind, port, dashboardPort, label, runtimeDisplayName, gatewayName } = input;
+  if (kind === "other") return null;
+  // An occupied externally supervised gateway port is expected. Preserve it
+  // unchanged so the FSM can perform the authoritative listener, supervisor,
+  // executable, capability, and health checks before any later effect. This
+  // must run before the healthy-state gate: a first attachment can have no
+  // NemoClaw gateway metadata yet, while the supervisor already owns the port.
+  // The explicit entry kind is authoritative: a dashboard entry can have the
+  // same numeric port and must still retain normal conflict handling.
+  if (input.externallySupervised) return kind === "gateway" ? "continue" : null;
   if (input.gatewayReuseState !== "healthy") return null;
-  if (port !== gatewayPort && port !== dashboardPort) return null;
   // Only probe the container when lifecycle commands are advertised — for
   // package-managed gateways without lifecycle commands the openshell-cluster-*
   // container intentionally doesn't exist and the probe would always report
   // "missing", which is then ignored by classifyGatewayPortReuse anyway.
-  if (port === gatewayPort && input.supportsLifecycleCommands) {
+  if (kind === "gateway" && input.supportsLifecycleCommands) {
     const decision = classifyGatewayPortReuse({
       gatewayReuseState: input.gatewayReuseState,
       supportsLifecycleCommands: true,

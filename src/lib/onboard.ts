@@ -1489,17 +1489,19 @@ async function preflight(
   });
 
   ensureOpenshellForOnboard();
+  // Bind the one lifecycle authority before applying any legacy listener-name
+  // heuristic. An external supervisor may intentionally use an arbitrary
+  // executable name; its listener is validated exactly by the downstream FSM.
+  const gatewayExternallySupervised = isGatewayExternallySupervised();
   await failFastOnForeignGatewayPortConflict({
     gatewayPort: GATEWAY_PORT,
+    externallySupervised: gatewayExternallySupervised,
     checkPortAvailable,
     getGatewayPortCheckOptions: dockerDriverGatewayEnv.getGatewayPortCheckOptions,
     isDockerDriverGatewayPortListener,
     exitProcess: (code) => process.exit(code),
   });
 
-  // Resolve the one lifecycle authority before any gateway-mutating preflight
-  // branch, so external supervision is honored ahead of every effect (#6576).
-  const gatewayExternallySupervised = isGatewayExternallySupervised();
   // Classify gateway state before port checks; the legacy path destroys
   // stale/unnamed gateways here while the Docker-driver path defers (#2020).
   const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
@@ -1574,19 +1576,20 @@ async function preflight(
     dashboardPort: dashboardPortToCheck,
     dashboardLabel: `${cliDisplayName()} dashboard`,
   });
-  for (const { port, label, envVar } of requiredPorts) {
+  for (const { kind, port, label, envVar } of requiredPorts) {
     const portCheckOptions =
-      port === GATEWAY_PORT ? dockerDriverGatewayEnv.getGatewayPortCheckOptions() : undefined;
+      kind === "gateway" ? dockerDriverGatewayEnv.getGatewayPortCheckOptions() : undefined;
     let portCheck = await checkPortAvailable(port, portCheckOptions);
     if (!portCheck.ok) {
       const reuse = await applyHealthyPortReuse({
+        kind,
         port,
-        gatewayPort: GATEWAY_PORT,
         dashboardPort: getOnboardDashboardPort(),
         label,
         runtimeDisplayName: cliDisplayName(),
         gatewayName: GATEWAY_NAME,
         gatewayReuseState,
+        externallySupervised: gatewayExternallySupervised,
         portCheckOptions,
         supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         destroyGateway,
@@ -1599,7 +1602,7 @@ async function preflight(
         ({ gatewayReuseState, portCheck } = reuse);
         if (portCheck.ok) continue;
       }
-      if (port === GATEWAY_PORT) {
+      if (kind === "gateway") {
         const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck);
         if (dockerGatewayPid !== null) {
           rememberDockerDriverGatewayPid(dockerGatewayPid);
@@ -1613,7 +1616,7 @@ async function preflight(
       // (e.g. dashboard forward left behind after destroy). Only kill the process
       // if its command line contains "openshell" to avoid killing unrelated SSH
       // tunnels the user may have set up on the same port. (#1950)
-      if (port === getOnboardDashboardPort() && portCheck.process === "ssh" && portCheck.pid) {
+      if (kind === "dashboard" && portCheck.process === "ssh" && portCheck.pid) {
         const outcome = await tryCleanupOrphanedDashboardForward({
           port,
           pid: portCheck.pid,

@@ -8,7 +8,10 @@ import { GATEWAY_MANAGEMENT_ENV_VAR } from "./gateway-management";
 import { evaluateGatewayAttachment } from "./gateway-ownership";
 import type { PortProbeResult } from "./preflight";
 
-const SYSTEMD_GATEWAY_EXEC = "/usr/local/bin/openshell-gateway";
+// Intentionally does not match the legacy OpenShell process-name allowlist.
+// A declared external owner may use any absolute executable path; exact
+// downstream attachment validation, not its basename, establishes identity.
+const SYSTEMD_GATEWAY_EXEC = "/opt/platform/gatewayd";
 const SYSTEMD_GATEWAY_PID = 4242;
 
 const DECLARATION = {
@@ -21,6 +24,7 @@ const DECLARATION = {
     serviceName: "openshell-gateway.service",
     execPath: SYSTEMD_GATEWAY_EXEC,
   },
+  requiredCapabilities: ["gateway.health"],
 };
 
 const ORIGINAL_ENV = { ...process.env };
@@ -90,6 +94,18 @@ describe("gateway host runtime ownership", () => {
     );
   });
 
+  it("fails closed on unsupported capabilities before probing an external listener (#6576)", () => {
+    declareExternalSupervision({
+      ...DECLARATION,
+      requiredCapabilities: ["gateway.teleport"],
+    });
+    const checkGatewayPortAvailable = vi.fn().mockResolvedValue(OCCUPIED_PORT);
+    const runtime = createGatewayHostRuntime(createDeps({ checkGatewayPortAvailable }));
+
+    expect(() => runtime.getGatewayOwner()).toThrow(/unsupported capability/);
+    expect(checkGatewayPortAvailable).not.toHaveBeenCalled();
+  });
+
   it("binds one authority for the run and returns it on later calls (#6576)", () => {
     declareExternalSupervision();
     const runtime = createGatewayHostRuntime(createDeps());
@@ -99,6 +115,23 @@ describe("gateway host runtime ownership", () => {
 
     expect(first).toMatchObject({ mode: "externally-supervised" });
     expect(second).toEqual(first);
+  });
+
+  it("allows capability reordering but fails closed when required capabilities drift (#6576)", () => {
+    process.env[GATEWAY_MANAGEMENT_ENV_VAR] = "/etc/nemoclaw/gateway-management.json";
+    let requiredCapabilities = ["sandbox.create", "gateway.health"];
+    vi.spyOn(require("node:fs") as typeof import("node:fs"), "readFileSync").mockImplementation(
+      () => JSON.stringify({ ...DECLARATION, requiredCapabilities }) as never,
+    );
+    const runtime = createGatewayHostRuntime(createDeps());
+
+    const first = runtime.getGatewayOwner();
+    requiredCapabilities = ["gateway.health", "sandbox.create", "sandbox.create"];
+
+    expect(runtime.getGatewayOwner()).toEqual(first);
+
+    requiredCapabilities = ["gpu.passthrough"];
+    expect(() => runtime.getGatewayOwner()).toThrow(/authority changed during this run/);
   });
 
   it("fails closed when the authority would change mid-run instead of switching (#6576)", () => {
@@ -157,6 +190,30 @@ describe("gateway host runtime attachment probe", () => {
       ok: false,
       code: "identity_mismatch",
     });
+  });
+
+  it("rejects a listener whose executable differs from the arbitrary declared path (#6576)", async () => {
+    declareExternalSupervision();
+    const runtime = createGatewayHostRuntime(
+      createDeps({ readProcExe: () => "/opt/platform/impostor-gateway" }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(
+      evaluateGatewayAttachment(owner, await runtime.probeGatewayAttachment(owner)),
+    ).toMatchObject({ ok: false, code: "identity_mismatch" });
+  });
+
+  it("rejects an exact external listener that fails the declared health probe (#6576)", async () => {
+    declareExternalSupervision();
+    const runtime = createGatewayHostRuntime(
+      createDeps({ probeGatewayHttpReady: async () => false }),
+    );
+    const owner = runtime.getGatewayOwner();
+
+    expect(
+      evaluateGatewayAttachment(owner, await runtime.probeGatewayAttachment(owner)),
+    ).toMatchObject({ ok: false, code: "gateway_unreachable" });
   });
 
   it("fails closed when the listener cgroup cannot be read (#6576)", async () => {

@@ -13,7 +13,14 @@ describe("buildRequiredPreflightPorts", () => {
         dashboardPort: null,
         dashboardLabel: "NemoClaw dashboard",
       }),
-    ).toEqual([{ port: 8080, label: "OpenShell gateway", envVar: "NEMOCLAW_GATEWAY_PORT" }]);
+    ).toEqual([
+      {
+        kind: "gateway",
+        port: 8080,
+        label: "OpenShell gateway",
+        envVar: "NEMOCLAW_GATEWAY_PORT",
+      },
+    ]);
   });
 
   it("includes the dashboard port when one is explicitly requested", () => {
@@ -24,8 +31,41 @@ describe("buildRequiredPreflightPorts", () => {
         dashboardLabel: "NemoClaw dashboard",
       }),
     ).toEqual([
-      { port: 8080, label: "OpenShell gateway", envVar: "NEMOCLAW_GATEWAY_PORT" },
-      { port: 18789, label: "NemoClaw dashboard", envVar: "NEMOCLAW_DASHBOARD_PORT" },
+      {
+        kind: "gateway",
+        port: 8080,
+        label: "OpenShell gateway",
+        envVar: "NEMOCLAW_GATEWAY_PORT",
+      },
+      {
+        kind: "dashboard",
+        port: 18789,
+        label: "NemoClaw dashboard",
+        envVar: "NEMOCLAW_DASHBOARD_PORT",
+      },
+    ]);
+  });
+
+  it("keeps equal-number gateway and dashboard entries role-distinct (#6576)", () => {
+    expect(
+      buildRequiredPreflightPorts({
+        gatewayPort: 8080,
+        dashboardPort: 8080,
+        dashboardLabel: "NemoClaw dashboard",
+      }),
+    ).toEqual([
+      {
+        kind: "gateway",
+        port: 8080,
+        label: "OpenShell gateway",
+        envVar: "NEMOCLAW_GATEWAY_PORT",
+      },
+      {
+        kind: "dashboard",
+        port: 8080,
+        label: "NemoClaw dashboard",
+        envVar: "NEMOCLAW_DASHBOARD_PORT",
+      },
     ]);
   });
 });

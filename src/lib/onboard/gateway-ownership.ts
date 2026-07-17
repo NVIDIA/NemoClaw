@@ -140,6 +140,15 @@ export function isExternallySupervised(owner: GatewayOwner): boolean {
   return owner.mode === "externally-supervised";
 }
 
+function sameRequiredCapabilities(
+  a: readonly GatewayCapability[],
+  b: readonly GatewayCapability[],
+): boolean {
+  const aSet = new Set(a);
+  const bSet = new Set(b);
+  return aSet.size === bSet.size && Array.from(aSet).every((capability) => bSet.has(capability));
+}
+
 /**
  * Whether two resolutions describe the same lifecycle authority. Used to keep
  * one authority per run: a later resolution that differs is a migration, not a
@@ -153,7 +162,8 @@ export function sameGatewayOwner(a: GatewayOwner, b: GatewayOwner): boolean {
     a.stateDir === b.stateDir &&
     a.supervisor?.kind === b.supervisor?.kind &&
     a.supervisor?.serviceName === b.supervisor?.serviceName &&
-    a.supervisor?.execPath === b.supervisor?.execPath
+    a.supervisor?.execPath === b.supervisor?.execPath &&
+    sameRequiredCapabilities(a.requiredCapabilities, b.requiredCapabilities)
   );
 }
 

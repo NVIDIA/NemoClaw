@@ -6,7 +6,10 @@ import { HERMES_OPENAI_API_PORT } from "../core/ports";
 /** Agent-neutral rejection message when {@link HERMES_OPENAI_API_PORT} is requested as a dashboard port; shared by both #4984 guards. */
 export const RESERVED_HERMES_DASHBOARD_PORT_MESSAGE = `[SECURITY] Invalid dashboard port ${HERMES_OPENAI_API_PORT} - reserved for the Hermes OpenAI-compatible API`;
 
+export type PreflightPortKind = "gateway" | "dashboard" | "other";
+
 export interface PreflightPort {
+  kind: PreflightPortKind;
   port: number;
   label: string;
   envVar: string;
@@ -24,10 +27,16 @@ export function buildRequiredPreflightPorts(opts: {
   dashboardLabel: string;
 }): PreflightPort[] {
   return [
-    { port: opts.gatewayPort, label: "OpenShell gateway", envVar: "NEMOCLAW_GATEWAY_PORT" },
+    {
+      kind: "gateway",
+      port: opts.gatewayPort,
+      label: "OpenShell gateway",
+      envVar: "NEMOCLAW_GATEWAY_PORT",
+    },
     ...(opts.dashboardPort !== null
       ? [
           {
+            kind: "dashboard" as const,
             port: opts.dashboardPort,
             label: opts.dashboardLabel,
             envVar: "NEMOCLAW_DASHBOARD_PORT",
