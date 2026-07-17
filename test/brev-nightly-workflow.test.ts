@@ -210,10 +210,11 @@ describe("Brev nightly workflow contract", () => {
     expect(reporterCheckout?.with?.ref).toBe("${{ github.workflow_sha }}");
     expect(reporterCheckout?.with?.["persist-credentials"]).toBe(false);
     expect(reporterCheckout?.with?.path).toBeUndefined();
-    for (const step of reporter?.steps ?? []) {
-      if (step.uses)
-        expect(step.uses, `${step.name} must pin its action`).toMatch(/@[0-9a-f]{40}$/);
-    }
+    const reporterActions = (reporter?.steps ?? [])
+      .map((step) => step.uses)
+      .filter((uses): uses is string => Boolean(uses));
+    expect(reporterActions.length).toBeGreaterThan(0);
+    expect(reporterActions.filter((uses) => !/@[0-9a-f]{40}$/.test(uses))).toEqual([]);
     expect(JSON.stringify(reporter)).not.toContain("inputs.branch");
     expect(JSON.stringify(reporter)).not.toMatch(/BREV_|NVIDIA_INFERENCE_API_KEY/);
   });
