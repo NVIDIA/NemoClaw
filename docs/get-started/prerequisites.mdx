@@ -84,8 +84,8 @@ Refer to the [troubleshooting guide](../reference/troubleshooting) for the overr
 
 ## Platforms
 
-The following table lists tested platform and runtime combinations.
-Availability is not limited to these entries, but untested configurations can have issues.
+The following table lists tested platforms and deferred platforms with a documented preparation path.
+A Deferred row is available for evaluation only and is not a support claim.
 The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json), the single source of truth kept in sync by CI and QA.
 
 {/* platform-matrix:begin */}
@@ -95,8 +95,9 @@ The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoC
 | macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Start the container runtime (Colima or Docker Desktop) before running the installer. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight. |
 | DGX Spark | Docker | Tested | Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
 | Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
+| DGX Station | Docker | Deferred | Deferred. For evaluation on a qualifying DGX Station GB300, follow [Prepare DGX Station for NemoClaw](prerequisites/dgx-station-preparation) before the Quickstart. |
 
-To find the complete platform support matrix, including deferred platforms, refer to [Platform Support](../reference/platform-support).
+For the complete platform support matrix, including all deferred platforms and CI coverage, refer to [Platform Support](../reference/platform-support).
 {/* platform-matrix:end */}
 
 ## Additional Setup

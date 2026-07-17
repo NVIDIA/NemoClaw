@@ -255,13 +255,14 @@ print(module.generate_provider_table(providers))
     expect(output).not.toContain("Deferred\\|Provider");
   });
 
-  it("full platform table includes deferred rows; partial table excludes them", () => {
+  it("prerequisites table includes deferred rows only when they have setup guidance", () => {
     const output = runPython(`
 ${loadGeneratorAs("g")}
 
 platforms = [
   {"name": "Linux", "runtimes": ["Docker"], "status": "tested", "ci_tested": True, "notes": "n"},
-  {"name": "WSL", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "notes": "later"}
+  {"name": "Station", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "prerequisites_notes": "evaluation setup", "notes": "full Station notes"},
+  {"name": "RTX", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "notes": "later"}
 ]
 print("PARTIAL:")
 print(module.generate_platform_table(platforms))
@@ -270,25 +271,33 @@ print(module.generate_platform_table_full(platforms))
 `);
     const [partial, full] = output.split("FULL:");
     expect(partial).toContain("Linux");
-    expect(partial).not.toContain("WSL");
+    expect(partial).toContain("Station");
+    expect(partial).toContain("evaluation setup");
+    expect(partial).not.toContain("full Station notes");
+    expect(partial).not.toContain("RTX");
     expect(full).toContain("Linux");
-    expect(full).toContain("WSL");
+    expect(full).toContain("Station");
+    expect(full).toContain("full Station notes");
+    expect(full).toContain("RTX");
   });
 
-  it("prerequisites platform block links the validated subset to the complete matrix", () => {
+  it("prerequisites platform block includes documented deferred setup and links to the complete matrix", () => {
     const output = runPython(`
 ${loadGeneratorAs("g")}
 
 platforms = [
   {"name": "Linux", "runtimes": ["Docker"], "status": "tested", "notes": "ready"},
-  {"name": "Station", "runtimes": ["Docker"], "status": "deferred", "notes": "later"}
+  {"name": "Station", "runtimes": ["Docker"], "status": "deferred", "prerequisites_notes": "evaluation setup", "notes": "later"},
+  {"name": "RTX", "runtimes": ["Docker"], "status": "deferred", "notes": "later"}
 ]
 print(module.generate_platform_prerequisites_block(platforms))
 `);
     expect(output).toContain("Linux");
-    expect(output).not.toContain("Station");
+    expect(output).toContain("Station");
+    expect(output).toContain("evaluation setup");
+    expect(output).not.toContain("RTX");
     expect(output).toContain(
-      "To find the complete platform support matrix, including deferred platforms, refer to [Platform Support](../reference/platform-support).",
+      "For the complete platform support matrix, including all deferred platforms and CI coverage, refer to [Platform Support](../reference/platform-support).",
     );
   });
 
