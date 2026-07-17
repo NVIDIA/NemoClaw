@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -16,6 +15,13 @@ import {
   runStarterPromptGenerator,
   STARTER_PROMPT_GENERATED_PATH,
 } from "../scripts/generate-starter-prompt.mts";
+import {
+  createGitRunner,
+  type GitRunner,
+  readPinnedPromptAssetBlob,
+  requireExpectedPromptAssetRoutes,
+  resolvePromptAssetRevision,
+} from "./helpers/starter-prompt-asset-contract";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,88 +65,7 @@ const platformPromptAssetRoutes = [
   { asset: promptAssets.dgxStation, label: "Confirmed DGX Station" },
   { asset: promptAssets.windowsWsl, label: "Officially detected Windows WSL" },
 ] as const;
-
-type GitResult = {
-  status: number | null;
-  stdout: Buffer;
-};
-
-type GitRunner = (args: readonly string[], timeoutMs?: number) => GitResult;
-
-const runGit: GitRunner = (args, timeoutMs = 10_000) => {
-  const result = spawnSync("git", [...args], {
-    cwd: repoRoot,
-    env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1" },
-    maxBuffer: 4 * 1024 * 1024,
-    timeout: timeoutMs,
-  });
-  return {
-    status: result.status,
-    stdout: Buffer.isBuffer(result.stdout) ? result.stdout : Buffer.from(result.stdout ?? ""),
-  };
-};
-
-function resolvePromptAssetRevision(revision: string, git: GitRunner = runGit): void {
-  if (!/^[0-9a-f]{40}$/.test(revision)) {
-    fail("promptAssetRevision must be a full lowercase commit SHA");
-  }
-
-  let revisionType = git(["cat-file", "-t", revision]);
-  if (revisionType.status !== 0) {
-    const fetch = git(
-      [
-        "fetch",
-        "--no-tags",
-        "--no-recurse-submodules",
-        "--no-write-fetch-head",
-        "--depth=1",
-        "origin",
-        revision,
-      ],
-      120_000,
-    );
-    if (fetch.status !== 0) {
-      fail(`could not fetch immutable prompt asset revision ${revision}`);
-    }
-    revisionType = git(["cat-file", "-t", revision]);
-  }
-
-  if (revisionType.status !== 0) {
-    fail(`immutable prompt asset revision ${revision} is unavailable after fetch`);
-  }
-  const objectType = revisionType.stdout.toString("utf8").trim();
-  if (objectType !== "commit") {
-    fail(`promptAssetRevision must resolve to a commit object, got ${objectType || "no type"}`);
-  }
-}
-
-function readPinnedPromptAssetBlob(
-  revision: string,
-  asset: PromptAsset,
-  git: GitRunner = runGit,
-): Buffer {
-  const tree = git(["ls-tree", "-z", revision, "--", asset.path]);
-  if (tree.status !== 0) {
-    fail(`${revision} prompt asset tree could not be read for ${asset.path}`);
-  }
-  const entry =
-    /^(?<mode>100644|100755) blob (?<oid>[0-9a-f]{40}|[0-9a-f]{64})\t(?<path>[^\0]+)\0$/u.exec(
-      tree.stdout.toString("utf8"),
-    );
-  if (!entry?.groups || entry.groups.path !== asset.path) {
-    fail(`${revision} must contain exactly one regular prompt asset blob at ${asset.path}`);
-  }
-
-  const blobType = git(["cat-file", "-t", entry.groups.oid]);
-  if (blobType.status !== 0 || blobType.stdout.toString("utf8").trim() !== "blob") {
-    fail(`${revision}:${asset.path} does not resolve to a readable Git blob`);
-  }
-  const blob = git(["cat-file", "blob", entry.groups.oid]);
-  if (blob.status !== 0) {
-    fail(`could not read immutable prompt asset blob ${revision}:${asset.path}`);
-  }
-  return blob.stdout;
-}
+const runGit = createGitRunner(repoRoot);
 
 const localCredentialFormSource = path.join(
   repoRoot,
@@ -275,42 +200,6 @@ function readPromptAsset(asset: (typeof promptAssets)[keyof typeof promptAssets]
 
 function urlsIn(content: string): URL[] {
   return Array.from(content.matchAll(/https?:\/\/[^\s"'<>;]+/g), ([match]) => new URL(match));
-}
-
-function promptAssetRoutesIn(content: string): Map<string, string> {
-  const heading = "## Platform-Specific Instructions\n";
-  const headingIndex = content.indexOf(heading);
-  if (headingIndex < 0) fail("Missing Platform-Specific Instructions section");
-  const bodyStart = headingIndex + heading.length;
-  const nextHeading = content.indexOf("\n## ", bodyStart);
-  const section = content.slice(bodyStart, nextHeading < 0 ? content.length : nextHeading);
-  const routes = new Map<string, string>();
-
-  for (const match of section.matchAll(
-    /^- (?<label>[^:\n]+): \[[^\]\n]+\]\((?<url>https?:\/\/[^)\s]+)\)\.$/gmu,
-  )) {
-    const { label, url } = match.groups ?? {};
-    if (!label || !url) fail("Malformed platform prompt asset route");
-    if (routes.has(label)) fail(`Duplicate platform prompt asset route for ${label}`);
-    routes.set(label, url);
-  }
-  return routes;
-}
-
-function requireExpectedPromptAssetRoutes(content: string): Map<string, string> {
-  const routes = promptAssetRoutesIn(content);
-  if (routes.size !== platformPromptAssetRoutes.length) {
-    fail(
-      `Expected ${platformPromptAssetRoutes.length} platform prompt asset routes, found ${routes.size}`,
-    );
-  }
-  for (const { asset, label } of platformPromptAssetRoutes) {
-    const actualUrl = routes.get(label);
-    if (actualUrl !== asset.url) {
-      fail(`${label} must map to ${asset.url}, got ${actualUrl ?? "no route"}`);
-    }
-  }
-  return routes;
 }
 
 function withCredentialCapability(url: string, capability = localCredentialCapability): string {
@@ -769,10 +658,10 @@ describe("starter prompt docs CTA", () => {
   });
 
   it("keeps local prompt assets byte-aligned with their exact immutable revision blobs (#6990)", () => {
-    resolvePromptAssetRevision(promptAssetRevision);
+    resolvePromptAssetRevision(promptAssetRevision, runGit);
     for (const asset of Object.values(promptAssets)) {
       const localBytes = fs.readFileSync(path.join(repoRoot, asset.path));
-      const pinnedBytes = readPinnedPromptAssetBlob(promptAssetRevision, asset);
+      const pinnedBytes = readPinnedPromptAssetBlob(promptAssetRevision, asset, runGit);
       const pinnedSha256 = createHash("sha256").update(pinnedBytes).digest("hex");
 
       expect(asset.pinnedSha256).toMatch(/^[0-9a-f]{64}$/);
@@ -789,19 +678,15 @@ describe("starter prompt docs CTA", () => {
       "promptAssetRevision must be a full lowercase commit SHA",
     );
 
-    let fetched = false;
-    const fetchedRevision: GitRunner = (args) => {
-      if (args[0] === "fetch") {
-        fetched = true;
-        return { status: 0, stdout: Buffer.alloc(0) };
-      }
-      return {
-        status: fetched ? 0 : 1,
-        stdout: Buffer.from(fetched ? "commit\n" : ""),
-      };
-    };
+    const fetchedRevisionResults = [
+      { status: 1, stdout: Buffer.alloc(0) },
+      { status: 0, stdout: Buffer.alloc(0) },
+      { status: 0, stdout: Buffer.from("commit\n") },
+    ];
+    const fetchedRevision: GitRunner = () =>
+      fetchedRevisionResults.shift() ?? fail("unexpected immutable-revision Git command");
     expect(() => resolvePromptAssetRevision(promptAssetRevision, fetchedRevision)).not.toThrow();
-    expect(fetched).toBe(true);
+    expect(fetchedRevisionResults).toEqual([]);
 
     const unavailableRevision: GitRunner = (args) => ({
       status: args[0] === "fetch" ? 128 : 1,
@@ -845,7 +730,7 @@ describe("starter prompt docs CTA", () => {
     const windowsSource = readPromptAsset(promptAssets.windowsWsl);
 
     expect(promptAssetRevision).toMatch(/^[0-9a-f]{40}$/);
-    expect(requireExpectedPromptAssetRoutes(promptSource)).toEqual(
+    expect(requireExpectedPromptAssetRoutes(promptSource, platformPromptAssetRoutes)).toEqual(
       new Map(platformPromptAssetRoutes.map(({ asset, label }) => [label, asset.url])),
     );
     for (const asset of Object.values(promptAssets)) {
@@ -949,9 +834,9 @@ describe("starter prompt docs CTA", () => {
       .replace(promptAssets.dgxStation.url, promptAssets.dgxSpark.url)
       .replace(sparkUrlMarker, promptAssets.dgxStation.url);
 
-    expect(() => requireExpectedPromptAssetRoutes(swappedRoutes)).toThrow(
-      `Confirmed DGX Spark must map to ${promptAssets.dgxSpark.url}`,
-    );
+    expect(() =>
+      requireExpectedPromptAssetRoutes(swappedRoutes, platformPromptAssetRoutes),
+    ).toThrow(`Confirmed DGX Spark must map to ${promptAssets.dgxSpark.url}`);
   });
 
   it("uses approved platform defaults without collecting optional onboarding choices (#6990)", () => {
