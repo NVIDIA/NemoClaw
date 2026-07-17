@@ -729,9 +729,9 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   normalized.status = readString(data.status) ?? normalized.status;
   if (
     normalized.stationExpressIntent &&
-    (normalized.mode !== "non-interactive" ||
-      normalized.resumable === false ||
-      normalized.status === "complete")
+    (data.resumable !== true ||
+      normalized.mode !== "non-interactive" ||
+      (data.status !== "in_progress" && data.status !== "failed"))
   ) {
     return null;
   }

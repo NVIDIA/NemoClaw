@@ -17,6 +17,9 @@ export interface StationExpressSessionLike {
   resumable?: boolean;
   status?: string;
   mode?: string;
+  sandboxName?: string | null;
+  provider?: string | null;
+  model?: string | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
   steps?: { provider_selection?: { status?: string | null } | null } | null;
 }
@@ -210,6 +213,34 @@ function shouldRestoreStationExpress(
   return options?.resume === true || session.status === "in_progress";
 }
 
+function requiresExplicitFailedSessionChoice(
+  options: ResumeOptionsLike | undefined,
+  session: StationExpressSessionLike | null,
+): boolean {
+  return (
+    options?.resume !== true &&
+    options?.fresh !== true &&
+    Boolean(session?.stationExpressIntent) &&
+    session?.resumable !== false &&
+    session?.status === "failed"
+  );
+}
+
+function matchesRecordedStationExpressSelection(
+  session: StationExpressSessionLike,
+  intent: StationExpressResumeIntent,
+): boolean {
+  if (session.sandboxName != null && session.sandboxName !== intent.sandboxName) return false;
+
+  const providerComplete = session.steps?.provider_selection?.status === "complete";
+  if (!providerComplete) return session.provider == null && session.model == null;
+
+  const model = stationModel(intent.model);
+  return Boolean(
+    model && session.provider === "vllm-local" && session.model === servedModel(model),
+  );
+}
+
 export function withStationExpressResumeEnvironment<Options extends ResumeOptionsLike>(
   run: (options?: Options) => Promise<void>,
   deps: StationExpressResumeDeps,
@@ -217,9 +248,19 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
 ): (options?: Options) => Promise<void> {
   return async (options) => {
     const session = deps.loadSession();
+    if (requiresExplicitFailedSessionChoice(options, session)) {
+      deps.error(
+        "  A failed DGX Station Express session is waiting. Run nemoclaw onboard --resume to continue it, or nemoclaw onboard --fresh to discard it.",
+      );
+      deps.exitProcess(1);
+    }
     if (!shouldRestoreStationExpress(options, session)) return run(options);
     const intent = parseStationExpressResumeIntent(session.stationExpressIntent);
-    if (session.mode !== "non-interactive" || !intent) {
+    if (
+      session.mode !== "non-interactive" ||
+      !intent ||
+      !matchesRecordedStationExpressSelection(session, intent)
+    ) {
       deps.error(
         "  DGX Station Express resume state is invalid. Run nemoclaw onboard --fresh to start again.",
       );

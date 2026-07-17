@@ -42,7 +42,7 @@ function resumeDeps(
   };
 }
 
-describe("DGX Station Express resume", () => {
+describe("DGX Station Express resume (#7048)", () => {
   it("captures a canonical secret-free intent from the installer environment", () => {
     expect(getStationExpressResumeIntent(expressEnv(), "my-assistant")).toEqual({
       ok: true,
@@ -65,13 +65,12 @@ describe("DGX Station Express resume", () => {
 
   it("restores the saved provider and model for a plain failed-session resume", async () => {
     const env: NodeJS.ProcessEnv = { NEMOCLAW_PROVIDER: "" };
-    const deps = resumeDeps(
-      createSession({
-        mode: "non-interactive",
-        status: "failed",
-        stationExpressIntent: ultraIntent,
-      }),
-    );
+    const failedSession = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: ultraIntent,
+    });
+    failedSession.status = "failed";
+    const deps = resumeDeps(failedSession);
     const run = vi.fn(async () => {
       expect(env).toMatchObject({
         NEMOCLAW_STATION_EXPRESS: "1",
@@ -113,7 +112,6 @@ describe("DGX Station Express resume", () => {
     };
     const session = createSession({
       mode: "non-interactive",
-      status: "failed",
       stationExpressIntent: ultraIntent,
       provider: "vllm-local",
       model: "nvidia/nemotron-3-ultra-550b-a55b",
@@ -121,6 +119,7 @@ describe("DGX Station Express resume", () => {
         provider_selection: completeProviderStep,
       },
     });
+    session.status = "failed";
     const env: NodeJS.ProcessEnv = {};
     const deps = resumeDeps(session);
     const run = vi.fn(async () => {
@@ -135,6 +134,63 @@ describe("DGX Station Express resume", () => {
 
     expect(run).toHaveBeenCalledTimes(1);
     expect(env).toEqual({});
+  });
+
+  it.each([
+    { provider: "ollama-local", model: "nvidia/nemotron-3-ultra-550b-a55b" },
+    { provider: "vllm-local", model: "nvidia/deepseek-v3.1" },
+    {
+      provider: "vllm-local",
+      model: "nvidia/nemotron-3-ultra-550b-a55b",
+      sandboxName: "other-assistant",
+    },
+  ])("fails closed when recorded state conflicts with Station Express intent", async ({
+    provider,
+    model,
+    sandboxName = "my-assistant",
+  }) => {
+    const session = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: ultraIntent,
+      sandboxName,
+      provider,
+      model,
+      steps: {
+        provider_selection: {
+          status: "complete",
+          startedAt: "2026-07-16T00:00:00.000Z",
+          completedAt: "2026-07-16T00:01:00.000Z",
+          error: null,
+        },
+      },
+    });
+    session.status = "failed";
+    const env: NodeJS.ProcessEnv = {};
+    const deps = resumeDeps(session);
+    const run = vi.fn(async () => undefined);
+
+    await expect(
+      withStationExpressResumeEnvironment(run, deps, env)({ resume: true }),
+    ).rejects.toThrow("exit 1");
+
+    expect(run).not.toHaveBeenCalled();
+    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("state is invalid"));
+  });
+
+  it("requires an explicit choice before replacing a failed Express session", async () => {
+    const session = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: ultraIntent,
+    });
+    session.status = "failed";
+    const deps = resumeDeps(session);
+    const run = vi.fn(async () => undefined);
+
+    await expect(withStationExpressResumeEnvironment(run, deps, {})({})).rejects.toThrow("exit 1");
+
+    expect(run).not.toHaveBeenCalled();
+    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("onboard --resume"));
+    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("onboard --fresh"));
   });
 
   it("does not restore discarded intent for --fresh", async () => {
