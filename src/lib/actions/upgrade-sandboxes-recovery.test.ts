@@ -12,19 +12,26 @@ import { upgradeSandboxes, upgradeSandboxesDependencies } from "./upgrade-sandbo
 
 type UpgradeSandboxes = typeof upgradeSandboxes;
 
-function makeManifest(sandboxName: string) {
+type ManifestAgentType = "openclaw" | "hermes";
+
+const MANIFEST_DIR_BY_AGENT: Record<ManifestAgentType, string> = {
+  openclaw: "/sandbox/.openclaw",
+  hermes: "/sandbox/.hermes",
+};
+
+function makeManifest(sandboxName: string, agentType: ManifestAgentType = "openclaw") {
   const timestamp = `2026-07-01T06-50-4${sandboxName.length}-044Z`;
   return {
     version: 1,
     sandboxName,
     timestamp,
-    agentType: "openclaw",
+    agentType,
     agentVersion: "2026.5.27",
     expectedVersion: "2026.5.27",
     stateDirs: ["workspace"],
     backedUpDirs: ["workspace"],
     stateFiles: [],
-    dir: "/sandbox/.openclaw",
+    dir: MANIFEST_DIR_BY_AGENT[agentType],
     backupPath: `/tmp/rebuild-backups/${sandboxName}/${timestamp}`,
     blueprintDigest: null,
     policyPresets: [],
@@ -40,16 +47,19 @@ function createRecoveryHarness(
     gatewayPort?: number;
     liveOutput?: string;
     latestBackup?: ReturnType<typeof makeManifest> | null;
-    registryOverrides?: Record<
-      string,
-      Partial<{
-        agent: "openclaw" | "hermes" | "langchain-deepagents-code" | null;
-        agentVersion: string | null;
-        createdAt: string;
-        nemoclawVersion: string | null;
-        fromDockerfile: string | null;
-        pendingRouteReservation: true;
-      }>
+    manifestAgentTypes?: Partial<Record<string, ManifestAgentType>>;
+    registryOverrides?: Partial<
+      Record<
+        string,
+        Partial<{
+          agent: "openclaw" | "hermes" | "langchain-deepagents-code" | null;
+          agentVersion: string | null;
+          createdAt: string;
+          nemoclawVersion: string | null;
+          fromDockerfile: string | null;
+          pendingRouteReservation: true;
+        }>
+      >
     >;
     confirmedLegacyManagedNames?: string[] | string;
     staleNames?: string[];
@@ -107,9 +117,12 @@ function createRecoveryHarness(
   });
   const latestBackupSpy = vi
     .spyOn(sandboxState, "getLatestBackup")
-    .mockImplementation((...args: unknown[]) =>
-      options.latestBackup === undefined ? makeManifest(String(args[0])) : options.latestBackup,
-    );
+    .mockImplementation((...args: unknown[]) => {
+      const sandboxName = String(args[0]);
+      return options.latestBackup === undefined
+        ? makeManifest(sandboxName, options.manifestAgentTypes?.[sandboxName])
+        : options.latestBackup;
+    });
   vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
     (...args: unknown[]) => ({
       ok: true as const,
@@ -191,18 +204,46 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
   });
 
   it.each([
-    { mode: "automatic", options: { auto: true }, expectedRebuilds: 2 },
-    { mode: "check-only", options: { check: true }, expectedRebuilds: 0 },
-  ] as const)("warns before every $mode prepared recovery path (#7073)", async ({
+    {
+      mode: "automatic",
+      options: { auto: true },
+      expectedRebuilds: 2,
+      expectedSequence: [
+        "warning:/sandbox/.openclaw",
+        "warning:/sandbox/.hermes",
+        "rebuild:openclaw-box",
+        "rebuild:hermes-box",
+      ],
+    },
+    {
+      mode: "check-only",
+      options: { check: true },
+      expectedRebuilds: 0,
+      expectedSequence: ["warning:/sandbox/.openclaw", "warning:/sandbox/.hermes"],
+    },
+  ] as const)("warns with each agent's restore path before $mode mixed recovery (#7073)", async ({
     options,
     expectedRebuilds,
+    expectedSequence,
   }) => {
     const sequence: string[] = [];
-    const harness = createRecoveryHarness(["alpha", "beta"]);
+    const statePaths = ["/sandbox/.openclaw", "/sandbox/.hermes"];
+    const harness = createRecoveryHarness(["openclaw-box", "hermes-box"], {
+      manifestAgentTypes: { "openclaw-box": "openclaw", "hermes-box": "hermes" },
+      registryOverrides: {
+        "openclaw-box": { agent: "openclaw" },
+        "hermes-box": { agent: "hermes" },
+      },
+    });
     vi.mocked(console.log).mockImplementation((...args) => {
-      if (String(args[0]).includes("Recovery restores /sandbox/.openclaw state only")) {
-        sequence.push("warning");
-      }
+      const message = String(args[0]);
+      sequence.push(
+        ...statePaths
+          .filter((candidate) =>
+            message.includes(`Recovery restores ${JSON.stringify(candidate)} state only`),
+          )
+          .map((statePath) => `warning:${statePath}`),
+      );
     });
     harness.rebuildSpy.mockImplementation(async (name: string) => {
       sequence.push(`rebuild:${name}`);
@@ -210,17 +251,22 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
 
     await expect(harness.upgradeSandboxes(options)).resolves.toBeUndefined();
 
+    for (const statePath of statePaths) {
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `Recovery restores ${JSON.stringify(statePath)} state only for this sandbox`,
+        ),
+      );
+    }
     expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining("Recovery restores /sandbox/.openclaw state only"),
+      expect.stringContaining("Files outside this recorded managed state path"),
     );
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("/sandbox/user-data"));
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining("NOT preserved by the recreate"),
     );
     expect(harness.rebuildSpy).toHaveBeenCalledTimes(expectedRebuilds);
-    expect(sequence[0]).toBe("warning");
-    expect(sequence.slice(1)).toEqual(
-      expectedRebuilds === 0 ? [] : ["rebuild:alpha", "rebuild:beta"],
-    );
+    expect(sequence).toEqual(expectedSequence);
   });
 
   it("continues through all eligible sandboxes before reporting a recovery failure", async () => {
