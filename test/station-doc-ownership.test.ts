@@ -49,6 +49,7 @@ describe("DGX Station documentation ownership", () => {
     expect(quickstart).toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
     expect(stationPreparation).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
+    expect(stationPreparation).toContain("[Platform Support](../../reference/platform-support)");
     expect(prerequisites).toContain("### DGX Station Express Preparation");
     expect(prerequisites).toMatch(/\| DGX OS \(Station\) \| Docker \| Deferred \|/);
     expect(prerequisites).toContain("prerequisites/dgx-station-preparation");
