@@ -476,7 +476,7 @@ export async function getReconciledSandboxGatewayState(
   opts: { getState?: SandboxGatewayStateLookup } = {},
 ): Promise<SandboxGatewayState> {
   const getState = opts.getState ?? getSandboxGatewayState;
-  const targetGatewayName = getKnownSandboxTargetGatewayName(sandboxName) ?? undefined;
+  let targetGatewayName = getKnownSandboxTargetGatewayName(sandboxName) ?? undefined;
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
   if (targetGatewayName) {
@@ -495,6 +495,10 @@ export async function getReconciledSandboxGatewayState(
           `Failed to select owning gateway '${targetGatewayName}' for sandbox '${sandboxName}'.`,
       };
     }
+    // Selection resolves registry ownership internally. If that snapshot changed
+    // after the initial lookup, keep the subprocess-local RPC pin aligned with
+    // the gateway that was actually selected rather than querying the stale one.
+    targetGatewayName = selection.gatewayName;
   }
   const lookup = await getState(sandboxName, targetGatewayName);
   if (lookup.state === "present") {
@@ -505,10 +509,10 @@ export async function getReconciledSandboxGatewayState(
   }
 
   if (lookup.state === "gateway_error") {
-    const targetGatewayName = getSandboxTargetGatewayName(sandboxName);
-    const recovery = await recoverNamedGatewayRuntime({ gatewayName: targetGatewayName });
+    const recoveryGatewayName = targetGatewayName ?? getSandboxTargetGatewayName();
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName: recoveryGatewayName });
     if (recovery.recovered) {
-      const retried = await getState(sandboxName, targetGatewayName);
+      const retried = await getState(sandboxName, recoveryGatewayName);
       if (retried.state === "present" || retried.state === "missing") {
         return { ...retried, recoveredGateway: true, recoveryVia: recovery.via || null };
       }
@@ -522,7 +526,7 @@ export async function getReconciledSandboxGatewayState(
       }
       return { ...retried, recoveredGateway: true, recoveryVia: recovery.via || null };
     }
-    const latestLifecycle = getNamedGatewayLifecycleState(targetGatewayName);
+    const latestLifecycle = getNamedGatewayLifecycleState(recoveryGatewayName);
     const latestStatus = stripAnsi(latestLifecycle.status || "");
     if (/No gateway configured/i.test(latestStatus)) {
       return {
@@ -532,7 +536,7 @@ export async function getReconciledSandboxGatewayState(
     }
     if (
       /Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) &&
-      gatewayNamePattern(targetGatewayName).test(latestStatus)
+      gatewayNamePattern(recoveryGatewayName).test(latestStatus)
     ) {
       return {
         state: "gateway_unreachable_after_restart",

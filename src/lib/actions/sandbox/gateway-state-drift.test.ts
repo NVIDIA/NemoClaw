@@ -268,6 +268,10 @@ describe("sandbox gateway state drift guard", () => {
       gatewayName: "nemoclaw-8090",
       gatewayPort: 8090,
     });
+    gatewaySelectSpy.mockReturnValue({
+      outcome: "selected",
+      gatewayName: "nemoclaw-8090",
+    });
     recoverNamedGatewayRuntimeSpy.mockResolvedValue({
       recovered: true,
       via: "start",

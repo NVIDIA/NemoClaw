@@ -115,6 +115,51 @@ describe("getReconciledSandboxGatewayState owning-gateway guard", () => {
     expect(result.recoveredGateway).toBeUndefined();
   });
 
+  it("queries the gateway returned by selection when registry ownership changes between snapshots", async () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
+    vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockReturnValue({
+      outcome: "selected",
+      gatewayName: "nemoclaw-8092",
+    });
+    const getState = vi.fn().mockResolvedValue({ state: "present", output: "Phase: Ready" });
+
+    const result = await getReconciledSandboxGatewayState("beta", { getState });
+
+    expect(getState).toHaveBeenCalledOnce();
+    expect(getState).toHaveBeenCalledWith("beta", "nemoclaw-8092");
+    expect(result).toMatchObject({ state: "present", output: "Phase: Ready" });
+  });
+
+  it("keeps recovery pinned to the gateway returned by selection after ownership changes", async () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
+    vi.mocked(gatewaySelect.selectSandboxOwningGateway).mockReturnValue({
+      outcome: "selected",
+      gatewayName: "nemoclaw-8092",
+    });
+    const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
+      recovered: true,
+      via: "start",
+    } as never);
+    const getState = vi
+      .fn()
+      .mockResolvedValueOnce({ state: "gateway_error", output: "transport error" })
+      .mockResolvedValueOnce({ state: "present", output: "Phase: Ready" });
+
+    const result = await getReconciledSandboxGatewayState("beta", { getState });
+
+    expect(getState).toHaveBeenNthCalledWith(1, "beta", "nemoclaw-8092");
+    expect(recover).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-8092",
+    });
+    expect(getState).toHaveBeenNthCalledWith(2, "beta", "nemoclaw-8092");
+    expect(result).toMatchObject({
+      state: "present",
+      output: "Phase: Ready",
+      recoveredGateway: true,
+      recoveryVia: "start",
+    });
+  });
+
   it("does not return an ambient sibling timeout without first querying the healthy owner", async () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
     const getState = vi.fn((_name: string, gatewayName?: string) =>
