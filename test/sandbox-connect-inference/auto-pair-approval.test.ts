@@ -13,7 +13,6 @@ import {
 } from "../../src/lib/actions/sandbox/connect-autopair-budget";
 import { testTimeoutOptions } from "../helpers/timeouts";
 import {
-  decodeWrappedSandboxScript,
   extractApprovalPassScript,
   runApprovalPassScript,
   runConnect,
@@ -21,12 +20,10 @@ import {
 } from "./helpers";
 
 function findApprovalExec(sandboxExecCalls: string[][]): string[] | undefined {
-  // The approval-pass payload is base64-wrapped so it survives OpenShell exec's
-  // no-newline-in-args rule (wrapSandboxShellScript), so identify the call by
-  // its decoded payload rather than literal segments.
+  // OpenShell carries the approval pass as one multiline command argument.
   return sandboxExecCalls.find((call) => {
     if (!call.includes("--")) return false;
-    const inner = decodeWrappedSandboxScript(call[call.length - 1] || "");
+    const inner = call[call.length - 1] || "";
     return inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve");
   });
 }
@@ -237,8 +234,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       // non-zero for it, per the hook above).
       const approvalExec = (state.sandboxExecCalls as string[][]).find((call) => {
         if (!call.includes("--")) return false;
-        // The payload is base64-wrapped for OpenShell exec; decode to identify it.
-        const inner = decodeWrappedSandboxScript(call[call.length - 1] || "");
+        const inner = call[call.length - 1] || "";
         return inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve");
       });
       expect(approvalExec).toBeDefined();

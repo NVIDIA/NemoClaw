@@ -16,9 +16,9 @@ import {
   phase6Env,
   resultText,
   runSecondaryCleanup,
-  sandboxEncodedSh,
   sandboxNode,
   sandboxSh,
+  sandboxShWithArgs,
   shellQuote,
 } from "./phase6-messaging-helpers.ts";
 
@@ -572,7 +572,7 @@ export async function issuePairingRequest(options: {
     options.channel === "slack"
       ? [options.fakeSlackPort ?? "", PAIRING_USER.slack]
       : [PAIRING_USER.discord, DISCORD_DM_CHANNEL];
-  return sandboxEncodedSh(options.sandbox, options.sandboxName, script, args, {
+  return sandboxShWithArgs(options.sandbox, options.sandboxName, script, args, {
     artifactName: `${options.channel}-issue-pairing-request`,
     redactionValues: options.redactions,
     timeoutMs: 120_000,

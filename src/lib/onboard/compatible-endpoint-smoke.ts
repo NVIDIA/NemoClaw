@@ -422,18 +422,6 @@ done
   `.trim();
 }
 
-/**
- * Wraps the sandbox smoke script as a one-line command suitable for execution
- * through the existing OpenShell command path.
- */
 export function buildCompatibleEndpointSandboxSmokeCommand(model: string): string {
-  const script = buildCompatibleEndpointSandboxSmokeScript(model);
-  const encoded = Buffer.from(script, "utf8").toString("base64");
-  return [
-    "set -eu",
-    'tmp="$(mktemp)"',
-    "trap 'rm -f \"$tmp\"' EXIT",
-    `python3 -c 'import base64, pathlib, sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(sys.argv[2]))' "$tmp" ${shellQuote(encoded)}`,
-    'sh "$tmp"',
-  ].join("; ");
+  return buildCompatibleEndpointSandboxSmokeScript(model);
 }

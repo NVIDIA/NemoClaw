@@ -81,10 +81,13 @@ describe("E2E workflow plan", () => {
     expect(() => buildE2eWorkflowPlan({ [kind]: value })).toThrow(`Invalid ${kind} input`);
   });
 
-  it("rejects simultaneous jobs and targets", () => {
-    expect(() => buildE2eWorkflowPlan({ jobs: "hermes-e2e", targets: "hermes-e2e" })).toThrow(
-      "Use either jobs or targets, not both",
-    );
+  it("combines free-standing jobs and typed targets in one execution plan", () => {
+    const registryId = firstId(buildLiveTargetMatrix(), "supported registry target");
+    const plan = buildE2eWorkflowPlan({ jobs: "hermes-e2e", targets: registryId });
+
+    expect(plan.matrix.map((row) => row.id)).toEqual([registryId]);
+    expect(plan.testMatrix).toEqual([]);
+    expect(plan.hermesSelected).toBe(true);
   });
 
   it("emits one compact JSON line with the deterministic workflow-output schema", () => {
@@ -115,12 +118,12 @@ describe("E2E workflow plan", () => {
   it("reports CLI failures as workflow annotations", () => {
     const result = spawnSync(
       TSX,
-      [PLANNER_CLI, "--jobs", "hermes-e2e", "--targets", "hermes-e2e"],
+      [PLANNER_CLI, "--jobs", "hermes-e2e", "--targets", "definitely-unknown-e2e-target"],
       { cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000 },
     );
 
     expect(result.status).toBe(1);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("::error::Use either jobs or targets, not both\n");
+    expect(result.stderr).toContain("::error::Unknown target 'definitely-unknown-e2e-target'");
   });
 });
