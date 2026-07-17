@@ -644,18 +644,16 @@ describe("starter prompt docs CTA", () => {
       "NEMOCLAW_VLLM_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
     );
 
-    expect(sparkSource).toContain(
-      "Leave `NEMOCLAW_VLLM_MODEL` unset so the installed maintained release selects its current Spark Express model.",
-    );
-    expect(stationSource).toContain(
-      "NEMOCLAW_VLLM_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
-    );
-    expect(stationSource).toContain("approximately 352 GB");
+    expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
+    expect(sparkSource).toContain("Leave `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_MODEL` unset");
+    expect(stationSource).toContain("NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b");
+    expect(stationSource).toContain("NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
+    expect(stationSource).toContain("default local inference setup with Nemotron 3 Ultra in vLLM");
     expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
     expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
   });
 
-  it("aligns messaging and policy questions with agent support and Express mode (#6990)", () => {
+  it("uses installer Express defaults without collecting optional onboarding choices (#6990)", () => {
     const promptSource = readStarterPrompt();
     const expressAssets = [
       readPromptAsset(promptAssets.dgxSpark),
@@ -664,7 +662,7 @@ describe("starter prompt docs CTA", () => {
     ];
 
     expect(promptSource).toContain(
-      "include messaging in the first sandbox build when the selected agent supports it",
+      "Next ask which agent I want: OpenClaw, Hermes, or LangChain Deep Agents Code.",
     );
     expect(promptSource).toContain("Skip messaging for Deep Agents.");
     expect(promptSource).toContain(
@@ -677,14 +675,18 @@ describe("starter prompt docs CTA", () => {
 
     for (const assetSource of expressAssets) {
       expect(assetSource).toContain(
-        "Balanced policy is required; set `NEMOCLAW_POLICY_TIER=balanced`",
+        "`NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`",
       );
       expect(assetSource).toContain(
-        "Ask separately for sandbox name, web search, messaging when the selected agent supports it, download approval, and final install approval.",
+        "Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.",
       );
       expect(assetSource).toContain(
-        "Set `NEMOCLAW_YES=1` only after both the separate download approval and final install approval.",
+        "Leave `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_POLICY_TIER`, web-search settings, and messaging settings unset",
       );
+      expect(assetSource).toContain(
+        "Do not ask again for the agent or ask separate questions for model, sandbox name, web search, messaging, policy, download approval, or final installation approval.",
+      );
+      expect(assetSource).not.toContain("NEMOCLAW_POLICY_TIER=balanced");
     }
   });
 
