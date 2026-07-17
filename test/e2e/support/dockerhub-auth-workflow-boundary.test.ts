@@ -119,9 +119,9 @@ function validateAuthArtifactMutation(options: {
   }
 }
 
-describe("shared Docker Hub authentication workflow boundary", () => {
+describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
   // source-shape-contract: security -- Immutable credential-bearing action bytes must stay bound to reviewed commit provenance.
-  it("binds the composite action and helper to their immutable reviewed revision", () => {
+  it("binds the composite action and helper to their immutable reviewed revision (#6961)", () => {
     expect(validateDockerHubAuthAction()).toEqual([]);
 
     const mappingErrors = validateAuthArtifactMutation({
