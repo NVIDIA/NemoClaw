@@ -149,7 +149,16 @@ export function runPrReviewAdvisorAnalysis(
   const writeFile =
     options.writeFile ??
     ((file: string, text: string): void => {
-      fs.writeFileSync(file, text);
+      const fd = fs.openSync(
+        file,
+        fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+        0o600,
+      );
+      try {
+        fs.writeFileSync(fd, text);
+      } finally {
+        fs.closeSync(fd);
+      }
     });
   const runGit =
     options.runGit ??

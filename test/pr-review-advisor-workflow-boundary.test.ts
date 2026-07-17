@@ -635,6 +635,35 @@ process.exitCode = valid ? 0 : 1;`,
     }
   });
 
+  it("does not overwrite existing bootstrap result artifacts", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-bootstrap-"));
+    const artifactDir = path.join(tmp, "artifacts", "pr-review-advisor");
+    const resultPath = path.join(artifactDir, "pr-review-advisor-result.json");
+    try {
+      fs.mkdirSync(artifactDir, { recursive: true });
+      fs.writeFileSync(resultPath, "existing artifact\n");
+
+      expect(() =>
+        runPrReviewAdvisorAnalysis(
+          {
+            advisorDir: path.join(tmp, "trusted-advisor-without-implementation"),
+            advisorWorkdir: ROOT,
+            outDir: artifactDir,
+            baseRef: "origin/main",
+            headRef: "HEAD",
+            model: "azure/openai/gpt-5.6-terra",
+            title: "PR Review Advisor",
+            runAnalysis: "1",
+          },
+          {},
+        ),
+      ).toThrow();
+      expect(fs.readFileSync(resultPath, "utf8")).toBe("existing artifact\n");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("runs analyze normally when the trusted checkout supports the advisor model", () => {
     const appendedEnv: Array<[string, string]> = [];
     const runCalls: Array<{
