@@ -89,17 +89,14 @@ describe("callOpenclawGateway", () => {
       "--",
       "bash",
       "-lc",
-      expect.stringContaining("base64 -d | bash -s"),
+      expect.stringContaining("set -e"),
       "nemoclaw-sessions-admin-rpc",
-      expect.stringContaining("data:text/javascript;base64"),
-      expect.any(String),
+      GATEWAY_ADMIN_RPC_SCRIPT,
       "sessions.reset",
       Buffer.from('{"key":"agent:main:main","reason":"reset"}', "utf8").toString("base64"),
     ]);
-    const shellWrapper = String(command?.[7] ?? "");
-    const shellB64 = shellWrapper.match(/printf '%s' '([^']+)'/)?.[1] ?? "";
-    const shell = Buffer.from(shellB64, "base64").toString("utf8");
-    expect(shellWrapper).not.toMatch(/[\n\r]/);
+    const shell = String(command?.[7] ?? "");
+    expect(shell).toContain("\n");
     expect(shell).toContain("node --input-type=module");
     expect(shell).toContain("NEMOCLAW_GATEWAY_RPC_METHOD");
     expect(shell).toContain("NEMOCLAW_GATEWAY_RPC_PARAMS_B64");
@@ -107,7 +104,7 @@ describe("callOpenclawGateway", () => {
     expect(shell).toContain('[ -L "$proxy_env" ]');
     expect(shell).toContain("expected root:444");
     expect(shell).toContain('. "$proxy_env"');
-    const script = Buffer.from(String(command?.[10] ?? ""), "base64").toString("utf8");
+    const script = String(command?.[9] ?? "");
     expect(script).toContain("callGatewayFromCli");
     expect(script).toContain("requireCanonicalGatewayPort");
     expect(script).toContain("url: `ws://127.0.0.1:${port}`");
@@ -143,7 +140,7 @@ describe("callOpenclawGateway", () => {
     expect(result.payload).toMatchObject({ ok: true, key: "agent:main:main" });
   });
 
-  it("sends no multiline OpenShell exec arguments", () => {
+  it("sends the gateway shell and module source byte-exactly as multiline OpenShell arguments", () => {
     captureMock.mockReturnValue(captureResult(0, '{"ok":true,"key":"agent:main:main"}'));
 
     callOpenclawGateway({
@@ -154,7 +151,12 @@ describe("callOpenclawGateway", () => {
 
     const command = (captureMock.mock.calls[0]?.[0] ?? []) as string[];
     expect(command.every((arg) => typeof arg === "string")).toBe(true);
-    expect(command.every((arg) => !/[\n\r]/.test(arg))).toBe(true);
+    expect(command[7]).toBe(buildGatewayAdminRpcShell());
+    expect(command[7]).toContain("\n");
+    expect(command[9]).toBe(GATEWAY_ADMIN_RPC_SCRIPT);
+    expect(
+      command.filter((_, index) => index !== 7 && index !== 9).every((arg) => !/[\n\r]/.test(arg)),
+    ).toBe(true);
   });
 
   it("validates the sourced proxy env file before invoking sessions admin RPC", () => {
@@ -190,7 +192,6 @@ describe("callOpenclawGateway", () => {
           shell,
           "test-shell",
           "throw new Error('node should not run')",
-          "unused",
           "sessions.reset",
           "e30=",
         ],

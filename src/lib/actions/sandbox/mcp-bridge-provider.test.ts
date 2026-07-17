@@ -18,11 +18,6 @@ import {
 } from "./mcp-bridge-provider";
 import * as processRecovery from "./process-recovery";
 
-function decodeMcpProofTransport(command: string): string {
-  const match = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/);
-  return match?.[1] ? Buffer.from(match[1], "base64").toString("utf8") : "";
-}
-
 describe("OpenShell MCP provider state", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -159,15 +154,13 @@ alpha-mcp-slack   generic  1                 0
       }),
     ).toBe("v11");
     const proofCommand = exec.mock.calls[0]?.[1] ?? "";
-    expect(proofCommand).not.toMatch(/[\r\n]/);
-    expect(proofCommand).toContain("base64 -d");
-    expect(decodeMcpProofTransport(proofCommand)).toContain("GITHUB_TOKEN");
-    expect(decodeMcpProofTransport(proofCommand)).not.toMatch(/\/tmp|snapshot/);
+    expect(proofCommand).toContain("\n");
+    expect(proofCommand).toContain("GITHUB_TOKEN");
+    expect(proofCommand).not.toMatch(/\/tmp|snapshot/);
+    expect(proofCommand).not.toContain("base64 -d");
     expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
       allowLocalDockerFallback: false,
     });
-    const decodeFailure = spawnSync("/bin/sh", ["-c", proofCommand.replace("base64 -d", "false")]);
-    expect(decodeFailure.status).not.toBe(0);
 
     exec.mockReturnValue({ status: 0, stdout: "raw-secret", stderr: "" });
     expect(() =>
@@ -185,7 +178,7 @@ alpha-mcp-slack   generic  1                 0
     ).toThrow(/Could not observe the current OpenShell credential revision/);
   });
 
-  it("uses a newline-free OpenShell transport for attachment readiness", () => {
+  it("uses native multiline OpenShell exec for attachment readiness", () => {
     const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
       status: 0,
       stdout: "canonical",
@@ -205,9 +198,10 @@ alpha-mcp-slack   generic  1                 0
     });
 
     const proofCommand = exec.mock.calls[0]?.[1] ?? "";
-    expect(proofCommand).not.toMatch(/[\r\n]/);
-    expect(decodeMcpProofTransport(proofCommand)).toContain("valid_placeholder");
-    expect(decodeMcpProofTransport(proofCommand)).toContain("GITHUB_TOKEN");
+    expect(proofCommand).toContain("\n");
+    expect(proofCommand).toContain("valid_placeholder");
+    expect(proofCommand).toContain("GITHUB_TOKEN");
+    expect(proofCommand).not.toContain("base64 -d");
   });
 
   it("fails detach verification when the strict OpenShell exec is unavailable", () => {
@@ -230,8 +224,8 @@ alpha-mcp-slack   generic  1                 0
     ).toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
 
     const proofCommand = exec.mock.calls[0]?.[1] ?? "";
-    expect(proofCommand).not.toMatch(/[\r\n]/);
-    expect(decodeMcpProofTransport(proofCommand)).toContain("GITHUB_TOKEN+x");
+    expect(proofCommand).toContain("GITHUB_TOKEN+x");
+    expect(proofCommand).not.toContain("base64 -d");
     expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
       allowLocalDockerFallback: false,
     });

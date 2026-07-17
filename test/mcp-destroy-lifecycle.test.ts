@@ -64,7 +64,7 @@ vi.mock("../src/lib/actions/sandbox/process-recovery", () => ({
 import * as bridge from "../src/lib/actions/sandbox/mcp-bridge";
 import * as registry from "../src/lib/state/registry";
 
-const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.72");
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.85");
 
 const bridgeEntries: Record<"github" | "slack", McpBridgeEntry> = {
   github: {

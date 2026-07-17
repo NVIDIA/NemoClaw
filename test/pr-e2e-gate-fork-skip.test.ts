@@ -72,12 +72,8 @@ function existingPrGateCheckRunsRoute(overrides: Record<string, unknown> = {}) {
 }
 
 function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Response {
-  return githubResponse(
-    exactPrGateCheck({
-      id,
-      ...(request.body as Record<string, unknown> | undefined),
-    }),
-  );
+  const body = (request.body ?? {}) as Record<string, unknown>;
+  return githubResponse(exactPrGateCheck({ id, ...body }));
 }
 
 function mainWorkflowRefRoute(sha = WORKFLOW_SHA) {
@@ -343,7 +339,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         details_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${GATE_RUN_ID}`,
         output: {
           title: "Maintainer approval required to skip credentialed E2E",
-          summary: expect.stringContaining("The selected jobs were not run"),
+          summary: expect.stringContaining("The selected jobs and targets were not run"),
         },
       });
       expect(JSON.stringify(completion?.body)).toContain("Review deployments");
@@ -490,6 +486,71 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     }
   });
 
+  it("requires authorization before internal PR code can receive E2E credentials", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-control-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          existingPrGateCheckRunsRoute(),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls?state=open&head="),
+            () => githubResponse([pullRequestListItem()]),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls/42/files?"),
+            () =>
+              githubResponse([
+                {
+                  filename:
+                    "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+                },
+              ]),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => prGateMutationResponse(request),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(startPrGate(startCommand(workDir))).resolves.toBeUndefined();
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+      const completion = requests
+        .filter((request) => request.url.endsWith("/check-runs/17"))
+        .at(-1);
+      expect(completion?.body).toMatchObject({
+        status: "in_progress",
+        output: {
+          title: "Maintainer authorization required to run E2E",
+          summary: expect.stringContaining(
+            "No selected E2E job or target ran and no repository secret was exposed",
+          ),
+        },
+      });
+      expect(JSON.stringify(completion?.body)).not.toContain("conclusion");
+      expect(JSON.stringify(completion?.body)).toContain(
+        "run `run-control-plane` with the PR number, exact head and base SHAs",
+      );
+      expect(fs.readFileSync(outputPath, "utf8")).not.toContain("fork_skip_mode=");
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("passes a no-risk fork without executing fork code", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fork-docs-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
@@ -526,7 +587,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
       expect(requests.at(-1)?.body).toMatchObject({
         status: "completed",
         conclusion: "success",
-        output: { title: "No E2E jobs selected" },
+        output: { title: "No E2E checks selected" },
       });
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -762,7 +823,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         ),
       },
     });
-    expect(JSON.stringify(completion?.body)).toContain("Selected jobs not run");
+    expect(JSON.stringify(completion?.body)).toContain("Selected jobs and targets not run");
     expect(JSON.stringify(completion?.body)).toContain(
       "Approval source: manual fallback; no supporting Actions run was supplied.",
     );
@@ -795,7 +856,13 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls/42/files?"),
-            () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
+            () =>
+              githubResponse([
+                {
+                  filename:
+                    "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
+                },
+              ]),
           ),
           githubFetchRoute(
             ({ url, method }) =>
@@ -872,7 +939,8 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
       expect(dispatch?.body).toMatchObject({
         ref: "main",
         inputs: {
-          jobs: "cloud-onboard,credential-sanitization,security-posture",
+          jobs: "cloud-onboard,credential-sanitization,security-posture,inference-routing,network-policy",
+          targets: "ubuntu-repo-cloud-langchain-deepagents-code",
           pr_number: "42",
           checkout_sha: HEAD_SHA,
           base_sha: BASE_SHA,
@@ -890,7 +958,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
       expect(checkUpdates[0]?.body).not.toHaveProperty("conclusion");
       expect(checkUpdates[1]?.body).toMatchObject({
         status: "in_progress",
-        output: { title: "Running 3 E2E jobs" },
+        output: { title: "Running 6 E2E checks" },
       });
       expect(
         checkUpdates.some(
@@ -946,7 +1014,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
             (request) => {
               const body = request.body as Record<string, unknown>;
               const title = (body.output as { title?: string } | undefined)?.title;
-              const updateFails = title === "Running 3 E2E jobs";
+              const updateFails = title === "Running 3 E2E checks";
               check = updateFails ? check : { ...check, ...body };
               return updateFails
                 ? githubResponse({ message: "simulated update failure" }, 500)

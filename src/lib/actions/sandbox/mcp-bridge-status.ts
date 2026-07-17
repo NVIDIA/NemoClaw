@@ -52,7 +52,7 @@ export interface McpBridgeJsonSummary {
 // from another inspected route attributed to the same adapter runtime.
 // sourceBoundary: OpenShell owns provider attachment and HTTP rewrite binding;
 // NemoClaw owns the generated least-privilege route and operator diagnostics.
-// whyNotSourceFix: v0.0.72 has no endpoint-exclusive provider attachment or
+// whyNotSourceFix: v0.0.85 has no endpoint-exclusive provider attachment or
 // enforceable Host, scheme, and query binding that NemoClaw can request.
 // regressionTest: mcp-bridge-status-boundaries.test.ts pins this warning and the
 // generated policy tests pin unique keys, explicit methods, and allowed IPs.

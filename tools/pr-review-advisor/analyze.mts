@@ -7,8 +7,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   E2E_RENDER_LIMIT,
-  type E2eCoverageResult,
   type E2eChangedCredentialFreeTest,
+  type E2eCoverageResult,
   type E2eTargetAdvisorResult,
   normalizeE2eCoverageResult,
   normalizeE2eTargetAdvisorResult,
@@ -901,19 +901,28 @@ export function classifyTestDepth(
       suggestedTests: ["Run the relevant existing unit/doc validation for the touched files."],
     };
   }
-  if (riskPlan.requiredJobs.length > 0) {
+  if (riskPlan.requiredJobs.length > 0 || riskPlan.requiredTargets.length > 0) {
     return {
       verdict: "runtime_validation_recommended",
       rationale: `Deterministic regression risks require live validation: ${riskPlan.families
         .map((family) => family.id)
         .join(", ")}.`,
-      suggestedTests: riskPlan.requiredJobs.map(
-        (job) =>
-          `Run the \`${job.id}\` E2E job for ${job.reasons.join("; ")} Matched files: ${job.matchedFiles
-            .slice(0, 5)
-            .map((file) => `\`${file}\``)
-            .join(", ")}.`,
-      ),
+      suggestedTests: [
+        ...riskPlan.requiredJobs.map(
+          (job) =>
+            `Run the \`${job.id}\` E2E job for ${job.reasons.join("; ")} Matched files: ${job.matchedFiles
+              .slice(0, 5)
+              .map((file) => `\`${file}\``)
+              .join(", ")}.`,
+        ),
+        ...riskPlan.requiredTargets.map(
+          (target) =>
+            `Run the \`${target.id}\` typed E2E target for ${target.reasons.join("; ")} Matched files: ${target.matchedFiles
+              .slice(0, 5)
+              .map((file) => `\`${file}\``)
+              .join(", ")}.`,
+        ),
+      ],
     };
   }
   const e2eSignals = sourceFiles.filter(
@@ -2109,6 +2118,7 @@ function buildReconciliationTurnContext(
       tier: context.riskPlan.tier,
       familyIds: context.riskPlan.families.map((family) => family.id),
       requiredJobIds: context.riskPlan.requiredJobs.map((job) => job.id),
+      requiredTargetIds: context.riskPlan.requiredTargets.map((target) => target.id),
     },
     linkedIssues: (context.github?.linkedIssues ?? []).map(({ number, fetchError }) => ({
       number,
@@ -2132,6 +2142,7 @@ export function buildRiskPlanReviewContext(plan: RiskPlan): Record<string, unkno
       matchedFiles: boundedPathSummary(family.matchedFiles),
       invariants: family.invariants,
       requiredJobs: family.requiredJobs,
+      requiredTargets: family.requiredTargets,
     })),
     requiredJobs: plan.requiredJobs.map((job) => ({
       id: job.id,
@@ -2139,6 +2150,13 @@ export function buildRiskPlanReviewContext(plan: RiskPlan): Record<string, unkno
       families: job.families,
       reasons: job.reasons,
       matchedFileCount: job.matchedFiles.length,
+    })),
+    requiredTargets: plan.requiredTargets.map((target) => ({
+      id: target.id,
+      tier: target.tier,
+      families: target.families,
+      reasons: target.reasons,
+      matchedFileCount: target.matchedFiles.length,
     })),
   };
 }

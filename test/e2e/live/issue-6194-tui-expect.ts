@@ -177,7 +177,9 @@ send -i $termSpawn -- "\\t"
 after 200
 expect_exact_or_exit $termSpawn $sandbox openshell_sandbox_listed 66 67
 send -i $termSpawn -- "\\r"
-expect_exact_or_exit $termSpawn {Name:} openshell_sandbox_detail 68 69
+# Ratatui may update the "Name:" label as separate terminal diffs. Wait for a
+# stable detail-panel heading, then still bind the view to the exact sandbox.
+expect_exact_or_exit $termSpawn {Filesystem Access} openshell_sandbox_detail 68 69
 expect_exact_or_exit $termSpawn $sandbox openshell_sandbox_detail_name 70 71
 # OpenShell documents 'r' as the Network Rules focus key in sandbox detail.
 send -i $termSpawn -- "r"
