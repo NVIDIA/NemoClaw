@@ -3,8 +3,6 @@
 
 import { isObjectRecord } from "../core/json-types";
 import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
-import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import { parseCheckpointDecision } from "./onboard-checkpoint-decision";
@@ -15,6 +13,7 @@ import {
   type CheckpointEffectGroupName,
   type CheckpointEffectGroupRecord,
   type CheckpointLoadResult,
+  type CheckpointMessagingSelection,
   type CheckpointProviderBinding,
   type CheckpointResourceProfile,
   type CheckpointSandboxIdentity,
@@ -72,8 +71,12 @@ function parseWebSearchValue(value: unknown): WebSearchConfig | null {
   return normalizeWebSearchConfig(value as Partial<WebSearchConfig>);
 }
 
-function parseMessagingValue(value: unknown): SandboxMessagingPlan | null {
-  return parseSandboxMessagingPlan(value);
+function parseMessagingValue(value: unknown): CheckpointMessagingSelection | null {
+  if (!isObjectRecord(value)) return null;
+  const selectedChannels = readStringArray(value.selectedChannels);
+  const disabledChannels = readStringArray(value.disabledChannels);
+  if (selectedChannels === null || disabledChannels === null) return null;
+  return { selectedChannels, disabledChannels };
 }
 
 function parseEffectGroupRecord(value: unknown): CheckpointEffectGroupRecord | null {

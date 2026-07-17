@@ -3,6 +3,10 @@
 
 import type { WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
+import {
+  getActiveChannelIdsFromPlan,
+  getDisabledChannelIdsFromPlan,
+} from "../messaging/plan-validation";
 import { decisionDeclined, decisionSelected } from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import type {
@@ -71,7 +75,12 @@ export function recordCheckpointMessaging(
     ...base,
     machineState: session.machine.state,
     updatedAt: new Date().toISOString(),
-    messaging: messagingPlan ? decisionSelected(messagingPlan) : decisionDeclined(),
+    messaging: messagingPlan
+      ? decisionSelected({
+          selectedChannels: getActiveChannelIdsFromPlan(messagingPlan),
+          disabledChannels: getDisabledChannelIdsFromPlan(messagingPlan),
+        })
+      : decisionDeclined(),
   };
 }
 

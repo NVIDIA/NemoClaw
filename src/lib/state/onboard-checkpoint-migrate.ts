@@ -5,7 +5,10 @@ import fs from "node:fs";
 
 import { isObjectRecord, type JsonValue } from "../core/json-types";
 import type { WebSearchConfig } from "../inference/web-search";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
+import {
+  getActiveChannelIdsFromPlan,
+  getDisabledChannelIdsFromPlan,
+} from "../messaging/plan-validation";
 import { inspectCheckpoint } from "./onboard-checkpoint";
 import {
   decisionFromLegacyNullable,
@@ -16,6 +19,7 @@ import {
   CHECKPOINT_SCHEMA_VERSION,
   type CheckpointDecision,
   type CheckpointLoadResult,
+  type CheckpointMessagingSelection,
   type CheckpointResourceProfile,
   type CheckpointSandboxIdentity,
   type OnboardCheckpoint,
@@ -44,11 +48,14 @@ function webSearchDecision(session: Session): CheckpointDecision<WebSearchConfig
   );
 }
 
-function messagingDecision(session: Session): CheckpointDecision<SandboxMessagingPlan> {
+function messagingDecision(session: Session): CheckpointDecision<CheckpointMessagingSelection> {
   return decisionFromLegacyNullable(
     session.sandboxPromptProgress.messaging,
     session.messagingPlan,
-    (plan) => plan,
+    (plan) => ({
+      selectedChannels: getActiveChannelIdsFromPlan(plan),
+      disabledChannels: getDisabledChannelIdsFromPlan(plan),
+    }),
   );
 }
 

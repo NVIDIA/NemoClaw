@@ -362,4 +362,47 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
+
+  it("resumes a non-interactive onboarding attempt that crashed after create succeeded but before its completion receipt (#7022)", async () => {
+    const recordStepComplete = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("process crashed after create"));
+    const { deps, calls, getSession } = createDeps({
+      getSandboxReuseState: () => "missing",
+      recordStepComplete,
+    });
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: false,
+        sandboxName: "my-assistant",
+        authoritativeResumeConfig: true,
+      }),
+    ).rejects.toThrow("process crashed after create");
+
+    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
+    expect(calls.promptName).not.toHaveBeenCalled();
+    expect(calls.configureWebSearch).not.toHaveBeenCalled();
+    const crashedSession = getSession();
+    expect(crashedSession.checkpoint?.effectGroups.sandbox_create).toBeUndefined();
+    expect(crashedSession.checkpoint?.sandboxIdentity).toEqual(
+      decisionSelected({ name: "my-assistant", agent: "openclaw" }),
+    );
+
+    const { deps: resumeDeps, calls: resumeCalls } = createDeps({
+      getSandboxReuseState: () => "ready",
+    });
+
+    await handleSandboxState({
+      ...baseOptions(resumeDeps, crashedSession),
+      resume: true,
+      sandboxName: "my-assistant",
+      authoritativeResumeConfig: true,
+    });
+
+    expect(resumeCalls.createSandbox).not.toHaveBeenCalled();
+    expect(resumeCalls.recordSkip).toHaveBeenCalled();
+  });
 });

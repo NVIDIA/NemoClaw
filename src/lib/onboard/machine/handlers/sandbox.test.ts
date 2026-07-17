@@ -651,6 +651,88 @@ describe("handleSandboxState", () => {
     expect(calls.createSandbox).toHaveBeenCalled();
   });
 
+  it("prefers the checkpointed web-search decision over a stale legacy completion flag (#7022)", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+      webSearch: decisionSelected({ fetchEnabled: true, provider: "brave" }),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.configureWebSearch).not.toHaveBeenCalled();
+    expect((calls.createSandbox.mock.calls[0] as unknown[] | undefined)?.[5]).toEqual({
+      fetchEnabled: true,
+      provider: "brave",
+    });
+  });
+
+  it("prefers the checkpointed resource-profile decision over a stale legacy completion flag (#7022)", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: true,
+        messaging: true,
+        resourceProfile: false,
+      },
+    });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+      webSearch: decisionDeclined(),
+      messaging: decisionDeclined(),
+      resourceProfile: decisionSelected({ cpu: "4", memory: "8Gi" }),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.selectResourceProfile).not.toHaveBeenCalled();
+    expect((calls.createSandbox.mock.calls[0] as unknown[] | undefined)?.[11]).toEqual({
+      cpu: "4",
+      memory: "8Gi",
+    });
+  });
+
   it("recreates a resumed Hermes sandbox when its compatible Anthropic frontend is stale", async () => {
     const session = createSession({
       agent: "hermes",

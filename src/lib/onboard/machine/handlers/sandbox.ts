@@ -17,7 +17,11 @@ import {
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import { isDecisionSelected } from "../../../state/onboard-checkpoint-decision";
+import {
+  decisionValue,
+  isDecisionSelected,
+  isDecisionUnset,
+} from "../../../state/onboard-checkpoint-decision";
 import type {
   CheckpointEffectGroupName,
   CheckpointProviderBinding,
@@ -830,10 +834,13 @@ class SandboxStateFlow<
     const explicitlyConfigured = parseExplicitWebSearchProvider(
       this.options.env[WEB_SEARCH_PROVIDER_ENV],
     ).specified;
+    const checkpoint = state.session?.checkpoint;
     const completedSelection =
       this.resumesSandboxPrompts &&
       this.options.resume &&
-      state.session?.sandboxPromptProgress?.webSearch === true;
+      (checkpoint
+        ? !isDecisionUnset(checkpoint.webSearch)
+        : state.session?.sandboxPromptProgress?.webSearch === true);
     if (!this.options.authoritativeResumeConfig && !explicitlyConfigured && !completedSelection) {
       return this.deps.configureWebSearch(
         null,
@@ -841,10 +848,17 @@ class SandboxStateFlow<
         state.webSearchSupportProbePath,
       );
     }
+    const checkpointedValue = checkpoint
+      ? (decisionValue(checkpoint.webSearch) as unknown as WebSearchConfig | null)
+      : null;
     if (completedSelection && !explicitlyConfigured && !state.webSearchSupportDropped) {
-      this.deps.note("  [resume] Reusing web search selection: disabled.");
+      this.deps.note(
+        checkpointedValue
+          ? "  [resume] Reusing checkpointed web search selection."
+          : "  [resume] Reusing web search selection: disabled.",
+      );
     }
-    return null;
+    return checkpointedValue ? Promise.resolve(checkpointedValue) : null;
   }
 
   private checkpointWebSearch(
@@ -975,13 +989,19 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>;
     resourceProfile: ResourceProfile | null;
   }> {
+    const checkpoint = state.session?.checkpoint;
+    const completedSelection = checkpoint
+      ? !isDecisionUnset(checkpoint.resourceProfile)
+      : state.session?.sandboxPromptProgress?.resourceProfile === true;
     if (
       this.resumesSandboxPrompts &&
       this.options.resume &&
-      state.session?.sandboxPromptProgress?.resourceProfile === true &&
+      completedSelection &&
       !hasResourceProfileEnvOverride(this.options.env)
     ) {
-      const resourceProfile = state.session.resourceProfile as ResourceProfile | null;
+      const resourceProfile = (
+        checkpoint ? decisionValue(checkpoint.resourceProfile) : state.session?.resourceProfile
+      ) as ResourceProfile | null;
       this.deps.note(
         resourceProfile
           ? "  [resume] Reusing resource profile selection."

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../inference/web-search";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { OnboardMachineState } from "../onboard/machine/types";
 
 export const CHECKPOINT_SCHEMA_VERSION = 1 as const;
@@ -22,6 +21,11 @@ export interface CheckpointSandboxIdentity {
 export interface CheckpointResourceProfile {
   readonly cpu: string;
   readonly memory: string;
+}
+
+export interface CheckpointMessagingSelection {
+  readonly selectedChannels: readonly string[];
+  readonly disabledChannels: readonly string[];
 }
 
 export type CheckpointEffectGroupName =
@@ -53,7 +57,7 @@ export interface OnboardCheckpoint {
   readonly updatedAt: string;
   readonly sandboxIdentity: CheckpointDecision<CheckpointSandboxIdentity>;
   readonly webSearch: CheckpointDecision<WebSearchConfig>;
-  readonly messaging: CheckpointDecision<SandboxMessagingPlan>;
+  readonly messaging: CheckpointDecision<CheckpointMessagingSelection>;
   readonly resourceProfile: CheckpointDecision<CheckpointResourceProfile>;
   readonly effectGroups: Readonly<
     Partial<Record<CheckpointEffectGroupName, CheckpointEffectGroupRecord>>
