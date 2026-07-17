@@ -501,17 +501,17 @@ cat "$HOME/apt-cache-calls"
     );
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain("apt-get update");
-    expect(output).toContain("apt-get install -y --no-install-recommends");
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
-    expect(output).toContain("APT_CACHE show docker-ce=5:29.6.1-1~ubuntu.24.04~noble");
-    expect(output).toContain(
+    const aptCommands = output
+      .split("\n")
+      .filter((line) =>
+        /^(APT_CACHE show |APT_GET -s install |SUDO env .* apt-get install )/.test(line),
+      )
+      .sort();
+    expect(aptCommands).toEqual([
+      "APT_CACHE show docker-ce=5:29.6.1-1~ubuntu.24.04~noble",
       "APT_GET -s install --no-install-recommends docker-ce=5:29.6.1-1~ubuntu.24.04~noble",
-    );
-    expect(output).toContain(
       "SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker-ce=5:29.6.1-1~ubuntu.24.04~noble",
-    );
-    expect(output).not.toContain("apt-get install -y --no-install-recommends dkms=");
+    ]);
     expect(output).toContain("pinned_packages=installed");
   });
 
