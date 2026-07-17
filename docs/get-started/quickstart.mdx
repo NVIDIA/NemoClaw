@@ -126,6 +126,10 @@ Use these details when your first-run path needs more control.
     It uses NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1` as the reviewed versions for missing prerequisites.
     Preparation retains installed packages, installs reviewed pinned versions only for missing packages, and warns with actual and expected versions when an installed prerequisite or the loaded NVIDIA driver differs.
     A different installed `cuda-keyring` version remains usable only when `dpkg -V` verifies its package files and the CUDA repository signing fingerprint matches the expected NVIDIA fingerprint.
+    New Docker repository setup uses the reviewed `arch=arm64`, `https://download.docker.com/linux/ubuntu`, `noble`, and `stable` source with the verified dearmored `/etc/apt/keyrings/docker.gpg` key.
+    An existing source using `/etc/apt/keyrings/docker.asc` is retained only when its safe root-owned regular source file exactly matches the reviewed architecture, URL, suite, component, and signing-key path.
+    Its safe installed ASCII key must be byte-identical to the fresh download after preparation verifies its pinned SHA-256 and official Docker fingerprint.
+    Other source differences, extra lines, symbolic links, unsafe files, and key mismatches remain fatal, and other managed repository files keep the generic exact-file guard.
     Driver-version drift is advisory, but the Station GB300 identity, ECC 0/0, packaged CDI lifecycle, `nvidia.com/gpu=all` device, Docker CDI launch, and `--gpus all` launch checks remain mandatory.
     It establishes NVIDIA CDI through the packaged refresh service, then proves both CDI and `--gpus all` with real container launches.
     If the packaged refresh fails or does not advertise `nvidia.com/gpu=all`, preparation prints service diagnostics and stops for administrator repair instead of generating CDI configuration directly.
@@ -206,6 +210,10 @@ Use these details when your first-run path needs more control.
     Set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to continue without Station host automation.
     Preparation retains installed packages, installs reviewed pinned versions only for missing packages, and warns with actual and expected versions when an installed prerequisite or the loaded NVIDIA driver differs.
     A different installed `cuda-keyring` version remains usable only when `dpkg -V` verifies its package files and the CUDA repository signing fingerprint matches the expected NVIDIA fingerprint.
+    New Docker repository setup uses the reviewed `arch=arm64`, `https://download.docker.com/linux/ubuntu`, `noble`, and `stable` source with the verified dearmored `/etc/apt/keyrings/docker.gpg` key.
+    An existing source using `/etc/apt/keyrings/docker.asc` is retained only when its root-owned regular source file has mode `0644` and exactly matches the reviewed architecture, URL, suite, component, and signing-key path.
+    Its installed ASCII key must also be a root-owned regular file with mode `0644` and be byte-identical to the fresh download after preparation verifies its pinned SHA-256 and official Docker fingerprint.
+    Other source differences, extra lines, symbolic links, unsafe files, and key mismatches remain fatal, and other managed repository files keep the generic byte-for-byte exact-file guard.
     Version warnings do not relax the generic Ubuntu 24.04 ARM64 image, Station GB300 DMI and GPU identity, Secure Boot, kernel, capacity, network, workload, systemd, repository-key, APT simulation, rollback, or file-integrity checks.
     Driver-version drift is advisory, but the ECC 0/0 requirement, packaged CDI lifecycle, `nvidia.com/gpu=all` device, Docker CDI launch, and `--gpus all` launch checks remain mandatory.
     It requires the packaged NVIDIA CDI refresh service to advertise `nvidia.com/gpu=all`, and verifies CDI and `--gpus all` with real container launches.

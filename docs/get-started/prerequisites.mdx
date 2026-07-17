@@ -47,6 +47,11 @@ On those systems, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly 
 The preparation probes package and runtime state first, retains installed packages, and installs reviewed pinned versions only for missing packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
 When an installed prerequisite or the loaded NVIDIA driver differs from the reviewed version, preparation prints the actual and expected versions as a warning and continues with the installed version.
 When repository setup is required, a different installed `cuda-keyring` version remains usable only after `dpkg -V` verifies its package files and the CUDA repository signing fingerprint matches the expected NVIDIA fingerprint.
+For new Docker repository setup, preparation writes the reviewed source with `arch=arm64`, the `https://download.docker.com/linux/ubuntu` URL, the `noble` suite, the `stable` component, and the verified dearmored key at `/etc/apt/keyrings/docker.gpg`.
+An existing source that instead uses `/etc/apt/keyrings/docker.asc` is retained only when the source is a root-owned regular file with mode `0644` and exactly matches the reviewed architecture, URL, suite, component, and signing-key path.
+The installed ASCII key must also be a root-owned regular file with mode `0644` and be byte-identical to the fresh download after preparation verifies its pinned SHA-256 and official Docker fingerprint.
+Any other Docker source difference, extra line, symbolic link, unsafe file, or key mismatch stops preparation.
+The Docker `.asc` compatibility path does not relax the generic byte-for-byte exact-file guard for other managed repository files.
 After reboot, preparation enables NVIDIA's packaged CDI refresh path and service, requires the `nvidia.com/gpu=all` device, and verifies it with a real container launch.
 If the packaged refresh fails or does not produce that device, preparation prints service diagnostics and stops for administrator repair.
 It does not bypass the packaged lifecycle with direct CDI generation.

@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly SCRIPT_VERSION="2026-07-17.1"
+readonly SCRIPT_VERSION="2026-07-17.2"
 readonly REBOOT_REQUIRED_EXIT=10
 readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
 # The qualified generic image currently ships this OEM telemetry bootcmd. Its
@@ -581,13 +581,48 @@ install_exact_file_or_reuse() {
   info "${label}=installed path=${target}"
 }
 
+ensure_docker_repository_source() {
+  local docker_asc=$1 docker_gpg=$2 docker_gpg_list=$3 docker_asc_list=$4
+  local source_target=/etc/apt/sources.list.d/docker.list
+  local gpg_key_target=/etc/apt/keyrings/docker.gpg
+  local asc_key_target=/etc/apt/keyrings/docker.asc
+
+  sudo test ! -L "$source_target" \
+    || fatal "Docker repository source must not be a symbolic link: ${source_target}"
+  if ! sudo test -e "$source_target"; then
+    install_exact_file_or_reuse "$docker_gpg" "$gpg_key_target" 0644 docker_repository_key
+    install_exact_file_or_reuse "$docker_gpg_list" "$source_target" 0644 docker_repository_source
+    return 0
+  fi
+
+  assert_root_regular_file_safe "$source_target" 0644 "Docker repository source"
+  if sudo cmp -s "$docker_gpg_list" "$source_target"; then
+    assert_root_regular_file_safe "$gpg_key_target" 0644 "Docker repository key"
+    sudo cmp -s "$docker_gpg" "$gpg_key_target" \
+      || fatal "Existing Docker repository key differs from the verified dearmored key: ${gpg_key_target}"
+    info "docker_repository_source=exact path=${source_target}"
+    return 0
+  fi
+
+  if sudo cmp -s "$docker_asc_list" "$source_target"; then
+    assert_root_regular_file_safe "$asc_key_target" 0644 "Docker repository ASCII key"
+    sudo cmp -s "$docker_asc" "$asc_key_target" \
+      || fatal "Existing Docker repository ASCII key differs from the verified key: ${asc_key_target}"
+    info "docker_repository_source=verified_compatible path=${source_target}"
+    return 0
+  fi
+
+  fatal "Existing Docker repository source differs from the validated .gpg and .asc forms; refusing to overwrite ${source_target}"
+}
+
 configure_repositories() {
-  local tmp cuda_deb docker_asc docker_gpg docker_list
+  local tmp cuda_deb docker_asc docker_gpg docker_gpg_list docker_asc_list
   tmp="$(mktemp -d)"
   cuda_deb="${tmp}/cuda-keyring.deb"
   docker_asc="${tmp}/docker.asc"
   docker_gpg="${tmp}/docker.gpg"
-  docker_list="${tmp}/docker.list"
+  docker_gpg_list="${tmp}/docker-gpg.list"
+  docker_asc_list="${tmp}/docker-asc.list"
 
   info "Downloading and verifying official repository keys"
   ensure_cuda_keyring "$cuda_deb"
@@ -598,11 +633,13 @@ configure_repositories() {
   gpg --batch --yes --dearmor --output "$docker_gpg" "$docker_asc"
   ensure_root_directory_safe /etc/apt/keyrings /etc/apt 0755 "Docker repository key directory"
   assert_root_directory_safe /etc/apt/sources.list.d "Docker repository source directory"
-  install_exact_file_or_reuse "$docker_gpg" /etc/apt/keyrings/docker.gpg 0644 docker_repository_key
   printf '%s\n' \
     'deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable' \
-    >"$docker_list"
-  install_exact_file_or_reuse "$docker_list" /etc/apt/sources.list.d/docker.list 0644 docker_repository_source
+    >"$docker_gpg_list"
+  printf '%s\n' \
+    'deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable' \
+    >"$docker_asc_list"
+  ensure_docker_repository_source "$docker_asc" "$docker_gpg" "$docker_gpg_list" "$docker_asc_list"
 
   rm -rf "$tmp"
   info "repository_keys=verified"

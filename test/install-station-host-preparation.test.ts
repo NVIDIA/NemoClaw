@@ -329,6 +329,12 @@ describe_express_install 'DGX Station'
     expect(output).toContain(
       "shared or managed hosts require an organization-approved Docker access path",
     );
+    expect(output).toContain(
+      "retains installed prerequisite versions with actual-versus-expected warnings",
+    );
+    expect(output).toContain(
+      "installs reviewed driver, Docker, and NVIDIA Container Toolkit versions only when packages are missing",
+    );
   });
 
   it("fails closed when failed-service inspection is unavailable", () => {

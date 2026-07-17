@@ -3222,7 +3222,7 @@ run_station_host_preparation() {
 ensure_station_express_host() {
   [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
 
-  info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
+  info "Checking reviewed DGX Station host prerequisites. Installed versions are retained with warnings; missing packages use reviewed versions."
   local status=0
   run_station_host_preparation || status=$?
   case "$status" in
@@ -3287,7 +3287,7 @@ describe_express_install() {
         inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B"
         inference_disclosure="Managed vLLM pulls the pinned Station image and approximately 352 GB model, then runs a local inference container."
       fi
-      printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
+      printf "  Station host setup retains installed prerequisite versions with actual-versus-expected warnings, applies the reviewed factory DKMS transition when present, installs reviewed driver, Docker, and NVIDIA Container Toolkit versions only when packages are missing, and may require one reboot after installing those packages.\n"
       printf "  Host setup may add this trusted local account to the docker group, which grants root-equivalent control. This flow is only for trusted single-user development hosts; shared or managed hosts require an organization-approved Docker access path.\n"
       printf "  DGX Station remains Deferred; this recipe has not completed end-to-end validation on physical hardware.\n"
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
