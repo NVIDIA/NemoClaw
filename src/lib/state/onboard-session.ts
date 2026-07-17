@@ -30,6 +30,14 @@ import {
   isTerminalOnboardMachineState,
 } from "../onboard/machine/transitions";
 import type { OnboardMachineState, OnboardNonTerminalMachineState } from "../onboard/machine/types";
+import {
+  assertStationExpressInstallerResumeMatches,
+  bindStationExpressProviderSelection,
+  isValidStationExpressReceiptGeneration,
+  parseStationExpressResumeIntent,
+  reconcileStationExpressInstallerResumeRetirement,
+  type StationExpressResumeIntent,
+} from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
   assignSafeToolDisclosureUpdate,
@@ -153,6 +161,10 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  /** Secret-free installer choices needed to retry an interrupted DGX Station Express run. */
+  stationExpressIntent: StationExpressResumeIntent | null;
+  /** Receipt generation durably awaiting exact-match retirement after Station completion. */
+  stationExpressReceiptRetirement: string | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
@@ -254,6 +266,8 @@ export interface SessionUpdates {
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
+  /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
+  stationExpressModelIdentity?: string;
 }
 
 export interface DebugSessionSummary {
@@ -631,6 +645,12 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    stationExpressIntent: parseStationExpressResumeIntent(overrides.stationExpressIntent),
+    stationExpressReceiptRetirement: isValidStationExpressReceiptGeneration(
+      overrides.stationExpressReceiptRetirement,
+    )
+      ? overrides.stationExpressReceiptRetirement
+      : null,
     endpointUrl: overrides.endpointUrl ?? null,
     credentialEnv: overrides.credentialEnv ?? null,
     hermesAuthMethod: overrides.hermesAuthMethod ?? null,
@@ -673,6 +693,25 @@ export function createSession(overrides: Partial<Session> = {}): Session {
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
+  const stationExpressIntent = parseStationExpressResumeIntent(data.stationExpressIntent);
+  if (
+    hasOwn(data, "stationExpressIntent") &&
+    data.stationExpressIntent !== null &&
+    !stationExpressIntent
+  )
+    return null;
+  const stationExpressReceiptRetirement = isValidStationExpressReceiptGeneration(
+    data.stationExpressReceiptRetirement,
+  )
+    ? data.stationExpressReceiptRetirement
+    : null;
+  if (
+    hasOwn(data, "stationExpressReceiptRetirement") &&
+    data.stationExpressReceiptRetirement !== null &&
+    !stationExpressReceiptRetirement
+  ) {
+    return null;
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -683,6 +722,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    stationExpressIntent,
+    stationExpressReceiptRetirement,
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
     credentialEnv: readString(data.credentialEnv),
     hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
@@ -712,6 +753,22 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   });
   normalized.resumable = data.resumable !== false;
   normalized.status = readString(data.status) ?? normalized.status;
+  if (
+    normalized.stationExpressIntent &&
+    (data.resumable !== true ||
+      normalized.mode !== "non-interactive" ||
+      (data.status !== "in_progress" && data.status !== "failed"))
+  ) {
+    return null;
+  }
+  if (
+    normalized.stationExpressReceiptRetirement &&
+    (normalized.status !== "complete" ||
+      normalized.resumable !== false ||
+      normalized.stationExpressIntent !== null)
+  ) {
+    return null;
+  }
 
   if (isObject(data.steps)) {
     for (const [name, step] of Object.entries(data.steps)) {
@@ -719,6 +776,23 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
       if (Object.prototype.hasOwnProperty.call(normalized.steps, name) && parsedStep) {
         normalized.steps[name] = parsedStep;
       }
+    }
+  }
+
+  if (normalized.stationExpressIntent) {
+    const providerComplete = normalized.steps.provider_selection?.status === "complete";
+    const providerBound = Boolean(
+      normalized.stationExpressIntent.servedModel &&
+        normalized.stationExpressIntent.checkpointModel,
+    );
+    if (
+      providerComplete !== providerBound ||
+      (providerComplete &&
+        (normalized.provider !== "vllm-local" ||
+          normalized.model !== normalized.stationExpressIntent.servedModel)) ||
+      (!providerComplete && (normalized.provider !== null || normalized.model !== null))
+    ) {
+      return null;
     }
   }
 
@@ -1299,6 +1373,15 @@ function markStepCompleteWithOptions(
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    const stationExpressIntent =
+      stepName === "provider_selection" && session.stationExpressIntent
+        ? bindStationExpressProviderSelection(
+            session.stationExpressIntent,
+            safeUpdates.provider,
+            safeUpdates.model,
+            updates.stationExpressModelIdentity,
+          )
+        : null;
     const now = new Date().toISOString();
     step.status = "complete";
     step.completedAt = now;
@@ -1306,6 +1389,7 @@ function markStepCompleteWithOptions(
     session.lastCompletedStep = stepName;
     session.failure = null;
     Object.assign(session, safeUpdates);
+    if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
     const nextState = nextMachineStateAfterCompletedStep(stepName, session);
     shouldEmit = Boolean(nextState && shouldUpdateMachine(options));
     if (nextState && shouldEmit) transitionMachineSnapshot(session, nextState, now);
@@ -1498,16 +1582,27 @@ export function finalizeIncompleteOnboardStep(
 export function completeSession(updates: SessionUpdates = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
   let wasComplete = false;
-  const updatedSession = updateSession((session) => {
+  let receiptGeneration: string | null = null;
+  let updatedSession = updateSession((session) => {
+    const intentReceiptGeneration = session.stationExpressIntent?.receiptGeneration ?? null;
+    receiptGeneration = session.stationExpressReceiptRetirement ?? intentReceiptGeneration;
+    if (intentReceiptGeneration) {
+      assertStationExpressInstallerResumeMatches(intentReceiptGeneration);
+    }
     const now = new Date().toISOString();
     wasComplete = session.status === "complete";
     Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
+    session.stationExpressIntent = null;
+    session.stationExpressReceiptRetirement = receiptGeneration;
     session.failure = null;
     transitionMachineSnapshot(session, "complete", now);
     return session;
   });
+  if (receiptGeneration) {
+    updatedSession = reconcileStationExpressReceiptRetirement(receiptGeneration);
+  }
   if (Object.keys(safeUpdates).length > 0) {
     emitOnboardMachineEvent(
       createOnboardMachineEvent({
@@ -1528,6 +1623,48 @@ export function completeSession(updates: SessionUpdates = {}): Session {
     );
   }
   return updatedSession;
+}
+
+function assertStationExpressReceiptRetirementSession(
+  session: Session | null,
+  expectedGeneration: string,
+): asserts session is Session {
+  if (
+    !session ||
+    session.stationExpressReceiptRetirement !== expectedGeneration ||
+    session.status !== "complete" ||
+    session.resumable !== false ||
+    session.stationExpressIntent !== null
+  ) {
+    throw new Error("DGX Station Express receipt retirement state does not match this attempt.");
+  }
+}
+
+export function reconcileStationExpressReceiptRetirement(expectedGeneration: string): Session {
+  if (!isValidStationExpressReceiptGeneration(expectedGeneration)) {
+    throw new Error("DGX Station Express receipt generation is invalid.");
+  }
+  const ownsOnboardLock = heldLockFd === null;
+  if (ownsOnboardLock) {
+    const lock = acquireOnboardLock("nemoclaw onboard (Station receipt retirement recovery)");
+    if (!lock.acquired) {
+      throw new Error(
+        "Cannot reconcile DGX Station Express receipt retirement while another onboarding run is in progress.",
+      );
+    }
+  }
+  try {
+    assertStationExpressReceiptRetirementSession(loadSession(), expectedGeneration);
+    return reconcileStationExpressInstallerResumeRetirement(expectedGeneration, () =>
+      updateSession((session) => {
+        assertStationExpressReceiptRetirementSession(session, expectedGeneration);
+        session.stationExpressReceiptRetirement = null;
+        return session;
+      }),
+    );
+  } finally {
+    if (ownsOnboardLock) releaseOnboardLock();
+  }
 }
 
 export function summarizeForDebug(
