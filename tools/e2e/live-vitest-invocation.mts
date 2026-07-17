@@ -18,6 +18,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 import { pathToFileURL } from "node:url";
 
 import { parseArgs } from "../advisors/io.mts";
@@ -119,6 +120,31 @@ export function buildLiveVitestArgs(invocation: LiveVitestInvocation): string[] 
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
+export const LIVE_VITEST_USAGE =
+  "usage: live-vitest-invocation.mts run --test-path <path> --selector <selector> [--project e2e-live]";
+
+/**
+ * Translate a finished child process into this process's exit code, preserving
+ * the shell's termination semantics.
+ *
+ * A bare `npx vitest …` under `set -euo pipefail` surfaces a signal death as
+ * 128+signo, not as a generic failure. Collapsing that to 1 would make a killed
+ * or OOM-reaped test run indistinguishable from an ordinary test failure.
+ */
+export function resolveChildExitCode(result: {
+  status: number | null;
+  signal?: NodeJS.Signals | null;
+  error?: Error;
+}): number {
+  if (result.error) return 1;
+  if (typeof result.status === "number") return result.status;
+  if (result.signal) {
+    const signo = os.constants.signals[result.signal];
+    return typeof signo === "number" ? 128 + signo : 1;
+  }
+  return 1;
+}
+
 function runCli(): void {
   const args = parseArgs(process.argv.slice(3));
   const argv = buildLiveVitestArgs({
@@ -129,13 +155,27 @@ function runCli(): void {
   // Run through the repository's pinned vitest binary, without a shell, so the
   // validated argv is passed verbatim.
   const result = spawnSync("npx", argv, { stdio: "inherit" });
-  process.exit(typeof result.status === "number" ? result.status : 1);
+  if (result.error) {
+    console.error(`failed to spawn vitest: ${result.error.message}`);
+  }
+  process.exit(resolveChildExitCode(result));
 }
 
-if (
-  process.argv[1] &&
-  import.meta.url === pathToFileURL(process.argv[1]).href &&
-  process.argv[2] === "run"
-) {
+function main(): void {
+  const subcommand = process.argv[2];
+  // Fail closed on a missing or unknown subcommand. Exiting 0 here would let a
+  // typo silently skip the live E2E run while the job still reported success.
+  if (subcommand !== "run") {
+    console.error(
+      subcommand
+        ? `unsupported subcommand ${JSON.stringify(subcommand)}\n${LIVE_VITEST_USAGE}`
+        : `missing subcommand\n${LIVE_VITEST_USAGE}`,
+    );
+    process.exit(2);
+  }
   runCli();
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
 }

@@ -4007,8 +4007,15 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   // The common live-Vitest invocation is built by the trusted helper (#6961),
   // which fixes the e2e-live project and reporters and validates the path and
-  // selector before running.
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run");
+  // selector before running. Match the subcommand as a whole word: a substring
+  // check would also accept a typo like `... .mts runx`, which the helper
+  // rejects but which must never reach the workflow in the first place.
+  if (
+    runVitest &&
+    !/tools\/e2e\/live-vitest-invocation\.mts run(?![\w-])/u.test(stringValue(runVitest.run))
+  ) {
+    errors.push("live E2E step must invoke tools/e2e/live-vitest-invocation.mts run");
+  }
   requireRunContains(errors, runVitest, "--test-path test/e2e/live/registry-targets.test.ts");
   requireRunContains(errors, runVitest, '--selector "^${TARGET_ID}$"');
 
