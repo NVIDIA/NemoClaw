@@ -35,6 +35,10 @@ sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
+sandbox_exec_argv() {
+  openshell sandbox exec --name "$SANDBOX_NAME" -- "$@" 2>&1
+}
+
 python_probe_source() {
   cat <<'PY'
 import sys
@@ -95,16 +99,14 @@ PY
 python_probe() {
   local python_bin="$1"
   local url="$2"
-  local -a command_prefix=("${@:3}")
-  local encoded remote_cmd
+  local source
+  shift 2
   if [ -n "${NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE+x}" ]; then
     printf '%s\n' "$NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE"
     return 0
   fi
-  encoded="$(python_probe_source | base64 | tr -d '\n')"
-  printf -v remote_cmd '%q ' "${command_prefix[@]}" "$python_bin"
-  remote_cmd+="-c \"\$(printf '%s' ${encoded@Q} | base64 -d)\" ${url@Q}"
-  sandbox_exec "$remote_cmd"
+  source="$(python_probe_source)"
+  sandbox_exec_argv "$@" "$python_bin" -c "$source" "$url"
 }
 
 expect_reached() {
@@ -125,10 +127,14 @@ expect_blocked() {
   local actor="$1"
   local label="$2"
   local url="$3"
-  local python_bin="${4:-python3}"
-  local -a command_prefix=("${@:5}")
+  local python_bin="python3"
   local output
-  output="$(python_probe "$python_bin" "$url" "${command_prefix[@]}" || true)"
+  shift 3
+  if [ "$#" -gt 0 ]; then
+    python_bin="$1"
+    shift
+  fi
+  output="$(python_probe "$python_bin" "$url" "$@" || true)"
   if echo "$output" | grep -q "BLOCKED:" && ! echo "$output" | grep -q "REACHED:"; then
     pass "${actor} cannot reach ${label} without explicit policy"
   elif echo "$output" | grep -q "REACHED:"; then
@@ -183,14 +189,16 @@ PY
 
 fetch_url_probe() {
   local url="$1"
-  local encoded remote_cmd
+  local source
   if [ -n "${NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE+x}" ]; then
     printf '%s\n' "$NEMOCLAW_E2E_FETCH_URL_PROBE_FIXTURE"
     return 0
   fi
-  encoded="$(fetch_url_probe_source | base64 | tr -d '\n')"
-  remote_cmd=". /tmp/nemoclaw-proxy-env.sh && /opt/venv/bin/python3 -c \"\$(printf '%s' ${encoded@Q} | base64 -d)\" ${url@Q}"
-  sandbox_exec "$remote_cmd"
+  source="$(fetch_url_probe_source)"
+  # shellcheck disable=SC2016 # positional parameters expand inside the sandbox shell.
+  sandbox_exec_argv \
+    sh -c '. /tmp/nemoclaw-proxy-env.sh && exec /opt/venv/bin/python3 -c "$1" "$2"' \
+    nemoclaw-fetch-url-probe "$source" "$url"
 }
 
 expect_fetch_reached() {
@@ -230,17 +238,16 @@ if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "blocked-no-marker" ]; then
 fi
 
 if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "probe-command-shape" ]; then
-  sandbox_exec() {
-    case "$1" in
-      *$'\n'*)
-        printf '%s\n' "NEWLINE_IN_COMMAND"
-        return 1
-        ;;
-      *)
-        printf 'SINGLE_LINE_COMMAND:%s\n' "$1"
+  sandbox_exec_argv() {
+    local argument
+    for argument in "$@"; do
+      if [[ "$argument" == *$'\n'* ]]; then
+        printf '%s\n' "NATIVE_MULTILINE_ARGV"
         return 0
-        ;;
-    esac
+      fi
+    done
+    printf '%s\n' "MISSING_MULTILINE_ARGV"
+    return 1
   }
   python_probe "python3" "https://example.com/"
   python_probe "/opt/venv/bin/python3" "https://example.com/" "$DCODE_MANAGED_EXEC"
@@ -248,17 +255,16 @@ if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "probe-command-shape" ]; then
 fi
 
 if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "fetch-probe-command-shape" ]; then
-  sandbox_exec() {
-    case "$1" in
-      *$'\n'*)
-        printf '%s\n' "NEWLINE_IN_COMMAND"
-        return 1
-        ;;
-      *)
-        printf '%s\n' "NO_NEWLINE_IN_FETCH_COMMAND"
+  sandbox_exec_argv() {
+    local argument
+    for argument in "$@"; do
+      if [[ "$argument" == *$'\n'* ]]; then
+        printf '%s\n' "NATIVE_MULTILINE_ARGV"
         return 0
-        ;;
-    esac
+      fi
+    done
+    printf '%s\n' "MISSING_MULTILINE_ARGV"
+    return 1
   }
   fetch_url_probe "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/README.md"
   exit 0

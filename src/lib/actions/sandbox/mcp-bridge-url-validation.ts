@@ -42,12 +42,12 @@ function rejectUnsupportedOpenShellMcpHostAlias(hostname: string): void {
   // invalidState: a host alias is accepted without an attested gateway address,
   // forcing broad private-range policy instead of an exact destination pin.
   // sourceBoundary: the pinned OpenShell release owns gateway-address discovery.
-  // whyNotSourceFix: v0.0.72 exposes no attested driver gateway address.
+  // whyNotSourceFix: v0.0.85 exposes no attested driver gateway address.
   // regressionTest: URL validation and all three live adapters reject aliases.
   // removalCondition: remove only after a reviewed OpenShell capability exposes
   // an attested address; a future version number alone is not that capability.
   throw new McpBridgeError(
-    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.72 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
+    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.85 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
     2,
   );
 }
@@ -93,7 +93,7 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
     // invalidState: an IPv6 literal reaches an OpenShell parser that cannot
     // represent and enforce its exact proxy target safely.
     // sourceBoundary: the pinned OpenShell proxy parser owns literal support.
-    // whyNotSourceFix: v0.0.72 does not support this target form.
+    // whyNotSourceFix: v0.0.85 does not support this target form.
     // regressionTest: host/Hermes parity rejects private and public IPv6 literals.
     // removalCondition: remove only with reviewed parser support and parity proof;
     // never infer the capability from semver alone.
@@ -164,7 +164,7 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
 export async function validateMcpServerUrlResolvedTarget(parsed: URL): Promise<string[]> {
   // invalidState: a hostname is public at add time but later rebinds to an
   // unpinned address. sourceBoundary: NemoClaw pins the add-time public answers;
-  // OpenShell v0.0.72 resolves, validates every answer against allowed_ips, and
+  // OpenShell v0.0.85 resolves, validates every answer against allowed_ips, and
   // connects with that same SocketAddr list. whyNotSourceFix: duplicating DNS
   // resolution here before each remote connection would create a second,
   // non-authoritative TOCTOU boundary outside OpenShell's data plane.

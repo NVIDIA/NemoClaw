@@ -25,7 +25,7 @@ import {
 } from "../tools/candidate-compat.mts";
 
 const SHA = "a".repeat(40);
-const VERSION = "0.0.82";
+const VERSION = "0.0.85";
 const E2E_SOURCES = readFileSync(resolve(".github/workflows/e2e.yaml"), "utf8");
 const ASSETS = [
   { name: "openshell-x86_64-unknown-linux-musl.tar.gz", role: "cli" as const },

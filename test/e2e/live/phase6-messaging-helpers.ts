@@ -275,7 +275,7 @@ export async function sandboxSh(
   });
 }
 
-export async function sandboxEncodedSh(
+export async function sandboxShWithArgs(
   sandbox: SandboxClient,
   sandboxName: string,
   script: string,
@@ -286,13 +286,12 @@ export async function sandboxEncodedSh(
     timeoutMs?: number;
   },
 ): Promise<ShellProbeResult> {
-  const command = [
-    "tmp=$(mktemp)",
-    "trap 'rm -f \"$tmp\"' EXIT",
-    `printf %s ${shellQuote(base64(script))} | base64 -d > "$tmp"`,
-    `sh "$tmp" ${args.map(shellQuote).join(" ")}`,
-  ].join("; ");
-  return sandboxSh(sandbox, sandboxName, command, options);
+  return sandbox.exec(sandboxName, ["sh", "-c", script, "nemoclaw-e2e-script", ...args], {
+    artifactName: options.artifactName,
+    env: sandboxAccessEnv(),
+    redactionValues: options.redactionValues ?? [],
+    timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
+  });
 }
 
 export async function sandboxNode(
@@ -315,7 +314,7 @@ export async function sandboxNode(
       return `export ${key}=${shellQuote(value)}`;
     })
     .join("\n");
-  return sandboxEncodedSh(
+  return sandboxShWithArgs(
     sandbox,
     sandboxName,
     `${exports}\nnode --input-type=module <<'NODE'\n${source}\nNODE\n`,

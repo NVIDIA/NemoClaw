@@ -44,7 +44,9 @@ import {
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "./mcp-bridge-servers.ts";
+import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
+import { prepareExactMainMcpProof } from "./openshell-exact-main-mcp-proof.ts";
 
 const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-bridge";
 const HERMES_SANDBOX_NAME = process.env.NEMOCLAW_MCP_HERMES_SANDBOX_NAME ?? "e2e-mcp-hermes";
@@ -978,43 +980,8 @@ test("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, host, 
     true,
   );
 
-  const mcpCallScript = `const https = require("node:https");
-const url = new URL(process.argv[2]);
-const method = process.argv[3];
-const expectation = process.argv[4];
-const credentialKey = process.argv[5] || "FAKE_MCP_SECRET";
-const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method });
-const req = https.request({
-  hostname: url.hostname,
-  port: url.port,
-  path: url.pathname,
-  method: "POST",
-  headers: {
-    "content-type": "application/json",
-    "content-length": Buffer.byteLength(body),
-    "authorization": "Bearer openshell:resolve:env:" + credentialKey
-  }
-}, (res) => {
-  let data = "";
-  res.setEncoding("utf8");
-  res.on("data", (chunk) => { data += chunk; });
-  res.on("end", () => {
-    console.log(JSON.stringify({ status: res.statusCode, body: data }));
-    const allowed = res.statusCode === 200 && data.includes("fake_echo");
-    const denied = res.statusCode === 403;
-    process.exit(expectation === "allow" ? (allowed ? 0 : 1) : (denied ? 0 : 1));
-  });
-});
-req.on("error", (error) => {
-  console.error(error.message);
-  const strictDenied = expectation === "deny-strict" && /HTTP\\/1\\.[01] 403 Forbidden/.test(error.message);
-  strictDenied && console.log(JSON.stringify({ status: 403, error: error.message }));
-  process.exit(expectation === "deny" || strictDenied ? 0 : 1);
-});
-req.end(body);
-`;
+  const mcpCallScript = MCP_PROVIDER_REWRITE_PROBE_SOURCE;
   await artifacts.writeText("mcp-provider-rewrite-proof.cjs", mcpCallScript);
-  const mcpCallScriptB64 = Buffer.from(mcpCallScript, "utf8").toString("base64");
   const runNodeMcpProbe = async (
     targetUrl: string,
     method: string,
@@ -1027,8 +994,9 @@ req.end(body);
       trustedSandboxShellScript(
         [
           "set -eu",
-          `printf '%s' ${JSON.stringify(mcpCallScriptB64)} | base64 -d > /tmp/nemoclaw-mcp-provider-rewrite-proof.cjs`,
-          `nemoclaw-start node /tmp/nemoclaw-mcp-provider-rewrite-proof.cjs ${JSON.stringify(targetUrl)} ${JSON.stringify(method)} ${expectation} ${JSON.stringify(credentialKey)}`,
+          `nemoclaw-start node - ${shellQuote(targetUrl)} ${shellQuote(method)} ${shellQuote(expectation)} ${shellQuote(credentialKey)} <<'NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE'`,
+          mcpCallScript,
+          "NEMOCLAW_MCP_PROVIDER_REWRITE_PROBE",
         ].join("\n"),
       ),
       {
@@ -1366,7 +1334,7 @@ mcpBridgeShardTest("hermes")(
 mcpBridgeShardTest("deepagents")(
   "mcp-bridge-deepagents",
   { timeout: 45 * 60_000 },
-  async ({ artifacts, cleanup, host, sandbox }) => {
+  async ({ artifacts, cleanup, host, lifecycle, sandbox }) => {
     await artifacts.writeJson("scenario.json", {
       id: "mcp-bridge-deepagents",
       sandbox: DEEPAGENTS_SANDBOX_NAME,
@@ -1397,11 +1365,17 @@ mcpBridgeShardTest("deepagents")(
     const hostAddress = await hostAddressForSandbox(host);
     const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
     const mcpUrl = fakeMcpTunnel.url;
+    const exactMainProof = prepareExactMainMcpProof(
+      { artifacts, cleanup, host, lifecycle, sandbox },
+      DEEPAGENTS_SANDBOX_NAME,
+      mcpUrl,
+    );
     await onboardAgent(host, cleanup, endpointUrl, {
       agent: "langchain-deepagents-code",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       artifactName: "onboard-deepagents-mcp-bridge",
     });
+    await exactMainProof.afterOnboard();
     cleanup.add("remove Deep Agents MCP bridge", () =>
       cleanupMcpBridge(host, DEEPAGENTS_SANDBOX_NAME, SERVER_NAME, "deepagents-config"),
     );
@@ -1439,6 +1413,7 @@ mcpBridgeShardTest("deepagents")(
       resultToken: deepAgentsResult,
       artifactName: "deepagents-real-mcp-tool-call-initial",
     });
+    await exactMainProof.assertLogPrivacy([TOOL_CHALLENGE, deepAgentsResult], "fake_echo");
     await restartBridgeWithoutHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "langchain-deepagents-code",
@@ -1463,6 +1438,7 @@ mcpBridgeShardTest("deepagents")(
       "deepagents-assert-secrets-absent-after-rotation",
     );
     await rebuildWithoutMcpHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
+    await exactMainProof.afterRebuild();
     await assertDeepAgentsConfig(sandbox, DEEPAGENTS_SANDBOX_NAME, mcpUrl);
     await assertSecretAbsentFromSandbox(
       sandbox,

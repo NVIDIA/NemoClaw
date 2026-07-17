@@ -192,13 +192,13 @@ export function ensureSandboxPortForwardForPort(
     );
   }
 
-  // OpenShell v0.0.72 removes the forward PID file shortly after SIGTERM,
+  // OpenShell v0.0.85 removes the forward PID file shortly after SIGTERM,
   // before the old SSH listener is guaranteed to release its host port. A
   // blind stop -> start can therefore collide with the just-stopped process.
   // Preserve authoritative owner metadata while waiting: accept a target-
   // owned forward that recovered on its own, reject another sandbox, and only
   // start after an otherwise-unowned local listener has actually quiesced.
-  // NemoClaw must compensate while the already-released OpenShell 0.0.72
+  // NemoClaw must compensate while the supported OpenShell 0.0.85
   // contract remains supported; test/process-recovery.test.ts locks both the
   // delayed-release and fail-closed cases. Remove this wait only after every
   // supported OpenShell release either waits for host-listener release before
@@ -235,7 +235,7 @@ export function ensureSandboxPortForwardForPort(
     ["forward", "start", "--background", forwardTarget, sandboxName],
     {
       ignoreError: true,
-      // OpenShell 0.0.72 leaves the background SSH forward attached to the
+      // OpenShell 0.0.85 leaves the background SSH forward attached to the
       // caller's inherited descriptors. Detach them so a scripted `recover`
       // can finish after the foreground OpenShell command exits. Keep this
       // until every supported OpenShell release redirects those descriptors.
