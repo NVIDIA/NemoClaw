@@ -69,7 +69,7 @@ Use `NEMOCLAW_AGENT=langchain-deepagents-code` or `nemo-deepagents onboard` for 
 After the readiness check, load exactly one matching instruction asset before provider selection:
 
 - Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c96d984fc49e338d8319d262bc36ff16a24dcbbb/docs/resources/prompt-assets/dgx-spark.md).
-- Confirmed DGX Station: [DGX Station Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c96d984fc49e338d8319d262bc36ff16a24dcbbb/docs/resources/prompt-assets/dgx-station.md).
+- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c96d984fc49e338d8319d262bc36ff16a24dcbbb/docs/resources/prompt-assets/dgx-station.md).
 - Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c96d984fc49e338d8319d262bc36ff16a24dcbbb/docs/resources/prompt-assets/windows-wsl.md).
 
 Read the matching raw Markdown file completely and follow it before continuing.
@@ -77,7 +77,7 @@ Do not load a platform asset for any other computer.
 
 ## Runtime and Provider Selection
 
-If no platform asset applies, or its Express path is declined, ask: "Which inference runtime or provider would you like?"
+If no platform asset applies, or its offered install path is declined, ask: "Which inference runtime or provider would you like?"
 Choices:
 
 1. Existing vLLM, only when a ready server is detected on `localhost:8000`.
@@ -119,7 +119,7 @@ Ask required model, endpoint, credential, and download questions one at a time.
 ## Avoid Interactive Menus
 
 - Collect every choice before running the installer.
-- Ask one question at a time for model, endpoint, sandbox name, web search, messaging when the selected agent supports it, policy when Express is not selected, credentials, administrator access, and downloads.
+- Ask one question at a time for model, endpoint, sandbox name, web search, messaging when the selected agent supports it, policy when no platform-asset install path is selected, credentials, administrator access, and downloads.
 - Use non-interactive environment variables whenever supported.
 - Never leave a command waiting at `Choose [1]:`.
 - If a choice cannot be supplied non-interactively, stop before starting and explain the supported alternative.
@@ -215,12 +215,12 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 
 ## Policy, Approval, and Verification
 
-- If a loaded platform asset selects Express, follow its policy requirement and skip the policy-tier question.
-- For non-Express installation, ask for Balanced, Restricted, or Open policy.
+- If a loaded platform asset selects its approved install path, follow its policy requirement and skip the policy-tier question.
+- For installation outside an accepted platform-asset path, ask for Balanced, Restricted, or Open policy.
 - Explain that messaging and web-search selections add required endpoints.
-- Before non-Express installation, summarize platform, administrator access, agent, provider, exact model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
-- Ask for final permission before non-Express installation.
-- For Express, treat the platform asset's confirmation as final permission and do not ask again.
+- Before installation outside an accepted platform-asset path, summarize platform, administrator access, agent, provider, exact model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
+- Ask for final permission before installation outside an accepted platform-asset path.
+- For an accepted platform-asset install path, treat the asset's confirmation as final permission and do not ask again.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` and `NEMOCLAW_YES=1` only after their approvals.
 - Keep credentials in the approved environment and never display them.
 - Verify the command and version, sandbox status, provider, model, `inference.local`, GPU access when applicable, messaging bridges when configured, and dashboard route when available.

@@ -21,19 +21,37 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
+// These digests record the exact asset bytes at promptAssetRevision so normal tests
+// can detect stale immutable links without fetching raw.githubusercontent.com.
 const promptAssetRevision = "c96d984fc49e338d8319d262bc36ff16a24dcbbb";
 
-function definePromptAsset(assetPath: string): { path: string; url: string } {
+type PromptAsset = {
+  path: string;
+  pinnedSha256: string;
+  url: string;
+};
+
+function definePromptAsset(assetPath: string, pinnedSha256: string): PromptAsset {
   return {
     path: assetPath,
+    pinnedSha256,
     url: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${promptAssetRevision}/${assetPath}`,
   };
 }
 
 const promptAssets = {
-  dgxSpark: definePromptAsset("docs/resources/prompt-assets/dgx-spark.md"),
-  dgxStation: definePromptAsset("docs/resources/prompt-assets/dgx-station.md"),
-  windowsWsl: definePromptAsset("docs/resources/prompt-assets/windows-wsl.md"),
+  dgxSpark: definePromptAsset(
+    "docs/resources/prompt-assets/dgx-spark.md",
+    "806e87f2ae7e4a4be731c7ce3b1ecde9ff8be170563d4338a5f79f76ce25e034", // gitleaks:allow -- pinned prompt-asset SHA-256
+  ),
+  dgxStation: definePromptAsset(
+    "docs/resources/prompt-assets/dgx-station.md",
+    "c6bd3f8006f36a944cd4fbe8b89027b58ec16f583b85368fae1b11cca2569142", // gitleaks:allow -- pinned prompt-asset SHA-256
+  ),
+  windowsWsl: definePromptAsset(
+    "docs/resources/prompt-assets/windows-wsl.md",
+    "7719b81e9304ac7cd924a9fe487a154846660557e50a0f1524f2b0dc87e729ab", // gitleaks:allow -- pinned prompt-asset SHA-256
+  ),
 } as const;
 const localCredentialFormSource = path.join(
   repoRoot,
@@ -625,7 +643,20 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("Existing vLLM: `NEMOCLAW_PROVIDER=vllm`");
   });
 
-  it("routes platform-only Express instructions to raw prompt assets (#6990)", () => {
+  it("keeps local prompt assets aligned with their immutable offline digests (#6990)", () => {
+    for (const asset of Object.values(promptAssets)) {
+      const localSource = readPromptAsset(asset);
+      const localSha256 = createHash("sha256").update(localSource).digest("hex");
+
+      expect(asset.pinnedSha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(
+        localSha256,
+        `${asset.path} no longer matches the content pinned at ${promptAssetRevision}; commit the asset content, then repin every platform URL and digest to that commit`,
+      ).toBe(asset.pinnedSha256);
+    }
+  });
+
+  it("routes platform-only installation instructions to raw prompt assets (#6990)", () => {
     const promptSource = readStarterPrompt();
     const sparkSource = readPromptAsset(promptAssets.dgxSpark);
     const stationSource = readPromptAsset(promptAssets.dgxStation);
@@ -655,11 +686,23 @@ describe("starter prompt docs CTA", () => {
     expect(sparkSource).toContain("Leave `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_MODEL` unset");
     expect(stationSource).toContain("NEMOCLAW_VLLM_MODEL=deepseek-v4-flash");
     expect(stationSource).toContain("NEMOCLAW_MODEL=deepseek-ai/DeepSeek-V4-Flash");
-    expect(stationSource).toContain("default local inference setup with DeepSeek V4 Flash in vLLM");
+    expect(stationSource).toContain(
+      "provider-preseeded DeepSeek path below is not the installer Express path",
+    );
     expect(stationSource).toContain("downloads the pinned vLLM container and model data");
     expect(stationSource).not.toContain("nemotron-3-ultra");
     expect(stationSource).toContain("model-cache filesystem and Docker storage");
-    expect(stationSource).toContain("have enough capacity before continuing");
+    expect(stationSource).toContain("scripts/prepare-dgx-station-host.sh --check");
+    expect(stationSource).toContain("scripts/prepare-dgx-station-host.sh --verify");
+    expect(stationSource).toContain("The checks must not apply repairs");
+    expect(stationSource).toContain("If either readiness mode fails");
+    expect(stationSource).toContain("Do not set `NEMOCLAW_PROVIDER`");
+    expect(stationSource).toContain("official installer with `--station-deepseek`");
+    expect(stationSource).toContain(
+      "Let the official installer present its third-party-software notice and complete confirmation summary.",
+    );
+    expect(stationSource).toContain("If a secure interactive terminal is unavailable, stop");
+    expect(stationSource).toContain("Keep the official confirmation visible");
     expect(stationSource).toContain("evaluation path with deferred end-to-end validation");
     expect(stationSource).toContain("startup may still fail after readiness checks");
     expect(stationSource).toContain("third-party-software notice");
@@ -667,31 +710,38 @@ describe("starter prompt docs CTA", () => {
     expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
   });
 
-  it("uses installer Express defaults without collecting optional onboarding choices (#6990)", () => {
+  it("uses approved platform defaults without collecting optional onboarding choices (#6990)", () => {
     const promptSource = readStarterPrompt();
-    const expressAssets = [
+    const platformAssets = [
       readPromptAsset(promptAssets.dgxSpark),
       readPromptAsset(promptAssets.dgxStation),
       readPromptAsset(promptAssets.windowsWsl),
     ];
+    const expressAssets = [
+      readPromptAsset(promptAssets.dgxSpark),
+      readPromptAsset(promptAssets.windowsWsl),
+    ];
+    const stationSource = readPromptAsset(promptAssets.dgxStation);
 
     expect(promptSource).toContain(
       "Next ask which agent I want: OpenClaw, Hermes, or LangChain Deep Agents Code.",
     );
     expect(promptSource).toContain("Skip messaging for Deep Agents.");
     expect(promptSource).toContain(
-      "If a loaded platform asset selects Express, follow its policy requirement and skip the policy-tier question.",
+      "If a loaded platform asset selects its approved install path, follow its policy requirement and skip the policy-tier question.",
     );
     expect(promptSource).toContain(
-      "For non-Express installation, ask for Balanced, Restricted, or Open policy.",
+      "For installation outside an accepted platform-asset path, ask for Balanced, Restricted, or Open policy.",
     );
     expect(promptSource).toContain(
-      "For Express, treat the platform asset's confirmation as final permission and do not ask again.",
+      "For an accepted platform-asset install path, treat the asset's confirmation as final permission and do not ask again.",
     );
-    expect(promptSource).toContain("Ask for final permission before non-Express installation.");
+    expect(promptSource).toContain(
+      "Ask for final permission before installation outside an accepted platform-asset path.",
+    );
     expect(promptSource).not.toContain("\n- Ask for Balanced, Restricted, or Open policy.\n");
 
-    for (const assetSource of expressAssets) {
+    for (const assetSource of platformAssets) {
       expect(assetSource).toContain(
         "`NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`",
       );
@@ -704,6 +754,10 @@ describe("starter prompt docs CTA", () => {
       expect(assetSource).toContain(
         "Do not ask again for the agent or ask separate questions for model, sandbox name, web search, messaging, policy, download approval, or final installation approval.",
       );
+      expect(assetSource).not.toContain("NEMOCLAW_POLICY_TIER=balanced");
+    }
+
+    for (const assetSource of expressAssets) {
       expect(assetSource).toContain(
         "Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when Express is accepted.",
       );
@@ -714,8 +768,42 @@ describe("starter prompt docs CTA", () => {
       expect(noticeIndex).toBeGreaterThan(-1);
       expect(confirmationIndex).toBeGreaterThan(noticeIndex);
       expect(acceptanceIndex).toBeGreaterThan(confirmationIndex);
-      expect(assetSource).not.toContain("NEMOCLAW_POLICY_TIER=balanced");
     }
+
+    expect(stationSource).toContain(
+      "Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when the prepared-host DeepSeek path is accepted.",
+    );
+    expect(stationSource).toContain("Treat the prepared-host confirmation as approval");
+
+    const stationDisclosureIndex = stationSource.indexOf(
+      "official `--station-deepseek` installer flow may install or change",
+    );
+    const stationDockerGroupIndex = stationSource.indexOf(
+      "`docker` group, which grants root-equivalent control",
+    );
+    const stationRebootIndex = stationSource.indexOf("operator-controlled reboot");
+    const stationNoticeIndex = stationSource.indexOf("Include the third-party-software notice");
+    const stationConfirmationIndex = stationSource.indexOf("Choices:");
+    const stationFailClosedIndex = stationSource.indexOf("If either readiness mode fails");
+    const stationPreparedGateIndex = stationSource.indexOf(
+      "If and only if both readiness modes succeed",
+    );
+    const stationProviderSetIndex = stationSource.indexOf("- Set `NEMOCLAW_PROVIDER=install-vllm`");
+    const stationAcceptanceIndex = stationSource.indexOf(
+      "Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`",
+    );
+    expect(stationDisclosureIndex).toBeGreaterThan(-1);
+    expect(stationDockerGroupIndex).toBeGreaterThan(stationDisclosureIndex);
+    expect(stationRebootIndex).toBeGreaterThan(stationDockerGroupIndex);
+    expect(stationNoticeIndex).toBeGreaterThan(stationRebootIndex);
+    expect(stationConfirmationIndex).toBeGreaterThan(stationNoticeIndex);
+    expect(stationPreparedGateIndex).toBeGreaterThan(stationFailClosedIndex);
+    expect(stationProviderSetIndex).toBeGreaterThan(stationPreparedGateIndex);
+    expect(stationAcceptanceIndex).toBeGreaterThan(stationConfirmationIndex);
+    expect(stationSource).toContain("NVIDIA open driver `610.43.02`");
+    expect(stationSource).toContain("Docker CE `29.6.1` with Buildx");
+    expect(stationSource).toContain("NVIDIA Container Toolkit `1.19.1`");
+    expect(stationSource).toContain("from `3.0.11-1ubuntu13` to `1:3.4.0-1ubuntu1`");
   });
 
   it("rejects missing, ambiguous, and unsafe credential schemas (#5048)", async () => {
