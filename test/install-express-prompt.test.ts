@@ -257,7 +257,10 @@ detect_express_platform
     );
     expect(output).toMatch(/approximately 352 GB model/);
     expect(output).toMatch(
-      /installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages/,
+      /retains installed prerequisite versions with actual-versus-expected warnings/,
+    );
+    expect(output).toMatch(
+      /installs reviewed driver, Docker, and NVIDIA Container Toolkit versions only when packages are missing/,
     );
     expect(output).toMatch(/DGX Station remains Deferred/);
     expect(output).toMatch(/Using express install for DGX Station/);
