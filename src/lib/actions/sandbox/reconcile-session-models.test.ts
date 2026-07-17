@@ -3,7 +3,11 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  closeSync,
+  constants,
+  fstatSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -31,6 +35,22 @@ beforeEach(() => {
 
 function store(entries: Record<string, unknown>): string {
   return JSON.stringify(entries);
+}
+
+function readRegularFileNoFollow(filePath: string): string {
+  const descriptor = openSync(
+    filePath,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile() || metadata.nlink !== 1) {
+      throw new Error(`${filePath} must be a single regular file`);
+    }
+    return readFileSync(descriptor, "utf8");
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 describe("reconcilePinnedSessionModels (#7102)", () => {
@@ -145,7 +165,7 @@ describe("buildSessionStoreReplaceCommand", () => {
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(readFileSync(sessionsPath, "utf8")).toBe(replacement);
+      expect(readRegularFileNoFollow(sessionsPath)).toBe(replacement);
       const after = statSync(sessionsPath);
       expect(after.mode & 0o777).toBe(before.mode & 0o777);
       expect(after.uid).toBe(before.uid);
@@ -175,7 +195,7 @@ describe("buildSessionStoreReplaceCommand", () => {
       );
 
       expect(result.status).not.toBe(0);
-      expect(readFileSync(targetPath, "utf8")).toBe(original);
+      expect(readRegularFileNoFollow(targetPath)).toBe(original);
       expect(readdirSync(root).sort()).toEqual(["sessions.json", "target.json"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -199,7 +219,7 @@ describe("buildSessionStoreReplaceCommand", () => {
       );
 
       expect(result.status).not.toBe(0);
-      expect(readFileSync(sessionsPath, "utf8")).toBe(current);
+      expect(readRegularFileNoFollow(sessionsPath)).toBe(current);
       expect(readdirSync(root)).toEqual(["sessions.json"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
