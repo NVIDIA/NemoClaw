@@ -1,12 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { ONBOARD_MACHINE_STATES } from "./machine/types";
 import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import type {
   CheckpointEffectGroupName,
   CheckpointSandboxIdentity,
   OnboardCheckpoint,
 } from "../state/onboard-checkpoint-types";
+
+export function checkpointProvesSandboxStepComplete(
+  checkpoint: OnboardCheckpoint | null | undefined,
+): boolean {
+  if (!checkpoint) return false;
+  const sandboxIndex = ONBOARD_MACHINE_STATES.indexOf("sandbox");
+  const stateIndex = ONBOARD_MACHINE_STATES.indexOf(checkpoint.machineState);
+  return stateIndex > sandboxIndex;
+}
 
 export type EffectGroupReplayReason =
   | "not_recorded"

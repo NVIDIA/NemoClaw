@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDecisionSelected } from "../state/onboard-checkpoint-decision";
 import { loadResumeCheckpoint } from "../state/onboard-checkpoint-migrate";
 import type { CheckpointLoadResult } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
+import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import type { ResumeConfigConflict } from "./resume-config";
 
 export interface OnboardSessionBootstrapInput {
@@ -81,6 +83,11 @@ export function getCheckpointedSandboxName(
   session: Session | null,
 ): string | null {
   if (!resume || (agent?.name && agent.name !== "openclaw")) return null;
+  if (session?.checkpoint) {
+    return isDecisionSelected(session.checkpoint.sandboxIdentity)
+      ? session.checkpoint.sandboxIdentity.value.name
+      : null;
+  }
   return session?.sandboxPromptProgress?.sandboxName === true ? session.sandboxName : null;
 }
 
@@ -123,6 +130,13 @@ function guardResumeCheckpoint(deps: OnboardSessionBootstrapDeps): void {
   }
   if (result?.status === "corrupt") {
     reportCorruptResumeCheckpoint(deps);
+  }
+  if (result?.status === "migrated") {
+    const migratedCheckpoint = result.checkpoint;
+    deps.updateSession((current) => {
+      current.checkpoint = migratedCheckpoint;
+      return current;
+    });
   }
 }
 
@@ -187,13 +201,15 @@ function assertRecoverableResumeSandboxName(
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
 ): void {
-  const sandboxStepCompleted = session?.steps?.sandbox?.status === "complete";
-  const sandboxNameCheckpointed =
-    (!session?.agent || session.agent === "openclaw") &&
-    session?.sandboxPromptProgress?.sandboxName === true;
+  const checkpoint = session?.checkpoint ?? null;
+  const nameRecoverable = checkpoint
+    ? checkpointProvesSandboxStepComplete(checkpoint) ||
+      isDecisionSelected(checkpoint.sandboxIdentity)
+    : session?.steps?.sandbox?.status === "complete" ||
+      ((!session?.agent || session.agent === "openclaw") &&
+        session?.sandboxPromptProgress?.sandboxName === true);
   const recoveredSandboxName =
-    input.requestedSandboxName ||
-    (sandboxStepCompleted || sandboxNameCheckpointed ? session?.sandboxName || null : null);
+    input.requestedSandboxName || (nameRecoverable ? session?.sandboxName || null : null);
   if (input.cannotPrompt && !recoveredSandboxName) {
     deps.error(
       "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",

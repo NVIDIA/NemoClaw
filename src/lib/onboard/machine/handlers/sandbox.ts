@@ -35,7 +35,10 @@ import {
   recordCheckpointEffectGroup,
   recordCheckpointSandboxIdentity,
 } from "../../checkpoint-record";
-import { planSandboxCreateReplay } from "../../checkpoint-replay";
+import {
+  checkpointProvesSandboxStepComplete,
+  planSandboxCreateReplay,
+} from "../../checkpoint-replay";
 import {
   bindingRevalidationGuidance,
   revalidateCheckpointBindings,
@@ -61,7 +64,6 @@ import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../../s
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
-import { ONBOARD_MACHINE_STATES } from "../types";
 import * as dcodeResume from "./sandbox-dcode-resume";
 import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
 import {
@@ -348,15 +350,6 @@ function observabilityRequestValidationError(
   return null;
 }
 
-function checkpointProvesSandboxStepComplete(
-  checkpoint: Session["checkpoint"] | undefined,
-): boolean {
-  if (!checkpoint) return false;
-  const sandboxIndex = ONBOARD_MACHINE_STATES.indexOf("sandbox");
-  const stateIndex = ONBOARD_MACHINE_STATES.indexOf(checkpoint.machineState);
-  return stateIndex > sandboxIndex;
-}
-
 function checkpointIdentityForResumeTarget(
   checkpoint: OnboardCheckpoint,
   sandboxName: string | null,
@@ -503,9 +496,9 @@ class SandboxStateFlow<
     const decision = decideSandboxResume({
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
-      sandboxStepComplete:
-        state.session?.steps?.sandbox?.status === "complete" ||
-        checkpointProvesSandboxStepComplete(state.session?.checkpoint),
+      sandboxStepComplete: state.session?.checkpoint
+        ? checkpointProvesSandboxStepComplete(state.session.checkpoint)
+        : state.session?.steps?.sandbox?.status === "complete",
       sandboxReuseState,
       inferenceRouteConfigChanged: hasHermesCompatibleAnthropicInferenceRouteDrift({
         agentName: (this.options.agent as { name?: string } | null)?.name,

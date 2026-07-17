@@ -551,6 +551,32 @@ describe("handleSandboxState", () => {
     expect(calls.recordSkip).toHaveBeenCalled();
   });
 
+  it("does not let a stale legacy complete marker override a checkpoint still at sandbox (#7022)", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionUnset(),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing" });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.createSandbox).toHaveBeenCalled();
+  });
+
   it("recreates a resumed Hermes sandbox when its compatible Anthropic frontend is stale", async () => {
     const session = createSession({
       agent: "hermes",

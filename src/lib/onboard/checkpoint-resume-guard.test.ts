@@ -114,4 +114,26 @@ describe("resume checkpoint fail-safe (#6228)", () => {
     await expect(prepareOnboardSession(resumeInput, deps)).rejects.toThrow("PAST_GUARD");
     expect(resolveResumeCheckpoint).toHaveBeenCalled();
   });
+
+  it("persists a migrated legacy checkpoint onto the session instead of re-deriving it every resume (#7022)", async () => {
+    let persistedSession = createSession({ sessionId: "s1", agent: "openclaw" });
+    const updateSession = vi.fn((mutator: (session: typeof persistedSession) => void) => {
+      mutator(persistedSession);
+      return persistedSession;
+    });
+    const deps = makeDeps({
+      updateSession,
+      resolveResumeCheckpoint: (): CheckpointLoadResult => ({
+        status: "migrated",
+        checkpoint: loadedCheckpoint,
+        fromVersion: 0,
+      }),
+      getResumeConfigConflicts: () => {
+        throw new Error("PAST_GUARD");
+      },
+    });
+    await expect(prepareOnboardSession(resumeInput, deps)).rejects.toThrow("PAST_GUARD");
+    expect(updateSession).toHaveBeenCalled();
+    expect(persistedSession.checkpoint).toEqual(loadedCheckpoint);
+  });
 });

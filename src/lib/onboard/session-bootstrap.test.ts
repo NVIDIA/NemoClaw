@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { CheckpointLoadResult } from "../state/onboard-checkpoint-types";
+import { decisionUnset } from "../state/onboard-checkpoint-decision";
+import {
+  CHECKPOINT_SCHEMA_VERSION,
+  type CheckpointLoadResult,
+} from "../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionRecoveryReceipt } from "../state/onboard-session";
 import type { ResumeConfigConflict } from "./resume-config";
 import { type OnboardSessionBootstrapDeps, prepareOnboardSession } from "./session-bootstrap";
@@ -338,6 +342,49 @@ describe("prepareOnboardSession", () => {
 
     expect(result.session?.sandboxName).toBe("checkpointed-box");
     expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("does not let a stale legacy checkpointed-name marker override an unset checkpoint identity (#7022)", async () => {
+    const session = createSession({
+      sandboxName: "stale-box",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionUnset(),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const { deps } = createDeps(session);
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          cannotPrompt: true,
+          nonInteractive: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(ExitError);
+
+    expect(deps.error).toHaveBeenCalledWith(
+      "  so no sandbox name was recorded. Re-run with --name <sandbox> (or set NEMOCLAW_SANDBOX_NAME).",
+    );
   });
 
   it("allows interactive resume to prompt when no sandbox name was recorded", async () => {
