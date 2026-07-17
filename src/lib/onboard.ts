@@ -359,6 +359,9 @@ const { resolveSandboxImageTagFromCreateOutput } =
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const {
+  loadResumeCheckpoint,
+}: typeof import("./state/onboard-checkpoint-migrate") = require("./state/onboard-checkpoint-migrate");
+const {
   registerIncompleteOnboardExitHandlerForSession,
 }: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
 const {
@@ -4164,6 +4167,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         cliName,
         error: (message) => console.error(message),
         exitProcess: (code) => process.exit(code),
+        resolveResumeCheckpoint: loadResumeCheckpoint,
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
@@ -4482,6 +4486,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         clearPlanEnv,
         getRegistrySandboxMessagingPlan,
         providerMatchesGatewayCredential,
+        providerExistsInGateway,
         stageSandboxCredentialProviders,
         promptValidatedSandboxName,
         selectResourceProfileForSandbox: () =>

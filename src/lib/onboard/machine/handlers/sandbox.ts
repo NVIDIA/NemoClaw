@@ -19,6 +19,10 @@ import {
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { isDecisionSelected } from "../../../state/onboard-checkpoint-decision";
 import type {
+  CheckpointSandboxIdentity,
+  OnboardCheckpoint,
+} from "../../../state/onboard-checkpoint-types";
+import type {
   HermesAuthMethod,
   Session,
   SessionResourceProfile,
@@ -57,6 +61,7 @@ import type { SandboxCreateIntent as ResolvedSandboxCreateIntent } from "../../s
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
+import { ONBOARD_MACHINE_STATES } from "../types";
 import * as dcodeResume from "./sandbox-dcode-resume";
 import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
 import {
@@ -184,6 +189,7 @@ export interface SandboxStateOptions<
     clearPlanEnv(): void;
     getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
     providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
+    providerExistsInGateway(name: string, gatewayName: string): boolean;
     stageSandboxCredentialProviders(input: {
       sandboxName: string;
       enabledChannels: readonly string[];
@@ -342,6 +348,25 @@ function observabilityRequestValidationError(
   return null;
 }
 
+function checkpointProvesSandboxStepComplete(
+  checkpoint: Session["checkpoint"] | undefined,
+): boolean {
+  if (!checkpoint) return false;
+  const sandboxIndex = ONBOARD_MACHINE_STATES.indexOf("sandbox");
+  const stateIndex = ONBOARD_MACHINE_STATES.indexOf(checkpoint.machineState);
+  return stateIndex > sandboxIndex;
+}
+
+function checkpointIdentityForResumeTarget(
+  checkpoint: OnboardCheckpoint,
+  sandboxName: string | null,
+  agentName: string,
+): CheckpointSandboxIdentity | null {
+  if (!isDecisionSelected(checkpoint.sandboxIdentity)) return null;
+  const identity = checkpoint.sandboxIdentity.value;
+  return identity.name === sandboxName && identity.agent === agentName ? identity : null;
+}
+
 class SandboxStateFlow<
   Gpu,
   Agent,
@@ -478,7 +503,9 @@ class SandboxStateFlow<
     const decision = decideSandboxResume({
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
-      sandboxStepComplete: state.session?.steps?.sandbox?.status === "complete",
+      sandboxStepComplete:
+        state.session?.steps?.sandbox?.status === "complete" ||
+        checkpointProvesSandboxStepComplete(state.session?.checkpoint),
       sandboxReuseState,
       inferenceRouteConfigChanged: hasHermesCompatibleAnthropicInferenceRouteDrift({
         agentName: (this.options.agent as { name?: string } | null)?.name,
@@ -530,29 +557,51 @@ class SandboxStateFlow<
   ): SandboxResumeDecision {
     if (decision.kind !== "create") return decision;
     const checkpoint = state.session?.checkpoint;
-    if (!checkpoint?.effectGroups.sandbox_create) return decision;
-    if (!isDecisionSelected(checkpoint.sandboxIdentity)) return decision;
+    const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+    const identity =
+      checkpoint && checkpointIdentityForResumeTarget(checkpoint, state.sandboxName, agentName);
+    if (!checkpoint || !identity) return decision;
 
-    const bindingCheck = revalidateCheckpointBindings(checkpoint, {
-      availableCredentialEnvs: new Set(
-        Object.keys(this.options.env).filter((name) => Boolean(this.options.env[name]?.trim())),
-      ),
-      liveRegisteredProviders: new Set(state.session?.stagedCredentialProviders ?? []),
-    });
-    if (bindingCheck.status === "stale") {
-      const guidance = bindingRevalidationGuidance(bindingCheck);
-      if (guidance) this.deps.error(guidance);
-      this.deps.error(
-        "  A previous onboarding attempt was interrupted after starting sandbox creation.",
-      );
-      this.deps.error("  Re-run with the required credentials available to continue safely.");
-      return this.deps.exitProcess(1);
-    }
+    const bindingCheck = revalidateCheckpointBindings(
+      checkpoint,
+      this.checkpointBindingAvailability(checkpoint),
+    );
+    if (bindingCheck.status === "stale") return this.rejectStaleCheckpointBindings(bindingCheck);
 
     const replay = planSandboxCreateReplay(checkpoint, {
       liveSandboxExists: sandboxReuseState === "ready",
     });
-    return replay.action === "reuse" ? { kind: "reuse" } : decision;
+    return replay.action === "reuse" && replay.identity.name === state.sandboxName
+      ? { kind: "reuse" }
+      : decision;
+  }
+
+  private checkpointBindingAvailability(checkpoint: OnboardCheckpoint): {
+    availableCredentialEnvs: ReadonlySet<string>;
+    liveRegisteredProviders: ReadonlySet<string>;
+  } {
+    return {
+      availableCredentialEnvs: new Set(
+        Object.keys(this.options.env).filter((name) => Boolean(this.options.env[name]?.trim())),
+      ),
+      liveRegisteredProviders: new Set(
+        checkpoint.bindings.registeredProviders.filter((name) =>
+          this.deps.providerExistsInGateway(name, this.options.gatewayName),
+        ),
+      ),
+    };
+  }
+
+  private rejectStaleCheckpointBindings(
+    bindingCheck: Extract<ReturnType<typeof revalidateCheckpointBindings>, { status: "stale" }>,
+  ): never {
+    const guidance = bindingRevalidationGuidance(bindingCheck);
+    if (guidance) this.deps.error(guidance);
+    this.deps.error(
+      "  A previous onboarding attempt was interrupted after starting sandbox creation.",
+    );
+    this.deps.error("  Re-run with the required credentials available to continue safely.");
+    return this.deps.exitProcess(1);
   }
 
   private applyObservabilityRequest(
@@ -797,6 +846,22 @@ class SandboxStateFlow<
     });
     if (messagingInvalidated) this.deps.clearPlanEnv();
     return { ...state, session, sandboxName };
+  }
+
+  private recordSandboxIdentityForCreate(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+  ): SandboxStepState<WebSearchConfig> {
+    if (this.resumesSandboxPrompts) return state;
+    const session = this.deps.updateSession((current) => {
+      recordCheckpointSandboxIdentity(
+        current,
+        sandboxName,
+        current.agent ?? (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
+      );
+      return current;
+    });
+    return { ...state, session };
   }
 
   private checkpointMessaging(
@@ -1053,6 +1118,7 @@ class SandboxStateFlow<
     if (!nextState.sandboxName) {
       nextState = this.checkpointSandboxName(nextState, requestedSandboxName);
     }
+    nextState = this.recordSandboxIdentityForCreate(nextState, requestedSandboxName);
     const webSearchConfig = await this.resolveWebSearchForCreation(nextState);
     const webSearchConfigChanged =
       nextState.webSearchConfigChanged ||

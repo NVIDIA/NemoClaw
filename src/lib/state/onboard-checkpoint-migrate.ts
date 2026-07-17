@@ -85,10 +85,17 @@ export function resolveCheckpointForResume(rawSession: unknown): CheckpointLoadR
   if (inspected.status === "unsupported_future" || inspected.status === "corrupt") {
     return inspected;
   }
-  if (inspected.status === "loaded") return inspected;
 
   const session = normalizeSession(rawSession as JsonValue);
   if (!session) return { status: "none" };
+
+  if (inspected.status === "loaded") {
+    // A checkpoint copied from another session's file would otherwise supply
+    // identity, bindings, and effect receipts for the wrong onboarding run.
+    if (inspected.checkpoint.sessionId !== session.sessionId) return { status: "corrupt" };
+    return inspected;
+  }
+
   return {
     status: "migrated",
     checkpoint: deriveCheckpointFromSession(session),

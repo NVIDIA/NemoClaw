@@ -88,6 +88,13 @@ describe("planSandboxCreateReplay never opens a second sandbox (#5961)", () => {
       identity: { name: "my-sandbox", agent: "openclaw" },
     });
   });
+
+  it("reuses a live sandbox even when the create receipt was lost to a mid-create crash (#7022)", () => {
+    expect(planSandboxCreateReplay(checkpoint(), { liveSandboxExists: true })).toEqual({
+      action: "reuse",
+      identity: { name: "my-sandbox", agent: "openclaw" },
+    });
+  });
 });
 
 describe("crash-then-resume matrix proves at-most-once destructive create (#6228)", () => {

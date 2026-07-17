@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { CheckpointLoadResult } from "../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionRecoveryReceipt } from "../state/onboard-session";
 import type { ResumeConfigConflict } from "./resume-config";
 import { type OnboardSessionBootstrapDeps, prepareOnboardSession } from "./session-bootstrap";
@@ -53,6 +54,7 @@ function createDeps(
     exitProcess: vi.fn((code: number) => {
       throw new ExitError(code);
     }) as (code: number) => never,
+    resolveResumeCheckpoint: vi.fn((): CheckpointLoadResult => ({ status: "none" })),
     ...overrides,
   };
   return { deps, getSession: () => session };

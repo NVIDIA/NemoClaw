@@ -101,4 +101,33 @@ describe("checkpoint schema inspection", () => {
     };
     expect(inspectCheckpoint(checkpoint)).toEqual({ status: "corrupt" });
   });
+
+  it("rejects a malformed effect group record instead of silently dropping it", () => {
+    const checkpoint = serializeCheckpoint(baseCheckpoint());
+    (checkpoint as Record<string, unknown>).effectGroups = {
+      sandbox_create: { completedAt: ISO, fingerprint: 42 },
+    };
+    expect(inspectCheckpoint(checkpoint)).toEqual({ status: "corrupt" });
+  });
+
+  it("rejects a non-object effect groups container instead of defaulting to empty", () => {
+    const checkpoint = serializeCheckpoint(baseCheckpoint());
+    (checkpoint as Record<string, unknown>).effectGroups = "not-an-object";
+    expect(inspectCheckpoint(checkpoint)).toEqual({ status: "corrupt" });
+  });
+
+  it("rejects non-string entries inside checkpoint bindings instead of silently dropping them", () => {
+    const checkpoint = serializeCheckpoint(baseCheckpoint());
+    (checkpoint as Record<string, unknown>).bindings = {
+      credentialEnvs: ["OPENAI_API_KEY", 42],
+      registeredProviders: ["web-search-p"],
+    };
+    expect(inspectCheckpoint(checkpoint)).toEqual({ status: "corrupt" });
+  });
+
+  it("rejects a non-object bindings container instead of defaulting to empty", () => {
+    const checkpoint = serializeCheckpoint(baseCheckpoint());
+    (checkpoint as Record<string, unknown>).bindings = "not-an-object";
+    expect(inspectCheckpoint(checkpoint)).toEqual({ status: "corrupt" });
+  });
 });

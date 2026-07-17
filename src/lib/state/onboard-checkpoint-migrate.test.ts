@@ -120,6 +120,14 @@ describe("resolveCheckpointForResume", () => {
     expect(resolveCheckpointForResume(raw)).toEqual({ status: "corrupt" });
   });
 
+  it("rejects a checkpoint copied from a different session's file instead of trusting it", () => {
+    const raw = {
+      ...rawJson(completedSession({ sessionId: "sess-2" })),
+      checkpoint: serializeCheckpoint(validCheckpoint),
+    };
+    expect(resolveCheckpointForResume(raw)).toEqual({ status: "corrupt" });
+  });
+
   it("persists a recorded checkpoint through a normalize round-trip", () => {
     const session = completedSession();
     const withCheckpoint = createSession({

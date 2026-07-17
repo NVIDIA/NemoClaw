@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { loadResumeCheckpoint } from "../state/onboard-checkpoint-migrate";
 import type { CheckpointLoadResult } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
@@ -47,7 +46,7 @@ export interface OnboardSessionBootstrapDeps {
   cliName(): string;
   error(message: string): void;
   exitProcess(code: number): never;
-  resolveResumeCheckpoint?: () => CheckpointLoadResult;
+  resolveResumeCheckpoint(): CheckpointLoadResult;
 }
 
 export interface OnboardSessionBootstrapResult {
@@ -115,7 +114,7 @@ function reportCorruptResumeCheckpoint(deps: OnboardSessionBootstrapDeps): never
 }
 
 function guardResumeCheckpoint(deps: OnboardSessionBootstrapDeps): void {
-  const result = (deps.resolveResumeCheckpoint ?? loadResumeCheckpoint)();
+  const result = deps.resolveResumeCheckpoint();
   if (result?.status === "unsupported_future") {
     reportUnsupportedResumeCheckpoint(result.foundVersion, deps);
   }

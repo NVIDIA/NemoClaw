@@ -226,6 +226,7 @@ export function createDeps(
       clearPlanEnv: calls.clearPlanEnv,
       getRegistrySandboxMessagingPlan: () => null,
       providerMatchesGatewayCredential: () => false,
+      providerExistsInGateway: () => false,
       stageSandboxCredentialProviders: calls.stageCredentialProviders,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,

@@ -4,6 +4,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hashCredential } from "../../../security/credential-hash";
+import { decisionUnset } from "../../../state/onboard-checkpoint-decision";
+import { CHECKPOINT_SCHEMA_VERSION } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { handleSandboxState } from "./sandbox";
@@ -508,6 +510,45 @@ describe("handleSandboxState", () => {
     expect(result.selectedMessagingChannels).toEqual(["slack"]);
     expect(result.webSearchConfigChanged).toBe(false);
     expect(result.session).toBe(skippedSession);
+  });
+
+  it("treats checkpoint machine-state progress past sandbox as step-complete even when the legacy step status is stale (#6228)", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "agent_setup",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionUnset(),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: () => ({
+        name: "saved",
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        toolDisclosure: "progressive",
+        fromDockerfile: null,
+        hermesAuthMethod: null,
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(session.steps.sandbox.status).not.toBe("complete");
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.recordSkip).toHaveBeenCalled();
   });
 
   it("recreates a resumed Hermes sandbox when its compatible Anthropic frontend is stale", async () => {

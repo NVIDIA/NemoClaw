@@ -61,6 +61,7 @@ function makeDeps(overrides: Partial<OnboardSessionBootstrapDeps>): OnboardSessi
     exitProcess: (code) => {
       throw new ExitError(code);
     },
+    resolveResumeCheckpoint: (): CheckpointLoadResult => ({ status: "none" }),
     ...overrides,
   };
 }
@@ -102,13 +103,15 @@ describe("resume checkpoint fail-safe (#6228)", () => {
     await expect(prepareOnboardSession(resumeInput, deps)).rejects.toThrow("PAST_GUARD");
   });
 
-  it("is backward compatible when no checkpoint resolver is supplied", async () => {
+  it("always runs checkpoint validation before resuming — there is no path that skips it (#6228)", async () => {
+    const resolveResumeCheckpoint = vi.fn((): CheckpointLoadResult => ({ status: "none" }));
     const deps = makeDeps({
-      resolveResumeCheckpoint: undefined,
+      resolveResumeCheckpoint,
       getResumeConfigConflicts: () => {
         throw new Error("PAST_GUARD");
       },
     });
     await expect(prepareOnboardSession(resumeInput, deps)).rejects.toThrow("PAST_GUARD");
+    expect(resolveResumeCheckpoint).toHaveBeenCalled();
   });
 });

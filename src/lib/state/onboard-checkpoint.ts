@@ -31,9 +31,14 @@ function readString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function readStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === "string");
+function readStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  const entries: string[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") return null;
+    entries.push(entry);
+  }
+  return entries;
 }
 
 function readCanonicalIsoTimestamp(value: unknown): string | null {
@@ -80,22 +85,25 @@ function parseEffectGroupRecord(value: unknown): CheckpointEffectGroupRecord | n
 
 function parseEffectGroups(
   value: unknown,
-): Partial<Record<CheckpointEffectGroupName, CheckpointEffectGroupRecord>> {
+): Partial<Record<CheckpointEffectGroupName, CheckpointEffectGroupRecord>> | null {
+  if (!isObjectRecord(value)) return null;
   const groups: Partial<Record<CheckpointEffectGroupName, CheckpointEffectGroupRecord>> = {};
-  if (!isObjectRecord(value)) return groups;
   for (const name of EFFECT_GROUP_NAMES) {
-    const record = parseEffectGroupRecord(value[name]);
-    if (record) groups[name] = record;
+    const raw = value[name];
+    if (raw === undefined) continue;
+    const record = parseEffectGroupRecord(raw);
+    if (!record) return null;
+    groups[name] = record;
   }
   return groups;
 }
 
-function parseBindings(value: unknown): CheckpointBindings {
-  if (!isObjectRecord(value)) return { credentialEnvs: [], registeredProviders: [] };
-  return {
-    credentialEnvs: readStringArray(value.credentialEnvs),
-    registeredProviders: readStringArray(value.registeredProviders),
-  };
+function parseBindings(value: unknown): CheckpointBindings | null {
+  if (!isObjectRecord(value)) return null;
+  const credentialEnvs = readStringArray(value.credentialEnvs);
+  const registeredProviders = readStringArray(value.registeredProviders);
+  if (credentialEnvs === null || registeredProviders === null) return null;
+  return { credentialEnvs, registeredProviders };
 }
 
 function requireDecision<T>(
@@ -116,7 +124,10 @@ function parseCurrentSchema(value: Record<string, unknown>): OnboardCheckpoint |
   const webSearch = requireDecision(value.webSearch, parseWebSearchValue);
   const messaging = requireDecision(value.messaging, parseMessagingValue);
   const resourceProfile = requireDecision(value.resourceProfile, parseResourceProfileValue);
+  const effectGroups = parseEffectGroups(value.effectGroups);
+  const bindings = parseBindings(value.bindings);
   if (!sandboxIdentity || !webSearch || !messaging || !resourceProfile) return null;
+  if (!effectGroups || !bindings) return null;
 
   return {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
@@ -127,8 +138,8 @@ function parseCurrentSchema(value: Record<string, unknown>): OnboardCheckpoint |
     webSearch,
     messaging,
     resourceProfile,
-    effectGroups: parseEffectGroups(value.effectGroups),
-    bindings: parseBindings(value.bindings),
+    effectGroups,
+    bindings,
   };
 }
 

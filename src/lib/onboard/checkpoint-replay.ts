@@ -47,8 +47,7 @@ export function planSandboxCreateReplay(
     return { action: "capture_identity_first" };
   }
   const identity = checkpoint.sandboxIdentity.value;
-  const created = Boolean(checkpoint.effectGroups.sandbox_create);
-  if (created && observed.liveSandboxExists) {
+  if (observed.liveSandboxExists) {
     return { action: "reuse", identity };
   }
   return { action: "create", identity };
