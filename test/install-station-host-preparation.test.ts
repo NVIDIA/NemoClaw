@@ -12,10 +12,8 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const PUBLIC_BOOTSTRAP = path.join(REPO_ROOT, "install.sh");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const STATION_REVISION = "a".repeat(40);
-const STATION_DOCS = [
-  path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx"),
-  path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx"),
-];
+const STATION_PREREQUISITES = path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx");
+const STATION_QUICKSTART = path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx");
 
 function runSourced(script: string, body: string, extraEnv: Record<string, string> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-host-"));
@@ -39,9 +37,10 @@ function runSourced(script: string, body: string, extraEnv: Record<string, strin
 }
 
 describe("DGX Station host preparation", () => {
-  it("keeps documented Station pins and Deferred status aligned", () => {
+  it("keeps Station prerequisites canonical and links to them from quickstart", () => {
     const helper = fs.readFileSync(STATION_PREPARE, "utf-8");
-    const docs = STATION_DOCS.map((doc) => fs.readFileSync(doc, "utf-8"));
+    const prerequisites = fs.readFileSync(STATION_PREREQUISITES, "utf-8");
+    const quickstart = fs.readFileSync(STATION_QUICKSTART, "utf-8");
     const pinnedValues = [
       "DRIVER_VERSION",
       "DOCKER_VERSION",
@@ -54,11 +53,14 @@ describe("DGX Station host preparation", () => {
       return value as string;
     });
 
-    for (const doc of docs) {
-      for (const version of pinnedValues) expect(doc).toContain(version);
-      expect(doc).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-      expect(doc).toMatch(/physical (?:DGX Station )?hardware|physical end-to-end validation/);
-    }
+    for (const version of pinnedValues) expect(prerequisites).toContain(version);
+    expect(prerequisites).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
+    expect(prerequisites).toMatch(
+      /physical (?:DGX Station )?hardware|physical end-to-end validation/,
+    );
+    expect(quickstart).toContain("prerequisites#dgx-station-express-preparation");
+    expect(quickstart).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
+    expect(quickstart).toMatch(/physical (?:DGX Station )?hardware|physical end-to-end validation/);
   });
 
   it("uses the documented plain-Ubuntu driver-injection probe for CDI and --gpus", () => {
