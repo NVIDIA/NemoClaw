@@ -23,7 +23,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // These digests record the exact asset bytes at promptAssetRevision so normal tests
 // can detect stale immutable links without fetching raw.githubusercontent.com.
-const promptAssetRevision = "3f04330bf4ea90174d1d86095bde52251fd7f4e3";
+const promptAssetRevision = "f3682a5be7069e58303d3345e682424d5c2453b2";
 
 type PromptAsset = {
   path: string;
@@ -46,7 +46,7 @@ const promptAssets = {
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
-    "5e85a64ebd98e70c1e891877a7a87b43a50d731115ec643109854aaadfab631d", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "82a47519f415c0c3ad1d6c5cb30dcb33de846026661d8da88054385b9789f3b5", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   windowsWsl: definePromptAsset(
     "docs/resources/prompt-assets/windows-wsl.md",
