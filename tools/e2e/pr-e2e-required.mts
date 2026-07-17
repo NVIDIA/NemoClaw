@@ -314,7 +314,10 @@ export function classifyCoordinationCheck(
   if (check.status !== "completed") {
     return { state: "waiting", description: title, ...links };
   }
-  if (check.conclusion === "failure" && AUTHORIZATION_TITLES.has(title)) {
+  if (
+    check.conclusion === "failure" &&
+    (AUTHORIZATION_TITLES.has(title) || hasRetryableFailureMarker(check))
+  ) {
     return { state: "waiting", description: title, ...links };
   }
   if (

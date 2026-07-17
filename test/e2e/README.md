@@ -208,11 +208,14 @@ cannot be retried because the child may still execute and a retry could start
 duplicate credential-bearing work. Inspect the linked run, then update the PR
 and run fresh CI before authorizing again.
 The native required job treats authorization and running titles as intermediate
-waiting states only while coordination remains in progress. A completed failure
-remains immutable and terminal to manual authorization. A later eligible
-`CI / Pull Request` run can create a fresh coordination check for the same
-unchanged open head and base only when the newest failed coordination check
-carries a current-version retry reason:
+waiting states only while coordination remains in progress. It also keeps
+polling when the current exact-diff coordination check is a completed failure
+with a validated current-version retry marker, so it can follow a later
+validated replacement for the same unchanged head and base. That completed
+failure remains immutable and cannot be changed by manual authorization. A
+later eligible `CI / Pull Request` run can create a fresh coordination check for
+the same unchanged open head and base only when the newest failed coordination
+check carries a current-version retry reason:
 `prerequisite-ci` after the later CI run succeeds, `child-cancelled` after a
 conclusively cancelled child, or `evidence-download` after a successful child
 whose evidence download failed, was cancelled, or was skipped. The trusted

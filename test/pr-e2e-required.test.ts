@@ -110,7 +110,8 @@ describe("native PR E2E required job", () => {
           conclusion: "failure",
           details_url: "https://github.com/attacker/repo/runs/17",
           output: {
-            summary: "[logs](https://github.com/attacker/repo/actions/runs/23/job/77)",
+            summary:
+              "[logs](https://github.com/attacker/repo/actions/runs/23/job/77)\n\n<!-- nemoclaw-pr-e2e-retry:v1:unknown -->",
             title: "Selected E2E jobs failed",
           },
         }),
@@ -294,6 +295,65 @@ describe("native PR E2E required job", () => {
                     : check(),
               ]),
             );
+          },
+        ),
+      ]),
+    );
+
+    await expect(
+      waitForRequiredGate(identity, {
+        timeoutMs: 100,
+        pollIntervalMs: 10,
+        now: () => clock,
+        sleep: async (milliseconds) => {
+          clock += milliseconds;
+        },
+      }),
+    ).resolves.toMatchObject({ conclusion: "success" });
+    expect(coordinationQueries).toBe(3);
+  });
+
+  it("waits for a replacement after a retryable coordination failure", async () => {
+    let coordinationQueries = 0;
+    let clock = 0;
+    const retryableFailure = check(undefined, {
+      conclusion: "failure",
+      output: {
+        title: "Selected E2E did not pass",
+        summary:
+          "The child run was cancelled.\n\n<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->",
+      },
+    });
+    const coordinationListings = [
+      listing([retryableFailure]),
+      listing([
+        retryableFailure,
+        check(undefined, {
+          id: 18,
+          status: "in_progress",
+          conclusion: null,
+          output: { title: "Running selected E2E jobs" },
+        }),
+      ]),
+      listing([
+        retryableFailure,
+        check(undefined, {
+          id: 18,
+          output: { title: "All selected E2E jobs passed" },
+        }),
+      ]),
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter([
+        githubFetchRoute(
+          ({ url }) => url.includes("/pulls/42"),
+          () => githubResponse(pullRequest()),
+        ),
+        githubFetchRoute(
+          ({ url }) => url.includes("Coordination"),
+          () => {
+            coordinationQueries += 1;
+            return githubResponse(coordinationListings.shift());
           },
         ),
       ]),
