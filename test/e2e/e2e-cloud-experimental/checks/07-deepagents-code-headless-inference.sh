@@ -77,8 +77,130 @@ sandbox_dcode_wrapper_contract() {
   sandbox_exec 'dcode_path="$(command -v dcode 2>/dev/null || true)"; [ "$dcode_path" = /usr/local/bin/dcode ] && [ -x /usr/local/lib/nemoclaw/dcode-launcher.sh ] && [ -x /usr/local/lib/nemoclaw/dcode-managed-exec ] && [ -x /usr/local/lib/nemoclaw/dcode-wrapper.sh ] && cmp -s /usr/local/bin/dcode /usr/local/lib/nemoclaw/dcode-launcher.sh && cmp -s /usr/local/lib/nemoclaw/dcode-managed-exec /usr/local/lib/nemoclaw/dcode-launcher.sh && python3 -c '\''import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("deepagents_code") else 1)'\'' && printf "%s\\n" NEMOCLAW_DCODE_WRAPPER_CHAIN_OK'
 }
 
+write_openshell_target_shim() {
+  local shim_path="$1"
+
+  cat >"$shim_path" <<'SHIM'
+#!/bin/bash
+set -euo pipefail
+
+real_openshell="${OPENSHELL_NEMOCLAW_REAL_BIN:?}"
+trace_file="${OPENSHELL_NEMOCLAW_TARGET_TRACE:?}"
+original_args=("$@")
+
+if [ "${1:-}" = "sandbox" ] && [ "${2:-}" = "exec" ]; then
+  shift 2
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -n | --name)
+        [ "$#" -ge 2 ] || exit 64
+        printf '%s\n' "$2" >>"$trace_file"
+        break
+        ;;
+      --name=*)
+        printf '%s\n' "${1#--name=}" >>"$trace_file"
+        break
+        ;;
+      --)
+        break
+        ;;
+    esac
+    shift
+  done
+fi
+
+unset OPENSHELL_NEMOCLAW_REAL_BIN OPENSHELL_NEMOCLAW_TARGET_TRACE
+exec "$real_openshell" "${original_args[@]}"
+SHIM
+  chmod 0700 "$shim_path"
+}
+
+validate_connect_target_trace() {
+  local trace_file="$1"
+  local observed=0
+  local target
+
+  if [ ! -s "$trace_file" ]; then
+    printf '%s\n' "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:missing"
+    return 1
+  fi
+
+  while IFS= read -r target || [ -n "$target" ]; do
+    observed=$((observed + 1))
+    if [ "$target" != "$SANDBOX_NAME" ]; then
+      printf '%s\n' "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:mismatch"
+      return 1
+    fi
+  done <"$trace_file"
+
+  if [ "$observed" -eq 0 ]; then
+    printf '%s\n' "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:missing"
+    return 1
+  fi
+}
+
 nemoclaw_connect_probe() {
-  "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" "$SANDBOX_NAME" connect --probe-only 2>&1
+  local real_openshell
+  local trace_dir
+  local trace_file
+  local shim_path
+  local connect_output
+  local connect_status
+  local trace_result
+
+  real_openshell="$(command -v openshell 2>/dev/null || true)"
+  case "$real_openshell" in
+    /*) ;;
+    *)
+      printf '%s\n' "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:openshell"
+      return 1
+      ;;
+  esac
+  if [ ! -x "$real_openshell" ]; then
+    printf '%s\n' "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:openshell"
+    return 1
+  fi
+
+  if ! trace_dir="$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-dcode-connect.XXXXXX")"; then
+    printf '%s\n' "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:shim"
+    return 1
+  fi
+  trace_file="$trace_dir/targets"
+  shim_path="$trace_dir/openshell"
+  if ! : >"$trace_file" || ! write_openshell_target_shim "$shim_path"; then
+    rm -rf -- "$trace_dir"
+    printf '%s\n' "NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:shim"
+    return 1
+  fi
+
+  # Exercise the public bare-connect route with every sandbox-name alias
+  # removed. The test-only OpenShell shim records the actual post-routing exec
+  # targets and then exact-execs the real absolute OpenShell binary.
+  if connect_output="$(
+    unset SANDBOX_NAME NEMOCLAW_SANDBOX_NAME NEMOCLAW_SANDBOX
+    env \
+      OPENSHELL_NEMOCLAW_REAL_BIN="$real_openshell" \
+      OPENSHELL_NEMOCLAW_TARGET_TRACE="$trace_file" \
+      NEMOCLAW_OPENSHELL_BIN="$shim_path" \
+      "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" connect --probe-only 2>&1
+  )"; then
+    connect_status=0
+  else
+    connect_status=$?
+  fi
+
+  if trace_result="$(validate_connect_target_trace "$trace_file")"; then
+    rm -rf -- "$trace_dir"
+    printf '%s\n' "$connect_output"
+    return "$connect_status"
+  else
+    connect_status=$?
+  fi
+
+  rm -rf -- "$trace_dir"
+  printf '%s\n' "$connect_output"
+  printf '%s\n' "$trace_result"
+  return "$connect_status"
 }
 
 dcode_connect_fail_closed_contract() (
@@ -462,13 +584,21 @@ DCODE_EXIT:${direct_exit}"
     fail_test "direct-exec dcode -n did not exit 0 with PONG (${direct_classification}, exit ${direct_exit})"
   fi
 
-  # 7. The user-facing connect readiness path accepts the same managed route.
+  # 7. The user-facing bare-connect readiness path must route every observed
+  # sandbox exec to the same sandbox used by the preceding lifecycle evidence.
+  connect_output=""
   if connect_output="$(nemoclaw_connect_probe)"; then
     connect_exit=0
+    pass "bare connect targeted the Deep Agents Code sandbox"
     pass "nemoclaw connect --probe-only accepted the managed inference route (direct DNS/hosts ${direct_dns_state})"
   else
     connect_exit=$?
-    fail_test "nemoclaw connect --probe-only rejected the managed inference route (exit ${connect_exit})"
+    connect_target_reason="$(printf '%s\n' "$connect_output" | sed -n 's/^NEMOCLAW_DCODE_CONNECT_TARGET_FAIL:\([a-z-]*\)$/\1/p' | tail -n1)"
+    if [ -n "$connect_target_reason" ]; then
+      fail_test "bare connect did not target the expected sandbox (${connect_target_reason})"
+    else
+      fail_test "nemoclaw connect --probe-only rejected the managed inference route (exit ${connect_exit})"
+    fi
   fi
 
   # 8. Untrusted evidence from the image-installed helper must fail closed
