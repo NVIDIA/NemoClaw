@@ -229,7 +229,7 @@
     {
       "name": "Intel Mac (macOS x86_64)",
       "status": "unsupported",
-      "notes": "OpenShell does not publish macOS x86_64 standalone gateway assets. Install hard-fails on x86_64 macOS (`scripts/install-openshell.sh:663`). See issue #954 (closed)."
+      "notes": "OpenShell does not publish macOS x86_64 standalone gateway assets. Install hard-fails on x86_64 macOS (`scripts/install-openshell.sh:689`). See issue #954 (closed)."
     },
     {
       "name": "Non-Ubuntu/Debian Linux distros",

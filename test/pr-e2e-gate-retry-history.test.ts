@@ -249,7 +249,7 @@ describe("PR E2E controller retry history", () => {
         output: {
           title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining(
-            "No selected E2E job ran and no repository secret was exposed",
+            "No selected E2E job or target ran and no repository secret was exposed",
           ),
         },
       });
@@ -262,7 +262,7 @@ describe("PR E2E controller retry history", () => {
         output: {
           title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining(
-            "No selected E2E job ran and no repository secret was exposed",
+            "No selected E2E job or target ran and no repository secret was exposed",
           ),
         },
       });

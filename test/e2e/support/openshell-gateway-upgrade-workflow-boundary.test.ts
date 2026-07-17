@@ -22,7 +22,7 @@ import {
 } from "../live/openshell-gateway-upgrade-helpers.ts";
 
 describe("OpenShell gateway upgrade workflow boundary", () => {
-  it("pins the v0.0.55 x86_64 and arm64 fixtures to the canonical live test (#6114)", () => {
+  it("pins architecture and immediate-predecessor fixtures to the canonical live test (#6114)", () => {
     const workflow = readOpenShellGatewayUpgradeWorkflow();
     expect(validateOpenShellGatewayUpgradeWorkflow(workflow)).toEqual([]);
     expect(validateE2eWorkflowBoundary()).toEqual([]);
@@ -36,6 +36,7 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     fixtures.find((fixture) => fixture.id === "v0.0.55-x86_64")!.sandbox_base_image_ref =
       "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
     fixtures.find((fixture) => fixture.id === "v0.0.55-aarch64")!.runner = "ubuntu-latest";
+    fixtures.find((fixture) => fixture.id === "v0.0.74-x86_64")!.openclaw_version = "latest";
     (job.env as Record<string, unknown>).NEMOCLAW_E2E_SHARD = "default";
     const run = (job.steps as Array<Record<string, unknown>>).find(
       (step) => step.name === "Run OpenShell gateway upgrade live Vitest test",
@@ -46,6 +47,7 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
       expect.arrayContaining([
         "openshell-gateway-upgrade must run on ${{ matrix.runner }}",
         "openshell-gateway-upgrade v0.0.55 matrix must pin x86_64 and arm64 upgrade fixtures",
+        "openshell-gateway-upgrade matrix must pin the immediate v0.0.74 x86_64 upgrade fixture",
         "openshell-gateway-upgrade must publish one risk-signal shard per legacy fixture",
         "openshell-gateway-upgrade step 'Run OpenShell gateway upgrade live Vitest test' must run: npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openshell-gateway-upgrade.test.ts",
       ]),

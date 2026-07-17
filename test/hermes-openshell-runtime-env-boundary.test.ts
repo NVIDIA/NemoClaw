@@ -45,19 +45,29 @@ function runEnvFileValidator(envFileContent: string) {
 }
 
 describe("Hermes OpenShell runtime environment boundary", () => {
-  it("accepts the driver-owned OpenShell transport environment", () => {
+  it("accepts non-identity OpenShell runtime metadata", () => {
     const result = runRuntimeEnvValidator({
       OPENSHELL_ENDPOINT: "https://gateway.openshell.internal:8080",
       OPENSHELL_LOG_LEVEL: "info",
       OPENSHELL_SANDBOX: "hermes-gpu",
       OPENSHELL_SANDBOX_ID: "sandbox-id",
-      OPENSHELL_TLS_CA: "/etc/openshell/tls/client/ca.crt",
-      OPENSHELL_TLS_CERT: "/etc/openshell/tls/client/tls.crt",
-      OPENSHELL_TLS_KEY: CANONICAL_TLS_KEY_PATH,
     });
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
+  });
+
+  it.each([
+    ["OPENSHELL_TLS_CA", "/etc/openshell/tls/client/ca.crt"],
+    ["OPENSHELL_TLS_CERT", "/etc/openshell/tls/client/tls.crt"],
+    ["OPENSHELL_TLS_KEY", CANONICAL_TLS_KEY_PATH],
+  ])("rejects supervisor-only %s from the child runtime", (name, value) => {
+    const result = runRuntimeEnvValidator({ [name]: value });
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("supervisor-only identity variables");
+    expect(result.stderr).toContain(name);
+    expect(result.stderr).not.toContain(value);
   });
 
   it("rejects noncanonical OpenShell TLS key values without printing them", () => {
@@ -82,12 +92,16 @@ describe("Hermes OpenShell runtime environment boundary", () => {
     }
   });
 
-  it("keeps the canonical OpenShell TLS key path out of mutable Hermes .env", () => {
-    const result = runEnvFileValidator(`OPENSHELL_TLS_KEY=${CANONICAL_TLS_KEY_PATH}\n`);
+  it.each([
+    ["OPENSHELL_TLS_CA", "/etc/openshell/tls/client/ca.crt"],
+    ["OPENSHELL_TLS_CERT", "/etc/openshell/tls/client/tls.crt"],
+    ["OPENSHELL_TLS_KEY", CANONICAL_TLS_KEY_PATH],
+  ])("keeps supervisor-only %s out of mutable Hermes .env", (name, value) => {
+    const result = runEnvFileValidator(`${name}=${value}\n`);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("OPENSHELL_TLS_KEY (line 1)");
-    expect(result.stderr).not.toContain(CANONICAL_TLS_KEY_PATH);
+    expect(result.stderr).toContain(`${name} (line 1)`);
+    expect(result.stderr).not.toContain(value);
   });
 
   it("continues to reject OpenShell supervisor identity credentials", () => {

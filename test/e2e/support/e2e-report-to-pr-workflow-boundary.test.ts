@@ -42,7 +42,49 @@ function generateMatrixScript(): string {
   return String(step!.run);
 }
 
-function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
+function trustedControllerMatrixScript(): string {
+  const workflow = readWorkflow() as {
+    jobs: Record<string, { steps: Array<{ id?: string; run?: string }> }>;
+  };
+  const step = workflow.jobs["generate-matrix"].steps.find(
+    (candidate) => candidate.id === "controller_matrix",
+  );
+  expect(step?.run).toEqual(expect.any(String));
+  return String(step!.run);
+}
+
+function executeTrustedControllerMatrix(targets: string) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-controller-matrix-"));
+  const outputPath = path.join(directory, "github-output");
+  try {
+    const result = spawnSync("bash", ["-c", trustedControllerMatrixScript()], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: outputPath,
+        TARGETS: targets,
+      },
+      timeout: 30_000,
+    });
+    return {
+      result,
+      workflowOutput: fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "",
+    };
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+}
+
+function executeGenerateMatrixWithPlannerOutput(
+  plan: unknown,
+  options: {
+    checkoutSha?: string;
+    controllerMatrix?: string;
+    jobs?: string;
+    targets?: string;
+  } = {},
+) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-planner-schema-"));
   const binDirectory = path.join(directory, "bin");
   const fakeNpx = path.join(binDirectory, "npx");
@@ -52,7 +94,12 @@ function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
     fakeNpx,
     [
       "#!/usr/bin/env bash",
-      '[[ "$#" -eq 4 && "$1" == "tsx" && "$2" == "tools/e2e/workflow-plan.mts" && "$3" == "--jobs" && "$4" == "cloud-onboard" ]] || exit 97',
+      "expected=(tsx tools/e2e/workflow-plan.mts)",
+      '[[ -z "${JOBS:-}" ]] || expected+=(--jobs "$JOBS")',
+      '[[ -z "${TARGETS:-}" ]] || expected+=(--targets "$TARGETS")',
+      'actual=("$@")',
+      '[[ "${#actual[@]}" -eq "${#expected[@]}" ]] || exit 97',
+      'for index in "${!expected[@]}"; do [[ "${actual[$index]}" == "${expected[$index]}" ]] || exit 97; done',
       "printf '%s\\n' \"${FAKE_E2E_PLAN}\"",
       "",
     ].join("\n"),
@@ -65,13 +112,15 @@ function executeGenerateMatrixWithPlannerOutput(plan: unknown) {
         encoding: "utf8",
         env: {
           ...process.env,
+          CHECKOUT_SHA: options.checkoutSha ?? "",
+          CONTROLLER_MATRIX: options.controllerMatrix ?? "",
           FAKE_E2E_PLAN: JSON.stringify(plan),
           GITHUB_OUTPUT: outputPath,
           GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
           INFERENCE_MODE: "mock",
-          JOBS: "cloud-onboard",
-          PATH: `${binDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
-          TARGETS: "",
+          JOBS: options.jobs ?? "cloud-onboard",
+          PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
+          TARGETS: options.targets ?? "",
         },
         timeout: 30_000,
       }),
@@ -780,6 +829,7 @@ it("carries the generated planner matrix through the workflow output and PR repo
       encoding: "utf8",
       env: {
         ...process.env,
+        CHECKOUT_SHA: "",
         GITHUB_OUTPUT: outputPath,
         GITHUB_STEP_SUMMARY: summaryPath,
         INFERENCE_MODE: "mock",
@@ -842,6 +892,75 @@ it("fails closed when planner output violates the workflow schema", () => {
     );
     expect(generated.workflowOutput).toBe("");
   }
+});
+
+it("builds controller target matrices only from trusted runner mappings (#7031)", () => {
+  const target = "ubuntu-repo-cloud-langchain-deepagents-code";
+
+  const empty = executeTrustedControllerMatrix("");
+  expect(empty.result.status, empty.result.stderr || empty.result.stdout).toBe(0);
+  expect(empty.workflowOutput).toBe("matrix=[]\n");
+
+  const approved = executeTrustedControllerMatrix(target);
+  expect(approved.result.status, approved.result.stderr || approved.result.stdout).toBe(0);
+  expect(parseSimpleOutput(approved.workflowOutput).matrix).toBe(
+    JSON.stringify([{ id: target, runner: "ubuntu-latest", label: target }]),
+  );
+
+  const rejected = executeTrustedControllerMatrix("untrusted-target");
+  expect(rejected.result.status).toBe(1);
+  expect(rejected.result.stderr).toContain(
+    "::error::PR E2E target is not approved by the trusted controller",
+  );
+  expect(rejected.workflowOutput).toBe("");
+});
+
+it("binds controller matrix IDs and runners to the trusted target selector (#7031)", () => {
+  const target = "ubuntu-repo-cloud-langchain-deepagents-code";
+  const validPlan = buildE2eWorkflowPlan({ jobs: "cloud-onboard", targets: target });
+  const trustedControllerMatrix = JSON.stringify([
+    { id: target, runner: "ubuntu-latest", label: target },
+  ]);
+  const options = {
+    checkoutSha: "a".repeat(40),
+    controllerMatrix: trustedControllerMatrix,
+    jobs: "cloud-onboard",
+    targets: target,
+  };
+
+  const matching = executeGenerateMatrixWithPlannerOutput(validPlan, options);
+  expect(matching.result.status, matching.result.stderr || matching.result.stdout).toBe(0);
+
+  const injectedWithoutSelection = executeGenerateMatrixWithPlannerOutput(validPlan, {
+    ...options,
+    controllerMatrix: "[]",
+    targets: "",
+  });
+  expect(injectedWithoutSelection.result.status).toBe(1);
+  expect(injectedWithoutSelection.result.stderr).toContain(
+    "::error::E2E planner matrix does not match controller-selected targets",
+  );
+
+  const mismatchedPlan = {
+    ...validPlan,
+    matrix: validPlan.matrix.map((row) => ({ ...row, id: "ubuntu-repo-cloud-openclaw" })),
+  };
+  const mismatched = executeGenerateMatrixWithPlannerOutput(mismatchedPlan, options);
+  expect(mismatched.result.status).toBe(1);
+  expect(mismatched.result.stderr).toContain(
+    "::error::E2E planner matrix does not match controller-selected targets",
+  );
+
+  const runnerInjectedPlan = {
+    ...validPlan,
+    matrix: validPlan.matrix.map((row) => ({ ...row, runner: "self-hosted" })),
+  };
+  const runnerInjected = executeGenerateMatrixWithPlannerOutput(runnerInjectedPlan, options);
+  expect(runnerInjected.result.status).toBe(1);
+  expect(runnerInjected.result.stderr).toContain(
+    "::error::E2E planner matrix does not match controller-selected targets",
+  );
+  expect(runnerInjected.workflowOutput).toBe("");
 });
 
 it("requires the report-to-pr job to check out the trusted workflow revision", () => {

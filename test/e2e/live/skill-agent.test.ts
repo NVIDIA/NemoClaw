@@ -60,8 +60,8 @@ function sleep(ms: number): Promise<void> {
 }
 
 function buildVerifySkillFixtureScript(): string {
-  // OpenShell rejects newline-bearing command args, so keep this readable as
-  // discrete clauses while emitting a single-line `sh -lc` script.
+  // Keep this readable as discrete clauses while emitting one atomic `sh -lc`
+  // expression with consistent error propagation.
   const skillPaths = [
     `/sandbox/.openclaw/skills/${SKILL_ID}/SKILL.md`,
     `\${HOME:-/home/sandbox}/.openclaw/skills/${SKILL_ID}/SKILL.md`,
