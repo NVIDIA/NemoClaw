@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
+import { isErrnoException } from "../core/errno";
 import { selectVllmModelFromEnv, type VllmModelDef } from "../inference/vllm-models";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
+import { getNemoclawStateRoot, resolveHome, STATE_DIR_NAME } from "../state/state-root";
 import { isSafeModelId } from "../validation";
 
 export const STATION_EXPRESS_ENV = "NEMOCLAW_STATION_EXPRESS";
@@ -33,6 +38,7 @@ interface ResumeOptionsLike {
 
 interface StationExpressResumeDeps {
   loadSession(): StationExpressSessionLike | null;
+  clearInstallerResume(): void;
   error(message: string): void;
   exitProcess(code: number): never;
 }
@@ -56,6 +62,7 @@ const RESUME_ENV = [
 const MAX_SERVED_MODEL_LENGTH = 512;
 const UNBOUND_INTENT_KEYS = "model,sandboxName,version";
 const BOUND_INTENT_KEYS = "model,sandboxName,servedModel,version";
+const STATION_EXPRESS_INSTALLER_RESUME_FILE = "station-express-resume";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -79,6 +86,55 @@ function validSandboxName(value: unknown): value is string {
   return (
     typeof value === "string" && value.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(value)
   );
+}
+
+export function clearStationExpressInstallerResume(env: NodeJS.ProcessEnv = process.env): void {
+  const stateBase = path.join(resolveHome(env), STATE_DIR_NAME);
+  const stateFile = path.join(
+    getNemoclawStateRoot(resolveHome(env)),
+    STATION_EXPRESS_INSTALLER_RESUME_FILE,
+  );
+  const relative = path.relative(stateBase, stateFile);
+  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Refusing DGX Station Express resume path outside ${stateBase}.`);
+  }
+
+  const paths = [stateBase];
+  let current = stateBase;
+  for (const component of relative.split(path.sep)) {
+    current = path.join(current, component);
+    paths.push(current);
+  }
+
+  for (const candidate of paths) {
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(candidate);
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") return;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Refusing symbolic link in DGX Station Express resume path: ${candidate}`);
+    }
+    if (candidate !== stateFile && !stat.isDirectory()) {
+      throw new Error(`Refusing invalid DGX Station Express resume directory: ${candidate}`);
+    }
+    if (candidate === stateFile) {
+      const uid = process.getuid?.();
+      if (!stat.isFile() || uid === undefined || stat.uid !== uid) {
+        throw new Error(
+          `Refusing to remove invalid DGX Station Express resume state: ${stateFile}`,
+        );
+      }
+    }
+  }
+
+  try {
+    fs.unlinkSync(stateFile);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+  }
 }
 
 export function parseStationExpressResumeIntent(value: unknown): StationExpressResumeIntent | null {
@@ -284,6 +340,16 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
 ): (options?: Options) => Promise<void> {
   return async (options) => {
     const session = deps.loadSession();
+    if (options?.fresh === true) {
+      try {
+        deps.clearInstallerResume();
+      } catch (error) {
+        deps.error(
+          `  Could not discard DGX Station Express installer resume state: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        deps.exitProcess(1);
+      }
+    }
     if (requiresExplicitFailedSessionChoice(options, session)) {
       deps.error(
         "  A failed DGX Station Express session is waiting. Run nemoclaw onboard --resume to continue it, or nemoclaw onboard --fresh to discard it.",
@@ -347,6 +413,7 @@ export function wrapOnboard<Options extends ResumeOptionsLike>(
 ): (options?: Options) => Promise<void> {
   return withStationExpressResumeEnvironment(run, {
     loadSession,
+    clearInstallerResume: clearStationExpressInstallerResume,
     error: (message) => console.error(message),
     exitProcess: (code) => process.exit(code),
   });

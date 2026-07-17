@@ -6,6 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  clearStationExpressInstallerResume,
+  withStationExpressResumeEnvironment,
+} from "../src/lib/onboard/station-express-resume";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
@@ -1180,6 +1184,84 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s
     expect(output).toMatch(
       /RESULT PLATFORM=DGX Station PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b STATION_EXPRESS=1/,
     );
+  });
+
+  it("does not restore the Station recipe after an explicit fresh onboard (#7048)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-fresh-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receipt, `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`, {
+      mode: 0o600,
+    });
+    const session = {
+      resumable: true,
+      status: "failed",
+      mode: "non-interactive",
+      provider: null,
+      model: null,
+      stationExpressIntent: {
+        version: 1 as const,
+        model: "nemotron-3-ultra-550b-a55b",
+        sandboxName: "my-assistant",
+      },
+    };
+
+    try {
+      await withStationExpressResumeEnvironment(
+        async () => undefined,
+        {
+          loadSession: () => session,
+          clearInstallerResume: () => clearStationExpressInstallerResume({ HOME: home }),
+          error: (message) => {
+            throw new Error(message);
+          },
+          exitProcess: (code): never => {
+            throw new Error(`exit ${String(code)}`);
+          },
+        },
+        {},
+      )({ fresh: true });
+      expect(fs.existsSync(receipt)).toBe(false);
+
+      const result = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf 'DGX Station'; }
+station_installer_revision() { printf '${STATION_REVISION}'; }
+NON_INTERACTIVE='1'
+NEMOCLAW_PROVIDER=''
+NEMOCLAW_NO_EXPRESS=''
+maybe_offer_express_install
+printf 'RESULT PROVIDER=%s STATION_EXPRESS=%s\n' "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_STATION_EXPRESS:-}"
+`,
+        ],
+        {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            HOME: home,
+            PATH: TEST_SYSTEM_PATH,
+            INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          },
+          timeout: 15_000,
+          killSignal: "SIGKILL",
+        },
+      );
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Skipping express prompt (--non-interactive set)");
+      expect(output).not.toContain("Resuming the accepted express install");
+      expect(output).toContain("RESULT PROVIDER= STATION_EXPRESS=");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("preserves an explicit provider even when Station resume state exists", () => {

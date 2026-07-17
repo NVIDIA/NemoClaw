@@ -1,10 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../state/onboard-session";
 import {
+  clearStationExpressInstallerResume,
   getStationExpressResumeIntent,
   parseStationExpressResumeIntent,
   STATION_EXPRESS_ENV,
@@ -39,6 +43,7 @@ function resumeDeps(
 ) {
   return {
     loadSession: vi.fn(() => session),
+    clearInstallerResume: vi.fn(),
     error: vi.fn(),
     exitProcess: vi.fn((code: number): never => {
       throw new Error(`exit ${String(code)}`);
@@ -234,6 +239,40 @@ describe("DGX Station Express resume (#7048)", () => {
     await withStationExpressResumeEnvironment(run, deps, env)({ fresh: true });
 
     expect(run).toHaveBeenCalledTimes(1);
+    expect(deps.clearInstallerResume).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the Station installer resume receipt cannot be discarded", async () => {
+    const deps = resumeDeps();
+    deps.clearInstallerResume.mockImplementation(() => {
+      throw new Error("unsafe receipt");
+    });
+    const run = vi.fn(async () => undefined);
+
+    await expect(
+      withStationExpressResumeEnvironment(run, deps, {})({ fresh: true }),
+    ).rejects.toThrow("exit 1");
+
+    expect(run).not.toHaveBeenCalled();
+    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("unsafe receipt"));
+  });
+
+  it("refuses a symbolic-link Station installer resume receipt", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const target = path.join(home, "target");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(target, "keep", { mode: 0o600 });
+    fs.symlinkSync(target, path.join(stateDir, "station-express-resume"));
+
+    try {
+      expect(() => clearStationExpressInstallerResume({ HOME: home })).toThrow(
+        "Refusing symbolic link",
+      );
+      expect(fs.readFileSync(target, "utf8")).toBe("keep");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("fails closed when an explicit resume override selects another model", async () => {

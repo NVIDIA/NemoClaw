@@ -133,6 +133,30 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(requireLoadedSession(session.loadSession()).stationExpressIntent).toBeNull();
   });
 
+  it("removes the Station installer receipt through the public fresh wrapper", async () => {
+    const { wrapOnboard } = await import("../onboard/station-express-resume");
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+    const intent = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+    };
+    session.saveSession(
+      session.createSession({ mode: "non-interactive", stationExpressIntent: intent }),
+    );
+    fs.writeFileSync(
+      receipt,
+      "revision=0123456789012345678901234567890123456789\nmodel=nemotron-3-ultra-550b-a55b\n",
+      { mode: 0o600 },
+    );
+    const run = vi.fn(async () => undefined);
+
+    await wrapOnboard(run, session.loadSession)({ fresh: true });
+
+    expect(run).toHaveBeenCalledWith({ fresh: true });
+    expect(fs.existsSync(receipt)).toBe(false);
+  });
+
   it("persists an injected provider failure and resumes through the real entry wrapper", async () => {
     const { prepareOnboardSession } = await import("../onboard/session-bootstrap");
     const { wrapOnboard } = await import("../onboard/station-express-resume");
