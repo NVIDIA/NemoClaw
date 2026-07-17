@@ -87,11 +87,33 @@ jobs:
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      matrix: ${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
     steps:
+      - id: controller_matrix
+        name: Build trusted controller target matrix
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          TARGETS: ${{ inputs.targets }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${TARGETS}" in
+            "")
+              matrix='[]'
+              ;;
+            ubuntu-repo-cloud-langchain-deepagents-code)
+              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
+              ;;
+            *)
+              echo "::error::PR E2E target is not approved by the trusted controller" >&2
+              exit 1
+              ;;
+          esac
+          printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
@@ -123,7 +145,8 @@ jobs:
           [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::plan_hash must be a lowercase SHA-256"; exit 1; }
           [[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::correlation_id must be a lowercase UUIDv4"; exit 1; }
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer"; exit 1; }
-          [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::PR E2E runs require jobs and do not accept targets"; exit 1; }
+          [[ -n "$JOBS" || -n "$TARGETS" ]] || { echo "::error::PR E2E runs require controller-selected jobs or targets"; exit 1; }
+          [[ -z "$TARGETS" || "$TARGETS" == "ubuntu-repo-cloud-langchain-deepagents-code" ]] || { echo "::error::PR E2E target is not approved by the trusted controller"; exit 1; }
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -143,6 +166,8 @@ jobs:
       - id: matrix
         name: Generate E2E target matrix
         env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CONTROLLER_MATRIX: ${{ steps.controller_matrix.outputs.matrix }}
           INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
@@ -152,10 +177,6 @@ jobs:
             mock|internal-nvidia|public-nvidia) ;;
             *) echo "::error::Invalid inference_mode: ${INFERENCE_MODE}" >&2; exit 1 ;;
           esac
-          if [ -n "${JOBS}" ] && [ -n "${TARGETS}" ]; then
-            echo "::error::Use either targets or jobs, not both." >&2
-            exit 1
-          fi
           for selector_name in JOBS TARGETS; do
             selector_value="${!selector_name}"
             if [ -n "${selector_value}" ] && [[ ! "${selector_value}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
@@ -167,7 +188,8 @@ jobs:
           planner_args=()
           if [ -n "${JOBS}" ]; then
             planner_args+=(--jobs "${JOBS}")
-          elif [ -n "${TARGETS}" ]; then
+          fi
+          if [ -n "${TARGETS}" ]; then
             planner_args+=(--targets "${TARGETS}")
           fi
           plan="$(npx tsx tools/e2e/workflow-plan.mts "${planner_args[@]}")"
@@ -212,8 +234,9 @@ jobs:
           fi
 
           expected_hermes_selected=false
-          selected_csv="${JOBS:-${TARGETS}}"
-          if [ -z "${selected_csv}" ] || [[ ",${selected_csv}," == *",hermes-e2e,"* ]]; then
+          if { [ -z "${JOBS}" ] && [ -z "${TARGETS}" ]; } \
+            || [[ ",${JOBS}," == *",hermes-e2e,"* ]] \
+            || [[ ",${TARGETS}," == *",hermes-e2e,"* ]]; then
             expected_hermes_selected=true
           fi
           hermes_selected="$(jq -r '.hermesSelected' <<< "${plan}")"
@@ -225,6 +248,14 @@ jobs:
           matrix="$(jq -c '.matrix' <<< "${plan}")"
           test_matrix="$(jq -c '.testMatrix' <<< "${plan}")"
           explicit_only_jobs_csv="$(jq -r '.explicitOnlyJobs | join(",")' <<< "${plan}")"
+          if [ -n "${CHECKOUT_SHA}" ]; then
+            expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
+            actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
+            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ]; then
+              echo "::error::E2E planner matrix does not match controller-selected targets" >&2
+              exit 1
+            fi
+          fi
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
           echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"
           echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
@@ -248,7 +279,7 @@ jobs:
 
   live:
     needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.jobs == '') && needs.generate-matrix.outputs.matrix != '[]' }}
+    if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -371,6 +402,7 @@ jobs:
 
       - name: Run live E2E tests
         env:
+          E2E_TARGET_ID: ${{ matrix.id }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TARGET_ID: ${{ matrix.id }}
         run: |
@@ -465,6 +497,7 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
             e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
+            e2e-artifacts/live/risk-signal.json
             e2e-artifacts/live/${{ matrix.id }}/actions/
             e2e-artifacts/live/${{ matrix.id }}/logs/
             e2e-artifacts/live/${{ matrix.id }}/shell/
