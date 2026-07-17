@@ -260,8 +260,8 @@ print(module.generate_provider_table(providers))
 ${loadGeneratorAs("g")}
 
 platforms = [
-  {"name": "Linux", "runtimes": ["Docker"], "status": "tested", "ci_tested": True, "notes": "n"},
   {"name": "Station", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "prerequisites_notes": "evaluation setup", "notes": "full Station notes"},
+  {"name": "Linux", "runtimes": ["Docker"], "status": "tested", "ci_tested": True, "notes": "n"},
   {"name": "RTX", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "notes": "later"}
 ]
 print("PARTIAL:")
@@ -275,10 +275,13 @@ print(module.generate_platform_table_full(platforms))
     expect(partial).toContain("evaluation setup");
     expect(partial).not.toContain("full Station notes");
     expect(partial).not.toContain("RTX");
+    expect(partial.indexOf("Linux")).toBeLessThan(partial.indexOf("Station"));
     expect(full).toContain("Linux");
     expect(full).toContain("Station");
     expect(full).toContain("full Station notes");
     expect(full).toContain("RTX");
+    expect(full.indexOf("Linux")).toBeLessThan(full.indexOf("RTX"));
+    expect(full.indexOf("RTX")).toBeLessThan(full.indexOf("Station"));
   });
 
   it("prerequisites platform block includes documented deferred setup and links to the complete matrix", () => {

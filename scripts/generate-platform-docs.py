@@ -314,7 +314,7 @@ def generate_platform_table(platforms: list[dict]) -> str:
     header = "| OS | Container runtime | Status | Notes |"
     separator = "|----|-------------------|--------|-------|"
     rows = []
-    for p in platforms:
+    for p in sorted(platforms, key=lambda entry: entry["name"].casefold()):
         prerequisites_notes = p.get("prerequisites_notes")
         if p["status"] == "deferred" and not prerequisites_notes:
             continue
@@ -381,7 +381,7 @@ def generate_platform_table_full(platforms: list[dict]) -> str:
     header = "| OS | Container runtime | Status | PRD priority | CI | Notes |"
     separator = "|----|-------------------|--------|--------------|----|-------|"
     rows = []
-    for p in platforms:
+    for p in sorted(platforms, key=lambda entry: entry["name"].casefold()):
         runtimes = ", ".join(p["runtimes"])
         priority = p.get("prd_priority", "Unset")
         ci = "Yes" if p.get("ci_tested") else "No"

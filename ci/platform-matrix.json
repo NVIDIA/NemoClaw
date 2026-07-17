@@ -42,7 +42,7 @@
       "notes": "Start the container runtime (Colima or Docker Desktop) before running the installer. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight."
     },
     {
-      "name": "DGX Spark",
+      "name": "Linux on DGX Spark",
       "runtimes": ["Docker"],
       "status": "tested",
       "prd_priority": "P1",
@@ -59,7 +59,7 @@
       "notes": "Requires WSL2 with Docker Desktop backend."
     },
     {
-      "name": "DGX Station",
+      "name": "Linux on DGX Station",
       "runtimes": ["Docker"],
       "status": "deferred",
       "prd_priority": "P1",

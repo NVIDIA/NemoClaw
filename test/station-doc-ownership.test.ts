@@ -50,7 +50,7 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
     expect(stationPreparation).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
     expect(prerequisites).toContain("### DGX Station Express Preparation");
-    expect(prerequisites).toMatch(/\| DGX Station \| Docker \| Deferred \|/);
+    expect(prerequisites).toMatch(/\| Linux on DGX Station \| Docker \| Deferred \|/);
     expect(prerequisites).toContain("prerequisites/dgx-station-preparation");
     expect(quickstart).toContain("prerequisites/dgx-station-preparation");
     expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
@@ -66,8 +66,8 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain('title: "Prepare DGX Station for NemoClaw"');
     expect(stationPreparation).toContain('sidebar-title: "Additional Setup for DGX Station"');
     expect(windowsPreparation).toContain('title: "Prepare Windows for NemoClaw"');
-    expect(windowsPreparation).toContain('sidebar-title: "Additional Setup for Windows"');
+    expect(windowsPreparation).toContain('sidebar-title: "Additional Setup for Windows Machines"');
     expect(docsIndex.match(/page: "Additional Setup for DGX Station"/g)).toHaveLength(3);
-    expect(docsIndex.match(/page: "Additional Setup for Windows"/g)).toHaveLength(3);
+    expect(docsIndex.match(/page: "Additional Setup for Windows Machines"/g)).toHaveLength(3);
   });
 });
