@@ -697,18 +697,23 @@ describe("starter prompt docs CTA", () => {
     const stationPermissionIndex = stationSource.indexOf(
       "Ask permission to run the selected maintained release's",
     );
-    const stationReadOnlyDisclosureIndex = stationSource.indexOf(
-      "Both `--check` and `--verify` are read-only readiness modes, and neither applies repairs.",
+    const stationNonRepairingDisclosureIndex = stationSource.indexOf(
+      "Both `--check` and `--verify` are non-repairing readiness modes, and neither applies host repairs.",
     );
     const stationImageDisclosureIndex = stationSource.indexOf(
       "`--verify` requires the pinned acceptance image to already be present locally",
     );
     const stationContainerDisclosureIndex = stationSource.indexOf(
-      "`--verify` starts short-lived GPU test containers through both CDI",
+      "`--verify` is not read-only: it starts short-lived GPU test containers through both CDI",
+    );
+    expect(stationSource).toContain("consumes GPU and temporary Docker storage");
+    expect(stationSource).toContain("may create Docker state and logs");
+    expect(stationSource).not.toContain(
+      "Both `--check` and `--verify` are read-only readiness modes",
     );
     expect(stationPermissionIndex).toBeGreaterThan(-1);
     for (const disclosureIndex of [
-      stationReadOnlyDisclosureIndex,
+      stationNonRepairingDisclosureIndex,
       stationImageDisclosureIndex,
       stationContainerDisclosureIndex,
     ]) {
