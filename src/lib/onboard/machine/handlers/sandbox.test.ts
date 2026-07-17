@@ -129,6 +129,42 @@ describe("handleSandboxState", () => {
     );
   });
 
+  it("skips re-registering a provider whose effect-group receipt and live postcondition both hold (#7022)", async () => {
+    const session = createSession({ sandboxName: "my-assistant" });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionSelected({ name: "my-assistant", agent: "openclaw" }),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {
+        web_search_provider: {
+          completedAt: "2026-01-01T00:00:00.000Z",
+          fingerprint: "my-assistant-brave-search",
+        },
+      },
+      bindings: { credentialEnvs: [], registeredProviders: ["my-assistant-brave-search"] },
+    };
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const stageSandboxCredentialProviders = vi.fn(async () => ["my-assistant-brave-search"]);
+    const { deps } = createDeps({
+      updateSession,
+      configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
+      stageSandboxCredentialProviders,
+      providerExistsInGateway: (name) => name === "my-assistant-brave-search",
+    });
+
+    await handleSandboxState({ ...baseOptions(deps, session), sandboxName: "my-assistant" });
+
+    expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
+  });
+
   it("does not auto-enable web search from ambient credentials during authoritative rebuild", async () => {
     const configureWebSearch = vi.fn(async () => ({ fetchEnabled: true as const }));
     const { deps, calls } = createDeps({ configureWebSearch });

@@ -19,6 +19,7 @@ import {
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { isDecisionSelected } from "../../../state/onboard-checkpoint-decision";
 import type {
+  CheckpointEffectGroupName,
   CheckpointResourceProfile,
   CheckpointSandboxIdentity,
   OnboardCheckpoint,
@@ -42,6 +43,7 @@ import {
 } from "../../checkpoint-record";
 import {
   checkpointProvesSandboxStepComplete,
+  planEffectGroupReplay,
   planSandboxCreateReplay,
 } from "../../checkpoint-replay";
 import {
@@ -560,6 +562,14 @@ class SandboxStateFlow<
       checkpoint && checkpointIdentityForResumeTarget(checkpoint, state.sandboxName, agentName);
     if (!checkpoint || !identity) return decision;
 
+    const recordedFingerprint = checkpoint.effectGroups.sandbox_create?.fingerprint;
+    if (
+      recordedFingerprint &&
+      recordedFingerprint !== this.currentSandboxCreateFingerprint(identity.name)
+    ) {
+      return this.rejectDriftedCheckpointFingerprint(identity.name);
+    }
+
     const bindingCheck = revalidateCheckpointBindings(
       checkpoint,
       this.checkpointBindingAvailability(checkpoint, state),
@@ -572,6 +582,36 @@ class SandboxStateFlow<
     return replay.action === "reuse" && replay.identity.name === state.sandboxName
       ? { kind: "reuse" }
       : decision;
+  }
+
+  private currentSandboxCreateFingerprint(sandboxName: string): string {
+    const { nemoclawVersion: builtFingerprint } = this.deps.getSandboxAgentRegistryFields(
+      this.options.agent,
+      !this.options.fromDockerfile,
+    );
+    const policyFingerprint = this.options.authoritativePolicyTier ?? "default";
+    return [
+      typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
+      policyFingerprint,
+    ].join("|");
+  }
+
+  private rejectDriftedCheckpointFingerprint(sandboxName: string): never {
+    this.deps.error(
+      `  A previous onboarding attempt recorded sandbox '${sandboxName}' with different build or policy inputs than this run requests.`,
+    );
+    this.deps.error("  Pass --recreate-sandbox to rebuild it with the current settings.");
+    return this.deps.exitProcess(1);
+  }
+
+  private providerBindingsLive(checkpoint: OnboardCheckpoint): boolean {
+    const providerExistsInGateway = this.deps.providerExistsInGateway;
+    if (!providerExistsInGateway || checkpoint.bindings.registeredProviders.length === 0) {
+      return false;
+    }
+    return checkpoint.bindings.registeredProviders.every((name) =>
+      providerExistsInGateway(name, this.options.gatewayName),
+    );
   }
 
   private checkpointBindingAvailability(
@@ -896,8 +936,17 @@ class SandboxStateFlow<
     sandboxName: string,
     enabledChannels: readonly string[],
     webSearchConfig: WebSearchConfig | null,
+    group: CheckpointEffectGroupName,
+    checkpoint: OnboardCheckpoint | null,
   ): Promise<void> {
     if (!this.resumesSandboxPrompts || (!webSearchConfig && enabledChannels.length === 0)) return;
+    if (
+      checkpoint &&
+      planEffectGroupReplay(checkpoint, group, this.providerBindingsLive(checkpoint)).action ===
+        "skip"
+    ) {
+      return;
+    }
     const registeredProviders = await this.deps.withGatewayRouteMutationLock(
       this.options.gatewayName,
       () =>
@@ -915,6 +964,7 @@ class SandboxStateFlow<
           credentialEnv: this.options.credentialEnv,
           registeredProviders,
         });
+        recordCheckpointEffectGroup(current, group, registeredProviders.join(","));
         return current;
       });
     }
@@ -1094,8 +1144,12 @@ class SandboxStateFlow<
         recordCheckpointEffectGroup(
           current,
           "sandbox_create",
-          typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
+          [
+            typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
+            this.options.authoritativePolicyTier ?? "default",
+          ].join("|"),
         );
+        recordCheckpointEffectGroup(current, "sandbox_register", sandboxName);
         return current;
       });
       return { ...state, sandboxName, session: recordedSession };
@@ -1155,6 +1209,8 @@ class SandboxStateFlow<
       requestedSandboxName,
       [],
       nextState.webSearchConfig,
+      "web_search_provider",
+      nextState.session?.checkpoint ?? null,
     );
     const messaging = await reconcileSandboxMessaging({
       resume: this.options.resume,
@@ -1168,6 +1224,8 @@ class SandboxStateFlow<
       requestedSandboxName,
       nextState.selectedMessagingChannels,
       null,
+      "messaging_providers",
+      nextState.session?.checkpoint ?? null,
     );
     return this.createAndRecordSandbox(nextState, requestedSandboxName, messaging.plan, decision);
   }

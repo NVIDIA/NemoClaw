@@ -30,7 +30,10 @@ function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardC
     messaging: decisionUnset(),
     resourceProfile: decisionUnset(),
     effectGroups: {
-      sandbox_create: { completedAt: "2026-01-01T00:00:00.000Z", fingerprint: "fp" },
+      sandbox_create: {
+        completedAt: "2026-01-01T00:00:00.000Z",
+        fingerprint: "my-assistant|default",
+      },
     },
     bindings: { credentialEnvs: [], registeredProviders: [] },
     ...overrides,
@@ -224,5 +227,27 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(getSession().checkpoint?.sandboxIdentity).toEqual(
       decisionSelected({ name: "my-assistant", agent: "hermes" }),
     );
+  });
+
+  it("rejects reuse when the recorded build/policy fingerprint drifted from the current request (#7022)", async () => {
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        effectGroups: {
+          sandbox_create: { completedAt: "2026-01-01T00:00:00.000Z", fingerprint: "stale-build" },
+        },
+      }),
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 });
