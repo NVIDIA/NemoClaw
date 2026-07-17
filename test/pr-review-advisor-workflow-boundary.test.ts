@@ -977,14 +977,16 @@ process.exitCode = valid ? 0 : 1;`,
   });
 
   it("fetches live PR head and base from one GitHub response snapshot", () => {
-    const calls: Array<{ command: string; args: string[] }> = [];
+    const ghApiCalls: Array<{ command: string; args: string[] }> = [];
     const live = fetchLivePullFromGh("NVIDIA/NemoClaw", "6736", (command, args) => {
-      calls.push({ command, args });
+      ghApiCalls.push({ command, args });
       return JSON.stringify({ head: { sha: HEAD_SHA }, base: { sha: BASE_SHA } });
     });
 
     expect(live).toEqual({ headSha: HEAD_SHA, baseSha: BASE_SHA });
-    expect(calls).toEqual([{ command: "gh", args: ["api", "repos/NVIDIA/NemoClaw/pulls/6736"] }]);
+    expect(ghApiCalls).toEqual([
+      { command: "gh", args: ["api", "repos/NVIDIA/NemoClaw/pulls/6736"] },
+    ]);
   });
 
   it("accepts a validated partial primary failure for publication", () => {
