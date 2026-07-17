@@ -63,15 +63,11 @@ describe("DGX Station documentation ownership", () => {
     const windowsPreparation = fs.readFileSync(WINDOWS_PREPARATION, "utf-8");
     const docsIndex = fs.readFileSync(DOCS_INDEX, "utf-8");
 
-    expect(stationPreparation).toContain('title: "Prepare DGX Station for NemoClaw"');
+    expect(stationPreparation).toContain('title: "Prepare DGX Station to Install NemoClaw"');
     expect(stationPreparation).toContain('sidebar-title: "Additional Setup for DGX Station"');
     expect(windowsPreparation).toContain('title: "Prepare a Windows Machine to Install NemoClaw"');
-    expect(windowsPreparation).toContain(
-      'sidebar-title: "Prepare a Windows Machine to Install NemoClaw"',
-    );
+    expect(windowsPreparation).toContain('sidebar-title: "Additional Setup for Windows Machines"');
     expect(docsIndex.match(/page: "Additional Setup for DGX Station"/g)).toHaveLength(3);
-    expect(docsIndex.match(/page: "Prepare a Windows Machine to Install NemoClaw"/g)).toHaveLength(
-      3,
-    );
+    expect(docsIndex.match(/page: "Additional Setup for Windows Machines"/g)).toHaveLength(3);
   });
 });
