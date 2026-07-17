@@ -115,7 +115,7 @@ function buildSandboxInferenceRouteHealth(
         endpoint,
         detail: gateway.detail,
         ...(gateway.ok
-          ? {}
+          ? { okLabel: "reachable" }
           : {
               failureLabel: classifyInferenceRouteFailureLabel(gateway.httpStatus),
             }),
