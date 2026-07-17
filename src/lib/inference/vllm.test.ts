@@ -920,7 +920,7 @@ describe("installVllm model resolution", () => {
     expect(errors).toContain(currentHostIdentity() ?? "$(id -u):$(id -g)");
   });
 
-  it("checks only the selected model namespace and required cache ancestors (#6858)", async () => {
+  it("ignores an unwritable unrelated model namespace (#6858)", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     mockSuccessfulVllmInstall(profile.containerName);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
@@ -933,6 +933,13 @@ describe("installVllm model resolution", () => {
     const unrelatedModelDir = path.join(hubDir, "models--unrelated--model");
     const existing = new Set([hubDir, lockDir, modelDir, modelLockDir, unrelatedModelDir]);
     vi.spyOn(fs, "existsSync").mockImplementation((target) => existing.has(String(target)));
+    mocks.findUnwritableTreePath.mockImplementation((target, _deps, options) => {
+      if (target === unrelatedModelDir) return unrelatedModelDir;
+      if ((target === cacheDir || target === hubDir) && options?.recursive !== false) {
+        return unrelatedModelDir;
+      }
+      return null;
+    });
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -941,17 +948,33 @@ describe("installVllm model resolution", () => {
     });
 
     expect(result).toEqual({ ok: true });
-    for (const target of [cacheDir, hubDir, lockDir]) {
-      expect(mocks.findUnwritableTreePath).toHaveBeenCalledWith(target, {}, { recursive: false });
-    }
-    for (const target of [modelDir, modelLockDir]) {
-      expect(mocks.findUnwritableTreePath).toHaveBeenCalledWith(target, {}, { recursive: true });
-    }
-    expect(mocks.findUnwritableTreePath).not.toHaveBeenCalledWith(
-      unrelatedModelDir,
-      expect.anything(),
-      expect.anything(),
+    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
+    expect(mocks.dockerRunDetached).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops when the selected model namespace is unwritable (#6858)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+    const cacheDir = path.join(os.homedir(), ".cache", "huggingface");
+    const modelKey = `models--${profile.defaultModel.id.split("/").join("--")}`;
+    const modelDir = path.join(cacheDir, "hub", modelKey);
+    vi.spyOn(fs, "existsSync").mockImplementation((target) => String(target) === modelDir);
+    mocks.findUnwritableTreePath.mockImplementation((target) =>
+      target === modelDir ? modelDir : null,
     );
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining(modelDir));
   });
 
   it("limits the Hugging Face token to the one-shot download container", async () => {
