@@ -1252,6 +1252,7 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s
         {
           loadSession: () => session,
           clearInstallerResume: () => clearStationExpressInstallerResume({ HOME: home }),
+          cleanupReceiptRetirementClaims: () => undefined,
           reconcileReceiptRetirement: () => undefined,
           error: (message) => {
             throw new Error(message);
@@ -1353,6 +1354,19 @@ mkdir -p "$HOME/.nemoclaw"
 chmod 0700 "$HOME/.nemoclaw"
 printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$HOME/.nemoclaw/station-express-resume"
 chmod 0600 "$HOME/.nemoclaw/station-express-resume"
+claim="$HOME/.nemoclaw/station-express-resume.retiring-${STATION_GENERATION}-ABC123"
+mkdir -m 0700 "$claim"
+printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$claim/receipt"
+: >"$claim/retired"
+chmod 0600 "$claim/receipt" "$claim/retired"
+: >"$claim/unexpected"
+(clear_station_express_resume) && exit 91
+[[ -f "$claim/receipt" ]] || exit 92
+rm "$claim/unexpected"
+chmod 0644 "$claim/retired"
+(clear_station_express_resume) && exit 93
+[[ -f "$claim/receipt" ]] || exit 94
+chmod 0600 "$claim/retired"
 detect_express_platform() { printf 'DGX Station'; }
 NON_INTERACTIVE=''
 NEMOCLAW_PROVIDER=''
@@ -1364,6 +1378,44 @@ maybe_offer_express_install
     expect(result.status, output).toBe(0);
     expect(output).toContain("NEMOCLAW_NO_EXPRESS=1");
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(
+          home,
+          ".nemoclaw",
+          `station-express-resume.retiring-${STATION_GENERATION}-ABC123`,
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses claim-only cleanup through a group-accessible gateway ancestor", () => {
+    const { home, result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+NEMOCLAW_GATEWAY_PORT=28080
+state_dir="$HOME/.nemoclaw/gateways/28080"
+claim="$state_dir/station-express-resume.retiring-${STATION_GENERATION}-ABC123"
+mkdir -p "$claim"
+chmod 0700 "$HOME/.nemoclaw" "$state_dir" "$claim"
+chmod 0770 "$HOME/.nemoclaw/gateways"
+: >"$claim/retired"
+chmod 0600 "$claim/retired"
+clear_station_express_resume
+`,
+    );
+
+    expect(result.status, output).toBe(1);
+    expect(output).toContain("must not be accessible by group or other users");
+    expect(
+      fs.existsSync(
+        path.join(
+          home,
+          ".nemoclaw/gateways/28080",
+          `station-express-resume.retiring-${STATION_GENERATION}-ABC123/retired`,
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("does not load Station resume state on DGX Spark", () => {

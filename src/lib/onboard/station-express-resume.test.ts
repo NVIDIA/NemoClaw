@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createSession } from "../state/onboard-session";
 import {
   assertStationExpressInstallerResumeMatches,
+  cleanupStationExpressReceiptRetirementClaims,
   clearStationExpressInstallerResume,
   getStationExpressResumeIntent,
   INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV,
@@ -47,12 +48,25 @@ function expressEnv(): NodeJS.ProcessEnv {
   };
 }
 
+function receiptText(generation = receiptGeneration): string {
+  return `revision=${receiptRevision}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${generation}\n`;
+}
+
+function retirementClaims(home: string): string[] {
+  const stateDir = path.join(home, ".nemoclaw");
+  return fs
+    .readdirSync(stateDir)
+    .filter((name) => name.startsWith("station-express-resume.retiring-"))
+    .map((name) => path.join(stateDir, name));
+}
+
 function resumeDeps(
   session = createSession({ mode: "non-interactive", stationExpressIntent: ultraIntent }),
 ) {
   return {
     loadSession: vi.fn(() => session),
     clearInstallerResume: vi.fn(),
+    cleanupReceiptRetirementClaims: vi.fn(),
     reconcileReceiptRetirement: vi.fn(),
     error: vi.fn(),
     exitProcess: vi.fn((code: number): never => {
@@ -368,6 +382,54 @@ describe("DGX Station Express resume (#7048)", () => {
     }
   });
 
+  it("rejects a stale automatic-fresh marker when its receipt is missing", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-auto-fresh-missing-"));
+    fs.mkdirSync(path.join(home, ".nemoclaw"), { mode: 0o700 });
+    const env = expressEnv();
+    env.HOME = home;
+    env[STATION_EXPRESS_RECEIPT_GENERATION_ENV] = receiptGeneration;
+    env[INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV] = receiptGeneration;
+    const deps = resumeDeps(createSession({ mode: "non-interactive" }));
+    const run = vi.fn(async () => undefined);
+
+    try {
+      await expect(
+        withStationExpressResumeEnvironment(run, deps, env)({ fresh: true }),
+      ).rejects.toThrow("exit 1");
+
+      expect(run).not.toHaveBeenCalled();
+      expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("state is missing"));
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a spoofed automatic-fresh marker for another receipt", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-auto-fresh-mismatch-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receipt, receiptText(otherReceiptGeneration), { mode: 0o600 });
+    const env = expressEnv();
+    env.HOME = home;
+    env[STATION_EXPRESS_RECEIPT_GENERATION_ENV] = receiptGeneration;
+    env[INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV] = receiptGeneration;
+    const deps = resumeDeps(createSession({ mode: "non-interactive" }));
+    const run = vi.fn(async () => undefined);
+
+    try {
+      await expect(
+        withStationExpressResumeEnvironment(run, deps, env)({ fresh: true }),
+      ).rejects.toThrow("exit 1");
+
+      expect(run).not.toHaveBeenCalled();
+      expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("another attempt"));
+      expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText(otherReceiptGeneration));
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("does not treat an older completed session as proof of a new installer attempt", async () => {
     const completed = createSession();
     completed.status = "complete";
@@ -462,6 +524,152 @@ describe("DGX Station Express resume (#7048)", () => {
 
       retireStationExpressInstallerResume(receiptGeneration, { env: { HOME: home } });
       expect(fs.existsSync(receipt)).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("never unlinks a replacement receipt introduced before its atomic claim", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-race-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
+    const originalRename = fs.renameSync.bind(fs);
+    const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce((from, to) => {
+      fs.writeFileSync(receipt, receiptText(otherReceiptGeneration), { mode: 0o600 });
+      originalRename(from, to);
+    });
+
+    try {
+      expect(() =>
+        retireStationExpressInstallerResume(receiptGeneration, { env: { HOME: home } }),
+      ).toThrow("another attempt");
+      rename.mockRestore();
+
+      expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText(otherReceiptGeneration));
+      expect(retirementClaims(home)).toHaveLength(1);
+      expect(fs.readFileSync(path.join(retirementClaims(home)[0]!, "receipt"), "utf8")).toBe(
+        receiptText(otherReceiptGeneration),
+      );
+
+      clearStationExpressInstallerResume({ HOME: home });
+      expect(fs.existsSync(receipt)).toBe(false);
+      expect(retirementClaims(home)).toEqual([]);
+    } finally {
+      rename.mockRestore();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("never unlinks a replacement receipt introduced after its atomic claim", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-claimed-race-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
+    const originalRename = fs.renameSync.bind(fs);
+    const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce((from, to) => {
+      originalRename(from, to);
+      fs.writeFileSync(receipt, receiptText(otherReceiptGeneration), { mode: 0o600 });
+    });
+
+    try {
+      expect(() =>
+        retireStationExpressInstallerResume(receiptGeneration, { env: { HOME: home } }),
+      ).not.toThrow();
+      rename.mockRestore();
+
+      expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText(otherReceiptGeneration));
+      expect(retirementClaims(home)).toEqual([]);
+    } finally {
+      rename.mockRestore();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rechecks the canonical receipt when a concurrent cleanup removes its empty claim", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-claim-race-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
+    const originalRename = fs.renameSync.bind(fs);
+    const rename = vi.spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      if (rename.mock.calls.length === 1) {
+        fs.rmdirSync(path.dirname(String(to)));
+      }
+      originalRename(from, to);
+    });
+
+    try {
+      expect(() =>
+        retireStationExpressInstallerResume(receiptGeneration, {
+          allowMissing: true,
+          env: { HOME: home },
+        }),
+      ).not.toThrow();
+      expect(rename).toHaveBeenCalledTimes(2);
+      rename.mockRestore();
+
+      expect(fs.existsSync(receipt)).toBe(false);
+      expect(retirementClaims(home)).toEqual([]);
+    } finally {
+      rename.mockRestore();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("fails safely when the receipt disappears before its atomic claim", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-remove-race-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
+    const originalRename = fs.renameSync.bind(fs);
+    const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce((from, to) => {
+      fs.unlinkSync(receipt);
+      originalRename(from, to);
+    });
+
+    try {
+      expect(() =>
+        retireStationExpressInstallerResume(receiptGeneration, { env: { HOME: home } }),
+      ).toThrow("state is missing");
+      rename.mockRestore();
+
+      expect(fs.existsSync(receipt)).toBe(false);
+      expect(retirementClaims(home)).toEqual([]);
+      expect(() =>
+        retireStationExpressInstallerResume(receiptGeneration, {
+          allowMissing: true,
+          env: { HOME: home },
+        }),
+      ).not.toThrow();
+    } finally {
+      rename.mockRestore();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to clean a symlinked receipt-retirement claim", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-claim-symlink-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const target = path.join(home, "claim-target");
+    const claim = path.join(
+      stateDir,
+      `station-express-resume.retiring-${receiptGeneration}-ABC123`,
+    );
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.mkdirSync(target, { mode: 0o700 });
+    fs.writeFileSync(path.join(target, "preserve"), "keep\n", { mode: 0o600 });
+    fs.symlinkSync(target, claim);
+
+    try {
+      expect(() => cleanupStationExpressReceiptRetirementClaims({ HOME: home })).toThrow(
+        "Refusing symbolic link",
+      );
+      expect(fs.readFileSync(path.join(target, "preserve"), "utf8")).toBe("keep\n");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

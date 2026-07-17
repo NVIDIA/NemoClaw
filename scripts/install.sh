@@ -3115,17 +3115,36 @@ portable_file_mode() {
 assert_station_express_resume_file_safe() {
   local state_file=$1 state_dir mode
   state_dir="$(dirname "$state_file")"
-  [[ -d "$state_dir" && -O "$state_dir" ]] \
-    || error "DGX Station express resume directory is not owned by the current user: ${state_dir}"
-  mode="$(portable_file_mode "$state_dir")" \
-    || error "Could not inspect DGX Station express resume directory permissions: ${state_dir}"
-  (((8#$mode & 0077) == 0)) \
-    || error "DGX Station express resume directory must not be accessible by group or other users: ${state_dir}"
+  assert_station_express_resume_directory_safe "$state_dir"
   [[ -f "$state_file" && -O "$state_file" ]] \
     || error "DGX Station express resume state must be a regular file owned by the current user: ${state_file}"
   mode="$(portable_file_mode "$state_file")" \
     || error "Could not inspect DGX Station express resume state permissions: ${state_file}"
   [[ "$mode" == "600" ]] || error "DGX Station express resume state must have mode 0600: ${state_file}"
+}
+
+assert_station_express_resume_directory_safe() {
+  local state_dir=$1 root="${HOME}/.nemoclaw" current relative component mode
+  assert_nemoclaw_state_path_safe "$state_dir"
+  current="$root"
+  relative="${state_dir#"$root"}"
+  relative="${relative#/}"
+  while :; do
+    [[ -d "$current" && ! -L "$current" && -O "$current" ]] \
+      || error "DGX Station express resume directory is not owned by the current user: ${current}"
+    mode="$(portable_file_mode "$current")" \
+      || error "Could not inspect DGX Station express resume directory permissions: ${current}"
+    (((8#$mode & 0077) == 0)) \
+      || error "DGX Station express resume directory must not be accessible by group or other users: ${current}"
+    [[ -n "$relative" ]] || break
+    component="${relative%%/*}"
+    current="${current}/${component}"
+    if [[ "$relative" == "$component" ]]; then
+      relative=''
+    else
+      relative="${relative#*/}"
+    fi
+  done
 }
 
 load_station_express_resume() {
@@ -3186,13 +3205,49 @@ save_station_express_resume() {
 }
 
 clear_station_express_resume() {
-  local state_file
+  local state_file state_dir claim claim_name claim_mode entry entry_mode unexpected_entry
   state_file="$(station_express_resume_file)" || return 0
   assert_nemoclaw_state_path_safe "$state_file"
-  [[ -e "$state_file" || -L "$state_file" ]] || return 0
-  [[ -f "$state_file" && -O "$state_file" ]] \
-    || error "Refusing to remove invalid DGX Station express resume state: ${state_file}"
-  rm -f "$state_file"
+  state_dir="$(dirname "$state_file")"
+  [[ -e "$state_dir" || -L "$state_dir" ]] || return 0
+  assert_station_express_resume_directory_safe "$state_dir"
+  if [[ -e "$state_file" || -L "$state_file" ]]; then
+    assert_station_express_resume_file_safe "$state_file"
+    rm -f "$state_file"
+  fi
+  for claim in "${state_file}.retiring-"*; do
+    [[ -e "$claim" || -L "$claim" ]] || continue
+    assert_nemoclaw_state_path_safe "$claim"
+    claim_name="${claim##*/}"
+    [[ "$claim_name" =~ ^station-express-resume\.retiring-[0-9a-f]{32}-[A-Za-z0-9]+$ ]] \
+      || error "DGX Station express receipt retirement claim is malformed: ${claim_name}"
+    [[ -d "$claim" && ! -L "$claim" && -O "$claim" ]] \
+      || error "Refusing invalid DGX Station express receipt retirement claim: ${claim}"
+    claim_mode="$(portable_file_mode "$claim")" \
+      || error "Could not inspect DGX Station express receipt retirement claim permissions: ${claim}"
+    (((8#$claim_mode & 0077) == 0)) \
+      || error "DGX Station express receipt retirement claim must be owner-only: ${claim}"
+    unexpected_entry="$(find "$claim" -mindepth 1 -maxdepth 1 ! -name receipt ! -name retired -print -quit)" \
+      || error "Could not inspect DGX Station express receipt retirement claim: ${claim}"
+    [[ -z "$unexpected_entry" ]] \
+      || error "DGX Station express receipt retirement claim contains unexpected state: ${claim}"
+    for entry in "$claim/receipt" "$claim/retired"; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      assert_nemoclaw_state_path_safe "$entry"
+      [[ -f "$entry" && ! -L "$entry" && -O "$entry" ]] \
+        || error "Refusing invalid DGX Station express receipt retirement claim entry: ${entry}"
+      entry_mode="$(portable_file_mode "$entry")" \
+        || error "Could not inspect DGX Station express receipt retirement claim entry permissions: ${entry}"
+      [[ "$entry_mode" == "600" ]] \
+        || error "DGX Station express receipt retirement claim entry must have mode 0600: ${entry}"
+    done
+    for entry in "$claim/receipt" "$claim/retired"; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      rm -f "$entry"
+    done
+    rmdir "$claim" \
+      || error "DGX Station express receipt retirement claim contains unexpected state: ${claim}"
+  done
 }
 
 activate_express_install() {

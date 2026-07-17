@@ -45,6 +45,7 @@ interface ResumeOptionsLike {
 interface StationExpressResumeDeps {
   loadSession(): StationExpressSessionLike | null;
   clearInstallerResume(): void;
+  cleanupReceiptRetirementClaims(): void;
   reconcileReceiptRetirement(generation: string): void;
   error(message: string): void;
   exitProcess(code: number): never;
@@ -74,8 +75,13 @@ const BOUND_INTENT_KEYS = "checkpointModel,model,sandboxName,servedModel,version
 const BOUND_RECEIPT_INTENT_KEYS =
   "checkpointModel,model,receiptGeneration,sandboxName,servedModel,version";
 const STATION_EXPRESS_INSTALLER_RESUME_FILE = "station-express-resume";
+const STATION_EXPRESS_RETIREMENT_CLAIM_PREFIX = `${STATION_EXPRESS_INSTALLER_RESUME_FILE}.retiring-`;
+const STATION_EXPRESS_RETIREMENT_CLAIM_RECEIPT = "receipt";
+const STATION_EXPRESS_RETIREMENT_CLAIM_PROOF = "retired";
+const STATION_EXPRESS_RETIREMENT_CLAIM_ATTEMPTS = 3;
 const STATION_EXPRESS_RECEIPT_GENERATION_PATTERN = /^[0-9a-f]{32}$/;
 const STATION_EXPRESS_RECEIPT_REVISION_PATTERN = /^[0-9a-f]{40}$/;
+const STATION_EXPRESS_RETIREMENT_CLAIM_SUFFIX_PATTERN = /^[A-Za-z0-9]+$/;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -112,60 +118,99 @@ export function isValidStationExpressReceiptGeneration(value: unknown): value is
   return typeof value === "string" && STATION_EXPRESS_RECEIPT_GENERATION_PATTERN.test(value);
 }
 
-export function assertStationExpressInstallerResumeSafe(
-  env: NodeJS.ProcessEnv = process.env,
-): string | null {
+interface StationExpressReceiptPaths {
+  stateBase: string;
+  stateDir: string;
+  stateFile: string;
+}
+
+interface StationExpressRetirementClaim {
+  directory: string;
+  generation: string;
+  proofFile: string;
+  receiptFile: string;
+}
+
+interface StationExpressRetirementClaimState {
+  claim: StationExpressRetirementClaim;
+  hasProof: boolean;
+  receiptGeneration: string | null;
+}
+
+function stationExpressReceiptPaths(env: NodeJS.ProcessEnv): StationExpressReceiptPaths {
   const stateBase = path.join(resolveHome(env), STATE_DIR_NAME);
   const stateFile = path.join(
     getNemoclawStateRoot(resolveHome(env)),
     STATION_EXPRESS_INSTALLER_RESUME_FILE,
   );
-  const relative = path.relative(stateBase, stateFile);
-  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error(`Refusing DGX Station Express resume path outside ${stateBase}.`);
-  }
+  return { stateBase, stateDir: path.dirname(stateFile), stateFile };
+}
 
+function lstatOrNull(candidate: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(candidate);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function assertOwnerOnlyDirectory(candidate: string, stat: fs.Stats): void {
   const uid = process.getuid?.();
-  const paths = [stateBase];
-  let current = stateBase;
-  for (const component of relative.split(path.sep)) {
-    current = path.join(current, component);
-    paths.push(current);
+  if (!stat.isDirectory() || uid === undefined || stat.uid !== uid || (stat.mode & 0o077) !== 0) {
+    throw new Error(`Refusing non-owner-only DGX Station Express resume directory: ${candidate}`);
+  }
+}
+
+function assertStationExpressStateDirectorySafe(
+  env: NodeJS.ProcessEnv,
+): StationExpressReceiptPaths | null {
+  const paths = stationExpressReceiptPaths(env);
+  const relative = path.relative(paths.stateBase, paths.stateDir);
+  if (relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`Refusing DGX Station Express resume path outside ${paths.stateBase}.`);
   }
 
-  for (const candidate of paths) {
-    let stat: fs.Stats;
-    try {
-      stat = fs.lstatSync(candidate);
-    } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") return null;
-      throw error;
-    }
+  const directories = [paths.stateBase];
+  let current = paths.stateBase;
+  for (const component of relative ? relative.split(path.sep) : []) {
+    current = path.join(current, component);
+    directories.push(current);
+  }
+  for (const candidate of directories) {
+    const stat = lstatOrNull(candidate);
+    if (!stat) return null;
     if (stat.isSymbolicLink()) {
       throw new Error(`Refusing symbolic link in DGX Station Express resume path: ${candidate}`);
     }
-    if (candidate !== stateFile) {
-      if (
-        !stat.isDirectory() ||
-        uid === undefined ||
-        stat.uid !== uid ||
-        (stat.mode & 0o077) !== 0
-      ) {
-        throw new Error(
-          `Refusing non-owner-only DGX Station Express resume directory: ${candidate}`,
-        );
-      }
-    } else if (
-      !stat.isFile() ||
-      uid === undefined ||
-      stat.uid !== uid ||
-      (stat.mode & 0o777) !== 0o600
-    ) {
-      throw new Error(`Refusing to remove invalid DGX Station Express resume state: ${stateFile}`);
-    }
+    assertOwnerOnlyDirectory(candidate, stat);
   }
+  return paths;
+}
 
-  return stateFile;
+function assertOwnerOnlyReceiptFile(candidate: string, errorMessage: string): fs.Stats | null {
+  const stat = lstatOrNull(candidate);
+  if (!stat) return null;
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Refusing symbolic link in DGX Station Express resume path: ${candidate}`);
+  }
+  const uid = process.getuid?.();
+  if (!stat.isFile() || uid === undefined || stat.uid !== uid || (stat.mode & 0o777) !== 0o600) {
+    throw new Error(errorMessage);
+  }
+  return stat;
+}
+
+export function assertStationExpressInstallerResumeSafe(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const paths = assertStationExpressStateDirectorySafe(env);
+  if (!paths) return null;
+  const stat = assertOwnerOnlyReceiptFile(
+    paths.stateFile,
+    `Refusing to remove invalid DGX Station Express resume state: ${paths.stateFile}`,
+  );
+  return stat ? paths.stateFile : null;
 }
 
 function readStationExpressInstallerResumeGeneration(stateFile: string): string {
@@ -206,41 +251,287 @@ export function assertStationExpressInstallerResumeMatches(
   }
 }
 
+function retirementClaimGeneration(name: string): string | null {
+  if (!name.startsWith(STATION_EXPRESS_RETIREMENT_CLAIM_PREFIX)) return null;
+  const encoded = name.slice(STATION_EXPRESS_RETIREMENT_CLAIM_PREFIX.length);
+  const generation = encoded.slice(0, 32);
+  const suffix = encoded.slice(33);
+  if (
+    encoded[32] !== "-" ||
+    !isValidStationExpressReceiptGeneration(generation) ||
+    !STATION_EXPRESS_RETIREMENT_CLAIM_SUFFIX_PATTERN.test(suffix)
+  ) {
+    throw new Error(`DGX Station Express receipt retirement claim is malformed: ${name}`);
+  }
+  return generation;
+}
+
+function retirementClaim(directory: string, generation: string): StationExpressRetirementClaim {
+  return {
+    directory,
+    generation,
+    proofFile: path.join(directory, STATION_EXPRESS_RETIREMENT_CLAIM_PROOF),
+    receiptFile: path.join(directory, STATION_EXPRESS_RETIREMENT_CLAIM_RECEIPT),
+  };
+}
+
+function listRetirementClaims(
+  paths: StationExpressReceiptPaths,
+  generation?: string,
+): StationExpressRetirementClaim[] {
+  const claims: StationExpressRetirementClaim[] = [];
+  for (const name of fs.readdirSync(paths.stateDir)) {
+    const claimGeneration = retirementClaimGeneration(name);
+    if (!claimGeneration || (generation && claimGeneration !== generation)) continue;
+    claims.push(retirementClaim(path.join(paths.stateDir, name), claimGeneration));
+  }
+  return claims;
+}
+
+function assertRetirementClaimDirectorySafe(claim: StationExpressRetirementClaim): string[] {
+  const stat = lstatOrNull(claim.directory);
+  if (!stat) return [];
+  if (stat.isSymbolicLink()) {
+    throw new Error(
+      `Refusing symbolic link in DGX Station Express receipt retirement claim: ${claim.directory}`,
+    );
+  }
+  assertOwnerOnlyDirectory(claim.directory, stat);
+  const entries = fs.readdirSync(claim.directory).sort();
+  for (const entry of entries) {
+    if (
+      entry !== STATION_EXPRESS_RETIREMENT_CLAIM_PROOF &&
+      entry !== STATION_EXPRESS_RETIREMENT_CLAIM_RECEIPT
+    ) {
+      throw new Error(
+        `DGX Station Express receipt retirement claim contains an unexpected entry: ${entry}`,
+      );
+    }
+  }
+  return entries;
+}
+
+function inspectRetirementClaim(
+  claim: StationExpressRetirementClaim,
+): StationExpressRetirementClaimState {
+  const entries = assertRetirementClaimDirectorySafe(claim);
+  const hasReceipt = entries.includes(STATION_EXPRESS_RETIREMENT_CLAIM_RECEIPT);
+  const hasProof = entries.includes(STATION_EXPRESS_RETIREMENT_CLAIM_PROOF);
+  let receiptGeneration: string | null = null;
+  if (hasReceipt) {
+    const receiptStat = assertOwnerOnlyReceiptFile(
+      claim.receiptFile,
+      `Refusing invalid DGX Station Express receipt retirement claim: ${claim.receiptFile}`,
+    );
+    if (!receiptStat) {
+      throw new Error("DGX Station Express receipt retirement claim changed during inspection.");
+    }
+    receiptGeneration = readStationExpressInstallerResumeGeneration(claim.receiptFile);
+  }
+  if (hasProof) {
+    const proofStat = assertOwnerOnlyReceiptFile(
+      claim.proofFile,
+      `Refusing invalid DGX Station Express receipt retirement proof: ${claim.proofFile}`,
+    );
+    if (!proofStat || proofStat.size !== 0) {
+      throw new Error("DGX Station Express receipt retirement proof is malformed.");
+    }
+  }
+  return { claim, hasProof, receiptGeneration };
+}
+
+function publishRetirementProof(claim: StationExpressRetirementClaim): void {
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(
+      claim.proofFile,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+      0o600,
+    );
+    fs.fchmodSync(descriptor, 0o600);
+    fs.fsyncSync(descriptor);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
+  const state = inspectRetirementClaim(claim);
+  if (!state.hasProof) {
+    throw new Error("DGX Station Express receipt retirement proof was not published.");
+  }
+}
+
+function preserveMismatchedClaim(claim: StationExpressRetirementClaim, stateFile: string): void {
+  try {
+    fs.linkSync(claim.receiptFile, stateFile);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
+  }
+}
+
+function unlinkRetirementClaimEntry(candidate: string): void {
+  try {
+    fs.unlinkSync(candidate);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+  }
+}
+
+function retireClaimedReceipt(
+  state: StationExpressRetirementClaimState,
+  expectedGeneration: string,
+  stateFile: string,
+): StationExpressRetirementClaim {
+  if (state.receiptGeneration !== null && state.receiptGeneration !== expectedGeneration) {
+    preserveMismatchedClaim(state.claim, stateFile);
+    throw new Error("DGX Station Express installer resume state belongs to another attempt.");
+  }
+  if (!state.hasProof) {
+    if (!state.receiptGeneration) {
+      throw new Error("DGX Station Express receipt retirement claim is incomplete.");
+    }
+    publishRetirementProof(state.claim);
+  }
+  const current = inspectRetirementClaim(state.claim);
+  if (current.receiptGeneration !== null) {
+    if (current.receiptGeneration !== expectedGeneration) {
+      preserveMismatchedClaim(current.claim, stateFile);
+      throw new Error("DGX Station Express installer resume state belongs to another attempt.");
+    }
+    unlinkRetirementClaimEntry(current.claim.receiptFile);
+  }
+  return state.claim;
+}
+
+function removeRetirementClaimProof(claim: StationExpressRetirementClaim): void {
+  const state = inspectRetirementClaim(claim);
+  if (state.receiptGeneration !== null) {
+    throw new Error("DGX Station Express receipt retirement claim is still active.");
+  }
+  if (state.hasProof) unlinkRetirementClaimEntry(claim.proofFile);
+  removeEmptyRetirementClaimDirectory(claim.directory);
+}
+
+function removeEmptyRetirementClaimDirectory(directory: string): void {
+  try {
+    fs.rmdirSync(directory);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+  }
+}
+
+function finishExistingRetirementClaims(
+  paths: StationExpressReceiptPaths,
+  expectedGeneration: string,
+): StationExpressRetirementClaim[] {
+  const completed: StationExpressRetirementClaim[] = [];
+  for (const claim of listRetirementClaims(paths, expectedGeneration)) {
+    const state = inspectRetirementClaim(claim);
+    if (!state.hasProof && state.receiptGeneration === null) {
+      removeEmptyRetirementClaimDirectory(claim.directory);
+      continue;
+    }
+    completed.push(retireClaimedReceipt(state, expectedGeneration, paths.stateFile));
+  }
+  return completed;
+}
+
+// Move the canonical receipt into a unique owner-only directory before deleting it.
+// The empty proof file is published first, so a crash can retry the same generation
+// without ever acting on a newer receipt that appeared at the canonical path.
+function claimAndRetireStationExpressInstallerResume(
+  expectedGeneration: string,
+  options: { allowMissing?: boolean; env?: NodeJS.ProcessEnv } = {},
+): StationExpressRetirementClaim[] {
+  if (!isValidStationExpressReceiptGeneration(expectedGeneration)) {
+    throw new Error("DGX Station Express receipt generation is invalid.");
+  }
+  const env = options.env ?? process.env;
+  const paths = assertStationExpressStateDirectorySafe(env);
+  if (!paths) {
+    if (options.allowMissing === true) return [];
+    throw new Error("Required DGX Station Express installer resume state is missing.");
+  }
+  for (let attempt = 0; attempt < STATION_EXPRESS_RETIREMENT_CLAIM_ATTEMPTS; attempt += 1) {
+    const completed = finishExistingRetirementClaims(paths, expectedGeneration);
+    if (completed.length > 0) return completed;
+
+    const stateFile = assertStationExpressInstallerResumeSafe(env);
+    if (!stateFile) {
+      if (options.allowMissing === true) return [];
+      throw new Error("Required DGX Station Express installer resume state is missing.");
+    }
+    if (readStationExpressInstallerResumeGeneration(stateFile) !== expectedGeneration) {
+      throw new Error("DGX Station Express installer resume state belongs to another attempt.");
+    }
+    const claimDirectory = fs.mkdtempSync(
+      path.join(paths.stateDir, `${STATION_EXPRESS_RETIREMENT_CLAIM_PREFIX}${expectedGeneration}-`),
+    );
+    fs.chmodSync(claimDirectory, 0o700);
+    const claim = retirementClaim(claimDirectory, expectedGeneration);
+    try {
+      fs.renameSync(paths.stateFile, claim.receiptFile);
+    } catch (error) {
+      removeEmptyRetirementClaimDirectory(claim.directory);
+      if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+      continue;
+    }
+    return [
+      retireClaimedReceipt(inspectRetirementClaim(claim), expectedGeneration, paths.stateFile),
+    ];
+  }
+  throw new Error("DGX Station Express installer resume state changed repeatedly during claim.");
+}
+
 export function retireStationExpressInstallerResume(
   expectedGeneration: string,
   options: { allowMissing?: boolean; env?: NodeJS.ProcessEnv } = {},
 ): void {
-  if (!isValidStationExpressReceiptGeneration(expectedGeneration)) {
-    throw new Error("DGX Station Express receipt generation is invalid.");
-  }
-  const stateFile = assertStationExpressInstallerResumeSafe(options.env ?? process.env);
-  if (!stateFile) {
-    if (options.allowMissing === true) return;
-    throw new Error("Required DGX Station Express installer resume state is missing.");
-  }
-  if (readStationExpressInstallerResumeGeneration(stateFile) !== expectedGeneration) {
-    throw new Error("DGX Station Express installer resume state belongs to another attempt.");
-  }
+  const claims = claimAndRetireStationExpressInstallerResume(expectedGeneration, options);
+  for (const claim of claims) removeRetirementClaimProof(claim);
+}
 
-  try {
-    fs.unlinkSync(stateFile);
-  } catch (error) {
-    if (!isErrnoException(error) || error.code !== "ENOENT" || options.allowMissing !== true) {
-      throw error;
-    }
-  }
+export function reconcileStationExpressInstallerResumeRetirement<T>(
+  expectedGeneration: string,
+  commitRetirement: () => T,
+  env: NodeJS.ProcessEnv = process.env,
+): T {
+  const claims = claimAndRetireStationExpressInstallerResume(expectedGeneration, {
+    allowMissing: true,
+    env,
+  });
+  const committed = commitRetirement();
+  for (const claim of claims) removeRetirementClaimProof(claim);
+  return committed;
 }
 
 export function clearStationExpressInstallerResume(env: NodeJS.ProcessEnv = process.env): void {
+  const paths = assertStationExpressStateDirectorySafe(env);
+  if (!paths) return;
   const stateFile = assertStationExpressInstallerResumeSafe(env);
-  if (!stateFile) return;
+  if (stateFile) fs.unlinkSync(stateFile);
+  for (const claim of listRetirementClaims(paths)) {
+    const state = inspectRetirementClaim(claim);
+    if (state.receiptGeneration !== null) fs.unlinkSync(claim.receiptFile);
+    if (state.hasProof) fs.unlinkSync(claim.proofFile);
+    fs.rmdirSync(claim.directory);
+  }
+}
 
-  // Every parent directory was verified as owner-only above. That makes the
-  // current uid the mutation boundary for the pathname between lstat and unlink.
-  try {
-    fs.unlinkSync(stateFile);
-  } catch (error) {
-    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+export function cleanupStationExpressReceiptRetirementClaims(
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const paths = assertStationExpressStateDirectorySafe(env);
+  if (!paths) return;
+  for (const claim of listRetirementClaims(paths)) {
+    const state = inspectRetirementClaim(claim);
+    if (!state.hasProof && state.receiptGeneration !== null) {
+      throw new Error("DGX Station Express receipt retirement claim is incomplete.");
+    }
+    if (state.hasProof) {
+      retireClaimedReceipt(state, claim.generation, paths.stateFile);
+    }
+    removeRetirementClaimProof(claim);
   }
 }
 
@@ -503,7 +794,16 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
         env[STATION_EXPRESS_ENV] === "1" &&
         isValidStationExpressReceiptGeneration(receiptGeneration) &&
         automaticFreshGeneration === receiptGeneration;
-      if (!preserveInstallerResume) {
+      if (preserveInstallerResume) {
+        try {
+          assertStationExpressInstallerResumeMatches(receiptGeneration, env);
+        } catch (error) {
+          deps.error(
+            `  Could not verify DGX Station Express installer resume state for automatic fresh recovery: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          deps.exitProcess(1);
+        }
+      } else {
         try {
           deps.clearInstallerResume();
         } catch (error) {
@@ -551,6 +851,14 @@ export function withStationExpressResumeEnvironment<Options extends ResumeOption
         deps.exitProcess(1);
       }
       return;
+    }
+    try {
+      deps.cleanupReceiptRetirementClaims();
+    } catch (error) {
+      deps.error(
+        `  Could not reconcile DGX Station Express receipt retirement state: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      deps.exitProcess(1);
     }
     if (requiresExplicitFailedSessionChoice(options, session)) {
       deps.error(
@@ -617,6 +925,7 @@ export function wrapOnboard<Options extends ResumeOptionsLike>(
   return withStationExpressResumeEnvironment(run, {
     loadSession,
     clearInstallerResume: clearStationExpressInstallerResume,
+    cleanupReceiptRetirementClaims: cleanupStationExpressReceiptRetirementClaims,
     reconcileReceiptRetirement,
     error: (message) => console.error(message),
     exitProcess: (code) => process.exit(code),

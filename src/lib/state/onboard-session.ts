@@ -35,7 +35,7 @@ import {
   bindStationExpressProviderSelection,
   isValidStationExpressReceiptGeneration,
   parseStationExpressResumeIntent,
-  retireStationExpressInstallerResume,
+  reconcileStationExpressInstallerResumeRetirement,
   type StationExpressResumeIntent,
 } from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
@@ -1644,13 +1644,27 @@ export function reconcileStationExpressReceiptRetirement(expectedGeneration: str
   if (!isValidStationExpressReceiptGeneration(expectedGeneration)) {
     throw new Error("DGX Station Express receipt generation is invalid.");
   }
-  assertStationExpressReceiptRetirementSession(loadSession(), expectedGeneration);
-  retireStationExpressInstallerResume(expectedGeneration, { allowMissing: true });
-  return updateSession((session) => {
-    assertStationExpressReceiptRetirementSession(session, expectedGeneration);
-    session.stationExpressReceiptRetirement = null;
-    return session;
-  });
+  const ownsOnboardLock = heldLockFd === null;
+  if (ownsOnboardLock) {
+    const lock = acquireOnboardLock("nemoclaw onboard (Station receipt retirement recovery)");
+    if (!lock.acquired) {
+      throw new Error(
+        "Cannot reconcile DGX Station Express receipt retirement while another onboarding run is in progress.",
+      );
+    }
+  }
+  try {
+    assertStationExpressReceiptRetirementSession(loadSession(), expectedGeneration);
+    return reconcileStationExpressInstallerResumeRetirement(expectedGeneration, () =>
+      updateSession((session) => {
+        assertStationExpressReceiptRetirementSession(session, expectedGeneration);
+        session.stationExpressReceiptRetirement = null;
+        return session;
+      }),
+    );
+  } finally {
+    if (ownsOnboardLock) releaseOnboardLock();
+  }
 }
 
 export function summarizeForDebug(

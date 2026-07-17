@@ -20,6 +20,13 @@ function receiptText(generation = receiptGeneration): string {
   return `revision=${receiptRevision}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${generation}\n`;
 }
 
+function receiptRetirementClaims(): string[] {
+  return fs
+    .readdirSync(session.SESSION_DIR)
+    .filter((name) => name.startsWith("station-express-resume.retiring-"))
+    .map((name) => path.join(session.SESSION_DIR, name));
+}
+
 function requireLoadedSession(
   loaded: ReturnType<OnboardSessionModule["loadSession"]>,
 ): LoadedSession {
@@ -265,14 +272,16 @@ describe("Station Express onboarding session state (#7048)", () => {
       stationExpressIntent: null,
       stationExpressReceiptRetirement: receiptGeneration,
     });
-    expect(fs.existsSync(receipt)).toBe(true);
+    expect(fs.existsSync(receipt)).toBe(false);
+    expect(receiptRetirementClaims()).toHaveLength(1);
+    expect(fs.existsSync(path.join(receiptRetirementClaims()[0]!, "receipt"))).toBe(true);
 
     session.reconcileStationExpressReceiptRetirement(receiptGeneration);
     expect(requireLoadedSession(session.loadSession()).stationExpressReceiptRetirement).toBeNull();
     expect(fs.existsSync(receipt)).toBe(false);
   });
 
-  it("recovers idempotently when deletion succeeds but the final session save fails", () => {
+  it("recovers a claimed receipt through the public wrapper after final session save fails", async () => {
     const receipt = path.join(session.SESSION_DIR, "station-express-resume");
     const intent = {
       version: 1 as const,
@@ -288,6 +297,7 @@ describe("Station Express onboarding session state (#7048)", () => {
     const rename = vi
       .spyOn(fs, "renameSync")
       .mockImplementationOnce((from, to) => originalRename(from, to))
+      .mockImplementationOnce((from, to) => originalRename(from, to))
       .mockImplementationOnce(() => {
         throw new Error("injected retirement publish failure");
       });
@@ -301,9 +311,51 @@ describe("Station Express onboarding session state (#7048)", () => {
       resumable: false,
       stationExpressReceiptRetirement: receiptGeneration,
     });
+    expect(receiptRetirementClaims()).toHaveLength(1);
 
+    const { wrapOnboard } = await import("../onboard/station-express-resume");
+    const run = vi.fn(async () => undefined);
+    await wrapOnboard(
+      run,
+      session.loadSession,
+      session.reconcileStationExpressReceiptRetirement,
+    )({});
+
+    expect(run).not.toHaveBeenCalled();
+    expect(requireLoadedSession(session.loadSession()).stationExpressReceiptRetirement).toBeNull();
+    expect(receiptRetirementClaims()).toEqual([]);
+  });
+
+  it("does not reconcile receipt retirement while another onboarding run holds the lock", () => {
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+    const completed = session.createSession({ mode: "non-interactive" });
+    completed.status = "complete";
+    completed.resumable = false;
+    completed.stationExpressReceiptRetirement = receiptGeneration;
+    session.saveSession(completed);
+    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
+    fs.writeFileSync(
+      session.LOCK_FILE,
+      JSON.stringify({
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        command: "competing nemoclaw onboard --fresh",
+      }),
+      { encoding: "utf8", flag: "wx", mode: 0o600 },
+    );
+
+    expect(() => session.reconcileStationExpressReceiptRetirement(receiptGeneration)).toThrow(
+      "another onboarding run is in progress",
+    );
+    expect(requireLoadedSession(session.loadSession()).stationExpressReceiptRetirement).toBe(
+      receiptGeneration,
+    );
+    expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText());
+
+    fs.unlinkSync(session.LOCK_FILE);
     session.reconcileStationExpressReceiptRetirement(receiptGeneration);
     expect(requireLoadedSession(session.loadSession()).stationExpressReceiptRetirement).toBeNull();
+    expect(fs.existsSync(receipt)).toBe(false);
   });
 
   it("preserves a mismatched receipt and the in-progress session", () => {
