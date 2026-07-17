@@ -89,6 +89,15 @@ function writeExecutable(filePath: string, source: string): void {
   fs.chmodSync(filePath, 0o755);
 }
 
+function mutateAuthActionSource(
+  source: string,
+  mutateAction: (action: Record<string, unknown>) => void,
+): string {
+  const action = YAML.parse(source) as Record<string, unknown>;
+  mutateAction(action);
+  return YAML.stringify(action);
+}
+
 function validateAuthArtifactMutation(options: {
   mutateAction?: (action: Record<string, unknown>) => void;
   mutateScript?: (source: string) => string;
@@ -98,13 +107,10 @@ function validateAuthArtifactMutation(options: {
   const scriptPath = path.join(directory, "docker-auth-setup.sh");
   try {
     const actionSource = fs.readFileSync(AUTH_ACTION_PATH, "utf8");
-    if (options.mutateAction) {
-      const action = YAML.parse(actionSource) as Record<string, unknown>;
-      options.mutateAction(action);
-      fs.writeFileSync(actionPath, YAML.stringify(action));
-    } else {
-      fs.writeFileSync(actionPath, actionSource);
-    }
+    const mutatedActionSource = options.mutateAction
+      ? mutateAuthActionSource(actionSource, options.mutateAction)
+      : actionSource;
+    fs.writeFileSync(actionPath, mutatedActionSource);
     const scriptSource = fs.readFileSync(AUTH_HELPER_PATH, "utf8");
     fs.writeFileSync(scriptPath, options.mutateScript?.(scriptSource) ?? scriptSource);
     return validateDockerHubAuthAction(actionPath, scriptPath);
