@@ -42,13 +42,7 @@ describe("DGX Station host preparation", () => {
   it("keeps documented Station pins and Deferred status aligned", () => {
     const helper = fs.readFileSync(STATION_PREPARE, "utf-8");
     const docs = STATION_DOCS.map((doc) => fs.readFileSync(doc, "utf-8"));
-    const pinnedValues = [
-      "DRIVER_VERSION",
-      "DOCKER_VERSION",
-      "TOOLKIT_VERSION",
-      "FACTORY_DKMS_VERSION",
-      "TARGET_DKMS_VERSION",
-    ].map((name) => {
+    const pinnedValues = ["DRIVER_VERSION", "DOCKER_VERSION", "TOOLKIT_VERSION"].map((name) => {
       const value = helper.match(new RegExp(`readonly ${name}="([^"]+)"`))?.[1];
       expect(value, `${name} must remain declared in the Station helper`).toBeTruthy();
       return value as string;
@@ -81,23 +75,33 @@ run_gpus_test_sudo
   });
 
   it.each([
-    ["", "missing"],
-    ["5:29.6.1-1~ubuntu.24.04~noble", "exact"],
-    ["5:30.0.0-1~ubuntu.24.04~noble", "mismatch"],
-  ])("classifies an installed package version as %s -> %s", (actual, expected) => {
+    ["", false, false],
+    ["5:29.6.1-1~ubuntu.24.04~noble", true, true],
+    ["5:30.0.0-1~ubuntu.24.04~noble", true, false],
+  ])("distinguishes package presence from an exact reviewed version: %s", (actual, installed, exact) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 installed_version() {
   if [[ "$1" == "docker-ce" ]]; then printf '%s' "$PACKAGE_ACTUAL"; fi
 }
-package_state 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'
+if package_is_installed 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'; then
+  printf 'installed=0\n'
+else
+  printf 'installed=1\n'
+fi
+if package_is_exact 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'; then
+  printf 'exact=0\n'
+else
+  printf 'exact=1\n'
+fi
 `,
       { PACKAGE_ACTUAL: actual },
     );
 
     expect(result.status, output).toBe(0);
-    expect(result.stdout.trim()).toBe(expected);
+    expect(output).toContain(`installed=${installed ? 0 : 1}`);
+    expect(output).toContain(`exact=${exact ? 0 : 1}`);
   });
 
   it.each([
@@ -114,50 +118,42 @@ package_state 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'
     expect(result.status === 0).toBe(accepted);
   });
 
-  it("allows only the reviewed factory DKMS transition", () => {
-    const approved = runSourced(
+  it.each([
+    "3.0.11-1ubuntu13",
+    "3.2.0-1",
+  ])("retains installed DKMS version drift as advisory: %s", (actual) => {
+    const { result, output } = runSourced(
       STATION_PREPARE,
       `
 installed_version() {
   if [[ "$1" == "dkms" ]]; then printf '%s' "$DKMS_ACTUAL"; fi
 }
-package_state 'dkms=1:3.4.0-1ubuntu1'
-assert_no_package_mismatches
+report_package_version_drift
 `,
-      { DKMS_ACTUAL: "3.0.11-1ubuntu13" },
+      { DKMS_ACTUAL: actual },
     );
-    expect(approved.result.status, approved.output).toBe(0);
-    expect(approved.output).toContain("approved-transition");
-    expect(approved.output).toContain("status=approved_transition");
 
-    const arbitrary = runSourced(
-      STATION_PREPARE,
-      `
-installed_version() {
-  if [[ "$1" == "dkms" ]]; then printf '%s' "$DKMS_ACTUAL"; fi
-}
-assert_no_package_mismatches
-`,
-      { DKMS_ACTUAL: "3.2.0-1" },
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(
+      `package=dkms status=version_drift actual=${actual} expected=1:3.4.0-1ubuntu1; retaining installed version`,
     );
-    expect(arbitrary.result.status, arbitrary.output).not.toBe(0);
-    expect(arbitrary.output).toMatch(/dkms status=mismatch/);
   });
 
-  it("refuses to change an existing mismatched prerequisite", () => {
+  it("warns with actual and expected versions for an installed prerequisite drift", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 installed_version() {
   if [[ "$1" == "docker-ce" ]]; then printf '5:30.0.0-1~ubuntu.24.04~noble'; fi
 }
-assert_no_package_mismatches
+report_package_version_drift
 `,
     );
 
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/docker-ce status=mismatch/);
-    expect(output).toMatch(/refusing to change them automatically/);
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(
+      "package=docker-ce status=version_drift actual=5:30.0.0-1~ubuntu.24.04~noble expected=5:29.6.1-1~ubuntu.24.04~noble; retaining installed version",
+    );
   });
 
   it("allows only condition-qualified factory failures and blocks other failed units", () => {
@@ -355,9 +351,10 @@ check_failed_units
 common_preflight() { :; }
 require_command() { :; }
 acquire_sudo() { :; }
-all_packages_exact() { return 0; }
+all_packages_installed() { return 0; }
 install_boot_marker_matches_current_boot() { return 1; }
-driver_loaded_exact() { return 0; }
+driver_is_loaded() { return 0; }
+report_package_version_drift() { :; }
 install_packages() { printf 'INSTALL_PACKAGES\n'; }
 finish_runtime() { printf 'FINISH_RUNTIME\n'; }
 verify_apply_state() { printf 'VERIFY_APPLY_STATE\n'; }
@@ -372,14 +369,14 @@ run_apply
     expect(output).toContain("APPLY_RESULT=COMPLETE");
   });
 
-  it("applies the reviewed factory DKMS transition and returns the reboot-required contract", () => {
+  it("retains factory DKMS drift while installing missing prerequisites", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 common_preflight() { :; }
 require_command() { :; }
 acquire_sudo() { :; }
-all_packages_exact() { return 1; }
+all_packages_installed() { return 1; }
 installed_version() {
   if [[ "$1" == "dkms" ]]; then printf '3.0.11-1ubuntu13'; fi
 }
@@ -393,7 +390,9 @@ run_apply
     );
 
     expect(result.status, output).toBe(10);
-    expect(output).toContain("package=dkms status=approved_transition");
+    expect(output).toContain(
+      "package=dkms status=version_drift actual=3.0.11-1ubuntu13 expected=1:3.4.0-1ubuntu1; retaining installed version",
+    );
     expect(output).toContain("INSTALL_PACKAGES");
     expect(output).toContain("ENSURE_DOCKER_GROUP");
     expect(output).toContain("RECHECK_ALL_WORKLOADS");
@@ -404,17 +403,40 @@ run_apply
     expect(output).toContain("APPLY_RESULT=REBOOT_REQUIRED");
   });
 
-  it("installs the exact NVIDIA Container Toolkit package contract", () => {
+  it("passes only missing pinned packages to APT and retains installed drift", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
+DOCKER_INSTALLED=0
+installed_version() {
+  local name="$1" spec
+  if [[ "$name" == "docker-ce" ]]; then
+    if [[ "$DOCKER_INSTALLED" == "1" ]]; then
+      printf '5:29.6.1-1~ubuntu.24.04~noble'
+    fi
+    return
+  fi
+  if [[ "$name" == "dkms" ]]; then
+    printf '3.0.11-1ubuntu13'
+    return
+  fi
+  for spec in "\${PACKAGE_SPECS[@]}"; do
+    if [[ "$(package_name "$spec")" == "$name" ]]; then
+      package_expected_version "$spec"
+      return
+    fi
+  done
+}
 configure_repositories() { printf 'CONFIGURE_REPOSITORIES\n'; }
-validate_package_availability() { printf 'VALIDATE_PACKAGES\n'; }
-simulate_install() { printf 'SIMULATE_INSTALL\n'; }
+apt-cache() { printf 'APT_CACHE %s\n' "$*" >>"$HOME/apt-cache-calls"; }
+apt-get() { printf 'APT_GET %s\n' "$*"; }
 check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
-package_is_exact() { return 0; }
-sudo() { printf 'SUDO %s\n' "$*"; }
+sudo() {
+  printf 'SUDO %s\n' "$*"
+  if [[ "$*" == *"apt-get install"* ]]; then DOCKER_INSTALLED=1; fi
+}
 install_packages
+cat "$HOME/apt-cache-calls"
 `,
     );
 
@@ -422,6 +444,27 @@ install_packages
     expect(output).toContain("apt-get update");
     expect(output).toContain("apt-get install -y --no-install-recommends");
     expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("APT_CACHE show docker-ce=5:29.6.1-1~ubuntu.24.04~noble");
+    expect(output).toContain(
+      "APT_GET -s install --no-install-recommends docker-ce=5:29.6.1-1~ubuntu.24.04~noble",
+    );
+    expect(output).toContain(
+      "SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker-ce=5:29.6.1-1~ubuntu.24.04~noble",
+    );
+    expect(output).not.toContain("apt-get install -y --no-install-recommends dkms=");
+    expect(output).toContain("pinned_packages=installed");
+  });
+
+  it("includes every NVIDIA Container Toolkit package when it is missing", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+installed_version() { :; }
+missing_package_specs
+`,
+    );
+
+    expect(result.status, output).toBe(0);
     for (const spec of [
       "libnvidia-container-tools=1.19.1-1",
       "libnvidia-container1=1.19.1-1",
@@ -430,7 +473,6 @@ install_packages
     ]) {
       expect(output).toContain(spec);
     }
-    expect(output).toContain("pinned_packages=installed");
   });
 
   it("does not refresh CDI when the GPU launch probe already passes", () => {
@@ -545,18 +587,41 @@ check_no_workloads
     expect(output).toMatch(/container state cannot be verified safely/);
   });
 
-  it("refuses an installed CUDA keyring version that differs from the pin", () => {
+  it("retains a verified CUDA keyring version drift and verifies its signing fingerprint", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+assert_root_directory_safe() { :; }
+assert_root_regular_file_safe() { :; }
+installed_version() { printf '2.0-1'; }
+dpkg() { :; }
+verify_key_fingerprint() { printf 'VERIFIED_FINGERPRINT\n'; }
+ensure_cuda_keyring "$HOME/cuda-keyring.deb"
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(
+      "package=cuda-keyring status=version_drift actual=2.0-1 expected=1.1-1; retaining installed version",
+    );
+    expect(output).toContain("VERIFIED_FINGERPRINT");
+  });
+
+  it("rejects CUDA keyring drift when package-file verification reports changes", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 assert_root_directory_safe() { :; }
 installed_version() { printf '2.0-1'; }
+dpkg() { printf '??5?????? c /usr/share/keyrings/cuda-archive-keyring.gpg\n'; }
+verify_key_fingerprint() { printf 'VERIFIED_FINGERPRINT\n'; }
 ensure_cuda_keyring "$HOME/cuda-keyring.deb"
 `,
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/refusing to upgrade or downgrade it automatically/);
+    expect(output).toMatch(/files differ from the package manifest/);
+    expect(output).not.toContain("VERIFIED_FINGERPRINT");
   });
 
   it("reuses an exact verified CUDA keyring without downloading it again", () => {
@@ -654,9 +719,10 @@ assert_root_directory_safe /etc/apt/keyrings test_directory
 common_preflight() { :; }
 require_command() { :; }
 acquire_sudo() { :; }
-all_packages_exact() { return 0; }
+all_packages_installed() { return 0; }
 install_boot_marker_matches_current_boot() { return 1; }
-driver_loaded_exact() { return 0; }
+driver_is_loaded() { return 0; }
+report_package_version_drift() { :; }
 finish_runtime() { DOCKER_GROUP_ADDED=1; printf 'FINISH_RUNTIME\n'; }
 verify_apply_state() { printf 'VERIFY_APPLY_STATE\n'; }
 run_apply
@@ -912,20 +978,83 @@ main "$READ_MODE"
     expect(fs.existsSync(path.join(home, "station-bootstrap-logs"))).toBe(false);
   });
 
-  it("fails verification when exact packages are present but the driver is not loaded", () => {
+  it("warns once for package and driver drift during a Station check", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+common_preflight() { :; }
+installed_version() {
+  local name="$1" spec
+  if [[ "$name" == "docker-ce" ]]; then
+    printf '5:30.0.0-1~ubuntu.24.04~noble'
+    return
+  fi
+  for spec in "\${PACKAGE_SPECS[@]}"; do
+    if [[ "$(package_name "$spec")" == "$name" ]]; then
+      package_expected_version "$spec"
+      return
+    fi
+  done
+}
+loaded_driver_version() { printf '620.1'; }
+install_boot_marker_matches_current_boot() { return 1; }
+run_check
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(
+      output.match(
+        /package=docker-ce status=version_drift actual=5:30\.0\.0-1~ubuntu\.24\.04~noble expected=5:29\.6\.1-1~ubuntu\.24\.04~noble/g,
+      ),
+    ).toHaveLength(1);
+    expect(
+      output.match(/driver status=version_drift actual=620\.1 expected=610\.43\.02/g),
+    ).toHaveLength(1);
+    expect(output).toContain("CHECK_RESULT=PACKAGES_AND_DRIVER_PRESENT");
+  });
+
+  it("treats loaded driver version drift as advisory without relaxing ECC checks", () => {
+    const advisory = runSourced(
+      STATION_PREPARE,
+      `
+loaded_driver_version() { printf '620.1'; }
+nvidia-smi() { printf 'NVIDIA GB300, 620.1, 0, 0\n'; }
+report_driver_version_drift
+verify_gpu
+`,
+    );
+    expect(advisory.result.status, advisory.output).toBe(0);
+    expect(advisory.output).toContain(
+      "driver status=version_drift actual=620.1 expected=610.43.02; retaining loaded version",
+    );
+    expect(advisory.output).toContain("gpu=NVIDIA GB300 driver=620.1 ecc_corrected=0");
+
+    const eccFailure = runSourced(
+      STATION_PREPARE,
+      `
+nvidia-smi() { printf 'NVIDIA GB300, 620.1, 1, 0\n'; }
+verify_gpu
+`,
+    );
+    expect(eccFailure.result.status, eccFailure.output).not.toBe(0);
+    expect(eccFailure.output).toMatch(/ECC must be 0\/0/);
+  });
+
+  it("fails verification when prerequisite packages are present but the driver is not loaded", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 common_preflight() { :; }
 require_command() { :; }
-all_packages_exact() { return 0; }
-driver_loaded_exact() { return 1; }
+all_packages_installed() { return 0; }
+driver_is_loaded() { return 1; }
 run_verify
 `,
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/Pinned driver is not loaded/);
+    expect(output).toMatch(/NVIDIA driver is not loaded/);
   });
 
   it("rejects a symlinked Station bootstrap state directory", () => {

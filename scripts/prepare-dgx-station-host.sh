@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly SCRIPT_VERSION="2026-07-16.5"
+readonly SCRIPT_VERSION="2026-07-17.1"
 readonly REBOOT_REQUIRED_EXIT=10
 readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
 # The qualified generic image currently ships this OEM telemetry bootcmd. Its
@@ -26,7 +26,6 @@ readonly DOCKER_KEY_FINGERPRINT="9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 readonly DRIVER_VERSION="610.43.02"
 readonly DOCKER_VERSION="29.6.1"
 readonly TOOLKIT_VERSION="1.19.1"
-readonly FACTORY_DKMS_VERSION="3.0.11-1ubuntu13"
 readonly TARGET_DKMS_VERSION="1:3.4.0-1ubuntu1"
 # Keep this as a plain Ubuntu image: NVIDIA Container Toolkit injects the host
 # driver utility when CDI or --gpus is requested. This intentionally exercises
@@ -82,7 +81,7 @@ usage() {
 Usage: prepare-dgx-station-host.sh --check|--apply|--verify
 
   --check   Read-only eligibility and current-state report.
-  --apply   Install exact prerequisites or finish post-reboot runtime setup.
+  --apply   Install missing reviewed prerequisites or finish post-reboot runtime setup.
   --verify  Read-only host verification plus ephemeral GPU container tests.
 
 Exit 10 from --apply means an operator-controlled reboot is required. After
@@ -197,48 +196,36 @@ package_is_exact() {
   [[ "$actual" == "$expected" ]]
 }
 
-package_state() {
+package_is_installed() {
   local spec=$1
-  local name expected actual
+  local name
   name="$(package_name "$spec")"
-  expected="$(package_expected_version "$spec")"
-  actual="$(installed_version "$name")"
-  if [[ -z "$actual" ]]; then
-    printf 'missing\n'
-  elif [[ "$actual" == "$expected" ]]; then
-    printf 'exact\n'
-  elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" && "$expected" == "$TARGET_DKMS_VERSION" ]]; then
-    printf 'approved-transition\n'
-  else
-    printf 'mismatch\n'
-  fi
+  [[ -n "$(installed_version "$name")" ]]
 }
 
-assert_no_package_mismatches() {
-  local spec state name expected actual mismatch=0
+report_package_version_drift() {
+  local spec name expected actual
   for spec in "${PACKAGE_SPECS[@]}"; do
-    state="$(package_state "$spec")"
-    if [[ "$state" == "approved-transition" ]]; then
-      name="$(package_name "$spec")"
-      expected="$(package_expected_version "$spec")"
-      actual="$(installed_version "$name")"
-      info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
-      continue
-    fi
-    [[ "$state" == "mismatch" ]] || continue
     name="$(package_name "$spec")"
     expected="$(package_expected_version "$spec")"
     actual="$(installed_version "$name")"
-    warn "package=${name} status=mismatch actual=${actual} expected=${expected}"
-    mismatch=1
+    [[ -n "$actual" && "$actual" != "$expected" ]] || continue
+    warn "package=${name} status=version_drift actual=${actual} expected=${expected}; retaining installed version"
   done
-  ((mismatch == 0)) || fatal "Existing Station prerequisite versions differ from the validated pins or approved factory transition; refusing to change them automatically"
 }
 
 all_packages_exact() {
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
     package_is_exact "$spec" || return 1
+  done
+  return 0
+}
+
+all_packages_installed() {
+  local spec
+  for spec in "${PACKAGE_SPECS[@]}"; do
+    package_is_installed "$spec" || return 1
   done
   return 0
 }
@@ -379,11 +366,27 @@ check_no_workloads() {
   info "workloads=none port_8000=free"
 }
 
-driver_loaded_exact() {
+loaded_driver_version() {
   local loaded
-  command -v nvidia-smi >/dev/null 2>&1 || return 1
-  loaded="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 | tr -d '[:space:]')"
-  [[ "$loaded" == "$DRIVER_VERSION" ]]
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+  loaded="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 | tr -d '[:space:]')" \
+    || return 0
+  printf '%s\n' "$loaded"
+}
+
+driver_is_loaded() {
+  [[ -n "$(loaded_driver_version)" ]]
+}
+
+driver_loaded_exact() {
+  [[ "$(loaded_driver_version)" == "$DRIVER_VERSION" ]]
+}
+
+report_driver_version_drift() {
+  local actual
+  actual="$(loaded_driver_version)"
+  [[ -n "$actual" && "$actual" != "$DRIVER_VERSION" ]] || return 0
+  warn "driver status=version_drift actual=${actual} expected=${DRIVER_VERSION}; retaining loaded version"
 }
 
 assert_station_state_dir_safe() {
@@ -448,10 +451,8 @@ print_package_status() {
       info "package=${name} status=exact version=${actual}"
     elif [[ -z "$actual" ]]; then
       info "package=${name} status=missing expected=${expected}"
-    elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" ]]; then
-      info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
     else
-      warn "package=${name} status=mismatch actual=${actual} expected=${expected}"
+      warn "package=${name} status=version_drift actual=${actual} expected=${expected}; retaining installed version"
     fi
   done
 }
@@ -548,13 +549,15 @@ ensure_cuda_keyring() {
     sudo dpkg -i "$cuda_deb"
     package_is_exact "cuda-keyring=${CUDA_KEYRING_PACKAGE_VERSION}" \
       || fatal "Installed cuda-keyring does not match ${CUDA_KEYRING_PACKAGE_VERSION}"
-  elif [[ "$actual" == "$CUDA_KEYRING_PACKAGE_VERSION" ]]; then
+  else
     verification="$(dpkg -V cuda-keyring 2>&1)" \
       || fatal "Unable to verify the installed cuda-keyring package"
     [[ -z "$verification" ]] || fatal "Installed cuda-keyring files differ from the package manifest: ${verification}"
-    info "cuda_keyring=exact version=${actual}"
-  else
-    fatal "Existing cuda-keyring version ${actual} differs from validated pin ${CUDA_KEYRING_PACKAGE_VERSION}; refusing to upgrade or downgrade it automatically"
+    if [[ "$actual" == "$CUDA_KEYRING_PACKAGE_VERSION" ]]; then
+      info "cuda_keyring=exact version=${actual}"
+    else
+      warn "package=cuda-keyring status=version_drift actual=${actual} expected=${CUDA_KEYRING_PACKAGE_VERSION}; retaining installed version"
+    fi
   fi
 
   assert_root_regular_file_safe /usr/share/keyrings/cuda-archive-keyring.gpg 0644 "CUDA repository keyring"
@@ -605,9 +608,16 @@ configure_repositories() {
   info "repository_keys=verified"
 }
 
-validate_package_availability() {
+missing_package_specs() {
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
+    package_is_installed "$spec" || printf '%s\n' "$spec"
+  done
+}
+
+validate_package_availability() {
+  local spec
+  for spec in "$@"; do
     apt-cache show "$spec" >/dev/null 2>&1 || fatal "Exact package version is unavailable: ${spec}"
   done
   info "exact_package_versions=available"
@@ -615,7 +625,7 @@ validate_package_availability() {
 
 simulate_install() {
   local simulation
-  simulation="$(apt-get -s install --no-install-recommends "${PACKAGE_SPECS[@]}")" \
+  simulation="$(apt-get -s install --no-install-recommends "$@")" \
     || fatal "APT simulation failed"
   printf '%s\n' "$simulation"
   if grep -Eq '^(Remv |Purg )' <<<"$simulation"; then
@@ -625,18 +635,24 @@ simulate_install() {
 }
 
 install_packages() {
+  local spec
+  local -a missing_specs=()
+  while IFS= read -r spec; do
+    missing_specs+=("$spec")
+  done < <(missing_package_specs)
+  ((${#missing_specs[@]} > 0)) || fatal "Package installation was requested without a missing prerequisite"
+
   configure_repositories
   info "Refreshing package metadata"
   sudo apt-get update
-  validate_package_availability
-  simulate_install
+  validate_package_availability "${missing_specs[@]}"
+  simulate_install "${missing_specs[@]}"
   check_no_workloads
-  info "Installing pinned Station prerequisites"
+  info "Installing missing pinned Station prerequisites"
   sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    "${PACKAGE_SPECS[@]}"
+    "${missing_specs[@]}"
 
-  local spec
-  for spec in "${PACKAGE_SPECS[@]}"; do
+  for spec in "${missing_specs[@]}"; do
     package_is_exact "$spec" || fatal "Installed package does not match ${spec}"
   done
   info "pinned_packages=installed"
@@ -819,7 +835,7 @@ finish_runtime() {
 verify_apply_state() {
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || fatal "Package verification failed: ${spec}"
+    package_is_installed "$spec" || fatal "Package verification failed: ${spec}"
   done
   verify_gpu
   systemctl is-active --quiet nvidia-persistenced.service || fatal "nvidia-persistenced.service is not active"
@@ -843,7 +859,6 @@ verify_gpu() {
   corrected="${corrected//[[:space:]]/}"
   uncorrected="${uncorrected//[[:space:]]/}"
   [[ "$name" == *"GB300"* ]] || fatal "Expected NVIDIA GB300, found ${name}"
-  [[ "$driver" == "$DRIVER_VERSION" ]] || fatal "Expected driver ${DRIVER_VERSION}, found ${driver}"
   [[ "$corrected" == "0" && "$uncorrected" == "0" ]] \
     || fatal "ECC must be 0/0, found corrected=${corrected} uncorrected=${uncorrected}"
   info "gpu=${name} driver=${driver} ecc_corrected=${corrected} ecc_uncorrected=${uncorrected}"
@@ -852,7 +867,7 @@ verify_gpu() {
 verify_host() {
   local spec user_name=${SUDO_USER:-$USER}
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || fatal "Package verification failed: ${spec}"
+    package_is_installed "$spec" || fatal "Package verification failed: ${spec}"
   done
   verify_gpu
   systemctl is-active --quiet nvidia-persistenced.service || fatal "nvidia-persistenced.service is not active"
@@ -873,14 +888,15 @@ verify_host() {
 run_check() {
   common_preflight
   print_package_status
-  if all_packages_exact; then
+  report_driver_version_drift
+  if all_packages_installed; then
     if install_boot_marker_matches_current_boot; then
       warn "Package installation completed in the current boot; reboot is required"
       info "CHECK_RESULT=REBOOT_REQUIRED"
-    elif driver_loaded_exact; then
+    elif driver_is_loaded; then
       info "CHECK_RESULT=PACKAGES_AND_DRIVER_PRESENT"
     else
-      warn "Exact packages are installed but driver ${DRIVER_VERSION} is not loaded; reboot is required"
+      warn "Station prerequisite packages are installed but the NVIDIA driver is not loaded; reboot is required"
       info "CHECK_RESULT=REBOOT_REQUIRED"
     fi
   else
@@ -901,17 +917,18 @@ run_apply() {
   require_command sudo
   acquire_sudo
   common_preflight
+  report_package_version_drift
+  report_driver_version_drift
 
   if [[ -e /var/run/reboot-required ]]; then
-    if all_packages_exact && ! driver_loaded_exact; then
+    if all_packages_installed && ! driver_is_loaded; then
       warn "A reboot is required before runtime setup can continue"
       exit "$REBOOT_REQUIRED_EXIT"
     fi
     fatal "An unrelated reboot is already pending"
   fi
 
-  if ! all_packages_exact; then
-    assert_no_package_mismatches
+  if ! all_packages_installed; then
     install_packages
     ensure_docker_group
     check_no_workloads
@@ -929,8 +946,8 @@ run_apply() {
     exit "$REBOOT_REQUIRED_EXIT"
   fi
 
-  driver_loaded_exact || {
-    warn "Pinned packages are installed but driver ${DRIVER_VERSION} is not loaded"
+  driver_is_loaded || {
+    warn "Station prerequisite packages are installed but the NVIDIA driver is not loaded; reboot is required"
     info "APPLY_RESULT=REBOOT_REQUIRED"
     info "Run: sudo reboot"
     exit "$REBOOT_REQUIRED_EXIT"
@@ -953,8 +970,10 @@ run_verify() {
   require_command docker
   require_command nvidia-ctk
   require_command nvidia-smi
-  all_packages_exact || fatal "Pinned prerequisite packages are incomplete; run --apply"
-  driver_loaded_exact || fatal "Pinned driver is not loaded; reboot, then run --apply"
+  all_packages_installed || fatal "Station prerequisite packages are incomplete; run --apply"
+  driver_is_loaded || fatal "NVIDIA driver is not loaded; reboot, then run --apply"
+  report_package_version_drift
+  report_driver_version_drift
   verify_host
 }
 

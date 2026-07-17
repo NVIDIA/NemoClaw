@@ -123,10 +123,13 @@ Use these details when your first-run path needs more control.
     On that Station configuration, accepting the express prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
     DGX OS, NVIDIA BaseOS images, and other Station generations stop before host preparation.
     Set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue on an unqualified Station without host automation.
-    It probes the pinned driver, Docker, Buildx, and NVIDIA Container Toolkit versions, reuses exact matches, installs missing pins, and permits only the reviewed factory `dkms` transition.
+    It uses NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1` as the reviewed versions for missing prerequisites.
+    Preparation retains installed packages, installs reviewed pinned versions only for missing packages, and warns with actual and expected versions when an installed prerequisite or the loaded NVIDIA driver differs.
+    A different installed `cuda-keyring` version remains usable only when `dpkg -V` verifies its package files and the CUDA repository signing fingerprint matches the expected NVIDIA fingerprint.
+    Driver-version drift is advisory, but the Station GB300 identity, ECC 0/0, packaged CDI lifecycle, `nvidia.com/gpu=all` device, Docker CDI launch, and `--gpus all` launch checks remain mandatory.
     It establishes NVIDIA CDI through the packaged refresh service, then proves both CDI and `--gpus all` with real container launches.
     If the packaged refresh fails or does not advertise `nvidia.com/gpu=all`, preparation prints service diagnostics and stops for administrator repair instead of generating CDI configuration directly.
-    After it changes pinned packages, the installer exits with status `10` at the required reboot boundary; reboot, sign in, and run the printed exact-commit command to resume the accepted recipe without another prompt.
+    After it installs missing pinned packages, the installer exits with status `10` at the required reboot boundary; reboot, sign in, and run the printed exact-commit command to resume the accepted recipe without another prompt.
     This automation does not change Station's Deferred support status; physical end-to-end validation remains open.
     Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead.
     The flag selects the interactive express prompt and requires terminal access.
@@ -198,14 +201,17 @@ Use these details when your first-run path needs more control.
     After you confirm the interactive express prompt, the installer switches the remaining onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
     DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default.
     DGX Station express install explicitly selects `nemotron-3-ultra-550b-a55b` instead of the Station managed-vLLM profile default, `deepseek-v4-flash`, and discloses the approximately `352 GB` model download before confirmation.
-    Before onboarding, the Station path requires Station GB300 with the generic Ubuntu 24.04 ARM64 image and checks for NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
+    Before onboarding, the Station path requires Station GB300 with the generic Ubuntu 24.04 ARM64 image and uses NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1` as the reviewed versions for missing prerequisites.
     DGX OS, NVIDIA BaseOS images, and other Station generations are outside this automatic preparation boundary.
     Set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to continue without Station host automation.
-    Preparation reuses exact versions, installs missing pinned packages, permits only the reviewed `dkms` transition from `3.0.11-1ubuntu13` to `1:3.4.0-1ubuntu1`, and refuses every other mismatched version.
+    Preparation retains installed packages, installs reviewed pinned versions only for missing packages, and warns with actual and expected versions when an installed prerequisite or the loaded NVIDIA driver differs.
+    A different installed `cuda-keyring` version remains usable only when `dpkg -V` verifies its package files and the CUDA repository signing fingerprint matches the expected NVIDIA fingerprint.
+    Version warnings do not relax the generic Ubuntu 24.04 ARM64 image, Station GB300 DMI and GPU identity, Secure Boot, kernel, capacity, network, workload, systemd, repository-key, APT simulation, rollback, or file-integrity checks.
+    Driver-version drift is advisory, but the ECC 0/0 requirement, packaged CDI lifecycle, `nvidia.com/gpu=all` device, Docker CDI launch, and `--gpus all` launch checks remain mandatory.
     It requires the packaged NVIDIA CDI refresh service to advertise `nvidia.com/gpu=all`, and verifies CDI and `--gpus all` with real container launches.
     If the packaged refresh fails or omits that device, preparation prints service diagnostics and stops for administrator repair instead of generating CDI configuration directly.
     If NVIDIA Docker runtime registration or a post-change acceptance probe fails, preparation restores the prior Docker daemon configuration.
-    Changing pinned packages exits with status `10` for a reboot; after you sign in and run the printed exact-commit command, the accepted express recipe resumes without another prompt.
+    Installing missing pinned packages exits with status `10` for a reboot; after you sign in and run the printed exact-commit command, the accepted express recipe resumes without another prompt.
     This automation does not change Station's Deferred support status; physical end-to-end validation remains open.
     To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
     The `--station-deepseek` flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
