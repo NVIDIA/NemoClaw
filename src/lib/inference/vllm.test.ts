@@ -933,13 +933,12 @@ describe("installVllm model resolution", () => {
     const unrelatedModelDir = path.join(hubDir, "models--unrelated--model");
     const existing = new Set([hubDir, lockDir, modelDir, modelLockDir, unrelatedModelDir]);
     vi.spyOn(fs, "existsSync").mockImplementation((target) => existing.has(String(target)));
-    mocks.findUnwritableTreePath.mockImplementation((target, _deps, options) => {
-      if (target === unrelatedModelDir) return unrelatedModelDir;
-      if ((target === cacheDir || target === hubDir) && options?.recursive !== false) {
-        return unrelatedModelDir;
-      }
-      return null;
-    });
+    mocks.findUnwritableTreePath.mockImplementation((target, _deps, options) =>
+      target === unrelatedModelDir ||
+      ((target === cacheDir || target === hubDir) && options?.recursive !== false)
+        ? unrelatedModelDir
+        : null,
+    );
 
     const result = await installVllm(profile, {
       hasImage: true,
