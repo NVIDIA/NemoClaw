@@ -15,10 +15,12 @@ import { githubApi, githubRestPaginated } from "../advisors/github.mts";
 import { parseArgs } from "../advisors/io.mts";
 import {
   buildRiskPlan,
+  isPrE2eTypedTargetId,
   RISK_PLAN_VERSION,
   type RiskPlan,
   requiresCredentialedE2eAuthorization,
   riskPlanRequiredJobIds,
+  riskPlanRequiredTargetIds,
 } from "../advisors/risk-plan.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
@@ -256,7 +258,7 @@ type WorkflowRunIdentity = {
 };
 
 export type PrGateState = {
-  version: 2;
+  version: 3;
   commitSha: string;
   baseSha: string;
   workflowSha: string;
@@ -264,6 +266,7 @@ export type PrGateState = {
   correlationId: string;
   prNumber: number;
   expectedJobs: string[];
+  expectedTargets: string[];
   expectedShards: Record<string, string[]>;
 };
 
@@ -552,7 +555,7 @@ function readRegularJson(file: string, maxBytes = MAX_PLAN_BYTES): unknown {
 }
 
 export function validatePrGateState(value: unknown): PrGateState {
-  if (!isObjectRecord(value) || value.version !== 2) {
+  if (!isObjectRecord(value) || value.version !== 3) {
     throw new Error("State version is invalid");
   }
   if (typeof value.commitSha !== "string" || !SHA_PATTERN.test(value.commitSha)) {
@@ -575,28 +578,44 @@ export function validatePrGateState(value: unknown): PrGateState {
   }
   if (
     !Array.isArray(value.expectedJobs) ||
-    value.expectedJobs.length < 1 ||
     !value.expectedJobs.every((job) => typeof job === "string" && JOB_PATTERN.test(job)) ||
     new Set(value.expectedJobs).size !== value.expectedJobs.length
   ) {
     throw new Error("State jobs are invalid");
   }
+  if (
+    !Array.isArray(value.expectedTargets) ||
+    !value.expectedTargets.every(
+      (target) =>
+        typeof target === "string" && JOB_PATTERN.test(target) && isPrE2eTypedTargetId(target),
+    ) ||
+    new Set(value.expectedTargets).size !== value.expectedTargets.length
+  ) {
+    throw new Error("State targets are invalid");
+  }
+  const expectedSelections = [...value.expectedJobs, ...value.expectedTargets];
+  if (
+    expectedSelections.length < 1 ||
+    new Set(expectedSelections).size !== expectedSelections.length
+  ) {
+    throw new Error("State E2E selections are invalid");
+  }
   if (!isObjectRecord(value.expectedShards)) {
     throw new Error("State shards are invalid");
   }
   const shardJobs = Object.keys(value.expectedShards).sort();
-  if (JSON.stringify(shardJobs) !== JSON.stringify([...value.expectedJobs].sort())) {
-    throw new Error("State shard jobs do not match expected jobs");
+  if (JSON.stringify(shardJobs) !== JSON.stringify([...expectedSelections].sort())) {
+    throw new Error("State shard selections do not match expected jobs and targets");
   }
-  for (const job of value.expectedJobs) {
-    const shards = value.expectedShards[job];
+  for (const selection of expectedSelections) {
+    const shards = value.expectedShards[selection];
     if (
       !Array.isArray(shards) ||
       shards.length < 1 ||
       new Set(shards).size !== shards.length ||
       !shards.every((shard) => typeof shard === "string" && SHARD_PATTERN.test(shard))
     ) {
-      throw new Error(`State shards are invalid for ${job}`);
+      throw new Error(`State shards are invalid for ${selection}`);
     }
   }
   return value as PrGateState;
@@ -633,21 +652,52 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
       throw new Error(`risk plan names unknown E2E job: ${job}`);
     }
   }
+  const selectedTargets = riskPlanRequiredTargetIds(rebuilt);
+  if (new Set(selectedTargets).size !== selectedTargets.length) {
+    throw new Error("risk plan required targets must be unique");
+  }
+  for (const target of selectedTargets) {
+    if (!JOB_PATTERN.test(target) || !isPrE2eTypedTargetId(target)) {
+      throw new Error(`risk plan names unknown PR E2E target: ${target}`);
+    }
+  }
   return rebuilt;
+}
+
+function riskPlanSelectionIds(plan: RiskPlan): string[] {
+  return [...riskPlanRequiredJobIds(plan), ...riskPlanRequiredTargetIds(plan)];
+}
+
+function riskPlanSelectionSummary(plan: RiskPlan): string {
+  const jobs = riskPlanRequiredJobIds(plan);
+  const targets = riskPlanRequiredTargetIds(plan);
+  return [
+    jobs.length > 0 ? `jobs: ${jobs.join(", ")}` : "",
+    targets.length > 0 ? `targets: ${targets.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
 }
 
 export function validateSignal(
   value: unknown,
   state: Pick<
     PrGateState,
-    "commitSha" | "planHash" | "correlationId" | "expectedJobs" | "expectedShards"
+    | "commitSha"
+    | "planHash"
+    | "correlationId"
+    | "expectedJobs"
+    | "expectedTargets"
+    | "expectedShards"
   >,
 ): E2eRiskSignal {
   if (!isObjectRecord(value) || value.version !== 1) {
     throw new Error("invalid E2E signal version");
   }
   const signal = value as E2eRiskSignal;
-  if (!state.expectedJobs.includes(signal.jobId)) throw new Error("E2E signal job is unexpected");
+  if (![...state.expectedJobs, ...state.expectedTargets].includes(signal.jobId)) {
+    throw new Error("E2E signal job or target is unexpected");
+  }
   if (!state.expectedShards[signal.jobId]?.includes(signal.shardId)) {
     throw new Error("E2E signal shard is unexpected");
   }
@@ -671,6 +721,7 @@ export function validateSignal(
 export function classifyPrGateEvidence(options: {
   workflowConclusion: string | null;
   expectedJobs: readonly string[];
+  expectedTargets?: readonly string[];
   expectedShards: Readonly<Record<string, readonly string[]>>;
   signals: readonly E2eRiskSignal[];
 }): PrGateVerdict {
@@ -681,17 +732,18 @@ export function classifyPrGateEvidence(options: {
       summary: `The run concluded ${options.workflowConclusion ?? "without a result"}.`,
     };
   }
-  const expectedEvidence = options.expectedJobs.flatMap((job) =>
-    (options.expectedShards[job] ?? []).map((shard) => `${job}:${shard}`),
+  const expectedSelections = [...options.expectedJobs, ...(options.expectedTargets ?? [])];
+  const expectedEvidence = expectedSelections.flatMap((selection) =>
+    (options.expectedShards[selection] ?? []).map((shard) => `${selection}:${shard}`),
   );
   if (
-    options.expectedJobs.length === 0 ||
-    options.expectedJobs.some((job) => (options.expectedShards[job]?.length ?? 0) === 0)
+    expectedSelections.length === 0 ||
+    expectedSelections.some((selection) => (options.expectedShards[selection]?.length ?? 0) === 0)
   ) {
     return {
       conclusion: "failure",
       title: "Evidence policy is incomplete",
-      summary: "At least one selected job has no configured shard policy.",
+      summary: "At least one selected E2E check has no configured shard policy.",
     };
   }
   const byJobShard = new Map<string, E2eRiskSignal>();
@@ -740,8 +792,8 @@ export function classifyPrGateEvidence(options: {
   }
   return {
     conclusion: "success",
-    title: "All selected jobs passed",
-    summary: "Every expected job shard passed with no skips or pending tests.",
+    title: "All selected E2E checks passed",
+    summary: "Every expected E2E check shard passed with no skips or pending tests.",
   };
 }
 
@@ -1123,11 +1175,17 @@ async function completeCheck(
 async function updateRunningCheck(
   context: PrGateCheckContext,
   token: string,
-  options: { childRunId: number; jobs: readonly string[]; planHash: string },
+  options: {
+    childRunId: number;
+    jobs: readonly string[];
+    targets: readonly string[];
+    planHash: string;
+  },
 ): Promise<void> {
   const childRunUrl = `https://github.com/${context.repository}/actions/runs/${options.childRunId}`;
-  const title = `Running ${options.jobs.length} E2E ${options.jobs.length === 1 ? "job" : "jobs"}`;
-  const summary = `Risk plan ${options.planHash} selected: ${options.jobs.join(", ")}.`;
+  const selectionCount = options.jobs.length + options.targets.length;
+  const title = `Running ${selectionCount} E2E ${selectionCount === 1 ? "check" : "checks"}`;
+  const summary = `Risk plan ${options.planHash} selected jobs: ${options.jobs.join(", ") || "none"}; targets: ${options.targets.join(", ") || "none"}.`;
   const check = await githubApi<unknown>(
     `repos/${context.repository}/check-runs/${context.checkRunId}`,
     token,
@@ -1656,11 +1714,21 @@ function assertPullUnchanged(before: PullRequest, after: PullRequest): void {
 export function expectedSignalShards(
   jobIds: readonly string[],
   workflowPath = ".github/workflows/e2e.yaml",
+  targetIds: readonly string[] = [],
 ): Record<string, string[]> {
+  const selections = [...jobIds, ...targetIds];
+  if (new Set(selections).size !== selections.length) {
+    throw new Error("E2E evidence jobs and targets must be unique");
+  }
+  for (const targetId of targetIds) {
+    if (!isPrE2eTypedTargetId(targetId)) {
+      throw new Error(`PR E2E target is not approved: ${targetId}`);
+    }
+  }
   const workflow = YAML.parse(fs.readFileSync(workflowPath, "utf8")) as unknown;
   const jobs = isObjectRecord(workflow) && isObjectRecord(workflow.jobs) ? workflow.jobs : {};
   const inventory = readFreeStandingJobsInventory(workflowPath);
-  return Object.fromEntries(
+  const jobShards = Object.fromEntries(
     jobIds.map((jobId) => {
       const executionJobId = inventory.targetToJob.get(jobId) ?? jobId;
       if (!isObjectRecord(jobs[executionJobId])) {
@@ -1721,6 +1789,10 @@ export function expectedSignalShards(
       return [jobId, shards];
     }),
   );
+  return {
+    ...jobShards,
+    ...Object.fromEntries(targetIds.map((targetId) => [targetId, ["default"]])),
+  };
 }
 
 export function validateWorkflowDispatchDetails(
@@ -1871,6 +1943,7 @@ export async function dispatchPrGate(options: {
   repository: string;
   token: string;
   jobs: readonly string[];
+  targets?: readonly string[];
   prNumber: number;
   commitSha: string;
   baseSha: string;
@@ -1879,11 +1952,15 @@ export async function dispatchPrGate(options: {
   correlationId: string;
 }): Promise<{ runId: number; workflowSha: string }> {
   assertRepository(options.repository, "repository");
+  const targets = options.targets ?? [];
   if (
     !options.token ||
-    options.jobs.length < 1 ||
+    options.jobs.length + targets.length < 1 ||
     new Set(options.jobs).size !== options.jobs.length ||
     options.jobs.some((job) => !JOB_PATTERN.test(job)) ||
+    new Set(targets).size !== targets.length ||
+    targets.some((target) => !JOB_PATTERN.test(target) || !isPrE2eTypedTargetId(target)) ||
+    options.jobs.some((job) => targets.includes(job)) ||
     !Number.isSafeInteger(options.prNumber) ||
     options.prNumber < 1 ||
     !SHA_PATTERN.test(options.commitSha) ||
@@ -1908,6 +1985,7 @@ export async function dispatchPrGate(options: {
         ref: "main",
         inputs: {
           jobs: options.jobs.join(","),
+          targets: targets.join(","),
           pr_number: String(options.prNumber),
           checkout_sha: options.commitSha,
           base_sha: options.baseSha,
@@ -2087,7 +2165,8 @@ async function dispatchSelectedPrGate(options: {
   paths: ControllerPaths;
 }): Promise<void> {
   const jobs = riskPlanRequiredJobIds(options.plan);
-  const expectedShards = expectedSignalShards(jobs);
+  const targets = riskPlanRequiredTargetIds(options.plan);
+  const expectedShards = expectedSignalShards(jobs, E2E_WORKFLOW_PATH, targets);
   const correlationId = randomUUID();
   if (!CORRELATION_PATTERN.test(correlationId)) {
     throw new Error("generated correlation ID is invalid");
@@ -2096,6 +2175,7 @@ async function dispatchSelectedPrGate(options: {
     repository: options.repository,
     token: options.token,
     jobs,
+    targets,
     prNumber: options.pull.number,
     commitSha: options.pull.head.sha,
     baseSha: options.baseSha,
@@ -2107,7 +2187,7 @@ async function dispatchSelectedPrGate(options: {
   try {
     appendOutput("run_id", String(childRunId));
     const state: PrGateState = {
-      version: 2,
+      version: 3,
       commitSha: options.pull.head.sha,
       baseSha: options.baseSha,
       workflowSha: dispatch.workflowSha,
@@ -2115,6 +2195,7 @@ async function dispatchSelectedPrGate(options: {
       correlationId,
       prNumber: options.pull.number,
       expectedJobs: jobs,
+      expectedTargets: targets,
       expectedShards,
     };
     const serializedState = `${JSON.stringify(state, null, 2)}\n`;
@@ -2131,13 +2212,14 @@ async function dispatchSelectedPrGate(options: {
       {
         childRunId,
         jobs,
+        targets,
         planHash: options.plan.planHash,
       },
     );
     appendOutput("state_hash", sha256(serializedState));
     appendOutput("dispatched", "true");
     console.log(
-      `Run dispatched: pr=${options.pull.number} run=${childRunId} plan=${options.plan.planHash} jobs=${jobs.join(",")} url=https://github.com/${options.repository}/actions/runs/${childRunId}`,
+      `Run dispatched: pr=${options.pull.number} run=${childRunId} plan=${options.plan.planHash} jobs=${jobs.join(",")} targets=${targets.join(",")} url=https://github.com/${options.repository}/actions/runs/${childRunId}`,
     );
   } catch (error) {
     try {
@@ -2233,7 +2315,7 @@ export async function startPrGate(
     },
     token,
     "Evaluating PR commit",
-    "Validating the exact PR revision and selecting deterministic E2E jobs.",
+    "Validating the exact PR revision and selecting deterministic E2E jobs and typed targets.",
   );
 
   let finalized = false;
@@ -2297,6 +2379,9 @@ export async function startPrGate(
     );
     writePrivateRegularFile(command.planPath, `${JSON.stringify(plan, null, 2)}\n`);
     const jobs = riskPlanRequiredJobIds(plan);
+    const targets = riskPlanRequiredTargetIds(plan);
+    const selections = riskPlanSelectionIds(plan);
+    const selectionSummary = riskPlanSelectionSummary(plan);
     const currentPull = await resolvePullRequest({
       repository,
       token,
@@ -2305,7 +2390,7 @@ export async function startPrGate(
       headBranch: command.headBranch,
     });
     assertPullUnchanged(pull, currentPull);
-    if (command.headRepository !== repository && jobs.length > 0) {
+    if (command.headRepository !== repository && selections.length > 0) {
       const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
       const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
       await completeCheck(
@@ -2315,8 +2400,8 @@ export async function startPrGate(
           conclusion: "failure",
           title: "Maintainer approval required to skip credentialed E2E",
           summary: [
-            `This fork PR diff (head ${command.headSha}, base ${ciIdentity.baseSha}) selected credential-bearing E2E jobs: ${jobs.join(", ")}.`,
-            "The selected jobs were not run. No fork code received repository secrets.",
+            `This fork PR diff (head ${command.headSha}, base ${ciIdentity.baseSha}) selected credential-bearing E2E checks (${selectionSummary}).`,
+            "The selected jobs and targets were not run. No fork code received repository secrets.",
             `Open ${gateRunLink}, choose Review deployments, and approve the \`${PR_GATE_APPROVAL_ENVIRONMENT}\` environment to record this skip. If Review deployments is absent, the environment is unprotected or the run is no longer waiting; configure it, update the PR to create a new head, and trigger fresh PR CI. GitHub records the reviewer and optional comment. The manual \`approve-fork-e2e-skip\` workflow operation remains available as fallback.`,
           ].join("\n\n"),
         },
@@ -2327,7 +2412,7 @@ export async function startPrGate(
       appendOutput("finalized", "true");
       finalized = true;
       console.log(
-        `Fork not dispatched: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")}`,
+        `Fork not dispatched: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")} targets=${targets.join(",")}`,
       );
       return;
     }
@@ -2345,9 +2430,9 @@ export async function startPrGate(
         token,
         CONTROL_PLANE_AUTHORIZATION_TITLE,
         [
-          `This exact internal diff (head \`${command.headSha}\`, base \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs execute or trust: ${jobs.join(", ")}.`,
-          "No selected E2E job ran and no repository secret was exposed.",
-          `A repository maintainer or administrator must review this exact revision, then open the [${WORKFLOW_NAME}](${workflowUrl}) workflow and run \`run-control-plane\` with the PR number, exact head and base SHAs, and a review reason. That authorized run dispatches the selected jobs and this gate passes only if their exact-SHA evidence verifies successfully.`,
+          `This exact internal diff (head \`${command.headSha}\`, base \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
+          "No selected E2E job or target ran and no repository secret was exposed.",
+          `A repository maintainer or administrator must review this exact revision, then open the [${WORKFLOW_NAME}](${workflowUrl}) workflow and run \`run-control-plane\` with the PR number, exact head and base SHAs, and a review reason. That authorized run dispatches the selected jobs and targets in one bound workflow run, and this gate passes only if their exact-SHA evidence verifies successfully.`,
           `Deterministic plan: \`${plan.planHash}\`.`,
         ].join("\n\n"),
       );
@@ -2355,14 +2440,14 @@ export async function startPrGate(
       appendOutput("finalized", "true");
       finalized = true;
       console.log(
-        `Control-plane authorization required: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")}`,
+        `Control-plane authorization required: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")} targets=${targets.join(",")}`,
       );
       return;
     }
-    if (jobs.length === 0) {
+    if (selections.length === 0) {
       await completeCheck({ repository, checkRunId }, token, {
         conclusion: "success",
-        title: "No E2E jobs selected",
+        title: "No E2E checks selected",
         summary: "No changed files matched an E2E risk rule.",
       });
       appendOutput("dispatched", "false");
@@ -2442,8 +2527,9 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
       throw new Error("pull request does not require credentialed E2E authorization");
     }
     const jobs = riskPlanRequiredJobIds(plan);
-    if (jobs.length === 0) {
-      throw new Error("authorized control-plane plan selected no E2E jobs");
+    const targets = riskPlanRequiredTargetIds(plan);
+    if (jobs.length + targets.length === 0) {
+      throw new Error("authorized control-plane plan selected no E2E jobs or targets");
     }
     writePrivateRegularFile(command.planPath, `${JSON.stringify(plan, null, 2)}\n`);
     const currentPull = await requireLiveExactDiff({
@@ -2708,6 +2794,7 @@ export async function finishPrGate(options: {
       verdict = classifyPrGateEvidence({
         workflowConclusion,
         expectedJobs: state.expectedJobs,
+        expectedTargets: state.expectedTargets,
         expectedShards: state.expectedShards,
         signals,
       });
@@ -2951,7 +3038,8 @@ async function completeForkE2ESkip(command: ForkSkipCommand): Promise<void> {
     allowedJobs,
   );
   const jobs = riskPlanRequiredJobIds(plan);
-  if (jobs.length === 0) {
+  const targets = riskPlanRequiredTargetIds(plan);
+  if (jobs.length + targets.length === 0) {
     throw new Error("pull request does not require a credentialed E2E skip");
   }
   const currentPull = validatePullRequest(
@@ -2988,7 +3076,7 @@ async function completeForkE2ESkip(command: ForkSkipCommand): Promise<void> {
       : "Approval source: manual fallback; no supporting Actions run was supplied.";
   const title = `Credentialed E2E skipped for fork PR — approved by @${command.maintainer}`;
   const approval = `Maintainer @${command.maintainer} approved skipping credentialed E2E for fork head \`${command.headSha}\` on base \`${command.baseSha}\`.`;
-  const nonExecution = `Selected jobs not run: ${jobs.join(", ")}.`;
+  const nonExecution = `Selected jobs and targets not run: ${riskPlanSelectionSummary(plan)}.`;
   await compatibleMainWorkflowCommit(repository, token, command.workflowSha);
   const finalPull = await requireLiveExactDiff({
     repository,

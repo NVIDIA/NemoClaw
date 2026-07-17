@@ -25,8 +25,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { getRegisteredOclifCommandsMetadata } from "../src/lib/cli/oclif-metadata";
 import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
+import { getRegisteredOclifCommandsMetadata } from "../src/lib/cli/oclif-metadata";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
@@ -118,17 +118,17 @@ describe("exec command documentation", () => {
 
   it.each(
     renderedCommandReferences,
-  )("documents multiline argument rejection in every exec section for $name", ({
+  )("documents multiline argv support and retained field boundaries for $name", ({
     text,
     binary,
   }) => {
     const sections = execSections(text, binary);
     expect(sections.length, `${binary} exec sections`).toBeGreaterThanOrEqual(2);
     for (const section of sections) {
-      expect(section).toContain("newline or carriage return");
-      expect(section).toContain("cmd1; cmd2");
-      expect(section).toContain(`${binary} <name> exec --stdin -- bash`);
-      expect(section).toContain(`${binary} <name> exec -- bash <script-path>`);
+      expect(section).toContain("preserves line endings and quote characters");
+      expect(section).toContain("NUL bytes are still rejected");
+      expect(section).toContain("`--workdir` remains single-line");
+      expect(section).toContain(`${binary} <name> exec -- bash -lc "$script"`);
     }
   });
 });

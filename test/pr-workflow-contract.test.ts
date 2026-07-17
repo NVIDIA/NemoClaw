@@ -641,7 +641,7 @@ describe("pull request and main workflow contracts", () => {
       "scripts/install-openshell.sh",
       "scripts/update-hermes-agent.sh",
       "src/lib/actions/sandbox/mcp-bridge-validation.ts",
-      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json",
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json",
     ]) {
       expect(files.test(path), path).toBe(true);
     }

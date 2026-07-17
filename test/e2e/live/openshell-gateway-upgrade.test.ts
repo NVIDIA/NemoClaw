@@ -34,6 +34,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   currentGatewayUpgradeInstallerArgs,
+  expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
@@ -56,7 +57,7 @@ const OLD_INSTALLER_SHA256 =
   process.env.NEMOCLAW_OLD_INSTALLER_SHA256 ??
   "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f";
 const OLD_OPENSHELL_VERSION = process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? "0.0.36";
-const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.72";
+const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.85";
 const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
@@ -111,7 +112,7 @@ function withoutEnvKeys(env: NodeJS.ProcessEnv, keys: readonly string[]): NodeJS
   return Object.fromEntries(Object.entries(env).filter(([key]) => !excluded.has(key)));
 }
 
-function shellLoginPrefix(hideUserLocalOpenShell = false): string {
+function shellLoginPrefix(hiddenOpenShellDir?: string): string {
   const lines = [
     "set -euo pipefail",
     'if [ -f "$HOME/.bashrc" ]; then',
@@ -125,11 +126,12 @@ function shellLoginPrefix(hideUserLocalOpenShell = false): string {
     "fi",
   ];
   lines.push(
-    ...(hideUserLocalOpenShell
+    ...(hiddenOpenShellDir
       ? [
           '_path_without_user_local=""',
           "while IFS= read -r _path_entry; do",
           '  [ "$_path_entry" = "$HOME/.local/bin" ] && continue',
+          `  [ "$_path_entry" = ${shellQuote(hiddenOpenShellDir)} ] && continue`,
           '  _path_without_user_local="${_path_without_user_local:+${_path_without_user_local}:}${_path_entry}"',
           'done < <(tr ":" "\\n" <<<"$PATH")',
           'export PATH="$_path_without_user_local"',
@@ -166,13 +168,13 @@ async function bash(
     env?: NodeJS.ProcessEnv;
     timeoutMs?: number;
     cwd?: string;
-    hideUserLocalOpenShell?: boolean;
+    hiddenOpenShellDir?: string;
     redactionValues?: string[];
   },
 ): Promise<ShellProbeResult> {
   return host.command(
     "bash",
-    ["-lc", `${shellLoginPrefix(options.hideUserLocalOpenShell)}\n${script}`],
+    ["-lc", `${shellLoginPrefix(options.hiddenOpenShellDir)}\n${script}`],
     {
       cwd: options.cwd ?? REPO_ROOT,
       artifactName: options.artifactName,
@@ -185,8 +187,8 @@ async function bash(
 
 // The frozen release installers are the source of truth, but their embedded
 // Dockerfiles predate the fixture pins needed for a deterministic upgrade test.
-// Keep this adapter scoped to the v0.0.36/v0.0.55 lanes and retire it with
-// those historical lanes; changing the tagged release payloads is not viable.
+// Keep this adapter scoped to the frozen historical lanes and retire it with
+// them; changing the tagged release payloads is not viable.
 function patchOldInstallerFixture(installer: string): void {
   const needle = '  legacy_script="${source_root}/install.sh"\n';
   const hook =
@@ -392,7 +394,7 @@ async function runInstallerPayload(
   logFile: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[] = [],
-  options: { hideUserLocalOpenShell?: boolean; interactiveInput?: string } = {},
+  options: { hiddenOpenShellDir?: string; interactiveInput?: string } = {},
 ): Promise<ShellProbeResult> {
   const quotedInstallerArgs = installerArgs.map(shellQuote).join(" ");
   const installerCommand = `bash ${quotedInstallerArgs} >${shellQuote(logFile)} 2>&1`;
@@ -401,7 +403,7 @@ async function runInstallerPayload(
   const installerInvocation = options.interactiveInput
     ? `printf '%s\\n' ${shellQuote(options.interactiveInput)} | script --quiet --return --command ${shellQuote(installerCommand)} /dev/null`
     : installerCommand;
-  const hiddenOpenShellPreflight = options.hideUserLocalOpenShell
+  const hiddenOpenShellPreflight = options.hiddenOpenShellDir
     ? [
         'test -x "$HOME/.local/bin/openshell"',
         "if command -v openshell >/dev/null 2>&1; then",
@@ -418,7 +420,7 @@ ${installerInvocation}`,
     {
       artifactName: `${label.replace(/[^a-z0-9_.-]+/gi, "-")}-installer`,
       env,
-      hideUserLocalOpenShell: options.hideUserLocalOpenShell,
+      hiddenOpenShellDir: options.hiddenOpenShellDir,
       redactionValues,
       timeoutMs: INSTALL_TIMEOUT_MS,
     },
@@ -553,8 +555,43 @@ git -C "$HOME/.nemoclaw/source" rev-parse --verify HEAD`,
     sandboxes?: Record<string, { nemoclawVersion?: unknown; fromDockerfile?: unknown }>;
   };
   expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]).toBeDefined();
-  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.nemoclawVersion).toBeUndefined();
-  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.fromDockerfile).toBeUndefined();
+  const expectedRegistryMetadata = expectedLegacyRegistryMetadata(OLD_NEMOCLAW_REF);
+  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.nemoclawVersion).toBe(
+    expectedRegistryMetadata.nemoclawVersion,
+  );
+  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.fromDockerfile).toBe(
+    expectedRegistryMetadata.fromDockerfile,
+  );
+}
+
+async function stageOldOpenShellInUserLocalBin(host: HostCliClient): Promise<string> {
+  const result = await bash(
+    host,
+    `active_openshell="$(command -v openshell)"
+active_dir="$(dirname "$active_openshell")"
+user_local_bin="$HOME/.local/bin"
+mkdir -p "$user_local_bin"
+for component in openshell openshell-gateway openshell-sandbox; do
+  test -x "$active_dir/$component"
+  if [ "$active_dir" != "$user_local_bin" ]; then
+    install -m 755 "$active_dir/$component" "$user_local_bin/$component"
+  fi
+done
+"$user_local_bin/openshell" --version
+printf '%s\n' "$active_dir"`,
+    { artifactName: "stage-old-openshell-user-local", timeoutMs: 30_000 },
+  );
+  expectExitZero(result, "stage the v0.0.55 OpenShell layout in ~/.local/bin");
+  expectOutputContains(
+    result,
+    OLD_OPENSHELL_VERSION,
+    `staged user-local OpenShell must remain ${OLD_OPENSHELL_VERSION}`,
+  );
+  const activeDir = result.stdout.trim().split("\n").at(-1) ?? "";
+  expect(path.isAbsolute(activeDir), `old OpenShell directory must be absolute: ${activeDir}`).toBe(
+    true,
+  );
+  return activeDir;
 }
 
 async function startSurvivorAgentInExistingClaw(host: HostCliClient): Promise<number> {
@@ -605,6 +642,7 @@ async function installCurrentNemoclawUpgrade(
   host: HostCliClient,
   fakeBaseUrl: string,
   currentInstallLog: string,
+  hiddenOldOpenShellDir?: string,
 ): Promise<void> {
   const currentRef = process.env.NEMOCLAW_CURRENT_NEMOCLAW_REF ?? process.env.GITHUB_SHA ?? "HEAD";
   const currentRefResult = await bash(
@@ -619,6 +657,12 @@ async function installCurrentNemoclawUpgrade(
   const resolvedRef = currentRefResult.stdout.trim();
   expect(resolvedRef.length).toBeGreaterThan(0);
   const exerciseOrdinaryUpgrade = OLD_NEMOCLAW_REF === "v0.0.55";
+  const expectsLegacyManagedConfirmation =
+    expectedLegacyRegistryMetadata(OLD_NEMOCLAW_REF).nemoclawVersion === undefined;
+  expect(
+    !exerciseOrdinaryUpgrade || Boolean(hiddenOldOpenShellDir),
+    "the v0.0.55 fixture must record the original OpenShell directory before hiding it",
+  ).toBe(true);
   const baseCurrentEnv = liveEnv({
     COMPATIBLE_API_KEY: "dummy",
     GITHUB_TOKEN: process.env.GITHUB_TOKEN ?? "",
@@ -658,7 +702,7 @@ async function installCurrentNemoclawUpgrade(
     currentEnv,
     redactionValues,
     {
-      hideUserLocalOpenShell: exerciseOrdinaryUpgrade,
+      hiddenOpenShellDir: exerciseOrdinaryUpgrade ? hiddenOldOpenShellDir : undefined,
       // One answer covers a changed usage notice, when present, and the other
       // confirms the legacy managed-image recovery prompt.
       interactiveInput: exerciseOrdinaryUpgrade ? "yes\nyes" : undefined,
@@ -666,11 +710,16 @@ async function installCurrentNemoclawUpgrade(
   );
 
   const currentLog = fs.readFileSync(currentInstallLog, "utf8");
-  expect(currentLog).toContain(
-    exerciseOrdinaryUpgrade
-      ? "Confirmed legacy managed-image recovery"
-      : "Confirmed 1 exact pre-fingerprint sandbox name(s)",
-  );
+  const expectedConfirmation = exerciseOrdinaryUpgrade
+    ? "Confirmed legacy managed-image recovery"
+    : expectsLegacyManagedConfirmation
+      ? "Confirmed 1 exact pre-fingerprint sandbox name(s)"
+      : null;
+  expect(
+    expectedConfirmation === null
+      ? !currentLog.includes("exact pre-fingerprint sandbox name(s)")
+      : currentLog.includes(expectedConfirmation),
+  ).toBe(true);
   expect(currentLog).toContain("Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped");
   expect(currentLog).toContain("Existing sandboxes recovered; skipping generic onboarding");
 
@@ -851,12 +900,15 @@ runLinuxOpenShellGatewayUpgrade(
     });
 
     await installOldNemoclawAndClaw(host, artifacts, fake.baseUrl);
+    const hiddenOldOpenShellDir =
+      OLD_NEMOCLAW_REF === "v0.0.55" ? await stageOldOpenShellInUserLocalBin(host) : undefined;
     const survivorPid = await startSurvivorAgentInExistingClaw(host);
     expect(Number.isInteger(survivorPid) && survivorPid > 0).toBe(true);
     await installCurrentNemoclawUpgrade(
       host,
       fake.baseUrl,
       artifacts.pathFor("current-install.log"),
+      hiddenOldOpenShellDir,
     );
     await assertSurvivorSandboxAfterUpgrade(host);
   },

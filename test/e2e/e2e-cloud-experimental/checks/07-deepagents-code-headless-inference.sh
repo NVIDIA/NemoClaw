@@ -72,7 +72,7 @@ sandbox_direct_dcode() {
 }
 
 sandbox_dcode_wrapper_contract() {
-  # Keep the remote argv on one line: OpenShell rejects newline-bearing args.
+  # Keep this assertion as one atomic shell expression for clear failure attribution.
   # shellcheck disable=SC2016
   sandbox_exec 'dcode_path="$(command -v dcode 2>/dev/null || true)"; [ "$dcode_path" = /usr/local/bin/dcode ] && [ -x /usr/local/lib/nemoclaw/dcode-launcher.sh ] && [ -x /usr/local/lib/nemoclaw/dcode-managed-exec ] && [ -x /usr/local/lib/nemoclaw/dcode-wrapper.sh ] && cmp -s /usr/local/bin/dcode /usr/local/lib/nemoclaw/dcode-launcher.sh && cmp -s /usr/local/lib/nemoclaw/dcode-managed-exec /usr/local/lib/nemoclaw/dcode-launcher.sh && python3 -c '\''import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("deepagents_code") else 1)'\'' && printf "%s\\n" NEMOCLAW_DCODE_WRAPPER_CHAIN_OK'
 }
@@ -265,8 +265,8 @@ SHIM
 )
 
 sandbox_login_proxy_contract() {
-  # OpenShell rejects CR/LF in any exec argv element, so keep this remote login
-  # command on one physical line. inference.local is intentionally absent from
+  # Keep the remote login contract in one quoted shell expression so the
+  # fixture can dispatch it atomically. inference.local is intentionally absent from
   # NO_PROXY: OpenShell does not need to provision inference.local DNS/hosts
   # into the sandbox because its managed proxy owns this L7 route. Adding
   # inference.local here would bypass that proxy and force a direct DNS lookup.
@@ -291,7 +291,7 @@ sandbox_entrypoint_rlimit_contract() {
 }
 
 rlimit_shell_contract_command() {
-  # Keep this command on one physical line: OpenShell rejects CR/LF in argv.
+  # Keep this contract as one atomic shell expression for clear failure attribution.
   # shellcheck disable=SC2016
   printf '%s' 'set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_SHELL_RLIMIT_FAIL:$1"; exit 1; }; nproc_soft="$(ulimit -Su)"; nproc_hard="$(ulimit -Hu)"; nofile_soft="$(ulimit -Sn)"; nofile_hard="$(ulimit -Hn)"; for value in "$nproc_soft" "$nproc_hard" "$nofile_soft" "$nofile_hard"; do case "$value" in "" | *[!0-9]*) contract_fail nonnumeric ;; esac; done; [ "$nproc_soft" = 512 ] && [ "$nproc_hard" = 512 ] || contract_fail nproc; [ "$nofile_soft" = 65536 ] && [ "$nofile_hard" = 65536 ] || contract_fail nofile; set +e; ulimit -Su 513 >/dev/null 2>&1; raise_nproc="$?"; ulimit -Sn 65537 >/dev/null 2>&1; raise_nofile="$?"; set -e; [ "$raise_nproc" -ne 0 ] || contract_fail raise-nproc; [ "$raise_nofile" -ne 0 ] || contract_fail raise-nofile; printf "%s\n" NEMOCLAW_DCODE_SHELL_RLIMIT_OK'
 }

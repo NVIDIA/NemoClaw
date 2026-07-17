@@ -177,8 +177,11 @@ send -i $termSpawn -- "\\t"
 after 200
 expect_exact_or_exit $termSpawn $sandbox openshell_sandbox_listed 66 67
 send -i $termSpawn -- "\\r"
-expect_exact_or_exit $termSpawn {Name:} openshell_sandbox_detail 68 69
+# Ratatui renders the sandbox identity before the policy panel. Assert the
+# exact sandbox first so waiting for the later heading cannot consume its
+# earlier terminal diff and leave the identity check waiting forever.
 expect_exact_or_exit $termSpawn $sandbox openshell_sandbox_detail_name 70 71
+expect_exact_or_exit $termSpawn {Filesystem Access} openshell_sandbox_detail 68 69
 # OpenShell documents 'r' as the Network Rules focus key in sandbox detail.
 send -i $termSpawn -- "r"
 expect_exact_or_exit $termSpawn {Network Rules} network_rules_focused 72 73

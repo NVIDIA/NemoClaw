@@ -190,11 +190,11 @@ sandbox_python_probe() {
   local method="$1"
   local url="$2"
   local body="$3"
-  local encoded
-  encoded="$(python_probe_source | base64 | tr -d '\n')"
+  local source
+  source="$(python_probe_source)"
   "$CLI" "$SANDBOX_NAME" exec -- \
     /opt/venv/bin/python3 -I -c \
-    "import base64; exec(compile(base64.b64decode('${encoded}'), '<otlp-policy-probe>', 'exec'))" \
+    "$source" \
     "$method" "$url" "$body" 2>&1
 }
 
@@ -334,15 +334,15 @@ PY
 }
 
 run_deterministic_tool_trace() {
-  local encoded
-  encoded="$(tool_trace_source | base64 | tr -d '\n')"
+  local source
+  source="$(tool_trace_source)"
   "$CLI" "$SANDBOX_NAME" exec -- \
     /usr/local/lib/nemoclaw/dcode-managed-exec \
     env \
     OTEL_SERVICE_NAME="$AMBIENT_CANARY" \
     OTEL_RESOURCE_ATTRIBUTES="ambient.canary=${AMBIENT_CANARY}" \
     /opt/venv/bin/python3 -I -c \
-    "import base64; exec(compile(base64.b64decode('${encoded}'), '<otlp-tool-trace>', 'exec'))" \
+    "$source" \
     "$TOOL_NAME" "$TOOL_ARGUMENT" "$TOOL_RESULT" 2>&1
 }
 

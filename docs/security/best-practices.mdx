@@ -656,7 +656,7 @@ NemoClaw binds the OpenShell gateway to loopback by default.
 |---|---|
 | Default | `NEMOCLAW_GATEWAY_BIND_ADDRESS=127.0.0.1`. |
 | What you can change | Keep Docker-driver gateways on loopback. Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` during onboarding and on later `connect` calls for remote dashboard/API access. Recreate a local-only sandbox before changing it to a remote bind. |
-| Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway; Docker-driver gateways on OpenShell 0.0.72 reject wildcard gateway binds while gateway JWT auth is active. |
+| Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway; Docker-driver gateways on OpenShell 0.0.85 reject wildcard gateway binds while gateway JWT auth is active. |
 | Recommendation | Keep the gateway loopback default and expose only the dashboard forward when remote access is needed. |
 
 ### Gateway Compatibility Container
@@ -668,9 +668,9 @@ On Linux hosts whose glibc is older than the OpenShell gateway binary requires, 
 | Default | NemoClaw does not auto-enable the compatibility container on ABI mismatch. If `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` is set, the container keeps the main gateway listener on `127.0.0.1`, uses host networking so OpenShell computes the same Docker bridge callback addresses as a host-side gateway, mounts the Docker socket read-only, drops Linux capabilities, sets `no-new-privileges`, and publishes no extra Docker ports. |
 | What you can change | Opt in with `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1`, keep the path disabled with `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=0`, or run on a host/OpenShell build combination where the gateway binary launches directly. |
 | Risk if relaxed | The Docker socket remains a privileged host API even when bind-mounted read-only. Treat this mode as equivalent to trusting the host user that can drive Docker, and do not enable it on untrusted shared hosts. |
-| Recommendation | Prefer a host with glibc 2.28 or newer, which OpenShell 0.0.72 supports directly, and use the compatibility container only as an explicit local bridge on an older trusted host. |
+| Recommendation | Prefer a host with glibc 2.28 or newer, which OpenShell 0.0.85 supports directly, and use the compatibility container only as an explicit local bridge on an older trusted host. |
 
-See [OpenShell 0.0.72 Compatibility Review](./openshell-0.0.72-compatibility-review) for source-of-truth boundaries and contract coverage.
+See [OpenShell Gateway Compatibility Review](./openshell-0.0.72-compatibility-review) for the unchanged compatibility-container source-of-truth boundaries.
 
 ### Insecure Auth Derivation
 

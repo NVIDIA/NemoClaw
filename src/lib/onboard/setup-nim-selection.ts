@@ -44,6 +44,8 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   reuseGatewayCredentialWithoutLocalKey?: boolean;
   /** Ephemeral selection-to-smoke validation cache; never written to session state. */
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
+  /** Route-validated vLLM checkpoint identity; ephemeral and never persisted directly. */
+  vllmModelIdentity?: string;
   nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
   openRouterFeaturedModels?: NvidiaFeaturedModelSession;
   /** Attempt-wide shared-gateway guard, invoked after identity selection and before probes. */
@@ -73,6 +75,7 @@ export function applyCloudFallbackSelection(
   state.allowToolsIncompatible = false;
   state.skipHostInferenceSmoke = false;
   state.reuseGatewayCredentialWithoutLocalKey = false;
+  delete state.vllmModelIdentity;
   delete state.endpointPinnedAddresses;
   delete state.endpointTrustedPrivateCapability;
 }
