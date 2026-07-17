@@ -16,8 +16,8 @@ import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
-  sandboxAccessEnv,
   type SandboxClient,
+  sandboxAccessEnv,
   trustedSandboxShellScript,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
@@ -662,12 +662,15 @@ export async function restartAndAssertExactMainDriverConfig(options: {
   expect(snapshot.config.configSha256, "rendered selected-driver config must be stable").toBe(
     baseline.config.configSha256,
   );
+  // OpenShell's graceful gateway shutdown stops managed Docker sandboxes and
+  // startup resumes them. Docker therefore remounts the same container's
+  // volatile tmpfs empty while the durable /sandbox state survives.
   await assertSandboxMountAndAuth({
     phase: "after-gateway-restart",
     sandbox: options.sandbox,
     sandboxName: options.sandboxName,
     durableMarkerValue: options.proof.durableMarkerValue!,
-    tmpfsMarker: "present",
+    tmpfsMarker: "absent",
   });
   await options.host.expectListed(options.sandboxName, {
     artifactName: "exact-main-driver-nemoclaw-list-after-gateway-restart",
@@ -685,7 +688,7 @@ export async function restartAndAssertExactMainDriverConfig(options: {
     "after-gateway-restart",
     options.proof,
     snapshot,
-    "same-container-tmpfs-and-durable-state-retained",
+    "same-container-tmpfs-remounted-and-durable-state-retained",
   );
 }
 
