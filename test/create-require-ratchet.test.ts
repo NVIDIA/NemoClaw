@@ -1,36 +1,257 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import ts from "typescript";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  collectCreateRequireInventory,
+  containsCreateRequireIdentifier,
+  createRequireInventoryFailure,
   extractPullRequestBaseSha,
   extractTrustedCreateRequireAllowlists,
+  type GitRunner,
+  requireSingleBaseChecker,
+  requireSingleCurrentChecker,
+  resolveBaseRevision,
   trustedCreateRequireExpansionFailure,
-} from "../.github/actions/ci-static-checks/create-require-ratchet.mts";
+  verifyTrustedCreateRequireRatchet,
+} from "../.github/actions/ci-static-checks/create-require-ratchet-core.mts";
+
+const BASE_SHA = "a".repeat(40);
+const temporaryRoots: string[] = [];
+
+function temporaryRepo(): string {
+  const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-create-require-ratchet-"));
+  temporaryRoots.push(root);
+  return root;
+}
+
+function writeFixture(root: string, relativePath: string, source: string): void {
+  const absolutePath = path.join(root, relativePath);
+  mkdirSync(path.dirname(absolutePath), { recursive: true });
+  writeFileSync(absolutePath, source);
+}
+
+function allowlistSource(
+  cli: readonly string[] = [],
+  testSupport: readonly string[] = [],
+  extraSource = "",
+): string {
+  return [
+    `export const CLI_CREATE_REQUIRE_FILES = ${JSON.stringify(cli)} as const;`,
+    `export const TEST_SUPPORT_CREATE_REQUIRE_FILES = ${JSON.stringify(testSupport)} as const;`,
+    extraSource,
+  ].join("\n");
+}
+
+function pullRequestEnvironment(root: string, revision = BASE_SHA): NodeJS.ProcessEnv {
+  const eventPath = path.join(root, "event.json");
+  writeFileSync(eventPath, JSON.stringify({ pull_request: { base: { sha: revision } } }));
+  return { GITHUB_BASE_REF: "main", GITHUB_EVENT_PATH: eventPath };
+}
+
+function baseRunner(
+  sources: Partial<Record<"mts" | "ts", string>>,
+  revision = BASE_SHA,
+): GitRunner {
+  return (args) => {
+    switch (args[0]) {
+      case "cat-file":
+        return {
+          status: args[2] === `${revision}^{commit}` ? 0 : 128,
+          stderr: "",
+          stdout: "",
+        };
+      case "show": {
+        const requestedPath = args[1]?.slice(revision.length + 1);
+        const extension = requestedPath?.endsWith(".mts") ? "mts" : "ts";
+        const source = sources[extension];
+        return source === undefined
+          ? { status: 128, stderr: "missing", stdout: "" }
+          : { status: 0, stderr: "", stdout: source };
+      }
+      default:
+        throw new Error(`unexpected git arguments: ${args.join(" ")}`);
+    }
+  };
+}
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
 
 describe("base-trusted createRequire ratchet", () => {
-  it("extracts only literal reviewed allowlists from either checker extension (#7056)", () => {
-    const source = [
-      'export const CLI_CREATE_REQUIRE_FILES = ["src/a.test.ts"] as const;',
-      'export const TEST_SUPPORT_CREATE_REQUIRE_FILES = ["test/helper.ts"] as const;',
-    ].join("\n");
+  it("extracts only top-level exported const literal allowlists exactly once (#7056)", () => {
+    const source = allowlistSource(["src/a.test.ts"], ["test/helper.ts"]);
+    expect(extractTrustedCreateRequireAllowlists(ts, source, "checker.ts")).toEqual({
+      cli: ["src/a.test.ts"],
+      testSupport: ["test/helper.ts"],
+    });
 
-    for (const fileName of ["test-create-require-budget.ts", "test-create-require-budget.mts"]) {
-      expect(extractTrustedCreateRequireAllowlists(source, fileName)).toEqual({
-        cli: ["src/a.test.ts"],
-        testSupport: ["test/helper.ts"],
-      });
-    }
     expect(() =>
       extractTrustedCreateRequireAllowlists(
+        ts,
         [
           "const dynamicPath = getPath();",
           "export const CLI_CREATE_REQUIRE_FILES = [dynamicPath] as const;",
           "export const TEST_SUPPORT_CREATE_REQUIRE_FILES = [] as const;",
         ].join("\n"),
+        "checker.ts",
       ),
     ).toThrow("CLI_CREATE_REQUIRE_FILES must be a literal string array");
+    expect(() =>
+      extractTrustedCreateRequireAllowlists(
+        ts,
+        allowlistSource([], []).replace("export const CLI", "const CLI"),
+        "checker.ts",
+      ),
+    ).toThrow("CLI_CREATE_REQUIRE_FILES must be a top-level exported const");
+    expect(() =>
+      extractTrustedCreateRequireAllowlists(
+        ts,
+        `${allowlistSource([], [])}\nexport const CLI_CREATE_REQUIRE_FILES = [] as const;`,
+        "checker.ts",
+      ),
+    ).toThrow("CLI_CREATE_REQUIRE_FILES must be declared exactly once");
+  });
+
+  it("fails closed on malformed checker syntax (#7056)", () => {
+    expect(() =>
+      extractTrustedCreateRequireAllowlists(ts, `${allowlistSource([], [])}\nif (`, "checker.ts"),
+    ).toThrow("checker.ts has TypeScript parse diagnostics");
+  });
+
+  it("detects executable identifiers while ignoring inert literal text (#7056)", () => {
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        'import { createRequire } from "node:module";\ncreateRequire(import.meta.url);',
+        "example.ts",
+      ),
+    ).toBe(true);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        'nodeModule["create" + "Require"](import.meta.url);',
+        "example.ts",
+      ),
+    ).toBe(true);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        'const boundary = { ["createRequire"]: load };',
+        "example.ts",
+      ),
+    ).toBe(true);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        [
+          "// createRequire is documentation",
+          'const quoted = "createRequire(import.meta.url)";',
+          "const template = `createRequire text`;",
+          "const jsx = <div>createRequire</div>;",
+        ].join("\n"),
+        "example.tsx",
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed on symbolic links under scoped scan roots (#7056)", () => {
+    const root = temporaryRepo();
+    writeFixture(root, "payload.ts", "createRequire(import.meta.url);");
+    mkdirSync(path.join(root, "src/lib"), { recursive: true });
+    symlinkSync(path.join(root, "payload.ts"), path.join(root, "src/lib/linked.test.ts"));
+    expect(() => collectCreateRequireInventory(ts, root)).toThrow(
+      "createRequire inventory does not permit scoped symbolic links",
+    );
+  });
+
+  it("fails closed on malformed scanned TypeScript (#7056)", () => {
+    const root = temporaryRepo();
+    writeFixture(root, "src/lib/broken.ts", "export function broken(");
+    expect(() => collectCreateRequireInventory(ts, root)).toThrow(
+      "broken.ts has TypeScript parse diagnostics",
+    );
+  });
+
+  it("collects only the scoped CLI, production, and support uses (#7056)", () => {
+    const root = temporaryRepo();
+    writeFixture(root, "src/lib/allowed.test.ts", "createRequire(import.meta.url);");
+    writeFixture(root, "src/lib/production.ts", "nodeModule.createRequire(import.meta.url);");
+    writeFixture(root, "test/helpers/support.ts", "const createRequire = factory;");
+    writeFixture(root, "test/ignored.test.ts", "createRequire(import.meta.url);");
+    writeFixture(root, "src/lib/inert.ts", 'const value = "createRequire";');
+
+    expect(collectCreateRequireInventory(ts, root)).toEqual({
+      cli: ["src/lib/allowed.test.ts"],
+      production: ["src/lib/production.ts"],
+      testSupport: ["test/helpers/support.ts"],
+    });
+  });
+
+  it("rejects unchanged declarations when actual CLI use is added (#7056)", () => {
+    const root = temporaryRepo();
+    writeFixture(root, "src/lib/new-boundary.test.ts", "createRequire(import.meta.url);");
+    const failure = createRequireInventoryFailure(collectCreateRequireInventory(ts, root), {
+      cli: [],
+      testSupport: [],
+    });
+    expect(failure).toContain("CLI_CREATE_REQUIRE_FILES omits actual createRequire use");
+    expect(failure).toContain("src/lib/new-boundary.test.ts");
+  });
+
+  it("rejects alternate runtime lists and early returns that hide actual use (#7056)", () => {
+    const root = temporaryRepo();
+    writeFixture(
+      root,
+      "scripts/checks/test-create-require-budget.ts",
+      allowlistSource(
+        [],
+        [],
+        [
+          'const alternateFiles = ["src/lib/hidden.test.ts"];',
+          "function main() { return; use(alternateFiles); }",
+        ].join("\n"),
+      ),
+    );
+    writeFixture(root, "src/lib/hidden.test.ts", "createRequire(import.meta.url);");
+    const failure = verifyTrustedCreateRequireRatchet(
+      ts,
+      root,
+      pullRequestEnvironment(root),
+      baseRunner({ ts: allowlistSource([], []) }),
+    );
+    expect(failure).toContain("src/lib/hidden.test.ts");
+  });
+
+  it("rejects latent declarations without corresponding actual use (#7056)", () => {
+    const failure = createRequireInventoryFailure(
+      { cli: [], production: [], testSupport: [] },
+      { cli: ["src/lib/latent.test.ts"], testSupport: ["test/helpers/latent.ts"] },
+    );
+    expect(failure).toContain("CLI_CREATE_REQUIRE_FILES contains paths without actual");
+    expect(failure).toContain("TEST_SUPPORT_CREATE_REQUIRE_FILES contains paths without actual");
+  });
+
+  it("rejects production and undeclared support use (#7056)", () => {
+    const failure = createRequireInventoryFailure(
+      {
+        cli: [],
+        production: ["src/lib/production.ts"],
+        testSupport: ["test/helpers/new-support.ts"],
+      },
+      { cli: [], testSupport: [] },
+    );
+    expect(failure).toContain("Production TypeScript must not introduce createRequire boundaries");
+    expect(failure).toContain("TEST_SUPPORT_CREATE_REQUIRE_FILES omits actual createRequire use");
   });
 
   it("rejects additions relative to the trusted base while permitting removals (#7056)", () => {
@@ -40,7 +261,6 @@ describe("base-trusted createRequire ratchet", () => {
         { cli: ["src/a.test.ts", "src/retired.test.ts"], testSupport: ["test/retired.ts"] },
       ),
     ).toBeNull();
-
     expect(
       trustedCreateRequireExpansionFailure(
         { cli: ["src/a.test.ts", "src/new.test.ts"], testSupport: ["test/new.ts"] },
@@ -55,13 +275,83 @@ describe("base-trusted createRequire ratchet", () => {
     );
   });
 
-  it("accepts only a validated base revision from the pull-request event (#7056)", () => {
-    const revision = "a".repeat(40);
+  it("requires exactly one current and one base checker (#7056)", () => {
+    const root = temporaryRepo();
+    writeFixture(root, "scripts/checks/test-create-require-budget.ts", allowlistSource([], []));
+    writeFixture(root, "scripts/checks/test-create-require-budget.mts", allowlistSource([], []));
+    expect(() => requireSingleCurrentChecker(root)).toThrow(
+      "current checkout must contain exactly one createRequire budget checker; found 2",
+    );
+    expect(() =>
+      requireSingleBaseChecker(
+        baseRunner({ ts: allowlistSource([], []), mts: allowlistSource([], []) }),
+        BASE_SHA,
+      ),
+    ).toThrow("trusted base must contain exactly one createRequire budget checker; found 2");
+  });
+
+  it("allows a clean one-file checker extension migration (#7056)", () => {
+    const root = temporaryRepo();
+    const paths = ["src/lib/allowed.test.ts"];
+    writeFixture(root, "scripts/checks/test-create-require-budget.mts", allowlistSource(paths, []));
+    writeFixture(root, paths[0], "createRequire(import.meta.url);");
+
     expect(
-      extractPullRequestBaseSha(JSON.stringify({ pull_request: { base: { sha: revision } } })),
-    ).toBe(revision);
+      verifyTrustedCreateRequireRatchet(
+        ts,
+        root,
+        pullRequestEnvironment(root),
+        baseRunner({ ts: allowlistSource(paths, []) }),
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts only a validated base revision from the pull-request event (#7056)", () => {
+    expect(
+      extractPullRequestBaseSha(JSON.stringify({ pull_request: { base: { sha: BASE_SHA } } })),
+    ).toBe(BASE_SHA);
     expect(() => extractPullRequestBaseSha('{"pull_request":{"base":{"sha":"HEAD^"}}}')).toThrow(
       "pull-request event does not contain a valid base commit SHA",
+    );
+  });
+
+  it("fetches one exact missing base revision in a shallow checkout (#7056)", () => {
+    const root = temporaryRepo();
+    const calls: Array<{ args: readonly string[]; timeoutMs: number | undefined }> = [];
+    let available = false;
+    const runner: GitRunner = (args, timeoutMs) => {
+      calls.push({ args, timeoutMs });
+      switch (args[0]) {
+        case "cat-file":
+          return { status: available ? 0 : 128, stderr: "", stdout: "" };
+        case "fetch":
+          available = true;
+          return { status: 0, stderr: "", stdout: "" };
+        default:
+          throw new Error(`unexpected git arguments: ${args.join(" ")}`);
+      }
+    };
+
+    expect(resolveBaseRevision(root, pullRequestEnvironment(root), runner)).toBe(BASE_SHA);
+    expect(calls).toEqual([
+      { args: ["cat-file", "-e", `${BASE_SHA}^{commit}`], timeoutMs: undefined },
+      {
+        args: ["fetch", "--no-tags", "--depth=1", "origin", BASE_SHA],
+        timeoutMs: 30_000,
+      },
+      { args: ["cat-file", "-e", `${BASE_SHA}^{commit}`], timeoutMs: undefined },
+    ]);
+  });
+
+  it("fails closed when an exact shallow-base fetch cannot complete (#7056)", () => {
+    const root = temporaryRepo();
+    const runner: GitRunner = (args) => ({
+      status: args[0] === "fetch" ? 128 : 1,
+      stderr: "unavailable",
+      stdout: "",
+    });
+    expect(() => resolveBaseRevision(root, pullRequestEnvironment(root), runner)).toThrow(
+      `could not fetch the pull-request base commit ${BASE_SHA}`,
     );
   });
 });
