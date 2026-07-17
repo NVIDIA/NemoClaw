@@ -18,6 +18,7 @@ import {
   dockerStop,
 } from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import { warnLine } from "../cli/terminal-style";
 import { VLLM_PORT } from "../core/ports";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
@@ -38,11 +39,13 @@ import { resolveVllmInstallModel } from "./vllm-prompt";
 import {
   findUnwritableModelCachePath,
   formatStorageBytes,
+  formatStorageDecimalBytes,
   imageStorageRequirementBytes,
+  managedVllmStorageEstimateBytes,
   measureDirectorySizeBytes,
-  modelStorageRequirementBytes,
   probeDockerStorage,
   probeHostStorage,
+  type StorageCapacity,
   type StorageProbeResult,
 } from "./vllm-storage";
 
@@ -59,6 +62,8 @@ export interface VllmProfile {
   // Compressed size of that exact platform manifest. The storage preflight
   // adds unpacking and pull-staging headroom.
   imageDownloadSizeBytes: number;
+  // Pre-calculated unpacked layer size for this exact digest when available.
+  imageUnpackedSizeBytes?: number;
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
   // because Spark/Station can host larger recipes, but generic discrete-GPU
   // Linux falls back to the small Nemotron-Nano-4B that fits on consumer
@@ -83,9 +88,19 @@ export interface VllmProfile {
   modelDownloadSizeBytes?: number;
 }
 
+interface VllmImageCatalogEntry {
+  downloadSizeBytes: number;
+  ref: string;
+  unpackedSizeBytes?: number;
+}
+
+const VLLM_WRITABLE_ALLOWANCE_BYTES = 816_000_000;
+
 // Platform manifests and decimal compressed sizes published by NGC for the
 // named release tags. Pinning the digest makes a cache hit authoritative: an
-// explicit pull cannot begin downloading different same-tag layers.
+// explicit pull cannot begin downloading different same-tag layers. Unpacked
+// sizes are digest-catalog values measured ahead of time because OCI metadata
+// does not publish exact uncompressed byte counts.
 export const VLLM_IMAGES = {
   vllm022: NEMOTRON_ULTRA_STATION_IMAGE,
   ngc2603Post1: {
@@ -104,6 +119,7 @@ export const VLLM_IMAGES = {
     arm64: {
       ref: "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
       downloadSizeBytes: 9_603_085_145,
+      unpackedSizeBytes: 27_658_526_720,
     },
   },
 } as const;
@@ -148,23 +164,19 @@ function hfDownloadCacheMount(): string {
   return `${hostHfCacheDir()}:${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`;
 }
 
+function hfModelCacheKey(model: VllmModelDef): string | null {
+  const modelParts = model.id.split("/");
+  if (modelParts.some((part) => !HF_CACHE_COMPONENT_PATTERN.test(part))) return null;
+  return `models--${modelParts.join("--")}`;
+}
+
 function hfModelSnapshotDir(model: VllmModelDef): string | null {
   const revision = model.revision;
-  const modelParts = model.id.split("/");
-  if (
-    !revision ||
-    !HF_CACHE_COMPONENT_PATTERN.test(revision) ||
-    modelParts.some((part) => !HF_CACHE_COMPONENT_PATTERN.test(part))
-  ) {
+  const modelCacheKey = hfModelCacheKey(model);
+  if (!revision || !modelCacheKey || !HF_CACHE_COMPONENT_PATTERN.test(revision)) {
     return null;
   }
-  return path.join(
-    hostHfCacheDir(),
-    "hub",
-    `models--${modelParts.join("--")}`,
-    "snapshots",
-    revision,
-  );
+  return path.join(hostHfCacheDir(), "hub", modelCacheKey, "snapshots", revision);
 }
 
 function hfModelCacheDir(model: VllmModelDef): string | null {
@@ -242,6 +254,7 @@ const SPARK_PROFILE: VllmProfile = {
   platform: "spark",
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
+  imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
   defaultModel: qwen35bNvfp4Model(),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: vllmDockerRunFlags(),
@@ -255,6 +268,7 @@ const STATION_PROFILE: VllmProfile = {
   platform: "station",
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
+  imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
   defaultModel: deepseekV4FlashModel(),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -276,7 +290,7 @@ const STATION_PROFILE: VllmProfile = {
 
 // Generic discrete-GPU Linux. Uses a small nemotron model that fits on
 // most GPUs.
-const genericLinuxImage =
+const genericLinuxImage: VllmImageCatalogEntry | null =
   process.arch === "arm64"
     ? VLLM_IMAGES.ngc2603Post1.arm64
     : process.arch === "x64"
@@ -289,6 +303,7 @@ const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxImage
       platform: "linux",
       image: genericLinuxImage.ref,
       imageDownloadSizeBytes: genericLinuxImage.downloadSizeBytes,
+      imageUnpackedSizeBytes: genericLinuxImage.unpackedSizeBytes,
       defaultModel: nemotronNanoModel(),
       containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
       dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -523,6 +538,7 @@ export function resolveVllmRuntimeProfile(profile: VllmProfile, model: VllmModel
       ...profile,
       image: runtime.image,
       imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
+      imageUnpackedSizeBytes: undefined,
       modelDownloadSizeBytes: runtime.modelDownloadSizeBytes ?? profile.modelDownloadSizeBytes,
       loadTimeoutSec: runtime.loadTimeoutSec ?? profile.loadTimeoutSec,
       dockerRunFlags: [...profile.dockerRunFlags, ...extraRunArgs],
@@ -779,132 +795,294 @@ function containerStillRunning(profile: VllmProfile): boolean {
   return out === profile.containerName;
 }
 
-function printImageStorageWarning(
-  profile: VllmProfile,
-  probe: StorageProbeResult,
-  requiredBytes: bigint,
-): void {
-  const insufficient = probe.ok && probe.capacity.availableBytes < requiredBytes;
+function printStorageProbeDetails(label: string, probe: StorageProbeResult, indent = "  "): void {
+  console.error(`${indent}${label}: ${storageProbeAvailability(probe)}`);
+}
+
+function storageProbeAvailability(probe: StorageProbeResult): string {
+  if (probe.ok) {
+    return `${formatStorageBytes(probe.capacity.availableBytes)} available at ${probe.capacity.source} (${probe.capacity.path})`;
+  }
+  return `unknown (${probe.reason})`;
+}
+
+interface ManagedStorageRequirement {
+  label: string;
+  probe: StorageProbeResult;
+  requiredBytes: bigint;
+}
+
+interface ManagedStorageCheck {
+  label: string;
+  probe: Extract<StorageProbeResult, { ok: true }>;
+  requiredBytes: bigint;
+  requirements: ManagedStorageRequirement[];
+}
+
+type ManagedStorageProblem =
+  | { check: ManagedStorageCheck; kind: "insufficient" }
+  | { check: ManagedStorageRequirement; kind: "unknown" };
+
+function managedImageUnpackedRequirementBytes(profile: VllmProfile): number {
+  if (profile.imageUnpackedSizeBytes !== undefined) return profile.imageUnpackedSizeBytes;
+  return Number(
+    imageStorageRequirementBytes(profile.imageDownloadSizeBytes) -
+      BigInt(profile.imageDownloadSizeBytes),
+  );
+}
+
+function managedStorageRequirements({
+  dockerProbe,
+  estimate,
+  includeImage,
+  modelProbe,
+}: {
+  dockerProbe: StorageProbeResult | null;
+  estimate: ReturnType<typeof managedVllmStorageEstimateBytes>;
+  includeImage: boolean;
+  modelProbe: StorageProbeResult | null;
+}): ManagedStorageRequirement[] {
+  const requirements: ManagedStorageRequirement[] = [];
+  if (includeImage && dockerProbe) {
+    requirements.push({
+      label: "Docker image storage",
+      probe: dockerProbe,
+      requiredBytes: estimate.imageCompressedBytes + estimate.imageUnpackedBytes,
+    });
+  }
+  if (modelProbe) {
+    requirements.push({
+      label: "Model cache storage",
+      probe: modelProbe,
+      requiredBytes:
+        estimate.modelBytes + estimate.modelStagingBytes + estimate.writableAllowanceBytes,
+    });
+  }
+  return requirements;
+}
+
+function storageCapacityKey(capacity: StorageCapacity): string {
+  if (capacity.filesystemId) return `filesystem:${capacity.filesystemId}`;
+  return `path:${path.resolve(capacity.path)}`;
+}
+
+function managedStorageCheckLabel(requirements: readonly ManagedStorageRequirement[]): string {
+  return requirements.map((requirement) => requirement.label).join(" + ");
+}
+
+function managedStorageChecks(
+  requirements: readonly ManagedStorageRequirement[],
+): ManagedStorageCheck[] {
+  const aggregateSuccessfulRequirements = requirements.some(
+    (requirement) => requirement.probe.ok && !requirement.probe.capacity.filesystemId,
+  );
+  const checks = new Map<string, ManagedStorageCheck>();
+  for (const requirement of requirements) {
+    if (!requirement.probe.ok) continue;
+    const key = aggregateSuccessfulRequirements
+      ? "all-successful-requirements"
+      : storageCapacityKey(requirement.probe.capacity);
+    const existing = checks.get(key);
+    if (existing) {
+      existing.requiredBytes += requirement.requiredBytes;
+      existing.requirements.push(requirement);
+      existing.label = managedStorageCheckLabel(existing.requirements);
+      if (requirement.probe.capacity.availableBytes < existing.probe.capacity.availableBytes) {
+        existing.probe = requirement.probe;
+      }
+      continue;
+    }
+    checks.set(key, {
+      label: requirement.label,
+      probe: requirement.probe,
+      requiredBytes: requirement.requiredBytes,
+      requirements: [requirement],
+    });
+  }
+  return Array.from(checks.values());
+}
+
+function managedStorageProblem(
+  requirements: readonly ManagedStorageRequirement[],
+): ManagedStorageProblem | null {
+  let insufficient: { check: ManagedStorageCheck; availableBytes: bigint } | null = null;
+  for (const check of managedStorageChecks(requirements)) {
+    const availableBytes = check.probe.capacity.availableBytes;
+    if (availableBytes >= check.requiredBytes) continue;
+    if (!insufficient || availableBytes < insufficient.availableBytes) {
+      insufficient = { check, availableBytes };
+    }
+  }
+  if (insufficient) return { check: insufficient.check, kind: "insufficient" };
+  const unknown =
+    requirements.find(
+      (requirement) => requirement.label === "Model cache storage" && !requirement.probe.ok,
+    ) ?? requirements.find((requirement) => !requirement.probe.ok);
+  if (unknown) return { check: unknown, kind: "unknown" };
+  return null;
+}
+
+function printManagedStorageWarning({
+  estimate,
+  includeImage,
+  model,
+  problem,
+  profile,
+  requirements,
+}: {
+  estimate: ReturnType<typeof managedVllmStorageEstimateBytes>;
+  includeImage: boolean;
+  model: VllmModelDef;
+  problem: ManagedStorageProblem;
+  profile: VllmProfile;
+  requirements: readonly ManagedStorageRequirement[];
+}): void {
+  const insufficient = problem.kind === "insufficient";
+  const { check } = problem;
+  const subject = includeImage ? "managed vLLM cold install" : "managed vLLM model download";
   console.error("");
   console.error(
-    `  ${insufficient ? "Insufficient" : "Unable to verify"} Docker storage for the managed vLLM image.`,
+    warnLine(`${insufficient ? "Insufficient" : "Unable to verify"} storage for ${subject}.`),
   );
   console.error("");
   console.error(`  Image:     ${profile.image}`);
-  console.error(
-    `  Available: ${
-      probe.ok ? formatStorageBytes(probe.capacity.availableBytes) : `unknown (${probe.reason})`
-    }`,
-  );
-  console.error(`  Required:  approximately ${formatStorageBytes(requiredBytes)}`);
-  if (probe.ok) {
-    console.error(`  Storage:   ${probe.capacity.source} (${probe.capacity.path})`);
-  } else if (probe.path) {
-    console.error(`  Storage:   ${probe.source ?? "filesystem"} (${probe.path})`);
+  if (includeImage) {
+    console.error(
+      `  Image compressed: ${formatStorageDecimalBytes(estimate.imageCompressedBytes)}`,
+    );
+    console.error(`  Image unpacked:   ${formatStorageDecimalBytes(estimate.imageUnpackedBytes)}`);
+  } else {
+    console.error("  Image status:      already cached locally");
   }
-  console.error("");
-  if (insufficient) {
-    console.error("  Free or expand Docker storage to reduce the risk of download failure.");
-  }
-  console.error("  Useful diagnostics:");
-  console.error("    docker system df");
-  console.error("    docker info --format '{{.DockerRootDir}}'");
-}
-
-function printModelStorageWarning(
-  model: VllmModelDef,
-  probe: StorageProbeResult,
-  requiredBytes: bigint,
-  cachedBytes: bigint,
-  snapshotBytes: bigint,
-): void {
-  const insufficient = probe.ok && probe.capacity.availableBytes < requiredBytes;
-  console.error("");
-  console.error(
-    `  ${insufficient ? "Insufficient" : "Unable to verify"} storage for the managed vLLM model cache.`,
-  );
-  console.error("");
   console.error(`  Model:     ${model.id}`);
-  if (cachedBytes > 0n) {
-    console.error(
-      `  Cached:    ${formatStorageBytes(cachedBytes)} of ${formatStorageBytes(snapshotBytes)}`,
-    );
-  }
+  console.error(`  Model files:       ${formatStorageDecimalBytes(estimate.modelBytes)}`);
+  console.error(`  Model staging:     ${formatStorageDecimalBytes(estimate.modelStagingBytes)}`);
   console.error(
-    `  Available: ${
-      probe.ok ? formatStorageBytes(probe.capacity.availableBytes) : `unknown (${probe.reason})`
-    }`,
+    `  Writable allowance: ${formatStorageDecimalBytes(estimate.writableAllowanceBytes)}`,
   );
-  console.error(`  Required:  approximately ${formatStorageBytes(requiredBytes)}`);
-  if (probe.ok) {
-    console.error(`  Storage:   ${probe.capacity.source} (${probe.capacity.path})`);
-  } else if (probe.path) {
-    console.error(`  Storage:   ${probe.source ?? "filesystem"} (${probe.path})`);
+  console.error(
+    `  Required:  approximately ${formatStorageDecimalBytes(check.requiredBytes)} (${formatStorageBytes(check.requiredBytes)}) for ${check.label}`,
+  );
+  console.error(
+    `  Total estimate: approximately ${formatStorageDecimalBytes(estimate.totalBytes)} (${formatStorageBytes(estimate.totalBytes)})`,
+  );
+  console.error(`  Available: ${storageProbeAvailability(check.probe)}`);
+  if (check.probe.ok) {
+    console.error(`  Storage:   ${check.probe.capacity.source} (${check.probe.capacity.path})`);
+  } else if (check.probe.path) {
+    console.error(`  Storage:   ${check.probe.source ?? "filesystem"} (${check.probe.path})`);
+  }
+  console.error("");
+  for (const storageRequirement of requirements) {
+    printStorageProbeDetails(storageRequirement.label, storageRequirement.probe);
+    console.error(
+      `    Required here: approximately ${formatStorageDecimalBytes(storageRequirement.requiredBytes)} (${formatStorageBytes(storageRequirement.requiredBytes)})`,
+    );
   }
   console.error("");
   if (insufficient) {
-    console.error(
-      "  Free or expand the model-cache storage to reduce the risk of download failure.",
-    );
+    console.error("  Free or expand local storage before continuing.");
   }
   console.error("  Useful diagnostics:");
-  console.error(`    df -h ${hostHfCacheDir()}`);
-  console.error(`    du -sh ${hostHfCacheDir()} 2>/dev/null`);
+  if (includeImage) {
+    console.error("    docker system df");
+    console.error("    docker info --format '{{.DockerRootDir}}'");
+  }
+  console.error('    df -h "$HOME/.cache/huggingface"');
 }
 
-async function imageStorageAccepted(
-  profile: VllmProfile,
-  opts: InstallVllmOptions,
-): Promise<boolean> {
-  const probe = probeDockerStorage();
-  const requiredBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
-  if (probe.ok && probe.capacity.availableBytes >= requiredBytes) {
-    return true;
-  }
-  printImageStorageWarning(profile, probe, requiredBytes);
-  if (!probe.ok) {
-    console.error("  Continuing because Docker storage capacity could not be verified.");
-    return true;
-  }
-  if (opts.nonInteractive) {
-    console.error(
-      "  Continuing because managed vLLM storage estimates are advisory in non-interactive setup.",
-    );
-    return true;
-  }
-  return isAffirmativeAnswer(await opts.promptFn("  Continue with the pull anyway? [y/N]: "));
-}
-
-async function modelStorageAccepted(
+async function managedStorageAccepted(
   profile: VllmProfile,
   model: VllmModelDef,
+  hasImage: boolean,
   opts: InstallVllmOptions,
 ): Promise<boolean> {
-  if (profile.modelDownloadSizeBytes === undefined) return true;
-  if (!Number.isFinite(profile.modelDownloadSizeBytes) || profile.modelDownloadSizeBytes <= 0) {
+  const includeImage = !hasImage;
+  const modelDownloadSizeBytes = profile.modelDownloadSizeBytes ?? model.downloadSizeBytes;
+  if (!Number.isFinite(modelDownloadSizeBytes) || modelDownloadSizeBytes <= 0) {
     throw new Error("vLLM model download size must be a positive finite byte count");
   }
-  const snapshotBytes = BigInt(Math.ceil(profile.modelDownloadSizeBytes));
+  const snapshotBytes = BigInt(Math.ceil(modelDownloadSizeBytes));
   const snapshotDir = hfModelSnapshotDir(model);
   const cachedBytes = snapshotDir ? measureDirectorySizeBytes(snapshotDir) : 0n;
-  if (cachedBytes >= snapshotBytes) return true;
-  const remainingBytes = snapshotBytes - cachedBytes;
-  const probe = probeHostStorage(hostHfCacheDir(), "Hugging Face cache");
-  const requiredBytes = modelStorageRequirementBytes(Number(remainingBytes));
-  if (probe.ok && probe.capacity.availableBytes >= requiredBytes) return true;
-  printModelStorageWarning(model, probe, requiredBytes, cachedBytes, snapshotBytes);
-  if (probe.ok && opts.nonInteractive) {
+  const remainingModelBytes = cachedBytes >= snapshotBytes ? 0n : snapshotBytes - cachedBytes;
+  const includeModel = remainingModelBytes > 0n;
+  const estimate = managedVllmStorageEstimateBytes({
+    imageCompressedBytes: profile.imageDownloadSizeBytes,
+    imageUnpackedBytes: managedImageUnpackedRequirementBytes(profile),
+    includeImage,
+    includeModel,
+    modelBytes: includeModel ? Number(remainingModelBytes) : modelDownloadSizeBytes,
+    writableAllowanceBytes: VLLM_WRITABLE_ALLOWANCE_BYTES,
+  });
+  const dockerProbe = includeImage ? probeDockerStorage() : null;
+  const modelProbe = includeModel ? probeHostStorage(hostHfCacheDir(), "Hugging Face cache") : null;
+  const requirements = managedStorageRequirements({
+    dockerProbe,
+    estimate,
+    includeImage,
+    modelProbe,
+  });
+  const problem = managedStorageProblem(requirements);
+  if (!problem) return true;
+  printManagedStorageWarning({
+    estimate,
+    includeImage,
+    model,
+    problem,
+    profile,
+    requirements,
+  });
+  const unknownModelRequirement = requirements.find(
+    (requirement) => requirement.label === "Model cache storage" && !requirement.probe.ok,
+  );
+  if (problem.kind === "unknown") {
+    if (problem.check.label === "Docker image storage") {
+      console.error("  Continuing because Docker storage capacity could not be verified.");
+      return true;
+    }
+    if (opts.nonInteractive) {
+      console.error(
+        "  Non-interactive setup stops because model-cache capacity could not be verified. Re-run interactively to review the warning.",
+      );
+      return false;
+    }
+    return isAffirmativeAnswer(
+      await opts.promptFn("  Continue with the model download anyway? [y/N]: "),
+    );
+  }
+  if (opts.nonInteractive) {
+    if (unknownModelRequirement) {
+      printManagedStorageWarning({
+        estimate,
+        includeImage,
+        model,
+        problem: { check: unknownModelRequirement, kind: "unknown" },
+        profile,
+        requirements,
+      });
+      console.error(
+        "  Non-interactive setup stops because model-cache capacity could not be verified. Re-run interactively to review the warning.",
+      );
+      return false;
+    }
     console.error(
       "  Continuing because managed vLLM storage estimates are advisory in non-interactive setup.",
     );
     return true;
   }
-  if (opts.nonInteractive) {
-    console.error(
-      "  Non-interactive setup stops because model-cache capacity could not be verified. Re-run interactively to review the warning.",
-    );
+  if (!isAffirmativeAnswer(await opts.promptFn("  Continue with the download anyway? [y/N]: "))) {
     return false;
   }
+  if (!unknownModelRequirement) return true;
+  printManagedStorageWarning({
+    estimate,
+    includeImage,
+    model,
+    problem: { check: unknownModelRequirement, kind: "unknown" },
+    profile,
+    requirements,
+  });
   return isAffirmativeAnswer(
     await opts.promptFn("  Continue with the model download anyway? [y/N]: "),
   );
@@ -1051,12 +1229,8 @@ export async function installVllm(
   // Guard the host filesystem before an image pull or model-download
   // container can start. The cache path itself is created only after both
   // storage decisions pass, so Docker never creates it as root.
-  if (!(await modelStorageAccepted(runtimeProfile, model, opts))) {
-    return { ok: false };
-  }
-
   const hasImage = imageIsCached(runtimeProfile);
-  if (!hasImage && !(await imageStorageAccepted(runtimeProfile, opts))) {
+  if (!(await managedStorageAccepted(runtimeProfile, model, hasImage, opts))) {
     return { ok: false };
   }
 
@@ -1073,9 +1247,9 @@ export async function installVllm(
   }
 
   // A cold image pull can consume the same host filesystem that backs the
-  // Hugging Face cache. Re-probe after the pull so two independently passing
-  // capacity checks cannot overcommit shared storage before `hf download`.
-  if (!hasImage && !(await modelStorageAccepted(runtimeProfile, model, opts))) {
+  // Hugging Face cache. Re-probe the model destination after the pull before
+  // `hf download` starts.
+  if (!hasImage && !(await managedStorageAccepted(runtimeProfile, model, true, opts))) {
     return { ok: false };
   }
 
