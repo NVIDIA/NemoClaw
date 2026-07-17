@@ -31,6 +31,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
+import { GATEWAY_PORT } from "../core/ports.js";
 import {
   BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
   classifyFailedDirsFromTarStderr,
@@ -54,10 +55,11 @@ import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
 import { restoreStateFile } from "./state-file-restore.js";
+import { nemoclawStateRoot } from "./state-root.js";
 import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
-const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
+const REBUILD_BACKUPS_DIR = path.join(nemoclawStateRoot(HOME_DIR, GATEWAY_PORT), "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
 export const OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR =
@@ -577,7 +579,12 @@ export function sshArgs(configFile: string, sandboxName: string): string[] {
 function computeBlueprintDigest(): string | null {
   // Look for blueprint.yaml relative to the agent-defs ROOT
   const candidates = [
-    path.join(process.env.HOME || "/tmp", ".nemoclaw", "blueprints", "0.1.0", "blueprint.yaml"),
+    path.join(
+      nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
+      "blueprints",
+      "0.1.0",
+      "blueprint.yaml",
+    ),
     path.join(__dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml"),
   ];
   for (const p of candidates) {
@@ -851,7 +858,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
   const dir = agent.configPaths.dir;
-  const stateDirs = agent.stateDirs;
+  // Runtime auth state (device identity keypairs, paired-device tokens) is
+  // never captured: sanitizeBackupDirectory scrubs its key/token fields, so a
+  // backup copy could only ever restore as corrupt auth state (#6852).
+  const runtimeAuthStateDirs = new Set(agent.runtimeAuthStateDirs);
+  const stateDirs = agent.stateDirs.filter((d) => !runtimeAuthStateDirs.has(d));
   const stateFiles = normalizeStateFileSpecs(agent.stateFiles);
   _log(
     `backupSandboxState: agent=${agentName}, dir=${dir}, stateDirs=[${stateDirs.join(",")}], stateFiles=[${stateFiles.map((f) => f.path).join(",")}]`,
@@ -1389,6 +1400,19 @@ function restoreSandboxStateInternal(
     return failRestoreContract(
       `Backup state directory '${normalizedBackupDir}' does not match target directory '${normalizedTargetDir}'`,
     );
+  }
+  // Runtime auth state is never restored: its backup copies are
+  // credential-scrubbed and would replace the sandbox's working device
+  // identity and pairing tokens with corrupt files (#6852). The current
+  // target manifest is authoritative here so legacy backups whose embedded
+  // manifests still list these dirs are also skipped.
+  const targetRuntimeAuthDirs = new Set(targetAgent.runtimeAuthStateDirs);
+  const skippedRuntimeAuthDirs = localDirs.filter((d) => targetRuntimeAuthDirs.has(d));
+  if (skippedRuntimeAuthDirs.length > 0) {
+    _log(`Skipping runtime auth state dirs from restore: [${skippedRuntimeAuthDirs.join(",")}]`);
+    for (const d of skippedRuntimeAuthDirs) {
+      localDirs.splice(localDirs.indexOf(d), 1);
+    }
   }
   const targetStateFiles = new Map<string, AgentStateFile>();
   for (const targetFile of targetAgent.stateFiles) {

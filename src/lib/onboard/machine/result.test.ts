@@ -10,6 +10,7 @@ import {
   failOnboardMachine,
   type OnboardStateResultTransitionKind,
   type OnboardStateTransitionHelperOptions,
+  pauseOnboardMachine,
   retryTo,
   transitionTo,
 } from "./result";
@@ -74,7 +75,12 @@ describe("onboard state result helpers", () => {
     branchTo("agent_setup", { metadata: "bad" });
   });
 
-  it("builds terminal completion and failure results", () => {
+  it("builds pause, terminal completion, and failure results", () => {
+    expect(pauseOnboardMachine({ sandboxName: "my-assistant" }, { reason: "not-ready" })).toEqual({
+      type: "pause",
+      updates: { sandboxName: "my-assistant" },
+      metadata: { reason: "not-ready" },
+    });
     expect(completeOnboardMachine({ sandboxName: "my-assistant" }, { verified: true })).toEqual({
       type: "complete",
       updates: { sandboxName: "my-assistant" },

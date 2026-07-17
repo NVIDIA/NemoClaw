@@ -50,7 +50,7 @@ PR #2700 changed 5 env-var validations from `return 1` to `return 0` in `scripts
 Candidate issue #2762: "PR #2700 changed validations... However... NEMOCLAW_CONTEXT_WINDOW and NEMOCLAW_MAX_TOKENS with invalid values still cause the container to exit with code 1."
 
 **Classification:** CONTRADICTING, high confidence (boosted by reverse-link)
-**Evidence cited (by-omission):** Bug class — env-var validation hard-exits under `set -euo pipefail`. PR fixed instances `NEMOCLAW_MODEL_OVERRIDE`, `NEMOCLAW_INFERENCE_API_OVERRIDE`, `NEMOCLAW_REASONING`, `NEMOCLAW_CORS_ORIGIN`, plus one more. Instances PR did NOT touch: `NEMOCLAW_CONTEXT_WINDOW`, `NEMOCLAW_MAX_TOKENS`. Issue reports same hard-exit class on those exact untouched instances. The PR's incomplete scope is the contradiction with the issue's expectation of a class-level fix.
+**Evidence cited (by-omission):** Bug class — env-var validation hard-exits under `set -euo pipefail`. PR fixed instances `NEMOCLAW_MODEL_OVERRIDE`, `NEMOCLAW_INFERENCE_API_OVERRIDE`, `NEMOCLAW_REASONING`, `NEMOCLAW_CORS_ORIGIN`, plus one more. Instances PR did NOT touch: `NEMOCLAW_CONTEXT_WINDOW`, `NEMOCLAW_MAX_TOKENS`. Issue reports the same hard-exit class on those untouched instances. The PR's incomplete scope is the contradiction with the issue's expectation of a class-level fix.
 
 ## SAME_ISSUE_DIFF
 

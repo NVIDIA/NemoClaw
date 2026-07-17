@@ -91,7 +91,7 @@ function emptyPrGateCheckRunsRoute() {
 function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
   return {
     id: 17,
-    name: "E2E / PR Gate",
+    name: "E2E / PR Gate Coordination",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
@@ -231,11 +231,11 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
 }
 
 describe("PR E2E controller", () => {
-  it("explains the accepted evidence URL when a manual exception uses another GitHub URL", () => {
+  it("explains the accepted evidence URL when a manual fork skip uses another GitHub URL", () => {
     expect(() =>
       parseControllerCommand([
         "--mode",
-        "resolve-fork",
+        "record-fork-e2e-skip",
         "--pr",
         "42",
         "--head",
@@ -371,6 +371,10 @@ describe("PR E2E controller", () => {
     });
     expect(expectedSignalShards(["docs-validation"])).toEqual({
       "docs-validation": ["default"],
+    });
+    expect(expectedSignalShards(["hermes-inference-switch", "openclaw-inference-switch"])).toEqual({
+      "hermes-inference-switch": ["hosted", "anthropic"],
+      "openclaw-inference-switch": ["hosted", "anthropic"],
     });
     const broadPlan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: BROAD_FILES });
     const broadShards = expectedSignalShards(riskPlanRequiredJobIds(broadPlan));
@@ -1231,7 +1235,7 @@ describe("PR E2E controller", () => {
       });
       const outputs = fs.readFileSync(outputPath, "utf8");
       expect(outputs).toContain("dispatched=true");
-      expect(outputs).not.toContain("exception_mode=");
+      expect(outputs).not.toContain("fork_skip_mode=");
       expect(outputs).not.toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -1349,7 +1353,7 @@ describe("PR E2E controller", () => {
         (request) => request.url.endsWith("/check-runs") && request.method === "POST",
       );
       expect(checkCreation?.body).toMatchObject({
-        name: "E2E / PR Gate",
+        name: "E2E / PR Gate Coordination",
         head_sha: HEAD_SHA,
         external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
         status: "in_progress",

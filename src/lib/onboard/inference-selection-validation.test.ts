@@ -160,6 +160,121 @@ describe("inference selection validation", () => {
     }
   });
 
+  it("probes an exactly allowlisted private endpoint with DNS pinning (#6861)", async () => {
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "llm.corp.example");
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "10.0.0.8", family: 4 }],
+    });
+
+    try {
+      const result = await helpers.validateCustomOpenAiLikeSelection(
+        "Custom endpoint",
+        "https://llm.corp.example/v1",
+        "model-a",
+        "COMPATIBLE_API_KEY",
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        api: "openai-completions",
+        pinnedAddresses: ["10.0.0.8"],
+      });
+      expect(result.ok && result.trustedPrivateCapability?.addresses).toEqual(["10.0.0.8"]);
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+        "https://llm.corp.example/v1",
+        "model-a",
+        "test-key",
+        expect.objectContaining({
+          pinnedAddresses: ["10.0.0.8"],
+          trustedPrivateCapability: expect.objectContaining({ addresses: ["10.0.0.8"] }),
+        }),
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("operator-trusted private"));
+    } finally {
+      warn.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("honors an exactly allowlisted private endpoint during non-interactive validation (#6861)", async () => {
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "llm.corp.example");
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "10.0.0.8", family: 4 }],
+    });
+
+    try {
+      const result = await helpers.validateCustomOpenAiLikeSelection(
+        "Custom endpoint",
+        "https://llm.corp.example/v1",
+        "model-a",
+        "COMPATIBLE_API_KEY",
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        api: "openai-completions",
+        pinnedAddresses: ["10.0.0.8"],
+      });
+      expect(result.ok && result.trustedPrivateCapability?.addresses).toEqual(["10.0.0.8"]);
+      expect(promptValidationRecovery).not.toHaveBeenCalled();
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("routes an unreachable custom endpoint through transport recovery, not a silent loop (#6854)", async () => {
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    let capturedRecovery: { kind?: string } | undefined;
+    const promptValidationRecovery = vi.fn(async (_label: string, recovery: { kind?: string }) => {
+      capturedRecovery = recovery;
+      return "retry" as const;
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery,
+      resolveEndpointHost: async () => {
+        throw new Error("getaddrinfo ENOTFOUND example.invalid");
+      },
+    });
+
+    try {
+      await helpers.validateCustomOpenAiLikeSelection(
+        "Custom endpoint",
+        "https://example.invalid/v1",
+        "model-a",
+        "COMPATIBLE_API_KEY",
+      );
+      // A DNS-unreachable endpoint is a transport failure: the recovery prompt
+      // receives a transport classification (DNS/VPN/URL hint + retry/back/exit),
+      // not the silent selection loop the private-IP path takes.
+      expect(promptValidationRecovery).toHaveBeenCalled();
+      expect(capturedRecovery?.kind).toBe("transport");
+      expect(probeOpenAiLikeEndpoint).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it.each([
     "http://127.0.0.1:8000/v1",
     "https://inference.local/v1",

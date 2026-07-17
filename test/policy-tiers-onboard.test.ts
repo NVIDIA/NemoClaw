@@ -483,6 +483,31 @@ describe("policy tier setup", () => {
     assert.deepEqual(result.appliedCalls, ["brave", "npm"]);
   });
 
+  it("preserves a recorded Balanced tier default during resumed reapply (#6844)", async () => {
+    const result = await runPolicySetup(
+      {
+        tierName: "restricted",
+        currentApplied: ["npm", "brave"],
+        recordedPolicyTier: "balanced",
+      },
+      {
+        selectedPresets: ["npm", "brave"],
+        webSearchConfig: null,
+        webSearchSupported: true,
+      },
+    );
+
+    assert.deepEqual(result.applied, ["npm", "brave"]);
+    assert.deepEqual(result.syncCalls, [
+      {
+        sandboxName: "test-sb",
+        current: ["npm", "brave"],
+        selected: ["npm", "brave"],
+      },
+    ]);
+    assert.deepEqual(result.removedCalls, []);
+  });
+
   it("clamps resumed policy presets to web-search-supported presets", async () => {
     const result = await runPolicySetup(
       {

@@ -12,9 +12,15 @@ const WORKFLOWS_DIR = path.join(REPO_ROOT, ".github", "workflows");
 const REVIEW_ADVISOR_CONFIGS = [path.join(REPO_ROOT, ".coderabbit.yaml")];
 const FORBIDDEN_WORKFLOW_REFERENCES = [
   ".github/workflows/e2e-script.yaml",
+  ".github/workflows/ollama-proxy-e2e.yaml",
   ".github/actions/run-e2e-script",
   ".github/workflows/nightly-e2e.yaml",
+  "test/e2e-ollama-proxy.sh",
   "nightly-e2e.yaml",
+];
+const FORBIDDEN_REPO_PATHS = [
+  ".github/workflows/ollama-proxy-e2e.yaml",
+  "test/e2e-ollama-proxy.sh",
 ];
 
 function workflowFiles(): string[] {
@@ -25,6 +31,12 @@ function workflowFiles(): string[] {
 }
 
 describe("retired shell E2E entrypoints", () => {
+  it("keeps retired standalone Ollama lanes deleted", () => {
+    for (const relativePath of FORBIDDEN_REPO_PATHS) {
+      expect(fs.existsSync(path.join(REPO_ROOT, relativePath)), relativePath).toBe(false);
+    }
+  });
+
   it("keeps shell E2E entrypoints out of test/e2e recursively", () => {
     const shellEntrypoints = fs
       .readdirSync(E2E_SUITE_DIR, { recursive: true })

@@ -10,15 +10,30 @@ import {
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
-import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
-import { validateHermesGpuStartupWorkflowBoundary } from "./hermes-gpu-startup-workflow-boundary.mts";
-import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
-import { validateOpenClawPluginRuntimeExdevWorkflowBoundary } from "./openclaw-plugin-runtime-exdev-workflow-boundary.mts";
-import { validateOpenShellGatewayAuthContractWorkflowBoundary } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
-import { validateE2eOperationsWorkflowBoundary } from "./operations-workflow-boundary.mts";
+import {
+  type HermesDashboardWorkflow,
+  validateHermesDashboardWorkflow,
+} from "./hermes-dashboard-workflow-boundary.mts";
+import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
+import {
+  type InferenceSwitchWorkflow,
+  validateInferenceSwitchWorkflow,
+} from "./inference-switch-workflow-boundary.mts";
+import {
+  type OpenClawPluginRuntimeExdevWorkflow,
+  validateOpenClawPluginRuntimeExdevWorkflow,
+} from "./openclaw-plugin-runtime-exdev-workflow-boundary.mts";
+import {
+  type OpenShellGatewayAuthContractWorkflow,
+  validateOpenShellGatewayAuthContractWorkflow,
+} from "./openshell-gateway-auth-contract-workflow-boundary.mts";
+import {
+  type OperationsWorkflow,
+  validateE2eOperationsWorkflow,
+} from "./operations-workflow-boundary.mts";
 import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
-import { validateSecurityPostureWorkflowBoundary } from "./security-posture-workflow-boundary.mts";
+import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
 import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -67,6 +82,7 @@ const COMMON_SECRET_ENV_NAMES = [
   "GITHUB_TOKEN",
 ];
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e", "hermes-gpu-startup"]);
+const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
@@ -83,6 +99,7 @@ const TRUSTED_DOCKER_HUB_PREDICATE =
 const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && '1' || '0' }}`;
 const GUARDED_DOCKER_HUB_USERNAME = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_USERNAME || '' }}`;
 const GUARDED_DOCKER_HUB_TOKEN = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`;
+const GUARDED_HERMES_E2E_INFERENCE_KEY = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -421,6 +438,35 @@ function requireJobStep(
   return step;
 }
 
+function requireDockerEngineRebuilds(
+  errors: string[],
+  jobName: string,
+  jobEnv: WorkflowRecord,
+  steps: readonly WorkflowStep[],
+): void {
+  const hasSeparateCacheBuilder = steps.some((step) => {
+    const uses = stringValue(step.uses);
+    return (
+      uses.startsWith("docker/setup-buildx-action@") || uses.startsWith("docker/build-push-action@")
+    );
+  });
+  const routesBuildsAwayFromDocker = steps.some((step) => {
+    const run = stringValue(step.run);
+    return (
+      Object.hasOwn(asRecord(step.env), "BUILDX_BUILDER") ||
+      /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
+      /docker\s+buildx\s+use(?:\s|$)/u.test(run)
+    );
+  });
+  if (
+    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
+    hasSeparateCacheBuilder ||
+    routesBuildsAwayFromDocker
+  ) {
+    errors.push(`${jobName} must keep rebuild builds on the Docker engine cache`);
+  }
+}
+
 function requireRunContains(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -633,7 +679,9 @@ function validateHostedCompatibleInferenceFlag(
   jobName: string,
   jobEnv: WorkflowRecord,
 ): void {
-  if (PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName)) return;
+  if (PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName) || ADAPTER_MANAGED_INFERENCE_JOBS.has(jobName)) {
+    return;
+  }
   if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
     errors.push(`${jobName} job must enable hosted-compatible inference mode`);
   }
@@ -1246,6 +1294,7 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
+  requireDockerEngineRebuilds(errors, jobName, jobEnv, steps);
   for (const step of steps) {
     if (step.name !== "Run OpenClaw rebuild live test") {
       requireEnvDoesNotExposeSecret(
@@ -1357,6 +1406,7 @@ function validateRebuildHermesJob(
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
+  requireDockerEngineRebuilds(errors, jobName, jobEnv, steps);
   for (const step of steps) {
     const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
     const stepEnv = asRecord(step.env);
@@ -2295,6 +2345,12 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   if (jobEnv.NEMOCLAW_AGENT !== "hermes") {
     errors.push("hermes-e2e job must set NEMOCLAW_AGENT=hermes");
   }
+  if (jobEnv.NEMOCLAW_E2E_INFERENCE_MODE !== "${{ inputs.inference_mode || 'mock' }}") {
+    errors.push("hermes-e2e job must consume the defaulted inference mode input");
+  }
+  if ("NEMOCLAW_E2E_USE_HOSTED_INFERENCE" in jobEnv) {
+    errors.push("hermes-e2e job must leave hosted inference selection to the adapter");
+  }
   if (jobEnv.NEMOCLAW_MODEL !== undefined) {
     errors.push("hermes-e2e job must use the shared hosted-compatible model default");
   }
@@ -2325,8 +2381,10 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
   const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("hermes-e2e live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_HERMES_E2E_INFERENCE_KEY) {
+    errors.push(
+      "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch without a PR checkout and the inference mode condition",
+    );
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/hermes-e2e.test.ts");
@@ -3420,6 +3478,11 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
       "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_AGENT",
     );
   }
+  if (jobEnv.NEMOCLAW_E2E_SHARD !== "${{ matrix.agent }}") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_E2E_SHARD",
+    );
+  }
   if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-bedrock-${{ matrix.agent }}") {
     errors.push(
       "bedrock-runtime-compatible-anthropic job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent",
@@ -3556,6 +3619,17 @@ function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecor
   requireRunDoesNotContain(errors, guard, "linux-arm64-gpu-jetson-orin-latest-1");
 }
 
+export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[] {
+  const workflowRecord = asRecord(workflow);
+  const triggers = asRecord(workflowRecord.on ?? workflowRecord[true as unknown as string]);
+  const workflowDispatch = asRecord(triggers.workflow_dispatch);
+  const errors: string[] = [];
+
+  validateAllowJetsonRunnerQueueInput(errors, asRecord(workflowDispatch.inputs));
+  validateJetsonRunnerDispatchGuard(errors, asRecord(workflowRecord.jobs));
+  return errors;
+}
+
 function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "sandbox-rlimits-connect";
   const job = asRecord(jobs[jobName]);
@@ -3604,18 +3678,55 @@ function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord)
   }
 }
 
-export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
-  const workflow = readWorkflowRecord(workflowPath);
+function validateInferenceModeInput(
+  errors: string[],
+  workflow: WorkflowRecord,
+  dispatchInputs: WorkflowRecord,
+): void {
+  const input = requireInput(errors, dispatchInputs, "inference_mode");
+  if (
+    input.type !== "choice" ||
+    input.default !== "mock" ||
+    JSON.stringify(input.options) !== JSON.stringify(["mock", "internal-nvidia", "public-nvidia"])
+  ) {
+    errors.push("workflow_dispatch inference_mode must be the canonical three-mode choice");
+  }
+  if ("NEMOCLAW_E2E_INFERENCE_MODE" in asRecord(workflow.env)) {
+    errors.push("workflow env must leave inference mode scoped to adapter-consuming jobs");
+  }
+}
+
+function validateInferenceModeGeneration(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  env: WorkflowRecord,
+): void {
+  if (env.INFERENCE_MODE !== "${{ inputs.inference_mode || 'mock' }}") {
+    errors.push("matrix generation step must pass the defaulted inference mode through env");
+  }
+  requireRunContains(errors, step, "Invalid inference_mode: ${INFERENCE_MODE}");
+}
+
+export function validateE2eWorkflow(workflowValue: unknown): string[] {
+  const workflow = asRecord(workflowValue);
   const errors: string[] = [];
   errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
   errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
-  errors.push(...validateHermesDashboardWorkflowBoundary(workflowPath));
-  errors.push(...validateHermesGpuStartupWorkflowBoundary(workflowPath));
-  errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
-  errors.push(...validateOpenClawPluginRuntimeExdevWorkflowBoundary(workflowPath));
-  errors.push(...validateOpenShellGatewayAuthContractWorkflowBoundary(workflowPath));
-  errors.push(...validateE2eOperationsWorkflowBoundary(workflowPath));
-  errors.push(...validateSecurityPostureWorkflowBoundary(workflowPath));
+  errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
+  errors.push(...validateHermesGpuStartupWorkflow(workflow));
+  errors.push(...validateInferenceSwitchWorkflow(workflow as unknown as InferenceSwitchWorkflow));
+  errors.push(
+    ...validateOpenClawPluginRuntimeExdevWorkflow(
+      workflow as unknown as OpenClawPluginRuntimeExdevWorkflow,
+    ),
+  );
+  errors.push(
+    ...validateOpenShellGatewayAuthContractWorkflow(
+      workflow as unknown as OpenShellGatewayAuthContractWorkflow,
+    ),
+  );
+  errors.push(...validateE2eOperationsWorkflow(workflow as unknown as OperationsWorkflow));
+  errors.push(...validateSecurityPostureWorkflow(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
@@ -3624,7 +3735,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
-  validateAllowJetsonRunnerQueueInput(errors, dispatchInputs);
+  validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("default-enabled tests")) {
@@ -3645,6 +3756,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  errors.push(...validateJetsonRunnerDispatchBoundary(workflow));
   const { errors: inventoryErrors, inventory: freeStandingInventory } =
     deriveFreeStandingJobsInventoryFromJobs(jobs);
   errors.push(...inventoryErrors);
@@ -3686,6 +3798,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (generateEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("matrix generation step must pass targets through TARGETS env");
   }
+  validateInferenceModeGeneration(errors, generate, generateEnv);
   requireRunContains(errors, generate, "npx tsx tools/e2e/workflow-plan.mts");
   requireRunContains(errors, generate, "Use either targets or jobs, not both");
   requireRunContains(errors, generate, "for selector_name in JOBS TARGETS");
@@ -3782,6 +3895,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     errors.push("checkout step must set persist-credentials=false");
   }
 
+  const dcodeTargetIf = "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}";
   const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
   const configureTraceEnv = asRecord(configureTrace?.env);
   if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
@@ -3809,10 +3923,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     "Install Deep Agents Code TUI host dependencies",
     ["expect"],
   );
-  if (
-    dcodeHostDependencies?.if !==
-    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
-  ) {
+  if (dcodeHostDependencies?.if !== dcodeTargetIf) {
     errors.push("live DCode TUI host dependencies must be scoped to the typed DCode target");
   }
 
@@ -3837,10 +3948,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
       "live DCode profile import gate must build the reviewed repository base without an override",
     );
   }
-  if (
-    dcodeProfileImportGate?.["if"] !==
-    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
-  ) {
+  if (dcodeProfileImportGate?.["if"] !== dcodeTargetIf) {
     errors.push("live DCode profile import gate must be scoped to the typed DCode target");
   }
   if (dcodeProfileImportGate?.shell !== "bash") {
@@ -3851,6 +3959,28 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     "bash scripts/check-dcode-profile-import-gate.sh"
   ) {
     errors.push("live DCode profile import gate must run the reviewed negative-build script");
+  }
+  const dcodeGateIndex = dcodeProfileImportGate
+    ? steps.indexOf(dcodeProfileImportGate)
+    : steps.length;
+  const routesDcodeBuildsThroughBuildx = steps.slice(0, dcodeGateIndex).some((step) => {
+    const stepCanRunForDcode = step["if"] === undefined || step["if"] === dcodeTargetIf;
+    const run = stringValue(step.run);
+    return (
+      stepCanRunForDcode &&
+      (stringValue(step.uses).startsWith("docker/setup-buildx-action@") ||
+        /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
+        /docker\s+buildx\s+use(?:\s|$)/u.test(run))
+    );
+  });
+  if (
+    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
+    Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "BUILDX_BUILDER") ||
+    routesDcodeBuildsThroughBuildx
+  ) {
+    errors.push(
+      "live DCode profile import gate must keep its local image chain on the Docker engine",
+    );
   }
 
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
@@ -4087,7 +4217,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
 
   validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest", "gateway-health-honest");
 
-  validateJetsonRunnerDispatchGuard(errors, jobs);
   validateSandboxRlimitConnectJob(errors, jobs);
 
   validateFreeStandingJobSelector(
@@ -4269,4 +4398,8 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   }
 
   return errors;
+}
+
+export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
+  return validateE2eWorkflow(readWorkflowRecord(workflowPath));
 }

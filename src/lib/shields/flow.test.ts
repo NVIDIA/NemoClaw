@@ -15,12 +15,15 @@ const HUNG_FORWARD_OWNER_SOURCE = `
 const { spawn } = require("node:child_process");
 const childScriptPath = process.argv[2];
 const sentinelPath = process.argv[3];
-spawn(process.execPath, [childScriptPath, sentinelPath], { stdio: "ignore" });
+const childReadyPath = process.argv[4];
+spawn(process.execPath, [childScriptPath, sentinelPath, childReadyPath], { stdio: "ignore" });
 setTimeout(() => {}, 5000);
 `;
 const LATE_WEAKENING_CHILD_SOURCE = `
 const fs = require("node:fs");
 const sentinelPath = process.argv[2];
+const childReadyPath = process.argv[3];
+fs.writeFileSync(childReadyPath, String(process.pid));
 setTimeout(() => fs.writeFileSync(sentinelPath, "ran"), 1200);
 setTimeout(() => {}, 5000);
 `;
@@ -350,7 +353,7 @@ describe("shields command flow", () => {
     const shields = requireDist(shieldsModulePath) as {
       excludeRecoveryProcessTree: (
         descendants: Array<{ pid: number; startIdentity: string; depth: number }>,
-        recoveryPid: number,
+        recovery: { pid: number; startIdentity: string },
         recoveryDescendants: Array<{ pid: number; startIdentity: string; depth: number }>,
       ) => Array<{ pid: number; startIdentity: string; depth: number }>;
     };
@@ -359,10 +362,27 @@ describe("shields command flow", () => {
     const weakeningChild = { pid: 300, startIdentity: "policy-set", depth: 1 };
 
     expect(
-      shields.excludeRecoveryProcessTree([recovery, recoveryChild, weakeningChild], recovery.pid, [
+      shields.excludeRecoveryProcessTree([recovery, recoveryChild, weakeningChild], recovery, [
         recoveryChild,
       ]),
     ).toEqual([weakeningChild]);
+  });
+
+  it("does not exclude a weakening child that reused a recovery PID", () => {
+    const shields = requireDist(shieldsModulePath) as {
+      excludeRecoveryProcessTree: (
+        descendants: Array<{ pid: number; startIdentity: string; depth: number }>,
+        recovery: { pid: number; startIdentity: string },
+        recoveryDescendants: Array<{ pid: number; startIdentity: string; depth: number }>,
+      ) => Array<{ pid: number; startIdentity: string; depth: number }>;
+    };
+    const recovery = { pid: 200, startIdentity: "timer", depth: 1 };
+    const sampledRecoveryChild = { pid: 201, startIdentity: "timer-child", depth: 2 };
+    const reusedPidChild = { pid: 201, startIdentity: "policy-set", depth: 1 };
+
+    expect(
+      shields.excludeRecoveryProcessTree([reusedPidChild], recovery, [sampledRecoveryChild]),
+    ).toEqual([reusedPidChild]);
   });
 
   it("auto-restore waits for the forward shields-down commit before reclaiming policy", () => {
@@ -441,14 +461,16 @@ describe("shields command flow", () => {
     );
   });
 
-  it("preempts a hung forward owner and its weakening subprocess before restoring", async () => {
-    const harness = createHarness();
+  it("preempts a hung forward owner and its weakening subprocess before restoring", {
+    timeout: 10_000,
+  }, async () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
     const sandboxName = "openclaw";
     const processToken = "b".repeat(32);
     const snapshotPath = path.join(stateDir, "policy-snapshot-hung.yaml");
     const sentinelPath = path.join(stateDir, "late-weakening-child-ran");
+    const childReadyPath = path.join(stateDir, "late-weakening-child-ready");
     const transitionPath = path.join(
       stateDir,
       `shields-transition-${sandboxName}-${processToken}.json`,
@@ -469,13 +491,51 @@ describe("shields command flow", () => {
       }),
     );
 
-    const owner = spawn(process.execPath, [ownerScriptPath, childScriptPath, sentinelPath], {
-      stdio: "ignore",
-    });
+    const owner = spawn(
+      process.execPath,
+      [ownerScriptPath, childScriptPath, sentinelPath, childReadyPath],
+      { stdio: "ignore" },
+    );
     expect(owner.pid).toBeTypeOf("number");
+    await vi.waitFor(() => expect(fs.existsSync(childReadyPath)).toBe(true), {
+      timeout: 5_000,
+      interval: 10,
+    });
+    const childPid = Number(fs.readFileSync(childReadyPath, "utf-8"));
+    expect(Number.isInteger(childPid) && childPid > 0).toBe(true);
     const timerControl = requireDist("./timer-control.js");
     const ownerStartIdentity = timerControl.readProcessStartIdentity(owner.pid);
     expect(ownerStartIdentity).toBeTypeOf("string");
+    const childStartIdentity = timerControl.readProcessStartIdentity(childPid);
+    expect(childStartIdentity).toBeTypeOf("string");
+    const initialDescendants = timerControl.listDescendantProcessIdentities(owner.pid);
+    expect(initialDescendants).not.toBeNull();
+    expect(initialDescendants.some(({ pid }: { pid: number }) => pid === childPid)).toBe(true);
+    const takeoverEvents: string[] = [];
+    const readProcessStartIdentity = timerControl.readProcessStartIdentity;
+    let unreadableOwnerIdentityReads = 2;
+    vi.spyOn(timerControl, "readProcessStartIdentity").mockImplementation((...args: unknown[]) => {
+      const [pid, deadline] = args as [number, number?];
+      const unreadable = pid === owner.pid && unreadableOwnerIdentityReads > 0;
+      unreadableOwnerIdentityReads -= unreadable ? 1 : 0;
+      return unreadable ? null : readProcessStartIdentity(pid, deadline);
+    });
+    const readProcessState = timerControl.readProcessState;
+    vi.spyOn(timerControl, "readProcessState").mockImplementation((...args: unknown[]) => {
+      const [pid, deadline] = args as [number, number?];
+      const state = readProcessState(pid, deadline);
+      pid === owner.pid && /^[Tt]/.test(state ?? "") && takeoverEvents.push("owner-stopped");
+      return state;
+    });
+    const listDescendantProcessIdentities = timerControl.listDescendantProcessIdentities;
+    vi.spyOn(timerControl, "listDescendantProcessIdentities").mockImplementation(
+      (...args: unknown[]) => {
+        const [rootPid, deadline] = args as [number, number?];
+        rootPid === owner.pid && takeoverEvents.push("owner-enumerated");
+        return listDescendantProcessIdentities(rootPid, deadline);
+      },
+    );
+    const harness = createHarness();
     fs.writeFileSync(
       transitionPath,
       JSON.stringify({
@@ -495,14 +555,183 @@ describe("shields command flow", () => {
       await new Promise((resolve) => setTimeout(resolve, 1400));
     } finally {
       owner.kill("SIGKILL");
+      try {
+        timerControl.readProcessStartIdentity(childPid) === childStartIdentity &&
+          process.kill(childPid, "SIGKILL");
+      } catch {
+        // The takeover already killed the exact child.
+      }
     }
 
     expect(fs.existsSync(sentinelPath)).toBe(false);
     expect(fs.existsSync(transitionPath)).toBe(false);
+    expect(takeoverEvents.indexOf("owner-stopped")).toBeGreaterThanOrEqual(0);
+    expect(takeoverEvents.indexOf("owner-enumerated")).toBeGreaterThan(
+      takeoverEvents.indexOf("owner-stopped"),
+    );
     expect(harness.runSpy).toHaveBeenCalledWith(
       ["openshell", "policy", "set"],
       expect.objectContaining({ ignoreError: true }),
     );
+  });
+
+  it("fails closed when the weakening subprocess set never reaches quiescence", {
+    timeout: 10_000,
+  }, () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const sandboxName = "non-quiescent";
+    const processToken = "c".repeat(32);
+    const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
+
+    const owner = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], {
+      stdio: "ignore",
+    });
+    expect(owner.pid).toBeTypeOf("number");
+    const timerControl = requireDist("./timer-control.js");
+    const ownerStartIdentity = timerControl.readProcessStartIdentity(owner.pid);
+    expect(ownerStartIdentity).toBeTypeOf("string");
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        version: 1,
+        sandboxName,
+        pid: owner.pid,
+        processStartIdentity: ownerStartIdentity,
+        command: "inference set",
+        acquiredAtMs: Date.now(),
+        takeoverToken: processToken,
+      }),
+      { mode: 0o600 },
+    );
+
+    const syntheticPidBase = 2_000_000_000;
+    const readProcessStartIdentity = timerControl.readProcessStartIdentity;
+    vi.spyOn(timerControl, "readProcessStartIdentity").mockImplementation((...args: unknown[]) => {
+      const [pid, deadline] = args as [number, number?];
+      return pid === owner.pid
+        ? ownerStartIdentity
+        : pid >= syntheticPidBase
+          ? `synthetic:${String(pid)}`
+          : readProcessStartIdentity(pid, deadline);
+    });
+    const readProcessState = timerControl.readProcessState;
+    vi.spyOn(timerControl, "readProcessState").mockImplementation((...args: unknown[]) => {
+      const [pid, deadline] = args as [number, number?];
+      return pid === owner.pid ? "T" : readProcessState(pid, deadline);
+    });
+    const listDescendantProcessIdentities = timerControl.listDescendantProcessIdentities;
+    let ownerEnumerationPass = 0;
+    vi.spyOn(timerControl, "listDescendantProcessIdentities").mockImplementation(
+      (...args: unknown[]) => {
+        const [rootPid, deadline] = args as [number, number?];
+        const ownerEnumeration = rootPid === owner.pid;
+        ownerEnumerationPass += ownerEnumeration ? 1 : 0;
+        const syntheticPid = syntheticPidBase + ownerEnumerationPass;
+        return ownerEnumeration
+          ? [{ pid: syntheticPid, startIdentity: `synthetic:${String(syntheticPid)}`, depth: 1 }]
+          : rootPid === process.pid
+            ? []
+            : listDescendantProcessIdentities(rootPid, deadline);
+      },
+    );
+    vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
+    const processKillSpy = vi.spyOn(process, "kill");
+    createHarness();
+    const shields = requireDist(shieldsModulePath) as {
+      prepareAutoRestoreTransitionTakeover: (
+        sandboxName: string,
+        processToken: string,
+        snapshotPath: string,
+      ) => void;
+    };
+
+    try {
+      expect(() =>
+        shields.prepareAutoRestoreTransitionTakeover(
+          sandboxName,
+          processToken,
+          path.join(stateDir, "unused-snapshot.yaml"),
+        ),
+      ).toThrow("Timed-out shields-down process tree could not be frozen safely");
+      expect(processKillSpy).toHaveBeenCalledWith(owner.pid, "SIGSTOP");
+      expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGKILL");
+    } finally {
+      owner.kill("SIGCONT");
+      owner.kill("SIGKILL");
+    }
+
+    expect(ownerEnumerationPass).toBe(8);
+    expect(fs.existsSync(lockPath)).toBe(true);
+  });
+
+  it("does not signal a replacement that reuses the owner PID during final verification", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const sandboxName = "reused-owner";
+    const processToken = "d".repeat(32);
+    const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
+    const owner = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], {
+      stdio: "ignore",
+    });
+    expect(owner.pid).toBeTypeOf("number");
+    const timerControl = requireDist("./timer-control.js");
+    const ownerStartIdentity = timerControl.readProcessStartIdentity(owner.pid);
+    expect(ownerStartIdentity).toBeTypeOf("string");
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({
+        version: 1,
+        sandboxName,
+        pid: owner.pid,
+        processStartIdentity: ownerStartIdentity,
+        command: "config set write",
+        acquiredAtMs: Date.now(),
+        takeoverToken: processToken,
+      }),
+      { mode: 0o600 },
+    );
+
+    const processKill = process.kill;
+    let ownerLivenessChecks = 0;
+    let replacementVisible = false;
+    const processKillSpy = vi.spyOn(process, "kill").mockImplementation((...args: unknown[]) => {
+      const [pid, signal] = args as [number, NodeJS.Signals | 0 | undefined];
+      const ownerLivenessCheck = pid === owner.pid && signal === 0;
+      ownerLivenessChecks += ownerLivenessCheck ? 1 : 0;
+      replacementVisible ||= ownerLivenessCheck && ownerLivenessChecks === 2;
+      return processKill(pid, signal);
+    });
+    const readProcessStartIdentity = timerControl.readProcessStartIdentity;
+    vi.spyOn(timerControl, "readProcessStartIdentity").mockImplementation((...args: unknown[]) => {
+      const [pid, deadline] = args as [number, number?];
+      return pid === owner.pid && replacementVisible
+        ? "replacement-process-start"
+        : readProcessStartIdentity(pid, deadline);
+    });
+    createHarness();
+    const shields = requireDist(shieldsModulePath) as {
+      prepareAutoRestoreTransitionTakeover: (
+        sandboxName: string,
+        processToken: string,
+        snapshotPath: string,
+      ) => void;
+    };
+
+    try {
+      shields.prepareAutoRestoreTransitionTakeover(
+        sandboxName,
+        processToken,
+        path.join(stateDir, "unused-snapshot.yaml"),
+      );
+      expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGSTOP");
+      expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGKILL");
+    } finally {
+      owner.kill("SIGCONT");
+      owner.kill("SIGKILL");
+    }
+
+    expect(ownerLivenessChecks).toBeGreaterThanOrEqual(2);
   });
 
   it("preempts timer-token config and inference mutations at the restore deadline", async () => {

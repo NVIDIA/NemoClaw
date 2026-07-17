@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
+
 type OpenAiChatCapabilityInput = {
   endpointUrl: string;
   model: string;
@@ -8,12 +10,14 @@ type OpenAiChatCapabilityInput = {
   requireChatCompletionsToolCalling?: boolean;
   extraHeaders?: readonly string[];
   pinnedAddresses?: readonly string[];
+  trustedPrivateCapability?: TrustedPrivateEndpointCapability;
 };
 
 function capabilityKey(input: OpenAiChatCapabilityInput): string | null {
   // Query strings, embedded URL credentials, and custom headers can carry
   // credentials. Do not retain either those values or a derived identifier.
-  if (input.extraHeaders?.length || input.pinnedAddresses?.length) return null;
+  if (input.extraHeaders?.length || input.pinnedAddresses?.length || input.trustedPrivateCapability)
+    return null;
 
   let endpoint: URL;
   try {

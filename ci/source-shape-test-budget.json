@@ -62,6 +62,11 @@
       "category": "security"
     },
     {
+      "file": "test/candidate-compat.test.ts",
+      "test": "keeps the manual controller read-only and runs digest-bound deterministic and live lanes (#6691)",
+      "category": "security"
+    },
+    {
       "file": "test/cloudflared-update-check-workflow.test.ts",
       "test": "keeps automatic and on-demand update checks reachable and credential-free",
       "category": "security"
@@ -74,6 +79,16 @@
     {
       "file": "test/code-scanning-workflow.test.ts",
       "test": "keeps every CodeQL action on one immutable revision",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "declares exactly one corporate CA build arg so onboard patching stays unambiguous",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
       "category": "security"
     },
     {
@@ -273,7 +288,7 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "records five independent successful exact-head samples",
+      "test": "records five independent successful samples for current main",
       "category": "compatibility"
     },
     {
@@ -317,6 +332,11 @@
       "category": "security"
     },
     {
+      "file": "test/pr-e2e-gate-shards.test.ts",
+      "test": "rejects malformed configured matrix shard selectors",
+      "category": "security"
+    },
+    {
       "file": "test/pr-review-advisor-workflow-boundary.test.ts",
       "test": "rejects deleting or weakening analysis-workspace symlink removal",
       "category": "security"
@@ -334,6 +354,11 @@
     {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "does not run npm lifecycle scripts during CI dependency installs",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "folds hermetic E2E support and Ollama proxy coverage into existing Vitest lanes",
       "category": "security"
     },
     {
@@ -440,6 +465,11 @@
       "file": "test/runner.test.ts",
       "test": "walkthrough.sh does not embed NVIDIA_INFERENCE_API_KEY in tmux or sandbox commands",
       "category": "security"
+    },
+    {
+      "file": "test/starter-prompt-docs.test.ts",
+      "test": "prepares the Starter Prompt in every docs build entry point (#5048)",
+      "category": "compatibility"
     },
     {
       "file": "test/validate-blueprint.test.ts",

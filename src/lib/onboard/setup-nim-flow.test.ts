@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../agent/defs";
+import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import type { VllmProfile } from "../inference/vllm";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
@@ -412,6 +413,35 @@ describe("createSetupNim", () => {
     expect(detectInferenceProviderHostState).not.toHaveBeenCalled();
   });
 
+  it("passes the Hermes Ollama context floor into local Ollama selection state (#6760)", async () => {
+    const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
+      async (_gpu, _requestedModel, _recoveredModel, _ollamaRunning, state) => {
+        expect(state.ollamaContextWindowFloor).toBe(MIN_HERMES_OLLAMA_CONTEXT_WINDOW);
+        state.model = "llama3.2:1b";
+        state.provider = "ollama-local";
+        state.endpointUrl = "http://127.0.0.1:11434/v1";
+        state.credentialEnv = null;
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "ollama",
+        getNonInteractiveModel: () => "llama3.2:1b",
+        detectInferenceProviderHostState: () =>
+          makeHostState({ hasOllama: true, ollamaHost: "127.0.0.1", ollamaRunning: true }),
+        handleRunningOllamaSelection,
+      }),
+    );
+
+    const result = await setupNim(null, null, { name: "hermes" } as AgentDefinition);
+
+    expect(result.provider).toBe("ollama-local");
+    expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
+  });
+
   it("applies same-gateway discovery constraints before a provider probe (#6315)", async () => {
     const providerProbe = vi.fn();
     const routeGuard = vi.fn(
@@ -683,6 +713,10 @@ describe("createSetupNim", () => {
       credentialEnv: null,
     });
     expect(handleVllmSelection).toHaveBeenCalledOnce();
+    expect(handleVllmSelection).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "vllm-model" }),
+      { managedInstall: true, sparkHost: false },
+    );
     expect(result).toMatchObject({
       model: "vllm-model",
       provider: "vllm",
@@ -690,6 +724,109 @@ describe("createSetupNim", () => {
       credentialEnv: null,
       preferredInferenceApi: "openai-completions",
     });
+  });
+
+  it("threads the DGX Station express model through the standard managed-vLLM selection contract", async () => {
+    const profile = { name: "DGX Station", platform: "station" } as VllmProfile;
+    const servedModel = "nvidia/nemotron-3-ultra-550b-a55b";
+    const prompt = vi.fn(async () => unexpected("provider prompt"));
+    const detectInferenceProviderHostState = vi.fn(() =>
+      makeHostState({
+        vllmProfile: profile,
+        hasVllmImage: false,
+        vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Station)" }],
+      }),
+    );
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async (_profile, options) => {
+      options.beforeInstall?.(servedModel);
+      return { ok: true };
+    });
+    const routeGuard = vi.fn(() => ({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    }));
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      expect(state).toMatchObject({
+        provider: "vllm-local",
+        model: servedModel,
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: "openai-completions",
+      });
+      state.provider = "vllm";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      return "selected";
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-vllm",
+        prompt,
+        detectInferenceProviderHostState,
+        installVllm,
+        handleVllmSelection,
+      }),
+    );
+
+    const result = await setupNim(null, null, null, true, null, "nemoclaw", routeGuard);
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(installVllm).toHaveBeenCalledWith(profile, {
+      hasImage: false,
+      nonInteractive: true,
+      promptFn: prompt,
+      beforeInstall: expect.any(Function),
+    });
+    expect(routeGuard).toHaveBeenCalledWith({
+      provider: "vllm-local",
+      model: servedModel,
+      endpointUrl: null,
+      preferredInferenceApi: "openai-completions",
+      credentialEnv: null,
+    });
+    expect(handleVllmSelection).toHaveBeenCalledWith(
+      expect.objectContaining({ model: servedModel }),
+      { managedInstall: true, sparkHost: false },
+    );
+    expect(result).toMatchObject({
+      model: servedModel,
+      provider: "vllm",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      preferredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("passes sparkHost:true when detected GPU is Spark (firmware-unknown GB10 threading)", async () => {
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      state.provider = "vllm-local";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      return "selected";
+    });
+    const sparkGpu = { type: "nvidia", spark: true, platform: "spark" } as ReturnType<
+      typeof import("../inference/nim").detectGpu
+    >;
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "vllm",
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmRunning: true,
+            vllmEntries: [{ key: "vllm", label: "Local vLLM — running" }],
+          }),
+        handleVllmSelection,
+      }),
+    );
+
+    await setupNim(sparkGpu);
+
+    expect(handleVllmSelection).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ sparkHost: true }),
+    );
   });
 
   it("validates DCode custom Anthropic selections on the OpenAI surface (#6294)", async () => {
@@ -721,5 +858,104 @@ describe("createSetupNim", () => {
 
     expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();
     expect(result.preferredInferenceApi).toBe("openai-completions");
+  });
+
+  it("refuses managed install when an existing vLLM occupies the port", async () => {
+    const profile = { name: "DGX Spark" } as VllmProfile;
+    const error = vi.fn();
+    const abortNonInteractive = vi.fn<SetupNimFlowDeps["abortNonInteractive"]>((message) => {
+      throw new Error(message);
+    });
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async (_profile, options) => {
+      options.beforeInstall?.("vllm-model");
+      return { ok: true };
+    });
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      state.provider = "vllm";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      return "selected";
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-vllm",
+        error,
+        abortNonInteractive,
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmRunning: true,
+            vllmProfile: profile,
+            hasVllmImage: true,
+            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
+          }),
+        installVllm,
+        handleVllmSelection,
+      }),
+    );
+
+    await expect(setupNim(null)).rejects.toThrow("vLLM is already running on localhost:8000");
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Select Local vLLM"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("stop the existing server"));
+    expect(abortNonInteractive).toHaveBeenCalledOnce();
+    expect(installVllm).not.toHaveBeenCalled();
+    expect(handleVllmSelection).not.toHaveBeenCalled();
+  });
+
+  it("returns interactive occupied-port selection to the provider menu", async () => {
+    vi.stubEnv("NEMOCLAW_PROVIDER", "");
+    const profile = { name: "DGX Spark" } as VllmProfile;
+    const prompt = vi.fn(async () => "1");
+    const error = vi.fn();
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>();
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>();
+    const selectedKeys = ["install-vllm", "build"];
+    const selectFromNumberedMenu = vi.fn<SetupNimFlowDeps["selectFromNumberedMenu"]>(
+      (_rawChoice, _defaultIndex, options) => {
+        const key = selectedKeys.shift();
+        const selected = options.find((option) => option.key === key);
+        expect(selected, `missing provider option ${String(key)}`).toBeDefined();
+        return selected!;
+      },
+    );
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async ({ selected }, state) => {
+        expect(selected.key).toBe("build");
+        state.model = "nvidia/nemotron-3-super-120b-a12b";
+        state.provider = "nvidia-prod";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        prompt,
+        error,
+        selectFromNumberedMenu,
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmRunning: true,
+            vllmProfile: profile,
+            hasVllmImage: true,
+            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
+          }),
+        installVllm,
+        handleVllmSelection,
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    await expect(setupNim(null)).resolves.toMatchObject({ provider: "nvidia-prod" });
+
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(selectFromNumberedMenu).toHaveBeenCalledTimes(2);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("stop the existing server"));
+    expect(installVllm).not.toHaveBeenCalled();
+    expect(handleVllmSelection).not.toHaveBeenCalled();
+    expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();
   });
 });

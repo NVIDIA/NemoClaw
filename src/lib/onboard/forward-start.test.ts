@@ -391,6 +391,59 @@ describe("runDetachedForwardStartWithDiagnostics", () => {
     }
   });
 
+  it("confirms a mux-delegated forward via the live-port probe when ssh exits under ControlMaster (#6099)", () => {
+    // Under `Host *` / `ControlMaster auto` ssh config, the spawned ssh client
+    // hands the -L forward to the ControlMaster mux daemon and exits; openshell
+    // 0.0.72+ reports the exit as a startup failure even though the mux daemon
+    // holds the listener and the dashboard is serving.
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(
+        stderr,
+        "Error:   × ssh process started but local forward listener was not reachable\n" +
+          "  ╰─▶ ssh exited before local forward listener opened on 127.0.0.1:18789\n",
+      );
+      return { pid: 781 };
+    });
+    const sleep = vi.fn();
+    const isPortListening = vi.fn().mockReturnValue(true);
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      { overallTimeoutMs: 10_000, pollIntervalMs: 10, sleepMs: sleep, isPortListening },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBe("ok-port-live");
+    expect(result.pid).toBe(781);
+    expect(isPortListening).toHaveBeenCalledWith(18789);
+  });
+
+  it("keeps waiting (then times out) when ssh exits under ControlMaster but the port is not live (#6099)", () => {
+    // A genuinely failed ssh (auth error, refused connection) produces the same
+    // exit diagnostic without a live listener — the fallback must not confirm.
+    const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
+    const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
+      fs.writeSync(stderr, "ssh exited before local forward listener opened on 127.0.0.1:18789\n");
+      return { pid: 782 };
+    });
+    const sleep = vi.fn();
+    const isPortListening = vi.fn().mockReturnValue(false);
+
+    const result = runDetachedForwardStartWithDiagnostics(
+      spawn,
+      fetchList,
+      { port: 18789, sandboxName: "my-sandbox" },
+      { overallTimeoutMs: 30, pollIntervalMs: 10, sleepMs: sleep, isPortListening },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+    expect(isPortListening).toHaveBeenCalled();
+  });
+
   it("keeps waiting (then times out) when openshell reports untracked but the port is not live", () => {
     const fetchList = vi.fn().mockReturnValue(forwardListWith([]));
     const spawn = vi.fn().mockImplementation(({ stderr }: { stderr: number }) => {
@@ -531,6 +584,20 @@ describe("looksLikeUntrackedForward", () => {
       ),
     ).toBe(true);
     expect(looksLikeUntrackedForward("forward may be running but is not tracked")).toBe(true);
+  });
+
+  it("matches openshell 0.0.72's mux-delegated ssh exit error (#6099)", () => {
+    expect(
+      looksLikeUntrackedForward(
+        "Error:   × ssh process started but local forward listener was not reachable\n" +
+          "  ╰─▶ ssh exited before local forward listener opened on 127.0.0.1:18789",
+      ),
+    ).toBe(true);
+    expect(
+      looksLikeUntrackedForward(
+        "ssh exited before local forward listener opened on 127.0.0.1:8642",
+      ),
+    ).toBe(true);
   });
 
   it("returns false for unrelated diagnostics", () => {

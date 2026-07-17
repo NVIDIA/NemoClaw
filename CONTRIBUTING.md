@@ -246,7 +246,7 @@ it("keeps both immutable image digests aligned", () => {
 ```
 
 `npm run source-shape:check` rejects unsupported categories, short or misplaced reasons, and any
-exception whose file, test title, and category are not in the exact reviewed allowlist. It also
+exception whose file, test title, and category are not in the reviewed allowlist. It also
 rejects unused allowlist entries, so one exception cannot silently replace another. Its output and
 metrics list every accepted exception so these contracts remain visible during review.
 

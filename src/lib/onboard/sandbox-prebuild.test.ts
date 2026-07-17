@@ -49,6 +49,7 @@ describe("sandbox BuildKit prebuild", () => {
     vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
     vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+    vi.stubEnv("BUILDX_BUILDER", "external-builder");
     vi.stubEnv("XDG_CONFIG_HOME", "/home/user/.config");
     vi.stubEnv("HTTPS_PROXY", "http://proxy:8080");
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "secret");
@@ -80,6 +81,7 @@ describe("sandbox BuildKit prebuild", () => {
       "RUST_BACKTRACE",
       "OPENSHELL_GATEWAY",
       "GRPC_VERBOSITY",
+      "BUILDX_BUILDER",
     ]) {
       expect(env[key], key).toBeUndefined();
     }

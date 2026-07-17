@@ -11,6 +11,7 @@ export type DirectPublicDispatchHarness = {
   getDefault: ReturnType<typeof vi.fn>;
   getSandbox: ReturnType<typeof vi.fn>;
   listSandboxes: ReturnType<typeof vi.fn>;
+  migrateLegacyPortState: ReturnType<typeof vi.fn>;
   recoverRegistryEntries: ReturnType<typeof vi.fn>;
   resetObservedCalls: () => void;
   runOclifArgv: ReturnType<typeof vi.fn>;
@@ -27,6 +28,8 @@ type DirectPublicDispatchOptions = {
   pendingSandboxNames?: readonly string[];
   /** Args the sandbox-connect stub treats as connect flags (default: none). */
   connectFlags?: readonly string[];
+  /** Error injected by the pre-dispatch legacy-state migration seam. */
+  migrationError?: Error;
 };
 
 const requireCache = require.cache as Record<string, NodeModule | undefined>;
@@ -58,12 +61,14 @@ export async function withDirectPublicDispatch(
   const oclifRunnerPath = require.resolve("../../src/lib/cli/oclif-runner.js");
   const sandboxConnectPath = require.resolve("../../src/lib/actions/sandbox/connect.js");
   const registryPath = require.resolve("../../src/lib/state/registry.js");
+  const legacyPortMigrationPath = require.resolve("../../src/lib/state/legacy-port-migration.js");
   const registryRecoveryPath = require.resolve("../../src/lib/registry-recovery-action.js");
   const runnerPath = require.resolve("../../src/lib/runner.js");
   const priorPublicDispatch = requireCache[publicDispatchPath];
   const priorOclifRunner = requireCache[oclifRunnerPath];
   const priorSandboxConnect = requireCache[sandboxConnectPath];
   const priorRegistry = requireCache[registryPath];
+  const priorLegacyPortMigration = requireCache[legacyPortMigrationPath];
   const priorRegistryRecovery = requireCache[registryRecoveryPath];
   const priorRunner = requireCache[runnerPath];
   const priorDockerHost = process.env.DOCKER_HOST;
@@ -96,6 +101,10 @@ export async function withDirectPublicDispatch(
     recoveredFromSession: false,
     recoveredFromGateway: 0,
   }));
+  const migrateLegacyPortState = vi.fn(() => {
+    if (options.migrationError) throw options.migrationError;
+    return { migratedSandboxNames: [], migratedSession: false, warnings: [] };
+  });
   const runOclifArgv = vi.fn(async () => undefined);
   const runOclifCommandById = vi.fn(async () => undefined);
   const stderr: string[] = [];
@@ -112,12 +121,14 @@ export async function withDirectPublicDispatch(
     getDefault.mockClear();
     getSandbox.mockClear();
     listSandboxes.mockClear();
+    migrateLegacyPortState.mockClear();
     recoverRegistryEntries.mockClear();
     runOclifArgv.mockClear();
     runOclifCommandById.mockClear();
   };
 
   cacheModule(registryPath, { getDefault, getSandbox, listSandboxes });
+  cacheModule(legacyPortMigrationPath, { migrateLegacyPortState });
   cacheModule(registryRecoveryPath, { recoverRegistryEntries });
   cacheModule(oclifRunnerPath, { runOclifArgv, runOclifCommandById });
   const connectFlags = new Set(options.connectFlags ?? []);
@@ -140,6 +151,7 @@ export async function withDirectPublicDispatch(
       getDefault,
       getSandbox,
       listSandboxes,
+      migrateLegacyPortState,
       recoverRegistryEntries,
       resetObservedCalls,
       runOclifArgv,
@@ -155,6 +167,7 @@ export async function withDirectPublicDispatch(
     restoreCache(oclifRunnerPath, priorOclifRunner);
     restoreCache(sandboxConnectPath, priorSandboxConnect);
     restoreCache(registryPath, priorRegistry);
+    restoreCache(legacyPortMigrationPath, priorLegacyPortMigration);
     restoreCache(registryRecoveryPath, priorRegistryRecovery);
     restoreCache(runnerPath, priorRunner);
     if (priorDockerHost === undefined) {

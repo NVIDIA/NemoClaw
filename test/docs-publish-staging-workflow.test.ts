@@ -64,7 +64,7 @@ describe("staging docs preview cleanup", () => {
       const command = JSON.parse(readFileSync(commandLog, "utf8")) as string[];
       expect(command).toEqual([
         "--yes",
-        "fern-api@5.65.2",
+        "fern-api@5.72.1",
         "docs",
         "preview",
         "delete",

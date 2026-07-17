@@ -36,7 +36,7 @@ gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json comments \
         | {url, author: .author.login, body}'
 ```
 
-Capture for evidence: comment URL + author login + the exact quoted phrase.
+Capture for evidence: comment URL + author login + the quoted phrase.
 
 **Signal 2 — Removal commit in range.** A commit between the reported version and `$LATEST` deletes the symbol implicated by the reproducer (CLI subcommand, function, flag). The commit subject does NOT need to mention "remove" / "delete" — many removals ride into a `refactor(...)` or `feat(...)` commit (e.g. PR #2227 removed `--dangerously-skip-permissions` under a `refactor(sandbox): ...` subject). Use git's pickaxe to find the responsible commit by content:
 
@@ -103,8 +103,8 @@ The cost of an incorrect "I checked and X is gone" claim in a public comment, or
 
 - **Skip the Step 9 score table** entirely. The "exit 0 + expected output" axis doesn't apply when the expected output is no longer the contract.
 - **Skip Brev provisioning** if the signal fires before Step 7 — a remote run would just confirm what static analysis already proved. (Signals 2 and 3 can run as soon as the reported version is parsed in Step 4.)
-- **Prepare a dry run** containing Project Status `Won't Fix`, the exact public comment, the durable `by-design` marker, and `human_review_required: true`.
-- **Request explicit maintainer approval** for that exact write set. Do not substitute a status label or write before approval.
+- **Prepare a dry run** containing Project Status `Won't Fix`, the public comment, the durable `by-design` marker, and `human_review_required: true`.
+- **Request explicit maintainer approval** for that write set. Do not substitute a status label or write before approval.
 - **On approval, update Project Status first, then post the accepted comment.** If approval is withheld, report the evidence without mutating GitHub.
 - **Use the by-design comment template below** instead of the standard Step 10 template.
 - **@-mention the reporter** so they can object if the framing is wrong.
@@ -116,7 +116,7 @@ Mandatory sections in this order. Omit only the sections explicitly noted as omi
 
 **Tag-anchoring + linking rule.** Every `file:line` citation, commit SHA, and test-path reference in the rendered comment MUST be a clickable markdown link to the verified-on tag (e.g., `v0.0.35`), not the maintainer's working `HEAD`. Lines drift between tags and main; tag-anchored links keep the citations reproducible by anyone reading the comment months later. Bare paths force the reader to navigate manually — that's a usability bug, not a stylistic preference.
 
-Use these exact link formats:
+Use these link formats:
 
 - File only: `[src/lib/onboard.ts](https://github.com/NVIDIA/NemoClaw/blob/v0.0.35/src/lib/onboard.ts)`
 - File:line: `[src/lib/onboard.ts:4965](https://github.com/NVIDIA/NemoClaw/blob/v0.0.35/src/lib/onboard.ts#L4965)`
