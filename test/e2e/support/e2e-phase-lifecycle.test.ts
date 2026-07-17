@@ -285,7 +285,9 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell forward stop 18789 || true",
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
       expect.stringContaining("sh -lc pid_file="),
-      expect.stringContaining("sh -lc cid="),
+      expect.stringContaining(
+        "docker ps --filter 'name=^/openshell-cluster-nemoclaw$' --format '{{.ID}}'",
+      ),
       expect.stringContaining("sh -lc pid_file="),
       "docker ps -qf name=openshell-cluster-nemoclaw",
       "true ",
