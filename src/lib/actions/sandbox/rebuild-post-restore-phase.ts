@@ -128,6 +128,7 @@ export async function runRebuildPostRestorePhase(
   } = input;
   const recreatedEntry = registry.getSandbox(sandboxName);
   const recreatedAgent = agentRuntime.getSessionAgent(sandboxName);
+  // OpenClaw is represented by a null registry agent and a null runtime definition.
   const recreatedRegistryAgentName = recreatedEntry?.agent ?? "openclaw";
   const recreatedRuntimeAgentName = recreatedAgent?.name ?? "openclaw";
   if (

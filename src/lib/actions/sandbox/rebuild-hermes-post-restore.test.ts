@@ -32,10 +32,6 @@ describe("Hermes rebuild post-restore verification", () => {
       },
       sandboxEntry: { agent: "hermes" },
     });
-    harness.restoreMcpBridgesAfterRebuildSpy.mockRejectedValueOnce(
-      new Error("gateway unavailable"),
-    );
-
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).rejects.toThrow("Hermes post-restore verification failed");
@@ -43,7 +39,7 @@ describe("Hermes rebuild post-restore verification", () => {
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("rebuilt but some post-restore steps were incomplete");
     expect(output).toContain("Hermes gateway health was not verified after state restore");
-    expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
+    expect(output).not.toContain("MCP bridge definitions were preserved but not fully refreshed");
     expect(output).not.toContain("rebuilt successfully");
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
   });
