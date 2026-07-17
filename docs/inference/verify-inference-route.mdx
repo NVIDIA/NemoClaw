@@ -33,6 +33,8 @@ $$nemoclaw <name> status
 ```
 
 The `Inference` row checks the sandbox's `inference.local` path and reports it as `reachable` when the route returns HTTP `200` through `499`.
+This includes authentication responses such as HTTP `401` and `403`: they confirm route access, not valid provider credentials or a successful model invocation.
+Use the status command's upstream provider diagnostic or send a short agent request to verify the configured model.
 The provider, model, and endpoint appear with the rest of the sandbox state.
 This path includes the OpenShell proxy and its authentication rewrite.
 When onboarding prints a dashboard summary, use it to verify that NemoClaw ran the same route-reachability probe from inside the sandbox.
