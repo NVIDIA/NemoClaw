@@ -38,17 +38,19 @@ function runSourced(script: string, body: string, extraEnv: Record<string, strin
   return { home, result, output: `${result.stdout}${result.stderr}` };
 }
 
-function writePciIdentityFixture(
-  vendor: string | null = "0x10de",
-  device: string | null = "0x31c2",
-  pciClass: string | null = "0x030200",
-) {
+function writePciIdentityFixture(vendor = "0x10de", device = "0x31c2", pciClass = "0x030200") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-pci-"));
   const pciDevice = path.join(root, "0000:01:00.0");
   fs.mkdirSync(pciDevice);
-  if (vendor !== null) fs.writeFileSync(path.join(pciDevice, "vendor"), `${vendor}\n`);
-  if (device !== null) fs.writeFileSync(path.join(pciDevice, "device"), `${device}\n`);
-  if (pciClass !== null) fs.writeFileSync(path.join(pciDevice, "class"), `${pciClass}\n`);
+  fs.writeFileSync(path.join(pciDevice, "vendor"), `${vendor}\n`);
+  fs.writeFileSync(path.join(pciDevice, "device"), `${device}\n`);
+  fs.writeFileSync(path.join(pciDevice, "class"), `${pciClass}\n`);
+  return root;
+}
+
+function writePciIdentityFixtureMissing(field: "vendor" | "device" | "class") {
+  const root = writePciIdentityFixture();
+  fs.rmSync(path.join(root, "0000:01:00.0", field));
   return root;
 }
 
@@ -151,9 +153,9 @@ package_state 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'
     ["wrong vendor", writePciIdentityFixture("0x1234")],
     ["wrong device", writePciIdentityFixture("0x10de", "0x31c1")],
     ["non-GPU PCI class", writePciIdentityFixture("0x10de", "0x31c2", "0x020000")],
-    ["missing vendor", writePciIdentityFixture(null)],
-    ["missing device", writePciIdentityFixture("0x10de", null)],
-    ["missing class", writePciIdentityFixture("0x10de", "0x31c2", null)],
+    ["missing vendor", writePciIdentityFixtureMissing("vendor")],
+    ["missing device", writePciIdentityFixtureMissing("device")],
+    ["missing class", writePciIdentityFixtureMissing("class")],
     ["empty PCI tree", fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-pci-empty-"))],
   ])("rejects %s as a GB300 PCI identity (#7103)", (_scenario, pciRoot) => {
     const { result } = runSourced(STATION_PREPARE, `station_has_exact_gb300_pci_gpu "$PCI_ROOT"`, {

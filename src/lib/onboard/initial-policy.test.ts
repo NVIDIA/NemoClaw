@@ -344,6 +344,36 @@ network_policies: {}
     expect(gpuDoc.filesystem_policy.read_only).not.toContain("/sys/module/nvidia/initstate");
   });
 
+  it("threads discovered Station sysfs paths through public policy preparation (#7103)", () => {
+    const sysfsRoot = tmpSysfsRoot();
+    addPciDevice(sysfsRoot, "0009:06:00.0", "0x10de\n", "0x030200\n");
+    fs.mkdirSync(path.join(sysfsRoot, "devices", "system", "cpu"), { recursive: true });
+    fs.mkdirSync(path.join(sysfsRoot, "module", "nvidia", "initstate"), { recursive: true });
+    const discoveredPaths = discoverStationGb300SysfsReadOnlyPaths(
+      "NVIDIA DGX Station GB300",
+      sysfsRoot,
+    );
+    const basePolicyPath = tmpPolicy(BASE_POLICY_FIXTURE);
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      directGpu: true,
+      stationGb300SysfsReadOnlyPaths: discoveredPaths,
+    });
+    const preparedDoc = YAML.parse(fs.readFileSync(prepared.policyPath, "utf-8"));
+
+    expect(discoveredPaths).toEqual([
+      "/sys/bus/pci/devices/0009:06:00.0",
+      "/sys/devices/system/cpu",
+      "/sys/module/nvidia/initstate",
+    ]);
+    for (const discoveredPath of discoveredPaths) {
+      expectSingleOccurrence(preparedDoc.filesystem_policy.read_only, discoveredPath);
+    }
+    expect(preparedDoc.filesystem_policy.read_only).not.toContain("/sys");
+    expect(prepared.cleanup?.()).toBe(true);
+    expect(fs.existsSync(prepared.policyPath)).toBe(false);
+  });
+
   it("builds direct sandbox GPU proof commands", () => {
     const commands = buildDirectSandboxGpuProofCommands("alpha");
     expect(commands.map((entry) => entry.label)).toEqual([
