@@ -8,11 +8,7 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
-import {
-  type SandboxClient,
-  trustedSandboxShellScript,
-  validateSandboxName,
-} from "../fixtures/clients/sandbox.ts";
+import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
@@ -548,15 +544,10 @@ export async function assertTrajectory(
   mode: KimiInferenceMode,
 ): Promise<void> {
   const checkScript = buildKimiTrajectoryCheckScript(mode === "mock");
-  const encoded = Buffer.from(checkScript, "utf8").toString("base64");
-  const trajectory = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(`python3 -c "$(printf %s '${encoded}' | base64 -d)"`),
-    {
-      artifactName: "kimi-trajectory-tool-splitting-check",
-      env: env({}, { mode }),
-      timeoutMs: 60_000,
-    },
-  );
+  const trajectory = await sandbox.exec(SANDBOX_NAME, ["python3", "-c", checkScript], {
+    artifactName: "kimi-trajectory-tool-splitting-check",
+    env: env({}, { mode }),
+    timeoutMs: 60_000,
+  });
   expect(trajectory.exitCode, resultText(trajectory)).toBe(0);
 }

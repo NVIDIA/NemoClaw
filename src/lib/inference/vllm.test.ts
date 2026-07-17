@@ -572,7 +572,6 @@ describe("installVllm model resolution", () => {
     stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     delete process.env.NEMOCLAW_VLLM_MODEL;
     delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
-    delete process.env.NEMOCLAW_IGNORE_VLLM_DISK_SPACE;
     delete process.env.HF_TOKEN;
     delete process.env.HUGGING_FACE_HUB_TOKEN;
     // Fail dockerPrereqsOk so the function returns before any docker work,
@@ -850,10 +849,11 @@ describe("installVllm model resolution", () => {
     expect(errors).toContain("docker system df");
   });
 
-  it("stops an absent or interrupted Ultra download when the HF cache is too small", async () => {
+  it("continues a non-interactive Ultra download when the HF cache is too small", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
     mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
     mocks.probeHostStorage.mockReturnValue({
       ok: true,
       capacity: {
@@ -862,26 +862,65 @@ describe("installVllm model resolution", () => {
         source: "Hugging Face cache",
       },
     });
+    const promptFn = vi.fn();
 
     const result = await installVllm(profile, {
-      hasImage: false,
+      hasImage: true,
       nonInteractive: true,
-      promptFn: vi.fn(),
+      promptFn,
     });
 
-    expect(result).toEqual({ ok: false });
+    expect(result).toEqual({ ok: true });
+    expect(promptFn).not.toHaveBeenCalled();
     expect(mocks.probeHostStorage).toHaveBeenCalledTimes(1);
-    expect(mocks.dockerImageInspectFormat).not.toHaveBeenCalled();
     expect(mocks.probeDockerStorage).not.toHaveBeenCalled();
-    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
-    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
-    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
-    expect(mkdirSpy).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
+    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
     const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
     expect(errors).toContain("Insufficient storage for the managed vLLM model cache");
     expect(errors).toContain("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4");
     expect(errors).toContain("Hugging Face cache");
-    expect(errors).toContain("Non-interactive setup stops before the guarded download");
+    expect(errors).toContain(
+      "Continuing because managed vLLM storage estimates are advisory in non-interactive setup",
+    );
+  });
+
+  it.each([
+    { reply: "y", expected: { ok: true }, pulls: 1, downloads: 1 },
+    { reply: "n", expected: { ok: false }, pulls: 0, downloads: 0 },
+    { reply: "", expected: { ok: false }, pulls: 0, downloads: 0 },
+  ])("requires an explicit interactive '$reply' for a low model-cache warning", async ({
+    reply,
+    expected,
+    pulls,
+    downloads,
+  }) => {
+    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
+    mockSuccessfulVllmInstall(profile.containerName);
+    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
+    mocks.probeHostStorage.mockReturnValue({
+      ok: true,
+      capacity: {
+        availableBytes: 1n,
+        path: path.join(os.homedir(), ".cache", "huggingface"),
+        source: "Hugging Face cache",
+      },
+    });
+    const replies = ["y", reply];
+    const promptFn = vi.fn(async () => replies.shift() ?? "");
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: false,
+      promptFn,
+    });
+
+    expect(result).toEqual(expected);
+    expect(promptFn).toHaveBeenCalledTimes(2);
+    expect(promptFn).toHaveBeenLastCalledWith("  Continue with the model download anyway? [y/N]: ");
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(pulls);
+    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(downloads);
   });
 
   it("fails closed before downloads when non-interactive model-cache capacity is inconclusive", async () => {
@@ -905,8 +944,10 @@ describe("installVllm model resolution", () => {
     const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
     expect(errors).toContain("Unable to verify storage for the managed vLLM model cache");
     expect(errors).toContain("statfs unavailable");
-    expect(errors).toContain("Non-interactive setup stops before the guarded download");
-    expect(errors).toContain("NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1");
+    expect(errors).toContain(
+      "Non-interactive setup stops because model-cache capacity could not be verified",
+    );
+    expect(errors).toContain("Re-run interactively to review the warning");
   });
 
   it.each([
@@ -940,28 +981,7 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerSpawn).toHaveBeenCalledTimes(downloads);
   });
 
-  it("allows an inconclusive model-cache probe only with the exact disk-space override", async () => {
-    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
-    process.env.NEMOCLAW_IGNORE_VLLM_DISK_SPACE = "1";
-    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(profile.containerName);
-    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
-    mocks.probeHostStorage.mockReturnValue(inconclusiveModelStorage());
-    const result = await installVllm(profile, {
-      hasImage: true,
-      nonInteractive: true,
-      promptFn: vi.fn(),
-    });
-    expect(result).toEqual({ ok: true });
-    expect(mocks.probeHostStorage).toHaveBeenCalledTimes(1);
-    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
-    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Continuing because NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1"),
-    );
-  });
-
-  it("re-probes after a cold image pull to prevent shared-filesystem overcommit", async () => {
+  it("re-probes after a cold image pull before continuing past a storage warning", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
     mockSuccessfulVllmInstall(profile.containerName);
@@ -992,13 +1012,17 @@ describe("installVllm model resolution", () => {
       promptFn: vi.fn(),
     });
 
-    expect(result).toEqual({ ok: false });
+    expect(result).toEqual({ ok: true });
     expect(mocks.probeHostStorage).toHaveBeenCalledTimes(2);
     expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
-    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
-    expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringContaining("Insufficient storage for the managed vLLM model cache"),
+    );
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Continuing because managed vLLM storage estimates are advisory in non-interactive setup",
+      ),
     );
   });
 
@@ -1089,35 +1113,6 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the dedicated disk-space override for a low Ultra model cache", async () => {
-    process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
-    process.env.NEMOCLAW_IGNORE_VLLM_DISK_SPACE = "1";
-    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(profile.containerName);
-    mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
-    mocks.probeHostStorage.mockReturnValue({
-      ok: true,
-      capacity: {
-        availableBytes: 1n,
-        path: path.join(os.homedir(), ".cache", "huggingface"),
-        source: "Hugging Face cache",
-      },
-    });
-
-    const result = await installVllm(profile, {
-      hasImage: true,
-      nonInteractive: true,
-      promptFn: vi.fn(),
-    });
-
-    expect(result).toEqual({ ok: true });
-    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
-    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining("NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1"),
-    );
-  });
-
   it("continues an uncached image pull only after an explicit storage yes (#6757)", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     process.env.NEMOCLAW_VLLM_MODEL = profile.defaultModel.envValue;
@@ -1139,7 +1134,7 @@ describe("installVllm model resolution", () => {
     expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
   });
 
-  it("fails safely before downloads in non-interactive low-storage setup (#6757)", async () => {
+  it("continues non-interactive setup after a low Docker-storage warning", async () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
     process.env.NEMOCLAW_VLLM_MODEL = profile.defaultModel.envValue;
     process.env.NEMOCLAW_YES = "1";
@@ -1155,11 +1150,13 @@ describe("installVllm model resolution", () => {
       promptFn: vi.fn(),
     });
 
-    expect(result).toEqual({ ok: false });
-    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
-    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: true });
+    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
+    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
     expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Non-interactive setup stops before the guarded download"),
+      expect.stringContaining(
+        "Continuing because managed vLLM storage estimates are advisory in non-interactive setup",
+      ),
     );
   });
 
@@ -1184,29 +1181,6 @@ describe("installVllm model resolution", () => {
     expect(errors).toContain("Unable to verify Docker storage for the managed vLLM image");
     expect(errors).toContain("Available: unknown (");
     expect(errors).toContain("Continuing because Docker storage capacity could not be verified");
-  });
-
-  it("honors only the dedicated disk-space override in non-interactive setup (#6757)", async () => {
-    const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
-    process.env.NEMOCLAW_VLLM_MODEL = profile.defaultModel.envValue;
-    process.env.NEMOCLAW_IGNORE_VLLM_DISK_SPACE = "1";
-    mockSuccessfulVllmInstall(profile.containerName);
-    mocks.probeDockerStorage.mockReturnValue({
-      ok: true,
-      capacity: { availableBytes: 1n, path: "/docker-low", source: "containerd image store" },
-    });
-    const result = await installVllm(profile, {
-      hasImage: false,
-      nonInteractive: true,
-      promptFn: vi.fn(),
-    });
-
-    expect(result).toEqual({ ok: true });
-    expect(mocks.dockerPullWithProgressWatchdog).toHaveBeenCalledTimes(1);
-    expect(mocks.dockerSpawn).toHaveBeenCalledTimes(1);
-    expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining("NEMOCLAW_IGNORE_VLLM_DISK_SPACE=1"),
-    );
   });
 
   it("reuses an authoritatively cached image without a cold-pull capacity check (#6757)", async () => {

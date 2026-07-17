@@ -19,11 +19,11 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { ScorecardData } from "../../../scripts/scorecard/build-slack-blocks.ts";
-import type { JobSummary, SummarizeJobsInput } from "../../../scripts/scorecard/summarize-jobs.ts";
+import type { ScorecardData } from "../../../scripts/scorecard/build-slack-blocks.mts";
+import type { JobSummary, SummarizeJobsInput } from "../../../scripts/scorecard/summarize-jobs.mts";
 
 const require = createRequire(import.meta.url);
-const slack = require("../../../scripts/scorecard/build-slack-blocks.ts") as {
+const slack = require("../../../scripts/scorecard/build-slack-blocks.mts") as {
   buildBlocks: (data: ScorecardData) => Array<{
     elements?: Array<{ text?: { text?: string }; url?: string }>;
     text?: { text: string };
@@ -32,7 +32,7 @@ const slack = require("../../../scripts/scorecard/build-slack-blocks.ts") as {
   buildFallbackText: (data: ScorecardData) => string;
   getSlackChannel: (data: ScorecardData) => string;
 };
-const trace = require("../../../scripts/scorecard/analyze-trace-timing.ts") as {
+const trace = require("../../../scripts/scorecard/analyze-trace-timing.mts") as {
   buildPhaseRows: (
     current: Record<string, number>,
     previous: Record<string, number>,
@@ -71,7 +71,7 @@ const trace = require("../../../scripts/scorecard/analyze-trace-timing.ts") as {
   ) => Promise<{ major: number; minor: number; name: string; patch: number; sha: string } | null>;
   selectOnboardTrace: (texts: string[]) => { totalMs: number } | null;
 };
-const scorecardJobs = require("../../../scripts/scorecard/summarize-jobs.ts") as {
+const scorecardJobs = require("../../../scripts/scorecard/summarize-jobs.mts") as {
   isSelectiveDispatch: (eventName: string, rawJobs?: string, rawTargets?: string) => boolean;
   loadWorkflowRunJobs: (deps: {
     context: { repo: { owner: string; repo: string }; runId: number };
@@ -184,7 +184,7 @@ describe("E2E scorecard", () => {
   it("loads typed scorecard helpers through the native github-script require boundary", () => {
     const script = `
       const path = require('node:path');
-      for (const file of ['analyze-trace-timing.ts', 'summarize-jobs.ts', 'build-slack-blocks.ts']) {
+      for (const file of ['analyze-trace-timing.mts', 'summarize-jobs.mts', 'build-slack-blocks.mts', 'coordinate-scorecard.mts']) {
         const loaded = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard', file));
         if (Object.keys(loaded).length === 0) process.exit(2);
       }

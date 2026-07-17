@@ -23,7 +23,7 @@ import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
-import { runSandboxAutoPairApprovalPass, wrapSandboxShellScript } from "./auto-pair-approval";
+import { runSandboxAutoPairApprovalPass } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
 import { captureHostCommand } from "./doctor-host-command";
 import { collectInferenceChecks, type DoctorInferenceRoute } from "./doctor-inference";
@@ -378,8 +378,7 @@ function collectToolScopeChecks(
 ): DoctorCheck[] {
   if (!sb || !sandboxReachable || (sb.agent ?? "openclaw") !== "openclaw") return [];
   return buildToolScopeChecks(sandboxName, CLI_NAME, wantsFix, {
-    exec: (name, script) =>
-      executeSandboxCommandForVerification(name, wrapSandboxShellScript(script)),
+    exec: (name, script) => executeSandboxCommandForVerification(name, script),
     runApprovalPass: (name) => {
       const result = runSandboxAutoPairApprovalPass(name, { capture: true });
       return { reported: result.reported, approved: result.approved };

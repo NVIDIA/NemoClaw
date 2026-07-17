@@ -12,6 +12,7 @@ import {
   createOpenAiChatCompletion,
   streamOpenAiChatCompletion,
 } from "./bedrock-runtime-adapter";
+import { isLocalAdapterProcess } from "./local-adapter-lifecycle";
 
 const servers: http.Server[] = [];
 
@@ -380,6 +381,42 @@ describe("Bedrock Runtime OpenAI adapter", () => {
     expect(response.status).toBe(502);
     const body = (await response.json()) as any;
     expect(body.error.message).toContain("Could not load credentials");
+  });
+
+  it("spawns the typed .mts launcher entrypoint", () => {
+    expect(__test.getAdapterScriptPath().endsWith("bedrock-runtime-adapter.mts")).toBe(true);
+  });
+
+  it("recognizes adapter processes launched from the old and new launcher filenames", () => {
+    const needle = __test.adapterProcessNeedle;
+    expect(
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/bedrock-runtime-adapter.mts",
+      ),
+    ).toBe(true);
+    expect(
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/bedrock-runtime-adapter.js",
+      ),
+    ).toBe(true);
+    expect(
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/openrouter-runtime-adapter-entry.js",
+      ),
+    ).toBe(false);
+    expect(
+      isLocalAdapterProcess(
+        4321,
+        needle,
+        () => "node /opt/nemoclaw/scripts/my-bedrock-runtime-adapter.mts",
+      ),
+    ).toBe(false);
   });
 
   it("includes forwarded AWS environment in the adapter reuse hash", () => {

@@ -122,8 +122,7 @@ function isMissingSandboxCleanupOutput(text: string): boolean {
 }
 
 function sandboxShellArgs(script: string): string[] {
-  const encoded = Buffer.from(script, "utf8").toString("base64");
-  return ["sh", "-lc", `printf %s ${shellQuote(encoded)} | base64 -d | sh`];
+  return ["sh", "-lc", script];
 }
 
 function assertAgent(value: string): asserts value is AgentName {
@@ -581,11 +580,13 @@ function stopBedrockAdapter(home: string): void {
   }
 }
 
+const BEDROCK_ADAPTER_LAUNCHER_PATTERN =
+  /(?:^|[^A-Za-z0-9_.-])bedrock-runtime-adapter\.(?:mts|js)(?:$|[^A-Za-z0-9_.-])/;
+
 function isBedrockAdapterProcess(pid: number): boolean {
-  const expectedScript = "bedrock-runtime-adapter.js";
   try {
     const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
-    if (cmdline.includes(expectedScript)) return true;
+    if (BEDROCK_ADAPTER_LAUNCHER_PATTERN.test(cmdline)) return true;
   } catch {
     // Fall back to ps on platforms without procfs.
   }
@@ -594,7 +595,7 @@ function isBedrockAdapterProcess(pid: number): boolean {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
-  return ps.status === 0 && ps.stdout.includes(expectedScript);
+  return ps.status === 0 && BEDROCK_ADAPTER_LAUNCHER_PATTERN.test(ps.stdout);
 }
 
 async function restoreHostsFile(
@@ -1307,6 +1308,11 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
   timeout: TEST_TIMEOUT_MS,
 }, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   assertAgent(AGENT);
+  const shard =
+    process.env.GITHUB_ACTIONS === "true"
+      ? process.env.NEMOCLAW_E2E_SHARD
+      : (process.env.NEMOCLAW_E2E_SHARD ?? AGENT);
+  expect(shard).toBe(AGENT);
   validateSandboxName(SANDBOX_NAME);
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-runtime-home-"));

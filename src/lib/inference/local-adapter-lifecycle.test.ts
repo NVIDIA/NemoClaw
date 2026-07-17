@@ -22,6 +22,7 @@ import {
   writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
 } from "./local-adapter-lifecycle";
+import { isOllamaAuthProxyCommandLine } from "./ollama/process";
 
 const tempDirs: string[] = [];
 const servers: http.Server[] = [];
@@ -81,25 +82,48 @@ describe("local adapter lifecycle", () => {
     expect(fs.statSync(pidPath).mode & 0o777).toBe(0o600);
   });
 
-  it("guards PID cleanup by process command line", () => {
+  it.each([
+    "ollama-auth-proxy.js",
+    "ollama-auth-proxy.mts",
+  ])("guards PID cleanup for the supported %s script", (scriptName) => {
+    const pidPath = path.join(tempDir(), "adapter.pid");
+    persistLocalAdapterPid(pidPath, 789);
+    const killed: string[][] = [];
+    const commandLine = `node /opt/nemoclaw/scripts/${scriptName}`;
+
+    expect(isLocalAdapterProcess(789, isOllamaAuthProxyCommandLine, () => commandLine)).toBe(true);
+
+    killLocalAdapterPid({
+      pidPath,
+      processMatcher: isOllamaAuthProxyCommandLine,
+      run: (args) => {
+        killed.push(args);
+      },
+      runCapture: () => commandLine,
+    });
+
+    expect(killed).toEqual([["kill", "789"]]);
+    expect(loadLocalAdapterPid(pidPath)).toBeNull();
+  });
+
+  it.each([
+    "ollama-auth-proxy-helper.mjs",
+    "ollama-auth-proxy.mts.backup",
+  ])("does not clean up the near-named %s process", (scriptName) => {
     const pidPath = path.join(tempDir(), "adapter.pid");
     persistLocalAdapterPid(pidPath, 789);
     const killed: string[][] = [];
 
-    expect(
-      isLocalAdapterProcess(789, "ollama-auth-proxy.js", () => "node scripts/ollama-auth-proxy.js"),
-    ).toBe(true);
-
     killLocalAdapterPid({
       pidPath,
-      processNeedle: "ollama-auth-proxy.js",
+      processMatcher: isOllamaAuthProxyCommandLine,
       run: (args) => {
         killed.push(args);
       },
-      runCapture: () => "node scripts/ollama-auth-proxy.js",
+      runCapture: () => `node /opt/nemoclaw/scripts/${scriptName}`,
     });
 
-    expect(killed).toEqual([["kill", "789"]]);
+    expect(killed).toEqual([]);
     expect(loadLocalAdapterPid(pidPath)).toBeNull();
   });
 

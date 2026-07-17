@@ -28,7 +28,10 @@ describe("MCP artifact credential scan", () => {
     fs.mkdirSync(path.join(root, "nested"));
     fs.writeFileSync(path.join(root, "nested", "result.json"), '{"status":"clean"}\n');
 
-    expect(scanMcpArtifactSecrets(root)).toEqual({ filesScanned: 1, leaks: [] });
+    expect(scanMcpArtifactSecrets(root)).toEqual({
+      filesScanned: 1,
+      leaks: [],
+    });
     expect(scanMcpArtifactSecrets(path.join(root, "missing"))).toEqual({
       filesScanned: 0,
       leaks: [],
@@ -67,6 +70,20 @@ describe("MCP artifact credential scan", () => {
       credential: "rebindHost",
       encoding: "base64",
       file: "wrapped.json",
+    });
+  });
+
+  it("finds every generated credential-window value through its shared prefix", () => {
+    const root = artifactRoot();
+    fs.writeFileSync(
+      path.join(root, "generation.txt"),
+      `${MCP_BRIDGE_TEST_CREDENTIALS.generationWindow}09`,
+    );
+
+    expect(scanMcpArtifactSecrets(root).leaks).toContainEqual({
+      credential: "generationWindow",
+      encoding: "raw",
+      file: "generation.txt",
     });
   });
 

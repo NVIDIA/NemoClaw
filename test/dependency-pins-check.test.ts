@@ -46,6 +46,8 @@ function writeFixture(root: string, overrides: FixtureOverrides = {}): void {
     `https://registry.npmjs.org/openclaw/-/openclaw-${openclawVersion}.tgz`;
   const openclawArg = `OPENCLAW_${openclawVersion.replace(/[.-]/g, "_")}`;
   const hermesSemver = overrides.hermesSemver ?? HERMES_SEMVER;
+  const credentialManifestName = `openshell-child-visible-credentials.v${openshellMax}.json`;
+  const credentialVersion = overrides.credentialVersion ?? openshellMax;
   const installerHashVersions = [
     overrides.installerHashExtraVersion,
     overrides.installerHashVersion ?? openshellMax,
@@ -84,10 +86,10 @@ jobs:
     env:
       NEMOCLAW_OPENSHELL_PIN_VERSION: "${overrides.workflowPinVersion ?? openshellMax}"
 `,
-    [`src/lib/actions/sandbox/openshell-child-visible-credentials.v${openshellMax}.json`]:
-      JSON.stringify({
-        openshellVersion: overrides.credentialVersion ?? openshellMax,
-      }),
+    [`src/lib/actions/sandbox/${credentialManifestName}`]: JSON.stringify({
+      openshellCommit: "f".repeat(40),
+      openshellVersion: credentialVersion,
+    }),
     "src/lib/actions/sandbox/mcp-bridge-validation.ts": `
 import boundary from "./openshell-child-visible-credentials.v${overrides.mcpImportVersion ?? openshellMax}.json";
 `,
@@ -108,7 +110,7 @@ const BUILDS = new Map([
 ]);
 `,
     "agents/hermes/Dockerfile": `
-COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v${openshellMax}.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v${overrides.hermesDockerfileBoundaryVersion ?? openshellMax}.json
+COPY src/lib/actions/sandbox/${credentialManifestName} /usr/local/lib/nemoclaw/${`openshell-child-visible-credentials.v${overrides.hermesDockerfileBoundaryVersion ?? openshellMax}.json`}
 `,
     "agents/hermes/mcp-config-transaction.py": `
 BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v${overrides.hermesTransactionBoundaryVersion ?? openshellMax}.json"

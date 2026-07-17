@@ -13,7 +13,6 @@ import {
   type WorkflowJob,
   type WorkflowStep,
 } from "./helpers/e2e-workflow-contract";
-import { execTimeout } from "./helpers/timeouts";
 
 type CiWorkflow = {
   "run-name"?: string;
@@ -148,6 +147,60 @@ function runWorkflowShellStep(
   };
 }
 
+function workflowJob(
+  id: unknown,
+  name: unknown,
+  conclusion: unknown,
+  status: unknown = "completed",
+): Record<string, unknown> {
+  return { conclusion, id, name, status };
+}
+
+function workflowJobListing(
+  jobs: Record<string, unknown>[],
+  totalCount: unknown = jobs.length,
+): string {
+  return JSON.stringify({ jobs, total_count: totalCount });
+}
+
+function runWorkflowShellStepWithJobs(
+  step: WorkflowStep,
+  env: Record<string, string>,
+  jobsResponse: string,
+  ghExitCode = 0,
+): { status: number | null; stdout: string; stderr: string } {
+  const temp = mkdtempSync(join(tmpdir(), "nemoclaw-workflow-jobs-"));
+  const fakeBin = join(temp, "bin");
+  mkdirSync(fakeBin);
+  writeFileSync(
+    join(fakeBin, "gh"),
+    [
+      "#!/usr/bin/env node",
+      "const expected = `api repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.RUN_ID}/attempts/${process.env.RUN_ATTEMPT}/jobs?per_page=100`;",
+      'if (process.argv.slice(2).join(" ") !== expected) process.exit(64);',
+      "const exitCode = Number(process.env.FAKE_GH_EXIT_CODE);",
+      "if (exitCode !== 0) process.exit(exitCode);",
+      'process.stdout.write(process.env.FAKE_GH_RESPONSE ?? "");',
+    ].join("\n"),
+    { mode: 0o755 },
+  );
+  try {
+    return runWorkflowShellStep(step, {
+      FAKE_GH_EXIT_CODE: String(ghExitCode),
+      FAKE_GH_RESPONSE: jobsResponse,
+      GH_TOKEN: "test-token",
+      GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+      PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      RUN_ATTEMPT: "2",
+      RUN_ID: "123",
+      RUN_URL: "https://github.com/NVIDIA/NemoClaw/actions/runs/123",
+      ...env,
+    });
+  } finally {
+    rmSync(temp, { force: true, recursive: true });
+  }
+}
+
 function runLoggedPackageScript(script: string): string[][] {
   const temp = mkdtempSync(join(tmpdir(), "nemoclaw-package-script-"));
   const fakeBin = join(temp, "bin");
@@ -223,6 +276,7 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
+  const dcoWorkflow = readYaml<CiWorkflow>(".github/workflows/dco-check.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
@@ -246,9 +300,34 @@ describe("pull request and main workflow contracts", () => {
       ".github/actions/ci-installer-integration/action.yaml",
     ),
   };
-  const resolveHermesBaseAction = readYaml<CompositeAction>(
-    ".github/actions/resolve-hermes-base-image/action.yaml",
-  );
+
+  // source-shape-contract: security -- Base retargets must rerun trusted installer verification without minting skipped required evidence
+  it("reruns installer hash verification after a pull request base retarget", () => {
+    expect(installerHashWorkflow.on?.pull_request?.types).toEqual([
+      "opened",
+      "synchronize",
+      "reopened",
+      "edited",
+    ]);
+    expect(installerHashWorkflow.jobs["check-hash"].if).toBe(
+      "github.repository == 'NVIDIA/NemoClaw'",
+    );
+  });
+
+  // source-shape-contract: security -- Dependabot's bounded DCO exemption must report an explicit successful required check
+  it("records the Dependabot DCO bypass as a successful required job", () => {
+    const job = dcoWorkflow.jobs["dco-check"];
+    const bypass = requiredWorkflowStep(job, "Check Dependabot DCO bypass");
+    const declaration = requiredWorkflowStep(job, "Check PR body for Signed-off-by");
+
+    expect(job.if).toBeUndefined();
+    expect(job.steps?.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
+    expect(bypass.env?.USERNAME).toBe("${{ github.event.pull_request.user.login }}");
+    expect(bypass.run).toContain('"$USERNAME" == "dependabot[bot]"');
+    expect(bypass.run).toContain('"$USERNAME" == "app/dependabot"');
+    expect(bypass.run).not.toContain(".github/dco-bypass.txt");
+    expect(declaration.if).toBe("${{ steps.dco-bypass.outputs.bypass != 'true' }}");
+  });
 
   // source-shape-contract: security -- Installer hashes must be verified by base-trusted or immutable bootstrap code
   it("runs pull request installer verification from immutable trusted code", () => {
@@ -289,6 +368,18 @@ describe("pull request and main workflow contracts", () => {
     );
 
     expect(installerHashWorkflow.on?.pull_request?.paths).toBeUndefined();
+    expect(installerHashWorkflow.on?.pull_request?.types).toEqual([
+      "opened",
+      "synchronize",
+      "reopened",
+      "edited",
+    ]);
+    expect(installerHashWorkflow["run-name"]).toContain(
+      "Installer Hash PR #{0} head {1} base {2} gate true",
+    );
+    expect(installerHashWorkflow["run-name"]).toContain("github.event.pull_request.base.sha");
+    expect(installerHashWorkflow["run-name"]).not.toContain("github.event.changes.base");
+    expect(job.if).toBe("github.repository == 'NVIDIA/NemoClaw'");
     expect(installerHashWorkflow.permissions).toEqual({ contents: "read" });
     expect(parserRuntimeSetup.uses).toBe(trustedSetupNodeAction);
     expect(parserRuntimeSetup.with?.["node-version"]).toBe("22.19.0");
@@ -550,7 +641,7 @@ describe("pull request and main workflow contracts", () => {
       "scripts/install-openshell.sh",
       "scripts/update-hermes-agent.sh",
       "src/lib/actions/sandbox/mcp-bridge-validation.ts",
-      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json",
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json",
     ]) {
       expect(files.test(path), path).toBe(true);
     }
@@ -569,7 +660,7 @@ describe("pull request and main workflow contracts", () => {
       "test/example.test.ts",
       "src/lib/example.spec.ts",
       "nemoclaw/src/example.test.ts",
-      "scripts/find-source-shape-tests.ts",
+      "scripts/find-source-shape-tests.mts",
       "ci/source-shape-test-budget.json",
     ]) {
       expect(files.test(path), path).toBe(true);
@@ -657,7 +748,7 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(cliCoverageCalls[4]).toEqual([
       "tsx",
-      "scripts/check-coverage-ratchet.ts",
+      "scripts/check-coverage-ratchet.mts",
       "coverage/cli/coverage-summary.json",
       "ci/coverage-threshold-cli.json",
       "CLI coverage",
@@ -672,7 +763,7 @@ describe("pull request and main workflow contracts", () => {
     );
     expect(pluginCoverageCalls[1]).toEqual([
       "tsx",
-      "scripts/check-coverage-ratchet.ts",
+      "scripts/check-coverage-ratchet.mts",
       "coverage/plugin/coverage-summary.json",
       "ci/coverage-threshold-plugin.json",
       "Plugin coverage",
@@ -905,6 +996,8 @@ describe("pull request and main workflow contracts", () => {
       expect(mergeStep.with?.["shard-count"], `${workflowName} merge shard-count`).toBe(
         cliShardCount,
       );
+      expect(workflow.jobs["cli-tests"].permissions?.actions, workflowName).toBe("read");
+      expect(workflow.jobs.checks.permissions?.actions, workflowName).toBe("read");
     }
   });
 
@@ -924,9 +1017,6 @@ describe("pull request and main workflow contracts", () => {
     expect(parityStep.run).toContain("base=HEAD^1");
     expect(parityStep.run).toContain("head=HEAD^2");
     expect(parityStep.run).toContain('base="$PUSH_BASE_SHA"');
-    expect(parityStep.run).toContain(
-      'npx tsx scripts/checks/e2e-mock-parity.ts --base "$base" --head "$head"',
-    );
 
     const trustedCapabilityProbe = requiredWorkflowStep(
       prWorkflow.jobs["cli-test-shards"],
@@ -1112,14 +1202,14 @@ describe("pull request and main workflow contracts", () => {
     const growthGuardrails = readYaml<CodebaseGrowthGuardrailsWorkflow>(
       ".github/workflows/codebase-growth-guardrails.yaml",
     );
-    const guardRun = stepRuns(growthGuardrails.jobs["codebase-growth-guardrails"]).join("\n");
-
-    expect(guardRun).toContain("HEAD_REPO");
-    expect(guardRun).toContain("HEAD_SHA");
+    const guardJob = growthGuardrails.jobs["codebase-growth-guardrails"];
+    const guardRun = stepRuns(guardJob).join("\n");
+    const guardEnv = JSON.stringify((guardJob.steps ?? []).map((step) => step.env ?? {}));
+    expect(guardEnv).toContain("HEAD_REPO");
     expect(guardRun).not.toContain(".raw_url");
-    expect(guardRun).toContain("previous_filename");
-    expect(guardRun).toContain("budgetChanged");
-    expect(guardRun).toContain("has a legacy budget but no matching test file at the PR head");
+    expect(guardRun).not.toContain("node <<'NODE'");
+    expect(guardRun).toContain("tools/growth-guardrails/test-size-budget.mts");
+    expect(guardRun).toContain("tools/growth-guardrails/test-conditionals.mts");
   });
 
   // source-shape-contract: security -- Coverage publication must exclude fork-authored reports and pin the publishing action
@@ -1145,6 +1235,65 @@ describe("pull request and main workflow contracts", () => {
     }
   });
 
+  it("links every failed CLI shard and falls back safely when job metadata is unavailable", () => {
+    const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";
+    const failedShards = workflowJobListing([
+      workflowJob(101, "cli-test-shards (1)", "success"),
+      workflowJob(102, "cli-test-shards (2)", "failure"),
+      workflowJob(108, "cli-test-shards (8)", "cancelled"),
+      workflowJob(109, "plugin-tests", "success"),
+    ]);
+    const malformedShards = workflowJobListing([
+      workflowJob("not-a-number", "cli-test-shards (2)", "failure"),
+    ]);
+    const oversizedShards = workflowJobListing([
+      workflowJob(9_007_199_254_740_992, "cli-test-shards (2)", "failure"),
+    ]);
+
+    for (const [workflowName, workflow] of [
+      ["pull_request", prWorkflow],
+      ["main", mainWorkflow],
+    ] as const) {
+      const cliGate = requiredWorkflowStep(
+        workflow.jobs["cli-tests"],
+        "Verify CLI shards completed",
+      );
+      const failure = runWorkflowShellStepWithJobs(
+        cliGate,
+        { CLI_SHARD_RESULT: "failure" },
+        failedShards,
+      );
+      const malformed = runWorkflowShellStepWithJobs(
+        cliGate,
+        { CLI_SHARD_RESULT: "failure" },
+        malformedShards,
+      );
+      const oversized = runWorkflowShellStepWithJobs(
+        cliGate,
+        { CLI_SHARD_RESULT: "failure" },
+        oversizedShards,
+      );
+      const unavailable = runWorkflowShellStepWithJobs(
+        cliGate,
+        { CLI_SHARD_RESULT: "cancelled" },
+        "",
+        1,
+      );
+
+      expect(failure.status, `${workflowName}: ${failure.stderr}`).not.toBe(0);
+      expect(failure.stdout).toContain(`${runUrl}/job/102`);
+      expect(failure.stdout).toContain(`${runUrl}/job/108`);
+      expect(malformed.status).not.toBe(0);
+      expect(malformed.stdout).toContain(`Details: ${runUrl}`);
+      expect(malformed.stdout).not.toContain(`${runUrl}/job/`);
+      expect(oversized.status).not.toBe(0);
+      expect(oversized.stdout).toContain(`Details: ${runUrl}`);
+      expect(oversized.stdout).not.toContain(`${runUrl}/job/`);
+      expect(unavailable.status).not.toBe(0);
+      expect(unavailable.stdout).toContain(`Expected success, got cancelled. Details: ${runUrl}`);
+    }
+  });
+
   it("accepts successful aggregate checks and rejects failed required lanes", () => {
     const prChecks = prWorkflow.jobs.checks;
     const mainChecks = mainWorkflow.jobs.checks;
@@ -1153,6 +1302,7 @@ describe("pull request and main workflow contracts", () => {
     const successfulCode = {
       BUILD_TYPECHECK_RESULT: "success",
       CHANGES_RESULT: "success",
+      CI_REQUIRED: "true",
       CLI_TESTS_RESULT: "success",
       CODE_CHANGED: "true",
       DOCS_ONLY_RESULT: "skipped",
@@ -1174,10 +1324,18 @@ describe("pull request and main workflow contracts", () => {
     };
 
     const codeSuccess = runWorkflowShellStep(prGate, successfulCode);
-    const codeFailure = runWorkflowShellStep(prGate, {
-      ...successfulCode,
-      STATIC_RESULT: "failure",
-    });
+    const codeFailure = runWorkflowShellStepWithJobs(
+      prGate,
+      {
+        ...successfulCode,
+        PLUGIN_TESTS_RESULT: "cancelled",
+        STATIC_RESULT: "failure",
+      },
+      workflowJobListing([
+        workflowJob(201, "static-checks", "failure"),
+        workflowJob(202, "plugin-tests", "cancelled"),
+      ]),
+    );
     const docsOnlySuccess = runWorkflowShellStep(prGate, {
       ...successfulCode,
       BUILD_TYPECHECK_RESULT: "skipped",
@@ -1191,109 +1349,52 @@ describe("pull request and main workflow contracts", () => {
       WECHAT_RUNTIME_AUDIT_RESULT: "skipped",
     });
     const mainSuccess = runWorkflowShellStep(mainGate, successfulMain);
-    const mainFailure = runWorkflowShellStep(mainGate, {
-      ...successfulMain,
-      REAL_OPENCLAW_DIST_HARNESS_RESULT: "failure",
-    });
+    const mainFailure = runWorkflowShellStepWithJobs(
+      mainGate,
+      {
+        ...successfulMain,
+        REAL_OPENCLAW_DIST_HARNESS_RESULT: "failure",
+      },
+      workflowJobListing([workflowJob(301, "real-openclaw-dist-harness", "failure")]),
+    );
+    const malformedFailure = runWorkflowShellStepWithJobs(
+      prGate,
+      { ...successfulCode, STATIC_RESULT: "failure" },
+      workflowJobListing([workflowJob("invalid", "static-checks", "failure")]),
+    );
+    const oversizedFailure = runWorkflowShellStepWithJobs(
+      prGate,
+      { ...successfulCode, STATIC_RESULT: "failure" },
+      workflowJobListing([workflowJob(9_007_199_254_740_992, "static-checks", "failure")]),
+    );
 
     expect(codeSuccess.status).toBe(0);
     expect(codeFailure.status).not.toBe(0);
     expect(codeFailure.stdout).toContain("static-checks failed");
+    expect(codeFailure.stdout).toContain(
+      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/201",
+    );
+    expect(codeFailure.stdout).toContain("plugin-tests failed");
+    expect(codeFailure.stdout).toContain(
+      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/202",
+    );
     expect(docsOnlySuccess.status).toBe(0);
     expect(mainSuccess.status).toBe(0);
     expect(mainFailure.status).not.toBe(0);
     expect(mainFailure.stdout).toContain("real-openclaw-dist-harness failed");
-  });
-
-  it("rejects a pulled Hermes base without MCP HTTP imports and falls back locally", () => {
-    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-hermes-base-resolver-"));
-    const fakeBin = join(temp, "bin");
-    const dockerLog = join(temp, "docker.log");
-    const githubEnv = join(temp, "github.env");
-    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
-    const resolver = requiredStep(resolveHermesBaseAction, "Resolve Hermes sandbox base image").run;
-
-    try {
-      mkdirSync(fakeBin);
-      writeFileSync(githubEnv, "");
-      writeFileSync(
-        join(fakeBin, "docker"),
-        [
-          "#!/usr/bin/env node",
-          'const fs = require("node:fs");',
-          "const args = process.argv.slice(2);",
-          'fs.appendFileSync(process.env.DOCKER_LOG, JSON.stringify(args) + "\\n");',
-          'if (args[0] === "pull" || args[0] === "build") process.exit(0);',
-          'if (args[0] === "image" && args[1] === "inspect") {',
-          '  process.stdout.write(process.env.REMOTE_DIGEST + "\\n");',
-          "  process.exit(0);",
-          "}",
-          'if (args[0] === "run") {',
-          '  const entrypointIndex = args.indexOf("--entrypoint");',
-          "  const entrypoint = args[entrypointIndex + 1];",
-          "  const image = args[entrypointIndex + 2];",
-          '  if (entrypoint === "/usr/bin/ldd") {',
-          '    process.stdout.write("ldd (Ubuntu GLIBC 2.39) 2.39\\n");',
-          "    process.exit(0);",
-          "  }",
-          '  if (entrypoint === "sh") process.exit(0);',
-          '  if (entrypoint === "/opt/hermes/.venv/bin/python") {',
-          "    process.exit(image === process.env.REMOTE_DIGEST ? 42 : 0);",
-          "  }",
-          "}",
-          "console.error(`unexpected docker invocation: ${JSON.stringify(args)}`);",
-          "process.exit(2);",
-          "",
-        ].join("\n"),
-        { mode: 0o755 },
-      );
-      // Keep the fake executable in a dedicated PATH directory so every other
-      // command in the composite action remains the real host utility.
-      const result = spawnSync("bash", ["-c", resolver ?? ""], {
-        cwd: process.cwd(),
-        encoding: "utf8",
-        timeout: execTimeout(),
-        env: {
-          ...process.env,
-          DOCKER_LOG: dockerLog,
-          GITHUB_ENV: githubEnv,
-          GITHUB_SHA: "1".repeat(40),
-          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-          REMOTE_DIGEST: remoteDigest,
-        },
-      });
-
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toContain("lacks the packaged MCP Streamable HTTP client imports");
-      expect(result.stdout).toContain("building locally");
-      expect(readFileSync(githubEnv, "utf8").trim()).toBe(
-        "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local",
-      );
-
-      const calls = readFileSync(dockerLog, "utf8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as string[]);
-      const firstPull = calls.find((args) => args[0] === "pull");
-      expect(firstPull?.[0]).toBe("pull");
-      expect(firstPull?.[1]).toMatch(
-        /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/,
-      );
-      const remoteProbe = calls.findIndex(
-        (args) => args.includes("/opt/hermes/.venv/bin/python") && args.includes(remoteDigest),
-      );
-      const localBuild = calls.findIndex((args) => args[0] === "build");
-      const localProbe = calls.findIndex(
-        (args) =>
-          args.includes("/opt/hermes/.venv/bin/python") &&
-          args.includes("nemoclaw-hermes-base-local"),
-      );
-      expect(remoteProbe).toBeGreaterThanOrEqual(0);
-      expect(localBuild).toBeGreaterThan(remoteProbe);
-      expect(localProbe).toBeGreaterThan(localBuild);
-    } finally {
-      rmSync(temp, { force: true, recursive: true });
-    }
+    expect(mainFailure.stdout).toContain(
+      "https://github.com/NVIDIA/NemoClaw/actions/runs/123/job/301",
+    );
+    expect(malformedFailure.status).not.toBe(0);
+    expect(malformedFailure.stdout).toContain(
+      "Details: https://github.com/NVIDIA/NemoClaw/actions/runs/123",
+    );
+    expect(malformedFailure.stdout).not.toContain("actions/runs/123/job/");
+    expect(oversizedFailure.status).not.toBe(0);
+    expect(oversizedFailure.stdout).toContain(
+      "Details: https://github.com/NVIDIA/NemoClaw/actions/runs/123",
+    );
+    expect(oversizedFailure.stdout).not.toContain("actions/runs/123/job/");
   });
 
   // source-shape-contract: security -- CI dependency installs must never execute package lifecycle scripts from fetched code

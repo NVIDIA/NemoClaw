@@ -183,17 +183,6 @@ function parseProbeJson(output: string): CronPreflightProbeJson | undefined {
   return JSON.parse(line) as CronPreflightProbeJson;
 }
 
-function probeShell(): string {
-  const encoded = Buffer.from(PROBE_SOURCE, "utf8").toString("base64");
-  return (
-    [
-      ". /tmp/nemoclaw-proxy-env.sh",
-      '__probe="$(mktemp /tmp/nemoclaw-preflight-probe.XXXXXX.cjs)"',
-      `printf %s '${encoded}' | base64 -d > "$__probe"`,
-    ].join(" && ") + '; node "$__probe"; __rc=$?; rm -f "$__probe"; exit "$__rc"'
-  );
-}
-
 async function preCleanCronSandbox(sandbox: SandboxClient): Promise<void> {
   await preCleanBestEffort(() =>
     sandbox.cleanupSandbox(SANDBOX_NAME, {
@@ -285,7 +274,7 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
   expect(install, "install command must run").toBeDefined();
   expect(install?.exitCode, resultText(install as ShellProbeResult)).toBe(0);
 
-  const probe = await host.nemoclaw([SANDBOX_NAME, "exec", "--", "sh", "-c", probeShell()], {
+  const probe = await host.nemoclaw([SANDBOX_NAME, "exec", "--", "node", "-e", PROBE_SOURCE], {
     artifactName: "phase-2-cron-preflight-probe",
     env: commandEnv(hosted.env),
     redactionValues: [apiKey],

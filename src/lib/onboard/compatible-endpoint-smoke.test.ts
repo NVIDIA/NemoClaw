@@ -381,12 +381,11 @@ JSON
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
   });
 
-  it("wraps the script as a base64 decoded temporary shell command", () => {
+  it("passes the native multiline script through the OpenShell command argument", () => {
     const command = buildCompatibleEndpointSandboxSmokeCommand("nvidia/model");
 
-    expect(command).toContain("set -eu");
-    expect(command).toContain("base64.b64decode");
-    expect(command).toContain('sh "$tmp"');
-    expect(command).toContain("trap");
+    expect(command).toBe(buildCompatibleEndpointSandboxSmokeScript("nvidia/model"));
+    expect(command).toContain("\n");
+    expect(command).not.toContain("base64.b64decode");
   });
 });

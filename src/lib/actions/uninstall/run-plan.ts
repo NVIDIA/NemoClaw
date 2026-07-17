@@ -25,6 +25,7 @@ import {
   type UninstallPaths,
 } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
+import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import { resolveGatewayName } from "../../onboard/gateway-binding";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
@@ -503,12 +504,6 @@ function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: str
   }
 }
 
-// Identifier we look for in `/proc/<pid>/cmdline` (via `ps -p <pid> -o args=`)
-// to confirm a candidate PID is the Ollama auth proxy and not another node
-// process that happens to be on the same port. Mirrors the
-// `isOllamaProxyProcess` check in `src/lib/onboard-ollama-proxy.ts`.
-const OLLAMA_AUTH_PROXY_CMDLINE_MARK = "ollama-auth-proxy.js";
-
 // Resolve the proxy port from runtime.env (rather than `process.env` at
 // module-load time) so a user who onboarded with NEMOCLAW_OLLAMA_PROXY_PORT
 // set to a custom value sees uninstall scan that same port. Mirrors the
@@ -529,7 +524,7 @@ function resolveOllamaProxyPort(runtime: UninstallRuntime): number {
 function isOllamaAuthProxyPid(pid: number, runtime: UninstallRuntime): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
-  return result.status === 0 && result.stdout.includes(OLLAMA_AUTH_PROXY_CMDLINE_MARK);
+  return result.status === 0 && isOllamaAuthProxyCommandLine(result.stdout);
 }
 
 // `ps -p <pid>` is preferred over `kill(pid, 0)` for existence probing here:
