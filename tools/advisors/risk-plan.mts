@@ -81,6 +81,7 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   ".github/workflows/pr.yaml",
   "package-lock.json",
   "package.json",
+  "scripts/scorecard/coordinate-scorecard.mts",
   "tools/advisors/github.mts",
   "tools/advisors/io.mts",
   "tools/advisors/risk-plan.mts",

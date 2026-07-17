@@ -174,6 +174,14 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(script).toContain(
       "expect_exact_or_exit $termSpawn {Filesystem Access} openshell_sandbox_detail 68 69",
     );
+    const sandboxIdentity = script.indexOf(
+      "expect_exact_or_exit $termSpawn $sandbox openshell_sandbox_detail_name 70 71",
+    );
+    const policyPanel = script.indexOf(
+      "expect_exact_or_exit $termSpawn {Filesystem Access} openshell_sandbox_detail 68 69",
+    );
+    expect(sandboxIdentity).toBeGreaterThanOrEqual(0);
+    expect(policyPanel).toBeGreaterThan(sandboxIdentity);
     expect(script).not.toContain("expect_exact_or_exit $termSpawn {Name:}");
     expect(script).not.toContain("(Dashboard-)?Sandbox:");
     expect(script).toContain('send -i $termSpawn -- "r"');
