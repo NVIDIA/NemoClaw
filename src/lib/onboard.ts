@@ -50,8 +50,6 @@ const baseImageResolutionFlow: typeof import("./onboard/base-image-resolution-fl
 const sandboxCreateIntentResolution: typeof import("./onboard/sandbox-create-intent-resolution") = require("./onboard/sandbox-create-intent-resolution");
 const sandboxCreatePlanMaterialization: typeof import("./onboard/sandbox-create-plan-materialization") = require("./onboard/sandbox-create-plan-materialization");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
-const { resolveDockerStartupCommandPatch } =
-  require("./onboard/docker-startup-command-agent") as typeof import("./onboard/docker-startup-command-agent");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
 const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
 const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
@@ -2701,7 +2699,6 @@ async function createSandboxWithBaseImageResolution(
     },
     resolvedCreateIntent,
   );
-  const startupCommandPatch = resolveDockerStartupCommandPatch(agent, dockerDriverGateway);
   const {
     activeMessagingChannels,
     initialSandboxPolicy,
@@ -2804,8 +2801,7 @@ async function createSandboxWithBaseImageResolution(
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
-      persistStartupCommand: startupCommandPatch.persistStartupCommand,
-      requiredUlimits: startupCommandPatch.requiredUlimits,
+      ...sandboxGpuCreateFlow.resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
     },
     {
       runOpenshell,

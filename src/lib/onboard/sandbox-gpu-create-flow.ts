@@ -18,6 +18,8 @@ import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
 
+export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
+
 type RunOpenshell = NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
 type RunCaptureOpenshell = NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
 type Sleep = NonNullable<DockerGpuPatchDeps["sleep"]>;
