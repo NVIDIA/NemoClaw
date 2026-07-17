@@ -365,6 +365,13 @@ export async function upgradeSandboxes(
         `    ${recovery.sandbox.name}  ${D}${recovery.manifest.timestamp}${R}  (non-Ready)`,
       );
     }
+    // #7073: the pre-upgrade backup scopes to /sandbox/.openclaw only, so the
+    // recreate does not preserve files kept elsewhere in the sandbox. Warn
+    // before the destructive recreate so users can back those paths up first
+    // rather than silently losing them.
+    console.log(
+      `    ${YW}⚠ Recovery restores /sandbox/.openclaw state only. Files outside .openclaw (e.g. /sandbox/user-data) are NOT preserved by the recreate — back them up before upgrading.${R}`,
+    );
   }
   if (rejectedRecoveries.length > 0) {
     console.log(`\n  ${YW}Backup recovery blocked:${R}`);

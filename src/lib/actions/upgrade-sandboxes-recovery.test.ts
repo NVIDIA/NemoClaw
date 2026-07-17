@@ -190,6 +190,19 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     }
   });
 
+  it("warns that non-.openclaw sandbox data is not preserved before recreating (#7073)", async () => {
+    const harness = createRecoveryHarness(["alpha"]);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("Recovery restores /sandbox/.openclaw state only"),
+    );
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("NOT preserved by the recreate"),
+    );
+  });
+
   it("continues through all eligible sandboxes before reporting a recovery failure", async () => {
     const harness = createRecoveryHarness(["alpha", "beta"]);
     harness.rebuildSpy.mockRejectedValueOnce(new Error("alpha failed"));
