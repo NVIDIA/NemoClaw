@@ -656,7 +656,7 @@ Commits: `80293213`, `392ad639`, `b4be33e5`, `21aaa895`, `3dee5570`.
 | `OS85-12` | Medium | OpenShell declares Docker 28.0+ while #6379 is on Docker 27 and NemoClaw marks DGX Spark tested. | Either validate and document a precise downstream exception from physical proof or raise the supported floor and preflight it. | Open product/platform decision. |
 | `OS85-13` | Low | Mount parsing/SELinux changes could affect the test-only tmpfs path. | Rerun the EXDEV tmpfs fixture and retain production no-mount evidence. | The stable release proof injects only the reviewed tmpfs config, requires Docker's structured tmpfs representation plus `noexec`/01777 at runtime, retains it across gateway restart, and requires a fresh remount after rebuild. The wrapper is disabled outside the explicit proof lane and production still supplies no driver mounts. Exact-head, Podman, and enforcing-SELinux results remain open. |
 | `OS85-14` | Low | Sanitized MCP tool names are newly present in logs. | Record the additive observability/privacy behavior; ensure no downstream parser assumes the old shape. | The stable release check requires the real `fake_echo` tool name and rejects argument/result canaries or an `arguments` field in JSON-RPC policy logs; exact-head runtime result pending. |
-| `OS85-15` | High | The installer-hash workflow executes its checker and parser from the PR base SHA. One PR cannot safely teach that trusted base about a new release and consume the release; using the head checker would let reviewed code define its own trust rules. | First land archive safety, normalized full-script template validation, and multi-release trust while selectors remain `0.0.72`; prove the old base rejects a new release and the new base permits only structured release-data changes; then submit the `0.0.85` pin. | Closed. Manifest trust landed in #6778, and structured sandbox digest-to-version parsing landed in #6779. The base-owned checker now permits only validated release-data and selector changes, rejects operational installer drift, and verifies the full `0.0.85` tree. |
+| `OS85-15` | High | The installer-hash workflow executes its checker and parser from the PR base SHA. One PR cannot safely teach that trusted base about a new release and consume the release; using the head checker would let reviewed code define its own trust rules. | First land archive safety, normalized full-script template validation, and multi-release trust while selectors remain `0.0.72`; prove the old base rejects a new release and the new base permits only structured release-data changes; then land the exact `0.0.85` manifest identities before refreshing this selector PR. | Base trust landed in #7069. #6778 and #6779 established base-owned structured manifest and sandbox-map validation; #7069 added only the three exact `0.0.85` release identities while retaining `0.0.72` and `0.0.82`. This selector PR must be based on that trusted state and pass the checker without relying on its head copy. |
 | `OS85-16` | High | Capability clearing now depends on `capctl 0.2.4` and `bitflags 1.3.2`, but upstream notices are unchanged and the consumed binaries have no published SBOM or attestation covering this dependency graph. | Bind crate checksums and source identities to the stable lock and binaries; review the unsafe syscall boundary and advisories; update notices/licenses; retain a generated SBOM and provenance for every consumed binary. | The stable lock, crate checksums, source identities, licenses, unsafe boundary, current RustSec absence, and SLSA-bound archives are recorded. Upstream still publishes no binary SBOM and its unchanged notices omit the new graph; that limitation remains explicit rather than being presented as complete attribution. |
 | `OS85-17` | Medium | The VM driver bakes configurable UID/GID into prepared rootfs state, but its same-version cache key omits both values and can reuse stale passwd/group entries after configuration drift. | Keep NemoClaw's selected driver Docker-only. Before any VM path is supported, key prepared images by UID/GID or purge them and prove identity/ownership after change and restart. | Source-reviewed exclusion for the current Docker topology; VM configuration-churn compatibility is unproven. |
 
@@ -785,11 +785,12 @@ restart/rebuild, and cleanup without a conditional skip or expected failure.
 
 ## Final acceptance gates
 
-1. The trusted manifest prerequisite landed on NemoClaw `main` as #6778 while
-   runtime selectors remained `0.0.72`. The structured sandbox-build-map
-   follow-up #6779 then landed before this selector commit; its base-owned parser
+1. The structured manifest and sandbox-build-map prerequisites landed as #6778
+   and #6779 while runtime selectors remained `0.0.72`; their base-owned parser
    rejects operational installer drift and permits only validated release-data
-   and selector changes.
+   and selector changes. Exact `0.0.85` manifest trust landed separately as
+   #7069. This selector PR must be based on `main` containing that trust and
+   pass the base-owned checker.
 2. Stable tag `v0.0.85` contains the required fail-closed credential fix and all
    13 adjacent ranges above, including the unpublished `v0.0.84` source boundary.
 3. The tag has successful release publication run 29507522595. Every consumed
@@ -802,9 +803,11 @@ restart/rebuild, and cleanup without a conditional skip or expected failure.
    one coherent version.
 5. Every concern-specific unit/integration proof above passes, followed by normal
    repository checks and exact-head CI/advisor review.
-6. The non-skipped live matrix passes on Linux x86 Docker, macOS Docker
-   Desktop/Colima, WSL, Colossus, and physical DGX Spark arm64. Legacy gateway
-   upgrade, restart, rollback, and teardown remain explicit phases.
+6. #7055 landed the controller-compatible legacy gateway evidence matrix. The
+   exact-head, non-skipped live matrix must still pass on Linux x86 Docker,
+   macOS Docker Desktop/Colima, WSL, Colossus, and physical DGX Spark arm64;
+   legacy gateway upgrade, restart, rollback, and teardown remain explicit
+   phases.
 7. The physical #6379 Spark run completes an authenticated real MCP tool call and
    reports any failure honestly. Inclusion of `40194f93` alone cannot close the
    issue.

@@ -280,6 +280,11 @@ pinned_sandbox_build_version() {
       32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f)
       printf '%s\n' "0.0.72"
       ;;
+    # OpenShell v0.0.82 standalone sandbox binaries.
+    145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09 | \
+      76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500)
+      printf '%s\n' "0.0.82"
+      ;;
     # OpenShell v0.0.85 standalone sandbox binaries.
     863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2 | \
       680115dbc2affde0e88261ab09f4044726d1cc9e01de55dc5077d1118f52968d)
