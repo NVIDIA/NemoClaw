@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -294,6 +295,55 @@ describe("LifecyclePhaseFixture gateway runtime restart helpers", () => {
       "nemoclaw status",
       "openshell status",
     ]);
+  });
+
+  it("stops only the exact gateway container when a sandbox has the gateway-name prefix", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, "12345\n")); // resolveHostRuntime pid probe
+    runner.enqueue(shellResult(0)); // forward stop
+    runner.enqueue(shellResult(0)); // gateway stop
+    runner.enqueue(shellResult(0)); // pid stop
+    runner.enqueue(shellResult(0)); // container stop
+
+    await fixture(runner, new FakeCleanup()).stopGatewayRuntime();
+
+    const containerStop = runner.calls.find(
+      (call) => call.options?.artifactName === "lifecycle-gateway-container-stop",
+    );
+    expect(containerStop?.command).toBe("sh");
+    expect(containerStop?.args.slice(0, 1)).toEqual(["-lc"]);
+
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-docker-"));
+    const stopLog = path.join(fakeBin, "stopped.txt");
+    const docker = path.join(fakeBin, "docker");
+    fs.writeFileSync(
+      docker,
+      `#!/bin/sh
+if [ "$1" = "ps" ]; then
+  shift
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--filter" ]; then filter="$2"; shift 2; else shift; fi
+  done
+  [ "$filter" = 'name=^/openshell-cluster-nemoclaw$' ] && printf '%s\\n' gateway-id
+elif [ "$1" = "stop" ]; then
+  printf '%s\\n' "$2" >>"$DOCKER_STOP_LOG"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      execFileSync("sh", containerStop?.args ?? [], {
+        env: {
+          ...process.env,
+          DOCKER_STOP_LOG: stopLog,
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+      });
+      expect(fs.readFileSync(stopLog, "utf8")).toBe("gateway-id\n");
+    } finally {
+      fs.rmSync(fakeBin, { force: true, recursive: true });
+    }
   });
 
   it("can recover a PID runtime through sandbox-specific status", async () => {
