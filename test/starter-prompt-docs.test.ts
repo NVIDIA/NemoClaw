@@ -694,10 +694,51 @@ describe("starter prompt docs CTA", () => {
     expect(stationSource).toContain("model-cache filesystem and Docker storage");
     expect(stationSource).toContain("scripts/prepare-dgx-station-host.sh --check");
     expect(stationSource).toContain("scripts/prepare-dgx-station-host.sh --verify");
-    expect(stationSource).toContain("The checks must not apply repairs");
+    const stationPermissionIndex = stationSource.indexOf(
+      "Ask permission to run the selected maintained release's",
+    );
+    const stationReadOnlyDisclosureIndex = stationSource.indexOf(
+      "Both `--check` and `--verify` are read-only readiness modes, and neither applies repairs.",
+    );
+    const stationImageDisclosureIndex = stationSource.indexOf(
+      "`--verify` requires the pinned acceptance image to already be present locally",
+    );
+    const stationContainerDisclosureIndex = stationSource.indexOf(
+      "`--verify` starts short-lived GPU test containers through both CDI",
+    );
+    expect(stationPermissionIndex).toBeGreaterThan(-1);
+    for (const disclosureIndex of [
+      stationReadOnlyDisclosureIndex,
+      stationImageDisclosureIndex,
+      stationContainerDisclosureIndex,
+    ]) {
+      expect(disclosureIndex).toBeGreaterThan(-1);
+      expect(disclosureIndex).toBeLessThan(stationPermissionIndex);
+    }
+    expect(stationSource).not.toMatch(/--verify[^.\n]*\b(?:may|can|will)\s+pull\b/i);
     expect(stationSource).toContain("If either readiness mode fails");
-    expect(stationSource).toContain("Do not set `NEMOCLAW_PROVIDER`");
-    expect(stationSource).toContain("official installer with `--station-deepseek`");
+    const stationFailureIndex = stationSource.indexOf("If either readiness mode fails");
+    const stationFallbackIndex = stationSource.indexOf(
+      "only supported next step is the official installer with `--station-deepseek`",
+      stationFailureIndex,
+    );
+    expect(stationFailureIndex).toBeGreaterThan(-1);
+    expect(stationFallbackIndex).toBeGreaterThan(stationFailureIndex);
+    const stationFailureInstructions = stationSource.slice(
+      stationFailureIndex,
+      stationFallbackIndex,
+    );
+    expect(stationFailureInstructions).toContain("- Do not set ");
+    for (const environmentName of [
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_VLLM_MODEL",
+      "NEMOCLAW_MODEL",
+      "NEMOCLAW_NON_INTERACTIVE",
+      "NEMOCLAW_YES",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+    ]) {
+      expect(stationFailureInstructions).toContain(`\`${environmentName}\``);
+    }
     expect(stationSource).toContain(
       "Let the official installer present its third-party-software notice and complete confirmation summary.",
     );

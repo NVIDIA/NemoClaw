@@ -17,8 +17,11 @@ Before asking for consent, explain all of these boundaries:
 - Both Station paths may install Node.js and the NemoClaw CLI, download a pinned vLLM container and DeepSeek V4 Flash model data, require enough space on the model-cache filesystem and Docker storage, and create a sandbox with suggested policy defaults.
 - DGX Station remains an evaluation path with deferred end-to-end validation on physical hardware, so startup may still fail after readiness checks.
 
+Both `--check` and `--verify` are read-only readiness modes, and neither applies repairs.
+`--verify` requires the pinned acceptance image to already be present locally and fails if the image is missing; it does not pull the image.
+`--verify` starts short-lived GPU test containers through both CDI (`nvidia.com/gpu=all`) and Docker `--gpus all`.
+
 Ask permission to run the selected maintained release's `scripts/prepare-dgx-station-host.sh --check` and `scripts/prepare-dgx-station-host.sh --verify` readiness modes.
-The checks must not apply repairs, and `--verify` may pull a pinned Ubuntu acceptance image and start short-lived GPU test containers.
 Treat the host as prepared only when both modes succeed and confirm the exact Station GB300 platform, generic Ubuntu 24.04 ARM64 image, pinned driver and package versions, packaged CDI lifecycle, `nvidia.com/gpu=all`, and real CDI and `--gpus all` container access.
 
 If either readiness mode fails, reports a mismatch, is unavailable, or has an inconclusive outcome:
