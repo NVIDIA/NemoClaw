@@ -52,6 +52,12 @@ describe("DGX Station documentation ownership", () => {
     expect(prerequisites).toContain("### DGX Station Express Preparation");
     expect(prerequisites).toMatch(/\| DGX OS \(Station\) \| Docker \| Deferred \|/);
     expect(prerequisites).toContain("prerequisites/dgx-station-preparation");
+    expect(prerequisites).toContain(
+      "[Additional Setup for DGX Station](prerequisites/dgx-station-preparation)",
+    );
+    expect(prerequisites).toContain(
+      "[Additional Setup for Windows Machines](prerequisites/windows-preparation)",
+    );
     expect(quickstart).toContain("prerequisites/dgx-station-preparation");
     expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
     expect(quickstart).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
