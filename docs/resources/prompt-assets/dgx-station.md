@@ -7,8 +7,8 @@
 
 Use these instructions only after hardware detection confirms DGX Station.
 
-Explain that Express uses the default local inference setup with Nemotron 3 Ultra in vLLM.
-Disclose that it downloads the pinned vLLM container and approximately 352 GB of model data.
+Explain that Express uses the default local inference setup with DeepSeek V4 Flash in vLLM.
+Disclose that it downloads the pinned vLLM container and model data.
 Verify that the model-cache filesystem and Docker storage have enough capacity before continuing.
 Explain that DGX Station remains an evaluation path with deferred end-to-end validation on physical hardware, so startup may still fail after readiness checks.
 Include the third-party-software notice, then ask: "Do you want the recommended Express Install?"
@@ -20,7 +20,7 @@ Choices:
 If Express is selected:
 
 - Set `NEMOCLAW_PROVIDER=install-vllm`.
-- Set `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b` and `NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b`.
+- Set `NEMOCLAW_VLLM_MODEL=deepseek-v4-flash` and `NEMOCLAW_MODEL=deepseek-ai/DeepSeek-V4-Flash`.
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
 - Set `NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when Express is accepted.

@@ -653,10 +653,11 @@ describe("starter prompt docs CTA", () => {
 
     expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
     expect(sparkSource).toContain("Leave `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_MODEL` unset");
-    expect(stationSource).toContain("NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b");
-    expect(stationSource).toContain("NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
-    expect(stationSource).toContain("default local inference setup with Nemotron 3 Ultra in vLLM");
-    expect(stationSource).toContain("approximately 352 GB of model data");
+    expect(stationSource).toContain("NEMOCLAW_VLLM_MODEL=deepseek-v4-flash");
+    expect(stationSource).toContain("NEMOCLAW_MODEL=deepseek-ai/DeepSeek-V4-Flash");
+    expect(stationSource).toContain("default local inference setup with DeepSeek V4 Flash in vLLM");
+    expect(stationSource).toContain("downloads the pinned vLLM container and model data");
+    expect(stationSource).not.toContain("nemotron-3-ultra");
     expect(stationSource).toContain("model-cache filesystem and Docker storage");
     expect(stationSource).toContain("have enough capacity before continuing");
     expect(stationSource).toContain("evaluation path with deferred end-to-end validation");
