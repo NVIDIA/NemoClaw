@@ -34,7 +34,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   currentGatewayUpgradeInstallerArgs,
-  expectedLegacyRegistryVersion,
+  expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
@@ -555,10 +555,13 @@ git -C "$HOME/.nemoclaw/source" rev-parse --verify HEAD`,
     sandboxes?: Record<string, { nemoclawVersion?: unknown; fromDockerfile?: unknown }>;
   };
   expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]).toBeDefined();
+  const expectedRegistryMetadata = expectedLegacyRegistryMetadata(OLD_NEMOCLAW_REF);
   expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.nemoclawVersion).toBe(
-    expectedLegacyRegistryVersion(OLD_NEMOCLAW_REF),
+    expectedRegistryMetadata.nemoclawVersion,
   );
-  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.fromDockerfile).toBeUndefined();
+  expect(oldRegistry.sandboxes?.[SURVIVOR_SANDBOX]?.fromDockerfile).toBe(
+    expectedRegistryMetadata.fromDockerfile,
+  );
 }
 
 async function stageOldOpenShellInUserLocalBin(host: HostCliClient): Promise<string> {

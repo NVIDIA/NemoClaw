@@ -16,7 +16,7 @@ import {
 } from "../../../tools/e2e/workflow-boundary.mts";
 import {
   currentGatewayUpgradeInstallerArgs,
-  expectedLegacyRegistryVersion,
+  expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
   upgradeGatewayCleanupScript,
   validateLegacyGatewayUpgradeFixture,
@@ -73,10 +73,14 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
   });
 
   it("pins the registry metadata written by each historical release fixture", () => {
-    expect(expectedLegacyRegistryVersion("v0.0.36")).toBeUndefined();
-    expect(expectedLegacyRegistryVersion("v0.0.55")).toBeUndefined();
-    expect(expectedLegacyRegistryVersion("v0.0.74")).toBe("0.0.74");
-    expect(() => expectedLegacyRegistryVersion("v0.0.75")).toThrow(
+    const absentMetadata = { nemoclawVersion: undefined, fromDockerfile: undefined };
+    expect(expectedLegacyRegistryMetadata("v0.0.36")).toEqual(absentMetadata);
+    expect(expectedLegacyRegistryMetadata("v0.0.55")).toEqual(absentMetadata);
+    expect(expectedLegacyRegistryMetadata("v0.0.74")).toEqual({
+      nemoclawVersion: "0.0.74",
+      fromDockerfile: null,
+    });
+    expect(() => expectedLegacyRegistryMetadata("v0.0.75")).toThrow(
       /Unsupported gateway-upgrade registry fixture/,
     );
   });
