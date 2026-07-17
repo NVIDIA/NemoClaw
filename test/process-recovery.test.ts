@@ -282,23 +282,25 @@ beta  127.0.0.1  18789  12345  running`;
     );
   });
 
-  it("fails closed without starting when an unowned stopped-forward listener never releases", () => {
+  it("fails closed after start reconciliation when a listener remains unowned", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
 
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "150");
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({ status: 0, output: "" });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     const runOpenshell = vi
       .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0 } as never);
+      .mockImplementation((rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        return { status: Number(args[0] === "forward" && args[1] === "start") } as never;
+      });
 
     expect(ensureSandboxPortForwardForPort("beta", 8642)).toBe(false);
-    expect(
-      runOpenshell.mock.calls.some(
-        ([rawArgs]) => Array.isArray(rawArgs) && rawArgs[0] === "forward" && rawArgs[1] === "start",
-      ),
-    ).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "start", "--background", "8642", "beta"],
+      { ignoreError: true, stdio: "ignore" },
+    );
   });
 
   it("checkAndRecoverSandboxProcesses re-establishes an active Teams messaging host forward from a compact plan when the dashboard forward is healthy", () => {
