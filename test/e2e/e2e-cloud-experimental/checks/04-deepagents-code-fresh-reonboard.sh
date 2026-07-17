@@ -62,10 +62,6 @@ assert_identity() {
   [ "$endpoint" = "https://inference.local/v1" ] || fail "$phase identity endpoint is '${endpoint:-missing}'"
 }
 
-encode_source() {
-  base64 | tr -d '\n'
-}
-
 seed_config_source() {
   cat <<'PY'
 import os
@@ -174,9 +170,11 @@ fi
 [ "$model_a" != "$model_b" ] || fail "model A and model B must differ"
 pass "initial live identity reports model A"
 
-seed_source="$(seed_config_source | encode_source)"
-seed_command="printf '%s' ${seed_source@Q} | base64 -d | /opt/venv/bin/python3 -I - ${model_a@Q} ${CREDENTIAL_CANARY@Q}"
-seed_output="$(sandbox_exec "$seed_command")" || fail "could not seed stale DCode config"
+seed_source="$(seed_config_source)"
+seed_output="$(
+  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    /opt/venv/bin/python3 -I -c "$seed_source" "$model_a" "$CREDENTIAL_CANARY" 2>&1
+)" || fail "could not seed stale DCode config"
 printf '%s\n' "$seed_output" | grep -Fq "NEMOCLAW_DCODE_STALE_CONFIG_SEEDED" || fail "stale config seed marker is missing"
 pass "seeded safe preferences and stale managed data"
 
@@ -279,9 +277,11 @@ if (!entry || entry.agent !== "langchain-deepagents-code" ||
 ' || fail "host registry does not report the verified model B selection"
 pass "status and registry report model B"
 
-verify_source="$(verify_config_source | encode_source)"
-verify_command="printf '%s' ${verify_source@Q} | base64 -d | /opt/venv/bin/python3 -I - ${model_a@Q} ${model_b@Q}"
-verify_output="$(sandbox_exec "$verify_command")" || fail "live DCode config does not preserve the managed restore boundary"
+verify_source="$(verify_config_source)"
+verify_output="$(
+  openshell sandbox exec --name "$SANDBOX_NAME" -- \
+    /opt/venv/bin/python3 -I -c "$verify_source" "$model_a" "$model_b" 2>&1
+)" || fail "live DCode config does not preserve the managed restore boundary"
 printf '%s\n' "$verify_output" | grep -Fq "NEMOCLAW_DCODE_FRESH_CONFIG_VERIFIED" || fail "fresh config verification marker is missing"
 pass "config keeps model B and only the allowlisted preferences"
 

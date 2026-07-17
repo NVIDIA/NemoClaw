@@ -37,6 +37,34 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("binds typed-target evidence identity and upload to the live matrix entry", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env?: Record<string, string>;
+          steps?: Array<{
+            env?: Record<string, string>;
+            name?: string;
+            with?: Record<string, string>;
+          }>;
+        }
+      >;
+    };
+    const live = workflow.jobs.live!;
+    const run = live.steps!.find((step) => step.name === "Run live E2E tests")!;
+    run.env!.E2E_TARGET_ID = "unbound-target";
+    const upload = live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.with!.path = upload.with!.path.replace("e2e-artifacts/live/risk-signal.json\n", "");
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "live E2E step must bind risk-signal identity to matrix.id",
+        "artifact upload path must include e2e-artifacts/live/risk-signal.json",
+      ]),
+    );
+  });
+
   it("rejects Bedrock matrix shard identity drift (#6938)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-bedrock-shard-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -74,6 +102,62 @@ describe("e2e workflow boundary", () => {
 
     expect(validateE2eWorkflow(workflow)).toContain(
       "step 'Generate E2E target matrix' run script must include Invalid inference_mode: ${INFERENCE_MODE}",
+    );
+  });
+
+  it("keeps controller target selection bound to the generated matrix (#7031)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        { steps?: Array<{ env?: Record<string, string>; name?: string; run?: string }> }
+      >;
+    };
+    const generate = workflow.jobs["generate-matrix"]?.steps?.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+    delete generate.env!.CHECKOUT_SHA;
+    generate.run = generate.run!.replace(
+      "E2E planner matrix does not match controller-selected targets",
+      "unchecked planner matrix",
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "matrix generation step must bind controller checkout through CHECKOUT_SHA env",
+        "step 'Generate E2E target matrix' run script must include E2E planner matrix does not match controller-selected targets",
+      ]),
+    );
+  });
+
+  it("keeps controller runner selection in a trusted pre-checkout matrix (#7031)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          outputs: Record<string, string>;
+          steps: Array<{ id?: string; name?: string; run?: string; uses?: string }>;
+        }
+      >;
+    };
+    const generateMatrix = workflow.jobs["generate-matrix"]!;
+    generateMatrix.outputs.matrix = "${{ steps.matrix.outputs.matrix }}";
+    const [trusted] = generateMatrix.steps.splice(
+      generateMatrix.steps.findIndex((step) => step.id === "controller_matrix"),
+      1,
+    );
+    trusted!.run = trusted!.run!.replace('"runner":"ubuntu-latest"', '"runner":"self-hosted"');
+    generateMatrix.steps.splice(
+      generateMatrix.steps.findIndex((step) => step.uses?.startsWith("actions/checkout@")) + 1,
+      0,
+      trusted!,
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "generate-matrix job must expose trusted controller matrix output",
+        "trusted controller matrix must pin typed target runner to ubuntu-latest",
+        "trusted controller matrix step must run before PR checkout",
+      ]),
     );
   });
 
@@ -258,9 +342,21 @@ describe("e2e workflow boundary", () => {
           targets: "network-policy",
         }),
       ).toMatchObject({
-        valid: false,
+        valid: true,
         liveTargetsRun: false,
-        selectedFreeStandingJobs: [],
+        selectedFreeStandingJobs: ["network-policy"],
+        registryTargets: [],
+      });
+      expect(
+        evaluateE2eWorkflowDispatchSelectors({
+          jobs: "network-policy",
+          targets: "ubuntu-repo-cloud-langchain-deepagents-code",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveTargetsRun: true,
+        selectedFreeStandingJobs: ["network-policy"],
+        registryTargets: ["ubuntu-repo-cloud-langchain-deepagents-code"],
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({
@@ -290,9 +386,10 @@ describe("e2e workflow boundary", () => {
     timeout: 60_000,
   }, () => {
     const inventory = readFreeStandingJobsInventory();
-    const workflowJobs = new Set(
-      Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}),
-    );
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { env?: Record<string, string> }>;
+    };
+    const workflowJobs = new Set(Object.keys(workflow.jobs));
 
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(inventory.allowedJobs).not.toHaveLength(0);
@@ -305,6 +402,8 @@ describe("e2e workflow boundary", () => {
     expect(inventory.liveTestToJobs.get("test/e2e/live/full-e2e.test.ts")).toEqual(
       expect.arrayContaining(["full-e2e", "security-posture"]),
     );
+    expect(workflow.jobs["gpu-e2e"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
+    expect(workflow.jobs["gpu-double-onboard"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
     expect(
       focusedE2eJobsForChangedFiles(
         [
@@ -684,11 +783,11 @@ jobs:
           "workflow missing snapshot-commands job",
           "report-to-pr job must wait for live",
           "report-to-pr step must pass jobs through JOBS env",
-          "step 'Post E2E target results to PR' run script must check selector validation before echoing selectors",
-          "step 'Post E2E target results to PR' run script must omit rejected test ID selectors",
-          "step 'Post E2E target results to PR' run script must filter reported entries for selective dispatches",
-          "step 'Post E2E target results to PR' run script must report missing requested jobs",
-          "step 'Post E2E target results to PR' run script must count cancelled jobs",
+          "step 'Post E2E target results to PR' run script must load the trusted report helper from the checked-out workspace",
+          "step 'Post E2E target results to PR' run script must assign resolveReportPr's result before use",
+          "step 'Post E2E target results to PR' run script must destructure loadReportJobs's result before use",
+          "step 'Post E2E target results to PR' run script must assign renderE2eReport's result before use",
+          "report-to-pr must check out the trusted workflow revision before reporting",
         ]),
       );
     } finally {

@@ -106,8 +106,13 @@ describe("E2E operations workflow boundary", () => {
     const workflow = readE2eOperationsWorkflow();
     const job = workflow.jobs["cloud-onboard"];
     job.env!.E2E_TARGET_ID = "different-job";
-    const run = job.steps!.find((step) => String(step.run ?? "").includes("npx vitest"))!;
-    run.run = run.run!.replace("test/e2e/risk-signal-reporter.ts", "default");
+    const run = job.steps!.find((step) =>
+      String(step.run ?? "").includes("tools/e2e/live-vitest-invocation.mts run --test-path"),
+    )!;
+    run.run = run.run!.replace(
+      "tools/e2e/live-vitest-invocation.mts run --test-path",
+      "tools/e2e/live-vitest-invocation.mts runx --test-path",
+    );
     const upload = job.steps!.find((step) =>
       step.uses?.startsWith("NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@"),
     )!;
@@ -152,9 +157,9 @@ describe("E2E operations workflow boundary", () => {
         "cloud-onboard must not hold issues: write",
         "cloud-onboard must not hold pull-requests: write",
         "report-to-pr must not hold issues: write",
-        "report-to-pr must hold only actions: read and pull-requests: write",
+        "report-to-pr must hold only actions: read, contents: read, and pull-requests: write",
         "report-to-pr must run only for manual workflow dispatches",
-        "report-to-pr must contain only its PR-comment step",
+        "report-to-pr must first check out the trusted workflow revision, then post its PR comment",
         "report-to-pr must not use issue mutations or generic GitHub write surfaces",
       ]),
     );
@@ -179,6 +184,29 @@ describe("E2E operations workflow boundary", () => {
       expect.arrayContaining([
         "report-to-pr must limit issue mutation to one validated PR-scoped createComment call",
         "report-to-pr must not use issue mutations or generic GitHub write surfaces",
+      ]),
+    );
+  });
+
+  it("requires prNumber and report to originate from the trusted resolveReportPr and renderE2eReport calls", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    report.with!.script = String(report.with!.script)
+      .replace(
+        "const prNumber = await resolveReportPr({ github, context, core, env: process.env });",
+        "const prNumber = 5093;",
+      )
+      .replace(
+        /const report = renderE2eReport\([^;]*\);/,
+        "const report = { body: 'fake', warnings: [] };",
+      );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "report-to-pr must derive prNumber from the trusted resolveReportPr call",
+        "report-to-pr must derive report from the trusted renderE2eReport call",
       ]),
     );
   });
@@ -331,9 +359,9 @@ describe("E2E operations workflow boundary", () => {
     };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
-      ["/workspace/scripts/scorecard/analyze-trace-timing.ts", traceTiming],
-      ["/workspace/scripts/scorecard/summarize-jobs.ts", scorecardJobs],
-      ["/workspace/scripts/scorecard/build-slack-blocks.ts", slackBlocks],
+      ["/workspace/scripts/scorecard/analyze-trace-timing.mts", traceTiming],
+      ["/workspace/scripts/scorecard/summarize-jobs.mts", scorecardJobs],
+      ["/workspace/scripts/scorecard/build-slack-blocks.mts", slackBlocks],
     ]);
     const runtimeRequire = (specifier: string) => {
       const runtimeModule = runtimeModules.get(specifier);

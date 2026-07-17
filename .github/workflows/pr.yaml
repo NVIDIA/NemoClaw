@@ -19,6 +19,7 @@ concurrency:
 jobs:
   # Detect which files changed so we can skip expensive jobs for docs-only PRs.
   changes:
+    if: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
@@ -496,6 +497,7 @@ jobs:
     steps:
       - name: Verify required PR checks
         env:
+          CI_REQUIRED: ${{ github.event.action != 'edited' || github.event.changes.base != null }}
           CODE_CHANGED: ${{ needs.changes.outputs.code }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           DOCS_ONLY_RESULT: ${{ needs['docs-only-checks'].result }}
@@ -512,6 +514,11 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+
+          if [ "$CI_REQUIRED" != "true" ]; then
+            echo "Metadata-only PR edit; the existing head and base CI results remain valid."
+            exit 0
+          fi
 
           job_listing_state="uninitialized"
           jobs_json=""

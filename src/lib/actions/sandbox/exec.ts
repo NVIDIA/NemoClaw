@@ -100,75 +100,23 @@ export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): str
   return ["sandbox", "exec", "--name", sandboxName, "--", "test", "-d", workdir];
 }
 
-// OpenShell's `sandbox exec` rejects any argv element that contains a newline
-// or carriage return ("command argument N contains newline or carriage return
-// characters"). Multi-line commands such as heredocs therefore fail with a
-// low-level InvalidArgument error that gives the reporter no NemoClaw-specific
-// recovery path (#5980). We detect the offending argument before dispatch and
-// fail with actionable guidance instead.
-//
-// Source-of-truth for this guard:
-//   - Invalid state: OpenShell's exec endpoint returns InvalidArgument for any
-//     argv element containing \r or \n.
-//   - Source boundary: the limitation lives in the external OpenShell
-//     `sandbox exec` argv contract, not in NemoClaw. We cannot fix it at the
-//     source from this repo, so the guard is a deliberately localized
-//     translation of that constraint into actionable NemoClaw guidance.
-//   - Regression coverage: `findMultilineExecArg`, `multilineExecMessage`, and
-//     the `execSandbox multi-line guard (#5980)` suite in exec.test.ts.
-//   - Removal condition: if a future OpenShell release accepts multi-line argv
-//     elements (tracked upstream in NVIDIA/OpenShell#2110), this guard and the
-//     matching docs notice in docs/reference/commands.mdx becomes unnecessary
-//     and should be removed with its generated variants.
-//
-// The pattern is intentionally limited to \r and \n: OpenShell rejects only
-// "newline or carriage return characters", so Unicode line separators (U+2028
-// LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR) are valid argv that OpenShell
-// accepts. Broadening the pattern to those code points would reject commands
-// OpenShell would otherwise run, so the guard deliberately mirrors OpenShell's
-// exact constraint rather than a general "line break" notion.
-const MULTILINE_ARG_PATTERN = /[\r\n]/;
-
-/** @internal Exported for unit testing only; not part of the public API. */
-export function findMultilineExecArg(command: readonly string[]): number {
-  for (let index = 0; index < command.length; index += 1) {
-    if (MULTILINE_ARG_PATTERN.test(command[index])) return index;
+// OpenShell accepts LF/CR in command argv while retaining field-specific
+// rejection for NUL-bearing command args and NUL/LF/CR-bearing workdirs. Keep
+// the downstream check narrow so inline scripts remain byte-exact. NemoClaw's
+// public exec surface does not populate OpenShell's request-environment field,
+// whose values remain subject to OpenShell's own NUL/LF/CR validation.
+function execInputError(command: readonly string[], workdir: string | undefined): string | null {
+  const nulIndex = command.findIndex((arg) => arg.includes("\0"));
+  if (nulIndex !== -1) {
+    return `error: command argument ${nulIndex + 1} contains a NUL byte, which OpenShell exec does not accept`;
   }
-  return -1;
-}
-
-// Describe the offending argument WITHOUT echoing its contents: a multi-line
-// value can carry pasted secrets, env files, or private-key material, and
-// printing even a truncated preview risks persisting it in terminal or CI logs.
-// The 1-based position plus a neutral size description is enough for the user
-// to find the argument they typed.
-function describeMultilineArg(arg: string): string {
-  // Split on all three newline conventions (CRLF, bare CR, bare LF) so the
-  // count matches what a user sees regardless of platform. The alternation is
-  // ordered CRLF-first so a Windows "\r\n" counts as one break, not two. A
-  // single trailing break still yields a count of 2 (the empty final segment),
-  // which is correct: a lone "\r" argument spans two lines.
-  const lineCount = arg.split(/\r\n|\r|\n/).length;
-  const charLabel = arg.length === 1 ? "character" : "characters";
-  const lineLabel = lineCount === 1 ? "line" : "lines";
-  return `${arg.length} ${charLabel} spanning ${lineCount} ${lineLabel}`;
-}
-
-export function multilineExecMessage(
-  cliName: string,
-  sandboxName: string,
-  command: readonly string[],
-  index: number,
-): string {
-  // Report a 1-based position within the user command (the args after `--`).
-  const position = index + 1;
-  return [
-    `error: command argument ${position} (${describeMultilineArg(command[index])}) contains a newline or carriage return, which OpenShell exec does not accept.`,
-    "Multi-line commands (for example heredocs) cannot be passed through exec argv. Instead:",
-    `  - join statements with semicolons: ${cliName} ${sandboxName} exec -- bash -lc "cmd1; cmd2"`,
-    `  - pipe the script into the sandbox shell over stdin: printf 'cmd1\\ncmd2\\n' | ${cliName} ${sandboxName} exec --stdin -- bash`,
-    `  - or write the script to a file in the sandbox and run it: ${cliName} ${sandboxName} exec -- bash <script-path>`,
-  ].join("\n");
+  if (workdir?.includes("\0")) {
+    return "error: --workdir must not contain NUL bytes";
+  }
+  if (workdir && /[\r\n]/.test(workdir)) {
+    return "error: --workdir must not contain newlines or carriage returns";
+  }
+  return null;
 }
 
 export function workdirMissingMessage(workdir: string): string {
@@ -407,9 +355,9 @@ export async function execSandbox(
     );
     process.exit(2);
   }
-  const multilineIndex = findMultilineExecArg(command);
-  if (multilineIndex !== -1) {
-    console.error(multilineExecMessage(CLI_NAME, sandboxName, command, multilineIndex));
+  const inputError = execInputError(command, options.workdir);
+  if (inputError) {
+    console.error(inputError);
     process.exit(2);
   }
   const binary = (deps.resolveBinary ?? defaultResolveBinary)();

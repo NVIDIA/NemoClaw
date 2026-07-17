@@ -112,10 +112,9 @@ describe("SandboxExecCommand oclif parse path", () => {
     });
   });
 
-  it("forwards a multi-line heredoc command verbatim to the action guard (#5980)", async () => {
-    // The command layer forwards argv unchanged; execSandbox() applies the
-    // newline guard (exit 2 before dispatch), which is asserted directly in the
-    // action test. Here we pin that the heredoc reaches the action intact.
+  it("forwards a multi-line heredoc command verbatim to the action", async () => {
+    // The action dispatches this exact argument through OpenShell. Its
+    // byte-preserving boundary is asserted directly in the action test.
     const heredoc = "cat <<EOF\nline1\nline2\nEOF";
     await SandboxExecCommand.run(["alpha", "--", "bash", "-lc", heredoc], rootDir);
     expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["bash", "-lc", heredoc], {
@@ -126,10 +125,7 @@ describe("SandboxExecCommand oclif parse path", () => {
     });
   });
 
-  it("forwards the semicolon workaround to dispatch (#5980)", async () => {
-    // Mirrors the action-layer "forwards the semicolon workaround to dispatch"
-    // test: the single-line semicolon-joined command carries no newline, so the
-    // command layer hands it to execSandbox() unchanged, which then dispatches.
+  it("forwards a semicolon-joined command unchanged", async () => {
     await SandboxExecCommand.run(["alpha", "--", "bash", "-lc", "echo line1; echo line2"], rootDir);
     expect(execSandboxMock).toHaveBeenCalledWith(
       "alpha",
@@ -138,7 +134,7 @@ describe("SandboxExecCommand oclif parse path", () => {
     );
   });
 
-  it("preserves --workdir and forwards a single-line command unchanged (#5980)", async () => {
+  it("preserves --workdir and forwards a single-line command unchanged", async () => {
     await SandboxExecCommand.run(
       ["alpha", "--workdir", "/sandbox", "--", "bash", "-lc", "echo line1; echo line2"],
       rootDir,

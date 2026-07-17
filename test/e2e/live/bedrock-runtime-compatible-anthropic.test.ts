@@ -122,8 +122,7 @@ function isMissingSandboxCleanupOutput(text: string): boolean {
 }
 
 function sandboxShellArgs(script: string): string[] {
-  const encoded = Buffer.from(script, "utf8").toString("base64");
-  return ["sh", "-lc", `printf %s ${shellQuote(encoded)} | base64 -d | sh`];
+  return ["sh", "-lc", script];
 }
 
 function assertAgent(value: string): asserts value is AgentName {

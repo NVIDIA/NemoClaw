@@ -15,6 +15,7 @@ runs:
         image="ghcr.io/nvidia/nemoclaw/sandbox-base"
         min_glibc="2.39"
         base_inputs=(Dockerfile.base nemoclaw-blueprint/blueprint.yaml)
+        source "${GITHUB_ACTION_PATH}/../base-image-resolver.sh"
 
         normalize_version_tag() {
           local raw="${1:-}" version
@@ -26,28 +27,17 @@ runs:
           printf 'v%s\n' "$version"
         }
 
-        glibc_version() {
-          docker run --rm --entrypoint /usr/bin/ldd "$1" --version 2>/dev/null \
-            | sed -nE 's/.*GLIBC ([0-9]+\.[0-9]+).*/\1/p; s/.* ([0-9]+\.[0-9]+)$/\1/p' \
-            | head -n 1
-        }
-
-        glibc_ok() {
-          local have="$1"
-          [[ -n "$have" ]] && [[ "$(printf '%s\n%s\n' "$min_glibc" "$have" | sort -V | head -n 1)" == "$min_glibc" ]]
-        }
-
         try_image() {
           local ref="$1" version
-          if ! docker pull "$ref" >/dev/null 2>&1; then
+          if ! resolver_pull "$ref"; then
             return 1
           fi
-          version="$(glibc_version "$ref" || true)"
-          if ! glibc_ok "$version"; then
+          version="$(resolver_glibc_version "$ref" || true)"
+          if ! resolver_glibc_ok "$version" "$min_glibc"; then
             echo "::warning::Sandbox base image ${ref} has glibc ${version:-unknown}; need >= ${min_glibc}"
             return 1
           fi
-          echo "BASE_IMAGE=${ref}" >> "$GITHUB_ENV"
+          resolver_write_env BASE_IMAGE "$ref" || return 1
           return 0
         }
 
@@ -69,13 +59,13 @@ runs:
         use_local_base() {
           local version
           echo "::notice::Sandbox base image inputs changed in this checkout; building Dockerfile.base locally"
-          docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
-          version="$(glibc_version nemoclaw-sandbox-base-local || true)"
-          if ! glibc_ok "$version"; then
+          resolver_build_local Dockerfile.base nemoclaw-sandbox-base-local
+          version="$(resolver_glibc_version nemoclaw-sandbox-base-local || true)"
+          if ! resolver_glibc_ok "$version" "$min_glibc"; then
             echo "::error::Local sandbox base image has glibc ${version:-unknown}; need >= ${min_glibc}"
             exit 1
           fi
-          echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
+          resolver_write_env BASE_IMAGE nemoclaw-sandbox-base-local
         }
 
         candidates=()
@@ -93,11 +83,9 @@ runs:
           candidates+=("${image}:${GITHUB_SHA:0:8}" "${image}:${GITHUB_SHA:0:7}")
         fi
 
-        for ref in "${candidates[@]}"; do
-          if try_image "$ref"; then
-            exit 0
-          fi
-        done
+        if resolver_try_candidates try_image "${candidates[@]}"; then
+          exit 0
+        fi
 
         if base_inputs_changed; then
           use_local_base
