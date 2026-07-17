@@ -398,6 +398,16 @@
     },
     {
       "file": "test/pr-workflow-contract.test.ts",
+      "test": "records the Dependabot DCO bypass as a successful required job",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "reruns installer hash verification after a pull request base retarget",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
       "test": "reuses the same shared CI actions in PR and main workflows",
       "category": "security"
     },
