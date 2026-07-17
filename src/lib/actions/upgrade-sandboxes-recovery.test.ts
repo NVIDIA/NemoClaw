@@ -190,16 +190,36 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     }
   });
 
-  it("warns that non-.openclaw sandbox data is not preserved before recreating (#7073)", async () => {
-    const harness = createRecoveryHarness(["alpha"]);
+  it.each([
+    { mode: "automatic", options: { auto: true }, expectedRebuilds: 2 },
+    { mode: "check-only", options: { check: true }, expectedRebuilds: 0 },
+  ] as const)("warns before every $mode prepared recovery path (#7073)", async ({
+    options,
+    expectedRebuilds,
+  }) => {
+    const sequence: string[] = [];
+    const harness = createRecoveryHarness(["alpha", "beta"]);
+    vi.mocked(console.log).mockImplementation((...args) => {
+      if (String(args[0]).includes("Recovery restores /sandbox/.openclaw state only")) {
+        sequence.push("warning");
+      }
+    });
+    harness.rebuildSpy.mockImplementation(async (name: string) => {
+      sequence.push(`rebuild:${name}`);
+    });
 
-    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+    await expect(harness.upgradeSandboxes(options)).resolves.toBeUndefined();
 
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining("Recovery restores /sandbox/.openclaw state only"),
     );
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining("NOT preserved by the recreate"),
+    );
+    expect(harness.rebuildSpy).toHaveBeenCalledTimes(expectedRebuilds);
+    expect(sequence[0]).toBe("warning");
+    expect(sequence.slice(1)).toEqual(
+      expectedRebuilds === 0 ? [] : ["rebuild:alpha", "rebuild:beta"],
     );
   });
 
