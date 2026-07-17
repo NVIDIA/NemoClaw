@@ -9,6 +9,6 @@ appVersion: "2026.05.27"
 keywords:
   - nemoclaw
   - inference-hub
-  - tpu
+  - cpu
 maintainers:
   - name: maggiezha
