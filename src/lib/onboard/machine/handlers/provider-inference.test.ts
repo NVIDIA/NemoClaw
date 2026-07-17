@@ -500,6 +500,126 @@ describe("handleProviderInferenceState", () => {
     expect(result).toMatchObject({ provider: "ollama-local", model: "llama3.1" });
   });
 
+  it("reuses a persisted vLLM served alias when resume repairs inference (#7023)", async () => {
+    const persistedServedAlias = "my-ultra-served-alias";
+    const session = createSession({
+      provider: "vllm-local",
+      model: persistedServedAlias,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => false) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      persistedServedAlias,
+      "vllm-local",
+      "http://host.openshell.internal:8000/v1",
+      null,
+      null,
+      [],
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+    expect(calls.complete).toHaveBeenCalledWith(
+      "inference",
+      expect.objectContaining({ provider: "vllm-local", model: persistedServedAlias }),
+    );
+    expect(result).toMatchObject({ provider: "vllm-local", model: persistedServedAlias });
+  });
+
+  it("keeps a persisted vLLM served alias across a failed repair and resume retry (#7023)", async () => {
+    const persistedServedAlias = "my-ultra-served-alias";
+    const persistedEndpointUrl = "http://host.openshell.internal:8000/v1";
+    const session = createSession({
+      provider: "vllm-local",
+      model: persistedServedAlias,
+      endpointUrl: persistedEndpointUrl,
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    });
+    session.steps.provider_selection.status = "complete";
+    const setupInference = vi
+      .fn<ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]["setupInference"]>()
+      .mockRejectedValueOnce(new Error("alias repair failed"))
+      .mockResolvedValueOnce({ ok: true });
+    const { deps, calls } = createDeps({
+      setupInference,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+    calls.complete.mockResolvedValue(session);
+    const resumeOptions = {
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    };
+
+    await expect(handleProviderInferenceState(resumeOptions)).rejects.toThrow(
+      "alias repair failed",
+    );
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalledWith("inference", expect.anything());
+
+    const result = await handleProviderInferenceState(resumeOptions);
+
+    expect(setupInference).toHaveBeenNthCalledWith(
+      1,
+      "my-assistant",
+      persistedServedAlias,
+      "vllm-local",
+      persistedEndpointUrl,
+      null,
+      null,
+      [],
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+    expect(setupInference).toHaveBeenNthCalledWith(
+      2,
+      "my-assistant",
+      persistedServedAlias,
+      "vllm-local",
+      persistedEndpointUrl,
+      null,
+      null,
+      [],
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.complete).toHaveBeenCalledOnce();
+    expect(calls.complete).toHaveBeenCalledWith(
+      "inference",
+      expect.objectContaining({ provider: "vllm-local", model: persistedServedAlias }),
+    );
+    expect(result).toMatchObject({
+      provider: "vllm-local",
+      model: persistedServedAlias,
+      endpointUrl: persistedEndpointUrl,
+      session: {
+        provider: "vllm-local",
+        model: persistedServedAlias,
+        endpointUrl: persistedEndpointUrl,
+      },
+    });
+  });
+
   it("reserves the prompted sandbox route when resume skips already-ready inference (#6562)", async () => {
     const session = createSession({
       provider: "nvidia-prod",
