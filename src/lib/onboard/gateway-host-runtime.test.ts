@@ -90,14 +90,26 @@ describe("gateway host runtime ownership", () => {
     );
   });
 
-  it("re-resolves the owner per call, so an installed packaged service is seen (#6576)", () => {
+  it("binds one authority for the run and returns it on later calls (#6576)", () => {
+    declareExternalSupervision();
     const runtime = createGatewayHostRuntime(createDeps());
 
+    const first = runtime.getGatewayOwner();
+    const second = runtime.getGatewayOwner();
+
+    expect(first).toMatchObject({ mode: "externally-supervised" });
+    expect(second).toEqual(first);
+  });
+
+  it("fails closed when the authority would change mid-run instead of switching (#6576)", () => {
+    const runtime = createGatewayHostRuntime(createDeps());
     expect(runtime.getGatewayOwner()).toMatchObject({ mode: "nemoclaw-managed" });
 
+    // The declaration appears after the owner was already bound: silently
+    // adopting it would open a check/use gap between preflight and the FSM.
     declareExternalSupervision();
 
-    expect(runtime.getGatewayOwner()).toMatchObject({ mode: "externally-supervised" });
+    expect(() => runtime.getGatewayOwner()).toThrow(/authority changed during this run/);
   });
 });
 

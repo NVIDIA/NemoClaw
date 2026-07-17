@@ -47,7 +47,14 @@ export const SUPPORTED_GATEWAY_CAPABILITIES = [
 export type GatewayCapability = (typeof SUPPORTED_GATEWAY_CAPABILITIES)[number];
 
 /** How the external supervisor runs the gateway, and how to recognize it. */
-export type GatewaySupervisorKind = "systemd-system" | "systemd-user" | "external";
+/**
+ * Supervisor kinds NemoClaw can authoritatively bind a listening PID to. Only
+ * systemd is supported in v1: an opaque "external" supervisor offers no way to
+ * prove the listener belongs to it, so declaring it could never attach. The
+ * contract is versioned, so a proven external-identity mechanism can be added
+ * later without a breaking change (#6576).
+ */
+export type GatewaySupervisorKind = "systemd-system" | "systemd-user";
 
 export interface GatewaySupervisorDeclaration {
   kind: GatewaySupervisorKind;
@@ -82,11 +89,7 @@ const DECLARATION_KEYS = new Set([
 
 const SUPERVISOR_KEYS = new Set(["kind", "serviceName", "execPath"]);
 
-const SUPERVISOR_KINDS = new Set<GatewaySupervisorKind>([
-  "systemd-system",
-  "systemd-user",
-  "external",
-]);
+const SUPERVISOR_KINDS = new Set<GatewaySupervisorKind>(["systemd-system", "systemd-user"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

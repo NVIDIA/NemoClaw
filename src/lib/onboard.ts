@@ -607,6 +607,7 @@ import {
   printMessagingProviderMissing,
   printSwapCreationFailed,
 } from "./onboard/preflight-messages";
+import { cleanupOrphanedGatewayContainer } from "./onboard/preflight-orphan-gateway-cleanup";
 import { shouldSkipPreRecreateBackup } from "./onboard/sandbox-backup-on-recreate";
 import {
   getResumeSandboxGpuOverrides,
@@ -1510,6 +1511,9 @@ async function preflight(
     exitProcess: (code) => process.exit(code),
   });
 
+  // Resolve the one lifecycle authority before any gateway-mutating preflight
+  // branch, so external supervision is honored ahead of every effect (#6576).
+  const gatewayExternallySupervised = isGatewayExternallySupervised();
   // Classify gateway state before port checks; the legacy path destroys
   // stale/unnamed gateways here while the Docker-driver path defers (#2020).
   const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
@@ -1523,7 +1527,7 @@ async function preflight(
   gatewayReuseState = await reconcilePreflightGatewayReuseState({
     gatewayReuseState,
     supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
-    externallySupervised: isGatewayExternallySupervised(),
+    externallySupervised: gatewayExternallySupervised,
     gatewayName: GATEWAY_NAME,
     verifyGatewayContainerRunning,
     recoverGatewayRuntime,
@@ -1543,7 +1547,7 @@ async function preflight(
   gatewayReuseState = applyPreflightGatewayCleanup({
     gatewayReuseState,
     isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
-    externallySupervised: isGatewayExternallySupervised(),
+    externallySupervised: gatewayExternallySupervised,
     cliDisplayName: cliDisplayName(),
     dashboardPort: getOnboardDashboardPort(),
     log: console.log,
@@ -1553,41 +1557,19 @@ async function preflight(
     destroyGatewayForReuse,
   });
 
-  // Clean up orphaned Docker containers from interrupted onboard (e.g. Ctrl+C
-  // during gateway start). The container may still be running even though
-  // OpenShell has no metadata for it (gatewayReuseState === "missing").
-  if (gatewayReuseState === "missing" && !isLinuxDockerDriverGatewayEnabled()) {
-    const containerName = `openshell-cluster-${GATEWAY_NAME}`;
-    const inspectResult = dockerInspect(
-      ["--type", "container", "--format", "{{.State.Status}}", containerName],
-      { ignoreError: true, suppressOutput: true },
-    );
-    if (inspectResult.status === 0) {
-      console.log("  Cleaning up orphaned gateway container...");
-      dockerStop(containerName, {
-        ignoreError: true,
-        suppressOutput: true,
-      });
-      dockerRm(containerName, {
-        ignoreError: true,
-        suppressOutput: true,
-      });
-      const postInspectResult = dockerInspect(["--type", "container", containerName], {
-        ignoreError: true,
-        suppressOutput: true,
-      });
-      if (postInspectResult.status !== 0) {
-        dockerRemoveVolumesByPrefix(`openshell-cluster-${GATEWAY_NAME}`, {
-          ignoreError: true,
-          suppressOutput: true,
-        });
-        registry.clearAll();
-        console.log("  ✓ Orphaned gateway container removed");
-      } else {
-        console.warn("  ! Found an orphaned gateway container, but automatic cleanup failed.");
-      }
-    }
-  }
+  cleanupOrphanedGatewayContainer({
+    gatewayReuseState,
+    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
+    externallySupervised: gatewayExternallySupervised,
+    gatewayName: GATEWAY_NAME,
+    dockerInspect,
+    dockerStop,
+    dockerRm,
+    dockerRemoveVolumesByPrefix,
+    clearRegistry: registry.clearAll,
+    log: console.log,
+    warn: console.warn,
+  });
 
   // Required ports — gateway, plus the dashboard port when an explicit one
   // is requested. envVar is the override env var documented in

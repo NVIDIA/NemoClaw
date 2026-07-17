@@ -21,10 +21,12 @@ import { loadGatewayManagementDeclaration } from "./gateway-management";
 import {
   assertGatewayEffectAllowed,
   cgroupBelongsToUnit,
+  describeGatewayOwnerForError,
   type GatewayAttachmentProbe,
   type GatewayOwner,
   isExternallySupervised,
   resolveGatewayOwner,
+  sameGatewayOwner,
 } from "./gateway-ownership";
 import type { PortProbeResult } from "./preflight";
 
@@ -81,32 +83,48 @@ export interface GatewayHostRuntime {
 }
 
 export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayHostRuntime {
+  let boundOwner: GatewayOwner | null = null;
+
   /**
-   * Resolve the one gateway lifecycle authority for this process. A malformed
+   * Resolve the one gateway lifecycle authority for this run. A malformed
    * declaration throws instead of degrading to self-management: a host that
    * meant to hand the gateway to an external supervisor must never silently get
    * a second NemoClaw-owned gateway on the same port.
    *
-   * Recomputed on every call rather than memoized. This runtime is constructed
-   * once per process, but both of its inputs can change underneath it —
-   * onboarding installs OpenShell, which may install the packaged gateway user
-   * service — and a stale owner is exactly the failure this contract exists to
-   * prevent.
+   * The authority is bound on first resolution and stays fixed for the run.
+   * Later calls re-read the declaration and packaged-service state and compare:
+   * if they now describe a *different* authority, that is a check/use gap
+   * between preflight and the FSM handler, so it fails closed rather than
+   * silently switching owners mid-run. Changing authority is an explicit
+   * migration, not something a mutating file can do underneath a running
+   * onboard (#6576).
    */
   function getGatewayOwner(): GatewayOwner {
     const loaded = loadGatewayManagementDeclaration();
     if (!loaded.ok) {
       throw new Error(`Invalid gateway management declaration: ${loaded.reason}`);
     }
-    return resolveGatewayOwner({
+    const resolved = resolveGatewayOwner({
       declaration: loaded.declaration,
       hasPackagedService: hasOpenShellGatewayUserService(),
     });
+    if (boundOwner) {
+      if (!sameGatewayOwner(boundOwner, resolved)) {
+        throw new Error(
+          "Gateway lifecycle authority changed during this run " +
+            `(${describeGatewayOwnerForError(boundOwner)} -> ${describeGatewayOwnerForError(resolved)}). ` +
+            "Exactly one component owns the gateway per run; re-run onboarding to adopt the new authority.",
+        );
+      }
+      return boundOwner;
+    }
+    boundOwner = resolved;
+    return boundOwner;
   }
 
   function isSupervisorUnitActive(owner: GatewayOwner): boolean | null {
     const supervisor = owner.supervisor;
-    if (!supervisor || supervisor.kind === "external") return null;
+    if (!supervisor) return null;
     const spawnSyncImpl =
       deps.spawnSyncImpl ??
       (require("node:child_process") as typeof import("node:child_process")).spawnSync;
@@ -144,15 +162,15 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
    * Bind a listening PID to the declared supervisor unit via cgroup membership
    * — the authoritative evidence that the process is the unit's, not merely a
    * same-binary impostor holding the port. Returns null when the relationship
-   * cannot be established (no PID, non-systemd supervisor, unreadable cgroup),
-   * and the caller then fails closed.
+   * cannot be established (no PID or an unreadable cgroup), and the caller then
+   * fails closed.
    */
   function readListenerSupervisorMatch(
     owner: GatewayOwner,
     pid: number | undefined,
   ): boolean | null {
     const supervisor = owner.supervisor;
-    if (!supervisor || supervisor.kind === "external" || typeof pid !== "number") return null;
+    if (!supervisor || typeof pid !== "number") return null;
     const cgroupText = readProcCgroup(pid);
     if (cgroupText === null) return null;
     return cgroupBelongsToUnit(cgroupText, supervisor.serviceName);

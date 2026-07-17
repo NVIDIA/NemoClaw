@@ -140,6 +140,30 @@ export function isExternallySupervised(owner: GatewayOwner): boolean {
   return owner.mode === "externally-supervised";
 }
 
+/**
+ * Whether two resolutions describe the same lifecycle authority. Used to keep
+ * one authority per run: a later resolution that differs is a migration, not a
+ * silent switch (#6576).
+ */
+export function sameGatewayOwner(a: GatewayOwner, b: GatewayOwner): boolean {
+  return (
+    a.mode === b.mode &&
+    a.source === b.source &&
+    a.endpoint === b.endpoint &&
+    a.stateDir === b.stateDir &&
+    a.supervisor?.kind === b.supervisor?.kind &&
+    a.supervisor?.serviceName === b.supervisor?.serviceName &&
+    a.supervisor?.execPath === b.supervisor?.execPath
+  );
+}
+
+/** Short owner description for error messages; carries no credential material. */
+export function describeGatewayOwnerForError(owner: GatewayOwner): string {
+  return owner.supervisor
+    ? `${owner.mode}:${owner.supervisor.serviceName}`
+    : `${owner.mode}:${owner.source}`;
+}
+
 function describeEffect(effect: GatewayLifecycleEffect): string {
   switch (effect) {
     case "standalone-fallback":

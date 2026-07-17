@@ -206,3 +206,35 @@ describe("gateway management declaration loading", () => {
     expect(result).toMatchObject({ ok: true, source: "profile" });
   });
 });
+
+describe("supported supervisor kinds (#6576)", () => {
+  it("accepts the systemd kinds it can bind a listener to", () => {
+    for (const kind of ["systemd-system", "systemd-user"]) {
+      expect(
+        parseGatewayManagementDeclaration(
+          externalDeclaration({
+            supervisor: {
+              kind,
+              serviceName: "openshell-gateway.service",
+              execPath: "/usr/local/bin/openshell-gateway",
+            },
+          }),
+        ),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
+  it("rejects the opaque 'external' kind, which could never attach", () => {
+    const result = parseGatewayManagementDeclaration(
+      externalDeclaration({
+        supervisor: {
+          kind: "external",
+          serviceName: "some-supervisor",
+          execPath: "/usr/local/bin/openshell-gateway",
+        },
+      }),
+    );
+
+    expect(result.ok === false && result.reason).toMatch(/supervisor\.kind must be one of/);
+  });
+});
