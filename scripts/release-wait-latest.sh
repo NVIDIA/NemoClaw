@@ -72,12 +72,16 @@ remote_tag_commit_or_object() {
 deadline=$((SECONDS + TIMEOUT_SECS))
 latest_peeled=""
 semver_peeled=""
+latest_object=""
+semver_object=""
 
 while ((SECONDS <= deadline)); do
+  semver_object="$(git ls-remote --tags origin "refs/tags/$tag" | awk '{print $1}')"
   semver_peeled="$(git ls-remote --tags origin "refs/tags/$tag^{}" | awk '{print $1}')"
+  latest_object="$(git ls-remote --tags origin refs/tags/latest | awk '{print $1}')"
   latest_peeled="$(git ls-remote --tags origin 'refs/tags/latest^{}' | awk '{print $1}')"
 
-  if [[ "$semver_peeled" == "$target" && "$latest_peeled" == "$target" ]]; then
+  if [[ "$semver_peeled" == "$target" && "$latest_peeled" == "$target" && "$latest_object" == "$semver_object" ]]; then
     break
   fi
 
@@ -86,6 +90,8 @@ done
 
 [[ "$semver_peeled" == "$target" ]] || fail "$tag peeled to $semver_peeled, expected $target"
 [[ "$latest_peeled" == "$target" ]] || fail "latest peeled to $latest_peeled, expected $target"
+[[ -n "$semver_object" ]] || fail "$tag tag object is missing"
+[[ "$latest_object" == "$semver_object" ]] || fail "latest tag object $latest_object does not match $tag object $semver_object"
 
 lkg_after="$(remote_tag_commit_or_object lkg)"
 if [[ -n "$lkg_before" && "$lkg_after" != "$lkg_before" ]]; then
@@ -96,7 +102,7 @@ if [[ -z "$lkg_before" && -n "$lkg_after" ]]; then
 fi
 
 result_path="$(dirname "$PLAN_PATH")/latest-result.json"
-node -e 'const fs=require("fs"); const result={schemaVersion:1,status:"ok",planPath:process.argv[1],planHash:process.argv[2],tag:process.argv[3],targetCommit:process.argv[4],semverPeeledCommit:process.argv[5],latestPeeledCommit:process.argv[6],lkgPeeledCommitBefore:process.argv[7] || null,lkgPeeledCommitAfter:process.argv[8] || null,createdAt:new Date().toISOString()}; fs.writeFileSync(process.argv[9], JSON.stringify(result, null, 2) + "\n");' "$PLAN_PATH" "$plan_hash" "$tag" "$target" "$semver_peeled" "$latest_peeled" "$lkg_before" "$lkg_after" "$result_path"
+node -e 'const fs=require("fs"); const result={schemaVersion:1,status:"ok",planPath:process.argv[1],planHash:process.argv[2],tag:process.argv[3],targetCommit:process.argv[4],semverTagObject:process.argv[5],latestTagObject:process.argv[6],semverPeeledCommit:process.argv[7],latestPeeledCommit:process.argv[8],lkgPeeledCommitBefore:process.argv[9] || null,lkgPeeledCommitAfter:process.argv[10] || null,createdAt:new Date().toISOString()}; fs.writeFileSync(process.argv[11], JSON.stringify(result, null, 2) + "\n");' "$PLAN_PATH" "$plan_hash" "$tag" "$target" "$semver_object" "$latest_object" "$semver_peeled" "$latest_peeled" "$lkg_before" "$lkg_after" "$result_path"
 
 printf 'release-wait-latest: latest and %s peel to %s\n' "$tag" "$target"
 printf 'release-wait-latest: result written: %s\n' "$result_path"
