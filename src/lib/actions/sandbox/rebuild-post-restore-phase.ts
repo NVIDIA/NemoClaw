@@ -23,6 +23,7 @@ import {
   restoreMcpAfterRebuild,
 } from "./rebuild-mcp-phase";
 import { reapplyMessagingManifestAfterOpenClawDoctor } from "./rebuild-messaging-phase";
+import { reconcileStalePinnedSessionModelsAfterRebuild } from "./reconcile-session-models";
 
 export interface RebuildPostRestorePhaseInput {
   sandboxName: string;
@@ -144,6 +145,10 @@ export async function runRebuildPostRestorePhase(
         `  ${D}Post-upgrade structure check skipped (doctor returned ${doctorResult?.status ?? "null"})${R}`,
       );
     }
+
+    // #7102: clear stale per-session pinned models left over from an
+    // `inference set` before this rebuild, while the gateway is still down.
+    reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log);
 
     await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
     log("Refreshing mutable OpenClaw config hash after post-restore config writes");
