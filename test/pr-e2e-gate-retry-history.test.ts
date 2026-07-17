@@ -246,7 +246,6 @@ describe("PR E2E controller retry history", () => {
         .at(-1);
       expect(completion?.body).toMatchObject({
         status: "in_progress",
-        conclusion: null,
         output: {
           title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining(
@@ -254,6 +253,7 @@ describe("PR E2E controller retry history", () => {
           ),
         },
       });
+      expect(completion?.body).not.toHaveProperty("conclusion");
       expect(checkRuns[0]).toEqual(completedCheck);
       expect(checkRuns[1]).toMatchObject({
         id: 18,
