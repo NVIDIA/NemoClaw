@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   dockerRunDetached: vi.fn(),
   dockerSpawn: vi.fn(),
   dockerStop: vi.fn(),
-  findUnwritableTreePath: vi.fn(),
+  findUnwritableModelCachePath: vi.fn(),
   getGpuIndicesByName: vi.fn<(_pattern: RegExp) => number[]>(() => []),
   measureDirectorySizeBytes: vi.fn(),
   probeDockerStorage: vi.fn(),
@@ -46,7 +46,7 @@ vi.mock("./vllm-storage", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./vllm-storage")>();
   return {
     ...actual,
-    findUnwritableTreePath: mocks.findUnwritableTreePath,
+    findUnwritableModelCachePath: mocks.findUnwritableModelCachePath,
     measureDirectorySizeBytes: mocks.measureDirectorySizeBytes,
     probeDockerStorage: mocks.probeDockerStorage,
     probeHostStorage: mocks.probeHostStorage,
@@ -70,7 +70,7 @@ import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
 
 beforeEach(() => {
   mocks.dockerImageInspectFormat.mockReturnValue("");
-  mocks.findUnwritableTreePath.mockReturnValue(null);
+  mocks.findUnwritableModelCachePath.mockReturnValue(null);
   mocks.measureDirectorySizeBytes.mockReturnValue(0n);
   mocks.probeDockerStorage.mockReturnValue({
     ok: true,
@@ -1294,8 +1294,14 @@ describe("installVllm model resolution", () => {
     mockSuccessfulVllmInstall(profile.containerName);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
     const cacheDir = path.join(os.homedir(), ".cache", "huggingface");
-    const rootOwnedPath = path.join(cacheDir, "hub", ".locks");
-    mocks.findUnwritableTreePath.mockReturnValue(rootOwnedPath);
+    const rootOwnedPath = path.join(
+      cacheDir,
+      "hub",
+      "models--nvidia--Qwen3.6-35B-A3B-NVFP4",
+      ".no_exist",
+      "processor_config.json",
+    );
+    mocks.findUnwritableModelCachePath.mockReturnValue(rootOwnedPath);
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -1304,7 +1310,11 @@ describe("installVllm model resolution", () => {
     });
 
     expect(result).toEqual({ ok: false });
-    expect(mocks.findUnwritableTreePath).toHaveBeenCalledWith(cacheDir);
+    const [scopedCacheDir, scopedModelDir] = mocks.findUnwritableModelCachePath.mock.calls[0];
+    expect(scopedCacheDir).toBe(cacheDir);
+    expect(scopedModelDir).toBe(
+      path.join(cacheDir, "hub", "models--nvidia--Qwen3.6-35B-A3B-NVFP4"),
+    );
     expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
     expect(mocks.dockerSpawn).not.toHaveBeenCalled();
     expect(mocks.dockerRunDetached).not.toHaveBeenCalled();
@@ -1313,7 +1323,7 @@ describe("installVllm model resolution", () => {
     expect(errors).toContain("not writable by host user");
     expect(errors).toContain("NemoClaw did not modify it");
     expect(errors).toContain("sudo chown -R");
-    expect(errors).toContain(`'${cacheDir}'`);
+    expect(errors).toContain(`'${rootOwnedPath}'`);
     expect(errors).toContain(currentHostIdentity() ?? "$(id -u):$(id -g)");
   });
 
