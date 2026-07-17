@@ -106,16 +106,22 @@ A handled prerequisite-CI failure, selected E2E failure or timeout, stale
 revision, or closed PR can leave the controller green while coordination is
 failed or cancelled and the native job is non-passing. Only a successful native
 `E2E / PR Gate` for the current head and base satisfies the required check. An
-unexpected controller error still fails the controller workflow and fails
-coordination closed, which prevents the native job from passing.
+eligible prerequisite-CI failure records the versioned retry reason
+`prerequisite-ci`. A selected child records `child-cancelled` only when the
+workflow is cancelled or a complete job listing shows that every non-passing
+job was cancelled. Assertion failures and other selected-E2E outcomes do not
+receive a retry reason. An unexpected controller error still fails the
+controller workflow and fails coordination closed, which prevents the native
+job from passing.
 
 On open, synchronization, reopen, transition out of draft, or base retarget,
 `.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate Coordination` for
 the exact PR head and base commits, including fork heads. The read-only native
 observer starts for every configured non-closed PR event; metadata-only edits
 mirror the existing exact-diff coordination result instead of publishing a
-skipped success. A base retarget fails any earlier coordination result in that
-head's lineage before reserving the new exact-diff identity. The
+skipped success. A base retarget fails any still-active earlier coordination
+result in that head's lineage, preserves completed audit history, and then
+reserves the new exact-diff identity. The
 `CI / Pull Request` run name binds its PR number, head SHA, base SHA, and gate
 eligibility so the trusted controller can authenticate the completed run even
 when a fork `workflow_run` payload omits pull-request metadata. The controller
@@ -202,13 +208,34 @@ cannot be retried because the child may still execute and a retry could start
 duplicate credential-bearing work. Inspect the linked run, then update the PR
 and run fresh CI before authorizing again.
 The native required job treats authorization and running titles as intermediate
-waiting states only while coordination remains in progress. A completed failure
-is terminal; neither manual authorization nor the native observer reinterprets
-it. Older builds whose authorization check already completed as failed also
-require a fresh exact-diff revision and PR CI run before a maintainer can
-authorize them. The normal wait, evidence download, and finish path is the only
-path that can record success; the authorization itself cannot make the gate
-green. A changed head or base requires a new authorization.
+waiting states only while coordination remains in progress. It also keeps
+polling when the current exact-diff coordination check is a completed failure
+with a validated current-version retry marker, so it can follow a later
+validated replacement for the same unchanged head and base. That completed
+failure remains immutable and cannot be changed by manual authorization. A
+later eligible `CI / Pull Request` run can create a fresh coordination check for
+the same unchanged open head and base only when the newest failed coordination
+check carries a current-version retry reason:
+`prerequisite-ci` after the later CI run succeeds, `child-cancelled` after a
+conclusively cancelled child, or `evidence-download` after a successful child
+whose evidence download failed, was cancelled, or was skipped. The trusted
+controller leaves the completed check as audit history, creates and validates a
+new `in_progress` check with the same exact-diff external identity, and rebuilds
+the deterministic plan before exposing a fresh authorization state. The
+controller and native observer select the highest check-run ID only when every
+older duplicate is a completed failure with a recognized versioned retry
+marker. An unexpected app or mismatched mutation identity, duplicate ID, older
+unmarked or otherwise non-retryable terminal state, or multiple active
+candidates fails closed. Selected-job product or
+assertion failures, evidence policy or integrity failures, schema or identity
+mismatches, traversal or provenance failures, reconciliation, controller
+errors, unknown states, and failures recorded before retry reasons existed
+remain terminal for that exact diff. Fork approval failures are not retried by
+PR CI; follow the protected or manual skip path, or update the PR to create a
+new head. Update the PR and run fresh CI for the other terminal outcomes. The
+normal wait, evidence download, and finish path is the only path that can record
+success; the authorization itself cannot make the gate green. A changed head or
+base requires a new authorization.
 
 A fork revision that selects jobs completes coordination as failed while the
 native required job waits for the skip-approval flow. The controller does not
@@ -237,8 +264,9 @@ variables, or custom protection apps; this job records the skip approval and
 runs no PR-controlled code. Prefer disabling administrator bypass so every
 decision appears in the approval history. If **Review deployments** is absent,
 the environment may be missing or unprotected, or the run may no longer be
-waiting. Configure the environment and trigger fresh upstream PR CI to create
-a new gate run, or use the manual fallback described below. GitHub approval
+waiting. Configure the environment, update the PR to create a new head, and
+trigger fresh upstream PR CI to create a new gate run, or use the manual
+fallback described below. GitHub approval
 history is not bound to a run attempt, so the controller rejects reruns of an
 approval run. Per-PR approval concurrency cancels an older waiting job when a
 newer revision reaches the gate.
@@ -301,13 +329,16 @@ succeeds but the `Download evidence` step fails, is cancelled, or is skipped,
 the controller cannot authenticate the child's artifacts. It fails
 coordination closed as
 `Evidence could not be verified` and leaves `E2E / PR Gate Controller` red so
-maintainers inspect that infrastructure failure and rerun the gate. If the
-download step succeeds but signals are missing, duplicated, skipped, pending,
-or report a test failure, the controller has completed its work: it publishes
-the handled red PR verdict and remains green. Malformed or unsafe evidence,
-schema or exact-identity mismatches, and traversal-limit violations remain
-controller verification errors, so coordination, the native required job, and
-the controller fail closed.
+maintainers inspect that infrastructure failure. This download-only outcome
+records `evidence-download`, so a later successful eligible PR CI run can create
+a fresh coordination check for the same exact diff. If the download step
+succeeds but signals are missing, duplicated, skipped, pending, or report a test
+failure, the controller has
+completed its work: it publishes the handled red PR verdict and remains green
+without a retry reason. Malformed or unsafe evidence, schema or exact-identity
+mismatches, and traversal-limit violations remain terminal controller
+verification errors, so coordination, the native required job, and the
+controller fail closed.
 These dispatches suppress PR comments and the scheduled or manual
 scorecard, including scorecard Slack reporting.
 

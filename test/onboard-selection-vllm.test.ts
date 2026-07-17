@@ -629,16 +629,35 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("rejects an existing DeepSeek server when Station express requires Ultra", () => {
+  it("adopts an existing Ultra served alias during Station express (#7023)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-ultra-mismatch-"));
-    const scriptPath = path.join(tmpDir, "station-ultra-mismatch-check.js");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-ultra-alias-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "station-ultra-alias-check.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const credentialsPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
     const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"ok"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
@@ -654,7 +673,12 @@ runner.runCapture = (command) => {
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) {
-    return JSON.stringify({ data: [{ id: "deepseek-ai/DeepSeek-V4-Flash" }] });
+    return JSON.stringify({
+      data: [{
+        id: "nemotron-ultra",
+        root: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+      }],
+    });
   }
   if (cmd.includes("docker images")) return "";
   return "";
@@ -663,7 +687,8 @@ runner.runCapture = (command) => {
 const { setupNim } = require(${onboardPath});
 
 (async () => {
-  await setupNim({ type: "nvidia", platform: "station" }, null);
+  const result = await setupNim({ type: "nvidia", platform: "station" }, null);
+  console.log("SELECTED " + result.provider + " " + result.model);
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -677,6 +702,7 @@ const { setupNim } = require(${onboardPath});
       env: {
         ...process.env,
         HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_PROVIDER: "install-vllm",
         NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
@@ -684,26 +710,13 @@ const { setupNim } = require(${onboardPath});
       },
     });
 
-    assert.equal(result.status, 1);
+    assert.equal(result.status, 0, result.stderr);
     assert.match(
       result.stdout,
       /NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:8000 — selecting the running instance\./,
     );
-    assert.match(
-      result.stderr,
-      /Detected vLLM model 'deepseek-ai\/DeepSeek-V4-Flash' does not match the shared gateway route 'nvidia\/nemotron-3-ultra-550b-a55b'\./,
-    );
-    assert.match(
-      result.stderr,
-      /To install 'nvidia\/nemotron-3-ultra-550b-a55b', stop the existing vLLM server on localhost:8000, then rerun the original install\/onboard command\./,
-    );
-    assert.match(
-      result.stderr,
-      /To keep 'deepseek-ai\/DeepSeek-V4-Flash' instead, start detailed setup:/,
-    );
-    assert.match(
-      result.stderr,
-      /unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL\s+nemoclaw onboard --fresh\s+Then select Local vLLM when prompted\./,
-    );
+    assert.match(result.stdout, /Detected model: nemotron-ultra/);
+    assert.match(result.stdout, /SELECTED vllm-local nemotron-ultra/);
+    assert.doesNotMatch(result.stderr, /does not match/);
   });
 });

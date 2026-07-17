@@ -21,6 +21,7 @@ const EXPECTED_V055_FIXTURES: WorkflowRecord[] = [
   {
     id: "v0.0.55-x86_64",
     runner: "ubuntu-latest",
+    shard: "v0-0-55-x86-64",
     nemoclaw_ref: "v0.0.55",
     nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
     installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
@@ -32,6 +33,7 @@ const EXPECTED_V055_FIXTURES: WorkflowRecord[] = [
   {
     id: "v0.0.55-aarch64",
     runner: "ubuntu-24.04-arm",
+    shard: "v0-0-55-aarch64",
     nemoclaw_ref: "v0.0.55",
     nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
     installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897",
@@ -53,9 +55,9 @@ function jobSteps(job: WorkflowRecord): WorkflowStep[] {
 }
 
 function v055Fixtures(job: WorkflowRecord): WorkflowRecord[] {
-  const legacy = record(record(job.strategy).matrix).legacy;
-  return Array.isArray(legacy)
-    ? legacy.map(record).filter((fixture) => fixture.nemoclaw_ref === "v0.0.55")
+  const include = record(record(job.strategy).matrix).include;
+  return Array.isArray(include)
+    ? include.map(record).filter((fixture) => fixture.nemoclaw_ref === "v0.0.55")
     : [];
 }
 
@@ -75,11 +77,14 @@ export function validateOpenShellGatewayUpgradeWorkflow(workflow: WorkflowRecord
   const errors: string[] = [];
   const job = record(record(workflow.jobs)[JOB_NAME]);
 
-  if (job["runs-on"] !== "${{ matrix.legacy.runner }}") {
-    errors.push(`${JOB_NAME} must run on \${{ matrix.legacy.runner }}`);
+  if (job["runs-on"] !== "${{ matrix.runner }}") {
+    errors.push(`${JOB_NAME} must run on \${{ matrix.runner }}`);
   }
   if (!isDeepStrictEqual(v055Fixtures(job), EXPECTED_V055_FIXTURES)) {
     errors.push(`${JOB_NAME} v0.0.55 matrix must pin x86_64 and arm64 upgrade fixtures`);
+  }
+  if (record(job.env).NEMOCLAW_E2E_SHARD !== "${{ matrix.shard }}") {
+    errors.push(`${JOB_NAME} must publish one risk-signal shard per legacy fixture`);
   }
 
   const run = jobSteps(job).find((step) => step.name === RUN_STEP_NAME) ?? {};
