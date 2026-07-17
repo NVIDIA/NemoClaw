@@ -1429,6 +1429,8 @@ if (cmd.includes("-printf")) {
         rows.push("l\\t" + remoteEntry + "\\t" + fs.readlinkSync(absEntry));
       } else if (st.isDirectory()) {
         walk(absEntry, remoteEntry);
+      } else if (st.isFile() && st.nlink > 1) {
+        rows.push("f\\t" + remoteEntry + "\\t");
       } else if (!st.isFile()) {
         rows.push("?\\t" + remoteEntry + "\\t");
       }
