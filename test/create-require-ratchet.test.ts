@@ -202,6 +202,23 @@ describe("base-trusted createRequire ratchet", () => {
     ).toBe(false);
   });
 
+  it("folds static template property names without flagging dynamic access (#7056)", () => {
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        'nodeModule[`create${"Require"}`](import.meta.url);',
+        "example.ts",
+      ),
+    ).toBe(true);
+    expect(
+      containsCreateRequireIdentifier(
+        ts,
+        "nodeModule[`create${suffix}`](import.meta.url);",
+        "example.ts",
+      ),
+    ).toBe(false);
+  });
+
   it("fails closed on symbolic links under scoped scan roots (#7056)", () => {
     const root = temporaryRepo();
     writeFixture(root, "payload.ts", "createRequire(import.meta.url);");
@@ -344,7 +361,7 @@ describe("base-trusted createRequire ratchet", () => {
     ).toBeNull();
   });
 
-  it("executes the committed Node entrypoint and rejects a real base expansion (#7056)", () => {
+  it("executes the committed Node entrypoint and rejects a static template expansion (#7056)", () => {
     const root = temporaryRepo();
     const repoRoot = path.join(root, "checkout");
     const entrypoint = copyTrustedEntrypoint(path.join(root, "trusted-action"));
@@ -384,7 +401,7 @@ describe("base-trusted createRequire ratchet", () => {
       "scripts/checks/test-create-require-budget.ts",
       allowlistSource([originalPath, expandedPath], []),
     );
-    writeFixture(repoRoot, expandedPath, "createRequire(import.meta.url);");
+    writeFixture(repoRoot, expandedPath, 'nodeModule[`create${"Require"}`](import.meta.url);');
     const failing = runTrustedEntrypoint(entrypoint, repoRoot, environment);
     expect(failing.status).toBe(1);
     expect(failing.stderr).toContain(

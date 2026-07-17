@@ -235,6 +235,15 @@ function* walkTypeScriptFiles(directory: string): Generator<string> {
 
 function staticStringValue(ts: TypeScriptApi, expression: TypeScript.Expression): string | null {
   if (ts.isStringLiteralLike(expression)) return expression.text;
+  if (ts.isTemplateExpression(expression)) {
+    let value = expression.head.text;
+    for (const span of expression.templateSpans) {
+      const substitution = staticStringValue(ts, span.expression);
+      if (substitution === null) return null;
+      value += substitution + span.literal.text;
+    }
+    return value;
+  }
   if (
     ts.isBinaryExpression(expression) &&
     expression.operatorToken.kind === ts.SyntaxKind.PlusToken
