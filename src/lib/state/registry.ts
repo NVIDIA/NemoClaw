@@ -437,9 +437,10 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
 }
 
 /**
- * Prepare a sandbox entry for persistence: normalize messaging state and drop
- * transient #5714 display-only markers plus legacy provider credential hashes
- * that must never reach sandboxes.json.
+ * Prepare a sandbox entry for persistence: canonicalize a no-dashboard port to
+ * null, normalize messaging state, and drop transient #5714 display-only
+ * markers plus legacy provider credential hashes that must never reach
+ * sandboxes.json.
  */
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   // Defensively drop non-durable recovery markers and legacy
@@ -460,6 +461,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const { messaging: _messaging, mcp: _mcp, ...rest } = durable;
   return {
     ...rest,
+    ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
   };

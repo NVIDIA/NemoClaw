@@ -109,11 +109,9 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.mts"));
-    writeFixture(path.join("scripts", "patch-openclaw-chat-send.js"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-npx.mts"));
-    writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.ts"));
+    writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
-    writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.ts"));
     writeFixture(path.join("scripts", "verify-wechat-runtime-lock.mts"));
     writeFixture(path.join("scripts", "lib", "reviewed-npm-archive.mts"));
   }
@@ -378,7 +376,7 @@ describe("sandbox build context staging", () => {
         true,
       );
       expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-issue-4434-diagnostics.ts")),
+        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-issue-4434-diagnostics.mts")),
       ).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-device-self-approval.mts")),

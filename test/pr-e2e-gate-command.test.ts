@@ -219,6 +219,42 @@ describe("PR E2E controller commands", () => {
     ).toEqual({ mode: "abandon", checkRunId: 17, childRunId: 23 });
   });
 
+  it("parses a wait command", () => {
+    expect(parseControllerCommand(["--mode", "wait", "--run-id", "23"])).toEqual({
+      mode: "wait",
+      childRunId: 23,
+    });
+  });
+
+  it("rejects a wait command without a positive run ID", () => {
+    expect(() => parseControllerCommand(["--mode", "wait", "--run-id", "0"])).toThrow(
+      /positive integer/u,
+    );
+  });
+
+  it("parses a download command into the private evidence workspace", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(
+        parseControllerCommand(["--mode", "download", "--run-id", "23", "--work-dir", workDir]),
+      ).toEqual({
+        mode: "download",
+        childRunId: 23,
+        planPath: path.join(workDir, "risk-plan.json"),
+        statePath: path.join(workDir, "controller-state.json"),
+        evidencePath: path.join(workDir, "evidence"),
+      });
+    });
+  });
+
+  it("rejects a download workspace that is not private", () => {
+    withPrivateWorkDir((workDir) => {
+      fs.chmodSync(workDir, 0o755);
+      expect(() =>
+        parseControllerCommand(["--mode", "download", "--run-id", "23", "--work-dir", workDir]),
+      ).toThrow(/owned private absolute directory/u);
+    });
+  });
+
   it("rejects an unsafe pull request number", () => {
     expect(() => parseControllerCommand(["--mode", "cancel", "--pr", "9007199254740992"])).toThrow(
       /safe integer range/u,

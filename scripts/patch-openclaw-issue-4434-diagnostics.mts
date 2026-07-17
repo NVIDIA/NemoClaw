@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --experimental-strip-types
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -8,8 +8,8 @@
  * diagnostics for sandbox fetch failures and inference timeouts.
  */
 
-const fs = require("node:fs");
-const path = require("node:path");
+import fs from "node:fs";
+import path from "node:path";
 
 const AUDIT_FLAG = "--audit";
 const EXIT_APPLY_FAILURE = 1;
@@ -37,7 +37,7 @@ const positional = args.filter((value) => value !== AUDIT_FLAG);
 const distDir = positional[0];
 
 if (!distDir || positional.length > 1) {
-  console.error("Usage: patch-openclaw-issue-4434-diagnostics.ts [--audit] <openclaw-dist-dir>");
+  console.error("Usage: patch-openclaw-issue-4434-diagnostics.mts [--audit] <openclaw-dist-dir>");
   process.exit(EXIT_USAGE);
 }
 

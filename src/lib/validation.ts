@@ -86,6 +86,13 @@ export function classifyValidationFailure({
   if (/unauthorized|forbidden|invalid api key|invalid_auth|permission/i.test(normalized)) {
     return { kind: "credential", retry: "credential" };
   }
+  if (
+    /cannot resolve endpoint host|did not resolve to any address|could not resolve host|name or service not known|enotfound|eai_again|no http response/i.test(
+      normalized,
+    )
+  ) {
+    return { kind: "transport", retry: "retry" };
+  }
   if (/ssl|tls|certificate|handshake/i.test(normalized)) {
     return { kind: "transport", retry: "retry" };
   }
