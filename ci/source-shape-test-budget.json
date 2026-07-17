@@ -247,6 +247,11 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
+      "category": "security"
+    },
+    {
       "file": "test/inference-options-docs.test.ts",
       "test": "keeps a per-model task-fit comparison table for curated onboarding models",
       "category": "compatibility"
@@ -389,6 +394,16 @@
     {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "publishes coverage only from same-repository code (#6692)",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "records the Dependabot DCO bypass as a successful required job",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "reruns installer hash verification after a pull request base retarget",
       "category": "security"
     },
     {
