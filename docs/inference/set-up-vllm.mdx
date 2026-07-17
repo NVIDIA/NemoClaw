@@ -157,7 +157,10 @@ NemoClaw intentionally keeps its existing bridge-networked managed-inference top
 The container publishes port `8000` through Docker, so apply the firewall guidance at the top of this page.
 
 <Warning>
-DGX Station and its managed-vLLM paths remain Deferred until NemoClaw completes end-to-end validation on physical DGX Station hardware.
+DGX Station remains Deferred.
+No stock DGX OS release is currently qualified for this path.
+On DGX OS 7.5, managed vLLM, inference, tool use, and restart/reuse passed, but CUDA initialization segfaulted inside the real OpenShell sandbox.
+Use the generic Ubuntu 24.04 ARM64 control for the Station express path and follow [NVIDIA/OpenShell#2343](https://github.com/NVIDIA/OpenShell/issues/2343) for DGX OS requalification.
 </Warning>
 
 ## Run Non-Interactive Onboarding

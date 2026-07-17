@@ -690,6 +690,42 @@ printf 'PROMPT_REACHED\n'
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
+  it("explains the qualified DGX OS blocker before Station express preparation (#7103)", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+validate_express_platform_boundary "Unsupported DGX Station OS"
+printf 'PROMPT_REACHED\n'
+`,
+      ],
+      {
+        cwd: path.join(import.meta.dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-dgx-os-guidance-")),
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+        },
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("No DGX OS/BaseOS release is currently qualified");
+    expect(output).toContain(
+      "DGX OS 7.5 qualification failed CUDA initialization inside the OpenShell sandbox",
+    );
+    expect(output).toContain("generic Ubuntu 24.04 ARM64");
+    expect(output).toContain("there is no validated in-place conversion");
+    expect(output).toContain("https://github.com/NVIDIA/OpenShell/issues/2343");
+    expect(output).not.toContain("PROMPT_REACHED");
+  });
+
   it("maps Windows WSL express install to Windows-host Ollama", () => {
     const result = runExpressPromptWithTty("\n", "pipe", "Windows WSL");
     const output = `${result.stdout}${result.stderr}`;

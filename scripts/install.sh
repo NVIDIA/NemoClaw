@@ -2958,7 +2958,7 @@ validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "DGX OS/BaseOS is outside the validated Station express boundary. Use the generic Ubuntu 24.04 ARM64 image."
+      error "No DGX OS/BaseOS release is currently qualified; it is outside the validated Station express boundary. DGX OS 7.5 qualification failed CUDA initialization inside the OpenShell sandbox (NVIDIA/OpenShell#2343). Reprovision through your approved generic Ubuntu 24.04 ARM64 workflow; there is no validated in-place conversion. Details: https://github.com/NVIDIA/OpenShell/issues/2343"
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi

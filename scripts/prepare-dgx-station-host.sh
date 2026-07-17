@@ -271,7 +271,7 @@ check_platform() {
   [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" == "24.04" ]] \
     || fatal "Expected Ubuntu 24.04, found ${PRETTY_NAME:-unknown}"
   [[ ! -e /etc/dgx-release && ! -L /etc/dgx-release ]] \
-    || fatal "DGX OS/BaseOS is outside this recipe's validated boundary; use the generic Ubuntu 24.04 ARM64 image"
+    || fatal "No DGX OS/BaseOS release is currently qualified for this recipe; DGX OS 7.5 qualification failed CUDA initialization inside the OpenShell sandbox (NVIDIA/OpenShell#2343); reprovision through your approved generic Ubuntu 24.04 ARM64 workflow; there is no validated in-place conversion; see https://github.com/NVIDIA/OpenShell/issues/2343"
 
   product="$(</sys/class/dmi/id/product_name)"
   is_station_product "$product" || fatal "Expected DGX Station GB300 DMI, found ${product}"
