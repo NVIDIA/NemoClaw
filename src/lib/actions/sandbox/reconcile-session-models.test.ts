@@ -44,9 +44,8 @@ function readRegularFileNoFollow(filePath: string): string {
   );
   try {
     const metadata = fstatSync(descriptor);
-    if (!metadata.isFile() || metadata.nlink !== 1) {
-      throw new Error(`${filePath} must be a single regular file`);
-    }
+    expect(metadata.isFile(), `${filePath} must be a regular file`).toBe(true);
+    expect(metadata.nlink, `${filePath} must have exactly one link`).toBe(1);
     return readFileSync(descriptor, "utf8");
   } finally {
     closeSync(descriptor);
