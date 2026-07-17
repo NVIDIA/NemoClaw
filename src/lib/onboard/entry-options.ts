@@ -51,6 +51,10 @@ export interface ResolvedOnboardEntryOptions {
 
 type NonInteractiveEntryOptions = { nonInteractive?: boolean };
 type ResumableEntryOptions = NonInteractiveEntryOptions & { resume?: boolean; fresh?: boolean };
+interface StationExpressSessionLifecycle {
+  loadSession(): StationExpressSessionLike | null;
+  reconcileStationExpressReceiptRetirement(generation: string): void;
+}
 
 /** Scope the CLI flag to helpers that still read the compatibility environment variable. */
 export function withNonInteractiveEnvironment<Options extends NonInteractiveEntryOptions>(
@@ -73,13 +77,12 @@ export function withNonInteractiveEnvironment<Options extends NonInteractiveEntr
 
 export function wrapOnboard<Options extends ResumableEntryOptions>(
   run: (options?: Options) => Promise<void>,
-  loadSession: () => StationExpressSessionLike | null,
-  reconcileStationExpressReceiptRetirement: (generation: string) => void,
+  session: StationExpressSessionLifecycle,
 ): (options?: Options) => Promise<void> {
   return wrapStationExpressOnboard(
     withNonInteractiveEnvironment(run),
-    loadSession,
-    reconcileStationExpressReceiptRetirement,
+    session.loadSession,
+    session.reconcileStationExpressReceiptRetirement,
   );
 }
 

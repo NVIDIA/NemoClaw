@@ -4000,11 +4000,7 @@ async function preflightAuthoritativeRebuildTarget(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-const onboard = onboardEntryOptions.wrapOnboard(
-  runOnboard,
-  onboardSession.loadSession,
-  onboardSession.reconcileStationExpressReceiptRetirement,
-);
+const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
