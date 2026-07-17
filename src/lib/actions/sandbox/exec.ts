@@ -3,6 +3,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { spawnExitCode } from "../../core/process-exit";
+import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import type {
   MutableConfigPermsInspection,
   MutableConfigRepairResult,
@@ -85,8 +86,10 @@ export function buildOpenshellExecArgs(
   sandboxName: string,
   command: readonly string[],
   options: SandboxExecOptions = {},
+  gatewayName?: string,
 ): string[] {
   const argv = ["sandbox", "exec", "--name", sandboxName];
+  if (gatewayName) argv.push("-g", gatewayName);
   if (options.workdir) argv.push("--workdir", options.workdir);
   if (options.tty === true) argv.push("--tty");
   if (options.tty === false) argv.push("--no-tty");
@@ -97,8 +100,15 @@ export function buildOpenshellExecArgs(
   return argv;
 }
 
-export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): string[] {
-  return ["sandbox", "exec", "--name", sandboxName, "--", "test", "-d", workdir];
+export function buildWorkdirProbeArgs(
+  sandboxName: string,
+  workdir: string,
+  gatewayName?: string,
+): string[] {
+  const argv = ["sandbox", "exec", "--name", sandboxName];
+  if (gatewayName) argv.push("-g", gatewayName);
+  argv.push("--", "test", "-d", workdir);
+  return argv;
 }
 
 // OpenShell accepts LF/CR in command argv while retaining field-specific
@@ -282,10 +292,11 @@ export async function runSandboxExecCommand(
   options: SandboxExecOptions,
   run: SandboxExecRunner,
   cleanupDeps: SandboxExecCleanupDeps,
+  gatewayName?: string,
 ): Promise<SandboxExecCompletion> {
   let result: SpawnLikeResult;
   try {
-    result = await run(binary, buildOpenshellExecArgs(sandboxName, command, options));
+    result = await run(binary, buildOpenshellExecArgs(sandboxName, command, options, gatewayName));
   } catch (error) {
     result = { status: null, error: error instanceof Error ? error : new Error(String(error)) };
   }
@@ -317,8 +328,11 @@ export function validateWorkdirOrFail(
   sandboxName: string,
   workdir: string,
   run: WorkdirProbeRunner = defaultWorkdirProbeRunner,
+  gatewayName?: string,
 ): void {
-  const outcome = evaluateWorkdirProbe(run(binary, buildWorkdirProbeArgs(sandboxName, workdir)));
+  const outcome = evaluateWorkdirProbe(
+    run(binary, buildWorkdirProbeArgs(sandboxName, workdir, gatewayName)),
+  );
   if (outcome === "missing") {
     console.error(workdirMissingMessage(workdir));
     process.exit(1);
@@ -369,6 +383,12 @@ export async function execSandbox(
     console.error(inputError);
     process.exit(2);
   }
+  try {
+    assertNoOpenShellGatewayEndpointOverride();
+  } catch (error) {
+    console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
   const binary = (deps.resolveBinary ?? defaultResolveBinary)();
   const gatewaySelection = (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
   if (gatewaySelection.outcome === "failed") {
@@ -377,8 +397,10 @@ export async function execSandbox(
     );
     process.exit(1);
   }
+  const gatewayName =
+    gatewaySelection.outcome === "selected" ? gatewaySelection.gatewayName : undefined;
   if (options.workdir) {
-    validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
+    validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir, gatewayName);
   }
   const emitPolicyDenialHint = preparePolicyHint(CLI_NAME, sandboxName, deps.policyHint);
   const completion = await runSandboxExecCommand(
@@ -397,6 +419,7 @@ export async function execSandbox(
       repairMutableConfigPerms: (name) =>
         (require("../../shields") as typeof import("../../shields")).repairMutableConfigPerms(name),
     },
+    gatewayName,
   );
   if (completion.invocationError) {
     console.error(`  Failed to invoke openshell: ${completion.invocationError}`);

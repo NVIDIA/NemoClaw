@@ -17,6 +17,7 @@ const cleanupSkipped: SandboxExecCleanupDeps = {
 
 describe("execSandbox gateway targeting", () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -26,7 +27,7 @@ describe("execSandbox gateway targeting", () => {
       order.push(`select:${name}`);
       return { outcome: "selected" as const, gatewayName: name };
     });
-    const run = vi.fn(async () => {
+    const run = vi.fn(async (_binary: string, _args: readonly string[]) => {
       order.push("run");
       return { status: 0 };
     });
@@ -60,21 +61,27 @@ describe("execSandbox gateway targeting", () => {
 
     expect(selectGateway).toHaveBeenCalledWith("beta");
     expect(run).toHaveBeenCalled();
+    const execArgs = run.mock.calls[0]?.[1] ?? [];
+    expect(execArgs.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "beta", "-g", "beta", "--"]);
+    expect(execArgs.at(-2)).toBe("nemoclaw-runtime-env");
+    expect(execArgs.at(-1)).toBe("hostname");
     expect(order.indexOf("select:beta")).toBeGreaterThanOrEqual(0);
     expect(order.indexOf("select:beta")).toBeLessThan(order.indexOf("run"));
   });
 
   it("selects the owning gateway before the workdir probe when a workdir is set", async () => {
     const order: string[] = [];
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
     const selectGateway = vi.fn((name: string) => {
       order.push(`select:${name}`);
-      return { outcome: "selected" as const, gatewayName: name };
+      process.env.OPENSHELL_GATEWAY = "drifted-sibling";
+      return { outcome: "selected" as const, gatewayName: "nemoclaw-8091" };
     });
-    const probeWorkdir = vi.fn(() => {
+    const probeWorkdir = vi.fn((_binary: string, _args: readonly string[]) => {
       order.push("probe");
       return { status: 0, error: undefined };
     });
-    const run = vi.fn(async () => {
+    const run = vi.fn(async (_binary: string, _args: readonly string[]) => {
       order.push("run");
       return { status: 0 };
     });
@@ -108,6 +115,62 @@ describe("execSandbox gateway targeting", () => {
     ).rejects.toThrow("__exit_0__");
 
     expect(order).toEqual(["select:beta", "probe", "run"]);
+    expect(process.env.OPENSHELL_GATEWAY).toBe("drifted-sibling");
+    expect(probeWorkdir.mock.calls[0]?.[1]).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "beta",
+      "-g",
+      "nemoclaw-8091",
+      "--",
+      "test",
+      "-d",
+      "/work",
+    ]);
+    const execArgs = run.mock.calls[0]?.[1] ?? [];
+    expect(execArgs.slice(0, 9)).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "beta",
+      "-g",
+      "nemoclaw-8091",
+      "--workdir",
+      "/work",
+      "--",
+    ]);
+    expect(execArgs.at(-2)).toBe("nemoclaw-runtime-env");
+    expect(execArgs.at(-1)).toBe("hostname");
+  });
+
+  it("rejects a direct endpoint override before selecting, probing, or dispatching", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://sibling.invalid");
+    const resolveBinary = vi.fn(() => "openshell");
+    const selectGateway = vi.fn();
+    const probeWorkdir = vi.fn();
+    const run = vi.fn();
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`__exit_${code ?? 0}__`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(
+      execSandbox(
+        "beta",
+        ["hostname"],
+        { workdir: "/work" },
+        { resolveBinary, selectGateway, probeWorkdir, run },
+      ),
+    ).rejects.toThrow("__exit_1__");
+
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("OPENSHELL_GATEWAY_ENDPOINT is set"),
+    );
+    expect(resolveBinary).not.toHaveBeenCalled();
+    expect(selectGateway).not.toHaveBeenCalled();
+    expect(probeWorkdir).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("aborts before the workdir probe and exec when gateway selection fails", async () => {
