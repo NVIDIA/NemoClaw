@@ -402,7 +402,12 @@ export async function execSandbox(
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir, gatewayName);
   }
-  const emitPolicyDenialHint = preparePolicyHint(CLI_NAME, sandboxName, deps.policyHint);
+  const emitPolicyDenialHint = preparePolicyHint(
+    CLI_NAME,
+    sandboxName,
+    deps.policyHint,
+    gatewayName,
+  );
   const completion = await runSandboxExecCommand(
     binary,
     sandboxName,

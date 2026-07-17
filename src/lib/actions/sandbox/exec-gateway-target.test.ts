@@ -173,6 +173,47 @@ describe("execSandbox gateway targeting", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("keeps post-exec policy probes pinned after ambient gateway selection drifts", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "ambient-sibling");
+    const enableAudit = vi.fn();
+    const probeLogs = vi.fn(() => "");
+    const selectGateway = vi.fn(() => {
+      process.env.OPENSHELL_GATEWAY = "drifted-sibling";
+      return { outcome: "selected" as const, gatewayName: "nemoclaw-8091" };
+    });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`__exit_${code ?? 0}__`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(
+      execSandbox(
+        "beta",
+        ["curl", "https://example.invalid"],
+        {},
+        {
+          resolveBinary: () => "openshell",
+          selectGateway,
+          run: async () => ({ status: 56 }),
+          cleanupDeps: cleanupSkipped,
+          policyHint: {
+            now: () => 0,
+            env: {},
+            enableAudit,
+            probeLogs,
+            attempts: 1,
+            sleep: async () => {},
+            writeStderr: () => {},
+          },
+        },
+      ),
+    ).rejects.toThrow("__exit_56__");
+
+    expect(process.env.OPENSHELL_GATEWAY).toBe("drifted-sibling");
+    expect(enableAudit).toHaveBeenCalledWith("beta", "nemoclaw-8091");
+    expect(probeLogs).toHaveBeenCalledWith("beta", "nemoclaw-8091");
+  });
+
   it("aborts before the workdir probe and exec when gateway selection fails", async () => {
     const order: string[] = [];
     const selectGateway = vi.fn(() => {
