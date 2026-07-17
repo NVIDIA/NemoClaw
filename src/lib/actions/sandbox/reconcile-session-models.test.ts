@@ -1,9 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { reconcilePinnedSessionModels } from "./reconcile-session-models";
+import {
+  buildSessionStoreReplaceCommand,
+  reconcilePinnedSessionModels,
+} from "./reconcile-session-models";
 
 function store(entries: Record<string, unknown>): string {
   return JSON.stringify(entries);
@@ -84,5 +99,101 @@ describe("reconcilePinnedSessionModels (#7102)", () => {
       "agent:main:main": { modelProvider: "inference", model: 42 },
     });
     expect(reconcilePinnedSessionModels(raw, primary).changed).toBe(false);
+  });
+});
+
+describe("buildSessionStoreReplaceCommand", () => {
+  it("uses no-follow exclusive staging with atomic replacement and cleanup (#7102)", () => {
+    const command = buildSessionStoreReplaceCommand(
+      "/sandbox/.openclaw/agents/main/sessions/sessions.json",
+      '{"new":true}\n',
+      '{"old":true}',
+    );
+
+    expect(command).toContain("os.O_EXCL");
+    expect(command).toContain("os.O_NOFOLLOW");
+    expect(command).toContain("os.fchown(staged_fd, source_stat.st_uid, source_stat.st_gid)");
+    expect(command).toContain("os.fchmod(staged_fd, stat.S_IMODE(source_stat.st_mode))");
+    expect(command).toContain("os.replace(staged_name, target_name");
+    expect(command).toContain("if not installed and staged_name");
+    expect(command).toContain("os.unlink(staged_name, dir_fd=parent_fd)");
+    expect(command).not.toContain(".nemoclaw-tmp");
+  });
+
+  it("atomically replaces a regular store while preserving its metadata (#7102)", () => {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-session-reconcile-"));
+    try {
+      const sessionsPath = join(root, "sessions.json");
+      const original = '{"old":true}\n';
+      const replacement = '{"new":true}\n';
+      writeFileSync(sessionsPath, original, { mode: 0o640 });
+      const before = statSync(sessionsPath);
+
+      const result = spawnSync(
+        "sh",
+        ["-c", buildSessionStoreReplaceCommand(sessionsPath, replacement, original.trim())],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(sessionsPath, "utf8")).toBe(replacement);
+      const after = statSync(sessionsPath);
+      expect(after.mode & 0o777).toBe(before.mode & 0o777);
+      expect(after.uid).toBe(before.uid);
+      expect(after.gid).toBe(before.gid);
+      expect(readdirSync(root)).toEqual(["sessions.json"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a symlinked store without changing its target (#7102)", () => {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-session-reconcile-link-"));
+    try {
+      const targetPath = join(root, "target.json");
+      const sessionsPath = join(root, "sessions.json");
+      const original = '{"keep":true}\n';
+      writeFileSync(targetPath, original);
+      symlinkSync(targetPath, sessionsPath);
+
+      const result = spawnSync(
+        "sh",
+        [
+          "-c",
+          buildSessionStoreReplaceCommand(sessionsPath, '{"replace":true}\n', original.trim()),
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(readFileSync(targetPath, "utf8")).toBe(original);
+      expect(readdirSync(root).sort()).toEqual(["sessions.json", "target.json"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses stale source content without changing the store (#7102)", () => {
+    const root = mkdtempSync(join(tmpdir(), "nemoclaw-session-reconcile-race-"));
+    try {
+      const sessionsPath = join(root, "sessions.json");
+      const current = '{"current":true}\n';
+      writeFileSync(sessionsPath, current);
+
+      const result = spawnSync(
+        "sh",
+        [
+          "-c",
+          buildSessionStoreReplaceCommand(sessionsPath, '{"replacement":true}\n', '{"stale":true}'),
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(readFileSync(sessionsPath, "utf8")).toBe(current);
+      expect(readdirSync(root)).toEqual(["sessions.json"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

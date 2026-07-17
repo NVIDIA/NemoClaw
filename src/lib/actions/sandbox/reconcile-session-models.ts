@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
+import { shellQuote } from "../../core/shell-quote";
 import { MANAGED_PROVIDER_ID } from "../../inference/config";
 import { executeSandboxCommand } from "./process-recovery";
 import type { RebuildLog } from "./rebuild-credential-preflight";
@@ -8,8 +10,147 @@ import { DEFAULT_AGENT_ID } from "./sessions/paths";
 
 const OPENCLAW_CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
 
+const SESSION_STORE_REPLACE_PYTHON = String.raw`
+import base64
+import hashlib
+import os
+import secrets
+import stat
+import sys
+
+target_path = sys.argv[1]
+payload = base64.b64decode(sys.argv[2], validate=True)
+expected_sha256 = sys.argv[3]
+parent_path, target_name = os.path.split(target_path)
+if not parent_path or not target_name:
+    raise ValueError("session store path must have a parent and basename")
+for flag_name in ("O_DIRECTORY", "O_NOFOLLOW"):
+    if not hasattr(os, flag_name):
+        raise OSError(f"{flag_name} is required for safe session store replacement")
+
+parent_fd = -1
+source_fd = -1
+staged_fd = -1
+staged_name = ""
+staged_identity = None
+installed = False
+try:
+    parent_fd = os.open(
+        parent_path,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+    )
+    source_fd = os.open(
+        target_name,
+        os.O_RDONLY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0),
+        dir_fd=parent_fd,
+    )
+    source_stat = os.fstat(source_fd)
+    if not stat.S_ISREG(source_stat.st_mode) or source_stat.st_nlink != 1:
+        raise ValueError("session store must be a single regular file")
+    source_chunks = []
+    while True:
+        chunk = os.read(source_fd, 1024 * 1024)
+        if not chunk:
+            break
+        source_chunks.append(chunk)
+    if hashlib.sha256(b"".join(source_chunks).strip()).hexdigest() != expected_sha256:
+        raise ValueError("session store changed before atomic replacement")
+
+    create_flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    for _attempt in range(100):
+        staged_name = f".sessions.json.nemoclaw.{secrets.token_hex(16)}"
+        try:
+            staged_fd = os.open(staged_name, create_flags, 0o600, dir_fd=parent_fd)
+            break
+        except FileExistsError:
+            continue
+    if staged_fd < 0:
+        raise OSError("could not create a private session store staging file")
+    staged_identity = os.fstat(staged_fd)
+    if not stat.S_ISREG(staged_identity.st_mode) or staged_identity.st_nlink != 1:
+        raise ValueError("session store staging path is not a single regular file")
+
+    written = 0
+    while written < len(payload):
+        count = os.write(staged_fd, payload[written:])
+        if count <= 0:
+            raise OSError("session store staging write made no progress")
+        written += count
+    os.fchown(staged_fd, source_stat.st_uid, source_stat.st_gid)
+    os.fchmod(staged_fd, stat.S_IMODE(source_stat.st_mode))
+    os.fsync(staged_fd)
+
+    current_stat = os.stat(target_name, dir_fd=parent_fd, follow_symlinks=False)
+    current_identity = (
+        current_stat.st_dev,
+        current_stat.st_ino,
+        current_stat.st_size,
+        current_stat.st_mtime_ns,
+        current_stat.st_ctime_ns,
+    )
+    source_identity = (
+        source_stat.st_dev,
+        source_stat.st_ino,
+        source_stat.st_size,
+        source_stat.st_mtime_ns,
+        source_stat.st_ctime_ns,
+    )
+    if current_identity != source_identity:
+        raise ValueError("session store changed before atomic replacement")
+    latest_staged = os.stat(staged_name, dir_fd=parent_fd, follow_symlinks=False)
+    if (latest_staged.st_dev, latest_staged.st_ino) != (
+        staged_identity.st_dev,
+        staged_identity.st_ino,
+    ):
+        raise ValueError("session store staging file changed before atomic replacement")
+
+    os.replace(staged_name, target_name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+    installed = True
+    os.fsync(parent_fd)
+finally:
+    if not installed and staged_name and staged_identity is not None and parent_fd >= 0:
+        try:
+            latest_staged = os.stat(staged_name, dir_fd=parent_fd, follow_symlinks=False)
+            if (latest_staged.st_dev, latest_staged.st_ino) == (
+                staged_identity.st_dev,
+                staged_identity.st_ino,
+            ):
+                os.unlink(staged_name, dir_fd=parent_fd)
+        except OSError:
+            pass
+    for descriptor in (staged_fd, source_fd, parent_fd):
+        if descriptor >= 0:
+            os.close(descriptor)
+`.trim();
+
 function defaultAgentSessionsPath(agentId: string): string {
   return `/sandbox/.openclaw/agents/${agentId}/sessions/sessions.json`;
+}
+
+export function buildSessionStoreReplaceCommand(
+  sessionsPath: string,
+  content: string,
+  expectedSource: string,
+): string {
+  const encoded = Buffer.from(content, "utf8").toString("base64");
+  const expectedSha256 = createHash("sha256").update(expectedSource).digest("hex");
+  return [
+    "python3",
+    "-c",
+    shellQuote(SESSION_STORE_REPLACE_PYTHON),
+    shellQuote(sessionsPath),
+    shellQuote(encoded),
+    shellQuote(expectedSha256),
+  ].join(" ");
 }
 
 export interface SessionModelReconcileResult {
@@ -90,7 +231,10 @@ function readPrimaryModelRef(sandboxName: string): string | null {
 /**
  * Best-effort reconcile of stale pinned session models after a rebuild restore.
  * MUST run in the post-restore window (gateway down): OpenClaw owns
- * `sessions.json` while it is live, so editing it there would race its writes.
+ * `sessions.json` while it is live, so editing it during `inference set` would
+ * race its writes, while omitting the session store from rebuild restore would
+ * discard conversation state. This recovery can be removed when OpenClaw
+ * exposes an offline, race-free session-model reset operation.
  */
 export function reconcileStalePinnedSessionModelsAfterRebuild(
   sandboxName: string,
@@ -112,11 +256,9 @@ export function reconcileStalePinnedSessionModelsAfterRebuild(
     log("Session model reconcile: no stale pinned session models");
     return;
   }
-  const encoded = Buffer.from(reconciled.content, "utf8").toString("base64");
-  const tmpPath = `${sessionsPath}.nemoclaw-tmp`;
   const writeResult = executeSandboxCommand(
     sandboxName,
-    `printf %s '${encoded}' | base64 -d > ${tmpPath} && mv ${tmpPath} ${sessionsPath}`,
+    buildSessionStoreReplaceCommand(sessionsPath, reconciled.content, readResult.stdout),
   );
   if (!writeResult || writeResult.status !== 0) {
     log(
