@@ -189,7 +189,7 @@ export interface SandboxStateOptions<
     clearPlanEnv(): void;
     getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
     providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
-    providerExistsInGateway(name: string, gatewayName: string): boolean;
+    providerExistsInGateway?(name: string, gatewayName: string): boolean;
     stageSandboxCredentialProviders(input: {
       sandboxName: string;
       enabledChannels: readonly string[];
@@ -564,7 +564,7 @@ class SandboxStateFlow<
 
     const bindingCheck = revalidateCheckpointBindings(
       checkpoint,
-      this.checkpointBindingAvailability(checkpoint),
+      this.checkpointBindingAvailability(checkpoint, state),
     );
     if (bindingCheck.status === "stale") return this.rejectStaleCheckpointBindings(bindingCheck);
 
@@ -576,19 +576,25 @@ class SandboxStateFlow<
       : decision;
   }
 
-  private checkpointBindingAvailability(checkpoint: OnboardCheckpoint): {
+  private checkpointBindingAvailability(
+    checkpoint: OnboardCheckpoint,
+    state: SandboxStepState<WebSearchConfig>,
+  ): {
     availableCredentialEnvs: ReadonlySet<string>;
     liveRegisteredProviders: ReadonlySet<string>;
   } {
+    const providerExistsInGateway = this.deps.providerExistsInGateway;
     return {
       availableCredentialEnvs: new Set(
         Object.keys(this.options.env).filter((name) => Boolean(this.options.env[name]?.trim())),
       ),
-      liveRegisteredProviders: new Set(
-        checkpoint.bindings.registeredProviders.filter((name) =>
-          this.deps.providerExistsInGateway(name, this.options.gatewayName),
-        ),
-      ),
+      liveRegisteredProviders: providerExistsInGateway
+        ? new Set(
+            checkpoint.bindings.registeredProviders.filter((name) =>
+              providerExistsInGateway(name, this.options.gatewayName),
+            ),
+          )
+        : new Set(state.session?.stagedCredentialProviders ?? []),
     };
   }
 

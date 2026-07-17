@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { loadResumeCheckpoint } from "../state/onboard-checkpoint-migrate";
 import type { CheckpointLoadResult } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
@@ -53,6 +54,8 @@ export interface OnboardSessionBootstrapResult {
   session: Session | null;
   fromDockerfile: string | null;
 }
+
+export const defaultResolveResumeCheckpoint: () => CheckpointLoadResult = loadResumeCheckpoint;
 
 export function checkpointSandboxName(
   sandboxName: string,
@@ -275,4 +278,14 @@ export async function prepareOnboardSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   return input.resume ? prepareResumeSession(input, deps) : prepareFreshSession(input, deps);
+}
+
+export function prepareOnboardSessionValidated(
+  input: OnboardSessionBootstrapInput,
+  deps: Omit<OnboardSessionBootstrapDeps, "resolveResumeCheckpoint">,
+): Promise<OnboardSessionBootstrapResult> {
+  return prepareOnboardSession(input, {
+    ...deps,
+    resolveResumeCheckpoint: defaultResolveResumeCheckpoint,
+  });
 }

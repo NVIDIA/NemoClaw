@@ -188,6 +188,28 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.recordSkip).toHaveBeenCalled();
   });
 
+  it("falls back to the staged-provider receipt when no live gateway check is wired", async () => {
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      providerExistsInGateway: undefined,
+    });
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        bindings: { credentialEnvs: [], registeredProviders: ["my-assistant-brave-search"] },
+      }),
+    );
+    session.stagedCredentialProviders = ["my-assistant-brave-search"];
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.recordSkip).toHaveBeenCalled();
+  });
+
   it("records durable sandbox identity for a non-OpenClaw agent create so a crash can still be recovered", async () => {
     const { deps, getSession } = createDeps({ getSandboxReuseState: () => "missing" });
     const session = createSession({ sessionId: "sess-1", agent: "hermes" });
