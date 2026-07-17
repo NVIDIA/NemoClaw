@@ -9,6 +9,7 @@
  * nor its local checker implementation execute before this verification.
  */
 
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyTrustedCreateRequireRatchet } from "./create-require-ratchet-core.mts";
@@ -25,7 +26,11 @@ function main(): void {
   console.log("Base-trusted createRequire allowlist ratchet passed.");
 }
 
-if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "")) {
+const invokedPath = process.argv[1];
+if (
+  invokedPath &&
+  realpathSync(fileURLToPath(import.meta.url)) === realpathSync(path.resolve(invokedPath))
+) {
   try {
     main();
   } catch (error) {

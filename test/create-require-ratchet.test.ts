@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -79,6 +80,43 @@ function baseRunner(
         throw new Error(`unexpected git arguments: ${args.join(" ")}`);
     }
   };
+}
+
+function runFixtureGit(repoRoot: string, args: readonly string[]): string {
+  const result = spawnSync("git", [...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  expect(result.status, result.stderr).toBe(0);
+  return result.stdout.trim();
+}
+
+function copyTrustedEntrypoint(actionRoot: string): string {
+  const sourceRoot = path.resolve(".github/actions/ci-static-checks");
+  mkdirSync(path.join(actionRoot, "node_modules"), { recursive: true });
+  for (const file of ["create-require-ratchet.mts", "create-require-ratchet-core.mts"]) {
+    copyFileSync(path.join(sourceRoot, file), path.join(actionRoot, file));
+  }
+  symlinkSync(
+    path.resolve("node_modules/typescript"),
+    path.join(actionRoot, "node_modules/typescript"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  return path.join(actionRoot, "create-require-ratchet.mts");
+}
+
+function runTrustedEntrypoint(
+  entrypoint: string,
+  repoRoot: string,
+  environment: NodeJS.ProcessEnv,
+) {
+  return spawnSync(process.execPath, ["--experimental-strip-types", entrypoint], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: { ...process.env, ...environment, GITHUB_WORKSPACE: repoRoot },
+    timeout: 10_000,
+  });
 }
 
 afterEach(() => {
@@ -304,6 +342,55 @@ describe("base-trusted createRequire ratchet", () => {
         baseRunner({ ts: allowlistSource(paths, []) }),
       ),
     ).toBeNull();
+  });
+
+  it("executes the committed Node entrypoint and rejects a real base expansion (#7056)", () => {
+    const root = temporaryRepo();
+    const repoRoot = path.join(root, "checkout");
+    const entrypoint = copyTrustedEntrypoint(path.join(root, "trusted-action"));
+    const originalPath = "src/lib/allowed.test.ts";
+    const expandedPath = "src/lib/expanded.test.ts";
+    mkdirSync(repoRoot, { recursive: true });
+    runFixtureGit(repoRoot, ["init", "--initial-branch=main"]);
+    writeFixture(
+      repoRoot,
+      "scripts/checks/test-create-require-budget.ts",
+      allowlistSource([originalPath], []),
+    );
+    writeFixture(repoRoot, originalPath, "createRequire(import.meta.url);");
+    runFixtureGit(repoRoot, ["add", "."]);
+    runFixtureGit(repoRoot, [
+      "-c",
+      "user.name=NemoClaw Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "test: create fixture base",
+    ]);
+    const baseRevision = runFixtureGit(repoRoot, ["rev-parse", "HEAD"]);
+    const environment = pullRequestEnvironment(repoRoot, baseRevision);
+
+    const passing = runTrustedEntrypoint(entrypoint, repoRoot, environment);
+    expect(passing.status, passing.stderr).toBe(0);
+    expect(passing.stdout, `stderr: ${passing.stderr}`).toContain(
+      "Base-trusted createRequire allowlist ratchet passed.",
+    );
+
+    writeFixture(
+      repoRoot,
+      "scripts/checks/test-create-require-budget.ts",
+      allowlistSource([originalPath, expandedPath], []),
+    );
+    writeFixture(repoRoot, expandedPath, "createRequire(import.meta.url);");
+    const failing = runTrustedEntrypoint(entrypoint, repoRoot, environment);
+    expect(failing.status).toBe(1);
+    expect(failing.stderr).toContain(
+      "createRequire allowlists must not expand relative to the trusted base.",
+    );
+    expect(failing.stderr).toContain(`- CLI_CREATE_REQUIRE_FILES: ${expandedPath}`);
   });
 
   it("accepts only a validated base revision from the pull-request event (#7056)", () => {
