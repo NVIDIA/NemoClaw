@@ -193,6 +193,7 @@ function main(): void {
 
   const previousTag = semverTags[0];
   const nextTag = bumpTag(previousTag, options.bump);
+  const followingTag = bumpTag(nextTag, "patch");
   if (readRemoteTag(nextTag)) {
     throw new Error(`Remote tag already exists: ${nextTag}`);
   }
@@ -223,6 +224,8 @@ function main(): void {
       `create annotated ${nextTag} tag at ${originMainCommit}`,
       `push ${nextTag}`,
       "wait for release-latest-tag workflow to move latest",
+      `carry open ${nextTag} items forward to ${followingTag}`,
+      `delete released ${nextTag} label after carry-forward succeeds`,
       "draft release notes from live compare data",
     ],
     forbiddenOperations: [
