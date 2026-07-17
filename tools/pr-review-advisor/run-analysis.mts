@@ -68,7 +68,7 @@ function writeBootstrapUnavailableResult(
   options: Required<Pick<RunAnalysisOptions, "mkdir" | "writeFile" | "runGit">>,
 ): void {
   options.mkdir(input.outDir);
-  let headSha = "unknown";
+  let headSha: string;
   try {
     headSha = options.runGit(["rev-parse", input.headRef], input.advisorWorkdir);
   } catch {
@@ -173,7 +173,12 @@ export function runPrReviewAdvisorAnalysis(
     options.appendEnv ??
     ((key: string, value: string): void => {
       if (!input.envFile) return;
-      fs.appendFileSync(input.envFile, `${key}=${value}\n`);
+      const fd = fs.openSync(input.envFile, fs.constants.O_WRONLY | fs.constants.O_APPEND);
+      try {
+        fs.writeFileSync(fd, `${key}=${value}\n`);
+      } finally {
+        fs.closeSync(fd);
+      }
     });
 
   if (!fileExists(analyzePath)) {

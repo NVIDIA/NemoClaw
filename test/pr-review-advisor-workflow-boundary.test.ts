@@ -681,6 +681,44 @@ process.exitCode = valid ? 0 : 1;`,
     expect(runCalls[0]!.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS).not.toBe("0");
   });
 
+  it("appends support status only to an existing GitHub env file", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pr-review-advisor-env-"));
+    const envFile = path.join(tmp, "github-env");
+    const input = advisorAnalysisInput({ envFile });
+    const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
+    try {
+      fs.writeFileSync(envFile, "");
+      runPrReviewAdvisorAnalysis(input, {
+        fileExists: (file) => file === analyzePath,
+        readText: (file) => {
+          if (file.endsWith("session.mts")) return input.model;
+          if (file.endsWith("analyze.mts")) return "PR_REVIEW_ADVISOR_MODEL";
+          if (file.endsWith("comment.mts")) return "PR_REVIEW_ADVISOR_COMMENT_MARKER";
+          throw new Error(`unexpected read: ${file}`);
+        },
+        runNode: () => 0,
+      });
+
+      expect(fs.readFileSync(envFile, "utf8")).toBe("PR_REVIEW_ADVISOR_SUPPORTED=1\n");
+      fs.rmSync(envFile);
+      expect(() =>
+        runPrReviewAdvisorAnalysis(input, {
+          fileExists: (file) => file === analyzePath,
+          readText: (file) => {
+            if (file.endsWith("session.mts")) return input.model;
+            if (file.endsWith("analyze.mts")) return "PR_REVIEW_ADVISOR_MODEL";
+            if (file.endsWith("comment.mts")) return "PR_REVIEW_ADVISOR_COMMENT_MARKER";
+            throw new Error(`unexpected read: ${file}`);
+          },
+          runNode: () => 0,
+        }),
+      ).toThrow();
+      expect(fs.existsSync(envFile)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("fails the supported advisor lane when analyze exits non-zero", () => {
     const input = advisorAnalysisInput();
     const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
