@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION } from "../../../src/lib/actions/sandbox/mcp-bridge-validation";
 import { MCP_BRIDGE_RUNTIME_COMPATIBILITY_ARTIFACT } from "../../../tools/e2e/mcp-bridge-runtime-compatibility.mts";
 
 const COMPATIBILITY_TOOL = path.resolve("tools/e2e/mcp-bridge-runtime-compatibility.mts");
@@ -75,11 +76,11 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
       expect(run.result.stderr).toBe("");
       expect(run.result.stdout).toContain("::notice title=OpenShell dev compatibility::");
       expect(run.result.stdout).not.toContain("0.0.78-dev.6+ga7271169");
-      expect(run.result.stdout).not.toContain("0.0.72");
+      expect(run.result.stdout).not.toContain(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION);
       expect(fs.readFileSync(run.githubOutputPath, "utf8")).toBe(
         [
           "mode=expected-version-mismatch",
-          "expected_version=0.0.72",
+          `expected_version=${MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION}`,
           "actual_version=0.0.78-dev.6+ga7271169",
           "",
         ].join("\n"),
@@ -97,7 +98,7 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
         classificationStatus: "passed",
         compatibility: "unsupported-version",
         mode: "expected-version-mismatch",
-        expectedOpenShellVersion: "0.0.72",
+        expectedOpenShellVersion: MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
         actualOpenShellVersion: "0.0.78-dev.6+ga7271169",
         credentialBoundaryGate: "rejected-as-required",
         fullLifecycle: "not-run",
@@ -108,7 +109,7 @@ describe.skipIf(process.platform === "win32")("MCP bridge compatibility CLI", ()
         "the exact-version gate rejected the unsupported runtime as required",
       );
       expect(summary).not.toContain("0.0.78-dev.6+ga7271169");
-      expect(summary).not.toContain("0.0.72");
+      expect(summary).not.toContain(MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION);
     } finally {
       fs.rmSync(run.root, { force: true, recursive: true });
     }

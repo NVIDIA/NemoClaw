@@ -587,7 +587,7 @@ def _pinned_process_matches_supervised_nonroot_start(
     supervisor_identity: tuple[str, int | None],
     expected_effective_uid: int,
 ) -> bool:
-    # OpenShell 0.0.72 keeps its supervisor at PID 1 and launches the non-root
+    # OpenShell 0.0.85 keeps its supervisor at PID 1 and launches the non-root
     # NemoClaw entrypoint as a child, so startup authority must be proved from
     # pinned procfs identity rather than a PID-1 equality check. Remove this
     # compatibility proof when #6256 provides authenticated supervisor/runtime

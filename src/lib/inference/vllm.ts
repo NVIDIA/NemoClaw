@@ -36,7 +36,7 @@ import {
 } from "./vllm-models";
 import { resolveVllmInstallModel } from "./vllm-prompt";
 import {
-  findUnwritableTreePath,
+  findUnwritableModelCachePath,
   formatStorageBytes,
   imageStorageRequirementBytes,
   measureDirectorySizeBytes,
@@ -165,6 +165,14 @@ function hfModelSnapshotDir(model: VllmModelDef): string | null {
     "snapshots",
     revision,
   );
+}
+
+function hfModelCacheDir(model: VllmModelDef): string | null {
+  const modelParts = model.id.split("/");
+  if (modelParts.some((part) => !HF_CACHE_COMPONENT_PATTERN.test(part))) {
+    return null;
+  }
+  return path.join(hostHfCacheDir(), "hub", `models--${modelParts.join("--")}`);
 }
 
 function hostUserIdentity(): string | null {
@@ -902,7 +910,7 @@ async function modelStorageAccepted(
   );
 }
 
-function ensureHfCacheDir(): { ok: true } | { ok: false; reason: string } {
+function ensureHfCacheDir(model: VllmModelDef): { ok: true } | { ok: false; reason: string } {
   const cacheDir = hostHfCacheDir();
   try {
     fs.mkdirSync(cacheDir, { recursive: true });
@@ -912,7 +920,7 @@ function ensureHfCacheDir(): { ok: true } | { ok: false; reason: string } {
       reason: `could not create Hugging Face cache directory ${cacheDir}: ${(err as Error).message}`,
     };
   }
-  const unwritablePath = findUnwritableTreePath(cacheDir);
+  const unwritablePath = findUnwritableModelCachePath(cacheDir, hfModelCacheDir(model));
   if (unwritablePath) {
     const identity = hostUserIdentity() ?? "$(id -u):$(id -g)";
     return {
@@ -920,7 +928,7 @@ function ensureHfCacheDir(): { ok: true } | { ok: false; reason: string } {
       reason:
         `Hugging Face cache path ${unwritablePath} is not writable by host user ${identity}. ` +
         "It may have been created by an earlier root-run downloader; NemoClaw did not modify it. " +
-        `Repair ownership, then retry: sudo chown -R ${identity} ${shellQuote(cacheDir)}`,
+        `Repair ownership, then retry: sudo chown -R ${identity} ${shellQuote(unwritablePath)}`,
     };
   }
   return { ok: true };
@@ -1052,7 +1060,7 @@ export async function installVllm(
     return { ok: false };
   }
 
-  const cacheDir = ensureHfCacheDir();
+  const cacheDir = ensureHfCacheDir(model);
   if (!cacheDir.ok) {
     console.error(`  vLLM install failed: ${cacheDir.reason}`);
     return { ok: false };

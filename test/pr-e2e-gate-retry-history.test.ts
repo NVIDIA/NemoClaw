@@ -246,14 +246,14 @@ describe("PR E2E controller retry history", () => {
         .at(-1);
       expect(completion?.body).toMatchObject({
         status: "in_progress",
-        conclusion: null,
         output: {
           title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining(
-            "No selected E2E job ran and no repository secret was exposed",
+            "No selected E2E job or target ran and no repository secret was exposed",
           ),
         },
       });
+      expect(completion?.body).not.toHaveProperty("conclusion");
       expect(checkRuns[0]).toEqual(completedCheck);
       expect(checkRuns[1]).toMatchObject({
         id: 18,
@@ -262,7 +262,7 @@ describe("PR E2E controller retry history", () => {
         output: {
           title: "Maintainer authorization required to run E2E",
           summary: expect.stringContaining(
-            "No selected E2E job ran and no repository secret was exposed",
+            "No selected E2E job or target ran and no repository secret was exposed",
           ),
         },
       });

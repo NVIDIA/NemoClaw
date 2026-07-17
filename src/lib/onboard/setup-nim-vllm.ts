@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { VLLM_MODELS } from "../inference/vllm-models";
 import { cliName } from "./branding";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "./setup-nim-flow";
 
@@ -81,6 +82,43 @@ function classifyModelSize(model: string): ModelSizeClass {
 function reportedModelRoot(entry: VllmModelEntry | null): string | null {
   const root = typeof entry?.root === "string" ? entry.root.trim() : "";
   return root && SAFE_REPORTED_MODEL_ID_PATTERN.test(root) ? root : null;
+}
+
+/** Match an arbitrary served alias to the requested model through vLLM's reported root. */
+function reportedModelMatchesRequest(
+  models: VllmModels,
+  detectedModel: string,
+  requestedModel: string,
+): boolean {
+  if (detectedModel === requestedModel) return true;
+  const root = reportedModelRoot(findVllmModelEntry(models, detectedModel));
+  if (!root) return false;
+  const normalizedRequest = requestedModel.toLowerCase();
+  const registeredModel = VLLM_MODELS.find(
+    (model) =>
+      model.id.toLowerCase() === normalizedRequest ||
+      model.servedModelId?.toLowerCase() === normalizedRequest,
+  );
+  return root.toLowerCase() === (registeredModel?.id ?? requestedModel).toLowerCase();
+}
+
+/** Preserve the checkpoint identity proven by the vLLM model response. */
+function validatedVllmModelIdentity(
+  models: VllmModels,
+  detectedModel: string,
+  requestedModel: string | null,
+): string | null {
+  const root = reportedModelRoot(findVllmModelEntry(models, detectedModel));
+  if (root) return root;
+  if (!requestedModel || detectedModel !== requestedModel) return null;
+  const normalizedRequest = requestedModel.toLowerCase();
+  const registeredModel = VLLM_MODELS.find(
+    (model) =>
+      model.envValue.toLowerCase() === normalizedRequest ||
+      model.id.toLowerCase() === normalizedRequest ||
+      model.servedModelId?.toLowerCase() === normalizedRequest,
+  );
+  return registeredModel?.id ?? requestedModel;
 }
 
 /** Read a string property from optional nested vLLM model metadata. */
@@ -191,7 +229,12 @@ export function createSetupNimVllmHandler(
       console.error("  Detected vLLM model ID contains invalid characters.");
       deps.exitProcess(1);
     }
-    if (requiredModel && detectedModel !== requiredModel) {
+    if (
+      requiredModel &&
+      detectedModel !== requiredModel &&
+      (options.managedInstall === true ||
+        !reportedModelMatchesRequest(models, detectedModel, requiredModel))
+    ) {
       console.error(
         `  Detected vLLM model '${detectedModel}' does not match the shared gateway route '${requiredModel}'.`,
       );
@@ -204,6 +247,7 @@ export function createSetupNimVllmHandler(
       console.error("  Then select Local vLLM when prompted.");
       deps.exitProcess(1);
     }
+    const modelIdentity = validatedVllmModelIdentity(models, detectedModel, requiredModel);
     state.model = detectedModel;
     state.assertRouteCompatible?.();
     console.log(`  Detected model: ${state.model}`);
@@ -235,6 +279,7 @@ export function createSetupNimVllmHandler(
       return "retry-selection";
     }
 
+    if (modelIdentity) state.vllmModelIdentity = modelIdentity;
     deps.applyVllmRuntimeContextWindow(models, state.model);
     if (validation.api !== "openai-completions") {
       console.log(

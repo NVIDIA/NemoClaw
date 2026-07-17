@@ -229,6 +229,7 @@ function runChildValidation(
   currentPullSha: string,
   currentPullBase = BASE_SHA,
   currentWorkflowSha = WORKFLOW_SHA,
+  selectors: { jobs?: string; targets?: string } = {},
 ) {
   const workflow = readYaml<DispatchWorkflow>(E2E_PATH);
   const validation = step(workflow.jobs["generate-matrix"], "Validate controller dispatch");
@@ -274,11 +275,11 @@ esac
         FAKE_PR_SHA: currentPullSha,
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
         GITHUB_TOKEN: "token",
-        JOBS: "onboard-repair",
+        JOBS: selectors.jobs ?? "onboard-repair",
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         PLAN_HASH: "b".repeat(64),
         PR_NUMBER: "42",
-        TARGETS: "",
+        TARGETS: selectors.targets ?? "",
         WORKFLOW_EVENT: "workflow_dispatch",
         WORKFLOW_REF: "refs/heads/main",
         WORKFLOW_SHA: currentWorkflowSha,
@@ -661,14 +662,33 @@ describe("PR E2E gate workflow", () => {
     const stale = runChildValidation("c".repeat(40));
     const retargeted = runChildValidation(HEAD_SHA, "d".repeat(40));
     const racedWorkflow = runChildValidation(HEAD_SHA, BASE_SHA, "e".repeat(40));
+    const combined = runChildValidation(HEAD_SHA, BASE_SHA, WORKFLOW_SHA, {
+      jobs: "cloud-onboard,credential-sanitization,security-posture",
+      targets: "ubuntu-repo-cloud-langchain-deepagents-code",
+    });
+    const unapprovedTarget = runChildValidation(HEAD_SHA, BASE_SHA, WORKFLOW_SHA, {
+      jobs: "onboard-repair",
+      targets: "ubuntu-repo-cloud-openclaw",
+    });
+    const empty = runChildValidation(HEAD_SHA, BASE_SHA, WORKFLOW_SHA, {
+      jobs: "",
+      targets: "",
+    });
 
     expect(current.status).toBe(0);
+    expect(combined.status).toBe(0);
     expect(stale.status).toBe(1);
     expect(stale.stdout).toContain("checkout_sha must match the PR head commit");
     expect(retargeted.status).toBe(1);
     expect(retargeted.stdout).toContain("base_sha must match the PR base commit");
     expect(racedWorkflow.status).toBe(1);
     expect(racedWorkflow.stdout).toContain("workflow_sha must match the trusted workflow commit");
+    expect(unapprovedTarget.status).toBe(1);
+    expect(unapprovedTarget.stdout).toContain(
+      "PR E2E target is not approved by the trusted controller",
+    );
+    expect(empty.status).toBe(1);
+    expect(empty.stdout).toContain("PR E2E runs require controller-selected jobs or targets");
   });
 
   // source-shape-contract: security -- Always-run finalization and private-workspace cleanup must survive every coordinate failure path

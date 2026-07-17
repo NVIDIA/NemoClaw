@@ -308,6 +308,7 @@ interface DirectorySizeEntry {
 interface WritableTreeDeps {
   canWrite: (target: string, directory: boolean) => boolean;
   list: (target: string) => DirectorySizeEntry[];
+  exists: (target: string) => boolean;
 }
 
 function defaultWritableTreeDeps(): WritableTreeDeps {
@@ -322,6 +323,7 @@ function defaultWritableTreeDeps(): WritableTreeDeps {
       }
     },
     list: defaultDirectorySizeDeps().list,
+    exists: fs.existsSync,
   };
 }
 
@@ -356,6 +358,39 @@ export function findUnwritableTreePath(
       }
     }
   }
+  return null;
+}
+
+/**
+ * Return the first path that would block a managed onboard for one model,
+ * scoped to what onboard actually writes: the cache root, its `hub`
+ * directory, and the target model's own cache subtree (including the
+ * download lock directory `hub/.locks/<model>` the Hugging Face client
+ * creates alongside it). Unrelated sibling model directories and lock
+ * subtrees are not walked, so a root-owned artifact left by a previous
+ * model's download cannot block onboarding a different model.
+ */
+export function findUnwritableModelCachePath(
+  cacheDir: string,
+  modelCacheDir: string | null,
+  overrides: Partial<WritableTreeDeps> = {},
+): string | null {
+  const deps = { ...defaultWritableTreeDeps(), ...overrides };
+  if (!deps.canWrite(cacheDir, true)) return cacheDir;
+  const hubDir = path.join(cacheDir, "hub");
+  if (!deps.exists(hubDir)) return null;
+  if (!deps.canWrite(hubDir, true)) return hubDir;
+  if (modelCacheDir === null) return null;
+  if (deps.exists(modelCacheDir)) {
+    const blockedPath = findUnwritableTreePath(modelCacheDir, deps);
+    if (blockedPath) return blockedPath;
+  }
+  const locksDir = path.join(hubDir, ".locks");
+  const lockDir = path.join(locksDir, path.basename(modelCacheDir));
+  if (deps.exists(lockDir)) {
+    return findUnwritableTreePath(lockDir, deps);
+  }
+  if (deps.exists(locksDir) && !deps.canWrite(locksDir, true)) return locksDir;
   return null;
 }
 

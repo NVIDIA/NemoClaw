@@ -82,6 +82,11 @@ _ECMASCRIPT_NON_WHITESPACE_SECRET_CHAR = (
     r"\u202f\u205f\u3000\ufeff'\"]"
 )
 _OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
+# OpenShell 8eacb477 reserves these for the supervisor and strips them from all
+# child process shapes; fail closed if a regressed runtime exposes them here.
+_OPENSHELL_SUPERVISOR_ONLY_ENV_NAMES = frozenset(
+    {"OPENSHELL_TLS_CA", "OPENSHELL_TLS_CERT", "OPENSHELL_TLS_KEY"}
+)
 _UPSTREAM_PROVIDER_ENV = "NEMOCLAW_UPSTREAM_PROVIDER"
 _FETCH_URL_TRUSTED_PROXY_ENV = (
     "DEEPAGENTS_CODE_FETCH_URL_TRUSTED_PROXY_URL"
@@ -236,8 +241,6 @@ def _is_openshell_placeholder_for_name(name: str, value: str) -> bool:
 def _is_managed_value(name: str, value: str) -> bool:
     if name == "DEEPAGENTS_CODE_OPENAI_API_KEY":
         return value == "nemoclaw-managed-inference"
-    if name == "OPENSHELL_TLS_KEY":
-        return value == "/etc/openshell/tls/client/tls.key"
     if name == "SLACK_BOT_TOKEN":
         return bool(re.fullmatch(r"xoxb-[A-Za-z0-9_-]{10,}", value)) and not _contains_other_platform_secret(value, "slack")
     if name == "SLACK_APP_TOKEN":
@@ -283,6 +286,11 @@ def _is_safe_otlp_endpoint_url(value: str) -> bool:
 
 def _assert_safe_environment() -> None:
     for name, value in os.environ.items():
+        if name in _OPENSHELL_SUPERVISOR_ONLY_ENV_NAMES:
+            raise RuntimeError(
+                f"runtime environment variable {name} is reserved for the "
+                "OpenShell supervisor and must not reach a child process"
+            )
         if _OPENSHELL_ENV_PLACEHOLDER_PREFIX in value:
             if _is_openshell_placeholder_for_name(name, value):
                 continue

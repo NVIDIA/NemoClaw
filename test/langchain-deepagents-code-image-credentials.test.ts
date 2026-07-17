@@ -216,14 +216,18 @@ describe("LangChain Deep Agents Code image credential boundary", () => {
     }
   });
 
-  it("accepts the mounted OpenShell TLS key path only from runtime provenance", () => {
-    const name = "OPENSHELL_TLS_KEY";
-    const value = "/etc/openshell/tls/client/tls.key";
+  it.each([
+    ["OPENSHELL_TLS_CA", "/etc/openshell/tls/client/ca.crt"],
+    ["OPENSHELL_TLS_CERT", "/etc/openshell/tls/client/tls.crt"],
+    ["OPENSHELL_TLS_KEY", "/etc/openshell/tls/client/tls.key"],
+  ])("rejects supervisor-only %s from runtime and dotenv provenance", (name, value) => {
     const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tls-runtime-"));
     const runtimeFixture = makeWrapperFixture(runtimeDir);
     const runtimeResult = runWrapper(runtimeFixture.wrapperPath, ["-n", "hi"], { [name]: value });
-    expect(runtimeResult.status, runtimeResult.stderr).toBe(0);
-    expect(fs.existsSync(runtimeFixture.ranMarker)).toBe(true);
+    expect(runtimeResult.status, runtimeResult.stderr).not.toBe(0);
+    expect(runtimeResult.stderr).toContain(name);
+    expect(runtimeResult.stderr).not.toContain(value);
+    expect(fs.existsSync(runtimeFixture.ranMarker)).toBe(false);
 
     const dotenvDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tls-dotenv-"));
     const dotenvFixture = makeWrapperFixture(dotenvDir);
