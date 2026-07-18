@@ -52,6 +52,13 @@ type ProbeProviderHealth = (
 ) => ProviderHealthStatus | null;
 type ProbeSandboxInferenceGatewayHealth = typeof probeSandboxInferenceGatewayHealth;
 
+/**
+ * Honest serving-process state while the self-report response and probe
+ * contracts remain undefined. Do not add a checked result until both contracts
+ * and their failure mapping are implemented together.
+ */
+export type ServingProcessHealth = { checked: false };
+
 export function getSandboxStatusInferenceHealth(
   gatewayPresent: boolean,
   currentProvider: unknown,
@@ -161,6 +168,12 @@ export interface SandboxStatusReport {
   failureLayer: SandboxStatusFailureLayer | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   /**
+   * Whether serving-process health was checked. Null when the sandbox is not
+   * reachable or the agent runtime is not gateway-based. This remains
+   * `checked: false` until a self-report probe contract is implemented.
+   */
+  servingProcessHealth: ServingProcessHealth | null;
+  /**
    * Whether the resolved docker-driver sandbox container is paused
    * (`docker pause`). `false` for non-docker-driver sandboxes or when no
    * container is found. A paused container can report `Phase: Error`
@@ -186,6 +199,7 @@ export interface SandboxStatusSnapshot {
   routeDrift: SandboxStatusRouteDrift | null;
   inferenceHealth: ProviderHealthStatus | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
+  servingProcessHealth: ServingProcessHealth | null;
 }
 
 export interface SandboxStatusAgentInfo {
@@ -305,6 +319,7 @@ export async function collectSandboxStatusSnapshot(
       routeDrift: null,
       inferenceHealth: null,
       terminalRuntimeHealth: null,
+      servingProcessHealth: null,
     };
   }
   const live =
@@ -386,6 +401,13 @@ export async function collectSandboxStatusSnapshot(
     lookup.state === "present" && statusAgent.agentRuntime === "terminal"
       ? (opts.deps?.probeTerminalRuntimeHealth ?? probeTerminalRuntimeCgroupOom)(sandboxName)
       : null;
+  // The serving-process leg is only meaningful when the gateway is up. A
+  // manifest declaration alone is not evidence: no self-report response/probe
+  // contract exists yet, so status must stay explicitly unchecked (#7003).
+  const servingProcessHealth: ServingProcessHealth | null =
+    lookup.state === "present" && statusAgent.agentRuntime === "gateway"
+      ? { checked: false }
+      : null;
   return {
     sb,
     lookup,
@@ -397,6 +419,7 @@ export async function collectSandboxStatusSnapshot(
     routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
+    servingProcessHealth,
   };
 }
 
@@ -463,6 +486,7 @@ async function buildSandboxStatusReport(
     phase,
     gatewayState: lookup.state,
     inferenceHealth,
+    servingProcessHealth: snapshot.servingProcessHealth,
     rpcIssue: rpcIssue ? { kind: rpcIssue.kind } : null,
     hostGpuDetected: !!(sb && sb.hostGpuDetected),
     sandboxGpuEnabled,
