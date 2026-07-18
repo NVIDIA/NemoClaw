@@ -922,6 +922,13 @@ require_docker_restart_quiescence() {
   require_docker_mutation_quiescence "$action"
 }
 
+exit_reboot_required() {
+  require_docker_restart_quiescence "rebooting the Station host"
+  info "APPLY_RESULT=REBOOT_REQUIRED"
+  info "Run: sudo reboot"
+  exit "$REBOOT_REQUIRED_EXIT"
+}
+
 loaded_driver_version() {
   local loaded
   command -v nvidia-smi >/dev/null 2>&1 || return 0
@@ -1450,10 +1457,11 @@ fail_after_docker_runtime_rollback() {
 finish_runtime() {
   if systemctl is-active --quiet containerd.service && systemctl is-active --quiet docker.service; then
     require_docker_mutation_quiescence "enabling or configuring the Station container runtime"
+    sudo systemctl enable containerd.service docker.service
   else
     require_docker_restart_quiescence "starting or configuring the Station container runtime"
+    sudo systemctl enable --now containerd.service docker.service
   fi
-  sudo systemctl enable --now containerd.service docker.service
   ensure_docker_group
   ensure_acceptance_image
   ensure_cdi_runtime
@@ -1665,7 +1673,7 @@ run_apply() {
   if reboot_required; then
     if all_packages_exact && ! driver_loaded_exact; then
       warn "A reboot is required before runtime setup can continue"
-      exit "$REBOOT_REQUIRED_EXIT"
+      exit_reboot_required
     fi
     fatal "An unrelated reboot is already pending"
   fi
@@ -1678,32 +1686,24 @@ run_apply() {
     sudo systemctl enable containerd.service docker.service nvidia-cdi-refresh.path nvidia-cdi-refresh.service
     verify_docker_container_baseline
     write_install_boot_marker
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
 
   if install_boot_marker_matches_current_boot; then
     warn "Package installation completed in the current boot"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
 
   driver_loaded_exact || {
     warn "Pinned packages are installed but driver ${DRIVER_VERSION} is not loaded"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   }
 
   finish_runtime
   verify_apply_state
   if ((DOCKER_GROUP_ADDED == 1)); then
     warn "Docker group membership was added and requires a new login before onboarding"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
   rm -f "$INSTALL_BOOT_MARKER"
   info "APPLY_RESULT=COMPLETE"

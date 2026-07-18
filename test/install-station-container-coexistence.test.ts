@@ -97,15 +97,27 @@ verify_docker_container_baseline
     expect(output).toContain("docker_container_baseline=preserved total=2");
   });
 
-  it("allows generic verification to preserve a stopped container baseline (#7153)", () => {
+  it("allows public generic verification to preserve a stopped container baseline (#7153)", () => {
     const { result, output } = runStationPreparation(
       `
-DOCKER_BASELINE_CAPTURED=1
-DOCKER_CONTAINER_BASELINE='aaaaaaaaaaaaaaaaaaaaaaaa'
-DOCKER_CONTAINER_BASELINE_TOTAL=1
+require_command() { :; }
+check_platform() { :; }
+check_secure_boot() { :; }
+check_kernel_headers() { :; }
+check_capacity() { :; }
+check_network() { :; }
+check_package_managers_idle() { :; }
+check_failed_units() { :; }
+check_agent_and_inference_conflicts() { :; }
+driver_loaded_exact() { return 0; }
 package_is_exact() { return 0; }
 verify_gpu() { :; }
-systemctl() { return 0; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet nvidia-persistenced.service'|'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) return 1 ;;
+  esac
+}
 verify_cdi_refresh_lifecycle() { :; }
 id() { printf 'operator docker\n'; }
 nvidia-ctk() {
@@ -122,16 +134,21 @@ docker() {
     'info') return 0 ;;
     'image inspect '*) return 0 ;;
     'ps -aq --no-trunc') printf 'aaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+    'ps -q --no-trunc'|'ps --format {{.ID}} {{.Names}}') return 0 ;;
     'version --format {{.Server.Version}}') printf '29.6.1\n' ;;
     *) return 1 ;;
   esac
 }
-verify_host
+main --verify
 `,
       { USER: "operator" },
     );
 
     expect(result.status, output).toBe(0);
+    expect(output).toContain("docker_container_baseline_total=1 running=0");
+    expect(output).toContain(
+      "running_docker_containers=none action=initial Station host preparation",
+    );
     expect(output).toContain("docker_container_baseline=preserved total=1");
     expect(output).toContain("STATION_HOST_READY");
   });
@@ -161,6 +178,95 @@ require_docker_mutation_quiescence "refreshing NVIDIA CDI configuration"
     expect(result.status, output).not.toBe(0);
     expect(output).toMatch(/container inventory changed during Station preparation/);
     expect(output).toContain("before=1, after=2");
+  });
+
+  it.each([
+    {
+      name: "pending prerequisite",
+      setup: `
+reboot_required() { return 0; }
+all_packages_exact() { return 0; }
+driver_loaded_exact() { return 1; }
+`,
+      expectedGate: "REBOOT_HANDOFF_BLOCKED check=1",
+    },
+    {
+      name: "post-install",
+      setup: `
+reboot_required() { return 1; }
+all_packages_exact() { return 1; }
+require_docker_restart_quiescence() {
+  local checks
+  checks="$(cat "$HOME/reboot-gate-checks" 2>/dev/null || printf '0')"
+  checks=$((checks + 1))
+  printf '%s' "$checks" >"$HOME/reboot-gate-checks"
+  if ((checks == 1)); then return 0; fi
+  printf 'REBOOT_HANDOFF_BLOCKED check=%s\n' "$checks"
+  return 1
+}
+`,
+      expectedGate: "REBOOT_HANDOFF_BLOCKED check=2",
+    },
+    {
+      name: "same-boot marker",
+      setup: `
+reboot_required() { return 1; }
+all_packages_exact() { return 0; }
+install_boot_marker_matches_current_boot() { return 0; }
+`,
+      expectedGate: "REBOOT_HANDOFF_BLOCKED check=1",
+    },
+    {
+      name: "unloaded driver",
+      setup: `
+reboot_required() { return 1; }
+all_packages_exact() { return 0; }
+install_boot_marker_matches_current_boot() { return 1; }
+driver_loaded_exact() { return 1; }
+`,
+      expectedGate: "REBOOT_HANDOFF_BLOCKED check=1",
+    },
+    {
+      name: "Docker group",
+      setup: `
+reboot_required() { return 1; }
+all_packages_exact() { return 0; }
+install_boot_marker_matches_current_boot() { return 1; }
+driver_loaded_exact() { return 0; }
+finish_runtime() { DOCKER_GROUP_ADDED=1; }
+`,
+      expectedGate: "REBOOT_HANDOFF_BLOCKED check=1",
+    },
+  ])("blocks the $name reboot handoff when stopped containers may restart (#7153)", ({
+    setup,
+    expectedGate,
+  }) => {
+    const { result, output } = runStationPreparation(`
+require_command() { :; }
+acquire_sudo() { :; }
+common_preflight() { :; }
+station_uses_factory_runtime() { return 1; }
+assert_no_package_mismatches() { :; }
+install_packages() { :; }
+ensure_docker_group() { :; }
+verify_docker_container_baseline() { :; }
+write_install_boot_marker() { :; }
+finish_runtime() { :; }
+verify_apply_state() { :; }
+sudo() { :; }
+require_docker_restart_quiescence() {
+  printf 'REBOOT_HANDOFF_BLOCKED check=1\n'
+  return 1
+}
+${setup}
+run_apply
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(result.status, output).not.toBe(10);
+    expect(output).toContain(expectedGate);
+    expect(output).not.toContain("APPLY_RESULT=REBOOT_REQUIRED");
+    expect(output).not.toContain("Run: sudo reboot");
   });
 
   it("blocks a running container at a Docker mutation boundary (#7153)", () => {
@@ -248,7 +354,12 @@ rollback_docker_runtime_config /var/backups/station-bootstrap/docker-runtime.TES
 
   it("does not apply restart-policy blocking when runtime services are already active (#7153)", () => {
     const { result, output } = runStationPreparation(`
-systemctl() { return 0; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) return 1 ;;
+  esac
+}
 require_docker_mutation_quiescence() { printf 'MUTATION_QUIESCENCE\n'; }
 require_docker_restart_quiescence() {
   printf 'UNEXPECTED_RESTART_QUIESCENCE\n'
@@ -265,8 +376,38 @@ finish_runtime
 
     expect(result.status, output).toBe(0);
     expect(output).toContain("MUTATION_QUIESCENCE");
-    expect(output).toContain("systemctl enable --now containerd.service docker.service");
+    expect(output).toContain("systemctl enable containerd.service docker.service");
+    expect(output).not.toContain("systemctl enable --now containerd.service docker.service");
     expect(output).not.toContain("UNEXPECTED_RESTART_QUIESCENCE");
+  });
+
+  it("applies restart-policy blocking before starting an inactive runtime service (#7153)", () => {
+    const { result, output } = runStationPreparation(`
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service') return 0 ;;
+    'is-active --quiet docker.service') return 1 ;;
+    *) return 1 ;;
+  esac
+}
+require_docker_mutation_quiescence() {
+  printf 'UNEXPECTED_MUTATION_QUIESCENCE\n'
+  return 1
+}
+require_docker_restart_quiescence() { printf 'RESTART_QUIESCENCE\n'; }
+sudo() { printf 'SUDO %s\n' "$*"; }
+ensure_docker_group() { :; }
+ensure_acceptance_image() { :; }
+ensure_cdi_runtime() { :; }
+configure_docker_runtime_if_needed() { :; }
+verify_docker_container_baseline() { :; }
+finish_runtime
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("RESTART_QUIESCENCE");
+    expect(output).toContain("systemctl enable --now containerd.service docker.service");
+    expect(output).not.toContain("UNEXPECTED_MUTATION_QUIESCENCE");
   });
 
   it("permits a stopped container with restart policy no (#7153)", () => {

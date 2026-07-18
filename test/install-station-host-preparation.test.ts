@@ -621,12 +621,14 @@ install_boot_marker_matches_current_boot() { return 1; }
 driver_loaded_exact() { return 0; }
 finish_runtime() { DOCKER_GROUP_ADDED=1; printf 'FINISH_RUNTIME\n'; }
 verify_apply_state() { printf 'VERIFY_APPLY_STATE\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 run_apply
 `,
     );
 
     expect(result.status, output).toBe(10);
     expect(output).toContain("VERIFY_APPLY_STATE");
+    expect(output).toContain("RECHECK_RESTART_QUIESCENCE");
     expect(output).toContain("APPLY_RESULT=REBOOT_REQUIRED");
     expect(output).toMatch(/new login before onboarding/);
   });
