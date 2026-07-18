@@ -1323,9 +1323,7 @@ process.exit(0);
       expect(loggedCommands).not.toContain(".env");
       expect(loggedCommands).not.toContain(".mcp.json");
       expect(loggedCommands).not.toContain(".nemoclaw-mcp.json");
-
-      // #5753 is "lost after rebuild" (backup + recreate + restore): restore
-      // must list agent/skills among the dirs it brings back into the sandbox.
+      // #5753: restore must include agent/skills after backup and recreation.
       const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(
