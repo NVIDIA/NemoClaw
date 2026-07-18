@@ -96,7 +96,7 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
       ),
     ).toEqual({
       activeVersion: 17,
-      configRevision: 23,
+      configRevision: "23",
       hash: "sha256:effective",
       policySource: "sandbox",
       sandbox: "e2e-mcp-dcode",
@@ -116,13 +116,12 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
     ).toMatchObject({ activeVersion: 17, status: "loaded", version: 17 });
   });
 
-  it("accepts OpenShell unsigned 64-bit config revisions as opaque JSON integers", () => {
+  it("preserves OpenShell unsigned 64-bit config revisions as exact decimal strings", () => {
     const status = parseExactMainPolicyStatus(
       '{"active_version":2,"config_revision":7692118364955054884,"hash":"sha256:effective","policy_source":"sandbox","sandbox":"e2e-mcp-dcode","status":"effective","version":2}',
     );
 
-    expect(status.configRevision).toSatisfy(Number.isInteger);
-    expect(Number.isSafeInteger(status.configRevision)).toBe(false);
+    expect(status.configRevision).toBe("7692118364955054884");
   });
 
   it("requires the policy-accept chain, proxy/loopback accepts, and all four L4 rejects", () => {

@@ -60,6 +60,21 @@ function dockerRunCommandBetween(
     .replace(/\\\n/g, " ");
 }
 
+function dockerRunCommandStartingWith(dockerfile: string, startMarker: string): string {
+  const start = dockerfile.indexOf(startMarker);
+  if (start === -1) throw new Error(`Expected Dockerfile RUN instruction ${startMarker}`);
+  const runLines: string[] = [];
+  for (const line of dockerfile.slice(start).split("\n")) {
+    runLines.push(line);
+    if (!line.trimEnd().endsWith("\\")) break;
+  }
+  const command = runLines.join("\n");
+  if (!command.startsWith("RUN ") || command.trimEnd().endsWith("\\")) {
+    throw new Error(`Expected complete Dockerfile RUN instruction ${startMarker}`);
+  }
+  return command;
+}
+
 function dockerHealthCommandBetween(
   dockerfile: string,
   startMarker: string,
@@ -1038,8 +1053,12 @@ describe("sandbox provisioning: base runtime tools", () => {
     ["Deep Agents Code", DEEPAGENTS_DOCKERFILE_BASE],
   ])("installs pinned nftables for OpenShell bypass enforcement in %s", (_agent, file) => {
     const dockerfile = fs.readFileSync(file, "utf-8");
+    const aptInstall = dockerRunCommandStartingWith(
+      dockerfile,
+      "RUN apt-get update && apt-get install -y --no-install-recommends",
+    );
 
-    expect(dockerfile).toContain("nftables=1.1.3-1");
+    expect(aptInstall).toContain("nftables=1.1.3-1");
   });
 
   it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {

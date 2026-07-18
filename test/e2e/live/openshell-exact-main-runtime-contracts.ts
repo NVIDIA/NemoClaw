@@ -32,7 +32,7 @@ type JsonRecord = Record<string, unknown>;
 
 export interface ExactMainPolicyStatus {
   activeVersion: number;
-  configRevision?: number;
+  configRevision?: string;
   hash: string;
   policySource?: string;
   sandbox: string;
@@ -73,18 +73,22 @@ export function parseExactMainPolicyStatus(raw: string): ExactMainPolicyStatus {
   if (!isRecord(parsed)) throw new Error("exact-main policy status must be a JSON object");
   const configRevision = parsed.config_revision;
   const policySource = parsed.policy_source;
-  if (
-    configRevision !== undefined &&
-    (typeof configRevision !== "number" || !Number.isInteger(configRevision))
-  ) {
-    throw new Error("exact-main policy config_revision must be an integer when present");
+  let exactConfigRevision: string | undefined;
+  if (configRevision !== undefined) {
+    const matches = [...raw.matchAll(/"config_revision"\s*:\s*(0|[1-9][0-9]*)(?=\s*[,}])/gu)];
+    if (matches.length !== 1 || matches[0][1] === undefined) {
+      throw new Error(
+        "exact-main policy config_revision must be one non-negative JSON integer when present",
+      );
+    }
+    exactConfigRevision = matches[0][1];
   }
   if (policySource !== undefined && typeof policySource !== "string") {
     throw new Error("exact-main policy policy_source must be a string when present");
   }
   return {
     activeVersion: requiredInteger(parsed, "active_version"),
-    ...(configRevision === undefined ? {} : { configRevision: Number(configRevision) }),
+    ...(exactConfigRevision === undefined ? {} : { configRevision: exactConfigRevision }),
     hash: requiredString(parsed, "hash"),
     ...(policySource === undefined ? {} : { policySource }),
     sandbox: requiredString(parsed, "sandbox"),
