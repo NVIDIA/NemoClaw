@@ -136,8 +136,10 @@ verify_host
     expect(output).toContain("STATION_HOST_READY");
   });
 
-  it("fails closed when container inventory changes after baseline capture (#7153)", () => {
+  it("fails closed before mutation when container inventory changes after baseline capture (#7153)", () => {
     const { result, output } = runStationPreparation(`
+ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"; }
+ss() { :; }
 docker() {
   case "$*" in
     'ps -aq --no-trunc')
@@ -153,7 +155,7 @@ docker() {
 }
 capture_docker_container_baseline
 touch "$HOME/inventory-changed"
-verify_docker_container_baseline
+require_docker_mutation_quiescence "refreshing NVIDIA CDI configuration"
 `);
 
     expect(result.status, output).not.toBe(0);

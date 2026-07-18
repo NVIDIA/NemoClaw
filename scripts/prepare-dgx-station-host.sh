@@ -911,6 +911,7 @@ check_agent_and_inference_conflicts() {
 require_docker_mutation_quiescence() {
   local action=$1
   check_agent_and_inference_conflicts
+  verify_docker_container_baseline
   require_no_running_docker_containers "$action"
 }
 
