@@ -7,6 +7,7 @@ import { stripAnsi } from "../../adapters/openshell/client";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import { getAgentRuntimeKind, loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -386,6 +387,17 @@ function collectToolScopeChecks(
   });
 }
 
+function shouldReportServingProcessHealth(agentName: string | null | undefined): boolean {
+  const resolvedName = agentName || "openclaw";
+  try {
+    return getAgentRuntimeKind(loadAgent(resolvedName)) === "gateway";
+  } catch {
+    // Status preserves OpenClaw's gateway default if its manifest cannot be
+    // loaded, while unknown non-default agents are classified as unknown.
+    return resolvedName === "openclaw";
+  }
+}
+
 async function collectDoctorChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -400,7 +412,9 @@ async function collectDoctorChecks(
     ...host.checks,
     ...gateway.checks,
     ...sandbox.checks,
-    ...(await collectInferenceChecks(sandboxName, route, sandbox.reachable)),
+    ...(await collectInferenceChecks(sandboxName, route, sandbox.reachable, {
+      includeServingProcessCheck: shouldReportServingProcessHealth(sb?.agent),
+    })),
     ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable),
     ...collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix),
     ollamaDoctorCheck(route.provider),

@@ -1181,7 +1181,7 @@ Use this form when you care about a specific sandbox's live OpenShell state, age
 Do not pass a sandbox name to `$$nemoclaw status`; that command is the global all-sandbox/service overview.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
-The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, and `dockerPaused`.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
 The schema-version `1` `model` and `provider` fields keep their established live-route meaning when the gateway route is readable.
 Use `recordedRoute` for the sandbox's durable provider and model and `liveRoute` for the gateway-global route.
 When the live shared route differs, text output prints both routes and JSON output sets `routeDrift.live`, `routeDrift.recorded`, and `routeDrift.canConnect`.
@@ -1193,6 +1193,10 @@ Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-ga
 In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild.
 For terminal runtime sandboxes, the command also checks cgroup OOM kill counters.
 If the counter records an OOM kill, text output prints `Runtime health: degraded (... OOM kill recorded)` and points you to `$$nemoclaw <name> rebuild`; JSON output reports `terminalRuntimeHealth.kind: "degraded"` with the OOM kill count and source counter path.
+For a present gateway runtime, text output prints `Serving process (<agent> gateway): not checked`, and JSON output reports `servingProcessHealth: { "checked": false }`.
+The existing inference probes run in a fresh sandbox command, so they do not attest that the long-running gateway process has equivalent inference access.
+NemoClaw does not probe the serving process yet.
+For terminal runtimes, `servingProcessHealth` is `null` and the text output omits this line because there is no long-running gateway process.
 The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), `failureLayer` is non-null, the authoritative in-sandbox inference route fails or cannot be probed, or a terminal runtime sandbox reports a recorded OOM kill.
 The alias form `$$nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `$$nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
@@ -1355,6 +1359,9 @@ For inference health, `doctor` treats the probe to `https://inference.local/v1/m
 HTTP responses from `200` through `499`, including `401` and `403`, pass this check.
 HTTP `500` through `599`, interim `100` through `199`, transport failures with status `000`, invalid status values, and an unavailable authoritative probe fail the check.
 Direct provider and upstream probes use the same authenticated model-invocation checks as status and remain diagnostic only, so their failure does not fail `doctor` when the authoritative in-sandbox route is reachable.
+For gateway runtimes, `doctor` also reports an informational `Serving process: not checked` result because its fresh sandbox probes do not attest the long-running gateway process.
+This result does not fail the readiness check.
+Terminal runtimes omit it because they have no long-running gateway process.
 
 Warnings do not make the command fail.
 Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate.

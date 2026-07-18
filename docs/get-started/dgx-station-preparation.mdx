@@ -25,6 +25,10 @@ Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires both 
 By default, an unknown version, malformed or unsafe marker, unmatched no-OTA factory image, or other Station generation stops before host preparation.
 On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
 
+Station preparation preserves existing stopped Docker container records, captures their IDs before its probes, and stops if that inventory changes during preparation.
+Running containers still block initial preparation and every Docker configuration change.
+Before a Docker restart or host reboot, stopped containers with a restart policy other than `no` also block preparation because they could start automatically.
+
 <Warning title="Temporary Metadata Override">
 Use `--force-station-install` only on a genuine DGX Station GB300 when automatic Station detection rejects its DGX release metadata.
 The flag handles metadata variants not yet recognized by NemoClaw; it is not a general compatibility bypass.
