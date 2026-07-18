@@ -28,7 +28,7 @@ import {
   assertHermesInspectionRejectsUnmanagedFields,
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
-import { buildMcpBridgeOnboardEnv } from "./mcp-bridge-onboard-env.ts";
+import { buildMcpBridgeExactMainEnv, buildMcpBridgeOnboardEnv } from "./mcp-bridge-onboard-env.ts";
 import { retryAfterHermesRestartTransportFailure } from "./mcp-bridge-reliability.ts";
 import {
   buildMcpDnsRebindingProbeScript,
@@ -827,11 +827,12 @@ async function rebuildWithoutMcpHostSecret(
   host: HostCliClient,
   sandboxName: string,
   artifactPrefix: string,
+  envOverlay: NodeJS.ProcessEnv = {},
 ): Promise<void> {
   const rebuild = await host.nemoclaw([sandboxName, "rebuild", "--yes"], {
     artifactName: `${artifactPrefix}-rebuild-with-provider-backed-mcp`,
     env: {
-      ...buildAvailabilityProbeEnv(),
+      ...buildMcpBridgeExactMainEnv({ envOverlay }),
       COMPATIBLE_API_KEY: COMPATIBLE_KEY,
       NVIDIA_INFERENCE_API_KEY: COMPATIBLE_KEY,
     },
@@ -1439,7 +1440,12 @@ mcpBridgeShardTest("deepagents")(
       [HOST_SECRET, ROTATED_HOST_SECRET],
       "deepagents-assert-secrets-absent-after-rotation",
     );
-    await rebuildWithoutMcpHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
+    await rebuildWithoutMcpHostSecret(
+      host,
+      DEEPAGENTS_SANDBOX_NAME,
+      "deepagents",
+      exactMainProof.envOverlay,
+    );
     await exactMainProof.afterRebuild();
     await assertDeepAgentsConfig(sandbox, DEEPAGENTS_SANDBOX_NAME, mcpUrl);
     await assertSecretAbsentFromSandbox(

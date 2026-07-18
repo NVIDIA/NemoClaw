@@ -16,8 +16,8 @@ import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
-  sandboxAccessEnv,
   type SandboxClient,
+  sandboxAccessEnv,
   trustedSandboxShellScript,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
@@ -88,6 +88,12 @@ type DockerMount = {
   Destination?: unknown;
   RW?: unknown;
   Source?: unknown;
+  Type?: unknown;
+};
+
+type ConfiguredDockerMount = {
+  Target?: unknown;
+  TmpfsOptions?: unknown;
   Type?: unknown;
 };
 
@@ -345,6 +351,34 @@ async function assertRuntimeMounts(
   phase: string,
 ): Promise<void> {
   const components = proof.components!;
+  const configuredMounts = await inspectJson<ConfiguredDockerMount[] | null>(
+    host,
+    containerId,
+    "{{json .HostConfig.Mounts}}",
+    `exact-main-driver-configured-mounts-${phase}`,
+  );
+  expect(Array.isArray(configuredMounts), "Docker HostConfig.Mounts must be structured").toBe(true);
+  expect(configuredMounts?.find((mount) => mount.Target === EXACT_MAIN_TMPFS_TARGET)).toMatchObject(
+    {
+      Type: "tmpfs",
+      Target: EXACT_MAIN_TMPFS_TARGET,
+      TmpfsOptions: {
+        Mode: EXACT_MAIN_TMPFS_MOUNT.mode,
+        SizeBytes: EXACT_MAIN_TMPFS_MOUNT.size_bytes,
+      },
+    },
+  );
+  const configuredTmpfs = await inspectJson<JsonRecord | null>(
+    host,
+    containerId,
+    "{{json .HostConfig.Tmpfs}}",
+    `exact-main-driver-configured-tmpfs-${phase}`,
+  );
+  expect(
+    configuredTmpfs === null ||
+      (isRecord(configuredTmpfs) && !Object.hasOwn(configuredTmpfs, EXACT_MAIN_TMPFS_TARGET)),
+    "the reviewed tmpfs must not use Docker's legacy HostConfig.Tmpfs path",
+  ).toBe(true);
   const mounts = await inspectJson<DockerMount[]>(
     host,
     containerId,
@@ -662,12 +696,15 @@ export async function restartAndAssertExactMainDriverConfig(options: {
   expect(snapshot.config.configSha256, "rendered selected-driver config must be stable").toBe(
     baseline.config.configSha256,
   );
+  // OpenShell's graceful gateway shutdown stops managed Docker sandboxes and
+  // startup resumes them. Docker therefore remounts the same container's
+  // volatile tmpfs empty while the durable /sandbox state survives.
   await assertSandboxMountAndAuth({
     phase: "after-gateway-restart",
     sandbox: options.sandbox,
     sandboxName: options.sandboxName,
     durableMarkerValue: options.proof.durableMarkerValue!,
-    tmpfsMarker: "present",
+    tmpfsMarker: "absent",
   });
   await options.host.expectListed(options.sandboxName, {
     artifactName: "exact-main-driver-nemoclaw-list-after-gateway-restart",
@@ -685,7 +722,7 @@ export async function restartAndAssertExactMainDriverConfig(options: {
     "after-gateway-restart",
     options.proof,
     snapshot,
-    "same-container-tmpfs-and-durable-state-retained",
+    "same-container-tmpfs-remounted-and-durable-state-retained",
   );
 }
 

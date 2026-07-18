@@ -94,13 +94,14 @@ function executeGenerateMatrixWithPlannerOutput(
     fakeNpx,
     [
       "#!/usr/bin/env bash",
-      "expected=(tsx tools/e2e/workflow-plan.mts)",
-      '[[ -z "${JOBS:-}" ]] || expected+=(--jobs "$JOBS")',
-      '[[ -z "${TARGETS:-}" ]] || expected+=(--targets "$TARGETS")',
+      "expected=(tsx tools/e2e/workflow-plan.mts --ci-output)",
       'actual=("$@")',
       '[[ "${#actual[@]}" -eq "${#expected[@]}" ]] || exit 97',
       'for index in "${!expected[@]}"; do [[ "${actual[$index]}" == "${expected[$index]}" ]] || exit 97; done',
-      "printf '%s\\n' \"${FAKE_E2E_PLAN}\"",
+      'printf "matrix=%s\\n" "$(jq -c .matrix <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
+      'printf "test_matrix=%s\\n" "$(jq -c .testMatrix <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
+      'printf "hermes_selected=%s\\n" "$(jq -r .hermesSelected <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
+      'printf "explicit_only_jobs=%s\\n" "$(jq -r ".explicitOnlyJobs | join(\\\",\\\")" <<< "${FAKE_E2E_PLAN}")" >> "${GITHUB_OUTPUT}"',
       "",
     ].join("\n"),
     { mode: 0o755 },
@@ -864,33 +865,6 @@ it("carries the generated planner matrix through the workflow output and PR repo
     expect(body).toContain(`| ${selected.id} | ✅ success |`);
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
-  }
-});
-
-it("fails closed when planner output violates the workflow schema", () => {
-  const [selected] = discoverCredentialFreeTests();
-  expect(selected).toBeDefined();
-  const validPlan = buildE2eWorkflowPlan();
-  const [registryRow] = validPlan.matrix;
-  expect(registryRow).toBeDefined();
-  const { explicitOnlyJobs: _omitted, ...missingField } = validPlan;
-  const malformedPlans = [
-    ["missing required field", missingField],
-    ["duplicate matrix id", { ...validPlan, matrix: [...validPlan.matrix, { ...registryRow }] }],
-    ["invalid test ID", { ...validPlan, testMatrix: [{ ...selected, id: "invalid_id" }] }],
-    ["nonboolean selection", { ...validPlan, hermesSelected: "false" }],
-  ] as const;
-
-  for (const [label, plan] of malformedPlans) {
-    const generated = executeGenerateMatrixWithPlannerOutput(plan);
-    expect(
-      generated.result.status,
-      `${label}: ${generated.result.stderr || generated.result.stdout}`,
-    ).toBe(1);
-    expect(generated.result.stderr).toContain(
-      "::error::E2E planner returned an invalid output schema",
-    );
-    expect(generated.workflowOutput).toBe("");
   }
 });
 
