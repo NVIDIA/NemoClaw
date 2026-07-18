@@ -188,6 +188,25 @@ export type DockerContainerInspect = {
   } | null;
   HostConfig?: {
     Binds?: string[] | null;
+    Mounts?: Array<{
+      Type?: string;
+      Source?: string;
+      Target?: string;
+      ReadOnly?: boolean;
+      Consistency?: string;
+      BindOptions?: unknown;
+      VolumeOptions?: {
+        NoCopy?: boolean;
+        Labels?: Record<string, string> | null;
+        Subpath?: string;
+        DriverConfig?: unknown;
+      } | null;
+      TmpfsOptions?: {
+        SizeBytes?: number;
+        Mode?: number;
+        Options?: string[][] | null;
+      } | null;
+    }> | null;
     NetworkMode?: string;
     RestartPolicy?: { Name?: string; MaximumRetryCount?: number } | null;
     CapAdd?: string[] | null;

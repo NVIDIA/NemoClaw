@@ -6,10 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
+const STATION_REVISION = "a".repeat(40);
+const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 
 function runSourced(script: string, body: string, extraEnv: Record<string, string> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-dgx-os-"));
@@ -29,7 +31,7 @@ function runSourced(script: string, body: string, extraEnv: Record<string, strin
       killSignal: "SIGKILL",
     },
   );
-  return { result, output: `${result.stdout}${result.stderr}` };
+  return { home, result, output: `${result.stdout}${result.stderr}` };
 }
 
 function writeDgxReleaseFixture(
@@ -389,9 +391,196 @@ dgx_station_release_state "$DGX_RELEASE"
     );
     expect(result.stderr).toBe("");
   });
+
+  it("uses explicit intent to bypass only unsupported release metadata", () => {
+    const forced = runSourced(
+      STATION_PREPARE,
+      `
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
+printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$HOME/os-release"; }
+station_product_name_path() { printf '%s' "$HOME/product-name"; }
+dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
+dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+station_has_exact_gb300_pci_gpu() { return 0; }
+FORCE_STATION_INSTALL=1
+check_platform
+printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
+`,
+    );
+
+    expect(forced.result.status, forced.output).toBe(0);
+    expect(forced.output).toContain("release metadata allowlist bypassed");
+    expect(forced.output).toContain("PROFILE=forced-factory-runtime");
+
+    const unforced = runSourced(
+      STATION_PREPARE,
+      `
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
+printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$HOME/os-release"; }
+station_product_name_path() { printf '%s' "$HOME/product-name"; }
+dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
+dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+check_platform
+`,
+    );
+
+    expect(unforced.result.status, unforced.output).not.toBe(0);
+    expect(unforced.output).toContain("outside the validated boundary");
+  });
+
+  it.each([
+    "generic-ubuntu",
+    "supported-dgx-os",
+    "supported-colossus-baseos",
+    "supported-ai-developer-tools",
+  ])("rejects explicit metadata intent for recognized %s before preparation (#7138)", (releaseState) => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
+printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$HOME/os-release"; }
+station_product_name_path() { printf '%s' "$HOME/product-name"; }
+dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
+dgx_station_release_state() { printf '%s' "$RELEASE_STATE"; }
+FORCE_STATION_INSTALL=1
+check_platform
+printf 'PREPARATION_REACHED\n'
+`,
+      { RELEASE_STATE: releaseState },
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain(
+      `This host is already supported (${releaseState}); omit --force-station-install`,
+    );
+    expect(output).not.toContain("PREPARATION_REACHED");
+  });
+
+  it("keeps generic Ubuntu preparation unchanged without explicit metadata intent (#7138)", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
+printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$HOME/os-release"; }
+station_product_name_path() { printf '%s' "$HOME/product-name"; }
+dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
+dgx_station_release_state() { printf 'generic-ubuntu'; }
+station_has_exact_gb300_pci_gpu() { return 0; }
+check_platform
+printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROFILE=generic-ubuntu");
+  });
+
+  it("parses the metadata override only alongside a preparation mode", () => {
+    const accepted = runSourced(
+      STATION_PREPARE,
+      `
+parse_args --apply --force-station-install
+printf 'MODE=%s FORCE=%s\n' "$MODE" "$FORCE_STATION_INSTALL"
+`,
+    );
+    const classifier = runSourced(
+      STATION_PREPARE,
+      "parse_args --classify-dgx-release --force-station-install",
+    );
+
+    expect(accepted.result.status, accepted.output).toBe(0);
+    expect(accepted.output).toContain("MODE=--apply FORCE=1");
+    expect(classifier.result.status, classifier.output).not.toBe(0);
+  });
+
+  it("does not let explicit metadata intent bypass architecture validation", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+uname() { printf 'x86_64\n'; }
+FORCE_STATION_INSTALL=1
+check_platform
+`,
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("Expected ARM64, found x86_64");
+  });
+});
+
+describe("DGX Station forced metadata installer handoff", () => {
+  it("forwards explicit intent only to Station host preparation", () => {
+    const { home, result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+SCRIPT_DIR="$HOME"
+touch "$SCRIPT_DIR/prepare-dgx-station-host.sh"
+bash() { printf 'HELPER_ARGS=%s\n' "$*"; }
+FORCE_STATION_INSTALL=1
+run_station_host_preparation
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(
+      `HELPER_ARGS=${path.join(home, "prepare-dgx-station-host.sh")} --apply --force-station-install`,
+    );
+  });
+
+  it("preserves explicit intent in the relogin command", () => {
+    const { result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+_SELECTED_EXPRESS_PLATFORM='DGX Station'
+NEMOCLAW_VLLM_MODEL='deepseek-v4-flash'
+FORCE_STATION_INSTALL=1
+station_installer_revision() { printf '${STATION_REVISION}'; }
+station_express_resume_generation() { printf '${STATION_GENERATION}'; }
+run_station_host_preparation() { return 11; }
+ensure_station_express_host
+`,
+    );
+
+    expect(result.status, output).toBe(11);
+    expect(output).toContain("bash -s -- --force-station-install");
+  });
 });
 
 describe("DGX Station stock DGX OS runtime validation", () => {
+  it("preserves packages and the runtime for a forced metadata profile", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() {
+  [[ "$1" == "sudo" ]] || { printf 'UNEXPECTED_REQUIREMENT %s\n' "$1"; return 1; }
+}
+acquire_sudo() { :; }
+common_preflight() { STATION_HOST_PROFILE=forced-factory-runtime; }
+reboot_required() { return 1; }
+verify_dgx_os_runtime_sudo() { printf 'FACTORY_RUNTIME_VALIDATED\n'; }
+ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
+install_packages() { printf 'PACKAGE_MUTATION\n'; return 1; }
+finish_runtime() { printf 'RUNTIME_MUTATION\n'; return 1; }
+run_apply
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("FACTORY_RUNTIME_VALIDATED");
+    expect(output).toContain("APPLY_RESULT=COMPLETE");
+    expect(output).not.toContain("PACKAGE_MUTATION");
+    expect(output).not.toContain("RUNTIME_MUTATION");
+    expect(output).not.toContain("UNEXPECTED_REQUIREMENT");
+  });
+
   it("requires the exact qualified BaseOS package inventory", () => {
     const exact = runSourced(
       STATION_PREPARE,
@@ -480,6 +669,77 @@ baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init
     expect(drifted.result.status, drifted.output).not.toBe(0);
   });
 
+  it("qualifies the BaseOS Fluent Bit template independently of host identity", () => {
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fluent-bit-"));
+    const config = path.join(configDir, "fluent-bit.conf");
+    fs.writeFileSync(
+      config,
+      [
+        "[FILTER]",
+        "    Name modify",
+        "    Match *",
+        "    Add Hostname station-a",
+        "    Add MAC A4:A6:8D:00:00:01",
+        "    Add IP 10.88.4.21",
+        "",
+      ].join("\n"),
+    );
+    const normalized = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        String.raw`sed -E -e 's/^([[:space:]]*Add Hostname) [A-Za-z0-9][A-Za-z0-9._-]*$/\1 <HOSTNAME>/' -e 's/^([[:space:]]*Add MAC) ([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/\1 <MAC>/' -e 's/^([[:space:]]*Add IP) ([0-9]{1,3}\.){3}[0-9]{1,3}$/\1 <IP>/' "$CONFIG" | sha256sum | awk '{print $1}'`,
+      ],
+      { encoding: "utf-8", env: { ...process.env, CONFIG: config } },
+    ).stdout.trim();
+
+    const exact = runSourced(
+      STATION_PREPARE,
+      `
+root_owned_file_is_not_writable_by_group_or_other() { return 0; }
+baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+`,
+      {
+        EXPECTED_SHA: normalized,
+        FLUENT_BIT_CONFIG: config,
+        PATH: process.env.PATH ?? TEST_SYSTEM_PATH,
+      },
+    );
+    expect(exact.result.status, exact.output).toBe(0);
+
+    fs.writeFileSync(config, fs.readFileSync(config, "utf-8").replace("station-a", "station-b"));
+    const differentHost = runSourced(
+      STATION_PREPARE,
+      `
+root_owned_file_is_not_writable_by_group_or_other() { return 0; }
+baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+`,
+      {
+        EXPECTED_SHA: normalized,
+        FLUENT_BIT_CONFIG: config,
+        PATH: process.env.PATH ?? TEST_SYSTEM_PATH,
+      },
+    );
+    expect(differentHost.result.status, differentHost.output).toBe(0);
+
+    fs.writeFileSync(config, fs.readFileSync(config, "utf-8").replace("Match *", "Match changed"));
+    const changedTemplate = runSourced(
+      STATION_PREPARE,
+      `
+root_owned_file_is_not_writable_by_group_or_other() { return 0; }
+baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+`,
+      {
+        EXPECTED_SHA: normalized,
+        FLUENT_BIT_CONFIG: config,
+        PATH: process.env.PATH ?? TEST_SYSTEM_PATH,
+      },
+    );
+    expect(changedTemplate.result.status, changedTemplate.output).not.toBe(0);
+  });
+
   it("keeps stock DGX OS out of the generic package mutation path", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -529,6 +789,219 @@ run_apply
     expect(output).not.toContain("UNEXPECTED_REQUIREMENT");
   });
 
+  it("keeps healthy AI Developer Tools CDI validation-only", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() {
+  [[ "$1" == "sudo" ]] || { printf 'UNEXPECTED_REQUIREMENT %s\n' "$1"; return 1; }
+}
+acquire_sudo() { :; }
+common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version'|'ps -aq') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+sudo() {
+  case "$*" in
+    'nvidia-ctk cdi list') printf 'nvidia.com/gpu=all\n' ;;
+    *) printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1 ;;
+  esac
+}
+refresh_cdi() { printf 'UNEXPECTED_CDI_REFRESH\n'; return 1; }
+ensure_dgx_os_acceptance_image() { printf 'IMAGE_CACHE_READY\n'; }
+run_dgx_os_cdi_test_sudo() { printf 'DIGEST_PINNED_CDI_PROBE_OK\n'; }
+run_dgx_os_gpus_test_sudo() { printf 'DIGEST_PINNED_GPUS_PROBE_OK\n'; }
+ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
+install_packages() { printf 'UNEXPECTED_PACKAGE_MUTATION\n'; return 1; }
+finish_runtime() { printf 'UNEXPECTED_RUNTIME_MUTATION\n'; return 1; }
+run_apply
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toContain("cdi=nvidia.com/gpu=all source=factory_runtime");
+    expect(output).toContain("DIGEST_PINNED_CDI_PROBE_OK");
+    expect(output).toContain("DIGEST_PINNED_GPUS_PROBE_OK");
+    expect(output.indexOf("FACTORY_GATES_OK")).toBeLessThan(
+      output.indexOf("cdi=nvidia.com/gpu=all source=factory_runtime"),
+    );
+    expect(output).toContain("APPLY_RESULT=COMPLETE");
+    expect(output).not.toContain("UNEXPECTED_");
+  });
+
+  it("repairs missing AI Developer Tools CDI through the packaged lifecycle before validation", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+cdi_ready=0
+require_command() {
+  [[ "$1" == "sudo" ]] || { printf 'UNEXPECTED_REQUIREMENT %s\n' "$1"; return 1; }
+}
+acquire_sudo() { :; }
+common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version'|'ps -aq') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+require_docker_mutation_quiescence() { printf 'WORKLOAD_GATE_OK %s\n' "$1"; }
+sudo() {
+  case "$*" in
+    'nvidia-ctk cdi list')
+      ((cdi_ready == 1)) && printf 'nvidia.com/gpu=all\n'
+      ;;
+    'systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service'|'systemctl start nvidia-cdi-refresh.path')
+      printf 'PACKAGED_LIFECYCLE %s\n' "$*"
+      ;;
+    'systemctl restart nvidia-cdi-refresh.service')
+      printf 'PACKAGED_LIFECYCLE %s\n' "$*"
+      cdi_ready=1
+      ;;
+    *) printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1 ;;
+  esac
+}
+nvidia-ctk() {
+  [[ "$*" == "cdi list" && "$cdi_ready" == "1" ]] && printf 'nvidia.com/gpu=all\n'
+}
+ensure_dgx_os_acceptance_image() { printf 'IMAGE_CACHE_READY\n'; }
+run_dgx_os_cdi_test_sudo() { printf 'DIGEST_PINNED_CDI_PROBE_OK\n'; }
+run_dgx_os_gpus_test_sudo() { printf 'DIGEST_PINNED_GPUS_PROBE_OK\n'; }
+ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
+install_packages() { printf 'UNEXPECTED_PACKAGE_MUTATION\n'; return 1; }
+finish_runtime() { printf 'UNEXPECTED_RUNTIME_MUTATION\n'; return 1; }
+configure_docker_runtime_if_needed() { printf 'UNEXPECTED_DOCKER_RUNTIME_MUTATION\n'; return 1; }
+run_apply
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toContain("WORKLOAD_GATE_OK");
+    expect(output).toContain(
+      "PACKAGED_LIFECYCLE systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
+    );
+    expect(output).toContain("PACKAGED_LIFECYCLE systemctl start nvidia-cdi-refresh.path");
+    expect(output).toContain("PACKAGED_LIFECYCLE systemctl restart nvidia-cdi-refresh.service");
+    expect(output).toContain("cdi=nvidia.com/gpu=all source=packaged_refresh_service");
+    expect(output).toContain("DIGEST_PINNED_CDI_PROBE_OK");
+    expect(output).toContain("DIGEST_PINNED_GPUS_PROBE_OK");
+    expect(output.indexOf("FACTORY_GATES_OK")).toBeLessThan(
+      output.indexOf("PACKAGED_LIFECYCLE systemctl enable"),
+    );
+    expect(output.indexOf("cdi=nvidia.com/gpu=all source=packaged_refresh_service")).toBeLessThan(
+      output.indexOf("DIGEST_PINNED_CDI_PROBE_OK"),
+    );
+    expect(output).toContain("APPLY_RESULT=COMPLETE");
+    expect(output).not.toContain("UNEXPECTED_");
+    expect(output).not.toContain("nvidia-ctk cdi generate");
+    expect(output).not.toContain("systemctl restart docker.service");
+    expect(output).not.toContain("systemctl restart containerd.service");
+  });
+
+  it.each([
+    ["restart failure", "return 1", "Packaged CDI refresh failed"],
+    ["missing device after restart", "return 0", "did not advertise nvidia.com/gpu=all"],
+  ] as const)("fails closed on AI Developer Tools CDI %s", (_scenario, restartResult, error) => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() { :; }
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+require_docker_mutation_quiescence() { printf 'WORKLOAD_GATE_OK %s\n' "$1"; }
+sudo() {
+  case "$*" in
+    'nvidia-ctk cdi list') return 0 ;;
+    'systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service'|'systemctl start nvidia-cdi-refresh.path') return 0 ;;
+    'systemctl restart nvidia-cdi-refresh.service') ${restartResult} ;;
+    'systemctl status nvidia-cdi-refresh.service --no-pager'|'journalctl -u nvidia-cdi-refresh.service --no-pager -n 50')
+      printf 'SERVICE_DIAGNOSTICS %s\n' "$*"
+      ;;
+    *) printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1 ;;
+  esac
+}
+nvidia-ctk() { return 0; }
+ensure_dgx_os_acceptance_image() { printf 'UNEXPECTED_ACCEPTANCE_IMAGE\n'; return 1; }
+run_dgx_os_cdi_test_sudo() { printf 'UNEXPECTED_CDI_PROBE\n'; return 1; }
+run_dgx_os_gpus_test_sudo() { printf 'UNEXPECTED_GPUS_PROBE\n'; return 1; }
+STATION_HOST_PROFILE=ai-developer-tools
+verify_dgx_os_runtime_sudo
+`,
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toContain("WORKLOAD_GATE_OK");
+    expect(output).toContain("SERVICE_DIAGNOSTICS");
+    expect(output).toContain(error);
+    expect(output).not.toContain("UNEXPECTED_");
+    expect(output).not.toContain("systemctl restart docker.service");
+    expect(output).not.toContain("systemctl restart containerd.service");
+  });
+
+  it("keeps forced factory-runtime profiles out of packaged CDI repair", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=forced-factory-runtime
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+sudo() {
+  [[ "$*" == "nvidia-ctk cdi list" ]] || { printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1; }
+}
+refresh_cdi() { printf 'UNEXPECTED_CDI_REFRESH\n'; return 1; }
+verify_dgx_os_runtime_sudo
+`,
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toMatch(/does not advertise the nvidia\.com\/gpu=all CDI device/);
+    expect(output).not.toContain("UNEXPECTED_");
+    expect(output).not.toContain("nvidia-cdi-refresh");
+  });
+
   it("returns a relogin result instead of requesting a reboot for factory Docker access", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -536,6 +1009,9 @@ run_apply
 require_command() { :; }
 acquire_sudo() { :; }
 common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+sudo() {
+  [[ "$*" == "nvidia-ctk cdi list" ]] && printf 'nvidia.com/gpu=all\n'
+}
 verify_dgx_os_runtime_sudo() { printf 'FACTORY_RUNTIME_VALIDATED\n'; }
 ensure_docker_group() { DOCKER_GROUP_ADDED=1; }
 run_apply
@@ -662,6 +1138,7 @@ sudo() {
 ensure_dgx_os_acceptance_image() { printf 'IMAGE_CACHE_READY\n'; }
 run_dgx_os_cdi_test_sudo() { printf 'CDI_TEST_OK\n'; }
 run_dgx_os_gpus_test_sudo() { printf 'GPUS_TEST_OK\n'; }
+verify_docker_container_baseline() { printf 'CONTAINER_BASELINE_PRESERVED\n'; }
 verify_dgx_os_runtime_sudo
 `,
     );
@@ -671,6 +1148,7 @@ verify_dgx_os_runtime_sudo
     expect(output).toContain("IMAGE_CACHE_READY");
     expect(output).toContain("CDI_TEST_OK");
     expect(output).toContain("GPUS_TEST_OK");
+    expect(output).toContain("CONTAINER_BASELINE_PRESERVED");
     expect(output).toContain("DGX_OS_HOST_READY host_runtime_mutation=container_image_cache_only");
     expect(output).not.toContain("UNEXPECTED_SYSTEMCTL");
     expect(output).not.toContain("UNEXPECTED_DOCKER");

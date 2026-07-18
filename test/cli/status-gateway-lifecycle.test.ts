@@ -37,7 +37,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           `  ${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)" &`,
           "  wait",
           "fi",
@@ -81,7 +81,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
       [
         "#!/usr/bin/env bash",
         `printf '%s\\n' "$*" >> ${JSON.stringify(markerFile)}`,
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",
@@ -143,7 +143,7 @@ describe("CLI status gateway lifecycle process contracts", () => {
     expect(result.out).toContain("healthy");
     expect(result.out).not.toContain("not verified");
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
-    const sandboxGetIndex = calls.indexOf("sandbox get alpha");
+    const sandboxGetIndex = calls.indexOf("sandbox get -g nemoclaw alpha");
     const inferenceGetIndex = calls.indexOf("inference get -g nemoclaw");
     expect(sandboxGetIndex).toBeGreaterThanOrEqual(0);
     expect(inferenceGetIndex).toBeGreaterThan(sandboxGetIndex);

@@ -4,12 +4,12 @@
 import type { SpawnSyncOptions } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
-import { buildCheckSpawnInvocation, runChecks } from "../scripts/checks/run";
+import { buildCheckSpawnInvocation, runChecks } from "../scripts/checks/run.mts";
 
 const sampleCheck = {
   name: "sample",
   command: "tsx.cmd",
-  args: ["scripts/checks/sample.ts"],
+  args: ["scripts/checks/sample.mts"],
 };
 
 function successfulSpawn(): { status: number | null } {
@@ -24,7 +24,7 @@ describe("checks runner", () => {
       }),
     ).toEqual({
       command: "C:\\Windows\\System32\\cmd.exe",
-      args: ["/d", "/s", "/c", "tsx.cmd", "scripts/checks/sample.ts"],
+      args: ["/d", "/s", "/c", "tsx.cmd", "scripts/checks/sample.mts"],
     });
   });
 
@@ -37,7 +37,7 @@ describe("checks runner", () => {
   it("keeps POSIX runner execution direct", () => {
     expect(buildCheckSpawnInvocation(sampleCheck, "linux")).toEqual({
       command: "tsx.cmd",
-      args: ["scripts/checks/sample.ts"],
+      args: ["scripts/checks/sample.mts"],
     });
   });
 
@@ -57,7 +57,7 @@ describe("checks runner", () => {
 
     expect(spawn).toHaveBeenCalledWith(
       "C:\\Windows\\System32\\cmd.exe",
-      ["/d", "/s", "/c", "tsx.cmd", "scripts/checks/sample.ts"],
+      ["/d", "/s", "/c", "tsx.cmd", "scripts/checks/sample.mts"],
       expect.objectContaining({ stdio: "inherit" }),
     );
     expect(calls[0]?.shell).toBeUndefined();
@@ -72,7 +72,7 @@ describe("checks runner", () => {
 
     expect(spawn).toHaveBeenCalledWith(
       "tsx.cmd",
-      ["scripts/checks/sample.ts"],
+      ["scripts/checks/sample.mts"],
       expect.objectContaining({ stdio: "inherit" }),
     );
   });

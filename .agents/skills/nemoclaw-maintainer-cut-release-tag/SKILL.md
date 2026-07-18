@@ -11,7 +11,7 @@ user_invocable: true
 
 Use the release scripts for normal release operations. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
 
-The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. After the tag and `latest` are verified, automatically move remaining open issues/PRs from the released version label to the next patch label, draft release notes, then verify the maintainer-published Announcement before final handoff.
+The release is one signed annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow requires that tag to be GitHub-Verified, points `latest` at the exact verified tag object, carries remaining open issues/PRs to the next patch label, and deletes the released label while holding the shared release-label coordination queue; release admins promote `lkg` manually after validation. After the workflow is verified, draft release notes, then verify the maintainer-published Announcement before final handoff.
 
 ## LKG Production Image Dispatch
 
@@ -34,6 +34,8 @@ The downstream scheduled reconciliation remains available if the event-driven di
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
 - Never push `latest` or `lkg` from this skill.
 - Never move, delete, or force-push an existing remote semver tag unless the maintainer explicitly starts protected-tag remediation.
+- Delete the released version label only after open work moves forward and a final query finds no open stragglers. Never rename or reuse a released label.
+- Keep label retirement inside the `release-latest-tag` workflow so it cannot overlap the post-merge labeler. Do not run the retirement script directly.
 - Draft release notes locally. Do not create the GitHub Discussion; the maintainer does that.
 - Do not mark the announcement step complete until the maintainer provides a valid Discussion URL and the published Announcement is verified.
 - Follow the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) for SSH, authentication, remote access, authorization, or permission failures.
@@ -48,7 +50,7 @@ Release Progress:
 - [ ] Step 2: Show plan, E2E evidence, and confirmation phrase
 - [ ] Step 3: Cut the semver tag from the confirmed plan
 - [ ] Step 4: Wait for workflow-managed latest
-- [ ] Step 5: Bump remaining open issues/PRs
+- [ ] Step 5: Carry open work forward and retire the released label
 - [ ] Step 6: Generate release-note data and draft Markdown
 - [ ] Step 7: Wait for maintainer-published Announcement
 - [ ] Step 8: Verify Announcement and hand off sharing
@@ -96,7 +98,7 @@ Read the generated `plan.json` and show the maintainer:
 - plan hash,
 - forbidden operations,
 - confirmation phrase,
-- open issue/PR housekeeping plan for the release label.
+- open issue/PR housekeeping plan for the release label, including deletion of the released label after carry-forward succeeds.
 
 Unless Step 1 records an explicit waiver, verify that the plan's next tag matches the H2 version heading in the dated changelog entry at the candidate SHA.
 When the entry is waived, show the recorded waiver reason in the plan presentation and confirmation handoff instead.
@@ -128,7 +130,7 @@ Run the cut script with the plan and the maintainer's phrase:
 npm run release:cut -- --plan <plan.json> --confirm "CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>"
 ```
 
-The script verifies a clean worktree, unchanged `origin/main`, tag availability, target reachability, and remote peeled tag state. It writes:
+The script verifies a clean worktree, unchanged `origin/main`, tag availability, target reachability, and remote peeled tag state, then creates and pushes the signed annotated tag using the configured signing key. It writes:
 
 ```text
 <release-dir>/cut-result.json
@@ -144,7 +146,7 @@ Run:
 npm run release:wait-latest -- --plan <plan.json>
 ```
 
-The script waits until `vX.Y.Z^{}` and `latest^{}` both peel to the planned commit and verifies `lkg` did not change from the plan. It writes:
+The script waits until `vX.Y.Z` and `latest` reference the same tag object, verifies both peel to the planned commit, and verifies `lkg` did not change from the plan. It writes:
 
 ```text
 <release-dir>/latest-result.json
@@ -152,26 +154,40 @@ The script waits until `vX.Y.Z^{}` and `latest^{}` both peel to the planned comm
 
 If it fails, report the failed workflow/status. Do not manually move `latest`.
 
-### Step 5: Bump Remaining Open Issues/PRs
+### Step 5: Verify Carry-Forward and Label Retirement
 
-Move every remaining open issue or PR carrying the released version to the next patch label:
+The `release-latest-tag` workflow continues after moving `latest`: it moves every remaining open issue or PR carrying the released version to the next patch label, verifies none remain, and deletes the released label. The workflow and post-merge labeler share one queued concurrency group, so assignment cannot overlap the verification-and-delete window.
 
-```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts <released-version> <next-version>
-```
-
-This is automatic post-tag housekeeping covered by the release plan and confirmation in Step 2. The script creates the next patch label when needed, removes the released-version label, and adds the next-version label to every open straggler. Do not run it before Step 4 verifies both the semver tag and workflow-managed `latest`.
-
-Then verify the released version has no open stragglers:
+Find the workflow run started by Step 3 and wait for it to finish:
 
 ```bash
-gh issue list --repo NVIDIA/NemoClaw --state open --label <released-version> --limit 100
-gh pr list --repo NVIDIA/NemoClaw --state open --label <released-version> --limit 100
+RELEASE_SHA="<full-origin-main-sha>"
+mapfile -t RELEASE_RUN_IDS < <(
+  gh run list --repo NVIDIA/NemoClaw --workflow release-latest-tag.yaml --limit 20 \
+    --event push --commit "$RELEASE_SHA" --json databaseId --jq '.[].databaseId'
+)
+if (( ${#RELEASE_RUN_IDS[@]} != 1 )); then
+  echo "Expected exactly one release-latest-tag push run for $RELEASE_SHA" >&2
+  exit 1
+fi
+gh run watch "${RELEASE_RUN_IDS[0]}" --repo NVIDIA/NemoClaw --exit-status
 ```
+
+This automatic post-tag housekeeping is covered by the release plan and confirmation in Step 2. Do not run `scripts/retire-release-label.mts` directly; doing so would bypass the coordination boundary.
+
+Then verify the released version label no longer exists:
+
+```bash
+gh label list --repo NVIDIA/NemoClaw --search <released-version> --json name \
+  --jq '.[] | select(.name == "<released-version>")'
+```
+
+The command must return no output. Never rename the released label into a future version; a future target must be a separately created label with its own GitHub identity.
 
 Summarize:
 
-- open issues/PRs bumped to `<next-version>`;
+- open issues/PRs moved to `<next-version>`;
+- released label deleted;
 - any items that need manual maintainer attention.
 
 ### Step 6: Generate Release-Note Data and Draft Markdown
@@ -235,7 +251,7 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 - `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
 - `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
 - `lkg` changed: stop and escalate to a release admin.
-- Post-tag housekeeping fails: report the error and list items still carrying the released label. After the failure is fixed, rerun the same bump command; already-moved items no longer match the source label.
+- Post-tag housekeeping fails: report the workflow error and list items still carrying the released label. After the failure is fixed, rerun `release-latest-tag.yaml` with `<released-version>` through `workflow_dispatch`; the promotion and retirement steps are idempotent, already-moved items no longer match the source label, and an already-deleted released label is treated as success. Do not run the retirement script outside the workflow.
 - Announcement is not published yet: keep Step 7 in progress and return the draft path and suggested title; the tag and housekeeping remain complete.
 - Announcement title, category, body, or links are wrong: ask the maintainer to edit the existing Discussion, then verify the same URL again. Do not create a replacement. After three failed verification attempts for the same Discussion, stop and escalate to a release admin.
 - Announcement cannot be inspected: report the read failure and ask the maintainer to confirm access or provide a public URL; do not mark Step 8 complete.

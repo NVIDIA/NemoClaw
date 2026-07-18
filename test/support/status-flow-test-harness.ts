@@ -7,7 +7,10 @@ import { type MockInstance, vi } from "vitest";
 
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { SandboxStatusPreflightResult } from "../../src/lib/actions/sandbox/status-preflight";
-import type { SandboxStatusRouteDrift } from "../../src/lib/actions/sandbox/status-snapshot";
+import type {
+  SandboxStatusRouteDrift,
+  ServingProcessHealth,
+} from "../../src/lib/actions/sandbox/status-snapshot";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
 
 type ShowSandboxStatus = typeof import("../../src/lib/actions/sandbox/status")["showSandboxStatus"];
@@ -56,6 +59,7 @@ export type StatusFlowHarnessOptions = {
   currentProvider?: string;
   routeDrift?: SandboxStatusRouteDrift | null;
   inferenceHealth?: ProviderHealthStatus | null;
+  servingProcessHealth?: ServingProcessHealth | null;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
   preflight?: SandboxStatusPreflightResult;
@@ -155,6 +159,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
               providerLabel: "Inference route",
               endpoint: "https://inference.local/v1/models",
               detail: "inference route reachable",
+              okLabel: "reachable",
               subprobes: [
                 {
                   ok: true,
@@ -167,6 +172,13 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
               ],
             }
           : options.inferenceHealth,
+      terminalRuntimeHealth: null,
+      servingProcessHealth:
+        options.servingProcessHealth === undefined
+          ? sandboxEntry.agent === "langchain-deepagents-code"
+            ? null
+            : { checked: false }
+          : options.servingProcessHealth,
     });
   const getSandboxDockerRuntimeSpy = vi
     .spyOn(dockerHealth, "getSandboxDockerRuntime")

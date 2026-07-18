@@ -90,8 +90,6 @@ description: "Commands."
 description-agent: "Commands."
 keywords: ["commands"]
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 ${body}
 `;
 }

@@ -9,16 +9,16 @@ Daily release labels coordinate release work. They do not classify issues and th
 
 - PRs own the release-inclusion meaning of daily version labels.
 - Engineers and agents may add the current `v0.0.x` label to open PRs to activate them for day work.
-- After a PR merges to `main`, the trusted post-merge workflow records it automatically. If a release tag already contains the merge, the workflow uses the earliest containing release; otherwise it finds the highest strict-ancestor release tag and adds its next patch label.
-- Post-merge assignment is additive and idempotent. It creates the next release label with the canonical metadata when needed and never removes an existing version label.
-- A scheduled and manually dispatchable reconciliation pass repairs missed or failed merge events across the current train and completed releases tagged within the seven-day retention window.
+- After a PR merges to `main`, the trusted post-merge workflow adds the next patch label only when the merge is ahead of the latest release tag. A merge already contained in a release tag receives no release label.
+- A scheduled and manually dispatchable reconciliation pass repairs missed or failed merge events only across the untagged interval from the latest release tag to `main`.
+- Post-merge assignment and tag-triggered label retirement share one queued GitHub Actions concurrency group. Authorized automation cannot add a released label during the retirement verification-and-delete window.
 - Issues may also carry daily version labels when they need a PR, fix, or regression follow-up for the daily tag.
 - Applying a daily version label is not a readiness claim.
 - Release includes PRs that both carry the daily version label and are merged by cutoff.
 - Issue version labels are tracking signals only; an issue label does not include work in the release without a merged labeled PR.
 - Open PRs and issues that miss a tagged release carry forward automatically by moving from the released version label to the next patch label.
-- An open PR or issue leaves the daily release cycle only when its version label is removed without a replacement. Merged PR labels record release attribution and remain subject to the history and pruning rules below.
-- Version labels are pruned after seven days only after durable release history is preserved and no open PR still carries or depends on the old label.
+- After the semver tag and workflow-managed `latest` are verified, post-tag housekeeping moves open stragglers and deletes the released version label. Tags and commit ancestry are the only durable release-membership record.
+- Released version labels must be deleted, never renamed or reused for a later release.
 
 ## Release-Prep Docs
 
@@ -42,7 +42,7 @@ At cutoff:
 6. Generate the release plan to freeze the candidate commit.
 7. Review the candidate commit's pre-tag E2E evidence.
 8. Cut the release tag only with explicit maintainer confirmation.
-9. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label.
+9. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label, verify none remain, and delete the released version label.
 
 ## Pre-Tag E2E Evidence
 
@@ -61,9 +61,9 @@ Every test must have either green evidence or an itemized maintainer exception b
 
 ## Carry Forward
 
-Open PRs and issues that miss the cutoff remain active carry-forward work, but their target changes after the release succeeds. Post-tag housekeeping creates the next patch label if needed, removes the released-version label from every open straggler, and adds the next patch label.
+Open PRs and issues that miss the cutoff remain active carry-forward work, but their target changes after the release succeeds. Post-tag housekeeping creates the next patch label if needed, removes the released-version label from every open straggler, adds the next patch label, verifies no open item remains on the released label, and deletes the released label.
 
-Run the automatic bump only after both the semver tag and workflow-managed `latest` resolve to the confirmed release commit. The release confirmation must include the housekeeping plan, so the post-tag label writes remain inside the authorized release operation.
+The `release-latest-tag` workflow runs automatic carry-forward after moving `latest`. It shares the release-label coordination queue with post-merge assignment and must complete before housekeeping is considered successful. The release confirmation must include the housekeeping plan, so the post-tag label writes remain inside the authorized release operation. Do not run the retirement script directly or manually add a label whose semver tag already exists.
 
 Maintainers may:
 
@@ -71,13 +71,14 @@ Maintainers may:
 - Remove a version label without replacement when an item is deferred, superseded, closed, or no longer part of the daily cycle.
 - Rerun post-tag housekeeping after a partial failure; already-moved items no longer match the released source label, so the operation is safely resumable.
 
-## Pruning
+## Label Retirement
 
-Old version labels may be deleted only when all conditions are true:
+Release labels are temporary planning state. Retire one only when all conditions are true:
 
-1. The label is older than seven days.
-2. Durable release history has been preserved in tags, release notes, Agent Feed artifacts, or equivalent reports.
-3. No open PR or issue still carries or depends on the old label after post-tag housekeeping, and the label is outside the post-merge reconciliation window.
-4. The current authorization context explicitly allows label pruning.
+1. The semver tag and workflow-managed `latest` both resolve to the confirmed release commit.
+2. Every open PR and issue has moved to the next patch label or explicitly left the daily release cycle.
+3. A final query finds no open item carrying the released label.
+4. The release confirmation explicitly authorizes deletion of that released label.
+5. Retirement runs inside the shared release-label coordination queue.
 
-Pruning is a cleanup operation, not part of ordinary daily triage.
+Delete the repository label after those checks. Deletion removes it from merged and closed items without preserving a second, mutable release-membership signal. Never rename a released label into a future version, and never recreate a label whose semver tag already exists.

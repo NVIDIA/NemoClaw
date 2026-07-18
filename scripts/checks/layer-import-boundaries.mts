@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -29,24 +29,26 @@ function toRepoPath(absPath: string): string {
 }
 
 function isProductionTsFile(absPath: string): boolean {
-  return absPath.endsWith(".ts") && !absPath.endsWith(".test.ts") && !absPath.endsWith(".spec.ts");
+  return (
+    /\.(?:cts|mts|ts|tsx)$/.test(absPath) && !/\.(?:test|spec)\.(?:cts|mts|ts|tsx)$/.test(absPath)
+  );
 }
 
 function* walk(dir: string): Generator<string> {
   if (!existsSync(dir)) return;
-  const rootStats = statSync(dir);
+  const rootStats = lstatSync(dir);
+  if (rootStats.isSymbolicLink()) return;
   if (rootStats.isFile()) {
     if (isProductionTsFile(dir)) yield dir;
     return;
   }
   if (!rootStats.isDirectory()) return;
-  for (const entry of readdirSync(dir)) {
-    if (SKIP_DIRS.has(entry)) continue;
-    const absPath = path.join(dir, entry);
-    const stats = statSync(absPath);
-    if (stats.isDirectory()) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_DIRS.has(entry.name) || entry.isSymbolicLink()) continue;
+    const absPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
       yield* walk(absPath);
-    } else if (stats.isFile() && isProductionTsFile(absPath)) {
+    } else if (entry.isFile() && isProductionTsFile(absPath)) {
       yield absPath;
     }
   }
@@ -58,7 +60,7 @@ function sourceFileFor(absPath: string): ts.SourceFile {
     readFileSync(absPath, "utf8"),
     ts.ScriptTarget.Latest,
     true,
-    ts.ScriptKind.TS,
+    absPath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
 }
 
@@ -111,9 +113,19 @@ function collectImportRefs(absPath: string): ImportRef[] {
 function resolveInternalImport(fromAbsPath: string, specifier: string): string | null {
   if (!specifier.startsWith(".")) return null;
   const base = path.resolve(path.dirname(fromAbsPath), specifier);
-  const candidates = [base, `${base}.ts`, `${base}.tsx`, path.join(base, "index.ts")];
+  const extensions = [".ts", ".tsx", ".mts", ".cts"];
+  const candidates = [
+    ...extensions.map((extension) => `${base}${extension}`),
+    ...extensions.map((extension) => path.join(base, `index${extension}`)),
+    base,
+  ];
   const found = candidates.find((candidate) => existsSync(candidate));
-  return found ? toRepoPath(found) : toRepoPath(`${base}.ts`);
+  if (!found) return toRepoPath(`${base}.ts`);
+  try {
+    return toRepoPath(realpathSync(found));
+  } catch {
+    return toRepoPath(found);
+  }
 }
 
 function isDomainFile(repoPath: string): boolean {
@@ -134,7 +146,7 @@ function isMessagingManifestFile(repoPath: string): boolean {
 
 function isActionFile(repoPath: string): boolean {
   if (repoPath.startsWith("src/lib/actions/")) return true;
-  return /(^|\/)[^/]+-actions?\.ts$/.test(repoPath);
+  return /(^|\/)[^/]+-actions?\.(?:cts|mts|ts|tsx)$/.test(repoPath);
 }
 
 function importTargetsForbiddenLayer(
@@ -319,27 +331,59 @@ function checkMessagingManifestFile(
 
 function checkCommandFile(absPath: string, repoPath: string, violations: Violation[]): void {
   const sourceFile = sourceFileFor(absPath);
-  let commandClassCount = 0;
+  const identifierBases = new Set<string>();
+  const namespaceBases = new Map<string, ReadonlySet<string>>();
+
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      !statement.importClause ||
+      statement.importClause.isTypeOnly
+    ) {
+      continue;
+    }
+
+    const moduleSpecifier = statement.moduleSpecifier.text;
+    const exportedBases =
+      moduleSpecifier === "@oclif/core"
+        ? new Set(["Command"])
+        : resolveInternalImport(absPath, moduleSpecifier) ===
+            "src/lib/cli/nemoclaw-oclif-command.ts"
+          ? new Set(["NemoClawCommand"])
+          : null;
+    if (!exportedBases) continue;
+
+    const bindings = statement.importClause.namedBindings;
+    if (bindings && ts.isNamedImports(bindings)) {
+      for (const binding of bindings.elements) {
+        if (binding.isTypeOnly) continue;
+        const importedName = binding.propertyName?.text ?? binding.name.text;
+        if (exportedBases.has(importedName)) identifierBases.add(binding.name.text);
+      }
+    } else if (bindings && ts.isNamespaceImport(bindings)) {
+      namespaceBases.set(bindings.name.text, exportedBases);
+    }
+  }
 
   function isCommandBase(expression: ts.ExpressionWithTypeArguments): boolean {
-    const text = expression.expression.getText(sourceFile);
-    return text === "Command" || text === "NemoClawCommand";
+    const base = expression.expression;
+    if (ts.isIdentifier(base)) return identifierBases.has(base.text);
+    return (
+      ts.isPropertyAccessExpression(base) &&
+      ts.isIdentifier(base.expression) &&
+      namespaceBases.get(base.expression.text)?.has(base.name.text) === true
+    );
   }
 
-  function visit(node: ts.Node): void {
-    if (
-      ts.isClassDeclaration(node) &&
-      node.heritageClauses?.some(
+  const commandClassCount = sourceFile.statements.filter(
+    (statement) =>
+      ts.isClassDeclaration(statement) &&
+      statement.heritageClauses?.some(
         (clause) =>
           clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.some(isCommandBase),
-      )
-    ) {
-      commandClassCount += 1;
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
+      ),
+  ).length;
   if (commandClassCount !== 1) {
     addViolation(
       violations,

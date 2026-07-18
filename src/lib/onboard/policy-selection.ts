@@ -108,7 +108,7 @@ export type SetupPolicySelectionDeps = {
   selectTierPresetsAndAccess: (
     tierName: string,
     presets: Preset[],
-    extraSelected: string[],
+    initialSelected: string[],
   ) => Promise<Array<Preset & { access: string }>>;
   parsePolicyPresetEnv: (raw: string) => string[];
   env?: NodeJS.ProcessEnv;
@@ -460,14 +460,14 @@ async function setupPoliciesWithSelectionInner(
   }
 
   const knownNames = new Set(allPresets.map((preset) => preset.name));
-  const extraSelected = [
+  const initialSelected = [
     ...appliedForPreservation.filter((name) => knownNames.has(name)),
     ...suggestions.filter((name) => knownNames.has(name) && !applied.includes(name)),
   ];
   const resolvedPresets = await deps.selectTierPresetsAndAccess(
     tierName,
     allPresets,
-    extraSelected,
+    initialSelected,
   );
   const interactiveChoice = pruneUnavailablePresets(
     mergeRequiredSetupPolicyPresets(

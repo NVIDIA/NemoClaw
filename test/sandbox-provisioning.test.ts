@@ -21,6 +21,12 @@ const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const DOCKERFILE_SANDBOX = path.join(ROOT, "test", "Dockerfile.sandbox");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const HERMES_DOCKERFILE_BASE = path.join(ROOT, "agents", "hermes", "Dockerfile.base");
+const DEEPAGENTS_DOCKERFILE_BASE = path.join(
+  ROOT,
+  "agents",
+  "langchain-deepagents-code",
+  "Dockerfile.base",
+);
 
 function dockerRunCommandBetween(
   dockerfile: string,
@@ -1026,6 +1032,20 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
 });
 
 describe("sandbox provisioning: base runtime tools", () => {
+  it.each([
+    ["OpenClaw", DOCKERFILE_BASE],
+    ["Hermes", HERMES_DOCKERFILE_BASE],
+    ["Deep Agents Code", DEEPAGENTS_DOCKERFILE_BASE],
+  ])("installs pinned nftables for OpenShell bypass enforcement in %s", (_agent, file) => {
+    const dockerfile = fs.readFileSync(file, "utf-8");
+    const aptInstall = dockerfile.match(
+      /^RUN apt-get update && apt-get install -y --no-install-recommends \\\n(?:.*\\\n)*.*$/m,
+    )?.[0];
+
+    expect(aptInstall).toBeDefined();
+    expect(aptInstall).toContain("nftables=1.1.3-1");
+  });
+
   it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));

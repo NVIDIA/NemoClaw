@@ -15,6 +15,8 @@ export type DoctorInferenceRoute = {
 type DoctorInferenceDeps = {
   probeProviderHealthImpl?: typeof probeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: typeof probeSandboxInferenceGatewayHealth;
+  /** False for terminal agents that do not have a long-running gateway serving process. */
+  includeServingProcessCheck?: boolean;
 };
 
 function pushInferenceHealthCheck(
@@ -155,6 +157,18 @@ export async function collectInferenceChecks(
     deps.probeProviderHealthImpl ?? probeProviderHealth,
   )) {
     pushInferenceHealthCheck(checks, diagnostic, { authoritative: false });
+  }
+  // Serving-process leg: the above probes run in a fresh exec with OpenShell's
+  // injected env, so they cannot attest what the long-running gateway process
+  // can reach. Until NemoClaw defines and implements a process-owned probe
+  // contract, keep this honest result explicit (#7003).
+  if (deps.includeServingProcessCheck !== false) {
+    checks.push({
+      group: "Inference",
+      label: "Serving process",
+      status: "info",
+      detail: "not checked — serving-process probing is not implemented",
+    });
   }
   return checks;
 }

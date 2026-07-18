@@ -9,12 +9,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 
-type CredentialsShim = typeof import("../src/lib/credentials/store.js") & {
+type CredentialsShim = typeof import("../../src/lib/credentials/store.js") & {
   CREDS_DIR: string;
   CREDS_FILE: string;
 };
 
-const credentials = require("../bin/lib/credentials.js") as CredentialsShim;
+const credentials = require("../../bin/lib/credentials.js") as CredentialsShim;
 const TRACKED_ENV_KEYS = [...credentials.KNOWN_CREDENTIAL_ENV_KEYS, "TEST_KEY"];
 
 function clearTrackedEnv() {

@@ -46,6 +46,13 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+export function immutableRawArtifactUrlPattern(relativePath: string, flags = ""): RegExp {
+  return new RegExp(
+    `https://raw\\.githubusercontent\\.com/NVIDIA/NemoClaw/([0-9a-f]{40})/${escapeRegExp(relativePath)}(?=$|[\\s\\u0060])`,
+    flags,
+  );
+}
+
 function findCredentialSection(promptSource: string): string {
   const match = promptSource.match(
     /## Handle Tokens Securely and Visually([\s\S]*?)\nUse this provider mapping/,
@@ -58,10 +65,7 @@ function verifyArtifact(section: string, artifact: ReviewedArtifact): string[] {
   const failures: string[] = [];
   const currentBytes = fs.readFileSync(path.join(REPO_ROOT, artifact.relativePath));
   const currentDigest = sha256(currentBytes);
-  const urlPattern = new RegExp(
-    `https://raw\\.githubusercontent\\.com/NVIDIA/NemoClaw/([0-9a-f]{40})/${escapeRegExp(artifact.relativePath)}`,
-    "g",
-  );
+  const urlPattern = immutableRawArtifactUrlPattern(artifact.relativePath, "g");
   const matches = [...section.matchAll(urlPattern)];
   const match = matches[0];
   if (matches.length !== 1 || !match?.[1] || match.index === undefined) {
@@ -403,9 +407,7 @@ function main(): void {
     sha256(fs.readFileSync(path.join(REPO_ROOT, relativePath))),
   );
   const pinnedCommits = REVIEWED_ARTIFACTS.flatMap(({ relativePath }) => {
-    const pattern = new RegExp(
-      `https://raw\\.githubusercontent\\.com/NVIDIA/NemoClaw/([0-9a-f]{40})/${escapeRegExp(relativePath)}`,
-    );
+    const pattern = immutableRawArtifactUrlPattern(relativePath);
     const commit = section.match(pattern)?.[1];
     return commit ? [commit] : [];
   });

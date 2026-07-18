@@ -11,8 +11,6 @@ const source = `---
 title: "Example"
 description-agent: "Use when looking up $$nemoclaw commands."
 ---
-import { AgentCli, AgentOnly } from "../_components/AgentGuide";
-
 <AgentOnly variant="openclaw">
 OpenClaw only.
 </AgentOnly>
@@ -30,7 +28,7 @@ Gateway agents only.
 $$nemoclaw list
 \`\`\`
 
-Use <AgentCli /> for the current variant.
+Use \`$$nemoclaw\` for the current variant.
 `;
 
 describe("agent variant docs", () => {
@@ -83,10 +81,14 @@ title: "Example"
 ## Prerequisites
 
 <AgentOnly variant="openclaw">
+
 - NemoClaw installed.
+
 </AgentOnly>
 <AgentOnly variant="hermes">
+
 - NemoHermes installed.
+
 </AgentOnly>
 - A local model server running.
 `,
@@ -96,6 +98,27 @@ title: "Example"
     expect(rendered).toContain("- NemoClaw installed.\n- A local model server running.");
     expect(rendered).not.toContain("- NemoClaw installed.\n\n- A local model server running.");
     expect(rendered).not.toContain("NemoHermes installed.");
+  });
+
+  it("preserves paragraph boundaries around retained variant prose", () => {
+    const rendered = renderAgentVariantPage(
+      `---
+title: "Example"
+---
+Shared paragraph.
+
+<AgentOnly variant="openclaw">
+
+OpenClaw paragraph.
+
+</AgentOnly>
+Following paragraph.
+`,
+      "openclaw",
+    );
+
+    expect(rendered).toContain("Shared paragraph.\n\nOpenClaw paragraph.");
+    expect(rendered).toContain("OpenClaw paragraph.\n\nFollowing paragraph.");
   });
 
   it("rejects nested AgentOnly blocks before they leak into generated variants", () => {
@@ -113,9 +136,45 @@ OpenClaw content.
     expect(() => renderAgentVariantPage(nested, "openclaw")).toThrow("nested AgentOnly block");
   });
 
+  it("rejects inline AgentOnly directives before they reach Fern", () => {
+    const inline = `---
+title: "Example"
+---
+<AgentOnly variant="openclaw">OpenClaw only.</AgentOnly>
+`;
+
+    expect(() => renderAgentVariantPage(inline, "openclaw")).toThrow(
+      "unresolved AgentOnly directive",
+    );
+  });
+
+  it("rejects runtime agent components before they reach Fern", () => {
+    const runtimeComponent = `---
+title: "Example"
+---
+Use <AgentCli /> for the current variant.
+`;
+
+    expect(() => renderAgentVariantPage(runtimeComponent, "hermes")).toThrow(
+      "unresolved runtime agent component",
+    );
+  });
+
+  it("rejects AgentGuide imports before they reach Fern", () => {
+    const runtimeImport = `---
+title: "Example"
+---
+import { AgentOnly } from "../_components/AgentGuide";
+`;
+
+    expect(() => renderAgentVariantPage(runtimeImport, "deepagents")).toThrow(
+      "unresolved AgentGuide import",
+    );
+  });
+
   it("rewrites relative imports but preserves Fern route links for generated build output", () => {
     const rendered = renderAgentVariantPage(
-      `${source}\nSee [Commands](../reference/commands#$$nemoclaw-list).\nSee [Backup](backup-restore).\n![Diagram](images/diagram.png)\n`,
+      `${source}\nimport { Example } from "../_components/Example";\n\nSee [Commands](../reference/commands#$$nemoclaw-list).\nSee [Backup](backup-restore).\n![Diagram](images/diagram.png)\n`,
       "hermes",
       {
         outputPath:
@@ -124,9 +183,7 @@ OpenClaw content.
       },
     );
 
-    expect(rendered).toContain(
-      'import { AgentCli, AgentOnly } from "../../../_components/AgentGuide";',
-    );
+    expect(rendered).toContain('import { Example } from "../../../_components/Example";');
     expect(rendered).toContain("[Commands](../reference/commands#nemohermes-list)");
     expect(rendered).toContain("[Backup](backup-restore)");
     expect(rendered).toContain("![Diagram](../../../manage-sandboxes/images/diagram.png)");
