@@ -9,6 +9,7 @@ import {
   collectBrevDebugBundle,
   type DeleteRunners,
   deleteBrevInstance,
+  downloadBrevCliArchive,
   type InstallRunners,
   installBrevCli,
   type Logger,
@@ -109,6 +110,19 @@ describe("installBrevCli (#6962)", () => {
       "onboarding",
       "ready",
     ]);
+  });
+
+  it("bounds the archive download so teardown cannot wait indefinitely (#6962)", async () => {
+    const fetcher: typeof fetch = (_input, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        expect(signal).toBeInstanceOf(AbortSignal);
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+
+    await expect(
+      downloadBrevCliArchive("https://example.invalid/brev.tar.gz", fetcher, 1),
+    ).rejects.toMatchObject({ name: "TimeoutError" });
   });
 
   it("uses the legacy credential path and never logs in with an API key", async () => {

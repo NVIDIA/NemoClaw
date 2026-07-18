@@ -268,6 +268,7 @@ describe("Brev nightly workflow contract", () => {
     expect(steps.some((step) => step.name === "Delete Brev instance")).toBe(false);
     expect(cleanupJob?.if).toBe("always() && !inputs.keep_alive");
     expect(cleanupJob?.needs).toBe("e2e-branch-validation");
+    expect(cleanupJob?.["timeout-minutes"]).toBe(15);
     expect(cleanup?.env?.INSTANCE_NAME).toBe("${{ env.BREV_E2E_INSTANCE_NAME }}");
     expect(cleanup?.run).toContain("tools/e2e/brev-lifecycle.mts delete-instance");
 

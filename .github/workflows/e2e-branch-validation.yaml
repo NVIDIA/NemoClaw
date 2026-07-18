@@ -327,6 +327,7 @@ jobs:
     needs: e2e-branch-validation
     if: always() && !inputs.keep_alive
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     env:

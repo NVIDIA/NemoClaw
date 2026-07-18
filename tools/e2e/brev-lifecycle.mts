@@ -216,6 +216,19 @@ export interface InstallRunners {
   logger: Logger;
 }
 
+export const BREV_CLI_DOWNLOAD_TIMEOUT_MS = 60_000;
+
+/** Download the pinned archive with a deadline so cleanup cannot hang indefinitely. */
+export async function downloadBrevCliArchive(
+  url: string,
+  fetcher: typeof fetch = fetch,
+  timeoutMs = BREV_CLI_DOWNLOAD_TIMEOUT_MS,
+): Promise<Buffer> {
+  const response = await fetcher(url, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!response.ok) throw new Error(`Brev CLI download failed: HTTP ${response.status}`);
+  return Buffer.from(await response.arrayBuffer());
+}
+
 /**
  * Install and authenticate the pinned Brev CLI, then confirm readiness. The
  * checksum is verified before the tarball is trusted.
@@ -342,11 +355,7 @@ async function runInstallCli(): Promise<void> {
       apiToken: process.env.BREV_API_TOKEN,
     },
     {
-      download: async (url) => {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Brev CLI download failed: HTTP ${response.status}`);
-        return Buffer.from(await response.arrayBuffer());
-      },
+      download: downloadBrevCliArchive,
       extractBrevBinary: (tarball) => {
         // mkdtemp gives the tarball a private, unpredictable directory; a fixed
         // name in the shared temp dir could be pre-created or symlinked by
