@@ -100,13 +100,17 @@ export function recordCheckpointResourceProfile(
 export function recordCheckpointBindings(
   session: Session,
   additions: {
-    credentialEnv?: string | null;
     registeredProviders?: readonly CheckpointProviderBinding[];
   },
 ): void {
   const base = baseCheckpoint(session);
-  const credentialEnvs = additions.credentialEnv
-    ? [...new Set([...base.bindings.credentialEnvs, additions.credentialEnv])]
+  const credentialEnvs = additions.registeredProviders
+    ? [
+        ...new Set([
+          ...base.bindings.credentialEnvs,
+          ...additions.registeredProviders.map((binding) => binding.credentialEnv),
+        ]),
+      ]
     : base.bindings.credentialEnvs;
   const registeredProviders = additions.registeredProviders
     ? [

@@ -130,6 +130,7 @@ describe("handleSandboxState", () => {
     expect(result.session?.checkpoint?.bindings.registeredProviders).toEqual([
       { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
     ]);
+    expect(result.session?.checkpoint?.bindings.credentialEnvs).toEqual(["BRAVE_API_KEY"]);
     expect(result.session?.checkpoint?.resourceProfile).toEqual(
       decisionSelected({ cpu: "2", memory: "4Gi" }),
     );

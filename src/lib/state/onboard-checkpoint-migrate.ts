@@ -79,7 +79,10 @@ export function deriveCheckpointFromSession(session: Session): OnboardCheckpoint
     resourceProfile: resourceDecision(session),
     effectGroups: {},
     bindings: {
-      credentialEnvs: session.credentialEnv ? [session.credentialEnv] : [],
+      // Provider/inference resume owns and revalidates the primary inference
+      // binding before the sandbox phase. This ledger covers only external
+      // effects created inside the sandbox phase.
+      credentialEnvs: [],
       registeredProviders: [],
     },
   };

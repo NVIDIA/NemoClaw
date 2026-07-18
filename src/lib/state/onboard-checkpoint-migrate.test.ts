@@ -53,7 +53,7 @@ describe("deriveCheckpointFromSession", () => {
     expect(checkpoint.messaging).toEqual(decisionDeclined());
     expect(checkpoint.resourceProfile).toEqual(decisionDeclined());
     expect(checkpoint.bindings).toEqual({
-      credentialEnvs: ["OPENAI_API_KEY"],
+      credentialEnvs: [],
       registeredProviders: [],
     });
   });

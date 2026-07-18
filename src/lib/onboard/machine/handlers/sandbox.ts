@@ -1045,7 +1045,6 @@ class SandboxStateFlow<
       this.deps.note("  ✓ Registered selected credentials with OpenShell for resume.");
       this.deps.updateSession((current) => {
         recordCheckpointBindings(current, {
-          credentialEnv: this.options.credentialEnv,
           registeredProviders,
         });
         recordCheckpointEffectGroup(
