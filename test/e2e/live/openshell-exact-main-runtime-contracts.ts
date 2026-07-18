@@ -278,7 +278,15 @@ connect_status() {
   fi
   printf '%s\n' "$status"
 }
-connect_status > "$first_result"
+first_status=000
+first_attempt=0
+while [ "$first_attempt" -lt 50 ]; do
+  first_attempt=$((first_attempt + 1))
+  first_status=$(connect_status)
+  [ "$first_status" = 200 ] && break
+  sleep 0.1
+done
+printf '%s\n' "$first_status" > "$first_result"
 IFS= read -r _ < "$trigger"
 connect_status > "$second_result"`;
 
@@ -342,7 +350,7 @@ export function buildExactMainLiveExeIdentityScript(mcpUrl: string): string {
     "}",
     'wait_for_result "$first"',
     "old_first=$(tr -d '\\r\\n' < \"$first\")",
-    '[ "$old_first" = 200 ]',
+    '[ "$old_first" = 200 ] || { printf \'expected initial live-exe CONNECT 200, got %s\\n\' "$old_first" >&2; exit 1; }',
     'replacement="$root/live-bash.next"',
     'cp "$live" "$replacement"',
     "printf '\\nNEMOCLAW_EXACT_MAIN_REPLACEMENT\\n' >> \"$replacement\"",
@@ -355,7 +363,7 @@ export function buildExactMainLiveExeIdentityScript(mcpUrl: string): string {
     "printf 'go\\n' > \"$trigger\"",
     'wait_for_result "$second"',
     "old_second=$(tr -d '\\r\\n' < \"$second\")",
-    '[ "$old_second" = 200 ]',
+    '[ "$old_second" = 200 ] || { printf \'expected retained live-exe CONNECT 200, got %s\\n\' "$old_second" >&2; exit 1; }',
     'wait "$old_pid"',
     'old_pid=""',
     `new_status=$("$live" -c "$oneshot_script" exact-main-new ${shellQuote(endpoint.hostname)} ${endpointPort} | tr -d '\\r\\n')`,
@@ -365,9 +373,7 @@ export function buildExactMainLiveExeIdentityScript(mcpUrl: string): string {
     "printf 'NEMOCLAW_LIVE_EXE_OLD_LINK=%s\\n' \"$old_exe\"",
     "printf 'NEMOCLAW_LIVE_EXE_OLD_HASH=%s\\n' \"$old_hash\"",
     "printf 'NEMOCLAW_LIVE_EXE_NEW_HASH=%s\\n' \"$new_hash\"",
-    '[ "$old_first" = 200 ]',
-    '[ "$old_second" = 200 ]',
-    '[ "$new_status" = 403 ]',
+    '[ "$new_status" = 403 ] || { printf \'expected replacement live-exe CONNECT 403, got %s\\n\' "$new_status" >&2; exit 1; }',
   ].join("\n");
 }
 

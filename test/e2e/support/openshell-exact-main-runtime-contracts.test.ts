@@ -174,6 +174,9 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
     expect(script).toContain("NEMOCLAW_LIVE_EXE_OLD_FIRST=%s");
     expect(script).toContain("NEMOCLAW_LIVE_EXE_OLD_SECOND=%s");
     expect(script).toContain("NEMOCLAW_LIVE_EXE_NEW=%s");
-    expect(script).toContain('[ "$new_status" = 403 ]');
+    expect(script).toContain('while [ "$first_attempt" -lt 50 ]');
+    expect(script).toContain('[ "$first_status" = 200 ] && break');
+    expect(script).toContain("expected initial live-exe CONNECT 200");
+    expect(script).toContain("expected replacement live-exe CONNECT 403");
   });
 });
