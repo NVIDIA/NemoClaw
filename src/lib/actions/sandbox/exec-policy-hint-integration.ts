@@ -21,6 +21,7 @@ export function preparePolicyHint(
   cliName: string,
   sandboxName: string,
   deps: ExecPolicyHintDeps = {},
+  gatewayName?: string,
 ): (completion: ExecPolicyDenialHintCompletion) => Promise<void> {
   const { now = Date.now, ...hintDeps } = deps;
   const commandStartedAtMs = now();
@@ -32,6 +33,7 @@ export function preparePolicyHint(
       Boolean(completion.invocationError),
       commandStartedAtMs,
       hintDeps,
+      gatewayName,
     );
   };
 }

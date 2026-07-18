@@ -9,8 +9,6 @@ keywords: ["verify inference.local", "nemoclaw inference route", "sandbox infere
 content:
   type: "how_to"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 Verify inference through the same `inference.local` path that the agent uses inside the sandbox.
 Reading the active route confirms configuration, but it does not authenticate a model request.
 
@@ -32,7 +30,10 @@ Run the named sandbox status command.
 $$nemoclaw <name> status
 ```
 
-The `Inference` row checks the sandbox's `inference.local` path and reports the provider, model, and endpoint with the rest of the sandbox state.
+The `Inference` row checks the sandbox's `inference.local` path and reports it as `reachable` when the route returns HTTP `200` through `499`.
+This includes authentication responses such as HTTP `401` and `403`: they confirm route access, not valid provider credentials or a successful model invocation.
+Use the status command's upstream provider diagnostic or send a short agent request to verify the configured model.
+The provider, model, and endpoint appear with the rest of the sandbox state.
 This path includes the OpenShell proxy and its authentication rewrite.
 When onboarding prints a dashboard summary, use it to verify that NemoClaw ran the same route-reachability probe from inside the sandbox.
 Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
@@ -61,7 +62,7 @@ Use the status command and a short agent request after onboarding to verify ongo
 Connect to the sandbox and send a short request before starting long-running work.
 A successful response proves that the configured model can serve an agent request through the OpenShell route.
 
-If status is healthy but a tool action returns JSON as normal assistant text, troubleshoot structured tool calling instead of the network route.
+If the status route is reachable but a tool action returns JSON as normal assistant text, troubleshoot structured tool calling instead of the network route.
 
 ## Related Topics
 

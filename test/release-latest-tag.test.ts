@@ -221,6 +221,13 @@ function createPlan(
   expect(plan.nextTag).toBe("v0.0.2");
   expect(plan.originMainCommit).toBe(releaseCommit);
   expect(plan.operations).toContain(`create signed annotated v0.0.2 tag at ${releaseCommit}`);
+  const carryForward = "have release-latest-tag workflow carry open v0.0.2 items forward to v0.0.3";
+  const deleteReleased =
+    "have release-latest-tag workflow delete released v0.0.2 label after carry-forward succeeds";
+  const carryForwardIndex = plan.operations.indexOf(carryForward);
+  const deleteReleasedIndex = plan.operations.indexOf(deleteReleased);
+  expect(carryForwardIndex).toBeGreaterThanOrEqual(0);
+  expect(deleteReleasedIndex).toBeGreaterThan(carryForwardIndex);
   expect(plan.confirmationPhrase).toBe(`CONFIRM RELEASE v0.0.2 ${releaseCommit}`);
   return { plan, result };
 }

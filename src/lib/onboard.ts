@@ -3837,12 +3837,12 @@ async function selectPolicyTier(): Promise<string> {
 async function selectTierPresetsAndAccess(
   tierName: string,
   allPresets: Array<{ name: string; description?: string }>,
-  extraSelected: string[] = [],
+  initialSelected?: string[],
 ): Promise<Array<{ name: string; access: string }>> {
   return getPolicySelectionPromptHelpers().selectTierPresetsAndAccess(
     tierName,
     allPresets,
-    extraSelected,
+    initialSelected,
   );
 }
 
