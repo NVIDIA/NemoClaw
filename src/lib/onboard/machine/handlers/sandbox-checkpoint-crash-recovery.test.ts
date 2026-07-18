@@ -609,18 +609,15 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
   it("backfills effect receipts after a crash following sandbox registration (#7022)", async () => {
     let persistedSession = createSession({ sessionId: "sess-1", agent: "openclaw" });
-    let crashBeforeEffectReceipts = false;
     const updateSession = vi.fn((mutator: (value: Session) => Session | void) => {
-      if (crashBeforeEffectReceipts) {
-        crashBeforeEffectReceipts = false;
-        throw new Error("process crashed after sandbox registration");
-      }
       persistedSession = mutator(persistedSession) ?? persistedSession;
       return persistedSession;
     });
     const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates) => {
       Object.assign(persistedSession, updates);
-      crashBeforeEffectReceipts = true;
+      updateSession.mockImplementationOnce(() => {
+        throw new Error("process crashed after sandbox registration");
+      });
       return persistedSession;
     });
     const firstRun = createDeps({
