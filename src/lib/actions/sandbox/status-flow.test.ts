@@ -130,6 +130,19 @@ describe("showSandboxStatus flow", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("omits serving-process status when the gateway is unavailable (#7003)", async () => {
+    const harness = createStatusFlowHarness({
+      lookupState: "missing",
+      servingProcessHealth: null,
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).not.toContain("Serving process");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it.each([
     { label: "unreachable" as const, detail: "inference.local is unreachable" },
     { label: "unhealthy" as const, detail: "inference.local returned HTTP 503" },

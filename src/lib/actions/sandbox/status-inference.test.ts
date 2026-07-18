@@ -11,6 +11,7 @@ import {
 describe("sandbox status inference.local route health (#6192)", () => {
   function snapshotDeps(options: {
     agent?: string;
+    lookupState?: "present" | "missing";
     provider?: string;
     liveProvider?: string;
     liveModel?: string;
@@ -35,10 +36,10 @@ describe("sandbox status inference.local route health (#6192)", () => {
     return {
       getSandbox: () => sandbox,
       listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: "alpha" }),
-      reconcile: async () => ({
-        state: "present" as const,
-        output: "Name: alpha\nPhase: Ready\n",
-      }),
+      reconcile: async () =>
+        options.lookupState === "missing"
+          ? { state: "missing" as const, output: "sandbox alpha not found" }
+          : { state: "present" as const, output: "Name: alpha\nPhase: Ready\n" },
       captureOpenshellForStatusImpl: async () =>
         ({
           status: 0,
@@ -110,6 +111,21 @@ describe("sandbox status inference.local route health (#6192)", () => {
 
     expect(snapshot.servingProcessHealth).toBeNull();
     expect(deps.probeTerminalRuntimeHealth).toHaveBeenCalledWith("alpha");
+
+    const report = await getSandboxStatusReport("alpha", deps);
+    expect(report.servingProcessHealth).toBeNull();
+  });
+
+  it("does not invent serving-process health when the gateway is unavailable (#7003)", async () => {
+    const deps = snapshotDeps({
+      lookupState: "missing",
+      routeHealth: null,
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(snapshot.servingProcessHealth).toBeNull();
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
 
     const report = await getSandboxStatusReport("alpha", deps);
     expect(report.servingProcessHealth).toBeNull();
