@@ -3,18 +3,18 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  type CredentialProviderRegistrationDeps,
-  createCredentialProviderRegistration,
-} from "../../credential-provider-registration";
-import type { MessagingTokenDef } from "../../messaging-prep";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
   type OnboardCheckpoint,
 } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
+import {
+  type CredentialProviderRegistrationDeps,
+  createCredentialProviderRegistration,
+} from "../../credential-provider-registration";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
+import type { MessagingTokenDef } from "../../messaging-prep";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps, makeMinimalPlan } from "./sandbox-test-fixtures";
 
@@ -605,5 +605,78 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
     expect(resumeCalls.createSandbox).not.toHaveBeenCalled();
     expect(resumeCalls.recordSkip).toHaveBeenCalled();
+  });
+
+  it("backfills effect receipts after a crash following sandbox registration (#7022)", async () => {
+    let persistedSession = createSession({ sessionId: "sess-1", agent: "openclaw" });
+    let crashBeforeEffectReceipts = false;
+    const updateSession = vi.fn((mutator: (value: Session) => Session | void) => {
+      if (crashBeforeEffectReceipts) {
+        crashBeforeEffectReceipts = false;
+        throw new Error("process crashed after sandbox registration");
+      }
+      persistedSession = mutator(persistedSession) ?? persistedSession;
+      return persistedSession;
+    });
+    const recordStepComplete = vi.fn(async (_stepName: string, updates: Partial<Session>) => {
+      Object.assign(persistedSession, updates);
+      crashBeforeEffectReceipts = true;
+      return persistedSession;
+    });
+    const firstRun = createDeps({
+      getSandboxReuseState: () => "missing",
+      recordStepComplete,
+      updateSession,
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(firstRun.deps, persistedSession),
+        resume: false,
+        sandboxName: "my-assistant",
+        authoritativeResumeConfig: true,
+      }),
+    ).rejects.toThrow("process crashed after sandbox registration");
+
+    expect(firstRun.calls.createSandbox).toHaveBeenCalledTimes(1);
+    expect(firstRun.calls.updateSandbox).toHaveBeenCalledTimes(1);
+    expect(recordStepComplete).toHaveBeenCalledTimes(1);
+    expect(persistedSession.checkpoint?.effectGroups.sandbox_create).toBeUndefined();
+    expect(persistedSession.checkpoint?.effectGroups.sandbox_register).toBeUndefined();
+
+    const resumeUpdateSession = vi.fn((mutator: (value: Session) => Session | void) => {
+      persistedSession = mutator(persistedSession) ?? persistedSession;
+      return persistedSession;
+    });
+    const recordStateSkipped = vi.fn(async () => persistedSession);
+    const resumedRun = createDeps({
+      getSandboxReuseState: () => "ready",
+      recordStateSkipped,
+      updateSession: resumeUpdateSession,
+    });
+
+    await handleSandboxState({
+      ...baseOptions(resumedRun.deps, persistedSession),
+      resume: true,
+      sandboxName: "my-assistant",
+      authoritativeResumeConfig: true,
+    });
+
+    expect(resumedRun.calls.createSandbox).not.toHaveBeenCalled();
+    expect(recordStateSkipped).toHaveBeenCalledTimes(1);
+    expect(resumedRun.calls.updateSandbox).toHaveBeenCalledWith("my-assistant", {
+      pendingRouteReservation: undefined,
+    });
+    expect(
+      resumedRun.calls.updateSandbox.mock.calls.some(([, updates]) =>
+        Object.prototype.hasOwnProperty.call(updates, "provider"),
+      ),
+    ).toBe(false);
+    expect(persistedSession.checkpoint?.effectGroups.sandbox_create?.fingerprint).toBe(
+      defaultCreateFingerprint(),
+    );
+    expect(persistedSession.checkpoint?.effectGroups.sandbox_register?.fingerprint).toBe(
+      "my-assistant",
+    );
   });
 });

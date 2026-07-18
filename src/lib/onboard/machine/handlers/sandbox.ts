@@ -798,11 +798,49 @@ class SandboxStateFlow<
         reason: "resume",
         sandboxName: state.sandboxName,
       });
+      const recordedSession = this.backfillReusedSandboxCheckpointReceipts(
+        skippedSession,
+        state.sandboxName,
+      );
       return {
         ...state,
-        session: skippedSession,
+        session: recordedSession,
         selectedMessagingChannels: messaging.selectedChannels,
       };
+    });
+  }
+
+  private backfillReusedSandboxCheckpointReceipts(
+    session: Session,
+    sandboxName: string | null,
+  ): Session {
+    if (!sandboxName || !session.checkpoint) return session;
+    const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+    if (!checkpointIdentityForResumeTarget(session.checkpoint, sandboxName, agentName)) {
+      return session;
+    }
+    if (
+      session.checkpoint.effectGroups.sandbox_create &&
+      session.checkpoint.effectGroups.sandbox_register
+    ) {
+      return session;
+    }
+    return this.deps.updateSession((current) => {
+      const checkpoint = current.checkpoint;
+      if (!checkpoint || !checkpointIdentityForResumeTarget(checkpoint, sandboxName, agentName)) {
+        return current;
+      }
+      if (!checkpoint.effectGroups.sandbox_create) {
+        recordCheckpointEffectGroup(
+          current,
+          "sandbox_create",
+          this.currentSandboxCreateFingerprint(sandboxName),
+        );
+      }
+      if (!checkpoint.effectGroups.sandbox_register) {
+        recordCheckpointEffectGroup(current, "sandbox_register", sandboxName);
+      }
+      return current;
     });
   }
 
