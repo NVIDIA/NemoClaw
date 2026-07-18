@@ -179,6 +179,9 @@ LOG_FILE=""
 DOCKER_GROUP_ADDED=0
 CDI_LIFECYCLE_READY=0
 NETWORK_VALIDATED=0
+PACKAGE_TRANSACTION_SPECS=()
+APT_TRANSACTION_GUARD_DIR=""
+APT_TRANSACTION_HOOK=""
 
 info() {
   printf '[station-prepare] %s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*"
@@ -872,35 +875,286 @@ configure_repositories() {
   info "repository_keys=verified"
 }
 
+collect_package_transaction_specs() {
+  local spec state
+  PACKAGE_TRANSACTION_SPECS=()
+  for spec in "${PACKAGE_SPECS[@]}"; do
+    state="$(package_state "$spec")"
+    case "$state" in
+      missing | approved-transition) PACKAGE_TRANSACTION_SPECS+=("$spec") ;;
+      exact) ;;
+      *) fatal "Package transaction contains an unapproved prerequisite state: ${spec} (${state})" ;;
+    esac
+  done
+  ((${#PACKAGE_TRANSACTION_SPECS[@]} > 0)) \
+    || fatal "Package transaction has no missing or approved-transition prerequisites"
+}
+
 validate_package_availability() {
   local spec
-  for spec in "${PACKAGE_SPECS[@]}"; do
+  for spec in "$@"; do
     apt-cache show "$spec" >/dev/null 2>&1 || fatal "Exact package version is unavailable: ${spec}"
   done
   info "exact_package_versions=available"
 }
 
+apt_guard_fatal() {
+  printf 'APT transaction guard: %s\n' "$*" >&2
+  return 1
+}
+
+validate_apt_preinstall_plan() {
+  local targets_file=$1 line package old_version old_arch old_multiarch direction
+  local new_version new_arch new_multiarch action extra record_key
+  local target expected allowed_old native_arch target_line target_expected target_allowed_old target_native_arch
+  local manifest_native_arch=""
+  local configured='|' changed='|' seen_targets='|' target_names='|'
+  [[ -r "$targets_file" && -f "$targets_file" && ! -L "$targets_file" ]] \
+    || apt_guard_fatal "target manifest is unavailable or unsafe: ${targets_file}" || return
+
+  while IFS='|' read -r target expected allowed_old native_arch extra; do
+    [[ -n "$target" && -n "$expected" && -n "$native_arch" && -z "$extra" ]] \
+      || apt_guard_fatal "target manifest contains an invalid record" || return
+    [[ "$target" =~ ^[a-z0-9][a-z0-9+.-]+$ ]] \
+      || apt_guard_fatal "target manifest contains an invalid package name: ${target}" || return
+    [[ "$expected" != *[[:space:]]* && "$expected" != *"|"* &&
+      "$allowed_old" != *[[:space:]]* && "$allowed_old" != *"|"* &&
+      "$native_arch" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+      || apt_guard_fatal "target manifest contains an invalid version for ${target}" || return
+    [[ "$target_names" != *"|${target}|"* ]] \
+      || apt_guard_fatal "target manifest repeats package ${target}" || return
+    if [[ -z "$manifest_native_arch" ]]; then
+      manifest_native_arch=$native_arch
+    else
+      [[ "$native_arch" == "$manifest_native_arch" ]] \
+        || apt_guard_fatal "target manifest mixes native architectures" || return
+    fi
+    target_names="${target_names}${target}|"
+  done <"$targets_file"
+  [[ "$target_names" != "|" ]] || apt_guard_fatal "target manifest is empty" || return
+
+  IFS= read -r line || apt_guard_fatal "APT omitted the pre-install protocol header" || return
+  [[ "$line" == "VERSION 3" ]] \
+    || apt_guard_fatal "APT pre-install protocol must be VERSION 3, found: ${line}" || return
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || break
+  done
+  [[ -z "$line" ]] || apt_guard_fatal "APT pre-install protocol omitted its record separator" || return
+
+  while read -r package old_version old_arch old_multiarch direction new_version new_arch new_multiarch action extra; do
+    [[ -n "$package" && -n "$old_version" && -n "$old_arch" && -n "$old_multiarch" &&
+      -n "$direction" && -n "$new_version" && -n "$new_arch" && -n "$new_multiarch" &&
+      -n "$action" && -z "$extra" ]] \
+      || apt_guard_fatal "APT emitted a malformed package action" || return
+    [[ "$package" =~ ^[a-z0-9][a-z0-9+.-]+$ ]] \
+      || apt_guard_fatal "APT emitted an invalid package name: ${package}" || return
+    [[ "$old_arch" == "-" || "$old_arch" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+      || apt_guard_fatal "APT emitted an invalid old architecture for ${package}: ${old_arch}" || return
+    [[ "$new_arch" == "-" || "$new_arch" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+      || apt_guard_fatal "APT emitted an invalid new architecture for ${package}: ${new_arch}" || return
+    [[ "$old_multiarch" =~ ^(same|foreign|allowed|none|no|-)$ &&
+      "$new_multiarch" =~ ^(same|foreign|allowed|none|no|-)$ ]] \
+      || apt_guard_fatal "APT emitted an invalid Multi-Arch field for ${package}" || return
+    record_key="${package}@${new_arch}"
+    case "$action" in
+      "**REMOVE**") apt_guard_fatal "APT proposed removing ${package}" || return ;;
+      "**CONFIGURE**")
+        configured="${configured}${record_key}|"
+        ;;
+      /*)
+        [[ "$changed" != *"|${record_key}|"* ]] \
+          || apt_guard_fatal "APT proposed duplicate archive actions for ${record_key}" || return
+        changed="${changed}${record_key}|"
+        target=""
+        expected=""
+        allowed_old=""
+        native_arch=""
+        while IFS='|' read -r target_line target_expected target_allowed_old target_native_arch; do
+          if [[ "$target_line" == "$package" ]]; then
+            target=$target_line
+            expected=$target_expected
+            allowed_old=$target_allowed_old
+            native_arch=$target_native_arch
+            break
+          fi
+        done <"$targets_file"
+        if [[ -z "$native_arch" ]]; then
+          native_arch=$manifest_native_arch
+        fi
+        [[ "$new_arch" == "$native_arch" || "$new_arch" == "all" ]] \
+          || apt_guard_fatal "APT selected foreign architecture ${new_arch} for ${package}; expected ${native_arch} or all" || return
+        if [[ -n "$target" ]]; then
+          [[ "$new_version" == "$expected" ]] \
+            || apt_guard_fatal "APT selected ${package}=${new_version}; expected ${expected}" || return
+          if [[ -n "$allowed_old" ]]; then
+            [[ "$old_version" == "$allowed_old" && "$direction" == "<" &&
+              ("$old_arch" == "$native_arch" || "$old_arch" == "all") ]] \
+              || apt_guard_fatal "APT changed approved transition ${package} from ${old_version}; expected ${allowed_old}" || return
+          else
+            [[ "$old_version" == "-" && "$old_arch" == "-" && "$direction" == "<" ]] \
+              || apt_guard_fatal "APT proposed changing retained target ${package}=${old_version}" || return
+          fi
+          seen_targets="${seen_targets}${package}|"
+        else
+          [[ "$old_version" == "-" && "$old_arch" == "-" && "$direction" == "<" ]] \
+            || apt_guard_fatal "APT proposed changing retained package ${package}=${old_version}" || return
+        fi
+        ;;
+      *) apt_guard_fatal "APT emitted an unsupported action for ${package}: ${action}" || return ;;
+    esac
+  done
+
+  while IFS='|' read -r target expected allowed_old native_arch; do
+    [[ "$seen_targets" == *"|${target}|"* ]] \
+      || apt_guard_fatal "APT omitted required target ${target}=${expected}" || return
+  done <"$targets_file"
+  while [[ "$configured" != "|" ]]; do
+    configured="${configured#|}"
+    package="${configured%%|*}"
+    configured="|${configured#*|}"
+    [[ "$changed" == *"|${package}|"* ]] \
+      || apt_guard_fatal "APT proposed configuring retained package ${package} without an archive action" || return
+  done
+}
+
+cleanup_apt_transaction_guard() {
+  local guard_dir=${APT_TRANSACTION_GUARD_DIR:-}
+  APT_TRANSACTION_GUARD_DIR=""
+  APT_TRANSACTION_HOOK=""
+  [[ -n "$guard_dir" ]] || return 0
+  if [[ ! "$guard_dir" =~ ^/run/nemoclaw-apt-transaction\.[A-Za-z0-9]+$ ]]; then
+    warn "refusing to clean unexpected APT transaction guard path: ${guard_dir}"
+    return 0
+  fi
+  sudo rm -rf -- "$guard_dir" \
+    || warn "could not remove APT transaction guard directory: ${guard_dir}"
+}
+
+create_apt_transaction_guard() {
+  local spec state name expected allowed_old native_arch targets="" hook_path targets_path
+  native_arch="$(sudo dpkg --print-architecture)"
+  [[ "$native_arch" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+    || fatal "Could not determine the native package architecture"
+  for spec in "${PACKAGE_TRANSACTION_SPECS[@]}"; do
+    state="$(package_state "$spec")"
+    name="$(package_name "$spec")"
+    expected="$(package_expected_version "$spec")"
+    case "$state" in
+      missing) allowed_old="" ;;
+      approved-transition) allowed_old="$(installed_version "$name")" ;;
+      *) fatal "Cannot authorize APT target ${spec} from state ${state}" ;;
+    esac
+    targets="${targets}${name}|${expected}|${allowed_old}|${native_arch}"$'\n'
+  done
+
+  APT_TRANSACTION_GUARD_DIR="$(sudo mktemp -d /run/nemoclaw-apt-transaction.XXXXXXXXXX)" \
+    || fatal "Could not create the root-owned APT transaction guard directory"
+  [[ "$APT_TRANSACTION_GUARD_DIR" =~ ^/run/nemoclaw-apt-transaction\.[A-Za-z0-9]+$ ]] \
+    || fatal "APT transaction guard returned an unexpected path: ${APT_TRANSACTION_GUARD_DIR}"
+  hook_path="${APT_TRANSACTION_GUARD_DIR}/verify-plan"
+  targets_path="${APT_TRANSACTION_GUARD_DIR}/targets"
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
+    declare -f apt_guard_fatal
+    declare -f validate_apt_preinstall_plan
+    # The generated hook expands its own path at execution time.
+    # shellcheck disable=SC2016
+    printf '%s\n' 'validate_apt_preinstall_plan "${0%/*}/targets"'
+  } | sudo tee "$hook_path" >/dev/null
+  printf '%s' "$targets" | sudo tee "$targets_path" >/dev/null
+  sudo chmod 0700 "$hook_path"
+  sudo chmod 0600 "$targets_path"
+  assert_root_directory_safe "$APT_TRANSACTION_GUARD_DIR" "APT transaction guard directory"
+  assert_root_regular_file_safe "$hook_path" 0700 "APT transaction guard"
+  assert_root_regular_file_safe "$targets_path" 0600 "APT transaction target manifest"
+  APT_TRANSACTION_HOOK=$hook_path
+}
+
+validate_apt_simulation() {
+  local simulation=$1
+  shift
+  local spec target_spec name expected actual line action version before_version
+  local simulated_targets='|' simulated_changes='|'
+
+  while IFS= read -r line; do
+    [[ "$line" =~ ^(Inst|Conf|Remv|Purg)[[:space:]] ]] || continue
+    read -r action name _ <<<"$line"
+    case "$action" in
+      Remv | Purg) fatal "APT simulation proposed a package removal: ${line}" ;;
+      Conf)
+        [[ "$simulated_changes" == *"|${name}|"* ]] \
+          || fatal "APT simulation proposed configuration without an approved install: ${line}"
+        ;;
+      Inst)
+        [[ "$simulated_changes" != *"|${name}|"* ]] \
+          || fatal "APT simulation proposed a duplicate package change: ${line}"
+        simulated_changes="${simulated_changes}${name}|"
+        target_spec=""
+        for spec in "$@"; do
+          if [[ "$(package_name "$spec")" == "$name" ]]; then
+            target_spec=$spec
+            break
+          fi
+        done
+        if [[ -n "$target_spec" ]]; then
+          [[ "$line" == *"("* ]] || fatal "APT simulation omitted the target version: ${line}"
+          version="${line#*(}"
+          version="${version%%[[:space:]]*}"
+          version="${version%)}"
+          expected="$(package_expected_version "$target_spec")"
+          [[ "$version" == "$expected" ]] \
+            || fatal "APT simulation selected ${name}=${version}; expected ${expected}"
+          simulated_targets="${simulated_targets}${name}|"
+          continue
+        fi
+
+        # A target package may require a new dependency, but APT must not
+        # upgrade, downgrade, or reinstall any package retained from the host.
+        actual="$(installed_version "$name")"
+        before_version="${line%%(*}"
+        [[ -z "$actual" && "$before_version" != *"["* ]] \
+          || fatal "APT simulation proposed changing retained package ${name}=${actual}: ${line}"
+        ;;
+    esac
+  done <<<"$simulation"
+
+  for spec in "$@"; do
+    name="$(package_name "$spec")"
+    [[ "$simulated_targets" == *"|${name}|"* ]] \
+      || fatal "APT simulation did not include required package ${spec}"
+  done
+}
+
 simulate_install() {
   local simulation
-  simulation="$(apt-get -s install --no-install-recommends "${PACKAGE_SPECS[@]}")" \
+  [[ "$APT_TRANSACTION_HOOK" =~ ^/run/nemoclaw-apt-transaction\.[A-Za-z0-9]+/verify-plan$ ]] \
+    || fatal "APT transaction guard is not ready"
+  simulation="$(sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
+    apt-get -s install --no-install-recommends --no-remove \
+    -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
+    -o "DPkg::Tools::options::${APT_TRANSACTION_HOOK}::Version=3" "$@")" \
     || fatal "APT simulation failed"
   printf '%s\n' "$simulation"
-  if grep -Eq '^(Remv |Purg )' <<<"$simulation"; then
-    fatal "APT simulation proposed a package removal"
-  fi
-  info "apt_simulation=no_removals"
+  validate_apt_simulation "$simulation" "$@"
+  info "apt_simulation=missing_only retained_packages=unchanged"
 }
 
 install_packages() {
+  collect_package_transaction_specs
   configure_repositories
   info "Refreshing package metadata"
   sudo apt-get update
-  validate_package_availability
-  simulate_install
+  validate_package_availability "${PACKAGE_TRANSACTION_SPECS[@]}"
+  create_apt_transaction_guard
+  simulate_install "${PACKAGE_TRANSACTION_SPECS[@]}"
   check_no_workloads
-  info "Installing pinned Station prerequisites"
-  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    "${PACKAGE_SPECS[@]}"
+  info "Installing missing pinned Station prerequisites"
+  sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
+    apt-get install -y --no-install-recommends --no-remove \
+    -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
+    -o "DPkg::Tools::options::${APT_TRANSACTION_HOOK}::Version=3" \
+    "${PACKAGE_TRANSACTION_SPECS[@]}"
+  cleanup_apt_transaction_guard
 
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
@@ -1339,6 +1593,7 @@ main() {
     info "version=${SCRIPT_VERSION} mode=${MODE} log=disabled_read_only"
   fi
   trap 'on_error "$LINENO"' ERR
+  trap 'cleanup_apt_transaction_guard' EXIT
   case "$MODE" in
     --check) run_check ;;
     --apply) run_apply ;;

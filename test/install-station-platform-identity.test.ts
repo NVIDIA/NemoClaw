@@ -111,14 +111,14 @@ describe("DGX Station platform identity", () => {
     expect(result.status, output).toBe(0);
   });
 
-  it("selects the GB300 by PCI identity when an auxiliary RTX is listed first", () => {
+  it("selects the GB300 by PCI identity when an auxiliary GPU has the same name", () => {
     const pciRoot = writePciIdentityFixture();
     const { result, output } = runStationPrepare(
       `
 station_pci_devices_path() { printf '%s' "$PCI_ROOT"; }
 nvidia-smi() {
   printf '%s\n' \
-    '00000000:02:00.0, NVIDIA RTX PRO, 595.71.05, N/A, N/A' \
+    '00000000:02:00.0, NVIDIA GB300, 595.71.05, 1, 0' \
     '00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0'
 }
 STATION_HOST_PROFILE=stock-dgx-os
@@ -129,7 +129,7 @@ verify_gpu
 
     expect(result.status, output).toBe(0);
     expect(output).toContain(
-      "gpu_bdf=0000:02:00.0 gpu=NVIDIA RTX PRO role=auxiliary validation=skipped",
+      "gpu_bdf=0000:02:00.0 gpu=NVIDIA GB300 role=auxiliary validation=skipped",
     );
     expect(output).toContain(
       "gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 driver=595.71.05 ecc_corrected=0 ecc_uncorrected=0",
