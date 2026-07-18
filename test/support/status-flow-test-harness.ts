@@ -159,6 +159,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
               providerLabel: "Inference route",
               endpoint: "https://inference.local/v1/models",
               detail: "inference route reachable",
+              okLabel: "reachable",
               subprobes: [
                 {
                   ok: true,
