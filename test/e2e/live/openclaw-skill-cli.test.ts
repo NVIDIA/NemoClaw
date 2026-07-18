@@ -37,13 +37,6 @@ function isEndpointRateLimited(text: string): boolean {
   return /HTTP 429|rate limit|too many requests/i.test(text);
 }
 
-function singleLineSandboxScript(script: string) {
-  if (/[\r\n]/.test(script)) {
-    throw new Error("openshell sandbox exec command args must stay single-line");
-  }
-  return trustedSandboxShellScript(script);
-}
-
 function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return testHomeEnvironment(home, extra);
 }
@@ -113,7 +106,7 @@ async function expectSandboxShellZero(
   artifactName: string,
   env: NodeJS.ProcessEnv,
 ): Promise<ShellProbeResult> {
-  const result = await sandbox.execShell(SANDBOX_NAME, singleLineSandboxScript(script), {
+  const result = await sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(script), {
     artifactName,
     env,
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,

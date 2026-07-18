@@ -6,7 +6,7 @@ user_invocable: true
 
 # NemoClaw Maintainer Evening
 
-Wrap up the day: check progress, identify stragglers, summarize for QA, cut the tag, automatically bump stragglers to the next patch, and prepare release notes for posting.
+Wrap up the day: check progress, identify stragglers, summarize for QA, cut the tag, automatically carry stragglers to the next patch, retire the released label, and prepare release notes for posting.
 
 See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md) for the daily cadence.
 
@@ -28,7 +28,7 @@ gh issue list --repo NVIDIA/NemoClaw --state open --label <version> --limit 100 
   --json number,title,url,labels
 ```
 
-List open labeled PRs and issues as the post-tag housekeeping plan. Tell the maintainer that, after the tag and workflow-managed `latest` are verified, `cut-release-tag` will automatically move all of them to the next patch label.
+List open labeled PRs and issues as the post-tag housekeeping plan. Tell the maintainer that, after the tag and workflow-managed `latest` are verified, `cut-release-tag` will automatically move all of them to the next patch label and delete the released label.
 
 If an item should leave the daily release flow instead of moving forward, remove it from the released-version label before asking for the release confirmation phrase.
 
@@ -50,7 +50,7 @@ If a docs PR or any other intended PR merges after `release:plan`, regenerate th
 
 ## Step 4: Cut the Tag and Publish Release Notes
 
-Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, post-tag bump plan, and release notes draft for confirmation. After the release plan freezes the candidate SHA, review the pre-tag E2E evidence ledger derived from `.github/workflows/e2e.yaml` at that commit. Do not ask for the release confirmation phrase until every test has green evidence or an explicit itemized maintainer exception. NemoClaw releases are tag-based: tag the confirmed release commit with `vX.Y.Z`, let the workflow move `latest`, automatically bump remaining open issues/PRs to the next patch label, and prepare the release notes announcement for the maintainer to post.
+Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, post-tag carry-forward and label-retirement plan, and release notes draft for confirmation. After the release plan freezes the candidate SHA, review the pre-tag E2E evidence ledger derived from `.github/workflows/e2e.yaml` at that commit. Do not ask for the release confirmation phrase until every test has green evidence or an explicit itemized maintainer exception. NemoClaw releases are tag-based: tag the confirmed release commit with `vX.Y.Z`, let the workflow move `latest`, automatically carry remaining open issues/PRs to the next patch label, delete the released label, and prepare the release notes announcement for the maintainer to post.
 
 ## Step 5: Confirm and Share
 
@@ -60,7 +60,8 @@ After the tag is cut and release notes are drafted or posted by the maintainer, 
 - **Pre-tag E2E evidence**: 12/13 tests green for the candidate SHA; 1 itemized maintainer exception
 - **Release notes draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
 - **Shipped**: 4 items (#1234, #1235, #1236, #1237)
-- **Bumped to v0.0.9**: 1 item (#1238 — still needs CI fix)
+- **Moved to v0.0.9**: 1 item (#1238 — still needs CI fix)
+- **Retired label**: `v0.0.8`
 - **QA focus areas**: installer changes, new onboard preset
 
 This summary can be shared in the team's handoff channel.
@@ -68,7 +69,7 @@ This summary can be shared in the team's handoff channel.
 ## Step 6: Update State
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts history "tag-cut" "<version>" "shipped N items, bumped M"
+node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts history "tag-cut" "<version>" "shipped N items, carried M forward"
 ```
 
 ## Notes
@@ -77,3 +78,4 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 - If nothing was labeled or nothing shipped, ask whether to skip the tag today.
 - A PR version label activates release work; it is not a readiness claim.
 - If an open item misses the tag, post-tag housekeeping moves its target to the next patch version.
+- After carry-forward succeeds, post-tag housekeeping deletes the released label; never rename or reuse it.

@@ -191,10 +191,12 @@ export function normalizeE2eCoverageResult(
 }
 
 function deterministicCoverageTests(changedFiles: string[], riskPlan: RiskPlan): E2eCoverageTest[] {
-  const tests: E2eCoverageTest[] = riskPlan.requiredJobs.map((job) => ({
-    id: job.id,
-    reason: job.reasons.join(" "),
-  }));
+  const tests: E2eCoverageTest[] = [...riskPlan.requiredJobs, ...riskPlan.requiredTargets].map(
+    (selection) => ({
+      id: selection.id,
+      reason: selection.reasons.join(" "),
+    }),
+  );
   if (requiresCloudOnboardE2e(changedFiles) && !tests.some((test) => test.id === "cloud-onboard")) {
     tests.push({
       id: "cloud-onboard",
@@ -272,7 +274,7 @@ export function normalizeE2eTargetAdvisorResult(
     options.riskPlan ??
     buildRiskPlan({ headSha: "target-normalize", changedFiles: metadata.changedFiles });
   const deterministicRequired = mergeRecommendations(
-    deterministicRiskJobRecommendations(riskPlan, context),
+    deterministicRiskRecommendations(riskPlan, context),
     focusedJobs,
   );
   const required = suppressFanout
@@ -573,11 +575,11 @@ function deterministicFreeStandingJobRecommendations(
   return output.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function deterministicRiskJobRecommendations(
+function deterministicRiskRecommendations(
   riskPlan: RiskPlan,
   context: E2eTargetNormalizationContext,
 ): E2eTargetRecommendation[] {
-  return riskPlan.requiredJobs
+  const jobs = riskPlan.requiredJobs
     .filter((job) => context.allowedJobIds.has(job.id))
     .map((job) => ({
       id: job.id,
@@ -586,6 +588,19 @@ function deterministicRiskJobRecommendations(
       required: true,
       reason: job.reasons.join(" "),
     }));
+  const targets = riskPlan.requiredTargets
+    .filter((target) => {
+      const definition = getTarget(target.id);
+      return definition !== undefined && liveTargetSupport(definition).supported;
+    })
+    .map((target) => ({
+      id: target.id,
+      workflow: E2E_WORKFLOW,
+      selectorType: "target" as const,
+      required: true,
+      reason: target.reasons.join(" "),
+    }));
+  return [...jobs, ...targets];
 }
 
 function suppressFanoutForFocusedJobs(

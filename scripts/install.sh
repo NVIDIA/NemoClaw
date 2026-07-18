@@ -747,7 +747,8 @@ usage() {
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
-  printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install\n"
+  printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
+  printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -2004,6 +2005,19 @@ legacy_openshell_gateway_upgrade_needed() {
   [[ -n "$version" ]] && ! version_gte "$version" "0.0.37"
 }
 
+resolve_current_openshell_version_range() {
+  local source_root="${NEMOCLAW_SOURCE_ROOT:-$(resolve_repo_root)}"
+  local blueprint="${source_root}/nemoclaw-blueprint/blueprint.yaml"
+  local min_version="" max_version=""
+  [ -f "$blueprint" ] || return 1
+  min_version="$(sed -nE 's/^min_openshell_version:[[:space:]]*["'"'"']([0-9]+\.[0-9]+\.[0-9]+)["'"'"'][[:space:]]*$/\1/p' "$blueprint")"
+  max_version="$(sed -nE 's/^max_openshell_version:[[:space:]]*["'"'"']([0-9]+\.[0-9]+\.[0-9]+)["'"'"'][[:space:]]*$/\1/p' "$blueprint")"
+  [[ "$min_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  [[ "$max_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  version_gte "$max_version" "$min_version" || return 1
+  printf '%s %s\n' "$min_version" "$max_version"
+}
+
 installer_non_interactive() {
   [[ "${NON_INTERACTIVE:-}" == "1" || "${NEMOCLAW_NON_INTERACTIVE:-}" == "1" ]]
 }
@@ -2186,6 +2200,55 @@ EOF
   esac
 }
 
+stop_legacy_openshell_gateway_process() {
+  [ "$(uname -s)" = "Linux" ] || return 1
+
+  local gateway_port runtime_dir pid_file pid gateway_exe attempt
+  gateway_port="$(resolve_nemoclaw_gateway_port)" || return 2
+  if [ -n "${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-}" ]; then
+    runtime_dir="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR}"
+  elif [ "$gateway_port" -eq 8080 ]; then
+    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway"
+  else
+    runtime_dir="${HOME}/.local/state/nemoclaw/openshell-docker-gateway-${gateway_port}"
+  fi
+  pid_file="${runtime_dir}/openshell-gateway.pid"
+  [ -f "$pid_file" ] || return 1
+  if [ -L "$pid_file" ] || ! [ -O "$pid_file" ]; then
+    error "Refusing to retire the legacy OpenShell gateway from an untrusted PID file: ${pid_file}"
+  fi
+
+  IFS= read -r pid <"$pid_file" || return 2
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] \
+    || error "Refusing to retire the legacy OpenShell gateway from an invalid PID file: ${pid_file}"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$pid_file"
+    return 0
+  fi
+
+  gateway_exe="$(readlink "/proc/${pid}/exe" 2>/dev/null || true)"
+  [ "${gateway_exe##*/}" = "openshell-gateway" ] \
+    || error "Refusing to stop PID ${pid}: the recorded process is not openshell-gateway."
+
+  kill "$pid" 2>/dev/null \
+    || error "Could not stop the recorded legacy OpenShell gateway process ${pid}."
+  for attempt in {1..50}; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null \
+      || error "Could not terminate the recorded legacy OpenShell gateway process ${pid}."
+    for attempt in {1..10}; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+  kill -0 "$pid" 2>/dev/null \
+    && error "The recorded legacy OpenShell gateway process ${pid} did not stop."
+  rm -f "$pid_file"
+}
+
 preinstall_backup_and_retire_legacy_gateway() {
   local reg_file gateway_name
   reg_file="$(nemoclaw_state_dir)/sandboxes.json"
@@ -2201,6 +2264,13 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
+  if ! command_exists openshell; then
+    # NemoClaw v0.0.55's OpenShell 0.0.44 layout could install this binary
+    # without persisting ~/.local/bin on PATH. Retain this fallback while direct
+    # v0.0.55 upgrades are supported; remove it only after support for that
+    # source version and its regression fixture are retired together.
+    prefer_user_local_openshell
+  fi
   command_exists openshell || return 0
 
   if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
@@ -2232,18 +2302,32 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
-  # Current OpenShell builds are not compatible with pre-0.0.37 gateway state,
-  # and those CLIs no longer have lifecycle verbs for destroying that old gateway.
-  # Retire the old gateway while the old CLI can still do it, after backup.
-  if [[ -n "$old_openshell_version" ]] && ! version_gte "$old_openshell_version" "0.0.37"; then
+  # Retire a backed-up gateway before install-openshell replaces an out-of-range
+  # component set. Leaving the old gateway process alive makes the new CLI's
+  # schema preflight fail before sandbox recovery can recreate it.
+  local supported_range="" min_openshell_version="" max_openshell_version=""
+  if ! supported_range="$(resolve_current_openshell_version_range)"; then
+    error "Could not resolve the current OpenShell version range. Existing gateway and sandbox state were left unchanged after backup."
+  fi
+  read -r min_openshell_version max_openshell_version <<<"$supported_range"
+  [ -n "$old_openshell_version" ] \
+    || error "Could not determine the installed OpenShell version. The installer stopped after backup without retiring the gateway."
+  if ! version_gte "$old_openshell_version" "$min_openshell_version" \
+    || ! version_gte "$max_openshell_version" "$old_openshell_version"; then
     info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
     if [ "$gateway_name" = "nemoclaw" ]; then
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
         || openshell gateway destroy >/dev/null 2>&1 \
-        || warn "Could not destroy the legacy OpenShell gateway before upgrade; onboarding will clean up stale runtime state."
+        || { stop_legacy_openshell_gateway_process \
+          && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
+            || warn "The legacy gateway process stopped, but its OpenShell registration could not be removed; onboarding will replace the stale registration."; }; } \
+        || error "Could not retire the legacy OpenShell gateway after backup. The installer stopped with the sandbox backups preserved."
     else
       openshell gateway destroy -g "$gateway_name" >/dev/null 2>&1 \
-        || warn "Could not destroy legacy gateway ${gateway_name} before upgrade; onboarding will clean up only that gateway's stale runtime state."
+        || { stop_legacy_openshell_gateway_process \
+          && { openshell gateway remove "$gateway_name" >/dev/null 2>&1 \
+            || warn "Legacy gateway ${gateway_name} stopped, but its OpenShell registration could not be removed; onboarding will replace only that stale registration."; }; } \
+        || error "Could not retire legacy gateway ${gateway_name} after backup. The installer stopped with the sandbox backups preserved."
     fi
   fi
 }
@@ -2530,6 +2614,7 @@ run_onboard() {
   show_usage_notice
   info "Running ${_CLI_BIN} onboard…"
   local -a onboard_cmd=(onboard)
+  local installer_auto_fresh_receipt_generation=""
   local session_file
   session_file="$(nemoclaw_state_dir)/onboard-session.json"
   # --fresh takes precedence over any session state. We forward --fresh to
@@ -2541,8 +2626,9 @@ run_onboard() {
   elif command_exists node && [[ -f "$session_file" ]]; then
     # Classify the session: "resume" (auto-attach --resume), "fresh-recover"
     # (interrupted before sandbox creation — nothing to resume, start over),
-    # "failed" (last run reported a step failure — user must choose), "skip"
-    # (complete / missing / unreadable — nothing to resume), or "corrupt".
+    # "failed" (last run reported a step failure — user must choose), "complete"
+    # (durably finished; the CLI may still have Station receipt retirement to
+    # reconcile), "skip" (missing / non-resumable), or "corrupt".
     local session_state
     session_state="$(
       node -e '
@@ -2550,7 +2636,9 @@ run_onboard() {
         let out = "skip";
         try {
           const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-          if (!data || data.resumable === false || data.status === "complete") {
+          if (data && data.status === "complete" && data.resumable === false) {
+            out = "complete";
+          } else if (!data || data.resumable === false) {
             out = "skip";
           } else if (data.status === "failed" || data.failure) {
             out = "failed";
@@ -2567,7 +2655,30 @@ run_onboard() {
               data.steps &&
               data.steps.sandbox &&
               data.steps.sandbox.status === "complete";
-            out = sandboxCreated ? "resume" : "fresh-recover";
+            const installerGeneration =
+              process.env.NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION || "";
+            const stationIntentHasGeneration =
+              data.stationExpressIntent &&
+              Object.prototype.hasOwnProperty.call(
+                data.stationExpressIntent,
+                "receiptGeneration",
+              );
+            const exactStationAttempt =
+              /^[0-9a-f]{32}$/.test(installerGeneration) &&
+              stationIntentHasGeneration &&
+              data.stationExpressIntent.receiptGeneration === installerGeneration;
+            const conflictingStationAttempt =
+              /^[0-9a-f]{32}$/.test(installerGeneration) &&
+              stationIntentHasGeneration &&
+              !exactStationAttempt;
+            // A Station session carries its sandbox name in the correlated
+            // intent, so it can safely resume even before sandbox creation.
+            // Using --fresh here would discard the still-needed receipt.
+            out = conflictingStationAttempt
+              ? "station-mismatch"
+              : sandboxCreated || exactStationAttempt
+                ? "resume"
+                : "fresh-recover";
           } else {
             // Unknown or missing status — do not auto-resume a file we
             // cannot classify against what onboard-session.ts actually
@@ -2581,6 +2692,10 @@ run_onboard() {
       ' "$session_file" 2>/dev/null || printf "corrupt"
     )"
     case "$session_state" in
+      complete) ;;
+      station-mismatch)
+        error "DGX Station Express resume state belongs to a different installer receipt. Refusing to discard either attempt automatically. Run '${_CLI_BIN} onboard --fresh' only if you intend to discard the saved Station recovery state."
+        ;;
       resume)
         info "Found an interrupted onboarding session — resuming it."
         onboard_cmd+=(--resume)
@@ -2589,6 +2704,10 @@ run_onboard() {
         # #5626: interrupted before sandbox creation; nothing to resume.
         info "Found an interrupted onboarding session with no sandbox yet — starting fresh."
         onboard_cmd+=(--fresh)
+        # Bind this automatic reset to the loaded Station receipt so the CLI
+        # clears only the unrelated session, not the accepted reboot choice.
+        # An explicit user --fresh never sets this internal child marker.
+        installer_auto_fresh_receipt_generation="${NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION:-}"
         ;;
       failed)
         # #2430: a previous run failed. The user's provider/inference
@@ -2663,17 +2782,42 @@ run_onboard() {
     # forward --yes so the Ollama size-confirmation gate does not abort
     # the unattended download (the size is still printed to logs).
     onboard_cmd+=(--yes)
-    "$cli_invoke" "${onboard_cmd[@]}" || status=$?
+    NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
+      "$cli_invoke" "${onboard_cmd[@]}" || status=$?
   elif [ -t 0 ]; then
-    "$cli_invoke" "${onboard_cmd[@]}" || status=$?
+    NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
+      "$cli_invoke" "${onboard_cmd[@]}" || status=$?
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
-    "$cli_invoke" "${onboard_cmd[@]}" <&3 || status=$?
+    NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION="$installer_auto_fresh_receipt_generation" \
+      "$cli_invoke" "${onboard_cmd[@]}" <&3 || status=$?
     exec 3<&-
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
   fi
   return "$status"
+}
+
+station_express_receipt_retirement_pending() {
+  command_exists node || return 1
+  local session_file
+  session_file="$(nemoclaw_state_dir)/onboard-session.json"
+  [[ -f "$session_file" ]] || return 1
+  node -e '
+    const fs = require("fs");
+    try {
+      const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      process.exit(
+        data &&
+          Object.prototype.hasOwnProperty.call(data, "stationExpressReceiptRetirement") &&
+          data.stationExpressReceiptRetirement !== null
+          ? 0
+          : 1,
+      );
+    } catch {
+      process.exit(1);
+    }
+  ' "$session_file" >/dev/null 2>&1
 }
 
 # Make sure Docker is installed and the current user can run it without
@@ -2845,8 +2989,20 @@ is_wsl_host() {
 # and Windows WSL from the host environment. Echoes "DGX Spark",
 # "DGX Station", "Windows WSL", or empty. Used to gate the express install
 # prompt; only platforms with a known sensible default are offered.
+is_station_gb300_product() {
+  local product=${1:-}
+  [[ "$product" =~ (^|[^[:alnum:]])[Ss][Tt][Aa][Tt][Ii][Oo][Nn]([^[:alnum:]]|$) &&
+    "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
+}
+
+classify_dgx_station_release() {
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
+  bash "$helper" --classify-dgx-release
+}
+
 detect_express_platform() {
-  local model=""
+  local model="" release_state=""
   if is_wsl_host; then
     printf "Windows WSL"
     return
@@ -2858,9 +3014,43 @@ detect_express_platform() {
     model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
   fi
   case "$model" in
-    *DGX*Spark*) printf "DGX Spark" ;;
-    *DGX*Station* | *Station*GB300*) printf "DGX Station" ;;
+    *DGX*Spark*)
+      printf "DGX Spark"
+      return
+      ;;
+  esac
+  if is_station_gb300_product "$model"; then
+    release_state="$(classify_dgx_station_release)"
+    case "$release_state" in
+      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+        printf "DGX Station"
+        ;;
+      *)
+        if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+          printf "DGX Station"
+        else
+          printf "Unsupported DGX Station OS"
+        fi
+        ;;
+    esac
+    return
+  fi
+  case "$model" in
+    *DGX*Station*) printf "Unsupported DGX Station generation" ;;
     *) ;;
+  esac
+}
+
+validate_express_platform_boundary() {
+  case "${1:-}" in
+    "Unsupported DGX Station OS")
+      if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
+      error "This DGX Station OS image is outside the validated Station express boundary. Use generic Ubuntu 24.04 ARM64, stock DGX OS 7.2.0, 7.4.0, or 7.5.0, or an explicitly qualified Station factory image."
+      ;;
+    "Unsupported DGX Station generation")
+      if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
+      error "This DGX Station generation is outside the validated Station GB300 express boundary."
+      ;;
   esac
 }
 
@@ -2868,9 +3058,65 @@ STATION_ULTRA_VLLM_MODEL="nemotron-3-ultra-550b-a55b"
 STATION_ULTRA_SERVED_MODEL="nvidia/nemotron-3-ultra-550b-a55b"
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
+_SELECTED_EXPRESS_PLATFORM=""
+_STATION_EXPRESS_RESUME_REVISION=""
+_STATION_EXPRESS_RESUME_LOADED=""
+_STATION_EXPRESS_RESUME_GENERATION=""
 
 normalize_station_vllm_model() {
   printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
+}
+
+# True when an interactive terminal is reachable for a prompt: stdin is a TTY,
+# or /dev/tty can be opened (the curl|bash case where stdin is the script pipe).
+# Mirrors how maybe_offer_express_install decides whether it can prompt.
+express_prompt_can_read_tty() {
+  [ -t 0 ] && return 0
+  if { exec 3</dev/tty; } 2>/dev/null; then
+    exec 3<&-
+    return 0
+  fi
+  return 1
+}
+
+fail_station_deepseek_terminal_required() {
+  error "--station-deepseek selects the DGX Station express prompt, which needs an interactive terminal. Re-run from a terminal (for a curl|bash pipe, /dev/tty must be available), or omit --station-deepseek and configure the install non-interactively."
+}
+
+fail_force_station_terminal_required() {
+  error "--force-station-install selects the DGX Station express prompt, which needs an interactive terminal. Re-run from a terminal (for a curl|bash pipe, /dev/tty must be available), or omit --force-station-install."
+}
+
+validate_force_station_install_override() {
+  local platform="$1" release_state
+  if [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
+    return 0
+  fi
+  if [ "$platform" != "DGX Station" ]; then
+    error "--force-station-install requires DGX Station GB300 hardware (detected: ${platform:-unsupported platform})."
+  fi
+  release_state="$(classify_dgx_station_release)"
+  case "$release_state" in
+    generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+      error "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
+      ;;
+  esac
+  if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    error "--force-station-install cannot be combined with NEMOCLAW_NO_EXPRESS=1. Remove one override."
+  fi
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    local trigger_note=""
+    if [ -n "${NON_INTERACTIVE_SOURCE:-}" ]; then
+      trigger_note=" (triggered by: ${NON_INTERACTIVE_SOURCE})"
+    fi
+    error "--force-station-install selects the DGX Station express prompt and cannot be combined with non-interactive mode${trigger_note}."
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    error "--force-station-install conflicts with NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER}. Remove the provider override to use Station express install."
+  fi
+  if ! express_prompt_can_read_tty; then
+    fail_force_station_terminal_required
+  fi
 }
 
 validate_station_deepseek_override() {
@@ -2885,7 +3131,17 @@ validate_station_deepseek_override() {
     error "--station-deepseek cannot be combined with NEMOCLAW_NO_EXPRESS=1. Remove one override."
   fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
-    error "--station-deepseek selects the DGX Station express prompt and cannot be combined with --non-interactive."
+    # #7009: name what actually put the run in non-interactive mode so the user
+    # can act on it. NON_INTERACTIVE_SOURCE is recorded in main() where the
+    # origin is still known (main exports NON_INTERACTIVE into
+    # NEMOCLAW_NON_INTERACTIVE, erasing the distinction here). Append the clause
+    # only when the origin is known, so direct callers that set NON_INTERACTIVE
+    # without going through main's flag parsing still get a clean message.
+    local trigger_note=""
+    if [ -n "${NON_INTERACTIVE_SOURCE:-}" ]; then
+      trigger_note=" (triggered by: ${NON_INTERACTIVE_SOURCE})"
+    fi
+    error "--station-deepseek selects the DGX Station express prompt and cannot be combined with non-interactive mode${trigger_note}."
   fi
   if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
     error "--station-deepseek conflicts with NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER}. Remove the provider override to use Station express install."
@@ -2899,11 +3155,24 @@ validate_station_deepseek_override() {
       error "--station-deepseek conflicts with NEMOCLAW_VLLM_MODEL='${NEMOCLAW_VLLM_MODEL}'. Remove one override or set NEMOCLAW_VLLM_MODEL=${STATION_DEEPSEEK_VLLM_MODEL}."
       ;;
   esac
+
+  # #7014: --station-deepseek selects the interactive DGX Station express prompt,
+  # so it needs a terminal. Without one, maybe_offer_express_install would just
+  # log "Skipping express prompt (no TTY)" and continue, silently ignoring the
+  # flag and installing a different configuration. Fail fast here (before Docker
+  # / build deps) with a clear message instead, mirroring the --non-interactive
+  # rejection above. Checked last so a genuine config conflict (provider/model)
+  # is still reported first.
+  if ! express_prompt_can_read_tty; then
+    fail_station_deepseek_terminal_required
+  fi
 }
 
 preflight_explicit_express_flags() {
   local platform
   platform="$(detect_express_platform)"
+  validate_express_platform_boundary "$platform"
+  validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
 }
 
@@ -2939,6 +3208,364 @@ configure_station_express_model() {
   fi
 }
 
+station_express_resume_file() {
+  local state_dir
+  state_dir="$(nemoclaw_state_dir)" || return 1
+  printf '%s/station-express-resume' "$state_dir"
+}
+
+validate_station_express_resume_model() {
+  local model="${1:-}"
+  [[ ${#model} -le 255 && "$model" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]
+}
+
+validate_station_express_resume_agent() {
+  case "${1:-}" in
+    openclaw | hermes | langchain-deepagents-code) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_station_express_resume_sandbox() {
+  local sandbox="${1:-}"
+  [[ ${#sandbox} -le 63 ]] \
+    && { [[ "$sandbox" =~ ^[a-z]$ ]] || [[ "$sandbox" =~ ^[a-z][a-z0-9-]*[a-z0-9]$ ]]; }
+}
+
+validate_station_express_resume_policy_tier() {
+  case "${1:-}" in
+    restricted | balanced | open) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_station_express_resume_revision() {
+  [[ "${1:-}" =~ ^[0-9a-f]{40}$ ]]
+}
+
+validate_station_express_resume_generation() {
+  [[ "${1:-}" =~ ^[0-9a-f]{32}$ ]]
+}
+
+station_express_resume_generation() {
+  local generation
+  [[ -r /proc/sys/kernel/random/uuid ]] \
+    || error "Could not generate a DGX Station express resume receipt identity."
+  IFS= read -r generation </proc/sys/kernel/random/uuid \
+    || error "Could not generate a DGX Station express resume receipt identity."
+  generation="${generation//-/}"
+  validate_station_express_resume_generation "$generation" \
+    || error "Generated DGX Station express resume receipt identity is invalid."
+  printf '%s' "$generation"
+}
+
+station_installer_revision() {
+  local revision
+  revision="$(git -C "${SCRIPT_DIR}/.." rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" \
+    || error "Could not resolve the exact NemoClaw revision for DGX Station reboot resume."
+  validate_station_express_resume_revision "$revision" \
+    || error "Resolved NemoClaw revision is invalid: ${revision}"
+  printf '%s' "$revision"
+}
+
+portable_file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
+assert_station_express_resume_file_safe() {
+  local state_file=$1 state_dir mode
+  state_dir="$(dirname "$state_file")"
+  assert_station_express_resume_directory_safe "$state_dir"
+  [[ -f "$state_file" && -O "$state_file" ]] \
+    || error "DGX Station express resume state must be a regular file owned by the current user: ${state_file}"
+  mode="$(portable_file_mode "$state_file")" \
+    || error "Could not inspect DGX Station express resume state permissions: ${state_file}"
+  [[ "$mode" == "600" ]] || error "DGX Station express resume state must have mode 0600: ${state_file}"
+}
+
+assert_station_express_resume_directory_safe() {
+  local state_dir=$1 root="${HOME}/.nemoclaw" current relative component mode
+  assert_nemoclaw_state_path_safe "$state_dir"
+  current="$root"
+  relative="${state_dir#"$root"}"
+  relative="${relative#/}"
+  while :; do
+    [[ -d "$current" && ! -L "$current" && -O "$current" ]] \
+      || error "DGX Station express resume directory is not owned by the current user: ${current}"
+    mode="$(portable_file_mode "$current")" \
+      || error "Could not inspect DGX Station express resume directory permissions: ${current}"
+    (((8#$mode & 0077) == 0)) \
+      || error "DGX Station express resume directory must not be accessible by group or other users: ${current}"
+    [[ -n "$relative" ]] || break
+    component="${relative%%/*}"
+    current="${current}/${component}"
+    if [[ "$relative" == "$component" ]]; then
+      relative=''
+    else
+      relative="${relative#*/}"
+    fi
+  done
+}
+
+load_station_express_resume() {
+  local state_file revision_line model_line generation_line agent_line sandbox_line policy_tier_line
+  local line_count saved_revision current_revision saved_agent saved_sandbox saved_policy_tier current_agent
+  state_file="$(station_express_resume_file)" || return 1
+  assert_nemoclaw_state_path_safe "$state_file"
+  [[ -e "$state_file" || -L "$state_file" ]] || return 1
+  assert_station_express_resume_file_safe "$state_file"
+  line_count="$(wc -l <"$state_file" | tr -d '[:space:]')"
+  revision_line="$(sed -n '1p' "$state_file")"
+  model_line="$(sed -n '2p' "$state_file")"
+  generation_line="$(sed -n '3p' "$state_file")"
+  agent_line="$(sed -n '4p' "$state_file")"
+  sandbox_line="$(sed -n '5p' "$state_file")"
+  policy_tier_line="$(sed -n '6p' "$state_file")"
+  saved_revision="${revision_line#revision=}"
+  NEMOCLAW_VLLM_MODEL="${model_line#model=}"
+  _STATION_EXPRESS_RESUME_GENERATION="${generation_line#generation=}"
+  if [[ "$line_count" == "3" ]]; then
+    saved_agent=openclaw
+    saved_sandbox=my-assistant
+    saved_policy_tier=balanced
+  elif [[ "$line_count" == "6" ]]; then
+    saved_agent="${agent_line#agent=}"
+    saved_sandbox="${sandbox_line#sandbox=}"
+    saved_policy_tier="${policy_tier_line#policy_tier=}"
+  else
+    error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
+  fi
+  if [[ "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${NEMOCLAW_VLLM_MODEL}" || "$generation_line" != "generation=${_STATION_EXPRESS_RESUME_GENERATION}" ]] \
+    || { [[ "$line_count" == "6" ]] && [[ "$agent_line" != "agent=${saved_agent}" || "$sandbox_line" != "sandbox=${saved_sandbox}" || "$policy_tier_line" != "policy_tier=${saved_policy_tier}" ]]; } \
+    || ! validate_station_express_resume_revision "$saved_revision" \
+    || ! validate_station_express_resume_model "$NEMOCLAW_VLLM_MODEL" \
+    || ! validate_station_express_resume_generation "$_STATION_EXPRESS_RESUME_GENERATION" \
+    || ! validate_station_express_resume_agent "$saved_agent" \
+    || ! validate_station_express_resume_sandbox "$saved_sandbox" \
+    || ! validate_station_express_resume_policy_tier "$saved_policy_tier"; then
+    error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
+  fi
+  current_revision="$(station_installer_revision)"
+  if [[ "$current_revision" != "$saved_revision" ]]; then
+    error "DGX Station express resume requires NemoClaw revision ${saved_revision}, but this installer is ${current_revision}. Rerun with: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=${saved_revision} bash"
+  fi
+  current_agent="${NEMOCLAW_AGENT:-openclaw}"
+  if [[ "$current_agent" != "$saved_agent" ]]; then
+    error "DGX Station express resume requires NEMOCLAW_AGENT=${saved_agent}. Rerun the exact command printed after host preparation."
+  fi
+  NEMOCLAW_SANDBOX_NAME="$saved_sandbox"
+  NEMOCLAW_POLICY_TIER="$saved_policy_tier"
+  _STATION_EXPRESS_RESUME_LOADED=1
+  export NEMOCLAW_VLLM_MODEL
+  export NEMOCLAW_SANDBOX_NAME
+  export NEMOCLAW_POLICY_TIER
+  export NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION="$_STATION_EXPRESS_RESUME_GENERATION"
+}
+
+save_station_express_resume() {
+  local state_file state_dir temp_file revision generation
+  local model="${NEMOCLAW_VLLM_MODEL:-}" agent="${NEMOCLAW_AGENT:-openclaw}"
+  local sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}" policy_tier="${NEMOCLAW_POLICY_TIER:-balanced}"
+  validate_station_express_resume_model "$model" || error "Cannot save an invalid DGX Station express model selector."
+  validate_station_express_resume_agent "$agent" || error "Cannot save an invalid DGX Station express agent."
+  validate_station_express_resume_sandbox "$sandbox" || error "Cannot save an invalid DGX Station express sandbox name."
+  validate_station_express_resume_policy_tier "$policy_tier" || error "Cannot save an invalid DGX Station express policy tier."
+  revision="$(station_installer_revision)"
+  state_file="$(station_express_resume_file)" || error "Could not resolve NemoClaw state for DGX Station express resume."
+  state_dir="$(ensure_nemoclaw_state_dir)" || error "Could not prepare NemoClaw state for DGX Station express resume."
+  assert_nemoclaw_state_path_safe "$state_file"
+  generation="${_STATION_EXPRESS_RESUME_GENERATION:-}"
+  if ! validate_station_express_resume_generation "$generation"; then
+    generation="$(station_express_resume_generation)"
+  fi
+  temp_file="$(mktemp "${state_file}.tmp.XXXXXX")" || error "Could not create DGX Station express resume state under ${state_dir}."
+  chmod 600 "$temp_file" || {
+    rm -f "$temp_file"
+    error "Could not secure DGX Station express resume state under ${state_dir}."
+  }
+  if ! printf 'revision=%s\nmodel=%s\ngeneration=%s\nagent=%s\nsandbox=%s\npolicy_tier=%s\n' \
+    "$revision" "$model" "$generation" "$agent" "$sandbox" "$policy_tier" >"$temp_file"; then
+    rm -f "$temp_file"
+    error "Could not write DGX Station express resume state under ${state_dir}."
+  fi
+  if ! mv -f "$temp_file" "$state_file"; then
+    rm -f "$temp_file"
+    error "Could not publish DGX Station express resume state under ${state_dir}."
+  fi
+  assert_station_express_resume_file_safe "$state_file"
+  _STATION_EXPRESS_RESUME_REVISION="$revision"
+  _STATION_EXPRESS_RESUME_GENERATION="$generation"
+  _STATION_EXPRESS_RESUME_AGENT="$agent"
+  _STATION_EXPRESS_RESUME_SANDBOX="$sandbox"
+  _STATION_EXPRESS_RESUME_POLICY_TIER="$policy_tier"
+}
+
+station_express_resume_command() {
+  printf 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s NEMOCLAW_AGENT=%s NEMOCLAW_SANDBOX_NAME=%s NEMOCLAW_POLICY_TIER=%s bash' \
+    "$_STATION_EXPRESS_RESUME_REVISION" "$_STATION_EXPRESS_RESUME_AGENT" \
+    "$_STATION_EXPRESS_RESUME_SANDBOX" "$_STATION_EXPRESS_RESUME_POLICY_TIER"
+  if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    printf ' -s -- --force-station-install'
+  fi
+}
+
+clear_station_express_resume() {
+  local state_file state_dir claim claim_name claim_mode entry entry_mode unexpected_entry
+  state_file="$(station_express_resume_file)" || return 0
+  assert_nemoclaw_state_path_safe "$state_file"
+  state_dir="$(dirname "$state_file")"
+  [[ -e "$state_dir" || -L "$state_dir" ]] || return 0
+  assert_station_express_resume_directory_safe "$state_dir"
+  if [[ -e "$state_file" || -L "$state_file" ]]; then
+    assert_station_express_resume_file_safe "$state_file"
+    rm -f "$state_file"
+  fi
+  for claim in "${state_file}.retiring-"*; do
+    [[ -e "$claim" || -L "$claim" ]] || continue
+    assert_nemoclaw_state_path_safe "$claim"
+    claim_name="${claim##*/}"
+    [[ "$claim_name" =~ ^station-express-resume\.retiring-[0-9a-f]{32}-[A-Za-z0-9]+$ ]] \
+      || error "DGX Station express receipt retirement claim is malformed: ${claim_name}"
+    [[ -d "$claim" && ! -L "$claim" && -O "$claim" ]] \
+      || error "Refusing invalid DGX Station express receipt retirement claim: ${claim}"
+    claim_mode="$(portable_file_mode "$claim")" \
+      || error "Could not inspect DGX Station express receipt retirement claim permissions: ${claim}"
+    (((8#$claim_mode & 0077) == 0)) \
+      || error "DGX Station express receipt retirement claim must be owner-only: ${claim}"
+    unexpected_entry="$(find "$claim" -mindepth 1 -maxdepth 1 ! -name receipt ! -name retired -print -quit)" \
+      || error "Could not inspect DGX Station express receipt retirement claim: ${claim}"
+    [[ -z "$unexpected_entry" ]] \
+      || error "DGX Station express receipt retirement claim contains unexpected state: ${claim}"
+    for entry in "$claim/receipt" "$claim/retired"; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      assert_nemoclaw_state_path_safe "$entry"
+      [[ -f "$entry" && ! -L "$entry" && -O "$entry" ]] \
+        || error "Refusing invalid DGX Station express receipt retirement claim entry: ${entry}"
+      entry_mode="$(portable_file_mode "$entry")" \
+        || error "Could not inspect DGX Station express receipt retirement claim entry permissions: ${entry}"
+      [[ "$entry_mode" == "600" ]] \
+        || error "DGX Station express receipt retirement claim entry must have mode 0600: ${entry}"
+    done
+    for entry in "$claim/receipt" "$claim/retired"; do
+      [[ -e "$entry" || -L "$entry" ]] || continue
+      rm -f "$entry"
+    done
+    rmdir "$claim" \
+      || error "DGX Station express receipt retirement claim contains unexpected state: ${claim}"
+  done
+}
+
+activate_express_install() {
+  local platform="$1"
+  _SELECTED_EXPRESS_PLATFORM="$platform"
+  NON_INTERACTIVE=1
+  export NEMOCLAW_NON_INTERACTIVE=1
+  export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
+  export NEMOCLAW_YES=1
+  export NEMOCLAW_POLICY_MODE=suggested
+  unset NEMOCLAW_STATION_EXPRESS
+  case "$platform" in
+    "DGX Spark")
+      export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      export NEMOCLAW_PROVIDER=install-vllm
+      if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+        export NEMOCLAW_VLLM_MODEL
+      fi
+      ;;
+    "DGX Station")
+      export NEMOCLAW_STATION_EXPRESS=1
+      if [ -n "${_STATION_EXPRESS_RESUME_GENERATION:-}" ]; then
+        export NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION="$_STATION_EXPRESS_RESUME_GENERATION"
+      else
+        unset NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION
+      fi
+      export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      export NEMOCLAW_PROVIDER=install-vllm
+      configure_station_express_model
+      ;;
+    "Windows WSL")
+      export NEMOCLAW_PROVIDER=install-windows-ollama
+      ;;
+  esac
+}
+
+run_station_host_preparation() {
+  # Public curl|bash starts in the root bootstrap, which clones the complete
+  # selected ref before executing this payload. Keep the sibling lookup and
+  # fail-closed check so Station preparation cannot drift from that ref.
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  local -a helper_args=(--apply)
+  [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
+  if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    helper_args+=(--force-station-install)
+  fi
+  bash "$helper" "${helper_args[@]}"
+}
+
+ensure_station_express_host() {
+  [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
+
+  local release_state
+  release_state="$(classify_dgx_station_release)"
+  case "$release_state" in
+    supported-dgx-os | supported-ai-developer-tools)
+      info "Validating the Station factory GPU and local container runtime. Host packages and runtime configuration will not be changed."
+      ;;
+    supported-colossus-baseos)
+      info "Validating the pinned BaseOS package inventory and preparing Docker access and CDI. Host packages and the NVIDIA driver will not be changed."
+      ;;
+    *)
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        warn "Proceeding with explicit --force-station-install intent; DGX release metadata qualification is bypassed, but Station GB300 hardware and factory-runtime health checks remain required."
+        info "Validating the existing Station GPU and local container runtime. Host packages, the NVIDIA driver, and runtime configuration will not be changed."
+      else
+        info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
+      fi
+      ;;
+  esac
+  local status=0
+  run_station_host_preparation || status=$?
+  case "$status" in
+    0)
+      ok "DGX Station host prerequisites are ready"
+      ;;
+    10)
+      save_station_express_resume
+      warn "DGX Station host prerequisites were installed and require a reboot."
+      info "Run: sudo reboot"
+      info "After signing in again, rerun the accepted revision:"
+      info "$(station_express_resume_command)"
+      exit 10
+      ;;
+    11)
+      save_station_express_resume
+      warn "Docker access was granted and requires a new login session. A reboot is not required."
+      info "After signing in again, rerun the accepted revision:"
+      info "$(station_express_resume_command)"
+      exit 11
+      ;;
+    *)
+      error "DGX Station host preparation failed. Review the station-bootstrap log above, correct the reported host state, and rerun the installer."
+      ;;
+  esac
+}
+
+prepare_installer_host() {
+  maybe_offer_express_install
+  if [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
+    # Station qualification is deliberately scoped to the local factory
+    # runtime. Normalize the Docker target before any preparation probe so an
+    # ambient remote context can neither satisfy nor be changed by this path.
+    unset DOCKER_HOST
+    export DOCKER_CONTEXT=default
+  fi
+  # Intentional ordering: Station preparation owns the reboot boundary before
+  # generic Docker bootstrap; ensure_station_express_host is a no-op elsewhere.
+  ensure_station_express_host
+  ensure_docker
+  ensure_openshell_build_deps
+}
+
 # Prompt the user to opt into express install on supported platforms. Sets the
 # non-interactive + provider/model env vars when accepted. Skipped when
 # the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
@@ -2972,6 +3599,26 @@ describe_express_install() {
         inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B"
         inference_disclosure="Managed vLLM pulls the pinned Station image and approximately 352 GB model, then runs a local inference container."
       fi
+      case "$(classify_dgx_station_release)" in
+        supported-dgx-os)
+          printf "  Stock DGX OS setup reuses the factory driver and container stack after local GPU device-visibility, CDI, Docker, and Buildx validation. It does not install or replace host packages or rewrite the Docker runtime.\n"
+          ;;
+        supported-colossus-baseos)
+          printf "  Qualified BaseOS setup preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages. It verifies their exact inventory, prepares Docker access and packaged CDI, and registers the NVIDIA Docker runtime only when the launch probe proves it is missing, with rollback on failure. It does not install host packages or require a reboot.\n"
+          ;;
+        supported-ai-developer-tools)
+          printf "  Factory Ubuntu with NVIDIA AI Developer Tools reuses its driver and container stack after local GPU, CDI, Docker, and Buildx validation. It may add this account to the Docker group, but does not install or replace host packages, rewrite the Docker runtime, or require a reboot.\n"
+          ;;
+        *)
+          if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+            printf "  Explicit --force-station-install intent bypasses only DGX release-metadata qualification. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
+          else
+            printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
+          fi
+          ;;
+      esac
+      printf "  Host setup may add this trusted local account to the docker group, which grants root-equivalent control. This flow is only for trusted single-user development hosts; shared or managed hosts require an organization-approved Docker access path.\n"
+      printf "  DGX Station remains Deferred; one DGX OS 7.5 GB300 physical validation passed, with repeat clean-host qualification and CI coverage still pending.\n"
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
@@ -3014,6 +3661,8 @@ describe_express_install() {
 maybe_offer_express_install() {
   local platform
   platform="$(detect_express_platform)"
+  validate_express_platform_boundary "$platform"
+  validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
   # Not on a platform we have an express recipe for — say nothing.
   if [ -z "$platform" ]; then
@@ -3022,15 +3671,22 @@ maybe_offer_express_install() {
   # On a supported platform but a skip condition applies — explain why so
   # the user understands they could have gotten express otherwise.
   if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    if [ "$platform" = "DGX Station" ]; then clear_station_express_resume; fi
     info "Detected ${platform}. Skipping express prompt (NEMOCLAW_NO_EXPRESS=1)."
+    return 0
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    if [ "$platform" = "DGX Station" ]; then clear_station_express_resume; fi
+    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
+    return 0
+  fi
+  if [ "$platform" = "DGX Station" ] && load_station_express_resume; then
+    info "Detected DGX Station. Resuming the accepted express install after host preparation."
+    activate_express_install "$platform"
     return 0
   fi
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     info "Detected ${platform}. Skipping express prompt (--non-interactive set)."
-    return 0
-  fi
-  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
-    info "Detected ${platform}. Skipping express prompt (NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER} already set)."
     return 0
   fi
   local reply=""
@@ -3039,6 +3695,11 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply; then
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        fail_force_station_terminal_required
+      elif [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+        fail_station_deepseek_terminal_required
+      fi
       info "Skipping express install (unable to read from TTY)."
       return 0
     fi
@@ -3048,6 +3709,11 @@ maybe_offer_express_install() {
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply <&3; then
       exec 3<&-
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        fail_force_station_terminal_required
+      elif [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+        fail_station_deepseek_terminal_required
+      fi
       info "Skipping express install (unable to read from TTY)."
       return 0
     fi
@@ -3060,28 +3726,7 @@ maybe_offer_express_install() {
   case "$reply" in
     "" | y | yes)
       info "Using express install for ${platform}."
-      NON_INTERACTIVE=1
-      export NEMOCLAW_NON_INTERACTIVE=1
-      export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
-      export NEMOCLAW_YES=1
-      export NEMOCLAW_POLICY_MODE=suggested
-      case "$platform" in
-        "DGX Spark")
-          export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
-          export NEMOCLAW_PROVIDER=install-vllm
-          if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
-            export NEMOCLAW_VLLM_MODEL
-          fi
-          ;;
-        "DGX Station")
-          export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
-          export NEMOCLAW_PROVIDER=install-vllm
-          configure_station_express_model
-          ;;
-        "Windows WSL")
-          export NEMOCLAW_PROVIDER=install-windows-ollama
-          ;;
-      esac
+      activate_express_install "$platform"
       ;;
     *)
       info "Skipping express install. Continuing with interactive flow."
@@ -3099,15 +3744,25 @@ main() {
 
   # Parse flags
   NON_INTERACTIVE=""
+  # #7009: record what put the run in non-interactive mode so conflict errors
+  # (e.g. validate_station_deepseek_override) can name the trigger. main()
+  # exports NON_INTERACTIVE into NEMOCLAW_NON_INTERACTIVE below, so the origin
+  # cannot be recovered from the env at error time — track it here instead.
+  NON_INTERACTIVE_SOURCE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
   FRESH=""
   STATION_DEEPSEEK=""
+  FORCE_STATION_INSTALL=""
   for arg in "$@"; do
     case "$arg" in
-      --non-interactive) NON_INTERACTIVE=1 ;;
+      --non-interactive)
+        NON_INTERACTIVE=1
+        NON_INTERACTIVE_SOURCE="the --non-interactive flag"
+        ;;
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --fresh) FRESH=1 ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
+      --force-station-install) FORCE_STATION_INSTALL=1 ;;
       --version | -v)
         local version_suffix
         version_suffix="$(installer_version_for_display)"
@@ -3126,6 +3781,9 @@ main() {
   done
   # Also honor env var
   NON_INTERACTIVE="${NON_INTERACTIVE:-${NEMOCLAW_NON_INTERACTIVE:-}}"
+  if [ "${NON_INTERACTIVE:-}" = "1" ] && [ -z "${NON_INTERACTIVE_SOURCE:-}" ]; then
+    NON_INTERACTIVE_SOURCE="NEMOCLAW_NON_INTERACTIVE=1"
+  fi
   ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE:-${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}}"
   FRESH="${FRESH:-${NEMOCLAW_FRESH:-}}"
 
@@ -3135,7 +3793,15 @@ main() {
   # (run_onboard has the same gate). Without this, ACCEPT_THIRD_PARTY_SOFTWARE=1
   # alone clears the preflight below but the install can still partial-fail at
   # run_onboard with the same TTY error, leaving phases 1/2 on disk anyway.
-  if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ] && [ "${NON_INTERACTIVE:-}" != "1" ]; then
+  #
+  # #7008: Station-only prompt flags are the exception — they explicitly select
+  # the interactive DGX Station express prompt, so accepting the notice must NOT
+  # imply non-interactive there. The two signals are orthogonal: one accepts a
+  # license, the other opts into an interactive express flow. Inferring
+  # non-interactive from the notice would make the express flow reject its own
+  # required flag validation.
+  if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ] && [ "${NON_INTERACTIVE:-}" != "1" ] \
+    && [ "${STATION_DEEPSEEK:-}" != "1" ] && [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
     NON_INTERACTIVE=1
   fi
 
@@ -3160,15 +3826,13 @@ main() {
   # still collect acceptance before Node.js or the CLI are installed.
   preflight_usage_notice_prompt
 
-  ensure_docker
-  ensure_openshell_build_deps
-
   # Offer express install on supported platforms (DGX Spark / Station / WSL).
   # Runs AFTER the third-party notice so the user has explicitly accepted the
   # license before opting into the unattended path. Express only sets the
   # provider/model/policy + non-interactive vars; license acceptance is
-  # already recorded by preflight above.
-  maybe_offer_express_install
+  # already recorded by preflight above. Station selection runs its pinned
+  # host prerequisite preparation before the generic Docker bootstrap.
+  prepare_installer_host
 
   _INSTALL_START=$SECONDS
   bash "${SCRIPT_DIR}/setup-jetson.sh"
@@ -3219,6 +3883,11 @@ main() {
         if [[ "${_PREEXISTING_SANDBOX_ORPHANED:-false}" == true ]]; then
           # #6520: do not claim recovery when recorded sandboxes are stranded.
           warn "Some recorded sandboxes could not be recovered; skipping generic onboarding."
+        elif [[ "${_STATION_EXPRESS_RESUME_LOADED:-}" == "1" ]] \
+          || station_express_receipt_retirement_pending; then
+          info "Existing sandboxes recovered; reconciling DGX Station Express onboarding state."
+          run_onboard || error "Onboarding did not complete successfully."
+          ONBOARD_RAN=true
         else
           info "Existing sandboxes recovered; skipping generic onboarding."
         fi

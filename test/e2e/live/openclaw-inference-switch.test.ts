@@ -206,27 +206,18 @@ async function runNemoclaw(
   });
 }
 
-function singleLineSandboxShellScript(script: string): string {
-  if (!/[\r\n]/.test(script)) return script;
-  return `printf '%s' ${shellQuote(Buffer.from(script, "utf8").toString("base64"))} | base64 -d | sh`;
-}
-
 async function sandboxShell(
   sandbox: SandboxClient,
   home: string,
   script: string,
   options: { artifactName: string; timeoutMs?: number; redactionValues?: string[] },
 ): Promise<ShellProbeResult> {
-  return sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(singleLineSandboxShellScript(script)),
-    {
-      artifactName: options.artifactName,
-      env: commandEnv(home),
-      timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
-      redactionValues: options.redactionValues,
-    },
-  );
+  return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(script), {
+    artifactName: options.artifactName,
+    env: commandEnv(home),
+    timeoutMs: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
+    redactionValues: options.redactionValues,
+  });
 }
 
 async function resetOpenClawInferenceSwitchState(

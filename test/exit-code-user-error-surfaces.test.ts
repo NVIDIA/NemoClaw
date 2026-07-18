@@ -265,7 +265,7 @@ describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
           "#!/usr/bin/env bash",
           "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods",
           'case "${1:-}" in',
-          '  -V|--version) printf "%s 0.0.72\\n" "${0##*/}"; exit 0;;',
+          '  -V|--version) printf "%s 0.0.85\\n" "${0##*/}"; exit 0;;',
           "esac",
           "exit 1",
         ].join("\n"),

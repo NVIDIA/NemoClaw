@@ -19,6 +19,7 @@ import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
+import { requireFixture } from "./require-fixture";
 
 describe("e2e workflow boundary", () => {
   it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
@@ -35,6 +36,34 @@ describe("e2e workflow boundary", () => {
 
   it("keeps the live E2E target workflow scheduled, dispatchable, pinned, and artifact-safe", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
+  });
+
+  it("binds typed-target evidence identity and upload to the live matrix entry", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env?: Record<string, string>;
+          steps?: Array<{
+            env?: Record<string, string>;
+            name?: string;
+            with?: Record<string, string>;
+          }>;
+        }
+      >;
+    };
+    const live = workflow.jobs.live!;
+    const run = live.steps!.find((step) => step.name === "Run live E2E tests")!;
+    run.env!.E2E_TARGET_ID = "unbound-target";
+    const upload = live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.with!.path = upload.with!.path.replace("e2e-artifacts/live/risk-signal.json\n", "");
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "live E2E step must bind risk-signal identity to matrix.id",
+        "artifact upload path must include e2e-artifacts/live/risk-signal.json",
+      ]),
+    );
   });
 
   it("rejects Bedrock matrix shard identity drift (#6938)", () => {
@@ -55,7 +84,7 @@ describe("e2e workflow boundary", () => {
     }
   });
 
-  it("requires unknown inference modes to be rejected before planning", () => {
+  it("requires matrix generation to use the planner CI-output mode", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
     };
@@ -67,13 +96,69 @@ describe("e2e workflow boundary", () => {
       (() => {
         throw new Error("workflow missing Generate E2E target matrix script");
       })();
-    generate!.run = generateRun.replace(
-      "Invalid inference_mode: ${INFERENCE_MODE}",
-      "Unsupported inference mode",
-    );
+    requireFixture(generateRun.includes("--ci-output"), "planner fixture missing --ci-output");
+    const invalidRun = generateRun.replace("--ci-output", "--plain-output");
+    requireFixture(invalidRun !== generateRun, "planner fixture mutation did not apply");
+    generate!.run = invalidRun;
 
     expect(validateE2eWorkflow(workflow)).toContain(
-      "step 'Generate E2E target matrix' run script must include Invalid inference_mode: ${INFERENCE_MODE}",
+      "step 'Generate E2E target matrix' run script must include --ci-output",
+    );
+  });
+
+  it("keeps controller target selection bound to the generated matrix (#7031)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        { steps?: Array<{ env?: Record<string, string>; name?: string; run?: string }> }
+      >;
+    };
+    const generate = workflow.jobs["generate-matrix"]?.steps?.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+    delete generate.env!.CHECKOUT_SHA;
+    generate.run = generate.run!.replace(
+      "E2E planner matrix does not match controller-selected targets",
+      "unchecked planner matrix",
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "matrix generation step must bind controller checkout through CHECKOUT_SHA env",
+        "step 'Generate E2E target matrix' run script must include E2E planner matrix does not match controller-selected targets",
+      ]),
+    );
+  });
+
+  it("keeps controller runner selection in a trusted pre-checkout matrix (#7031)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          outputs: Record<string, string>;
+          steps: Array<{ id?: string; name?: string; run?: string; uses?: string }>;
+        }
+      >;
+    };
+    const generateMatrix = workflow.jobs["generate-matrix"]!;
+    generateMatrix.outputs.matrix = "${{ steps.matrix.outputs.matrix }}";
+    const [trusted] = generateMatrix.steps.splice(
+      generateMatrix.steps.findIndex((step) => step.id === "controller_matrix"),
+      1,
+    );
+    trusted!.run = trusted!.run!.replace('"runner":"ubuntu-latest"', '"runner":"self-hosted"');
+    generateMatrix.steps.splice(
+      generateMatrix.steps.findIndex((step) => step.uses?.startsWith("actions/checkout@")) + 1,
+      0,
+      trusted!,
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "generate-matrix job must expose trusted controller matrix output",
+        "trusted controller matrix must pin typed target runner to ubuntu-latest",
+        "trusted controller matrix step must run before PR checkout",
+      ]),
     );
   });
 
@@ -258,9 +343,21 @@ describe("e2e workflow boundary", () => {
           targets: "network-policy",
         }),
       ).toMatchObject({
-        valid: false,
+        valid: true,
         liveTargetsRun: false,
-        selectedFreeStandingJobs: [],
+        selectedFreeStandingJobs: ["network-policy"],
+        registryTargets: [],
+      });
+      expect(
+        evaluateE2eWorkflowDispatchSelectors({
+          jobs: "network-policy",
+          targets: "ubuntu-repo-cloud-langchain-deepagents-code",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveTargetsRun: true,
+        selectedFreeStandingJobs: ["network-policy"],
+        registryTargets: ["ubuntu-repo-cloud-langchain-deepagents-code"],
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({
@@ -1084,27 +1181,23 @@ jobs:
     }
   });
 
-  it("rejects raw jobs selector echo from matrix generation", () => {
+  it("rejects matrix generation that bypasses the planner CI-output mode", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = fs.readFileSync(
       path.join(process.cwd(), ".github/workflows/e2e.yaml"),
       "utf8",
     );
-    fs.writeFileSync(
-      workflowPath,
-      workflow.replace(
-        'echo "::error::Invalid ${selector_name,,} input; use comma-separated ids" >&2',
-        'echo "::error::Invalid jobs input: ${JOBS}" >&2',
-      ),
-    );
+    requireFixture(workflow.includes("--ci-output"), "workflow fixture missing --ci-output");
+    const invalidWorkflow = workflow.replace("--ci-output", "--plain-output");
+    requireFixture(invalidWorkflow !== workflow, "workflow fixture mutation did not apply");
+    fs.writeFileSync(workflowPath, invalidWorkflow);
 
     try {
       const errors = validateE2eWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
-          "step 'Generate E2E target matrix' run script must include Invalid ${selector_name,,} input; use comma-separated ids",
-          "step 'Generate E2E target matrix' run script must not include Invalid jobs input: ${JOBS}",
+          "step 'Generate E2E target matrix' run script must include --ci-output",
         ]),
       );
     } finally {

@@ -91,6 +91,10 @@ exec_installer_from_ref() {
   legacy_script="${source_root}/install.sh"
 
   if has_payload_marker "$payload_script"; then
+    # The public curl|bash boundary deliberately executes from the complete
+    # selected-ref checkout, not from a standalone payload file. Installer
+    # helpers beside scripts/install.sh (including DGX Station preparation)
+    # are therefore staged from the same ref before payload execution.
     verify_downloaded_script "$payload_script" "versioned installer"
     NEMOCLAW_INSTALL_REF="$ref" NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
       bash "$payload_script" "$@"

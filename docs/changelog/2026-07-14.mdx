@@ -39,7 +39,8 @@ NemoClaw v0.0.82 adds non-destructive sandbox stop and start commands, protects 
   Installer upgrades also ignore route-only placeholders left by interrupted onboarding instead of treating them as backupable sandboxes.
   For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes).
 - Managed vLLM setup checks storage before large downloads begin.
-  NemoClaw verifies Docker image storage and the Hugging Face model cache before an uncached image pull or model download, rechecks model capacity after the image pull, and stops when capacity or filesystem identity cannot be established unless the operator explicitly accepts the warning.
+  NemoClaw verifies Docker image storage and the Hugging Face model cache before an uncached image pull or model download, rechecks model capacity after the image pull, and treats low verified capacity as an advisory warning in express and other non-interactive setup paths.
+  Interactive setup still stops unless the operator explicitly accepts the warning.
   Managed profiles use immutable platform digests, and the model download and serving containers use `--pull=never` so an implicit pull cannot bypass the storage gate.
   For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider).
 - Onboarding reports local inference and gateway conflicts more accurately.

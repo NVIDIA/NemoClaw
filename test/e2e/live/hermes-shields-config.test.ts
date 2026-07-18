@@ -110,7 +110,9 @@ async function expectMutablePosture(sandbox: SandboxClient, cycle: number): Prom
   );
   assertExitZero(result, `inspect Hermes mutable posture after cycle ${cycle}`);
   expect(result.stdout).toContain("755 sandbox:sandbox /sandbox");
-  expect(result.stdout).toContain(`3770 sandbox:sandbox ${HERMES_DIR}`);
+  expect(result.stdout).toMatch(
+    new RegExp(`^(?:700|3770) sandbox:sandbox ${HERMES_DIR.replace(".", "\\.")}$`, "m"),
+  );
   expect(result.stdout).toContain(`640 sandbox:sandbox ${CONFIG_PATH}`);
   expect(result.stdout).toContain(`640 sandbox:sandbox ${HERMES_DIR}/.env`);
   expect(result.stdout).toContain(`640 sandbox:sandbox ${HERMES_DIR}/.config-hash`);

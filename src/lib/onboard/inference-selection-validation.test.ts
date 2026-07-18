@@ -202,6 +202,78 @@ describe("inference selection validation", () => {
     }
   });
 
+  it.each([
+    {
+      runtimeSurface: "native Anthropic Messages",
+      intendedApi: "anthropic-messages" as const,
+      expectedEndpointUrl: "https://anthropic.corp.example",
+      expectedProbeOptions: { probeStreaming: true },
+    },
+    {
+      runtimeSurface: "managed Chat Completions (Hermes/DCode)",
+      intendedApi: "openai-completions" as const,
+      expectedEndpointUrl: "https://anthropic.corp.example/v1",
+      expectedProbeOptions: { calibrateTimeouts: true, skipResponsesProbe: true },
+    },
+  ])("probes an exactly allowlisted private Anthropic endpoint on its $runtimeSurface surface (#7037)", async ({
+    intendedApi,
+    expectedEndpointUrl,
+    expectedProbeOptions,
+  }) => {
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "anthropic.corp.example");
+    vi.stubEnv("NEMOCLAW_REASONING", "false");
+    const probeEndpoint = vi.fn(() => ({
+      ok: true,
+      api: intendedApi,
+      label: "Compatible API",
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "NemoClaw agent",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint: probeEndpoint,
+      probeOpenAiLikeEndpoint: probeEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "10.0.0.8", family: 4 }],
+    });
+
+    try {
+      const result = await helpers.validateCustomAnthropicSelection(
+        "Custom Anthropic endpoint",
+        "https://anthropic.corp.example",
+        "model-a",
+        "COMPATIBLE_ANTHROPIC_API_KEY",
+        null,
+        { intendedApi },
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        api: intendedApi,
+        pinnedAddresses: ["10.0.0.8"],
+        trustedPrivateCapability: { addresses: ["10.0.0.8"] },
+      });
+      expect(probeEndpoint).toHaveBeenCalledOnce();
+      expect(probeEndpoint).toHaveBeenCalledWith(
+        expectedEndpointUrl,
+        "model-a",
+        "test-key",
+        expect.objectContaining({
+          ...expectedProbeOptions,
+          pinnedAddresses: ["10.0.0.8"],
+          trustedPrivateCapability: expect.objectContaining({ addresses: ["10.0.0.8"] }),
+        }),
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("operator-trusted private"));
+    } finally {
+      log.mockRestore();
+      warn.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("honors an exactly allowlisted private endpoint during non-interactive validation (#6861)", async () => {
     vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "llm.corp.example");
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));

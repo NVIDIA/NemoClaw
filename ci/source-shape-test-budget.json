@@ -247,6 +247,16 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-final-image-layout.test.ts",
+      "test": "keeps security entrypoint hashes synchronized with the copied files",
+      "category": "security"
+    },
+    {
+      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
+      "category": "security"
+    },
+    {
       "file": "test/inference-options-docs.test.ts",
       "test": "keeps a per-model task-fit comparison table for curated onboarding models",
       "category": "compatibility"
@@ -393,6 +403,16 @@
     },
     {
       "file": "test/pr-workflow-contract.test.ts",
+      "test": "records the Dependabot DCO bypass as a successful required job",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "reruns installer hash verification after a pull request base retarget",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
       "test": "reuses the same shared CI actions in PR and main workflows",
       "category": "security"
     },
@@ -444,6 +464,11 @@
     {
       "file": "test/regression-e2e-workflow.test.ts",
       "test": "stages the public NVIDIA key for the Model Router's NVIDIA credential",
+      "category": "security"
+    },
+    {
+      "file": "test/release-latest-tag-workflow.test.ts",
+      "test": "binds latest promotion to the exact GitHub-verified tag object",
       "category": "security"
     },
     {

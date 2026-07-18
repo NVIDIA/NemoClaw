@@ -1,11 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  findUnwritableModelCachePath,
   findUnwritableTreePath,
   formatStorageBytes,
+  formatStorageDecimalBytes,
   imageStorageRequirementBytes,
+  managedVllmStorageEstimateBytes,
   measureDirectorySizeBytes,
   modelStorageRequirementBytes,
   probeDockerStorage,
@@ -14,6 +20,7 @@ import {
 } from "./vllm-storage";
 
 const GIB = 1024n ** 3n;
+const tempDirs: string[] = [];
 
 function nativeDockerInfo(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -31,11 +38,13 @@ const nativeHost = {
   dockerContext: undefined,
   dockerHost: undefined,
   platform: "linux" as NodeJS.Platform,
+  stat: () => ({ dev: 1n }),
 };
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { force: true, recursive: true });
 });
 
 describe("managed vLLM image-storage requirements", () => {
@@ -56,6 +65,23 @@ describe("managed vLLM image-storage requirements", () => {
   it("formats available and required bytes as rounded GiB values", () => {
     expect(formatStorageBytes(2n * GIB)).toBe("2 GiB");
     expect(formatStorageBytes((23n * GIB) / 10n)).toBe("2.3 GiB");
+  });
+
+  it("formats catalog estimates as decimal GB values", () => {
+    expect(formatStorageDecimalBytes(390_458_611_865n)).toBe("390.459 GB");
+    expect(formatStorageDecimalBytes(816_000_000n)).toBe("0.816 GB");
+  });
+
+  it("adds image, model, staging, and writable bytes for a cold managed-vLLM estimate (#6858)", () => {
+    expect(
+      managedVllmStorageEstimateBytes({
+        imageCompressedBytes: 9_603_085_145,
+        imageUnpackedBytes: 27_658_526_720,
+        includeImage: true,
+        modelBytes: 352_381_000_000,
+        writableAllowanceBytes: 816_000_000,
+      }).totalBytes,
+    ).toBe(393_679_837_337n);
   });
 });
 
@@ -101,6 +127,142 @@ describe("host cache-storage detection", () => {
         list: () => [],
       }),
     ).toBeNull();
+  });
+
+  it("ignores an unrelated model's root-owned artifacts when scoped to a target model", () => {
+    const target = "/cache/hub/models--org--target";
+    const sibling = "/cache/hub/models--org--other";
+    const rootOwned = new Set([
+      sibling,
+      `${sibling}/.no_exist`,
+      `${sibling}/.no_exist/config.json`,
+    ]);
+    const present = new Set(["/cache", "/cache/hub", target, sibling]);
+    const walked: string[] = [];
+
+    expect(
+      findUnwritableModelCachePath("/cache", target, {
+        exists: (path) => present.has(path),
+        canWrite: (path) => {
+          walked.push(path);
+          return !rootOwned.has(path);
+        },
+        list: () => [],
+      }),
+    ).toBeNull();
+    expect(walked).not.toContain(sibling);
+    expect(walked).not.toContain(`${sibling}/.no_exist`);
+  });
+
+  it("catches a root-owned artifact inside the target model tree", () => {
+    const target = "/cache/hub/models--org--target";
+    const blocked = `${target}/.no_exist/processor_config.json`;
+    const entries = new Map([
+      [target, [{ kind: "directory" as const, name: ".no_exist" }]],
+      [`${target}/.no_exist`, [{ kind: "file" as const, name: "processor_config.json" }]],
+    ]);
+
+    expect(
+      findUnwritableModelCachePath("/cache", target, {
+        exists: () => true,
+        canWrite: (path) => path !== blocked,
+        list: (path) => entries.get(path) ?? [],
+      }),
+    ).toBe(blocked);
+  });
+
+  it("flags an unwritable cache root before inspecting the hub", () => {
+    expect(
+      findUnwritableModelCachePath("/cache", "/cache/hub/models--org--target", {
+        exists: () => true,
+        canWrite: (path) => path !== "/cache",
+        list: () => [],
+      }),
+    ).toBe("/cache");
+  });
+
+  it("flags an unwritable hub directory", () => {
+    expect(
+      findUnwritableModelCachePath("/cache", "/cache/hub/models--org--target", {
+        exists: () => true,
+        canWrite: (path) => path !== "/cache/hub",
+        list: () => [],
+      }),
+    ).toBe("/cache/hub");
+  });
+
+  it("accepts a fresh cache with no hub directory yet", () => {
+    expect(
+      findUnwritableModelCachePath("/cache", "/cache/hub/models--org--target", {
+        exists: () => false,
+        canWrite: () => true,
+        list: () => [],
+      }),
+    ).toBeNull();
+  });
+
+  it("catches a root-owned lock directory for the target model", () => {
+    const target = "/cache/hub/models--org--target";
+    const lockDir = "/cache/hub/.locks/models--org--target";
+    const blocked = `${lockDir}/abc123.lock`;
+    const present = new Set(["/cache", "/cache/hub", target, lockDir]);
+    const entries = new Map([[lockDir, [{ kind: "file" as const, name: "abc123.lock" }]]]);
+
+    expect(
+      findUnwritableModelCachePath("/cache", target, {
+        exists: (path) => present.has(path),
+        canWrite: (path) => path !== blocked,
+        list: (path) => entries.get(path) ?? [],
+      }),
+    ).toBe(blocked);
+  });
+
+  it("ignores a sibling model's root-owned lock directory", () => {
+    const target = "/cache/hub/models--org--target";
+    const siblingLockDir = "/cache/hub/.locks/models--org--other";
+    const present = new Set(["/cache", "/cache/hub", siblingLockDir]);
+    const walked: string[] = [];
+
+    expect(
+      findUnwritableModelCachePath("/cache", target, {
+        exists: (path) => present.has(path),
+        canWrite: (path) => {
+          walked.push(path);
+          return true;
+        },
+        list: () => [],
+      }),
+    ).toBeNull();
+    expect(walked).not.toContain(siblingLockDir);
+  });
+
+  it("flags a root-owned locks parent before creating a new target's lock directory", () => {
+    const target = "/cache/hub/models--org--target";
+    const locksDir = "/cache/hub/.locks";
+    const present = new Set(["/cache", "/cache/hub", locksDir]);
+
+    expect(
+      findUnwritableModelCachePath("/cache", target, {
+        exists: (path) => present.has(path),
+        canWrite: (path) => path !== locksDir,
+        list: () => [],
+      }),
+    ).toBe(locksDir);
+  });
+
+  it("skips the model subtree when the model cache path is unresolved", () => {
+    const walked: string[] = [];
+    expect(
+      findUnwritableModelCachePath("/cache", null, {
+        exists: (path) => path === "/cache/hub",
+        canWrite: (path) => {
+          walked.push(path);
+          return true;
+        },
+        list: () => [],
+      }),
+    ).toBeNull();
+    expect(walked).toEqual(["/cache", "/cache/hub"]);
   });
 
   it("counts complete and partial snapshot files without following directory symlinks", () => {
@@ -217,6 +379,7 @@ describe("Docker image-storage detection", () => {
       ok: true,
       capacity: {
         availableBytes: 7n * GIB,
+        filesystemId: expect.any(String),
         path: "/var/lib/docker",
         source: "Docker root directory",
       },
@@ -246,6 +409,7 @@ describe("Docker image-storage detection", () => {
       ok: true,
       capacity: {
         availableBytes: 2n * GIB,
+        filesystemId: expect.any(String),
         path: "/var/lib/docker",
         source: "Docker pull staging",
       },
@@ -291,6 +455,7 @@ describe("Docker image-storage detection", () => {
       ok: true,
       capacity: {
         availableBytes: 9n * GIB,
+        filesystemId: expect.any(String),
         path: "/var/lib/docker",
         source: "Docker root directory",
       },
@@ -455,5 +620,25 @@ describe("Docker image-storage detection", () => {
       reason:
         "Docker uses a named context (remote-builder) whose host filesystem cannot be inspected",
     });
+  });
+});
+
+describe("Hugging Face model-cache storage", () => {
+  it("checks the nearest existing filesystem before creating the cache directory (#6858)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-storage-"));
+    tempDirs.push(root);
+    const cacheDir = path.join(root, ".cache", "huggingface");
+    const statfs = vi.fn(() => ({ bavail: 7n, bsize: GIB }));
+
+    expect(probeHostStorage(cacheDir, "Hugging Face cache", { statfs })).toEqual({
+      ok: true,
+      capacity: {
+        availableBytes: 7n * GIB,
+        filesystemId: expect.any(String),
+        path: cacheDir,
+        source: "Hugging Face cache",
+      },
+    });
+    expect(statfs).toHaveBeenCalledWith(root);
   });
 });

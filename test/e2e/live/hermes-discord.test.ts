@@ -20,9 +20,9 @@ import {
   expectExitZero,
   phase6Env,
   resultText,
-  sandboxEncodedSh,
   sandboxNode,
   sandboxSh,
+  sandboxShWithArgs,
   shellQuote,
   trackPreinstallSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
@@ -305,7 +305,7 @@ async function runHermesPythonDiscordGatewayProof(
   port: string,
   redactionValues: string[],
 ): Promise<ShellProbeResult> {
-  return sandboxEncodedSh(
+  return sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     `FAKE_DISCORD_GATEWAY_CLIENT_HOST=${shellQuote(FAKE_DISCORD_HOST)} FAKE_DISCORD_GATEWAY_CLIENT_PORT=${shellQuote(port)} /opt/hermes/.venv/bin/python - <<'PY'\n${HERMES_DISCORD_PYTHON_GATEWAY_PROOF}\nPY\n`,
@@ -324,7 +324,7 @@ async function assertRawTokenAbsentFromFiles(
   redactionValues: string[],
 ): Promise<void> {
   const tokenB64 = Buffer.from(token, "utf8").toString("base64");
-  const probe = await sandboxEncodedSh(
+  const probe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nif grep -Fq "$token" /sandbox/.hermes/config.yaml /sandbox/.hermes/.env 2>/dev/null; then echo LEAK; else echo OK; fi`,
@@ -349,7 +349,7 @@ async function rawTokenSurfaceProbe(
       : surface === "process"
         ? buildProcessTokenProbe(token)
         : `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nhit="$(grep -rFlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1 || true)"\nif [ -n "$hit" ]; then printf 'FOUND_TOKEN %s\\n' "$hit"; else echo ABSENT; fi`;
-  return sandboxEncodedSh(sandbox, SANDBOX_NAME, script, [], {
+  return sandboxShWithArgs(sandbox, SANDBOX_NAME, script, [], {
     artifactName,
     redactionValues,
     timeoutMs: surface === "filesystem" ? 120_000 : 60_000,
@@ -483,7 +483,7 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
   expect(resultText(health!)).toMatch(/"ok"/i);
 
   const expectedRequireMention = DISCORD_REQUIRE_MENTION === "0" ? "false" : "true";
-  const configProbe = await sandboxEncodedSh(
+  const configProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     `EXPECTED_REQUIRE_MENTION=${shellQuote(expectedRequireMention)} python3 - <<'PY'
@@ -530,7 +530,7 @@ PY`,
   expectExitZero(configProbe, "Hermes Discord config shape");
   expect(configProbe.stdout.trim()).toBe("OK");
 
-  const envProbe = await sandboxEncodedSh(
+  const envProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     `EXPECTED_ALLOWED_USERS=${shellQuote(normalizedCsv(DISCORD_ALLOWED_IDS))} EXPECTED_GUILD_IDS=${shellQuote(normalizedCsv(DISCORD_SERVER_IDS))} python3 - <<'PY'
@@ -677,7 +677,7 @@ req.end();
       throw new Error(`Discord API call failed: ${discordApiResult.error}`);
   }
 
-  const bridgeResidue = await sandboxEncodedSh(
+  const bridgeResidue = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     String.raw`set +e

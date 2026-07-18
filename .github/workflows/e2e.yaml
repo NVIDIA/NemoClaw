@@ -87,11 +87,33 @@ jobs:
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      matrix: ${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
     steps:
+      - id: controller_matrix
+        name: Build trusted controller target matrix
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          TARGETS: ${{ inputs.targets }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${TARGETS}" in
+            "")
+              matrix='[]'
+              ;;
+            ubuntu-repo-cloud-langchain-deepagents-code)
+              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
+              ;;
+            *)
+              echo "::error::PR E2E target is not approved by the trusted controller" >&2
+              exit 1
+              ;;
+          esac
+          printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
@@ -123,7 +145,8 @@ jobs:
           [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::plan_hash must be a lowercase SHA-256"; exit 1; }
           [[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::correlation_id must be a lowercase UUIDv4"; exit 1; }
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer"; exit 1; }
-          [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::PR E2E runs require jobs and do not accept targets"; exit 1; }
+          [[ -n "$JOBS" || -n "$TARGETS" ]] || { echo "::error::PR E2E runs require controller-selected jobs or targets"; exit 1; }
+          [[ -z "$TARGETS" || "$TARGETS" == "ubuntu-repo-cloud-langchain-deepagents-code" ]] || { echo "::error::PR E2E target is not approved by the trusted controller"; exit 1; }
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -143,112 +166,28 @@ jobs:
       - id: matrix
         name: Generate E2E target matrix
         env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CONTROLLER_MATRIX: ${{ steps.controller_matrix.outputs.matrix }}
           INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
         run: |
           set -euo pipefail
-          case "${INFERENCE_MODE}" in
-            mock|internal-nvidia|public-nvidia) ;;
-            *) echo "::error::Invalid inference_mode: ${INFERENCE_MODE}" >&2; exit 1 ;;
-          esac
-          if [ -n "${JOBS}" ] && [ -n "${TARGETS}" ]; then
-            echo "::error::Use either targets or jobs, not both." >&2
-            exit 1
-          fi
-          for selector_name in JOBS TARGETS; do
-            selector_value="${!selector_name}"
-            if [ -n "${selector_value}" ] && [[ ! "${selector_value}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-              echo "::error::Invalid ${selector_name,,} input; use comma-separated ids" >&2
+          npx tsx tools/e2e/workflow-plan.mts --ci-output
+          if [ -n "${CHECKOUT_SHA}" ]; then
+            matrix="$(sed -n 's/^matrix=//p' "${GITHUB_OUTPUT}")"
+            expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
+            actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
+            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ]; then
+              : > "${GITHUB_OUTPUT}"
+              echo "::error::E2E planner matrix does not match controller-selected targets" >&2
               exit 1
             fi
-          done
-
-          planner_args=()
-          if [ -n "${JOBS}" ]; then
-            planner_args+=(--jobs "${JOBS}")
-          elif [ -n "${TARGETS}" ]; then
-            planner_args+=(--targets "${TARGETS}")
           fi
-          plan="$(npx tsx tools/e2e/workflow-plan.mts "${planner_args[@]}")"
-          plan_filter='
-            type == "object" and
-            (keys | sort) == ["explicitOnlyJobs", "hermesSelected", "matrix", "testMatrix"] and
-            (.matrix | type) == "array" and
-            all(.matrix[];
-              type == "object" and
-              (keys | sort) == ["expectedStateId", "id", "install", "label", "onboarding", "pendingRuntimeSuites", "platform", "requiredSecrets", "runner", "runtime", "suites", "supportReasons", "supported"] and
-              (.id | type == "string" and test("^[a-z0-9]+(?:-[a-z0-9]+)*$")) and
-              (.runner | type == "string" and test("^[A-Za-z0-9_-]+$")) and
-              (.label | type) == "string" and
-              (.platform | type) == "string" and
-              (.install | type) == "string" and
-              (.runtime | type) == "string" and
-              (.onboarding | type) == "string" and
-              (.expectedStateId | type) == "string" and
-              (.supported | type) == "boolean" and
-              all(.suites[], .requiredSecrets[], .supportReasons[], .pendingRuntimeSuites[]; type == "string")
-            ) and
-            (([.matrix[].id] | length) == ([.matrix[].id] | unique | length)) and
-            (.testMatrix | type) == "array" and
-            all(.testMatrix[];
-              type == "object" and
-              (keys | sort) == ["file", "id", "project"] and
-              (.id | test("^[a-z0-9]+(?:-[a-z0-9]+)*$")) and
-              (.file | test("^test/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+[.]test[.](?:js|ts)$")) and
-              ((.project == "e2e-live" and (.file | startswith("test/e2e/live/"))) or
-               (.project == "integration" and (.file | startswith("test/")) and
-                ((.file | startswith("test/e2e/")) | not)))
-            ) and
-            (([.testMatrix[].id] | length) == ([.testMatrix[].id] | unique | length)) and
-            (.hermesSelected | type) == "boolean" and
-            (.explicitOnlyJobs | type) == "array" and
-            all(.explicitOnlyJobs[]; type == "string" and test("^[A-Za-z0-9_-]+$")) and
-            ((.explicitOnlyJobs | length) == (.explicitOnlyJobs | unique | length))
-          '
-          if ! jq -e "${plan_filter}" <<< "${plan}" >/dev/null; then
-            echo "::error::E2E planner returned an invalid output schema" >&2
-            exit 1
-          fi
-
-          expected_hermes_selected=false
-          selected_csv="${JOBS:-${TARGETS}}"
-          if [ -z "${selected_csv}" ] || [[ ",${selected_csv}," == *",hermes-e2e,"* ]]; then
-            expected_hermes_selected=true
-          fi
-          hermes_selected="$(jq -r '.hermesSelected' <<< "${plan}")"
-          if [ "${hermes_selected}" != "${expected_hermes_selected}" ]; then
-            echo "::error::E2E planner changed the trusted Hermes selection" >&2
-            exit 1
-          fi
-
-          matrix="$(jq -c '.matrix' <<< "${plan}")"
-          test_matrix="$(jq -c '.testMatrix' <<< "${plan}")"
-          explicit_only_jobs_csv="$(jq -r '.explicitOnlyJobs | join(",")' <<< "${plan}")"
-          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
-          echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"
-          echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
-          echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"
-
-          MATRIX_JSON="${matrix}" TEST_MATRIX_JSON="${test_matrix}" python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-          import os
-
-          typed_rows = json.loads(os.environ["MATRIX_JSON"])
-          test_rows = json.loads(os.environ["TEST_MATRIX_JSON"])
-          print("## E2E Execution Plan")
-          print()
-          print("| Test | Execution | Runner |")
-          print("| --- | --- | --- |")
-          for row in typed_rows:
-              print(f"| `{row['id']}` | typed registry | `{row['runner']}` |")
-          for row in test_rows:
-              print(f"| `{row['id']}` | shared E2E job | `ubuntu-latest` |")
-          PY
 
   live:
     needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.jobs == '') && needs.generate-matrix.outputs.matrix != '[]' }}
+    if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -371,6 +310,7 @@ jobs:
 
       - name: Run live E2E tests
         env:
+          E2E_TARGET_ID: ${{ matrix.id }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TARGET_ID: ${{ matrix.id }}
         run: |
@@ -465,6 +405,7 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
             e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
+            e2e-artifacts/live/risk-signal.json
             e2e-artifacts/live/${{ matrix.id }}/actions/
             e2e-artifacts/live/${{ matrix.id }}/logs/
             e2e-artifacts/live/${{ matrix.id }}/shell/
@@ -534,7 +475,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -601,7 +542,9 @@ jobs:
       NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: stable
+      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -645,6 +588,20 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
+          if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
+            mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
+            jq -n '{
+              schemaVersion: 1,
+              sourceRepository: "NVIDIA/OpenShell",
+              releaseTag: "v0.0.85",
+              sourceSha: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
+              artifacts: {
+                cli: {binarySha256: "222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8"},
+                gateway: {binarySha256: "33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f"},
+                standaloneSandbox: {binarySha256: "863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2"}
+              }
+            }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
+          fi
 
       - name: Run MCP OpenShell provider live test
         run: |
@@ -661,6 +618,13 @@ jobs:
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts
+          if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
+            npx vitest run --project e2e-live \
+              test/e2e/live/openshell-credential-generation-window.test.ts \
+              -t '^openshell-credential-generation-window$' \
+              --no-file-parallelism \
+              --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          fi
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
@@ -3506,44 +3470,67 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   openshell-gateway-upgrade:
-    name: OpenShell gateway upgrade (${{ matrix.legacy.id }})
+    name: OpenShell gateway upgrade (${{ matrix.id }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-upgrade,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        legacy:
-          - id: v0.0.36
+        include:
+          - id: v0.0.36-x86_64
+            runner: ubuntu-latest
+            shard: v0-0-36-x86-64
             nemoclaw_ref: v0.0.36
             nemoclaw_commit: "3351fbdd4eb7d9b80ec471545083956327da2b10"
             installer_sha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f"
             sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
             openshell_version: 0.0.36
             openclaw_version: 2026.4.24
-          - id: v0.0.55
+          - id: v0.0.55-x86_64
+            runner: ubuntu-latest
+            shard: v0-0-55-x86-64
             nemoclaw_ref: v0.0.55
             nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
             installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
             openshell_version: 0.0.44
             openclaw_version: 2026.5.22
+          - id: v0.0.55-aarch64
+            runner: ubuntu-24.04-arm
+            shard: v0-0-55-aarch64
+            nemoclaw_ref: v0.0.55
+            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
+            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
+            openshell_version: 0.0.44
+            openclaw_version: 2026.5.22
+          - id: v0.0.74-x86_64
+            runner: ubuntu-latest
+            shard: v0-0-74-x86-64
+            nemoclaw_ref: v0.0.74
+            nemoclaw_commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3"
+            installer_sha256: "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
+            openshell_version: 0.0.72
+            openclaw_version: 2026.5.27
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openshell-gateway-upgrade"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-upgrade
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gateway-upgrade-survivor"
-      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.legacy.nemoclaw_ref }}
-      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.legacy.nemoclaw_commit }}
-      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.legacy.installer_sha256 }}
-      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.legacy.sandbox_base_image_ref }}
-      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.legacy.openshell_version }}
-      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.legacy.openclaw_version }}
+      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.nemoclaw_ref }}
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.nemoclaw_commit }}
+      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.installer_sha256 }}
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.sandbox_base_image_ref }}
+      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.openshell_version }}
+      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.openclaw_version }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -3557,9 +3544,9 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run OpenShell gateway upgrade live Vitest test
-        # This preserves the legacy ubuntu-latest + Docker/OpenShell runner
-        # lane while covering both the original v0.0.36 fixture and the exact
-        # v0.0.55/OpenShell 0.0.44 source shape from upgrade regression #6114.
+        # Keep the original v0.0.36 fixture on x86_64 and validate the exact
+        # v0.0.55/OpenShell 0.0.44 regression shape on x86_64 and arm64, plus
+        # the immediate v0.0.74/OpenShell 0.0.72 predecessor to this bump.
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -3571,7 +3558,7 @@ jobs:
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-openshell-gateway-upgrade-${{ matrix.legacy.id }}
+          name: e2e-openshell-gateway-upgrade-${{ matrix.id }}
 
       - name: Clean up Docker auth
         if: always()
@@ -5075,120 +5062,42 @@ jobs:
         with:
           script: |
             const path = require('path');
-            const traceTiming = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
+            const { buildScorecard } = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/coordinate-scorecard.mts'),
             );
             const scorecardJobs = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.mts'),
             );
-            const slackBlocks = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.mts'),
+            const traceTiming = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
             );
             const needs = ${{ toJSON(needs) }};
-            const safeSelector = /^[A-Za-z0-9_-]+$/;
-            const parseSelectors = (value) =>
-              value.split(',').map((name) => name.trim()).filter((name) => safeSelector.test(name));
-            const rawRequestedJobs = process.env.JOBS || '';
-            const rawRequestedTargets = process.env.TARGETS || '';
-            const requestedJobs = parseSelectors(rawRequestedJobs);
-            const requestedTargets = parseSelectors(rawRequestedTargets);
-            const isDispatch = context.eventName === 'workflow_dispatch';
-            const isSelectiveDispatch = scorecardJobs.isSelectiveDispatch(
-              context.eventName,
-              rawRequestedJobs,
-              rawRequestedTargets,
-            );
-            const runMode = isSelectiveDispatch
-              ? 'Selective dispatch'
-              : isDispatch
-                ? 'Manual full run'
-                : 'Scheduled E2E';
-            const metaJobs = [
-              'generate-matrix',
-              'report-to-pr',
-              'scorecard',
-            ];
-            const explicitOnly = parseSelectors(process.env.EXPLICIT_ONLY_JOBS || '');
-            const explicitlySelected = [...requestedJobs, ...requestedTargets];
 
             // GitHub's jobs API is the canonical source because `needs.live`
             // collapses every matrix target into one result and has no job URL.
             // The typed helper owns and tests the degraded `needs` fallback.
             const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
+            const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
+            if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
 
-            const { cancelled, failedJobs, failure, ran, skipped, success, total } =
-              scorecardJobs.summarizeJobs({
-                apiJobs,
-                explicitOnlyJobNames: explicitOnly,
-                explicitlySelected,
-                metaJobNames: metaJobs,
-                needs,
-              });
-            const perfect = ran > 0 && failure === 0 && cancelled === 0;
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const today = new Date().toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            });
-            const { budgetWarningMessage, traceTimingLine, traceSummaryLines } =
-              await traceTiming.buildTraceTimingResult({ github, context, core });
-            if (budgetWarningMessage) core.warning(budgetWarningMessage);
-            const lines = [
-              `## 🌅 NemoClaw E2E Scorecard — ${today}`,
-              '',
-              `**Run mode:** ${runMode}`,
-            ];
-            if (requestedJobs.length > 0) {
-              lines.push(`**Requested jobs:** ${requestedJobs.map((name) => `\`${name}\``).join(', ')}`);
-            }
-            if (requestedTargets.length > 0) {
-              lines.push(`**Requested targets:** ${requestedTargets.map((name) => `\`${name}\``).join(', ')}`);
-            }
-            lines.push(
-              `**Jobs run:** ${ran} of ${total}`,
-              `  ✅ ${success} passed`,
-              `  ❌ ${failure} failed`,
-              `  🚫 ${cancelled} cancelled`,
-              `  ⏭️ ${skipped} skipped`,
-            );
-            if (failedJobs.length > 0) {
-              lines.push('', '**Failed jobs:**');
-              for (const job of failedJobs) {
-                lines.push(job.url ? `  - [${job.name}](${job.url})` : `  - \`${job.name}\``);
-              }
-            }
-            if (perfect) lines.push('', '🎉 **All jobs passed!**');
-            lines.push('', traceTimingLine, ...traceSummaryLines, '', `🔗 [Full run details](${runUrl})`);
-            await core.summary.addRaw(lines.join('\n')).write();
-            const scorecardData = {
-              today,
-              runMode,
+            const { summaryMarkdown, scorecardData, slackData } = buildScorecard({
+              eventName: context.eventName,
               actor: context.actor || '',
-              isSelectiveDispatch,
-              requestedJobs,
-              requestedTargets,
-              total,
-              ran,
-              success,
-              failure,
-              cancelled,
-              skipped,
-              perfect,
-              failedJobs,
-              traceTimingLine,
-              runUrl,
-            };
+              serverUrl: context.serverUrl,
+              repo: context.repo,
+              runId: context.runId,
+              rawJobs: process.env.JOBS || '',
+              rawTargets: process.env.TARGETS || '',
+              rawExplicitOnly: process.env.EXPLICIT_ONLY_JOBS || '',
+              needs,
+              apiJobs,
+              trace,
+              today: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            });
+
+            await core.summary.addRaw(summaryMarkdown).write();
             core.setOutput('scorecardData', JSON.stringify(scorecardData));
-            core.setOutput('slackData', JSON.stringify({
-              channel: slackBlocks.getSlackChannel(scorecardData),
-              payload: {
-                text: slackBlocks.buildFallbackText(scorecardData),
-                attachments: [{
-                  color: slackBlocks.getStatusColor(scorecardData),
-                  blocks: slackBlocks.buildBlocks(scorecardData),
-                }],
-              },
-            }));
+            core.setOutput('slackData', JSON.stringify(slackData));
 
       - name: Post scorecard to Slack
         # Webhook secrets never enter branch-dispatched runs. The payload is
@@ -5211,7 +5120,22 @@ jobs:
               preview: 'SLACK_WEBHOOK_URL_PREVIEW',
             };
             const channel = data?.channel;
-            if (!Object.hasOwn(envByChannel, channel) || !data.payload || typeof data.payload !== 'object') {
+            const payload = data?.payload;
+            const attachments = payload?.attachments;
+            const validPayload =
+              Object.hasOwn(envByChannel, channel) &&
+              payload !== null &&
+              typeof payload === 'object' &&
+              typeof payload.text === 'string' &&
+              Array.isArray(attachments) &&
+              attachments.every(
+                (attachment) =>
+                  attachment !== null &&
+                  typeof attachment === 'object' &&
+                  typeof attachment.color === 'string' &&
+                  Array.isArray(attachment.blocks),
+              );
+            if (!validPayload) {
               core.setFailed('Invalid precomputed Slack payload');
               return;
             }
