@@ -863,7 +863,7 @@ station_sudo_local_default_docker() {
     *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
   esac
 }
-check_no_workloads() { printf 'WORKLOAD_GATE_OK\n'; }
+require_docker_mutation_quiescence() { printf 'WORKLOAD_GATE_OK %s\n' "$1"; }
 sudo() {
   case "$*" in
     'nvidia-ctk cdi list')
