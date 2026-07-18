@@ -52,6 +52,8 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain("DGX Server for GALAXY-GB300");
     expect(quickstart).toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("--force-station-install");
+    expect(stationPreparation).toContain("metadata omits or varies fields");
+    expect(stationPreparation).toContain("Remove the override after");
     expect(quickstart).toContain("--force-station-install");
     expect(platformSupport).toContain("maintainer-directed temporary metadata override");
     expect(vllmSetup).toContain("maintainer-directed temporary metadata override");

@@ -512,6 +512,7 @@ require_command() {
 }
 acquire_sudo() { :; }
 common_preflight() { STATION_HOST_PROFILE=forced-factory-runtime; }
+reboot_required() { return 1; }
 verify_dgx_os_runtime_sudo() { printf 'FACTORY_RUNTIME_VALIDATED\n'; }
 ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
 install_packages() { printf 'PACKAGE_MUTATION\n'; return 1; }

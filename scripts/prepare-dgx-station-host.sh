@@ -110,6 +110,10 @@ station_pci_devices_path() {
   printf '%s' /sys/bus/pci/devices
 }
 
+reboot_required() {
+  [[ -e /var/run/reboot-required ]]
+}
+
 dgx_station_release_file_is_safe() {
   local path=$1 metadata uid gid mode size
   [[ -r "$path" && -f "$path" && ! -L "$path" ]] || return 1
@@ -1472,8 +1476,9 @@ run_apply() {
   common_preflight
 
   if station_uses_factory_runtime; then
-    [[ ! -e /var/run/reboot-required ]] \
-      || fatal "A reboot is pending on the Station factory image; reboot before running Station express install"
+    if reboot_required; then
+      fatal "A reboot is pending on the Station factory image; reboot before running Station express install"
+    fi
     if [[ "$STATION_HOST_PROFILE" == "colossus-baseos" ]]; then
       finish_runtime
     fi
@@ -1500,7 +1505,7 @@ run_apply() {
   require_command readlink
   require_command sha256sum
 
-  if [[ -e /var/run/reboot-required ]]; then
+  if reboot_required; then
     if all_packages_exact && ! driver_loaded_exact; then
       warn "A reboot is required before runtime setup can continue"
       exit "$REBOOT_REQUIRED_EXIT"
