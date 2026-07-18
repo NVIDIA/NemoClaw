@@ -497,20 +497,35 @@ async function findSandboxContainer(
   return ids[0] ?? "";
 }
 
+export function buildExactMainNftInspectionScript(): string {
+  return [
+    "namespace_count=0",
+    "namespace_path=",
+    "for candidate in /var/run/netns/sandbox-*; do",
+    '  [ -e "$candidate" ] || continue',
+    "  namespace_count=$((namespace_count + 1))",
+    '  namespace_path="$candidate"',
+    "done",
+    'if [ "$namespace_count" -gt 1 ]; then',
+    "  printf 'expected at most one sandbox netns, got %s\\n' \"$namespace_count\" >&2",
+    "  ip netns list >&2 || true",
+    "  exit 1",
+    "fi",
+    'if [ "$namespace_count" -eq 1 ]; then',
+    '  exec nsenter --net="$namespace_path" -- nft -j list table inet openshell_bypass',
+    "fi",
+    "exec nft -j list table inet openshell_bypass",
+  ].join("\n");
+}
+
 async function inspectNftRules(
   host: HostCliClient,
   containerId: string,
   artifactName: string,
 ): Promise<{ inspection: ExactMainNftInspection; raw: string }> {
-  const script = [
-    "set -- /var/run/netns/sandbox-*",
-    '[ "$#" -eq 1 ] && [ -e "$1" ] || { printf \'expected exactly one sandbox netns\\n\' >&2; exit 1; }',
-    "namespace=${1##*/}",
-    'exec ip netns exec "$namespace" nft -j list table inet openshell_bypass',
-  ].join("\n");
   const result = await host.command(
     "docker",
-    ["exec", "--user", "0", containerId, "sh", "-ceu", script],
+    ["exec", "--user", "0", containerId, "sh", "-ceu", buildExactMainNftInspectionScript()],
     { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 30_000 },
   );
   expectExitZero(result, "inspect exact-main nft bypass rules");

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildExactMainLiveExeIdentityScript,
+  buildExactMainNftInspectionScript,
   inspectExactMainNftRuleset,
   parseExactMainPolicyStatus,
 } from "../live/openshell-exact-main-runtime-contracts.ts";
@@ -132,6 +133,17 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
       rejectIndexes: { ipv4Tcp: 2, ipv4Udp: 4, ipv6Tcp: 3, ipv6Udp: 5 },
       ruleCount: 6,
     });
+  });
+
+  it("inspects nft rules in either supported OpenShell network topology", () => {
+    const script = buildExactMainNftInspectionScript();
+    const syntax = spawnSync("sh", ["-n"], { encoding: "utf8", input: script });
+
+    expect(syntax.status, syntax.stderr).toBe(0);
+    expect(script).toContain("/var/run/netns/sandbox-*");
+    expect(script).toContain('nsenter --net="$namespace_path"');
+    expect(script).toContain("exec nft -j list table inet openshell_bypass");
+    expect(script).toContain('if [ "$namespace_count" -gt 1 ]');
   });
 
   it("rejects the feasible sequential-install partial state instead of calling it green", () => {
