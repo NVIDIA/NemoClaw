@@ -785,30 +785,20 @@ test(STALE_BASE_REBUILD
   });
 
   switch (STALE_BASE_REBUILD) {
-    case false: {
-      progress.phase("phase 5 current base build");
-      const buildCurrentBase = await host.command(
-        "docker",
-        [
-          "build",
-          "-f",
-          path.join(REPO_ROOT, "agents", "hermes", "Dockerfile.base"),
-          "-t",
-          CURRENT_BASE_TAG,
-          REPO_ROOT,
-        ],
-        {
-          artifactName: "phase-5-docker-build-current-hermes-base",
-          env: testEnv(apiKey),
-          redactionValues,
-          timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
-          captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
-          onOutput: progress.onOutput,
-        },
+    case false:
+      // The authoritative `nemoclaw <sandbox> rebuild` below constructs the
+      // current Hermes base exactly once through its forced-build path: the
+      // seeded old sandbox carries no resolvable base-image metadata, so rebuild
+      // rebuilds the base from Dockerfile.base. Building the same base here
+      // during setup prepared the identical expensive apt/uv/npm layers twice in
+      // one job without adding coverage, so the redundant setup build is gone
+      // while phase 6 keeps exercising the real forced-build path (#7144).
+      progress.phase("phase 5 current base built by authoritative rebuild");
+      await artifacts.writeText(
+        "phase-5-current-base-note.txt",
+        "Current Hermes base is constructed once by the authoritative rebuild in phase 6; the redundant setup build was removed. (#7144)\n",
       );
-      expectExitZero(buildCurrentBase, "docker build current Hermes base image");
       break;
-    }
     case true:
       progress.phase("phase 5 stale base setup");
       await artifacts.writeText(
