@@ -188,7 +188,6 @@ export type DockerContainerInspect = {
   } | null;
   HostConfig?: {
     Binds?: string[] | null;
-    Tmpfs?: Record<string, string> | null;
     Mounts?: Array<{
       Type?: string;
       Source?: string;
@@ -243,16 +242,6 @@ export type DockerContainerInspect = {
     ReadonlyPaths?: string[] | null;
     MaskedPaths?: string[] | null;
   } | null;
-  Mounts?: Array<{
-    Type?: string;
-    Name?: string;
-    Source?: string;
-    Destination?: string;
-    Driver?: string;
-    Mode?: string;
-    RW?: boolean;
-    Propagation?: string;
-  }> | null;
   NetworkSettings?: {
     Networks?: Record<
       string,
