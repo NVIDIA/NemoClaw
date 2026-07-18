@@ -522,16 +522,17 @@ describe("DGX Station forced metadata installer handoff", () => {
       INSTALLER_PAYLOAD,
       `
 SCRIPT_DIR="$HOME"
-touch "$SCRIPT_DIR/prepare-dgx-station-host.sh"
-bash() { printf 'HELPER_ARGS=%s\n' "$*"; }
+cat >"$SCRIPT_DIR/prepare-dgx-station-host.sh" <<'HELPER'
+printf '%s\n' "$*" >"$HOME/helper-args"
+HELPER
 FORCE_STATION_INSTALL=1
 run_station_host_preparation
 `,
     );
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain(
-      `HELPER_ARGS=${path.join(home, "prepare-dgx-station-host.sh")} --apply --force-station-install`,
+    expect(fs.readFileSync(path.join(home, "helper-args"), "utf8")).toBe(
+      "--apply --force-station-install\n",
     );
   });
 
