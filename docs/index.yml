@@ -362,9 +362,6 @@ navigation:
               - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
-              - page: "Engineer Agentic Docs"
-                path: _build/agent-variants/resources/engineer-agentic-documentation.openclaw.generated.mdx
-                slug: engineer-agentic-documentation
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.openclaw.generated.mdx
                 slug: community-contributions
@@ -613,9 +610,6 @@ navigation:
               - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.deepagents.generated.mdx
                 slug: agent-skills
-              - page: "Engineer Agentic Docs"
-                path: _build/agent-variants/resources/engineer-agentic-documentation.deepagents.generated.mdx
-                slug: engineer-agentic-documentation
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.deepagents.generated.mdx
                 slug: community-contributions
@@ -950,9 +944,6 @@ navigation:
               - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
-              - page: "Engineer Agentic Docs"
-                path: _build/agent-variants/resources/engineer-agentic-documentation.hermes.generated.mdx
-                slug: engineer-agentic-documentation
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.hermes.generated.mdx
                 slug: community-contributions
