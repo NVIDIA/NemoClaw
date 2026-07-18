@@ -3,6 +3,35 @@
  * SPDX-License-Identifier: Apache-2.0
  */}
 
+## v0.0.87
+
+NemoClaw v0.0.87 adds bounded DGX Station factory-image qualification paths, fixes Station post-reboot resume, makes managed Deep Agents Code startup restart-safe, and improves rebuild recovery, managed vLLM storage checks, sandbox backups, and strict-provider compatibility.
+
+- DGX Station Express recognizes the exact April 2026 NVIDIA Colossus BaseOS and June 2026 NVIDIA AI Developer Tools GB300 factory profiles for qualification.
+  The installer preserves each factory kernel, driver, Docker, and NVIDIA Container Toolkit stack, applies only the bounded access or runtime preparation required by that exact profile, and rejects identity, package, service, GPU, or runtime drift.
+  DGX Station remains Deferred while physical qualification continues.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/prerequisites/dgx-station-preparation) and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
+- Station Express onboarding now accepts both the current six-field installer resume receipt and the legacy three-field format after host preparation requires a reboot.
+  The current format validates the agent, sandbox name, and policy tier in addition to the pinned revision, model, and receipt generation, while malformed, unsupported, or extended receipts remain fail-closed for troubleshooting.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/prerequisites/dgx-station-preparation).
+- Managed Deep Agents Code onboarding now persists the `nemoclaw-dcode-entrypoint` startup command when the OpenShell Docker driver recreates a sandbox.
+  The recreated container also receives the required `nproc=512:512` and `nofile=65536:65536` limits, so the managed runtime remains available after a gateway restart without weakening its process and file-descriptor boundaries.
+  For more information, refer to [Security Best Practices](/user-guide/deepagents/security/best-practices).
+- Rebuild recovery verifies that a restored Hermes sandbox returns to healthy gateway and managed MCP state before reporting success.
+  OpenClaw rebuilds also clear stale managed-provider session pins after an inference switch, allowing restored sessions to use the current configured model while preserving intentional pins to other providers.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) and [Switch Inference Providers](/user-guide/openclaw/inference/manage-inference/switch-providers).
+- Managed vLLM storage preflight estimates cold image and model downloads from pinned image metadata and model payload sizes.
+  It checks Docker storage and the Hugging Face cache separately when they use different filesystems, rechecks capacity after a cold image pull, warns and continues during express or other non-interactive setup, and requires confirmation during interactive setup.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+- Sandbox backup creation now streams archive data and validates entries incrementally instead of buffering the complete archive in host memory.
+  Large backups therefore retain the existing traversal checks and partial-state behavior without requiring memory proportional to the archive size.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots).
+- Hermes registers NemoClaw tools with the single function-schema envelope required by strict OpenAI-compatible providers.
+  Google Gemini no longer rejects the managed Hermes tool list because of a nested schema, and audio transcription retains its declared parameters.
+  For more information, refer to [Use Google Gemini](/user-guide/hermes/inference/hosted-inference/use-google-gemini).
+- Replacement-image rebuild failures preserve bounded, redacted Docker diagnostics when process output arrives as buffered data, making host-specific build failures actionable without exposing credentials or private host paths.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+
 ## v0.0.86
 
 NemoClaw v0.0.86 enables the Station express recipe on qualified stock DGX OS GB300 systems, makes interrupted Station setup resumable, and fixes model validation, managed vLLM cache checks, sandbox builds, and upgrade guidance.

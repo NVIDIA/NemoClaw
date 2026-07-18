@@ -7,12 +7,9 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `nemoclaw-user-guide`
-- Evaluation date: 2026-06-24
+- Evaluation date: 2026-07-17
 - NVSkills-Eval profile: `external`
 - Environment: `astra-sandbox`
-- Dataset: 5 evaluation tasks
-- Attempts per task: 1
-- Pass threshold: 50%
 - Overall verdict: PASS
 
 ## Agents Used
@@ -32,33 +29,21 @@ Reported benchmark dimensions:
 
 Underlying evaluation signals used in this run:
 
-- `security` (Security): checks for unsafe operations, secret leakage, and unauthorized access.
-- `skill_execution` (Skill Execution): verifies that the agent loaded the expected skill and workflow.
-- `skill_efficiency` (Efficiency): checks routing quality, decoy avoidance, and redundant tool usage.
-- `accuracy` (Accuracy): grades final-answer correctness against the reference answer.
-- `goal_accuracy` (Goal Accuracy): checks whether the overall user task completed successfully.
-- `behavior_check` (Behavior Check): verifies expected behavior steps, including safety expectations.
-- `token_efficiency` (Token Efficiency): compares token usage with and without the skill.
+- No Tier 3 evaluation signal details were available in this report.
 
 ## Test Tasks
 
-The benchmark dataset contained 5 evaluation tasks:
-
-- Positive tasks: 5 tasks where the skill was expected to activate.
-- Negative tasks: 0 tasks where no skill was expected.
-- Unlabeled tasks: 0 tasks where positive/negative intent could not be inferred.
-
-Task composition is derived from the evaluation dataset when possible. Entries with `expected_skill` set are treated as positive skill-activation cases, while entries with `expected_skill: null` are treated as negative activation cases.
+The evaluation dataset was not available in this report payload.
 
 ## Results
 
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 5 | 90% (-10%) | 100% (+10%) |
-| Correctness | 5 | 90% (+68%) | 86% (+47%) |
-| Discoverability | 5 | 86% (+67%) | 67% (+22%) |
-| Effectiveness | 5 | 80% (+74%) | 87% (+64%) |
-| Efficiency | 5 | 71% (+45%) | 57% (+15%) |
+| Security | N/A | N/A | N/A |
+| Correctness | N/A | N/A | N/A |
+| Discoverability | N/A | N/A | N/A |
+| Effectiveness | N/A | N/A | N/A |
+| Efficiency | N/A | N/A | N/A |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 

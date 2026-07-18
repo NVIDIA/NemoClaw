@@ -9,6 +9,7 @@ import * as registry from "../../state/registry";
 import * as messagingHostForward from "./messaging-host-forward-lifecycle";
 import * as processRecovery from "./process-recovery";
 import * as rebuildConfigHash from "./rebuild-config-hash";
+import * as rebuildHermesPostRestore from "./rebuild-hermes-post-restore";
 import * as rebuildMcp from "./rebuild-mcp-phase";
 import * as rebuildMessaging from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
@@ -23,8 +24,8 @@ describe("rebuild post-restore session model reconciliation (#7102)", () => {
     order = [];
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.spyOn(agentRuntime, "getSessionAgent").mockImplementation(
-      () => ({ name: agentName }) as never,
+    vi.spyOn(agentRuntime, "getSessionAgent").mockImplementation(() =>
+      agentName === "openclaw" ? null : ({ name: agentName } as never),
     );
     vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("test agent");
     vi.spyOn(agentDefs, "loadAgent").mockImplementation(
@@ -57,6 +58,13 @@ describe("rebuild post-restore session model reconciliation (#7102)", () => {
       skipReason: "not-needed",
     } as never);
     vi.spyOn(rebuildMcp, "restoreMcpAfterRebuild").mockResolvedValue(true);
+    vi.spyOn(rebuildHermesPostRestore, "ensureHermesGatewayAfterStateRestore").mockImplementation(
+      (_sandboxName, targetAgentName) =>
+        targetAgentName === "hermes" ? "healthy" : "not-applicable",
+    );
+    vi.spyOn(registry, "getSandbox").mockImplementation(
+      () => ({ agent: agentName === "openclaw" ? null : agentName }) as never,
+    );
     vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
     vi.spyOn(messagingHostForward, "ensureMessagingHostForwardAfterRebuild").mockReturnValue(true);
   });
@@ -68,6 +76,7 @@ describe("rebuild post-restore session model reconciliation (#7102)", () => {
   function input() {
     return {
       sandboxName: "alpha",
+      targetAgentName: agentName,
       sandboxEntry: {} as never,
       messagingPlan: null,
       backupManifest: null,
@@ -97,9 +106,11 @@ describe("rebuild post-restore session model reconciliation (#7102)", () => {
 
   it("does not run OpenClaw session reconciliation for another agent", async () => {
     agentName = "hermes";
+    const args = input();
 
-    await runRebuildPostRestorePhase(input());
+    await runRebuildPostRestorePhase(args);
 
+    expect(args.bail).not.toHaveBeenCalled();
     expect(sessionModels.reconcileStalePinnedSessionModelsAfterRebuild).not.toHaveBeenCalled();
     expect(processRecovery.executeSandboxCommand).not.toHaveBeenCalled();
   });

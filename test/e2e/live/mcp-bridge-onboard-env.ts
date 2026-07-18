@@ -10,6 +10,23 @@ const EXACT_MAIN_OVERLAY_KEYS = new Set([
   "NEMOCLAW_OPENSHELL_SANDBOX_BIN",
 ]);
 
+export function buildMcpBridgeExactMainEnv(options: {
+  baseEnv?: NodeJS.ProcessEnv;
+  envOverlay?: NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+  const envOverlay = options.envOverlay ?? {};
+  for (const key of Object.keys(envOverlay)) {
+    if (!EXACT_MAIN_OVERLAY_KEYS.has(key)) {
+      throw new Error(`MCP exact-main command does not allow env overlay key '${key}'`);
+    }
+  }
+
+  return {
+    ...buildAvailabilityProbeEnv(options.baseEnv),
+    ...envOverlay,
+  };
+}
+
 export function buildMcpBridgeOnboardEnv(options: {
   agent: "openclaw" | "hermes" | "langchain-deepagents-code";
   baseEnv?: NodeJS.ProcessEnv;
@@ -19,15 +36,8 @@ export function buildMcpBridgeOnboardEnv(options: {
   envOverlay?: NodeJS.ProcessEnv;
   sandboxName: string;
 }): NodeJS.ProcessEnv {
-  const envOverlay = options.envOverlay ?? {};
-  for (const key of Object.keys(envOverlay)) {
-    if (!EXACT_MAIN_OVERLAY_KEYS.has(key)) {
-      throw new Error(`MCP exact-main onboarding does not allow env overlay key '${key}'`);
-    }
-  }
-
   return {
-    ...buildAvailabilityProbeEnv(options.baseEnv),
+    ...buildMcpBridgeExactMainEnv(options),
     COMPATIBLE_API_KEY: options.compatibleKey,
     NVIDIA_INFERENCE_API_KEY: options.compatibleKey,
     NEMOCLAW_AGENT: options.agent,
@@ -38,6 +48,5 @@ export function buildMcpBridgeOnboardEnv(options: {
     NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_SANDBOX_NAME: options.sandboxName,
     NEMOCLAW_RECREATE_SANDBOX: "1",
-    ...envOverlay,
   };
 }
