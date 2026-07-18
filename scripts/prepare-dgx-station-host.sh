@@ -81,7 +81,7 @@ readonly -a BASEOS_PACKAGE_SPECS=(
 readonly BASEOS_CLOUD_CFG_SHA256="038ba435093de59f4a21021caf6c921d63344e9aae3b88795ee5b2659f43f437"
 readonly BASEOS_CLOUD_INIT_UNIT_SHA256="e13dd95a7bfac6407ea1ce45ed6683c0f4e84c791840d305c937d38ae77d9456"
 readonly BASEOS_FLUENT_BIT_UNIT_SHA256="1854339f563e518894c156d081912595d2d6e175a1ed6692e74e88224b6bad5f"
-readonly BASEOS_FLUENT_BIT_CFG_SHA256="bb380bf6103957cdd7440dfba60107b7a3f50db3c0e75c483a6bfdb5e046201c"
+readonly BASEOS_FLUENT_BIT_CFG_NORMALIZED_SHA256="ffec8b1bcc628877b9a230c6b26313b5ee6b25c20398580832133dbb15349551"
 readonly BASEOS_FLUENT_BIT_PARSERS_SHA256="760e6a347874a6cbdc10c6cd21d82d1ee5388c8573ddfaab05ef37904749dbe1"
 readonly BASEOS_FLUENT_BIT_PLUGINS_SHA256="9d5aad2c1be151b4d35de53a460f9783f98ac3cc815ebc638b0e8489f4ecd577"
 readonly BASEOS_FWUPD_UNIT_SHA256="835e7c291761c247d3cd5c64652b768c6a7fdc7cc72fea1bf70fc92e4cb3cfd5"
@@ -389,6 +389,21 @@ file_sha256_matches() {
   [[ "$actual" == "$expected" ]]
 }
 
+baseos_fluent_bit_config_matches() {
+  local path=$1 expected=$2 actual
+  root_owned_file_is_not_writable_by_group_or_other "$path" || return 1
+  actual="$({
+    LC_ALL=C sed -E \
+      -e 's/^([[:space:]]*Add Hostname) [A-Za-z0-9][A-Za-z0-9._-]*$/\1 <HOSTNAME>/' \
+      -e 's/^([[:space:]]*Add MAC) ([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/\1 <MAC>/' \
+      -e 's/^([[:space:]]*Add IP) ([0-9]{1,3}\.){3}[0-9]{1,3}$/\1 <IP>/' \
+      "$path" \
+      | sha256sum \
+      | awk '{print $1}'
+  } 2>/dev/null)" || return 1
+  [[ "$actual" == "$expected" ]]
+}
+
 systemd_property_matches() {
   local unit=$1 property=$2 expected=$3 actual
   actual="$(systemctl show "$unit" -p "$property" --value 2>/dev/null)" || return 1
@@ -422,7 +437,8 @@ baseos_cloud_init_failure_is_qualified() {
 baseos_fluent_bit_failure_is_qualified() {
   baseos_failed_unit_matches fluent-bit.service \
     /usr/lib/systemd/system/fluent-bit.service "$BASEOS_FLUENT_BIT_UNIT_SHA256" enabled 1 \
-    && file_sha256_matches /etc/fluent-bit/fluent-bit.conf "$BASEOS_FLUENT_BIT_CFG_SHA256" \
+    && baseos_fluent_bit_config_matches \
+      /etc/fluent-bit/fluent-bit.conf "$BASEOS_FLUENT_BIT_CFG_NORMALIZED_SHA256" \
     && file_sha256_matches /etc/fluent-bit/parsers.conf "$BASEOS_FLUENT_BIT_PARSERS_SHA256" \
     && file_sha256_matches /etc/fluent-bit/plugins.conf "$BASEOS_FLUENT_BIT_PLUGINS_SHA256"
 }
@@ -867,6 +883,7 @@ common_preflight() {
   require_command getent
   require_command grep
   require_command ps
+  require_command sed
   require_command sha256sum
   require_command ss
   require_command stat

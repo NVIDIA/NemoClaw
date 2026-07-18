@@ -617,6 +617,77 @@ baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init
     expect(drifted.result.status, drifted.output).not.toBe(0);
   });
 
+  it("qualifies the BaseOS Fluent Bit template independently of host identity", () => {
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fluent-bit-"));
+    const config = path.join(configDir, "fluent-bit.conf");
+    fs.writeFileSync(
+      config,
+      [
+        "[FILTER]",
+        "    Name modify",
+        "    Match *",
+        "    Add Hostname station-a",
+        "    Add MAC A4:A6:8D:00:00:01",
+        "    Add IP 10.88.4.21",
+        "",
+      ].join("\n"),
+    );
+    const normalized = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        String.raw`sed -E -e 's/^([[:space:]]*Add Hostname) [A-Za-z0-9][A-Za-z0-9._-]*$/\1 <HOSTNAME>/' -e 's/^([[:space:]]*Add MAC) ([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/\1 <MAC>/' -e 's/^([[:space:]]*Add IP) ([0-9]{1,3}\.){3}[0-9]{1,3}$/\1 <IP>/' "$CONFIG" | sha256sum | awk '{print $1}'`,
+      ],
+      { encoding: "utf-8", env: { ...process.env, CONFIG: config } },
+    ).stdout.trim();
+
+    const exact = runSourced(
+      STATION_PREPARE,
+      `
+root_owned_file_is_not_writable_by_group_or_other() { return 0; }
+baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+`,
+      {
+        EXPECTED_SHA: normalized,
+        FLUENT_BIT_CONFIG: config,
+        PATH: process.env.PATH ?? TEST_SYSTEM_PATH,
+      },
+    );
+    expect(exact.result.status, exact.output).toBe(0);
+
+    fs.writeFileSync(config, fs.readFileSync(config, "utf-8").replace("station-a", "station-b"));
+    const differentHost = runSourced(
+      STATION_PREPARE,
+      `
+root_owned_file_is_not_writable_by_group_or_other() { return 0; }
+baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+`,
+      {
+        EXPECTED_SHA: normalized,
+        FLUENT_BIT_CONFIG: config,
+        PATH: process.env.PATH ?? TEST_SYSTEM_PATH,
+      },
+    );
+    expect(differentHost.result.status, differentHost.output).toBe(0);
+
+    fs.writeFileSync(config, fs.readFileSync(config, "utf-8").replace("Match *", "Match changed"));
+    const changedTemplate = runSourced(
+      STATION_PREPARE,
+      `
+root_owned_file_is_not_writable_by_group_or_other() { return 0; }
+baseos_fluent_bit_config_matches "$FLUENT_BIT_CONFIG" "$EXPECTED_SHA"
+`,
+      {
+        EXPECTED_SHA: normalized,
+        FLUENT_BIT_CONFIG: config,
+        PATH: process.env.PATH ?? TEST_SYSTEM_PATH,
+      },
+    );
+    expect(changedTemplate.result.status, changedTemplate.output).not.toBe(0);
+  });
+
   it("keeps stock DGX OS out of the generic package mutation path", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
