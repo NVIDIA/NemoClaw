@@ -118,6 +118,10 @@ describe("handleSandboxState", () => {
       stageSandboxCredentialProviders: vi.fn(async () => [
         { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
       ]),
+      providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+        name === "my-assistant-brave-search" &&
+        type === "brave" &&
+        credentialEnv === "BRAVE_API_KEY",
       selectResourceProfileForSandbox: vi.fn(async () => ({ cpu: "2", memory: "4Gi" })),
     });
 

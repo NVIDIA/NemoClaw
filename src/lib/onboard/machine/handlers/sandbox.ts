@@ -649,6 +649,16 @@ class SandboxStateFlow<
     return this.deps.exitProcess(1);
   }
 
+  private assertCheckpointBindingsStillLive(state: SandboxStepState<WebSearchConfig>): void {
+    const checkpoint = state.session?.checkpoint;
+    if (!checkpoint) return;
+    const bindingCheck = revalidateCheckpointBindings(
+      checkpoint,
+      this.checkpointBindingAvailability(checkpoint),
+    );
+    if (bindingCheck.status === "stale") this.rejectStaleCheckpointBindings(bindingCheck);
+  }
+
   private applyObservabilityRequest(
     state: SandboxStepState<WebSearchConfig>,
   ): SandboxStepState<WebSearchConfig> {
@@ -1093,6 +1103,7 @@ class SandboxStateFlow<
     );
     const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
       this.assertGatewayRouteCompatible(requestedSandboxName);
+      this.assertCheckpointBindingsStillLive(state);
       await this.deps.startRecordedStep("sandbox", {
         sandboxName: requestedSandboxName,
         provider: this.options.provider,

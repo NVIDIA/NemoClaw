@@ -108,7 +108,7 @@ function realStageSandboxCredentialProviders(
     persistMigratedLegacyKeys: vi.fn(),
   });
   let crashPending = crashAfterFirstSuccess;
-  return vi.fn(
+  const stageSandboxCredentialProviders = vi.fn(
     async (input: {
       sandboxName: string;
       enabledChannels: readonly string[];
@@ -126,6 +126,10 @@ function realStageSandboxCredentialProviders(
         : staged;
     },
   );
+  return {
+    stageSandboxCredentialProviders,
+    providerMatchesGatewayCredential: registration.providerMatchesGatewayCredential,
+  };
 }
 
 function sessionWithCheckpoint(checkpoint: OnboardCheckpoint): Session {
@@ -340,21 +344,23 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
   });
 
   it("safely replays web-search provider registration through the real adapter after a crash between staging and its checkpoint receipt (#7022)", async () => {
-    const stageSandboxCredentialProviders = realStageSandboxCredentialProviders(
-      [
-        {
-          name: "my-assistant-brave-search",
-          envKey: "BRAVE_API_KEY",
-          token: "brave-secret",
-          providerType: "brave",
-        },
-      ],
-      true,
-    );
+    const { stageSandboxCredentialProviders, providerMatchesGatewayCredential } =
+      realStageSandboxCredentialProviders(
+        [
+          {
+            name: "my-assistant-brave-search",
+            envKey: "BRAVE_API_KEY",
+            token: "brave-secret",
+            providerType: "brave",
+          },
+        ],
+        true,
+      );
     const { deps, getSession } = createDeps({
       getSandboxReuseState: () => "missing",
       configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
       stageSandboxCredentialProviders,
+      providerMatchesGatewayCredential,
     });
 
     await expect(handleSandboxState({ ...baseOptions(deps), resume: false })).rejects.toThrow(
@@ -381,21 +387,23 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
   });
 
   it("safely replays messaging provider registration through the real adapter after a crash between staging and its checkpoint receipt (#7022)", async () => {
-    const stageSandboxCredentialProviders = realStageSandboxCredentialProviders(
-      [
-        {
-          name: "my-assistant-discord-bridge",
-          envKey: "DISCORD_BOT_TOKEN",
-          token: "discord-secret",
-        },
-      ],
-      true,
-    );
+    const { stageSandboxCredentialProviders, providerMatchesGatewayCredential } =
+      realStageSandboxCredentialProviders(
+        [
+          {
+            name: "my-assistant-discord-bridge",
+            envKey: "DISCORD_BOT_TOKEN",
+            token: "discord-secret",
+          },
+        ],
+        true,
+      );
     const messagingPlan = makeMinimalPlan("my-assistant", "openclaw", ["discord"]);
     const { deps, getSession } = createDeps({
       getSandboxReuseState: () => "missing",
       readMessagingPlanFromEnv: () => messagingPlan,
       stageSandboxCredentialProviders,
+      providerMatchesGatewayCredential,
     });
 
     await expect(handleSandboxState({ ...baseOptions(deps), resume: false })).rejects.toThrow(
@@ -440,6 +448,46 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
+  });
+
+  it("re-revalidates checkpoint bindings immediately before the locked destructive create, catching a race after the initial check (#7022)", async () => {
+    let liveCheckCount = 0;
+    const providerMatchesGatewayCredential = vi.fn(() => {
+      liveCheckCount += 1;
+      return liveCheckCount === 1;
+    });
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        effectGroups: {},
+        bindings: {
+          credentialEnvs: [],
+          registeredProviders: [
+            { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+          ],
+        },
+      }),
+    );
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "missing",
+      providerMatchesGatewayCredential,
+      updateSession,
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(liveCheckCount).toBeGreaterThan(1);
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.error.mock.calls.flat().join("\n")).toContain("my-assistant-brave-search");
   });
 
   it("resumes a non-interactive onboarding attempt that crashed after create succeeded but before its completion receipt (#7022)", async () => {
