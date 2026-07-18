@@ -568,7 +568,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Error'",
@@ -621,7 +621,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Ready'",
@@ -710,7 +710,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo '  Name: alpha'",
           "  echo '  Phase: Error'",

@@ -90,7 +90,7 @@ describe("CLI sandbox status text output", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Ready'",
@@ -145,7 +145,7 @@ describe("CLI sandbox status text output", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "dcode-station" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "dcode-station" ] || [ "$5" = "dcode-station" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: dcode-station'",
         "  echo '  Phase: Ready'",
@@ -201,7 +201,7 @@ describe("CLI sandbox status text output", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Ready'",
@@ -329,7 +329,7 @@ describe("CLI sandbox status text output", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Error'",
@@ -423,7 +423,7 @@ describe("CLI sandbox status text output", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo '  Name: alpha'",
           "  echo '  Phase: Error'",
@@ -493,7 +493,7 @@ describe("CLI sandbox status text output", () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo",
           "  echo '  Id: abc'",
