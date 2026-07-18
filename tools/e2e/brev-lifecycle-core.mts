@@ -287,10 +287,16 @@ export function assertInstanceName(value: string | undefined): string {
   return value;
 }
 
-/** Validate an owner/repo slug before it is spliced into gh api paths. */
+/**
+ * Validate an owner/repo slug before it is spliced into gh api paths. Dot-only
+ * components ("." or "..") would traverse to a different API endpoint.
+ */
 export function assertRepository(value: string | undefined): string {
   if (!value || !REPOSITORY_PATTERN.test(value)) {
     throw new Error("repository must be an owner/name slug");
+  }
+  if (value.split("/").some((component) => /^\.+$/u.test(component))) {
+    throw new Error("repository must be an owner/name slug without dot-only components");
   }
   return value;
 }

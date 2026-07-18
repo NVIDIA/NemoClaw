@@ -353,6 +353,12 @@ describe("environment argv guards (option-injection rejection) (#6962)", () => {
     }
   });
 
+  it("rejects dot-only repository components that would traverse API paths", () => {
+    for (const bad of ["../target", "owner/..", "./name", "owner/.", "../.."]) {
+      expect(() => assertRepository(bad)).toThrow(/owner\/name/);
+    }
+  });
+
   it("accepts decimal or empty run identifiers and rejects the rest", () => {
     expect(assertRunIdentifier("29585396577", "RUN_ID")).toBe("29585396577");
     expect(assertRunIdentifier("", "RUN_ID")).toBe("");
