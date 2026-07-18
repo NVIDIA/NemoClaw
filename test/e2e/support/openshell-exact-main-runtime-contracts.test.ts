@@ -141,9 +141,10 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
 
     expect(syntax.status, syntax.stderr).toBe(0);
     expect(script).toContain("/var/run/netns/sandbox-*");
+    expect(script).toContain('ip netns pids "$namespace" 2>/dev/null');
     expect(script).toContain('nsenter --net="$namespace_path"');
     expect(script).toContain("exec nft -j list table inet openshell_bypass");
-    expect(script).toContain('if [ "$namespace_count" -gt 1 ]');
+    expect(script).toContain('if [ "$active_namespace_count" -gt 1 ]');
   });
 
   it("rejects the feasible sequential-install partial state instead of calling it green", () => {
