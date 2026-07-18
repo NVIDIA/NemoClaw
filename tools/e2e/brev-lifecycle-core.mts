@@ -266,3 +266,49 @@ export function assertTestedShaCurrent(currentSha: string, testedSha: string): v
     throw new Error("PR head moved after Brev validation; refusing to report stale evidence");
   }
 }
+
+const INSTANCE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
+const REPOSITORY_PATTERN = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/u;
+const RUN_IDENTIFIER_PATTERN = /^[0-9]+$/u;
+const RELATIVE_DIR_PATTERN = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/u;
+
+/**
+ * Validate an instance name before it becomes ssh/scp/brev argv. A leading
+ * "-" would be parsed as an option (ssh -oProxyCommand=... executes commands),
+ * so names must start with an alphanumeric and stay within the shape the
+ * workflow generates (e2e-<pr>-<suite>-<run id>-<run attempt>).
+ */
+export function assertInstanceName(value: string | undefined): string {
+  if (!value || !INSTANCE_NAME_PATTERN.test(value)) {
+    throw new Error(
+      "instance name must start alphanumeric and contain only [A-Za-z0-9._-]",
+    );
+  }
+  return value;
+}
+
+/** Validate an owner/repo slug before it is spliced into gh api paths. */
+export function assertRepository(value: string | undefined): string {
+  if (!value || !REPOSITORY_PATTERN.test(value)) {
+    throw new Error("repository must be an owner/name slug");
+  }
+  return value;
+}
+
+/** Validate a numeric run identifier; empty stays empty for URL fallback. */
+export function assertRunIdentifier(value: string, field: string): string {
+  if (value !== "" && !RUN_IDENTIFIER_PATTERN.test(value)) {
+    throw new Error(`${field} must be a decimal run identifier`);
+  }
+  return value;
+}
+
+/** Validate a debug-bundle destination as a plain relative directory path. */
+export function assertRelativeDirPath(value: string): string {
+  if (!RELATIVE_DIR_PATTERN.test(value) || value.includes("..")) {
+    throw new Error(
+      "destination directory must be a relative path without traversal and must not start with '-'",
+    );
+  }
+  return value;
+}

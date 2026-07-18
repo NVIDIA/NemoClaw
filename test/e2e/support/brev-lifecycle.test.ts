@@ -16,7 +16,11 @@ import {
   reportPr,
 } from "../../../tools/e2e/brev-lifecycle.mts";
 import {
+  assertInstanceName,
   assertPrNumber,
+  assertRelativeDirPath,
+  assertRepository,
+  assertRunIdentifier,
   assertTestedShaCurrent,
   BREV_CLI_SHA256,
   brevCliDownloadUrl,
@@ -44,7 +48,7 @@ function fakeLogger(): Logger & { lines: string[] } {
 const ok = (stdout = ""): CommandResult => ({ status: 0, stdout, stderr: "" });
 const fail = (stderr = "boom", status = 1): CommandResult => ({ status, stdout: "", stderr });
 
-describe("selectBrevLogin (install/auth branches, #6962)", () => {
+describe("selectBrevLogin (install/auth branches) (#6962)", () => {
   it("prefers API-key/organization login when both are present", () => {
     expect(selectBrevLogin({ apiKey: "k", orgId: "o", apiToken: "legacy" })).toEqual({
       kind: "api-key",
@@ -130,7 +134,7 @@ describe("installBrevCli (#6962)", () => {
   });
 });
 
-describe("normalizeBrevList / presence (brev ls --json variants, #6962)", () => {
+describe("normalizeBrevList / presence (brev ls --json variants) (#6962)", () => {
   it("accepts a bare array of instance objects", () => {
     expect(normalizeBrevList([{ name: "a" }, { name: "b" }])).toHaveLength(2);
   });
@@ -163,7 +167,7 @@ describe("normalizeBrevList / presence (brev ls --json variants, #6962)", () => 
   });
 });
 
-describe("deleteBrevInstance (deletion outcomes, #6962)", () => {
+describe("deleteBrevInstance (deletion outcomes) (#6962)", () => {
   function deleteRunners(overrides: Partial<DeleteRunners> = {}): DeleteRunners & {
     logger: Logger & { lines: string[] };
   } {
@@ -253,7 +257,7 @@ describe("deleteBrevInstance (deletion outcomes, #6962)", () => {
   });
 });
 
-describe("classifyValidationResult (result mapping, #6962)", () => {
+describe("classifyValidationResult (result mapping) (#6962)", () => {
   it("maps each job result to its conclusion, status, and emoji", () => {
     expect(classifyValidationResult("success")).toEqual({
       conclusion: "success",
@@ -306,7 +310,7 @@ describe("renderBrevPrComment (#6962)", () => {
   });
 });
 
-describe("assertPrNumber / assertTestedShaCurrent (stale-head rejection, #6962)", () => {
+describe("assertPrNumber / assertTestedShaCurrent (stale-head rejection) (#6962)", () => {
   it("accepts a positive integer PR number and rejects the rest", () => {
     expect(assertPrNumber("6842")).toBe("6842");
     for (const bad of [undefined, "", "0", "-3", "12a", "abc"]) {
@@ -331,7 +335,41 @@ describe("assertPrNumber / assertTestedShaCurrent (stale-head rejection, #6962)"
   });
 });
 
-describe("reportPr (publication guard, #6962)", () => {
+describe("environment argv guards (option-injection rejection) (#6962)", () => {
+  it("accepts the workflow-generated instance name shape", () => {
+    expect(assertInstanceName("e2e-6983-full-29585396577-1")).toBe("e2e-6983-full-29585396577-1");
+  });
+
+  it("rejects instance names that could become ssh/scp/brev options", () => {
+    for (const bad of [undefined, "", "-oProxyCommand=evil", "a b", "a;b", "a$(x)"]) {
+      expect(() => assertInstanceName(bad)).toThrow(/instance name/);
+    }
+  });
+
+  it("accepts an owner/name repository slug and rejects the rest", () => {
+    expect(assertRepository("NVIDIA/NemoClaw")).toBe("NVIDIA/NemoClaw");
+    for (const bad of [undefined, "", "NVIDIA", "a/b/c", "owner/repo?x=1"]) {
+      expect(() => assertRepository(bad)).toThrow(/owner\/name/);
+    }
+  });
+
+  it("accepts decimal or empty run identifiers and rejects the rest", () => {
+    expect(assertRunIdentifier("29585396577", "RUN_ID")).toBe("29585396577");
+    expect(assertRunIdentifier("", "RUN_ID")).toBe("");
+    for (const bad of ["1e3", "-1", "12/attempts", "abc"]) {
+      expect(() => assertRunIdentifier(bad, "RUN_ID")).toThrow(/RUN_ID/);
+    }
+  });
+
+  it("accepts a plain relative destination directory and rejects the rest", () => {
+    expect(assertRelativeDirPath("brev-debug-bundle")).toBe("brev-debug-bundle");
+    for (const bad of ["-r", "/etc", "../escape", "a b"]) {
+      expect(() => assertRelativeDirPath(bad)).toThrow(/destination directory/);
+    }
+  });
+});
+
+describe("reportPr (publication guard) (#6962)", () => {
   function reportRunners(headSha: string): ReportPrRunners & {
     checks: unknown[];
     comments: unknown[];
@@ -399,7 +437,7 @@ describe("reportPr (publication guard, #6962)", () => {
   });
 });
 
-describe("resolveValidationJobUrl (#6978 behavior preserved)", () => {
+describe("resolveValidationJobUrl (behavior preserved) (#6978)", () => {
   const base = {
     runId: "123",
     runAttempt: "2",

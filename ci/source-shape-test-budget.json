@@ -33,6 +33,11 @@
     },
     {
       "file": "test/brev-nightly-workflow.test.ts",
+      "test": "gives the reporter the run identity it needs to link the validated job",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/brev-nightly-workflow.test.ts",
       "test": "grants the reusable workflow permission ceiling so GitHub can start the run",
       "category": "security"
     },

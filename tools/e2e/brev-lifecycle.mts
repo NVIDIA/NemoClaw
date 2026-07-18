@@ -30,7 +30,11 @@ import { pathToFileURL } from "node:url";
 
 import { parseArgs } from "../advisors/io.mts";
 import {
+  assertInstanceName,
   assertPrNumber,
+  assertRelativeDirPath,
+  assertRepository,
+  assertRunIdentifier,
   assertTestedShaCurrent,
   BREV_CLI_SHA256,
   BREV_CLI_VERSION,
@@ -344,10 +348,18 @@ async function runInstallCli(): Promise<void> {
         return Buffer.from(await response.arrayBuffer());
       },
       extractBrevBinary: (tarball) => {
-        const tmp = path.join(os.tmpdir(), "brev.tar.gz");
-        fs.writeFileSync(tmp, tarball);
-        const extract = run("tar", ["-xzf", tmp, "-C", "/usr/local/bin", "brev"]);
-        if (extract.status !== 0) throw new Error(`tar extraction failed: ${extract.stderr}`);
+        // mkdtemp gives the tarball a private, unpredictable directory; a fixed
+        // name in the shared temp dir could be pre-created or symlinked by
+        // another local user before tar extracts into /usr/local/bin.
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "brev-cli-"));
+        try {
+          const tmp = path.join(tmpDir, "brev.tar.gz");
+          fs.writeFileSync(tmp, tarball);
+          const extract = run("tar", ["-xzf", tmp, "-C", "/usr/local/bin", "brev"]);
+          if (extract.status !== 0) throw new Error(`tar extraction failed: ${extract.stderr}`);
+        } finally {
+          fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
         fs.chmodSync("/usr/local/bin/brev", 0o755);
       },
       brevLogin: (apiKey, orgId) => {
@@ -375,8 +387,8 @@ async function runInstallCli(): Promise<void> {
 
 function runCollectDebug(): void {
   const run = realRunner();
-  const instance = requireEnv("INSTANCE_NAME");
-  const destDir = process.env.DEST_DIR ?? "brev-debug-bundle";
+  const instance = assertInstanceName(requireEnv("INSTANCE_NAME"));
+  const destDir = assertRelativeDirPath(process.env.DEST_DIR ?? "brev-debug-bundle");
   fs.mkdirSync(destDir, { recursive: true });
   const quietSsh = ["-o", "StrictHostKeyChecking=no", "-o", "LogLevel=ERROR"];
   collectBrevDebugBundle(instance, destDir, {
@@ -393,7 +405,7 @@ function runCollectDebug(): void {
 
 async function runDeleteInstance(): Promise<void> {
   const run = realRunner();
-  const instance = requireEnv("INSTANCE_NAME");
+  const instance = assertInstanceName(requireEnv("INSTANCE_NAME"));
   const result = await deleteBrevInstance(instance, {
     hasBrevCli: () => run("bash", ["-c", "command -v brev >/dev/null 2>&1"]).status === 0,
     brevDelete: (name) => run("brev", ["delete", name], { timeoutMs: 30_000 }),
@@ -417,7 +429,7 @@ async function runDeleteInstance(): Promise<void> {
 
 function runReportPr(): void {
   const run = realRunner();
-  const repo = requireEnv("GITHUB_REPOSITORY");
+  const repo = assertRepository(requireEnv("GITHUB_REPOSITORY"));
   const gh = (args: string[]): CommandResult => run("gh", args);
   reportPr(
     {
@@ -426,10 +438,10 @@ function runReportPr(): void {
       validationResult: requireEnv("VALIDATION_RESULT"),
       testedSha: process.env.TESTED_SHA ?? "",
       keepAlive: process.env.KEEP_ALIVE === "true",
-      instanceName: requireEnv("INSTANCE_NAME"),
+      instanceName: assertInstanceName(requireEnv("INSTANCE_NAME")),
       runUrl: requireEnv("RUN_URL"),
-      runId: process.env.RUN_ID ?? "",
-      runAttempt: process.env.RUN_ATTEMPT ?? "",
+      runId: assertRunIdentifier(process.env.RUN_ID ?? "", "RUN_ID"),
+      runAttempt: assertRunIdentifier(process.env.RUN_ATTEMPT ?? "", "RUN_ATTEMPT"),
     },
     {
       getPrHead: (prNumber) => {
@@ -481,9 +493,11 @@ function runReportPr(): void {
         if (result.status !== 0) throw new Error(`check-run creation failed: ${result.stderr}`);
       },
       postComment: (prNumber, body) => {
-        const bodyFile = path.join(os.tmpdir(), `brev-e2e-comment-${prNumber}.md`);
-        fs.writeFileSync(bodyFile, body);
-        const result = gh(["pr", "comment", prNumber, "--repo", repo, "--body-file", bodyFile]);
+        // The body travels over stdin; a predictable file in the shared temp
+        // dir could be swapped by another local user between write and read.
+        const result = run("gh", ["pr", "comment", prNumber, "--repo", repo, "--body-file", "-"], {
+          input: body,
+        });
         if (result.status !== 0) throw new Error(`PR comment failed: ${result.stderr}`);
       },
     },
