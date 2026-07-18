@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly SCRIPT_VERSION="2026-07-17.4"
+readonly SCRIPT_VERSION="2026-07-18.1"
 readonly REBOOT_REQUIRED_EXIT=10
 readonly LOGIN_REQUIRED_EXIT=11
 readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
@@ -1358,6 +1358,13 @@ verify_dgx_os_runtime_sudo() {
     || fatal "The local Docker daemon is not reachable with sudo on the Station factory image"
   station_sudo_local_default_docker buildx version >/dev/null 2>&1 \
     || fatal "Docker Buildx is unavailable on the Station factory image"
+  if [[ "$STATION_HOST_PROFILE" == "ai-developer-tools" ]]; then
+    if sudo nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all'; then
+      info "cdi=nvidia.com/gpu=all source=factory_runtime"
+    else
+      refresh_cdi
+    fi
+  fi
   sudo nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all' \
     || fatal "The Station factory image does not advertise the nvidia.com/gpu=all CDI device"
   ensure_dgx_os_acceptance_image
