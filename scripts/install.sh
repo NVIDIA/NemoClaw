@@ -2576,22 +2576,37 @@ recover_preexisting_sandboxes_before_onboard() {
   # src/lib/actions/upgrade-sandboxes.ts.
   local recovery_log=""
   recovery_log="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-recovery-XXXXXX" 2>/dev/null)" || recovery_log=""
-  local recovery_status=0
+  local recovery_status=0 recovery_pass=1
   if [ -n "$recovery_log" ]; then
     _cleanup_files+=("$recovery_log")
-    if NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
-      "$cli_runner" upgrade-sandboxes --auto 2>&1 | tee "$recovery_log"; then
-      recovery_status=0
-    else
-      # pipefail: take the CLI's own status, not tee's — a log-write failure
-      # (e.g. ENOSPC on TMPDIR) must not convert a successful recovery into
-      # the #5735 failure path.
-      recovery_status=${PIPESTATUS[0]}
-    fi
-  else
-    NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
-      "$cli_runner" upgrade-sandboxes --auto 2>&1 || recovery_status=$?
   fi
+  while [ "$recovery_pass" -le 2 ]; do
+    recovery_status=0
+    if [ -n "$recovery_log" ]; then
+      if NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
+        "$cli_runner" upgrade-sandboxes --auto 2>&1 | tee "$recovery_log"; then
+        recovery_status=0
+      else
+        # pipefail: take the CLI's own status, not tee's — a log-write failure
+        # (e.g. ENOSPC on TMPDIR) must not convert a successful recovery into
+        # the #5735 failure path.
+        recovery_status=${PIPESTATUS[0]}
+      fi
+    else
+      NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
+        "$cli_runner" upgrade-sandboxes --auto 2>&1 || recovery_status=$?
+    fi
+    [ "$recovery_status" -eq 0 ] || break
+    if [ "$recovery_pass" -eq 1 ]; then
+      # #7091: the replaced gateway can briefly retain the old supervisor's
+      # Ready row before that sandbox exits. Recheck beyond the observed
+      # eight-second failure window so the validated backup recovery path sees
+      # the real phase instead of letting the installer report false success.
+      info "Verifying pre-existing sandboxes remain healthy…"
+      sleep 10
+    fi
+    recovery_pass=$((recovery_pass + 1))
+  done
   if [ "$recovery_status" -eq 0 ]; then
     _PREEXISTING_SANDBOX_RECOVERY_RAN=true
     if [ -n "$recovery_log" ] \
