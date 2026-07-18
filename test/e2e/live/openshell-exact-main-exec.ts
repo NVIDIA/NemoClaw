@@ -42,8 +42,9 @@ proc = matches[0]
 status = {}
 for line in (proc / "status").read_text(encoding="utf-8").splitlines():
     name, separator, value = line.partition(":")
-    if separator:
-        status[name] = value.strip().split()[0]
+    fields = value.strip().split()
+    if separator and fields:
+        status[name] = fields[0]
 cap_bnd = status.get("CapBnd", "")
 if not cap_bnd or set(cap_bnd) != {"0"}:
     raise SystemExit(f"entrypoint retained capability bounding set {cap_bnd or '<missing>'}")
@@ -69,8 +70,9 @@ tls_names = {${SUPERVISOR_TLS_ENV_NAMES.map((name) => JSON.stringify(name)).join
 status = {}
 for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
     name, separator, value = line.partition(":")
-    if separator:
-        status[name] = value.strip().split()[0]
+    fields = value.strip().split()
+    if separator and fields:
+        status[name] = fields[0]
 cap_bnd = status.get("CapBnd", "")
 if not cap_bnd or set(cap_bnd) != {"0"}:
     raise SystemExit(f"exec child retained capability bounding set {cap_bnd or '<missing>'}")

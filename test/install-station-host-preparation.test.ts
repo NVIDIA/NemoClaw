@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  assertStationExpressInstallerResumeMatches,
   clearStationExpressInstallerResume,
   withStationExpressResumeEnvironment,
 } from "../src/lib/onboard/station-express-resume";
@@ -73,11 +74,15 @@ printf 'RESULT PROVIDER=%s STATION_EXPRESS=%s\n' "\${NEMOCLAW_PROVIDER:-}" "\${N
 }
 
 describe("DGX Station host preparation", () => {
-  it("uses the documented plain-Ubuntu driver-injection probe for CDI and --gpus", () => {
+  it("uses the documented plain-Ubuntu probe and verifies the GB300 row", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-sudo() { printf 'SUDO %s\\n' "$*"; }
+STATION_HOST_PROFILE=generic-ubuntu
+sudo() {
+  printf 'SUDO %s\\n' "$*" >&2
+  printf 'NVIDIA GB300, 610.43.02, 0, 0\\n'
+}
 run_cdi_test_sudo
 run_gpus_test_sudo
 `,
@@ -87,9 +92,10 @@ run_gpus_test_sudo
       "docker.io/library/ubuntu@sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab";
     expect(result.status, output).toBe(0);
     expect(output).toContain(
-      `SUDO docker run --rm --device nvidia.com/gpu=all ${image} nvidia-smi`,
+      `SUDO docker run --rm --device nvidia.com/gpu=all ${image} nvidia-smi --query-gpu=`,
     );
-    expect(output).toContain(`SUDO docker run --rm --gpus all ${image} nvidia-smi`);
+    expect(output).toContain(`SUDO docker run --rm --gpus all ${image} nvidia-smi --query-gpu=`);
+    expect(output).toContain("gpu=NVIDIA GB300 role=inference");
   });
 
   it.each([
@@ -1106,9 +1112,13 @@ ensure_station_express_host
 
     expect(result.status, output).toBe(10);
     expect(fs.readFileSync(stateFile, "utf-8")).toBe(
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n` +
+        "agent=openclaw\nsandbox=my-assistant\npolicy_tier=balanced\n",
     );
     expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
+    expect(() =>
+      assertStationExpressInstallerResumeMatches(STATION_GENERATION, { HOME: home }),
+    ).not.toThrow();
     expect(output).toContain(`NEMOCLAW_INSTALL_TAG=${STATION_REVISION}`);
   });
 

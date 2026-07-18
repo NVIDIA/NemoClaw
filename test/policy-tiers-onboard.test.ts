@@ -95,6 +95,7 @@ type SetupHarnessOptions = {
   customPresets?: TestPreset[];
   customOwnsObservability?: boolean;
   recordedPolicyTier?: string | null;
+  nonInteractive?: boolean;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -106,6 +107,7 @@ function createSetupHarness({
   customPresets = [],
   customOwnsObservability = false,
   recordedPolicyTier = null,
+  nonInteractive = true,
   env = {},
 }: SetupHarnessOptions = {}) {
   const notes: string[] = [];
@@ -142,7 +144,7 @@ function createSetupHarness({
     localInferenceProviders: ["ollama-local", "vllm-local"],
     step: () => undefined,
     note: (message) => notes.push(message),
-    isNonInteractive: () => true,
+    isNonInteractive: () => nonInteractive,
     waitForSandboxReady: () => true,
     syncPresetSelection: (sandboxName, current, selected, accessByName) => {
       syncCalls.push({
@@ -161,9 +163,13 @@ function createSetupHarness({
       tierUpdates.push({ sandboxName, policyTier });
     },
     getRecordedPolicyTier: () => recordedPolicyTier,
-    selectTierPresetsAndAccess: async (selectedTier, presets, extraSelected) => {
+    selectTierPresetsAndAccess: async (selectedTier, presets, initialSelected) => {
       const promptHarness = createPromptHarness();
-      return promptHarness.helpers.selectTierPresetsAndAccess(selectedTier, presets, extraSelected);
+      return promptHarness.helpers.selectTierPresetsAndAccess(
+        selectedTier,
+        presets,
+        initialSelected,
+      );
     },
     parsePolicyPresetEnv,
     env: {
@@ -467,6 +473,46 @@ describe("policy tier setup", () => {
     assert.ok(!result.applied.includes("brave"));
     assert.ok(result.removedCalls.includes("brave"));
     assert.ok(!result.appliedCalls.includes("brave"));
+  });
+
+  it.each([
+    ["OpenClaw", "openclaw", "no web search", null, []],
+    [
+      "OpenClaw",
+      "openclaw",
+      "Brave Search",
+      { fetchEnabled: true, provider: "brave" as const },
+      ["brave"],
+    ],
+    [
+      "OpenClaw",
+      "openclaw",
+      "Tavily Search",
+      { fetchEnabled: true, provider: "tavily" as const },
+      ["tavily"],
+    ],
+    ["Hermes", "hermes", "no web search", null, []],
+    [
+      "Hermes",
+      "hermes",
+      "Tavily Search",
+      { fetchEnabled: true, provider: "tavily" as const },
+      ["tavily"],
+    ],
+  ])("preselects only the matching web-search preset for fresh interactive %s onboarding with %s (#7125)", async (_agentLabel, agent, _searchLabel, webSearchConfig, expectedSearchPresets) => {
+    const result = await runPolicySetup(
+      { tierName: "balanced", nonInteractive: false },
+      {
+        agent,
+        webSearchConfig,
+        webSearchSupported: true,
+      },
+    );
+
+    assert.deepEqual(
+      result.applied.filter((name) => name === "brave" || name === "tavily"),
+      expectedSearchPresets,
+    );
   });
 
   it("keeps explicitly requested built-in Brave when web search is supported", async () => {
@@ -797,10 +843,10 @@ describe("policy tier setup", () => {
 describe("selectTierPresetsAndAccess", () => {
   async function resolve(
     tierName: string,
-    extraSelected: string[] = [],
+    initialSelected?: string[],
   ): Promise<Array<{ name: string; access: string }>> {
     const { helpers } = createPromptHarness();
-    return helpers.selectTierPresetsAndAccess(tierName, policy.listPresets(), extraSelected);
+    return helpers.selectTierPresetsAndAccess(tierName, policy.listPresets(), initialSelected);
   }
 
   it("returns tier presets with their default access levels", async () => {
@@ -819,20 +865,19 @@ describe("selectTierPresetsAndAccess", () => {
     assert.deepEqual(await resolve("restricted"), []);
   });
 
-  it("adds a non-tier preset to the initial checked set through extraSelected", async () => {
-    const names = (await resolve("balanced", ["slack"])).map((preset) => preset.name);
-    assert.ok(names.includes("slack"), "slack should be included via extraSelected");
-    assert.ok(names.includes("npm"), "npm (tier default) should still be included");
+  it("uses an explicit initial checked set when provided", async () => {
+    const names = (await resolve("balanced", ["npm", "slack"])).map((preset) => preset.name);
+    assert.deepEqual(names, ["npm", "slack"]);
   });
 
-  it("silently filters an invalid extraSelected preset name", async () => {
+  it("silently filters an invalid initial preset name", async () => {
     const names = (await resolve("balanced", ["nonexistent-preset"])).map((preset) => preset.name);
     assert.ok(!names.includes("nonexistent-preset"), "invalid preset should be dropped");
   });
 
   it("returns tier presets before non-tier presets", async () => {
-    const names = (await resolve("balanced", ["slack"])).map((preset) => preset.name);
     const tierNames = ["npm", "pypi", "huggingface", "brew", "brave"];
+    const names = (await resolve("balanced", [...tierNames, "slack"])).map((preset) => preset.name);
     const lastTierIdx = Math.max(...tierNames.map((name) => names.indexOf(name)));
     const slackIdx = names.indexOf("slack");
     assert.ok(slackIdx > lastTierIdx, "non-tier preset (slack) should appear after tier presets");

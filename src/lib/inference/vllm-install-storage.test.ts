@@ -145,6 +145,7 @@ describe("managed vLLM install storage", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getGpuIndicesByName.mockReturnValue([0]);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);

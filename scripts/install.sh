@@ -748,6 +748,7 @@ usage() {
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
+  printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -3021,8 +3022,16 @@ detect_express_platform() {
   if is_station_gb300_product "$model"; then
     release_state="$(classify_dgx_station_release)"
     case "$release_state" in
-      generic-ubuntu | supported-dgx-os) printf "DGX Station" ;;
-      *) printf "Unsupported DGX Station OS" ;;
+      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+        printf "DGX Station"
+        ;;
+      *)
+        if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+          printf "DGX Station"
+        else
+          printf "Unsupported DGX Station OS"
+        fi
+        ;;
     esac
     return
   fi
@@ -3036,7 +3045,7 @@ validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "This DGX Station OS image is outside the validated Station express boundary. Use generic Ubuntu 24.04 ARM64 or stock DGX OS 7.2.0, 7.4.0, or 7.5.0 on Station GB300."
+      error "This DGX Station OS image is outside the validated Station express boundary. Use generic Ubuntu 24.04 ARM64, stock DGX OS 7.2.0, 7.4.0, or 7.5.0, or an explicitly qualified Station factory image."
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
@@ -3072,6 +3081,42 @@ express_prompt_can_read_tty() {
 
 fail_station_deepseek_terminal_required() {
   error "--station-deepseek selects the DGX Station express prompt, which needs an interactive terminal. Re-run from a terminal (for a curl|bash pipe, /dev/tty must be available), or omit --station-deepseek and configure the install non-interactively."
+}
+
+fail_force_station_terminal_required() {
+  error "--force-station-install selects the DGX Station express prompt, which needs an interactive terminal. Re-run from a terminal (for a curl|bash pipe, /dev/tty must be available), or omit --force-station-install."
+}
+
+validate_force_station_install_override() {
+  local platform="$1" release_state
+  if [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
+    return 0
+  fi
+  if [ "$platform" != "DGX Station" ]; then
+    error "--force-station-install requires DGX Station GB300 hardware (detected: ${platform:-unsupported platform})."
+  fi
+  release_state="$(classify_dgx_station_release)"
+  case "$release_state" in
+    generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+      error "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
+      ;;
+  esac
+  if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    error "--force-station-install cannot be combined with NEMOCLAW_NO_EXPRESS=1. Remove one override."
+  fi
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    local trigger_note=""
+    if [ -n "${NON_INTERACTIVE_SOURCE:-}" ]; then
+      trigger_note=" (triggered by: ${NON_INTERACTIVE_SOURCE})"
+    fi
+    error "--force-station-install selects the DGX Station express prompt and cannot be combined with non-interactive mode${trigger_note}."
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    error "--force-station-install conflicts with NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER}. Remove the provider override to use Station express install."
+  fi
+  if ! express_prompt_can_read_tty; then
+    fail_force_station_terminal_required
+  fi
 }
 
 validate_station_deepseek_override() {
@@ -3127,6 +3172,7 @@ preflight_explicit_express_flags() {
   local platform
   platform="$(detect_express_platform)"
   validate_express_platform_boundary "$platform"
+  validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
 }
 
@@ -3171,6 +3217,26 @@ station_express_resume_file() {
 validate_station_express_resume_model() {
   local model="${1:-}"
   [[ ${#model} -le 255 && "$model" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]
+}
+
+validate_station_express_resume_agent() {
+  case "${1:-}" in
+    openclaw | hermes | langchain-deepagents-code) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_station_express_resume_sandbox() {
+  local sandbox="${1:-}"
+  [[ ${#sandbox} -le 63 ]] \
+    && { [[ "$sandbox" =~ ^[a-z]$ ]] || [[ "$sandbox" =~ ^[a-z][a-z0-9-]*[a-z0-9]$ ]]; }
+}
+
+validate_station_express_resume_policy_tier() {
+  case "${1:-}" in
+    restricted | balanced | open) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 validate_station_express_resume_revision() {
@@ -3242,7 +3308,8 @@ assert_station_express_resume_directory_safe() {
 }
 
 load_station_express_resume() {
-  local state_file revision_line model_line generation_line line_count saved_revision current_revision
+  local state_file revision_line model_line generation_line agent_line sandbox_line policy_tier_line
+  local line_count saved_revision current_revision saved_agent saved_sandbox saved_policy_tier current_agent
   state_file="$(station_express_resume_file)" || return 1
   assert_nemoclaw_state_path_safe "$state_file"
   [[ -e "$state_file" || -L "$state_file" ]] || return 1
@@ -3251,27 +3318,58 @@ load_station_express_resume() {
   revision_line="$(sed -n '1p' "$state_file")"
   model_line="$(sed -n '2p' "$state_file")"
   generation_line="$(sed -n '3p' "$state_file")"
+  agent_line="$(sed -n '4p' "$state_file")"
+  sandbox_line="$(sed -n '5p' "$state_file")"
+  policy_tier_line="$(sed -n '6p' "$state_file")"
   saved_revision="${revision_line#revision=}"
   NEMOCLAW_VLLM_MODEL="${model_line#model=}"
   _STATION_EXPRESS_RESUME_GENERATION="${generation_line#generation=}"
-  if [[ "$line_count" != "3" || "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${NEMOCLAW_VLLM_MODEL}" || "$generation_line" != "generation=${_STATION_EXPRESS_RESUME_GENERATION}" ]] \
+  if [[ "$line_count" == "3" ]]; then
+    saved_agent=openclaw
+    saved_sandbox=my-assistant
+    saved_policy_tier=balanced
+  elif [[ "$line_count" == "6" ]]; then
+    saved_agent="${agent_line#agent=}"
+    saved_sandbox="${sandbox_line#sandbox=}"
+    saved_policy_tier="${policy_tier_line#policy_tier=}"
+  else
+    error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
+  fi
+  if [[ "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${NEMOCLAW_VLLM_MODEL}" || "$generation_line" != "generation=${_STATION_EXPRESS_RESUME_GENERATION}" ]] \
+    || { [[ "$line_count" == "6" ]] && [[ "$agent_line" != "agent=${saved_agent}" || "$sandbox_line" != "sandbox=${saved_sandbox}" || "$policy_tier_line" != "policy_tier=${saved_policy_tier}" ]]; } \
     || ! validate_station_express_resume_revision "$saved_revision" \
     || ! validate_station_express_resume_model "$NEMOCLAW_VLLM_MODEL" \
-    || ! validate_station_express_resume_generation "$_STATION_EXPRESS_RESUME_GENERATION"; then
+    || ! validate_station_express_resume_generation "$_STATION_EXPRESS_RESUME_GENERATION" \
+    || ! validate_station_express_resume_agent "$saved_agent" \
+    || ! validate_station_express_resume_sandbox "$saved_sandbox" \
+    || ! validate_station_express_resume_policy_tier "$saved_policy_tier"; then
     error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
   fi
   current_revision="$(station_installer_revision)"
   if [[ "$current_revision" != "$saved_revision" ]]; then
     error "DGX Station express resume requires NemoClaw revision ${saved_revision}, but this installer is ${current_revision}. Rerun with: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=${saved_revision} bash"
   fi
+  current_agent="${NEMOCLAW_AGENT:-openclaw}"
+  if [[ "$current_agent" != "$saved_agent" ]]; then
+    error "DGX Station express resume requires NEMOCLAW_AGENT=${saved_agent}. Rerun the exact command printed after host preparation."
+  fi
+  NEMOCLAW_SANDBOX_NAME="$saved_sandbox"
+  NEMOCLAW_POLICY_TIER="$saved_policy_tier"
   _STATION_EXPRESS_RESUME_LOADED=1
   export NEMOCLAW_VLLM_MODEL
+  export NEMOCLAW_SANDBOX_NAME
+  export NEMOCLAW_POLICY_TIER
   export NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION="$_STATION_EXPRESS_RESUME_GENERATION"
 }
 
 save_station_express_resume() {
-  local state_file state_dir temp_file revision generation model="${NEMOCLAW_VLLM_MODEL:-}"
+  local state_file state_dir temp_file revision generation
+  local model="${NEMOCLAW_VLLM_MODEL:-}" agent="${NEMOCLAW_AGENT:-openclaw}"
+  local sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}" policy_tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   validate_station_express_resume_model "$model" || error "Cannot save an invalid DGX Station express model selector."
+  validate_station_express_resume_agent "$agent" || error "Cannot save an invalid DGX Station express agent."
+  validate_station_express_resume_sandbox "$sandbox" || error "Cannot save an invalid DGX Station express sandbox name."
+  validate_station_express_resume_policy_tier "$policy_tier" || error "Cannot save an invalid DGX Station express policy tier."
   revision="$(station_installer_revision)"
   state_file="$(station_express_resume_file)" || error "Could not resolve NemoClaw state for DGX Station express resume."
   state_dir="$(ensure_nemoclaw_state_dir)" || error "Could not prepare NemoClaw state for DGX Station express resume."
@@ -3285,7 +3383,8 @@ save_station_express_resume() {
     rm -f "$temp_file"
     error "Could not secure DGX Station express resume state under ${state_dir}."
   }
-  if ! printf 'revision=%s\nmodel=%s\ngeneration=%s\n' "$revision" "$model" "$generation" >"$temp_file"; then
+  if ! printf 'revision=%s\nmodel=%s\ngeneration=%s\nagent=%s\nsandbox=%s\npolicy_tier=%s\n' \
+    "$revision" "$model" "$generation" "$agent" "$sandbox" "$policy_tier" >"$temp_file"; then
     rm -f "$temp_file"
     error "Could not write DGX Station express resume state under ${state_dir}."
   fi
@@ -3296,6 +3395,18 @@ save_station_express_resume() {
   assert_station_express_resume_file_safe "$state_file"
   _STATION_EXPRESS_RESUME_REVISION="$revision"
   _STATION_EXPRESS_RESUME_GENERATION="$generation"
+  _STATION_EXPRESS_RESUME_AGENT="$agent"
+  _STATION_EXPRESS_RESUME_SANDBOX="$sandbox"
+  _STATION_EXPRESS_RESUME_POLICY_TIER="$policy_tier"
+}
+
+station_express_resume_command() {
+  printf 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s NEMOCLAW_AGENT=%s NEMOCLAW_SANDBOX_NAME=%s NEMOCLAW_POLICY_TIER=%s bash' \
+    "$_STATION_EXPRESS_RESUME_REVISION" "$_STATION_EXPRESS_RESUME_AGENT" \
+    "$_STATION_EXPRESS_RESUME_SANDBOX" "$_STATION_EXPRESS_RESUME_POLICY_TIER"
+  if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    printf ' -s -- --force-station-install'
+  fi
 }
 
 clear_station_express_resume() {
@@ -3383,18 +3494,35 @@ run_station_host_preparation() {
   # selected ref before executing this payload. Keep the sibling lookup and
   # fail-closed check so Station preparation cannot drift from that ref.
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  local -a helper_args=(--apply)
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
-  bash "$helper" --apply
+  if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    helper_args+=(--force-station-install)
+  fi
+  bash "$helper" "${helper_args[@]}"
 }
 
 ensure_station_express_host() {
   [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
 
-  if [[ "$(classify_dgx_station_release)" == "supported-dgx-os" ]]; then
-    info "Validating stock DGX OS GPU device visibility and the local container runtime contract. Host packages and runtime configuration will not be changed."
-  else
-    info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
-  fi
+  local release_state
+  release_state="$(classify_dgx_station_release)"
+  case "$release_state" in
+    supported-dgx-os | supported-ai-developer-tools)
+      info "Validating the Station factory GPU and local container runtime. Host packages and runtime configuration will not be changed."
+      ;;
+    supported-colossus-baseos)
+      info "Validating the pinned BaseOS package inventory and preparing Docker access and CDI. Host packages and the NVIDIA driver will not be changed."
+      ;;
+    *)
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        warn "Proceeding with explicit --force-station-install intent; DGX release metadata qualification is bypassed, but Station GB300 hardware and factory-runtime health checks remain required."
+        info "Validating the existing Station GPU and local container runtime. Host packages, the NVIDIA driver, and runtime configuration will not be changed."
+      else
+        info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
+      fi
+      ;;
+  esac
   local status=0
   run_station_host_preparation || status=$?
   case "$status" in
@@ -3403,13 +3531,18 @@ ensure_station_express_host() {
       ;;
     10)
       save_station_express_resume
-      local revision
-      revision="${_STATION_EXPRESS_RESUME_REVISION}"
       warn "DGX Station host prerequisites were installed and require a reboot."
       info "Run: sudo reboot"
       info "After signing in again, rerun the accepted revision:"
-      info "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=${revision} bash"
+      info "$(station_express_resume_command)"
       exit 10
+      ;;
+    11)
+      save_station_express_resume
+      warn "Docker access was granted and requires a new login session. A reboot is not required."
+      info "After signing in again, rerun the accepted revision:"
+      info "$(station_express_resume_command)"
+      exit 11
       ;;
     *)
       error "DGX Station host preparation failed. Review the station-bootstrap log above, correct the reported host state, and rerun the installer."
@@ -3466,11 +3599,24 @@ describe_express_install() {
         inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B"
         inference_disclosure="Managed vLLM pulls the pinned Station image and approximately 352 GB model, then runs a local inference container."
       fi
-      if [[ "$(classify_dgx_station_release)" == "supported-dgx-os" ]]; then
-        printf "  Stock DGX OS setup reuses the factory driver and container stack after local GPU device-visibility, CDI, Docker, and Buildx validation. It does not install or replace host packages or rewrite the Docker runtime.\n"
-      else
-        printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
-      fi
+      case "$(classify_dgx_station_release)" in
+        supported-dgx-os)
+          printf "  Stock DGX OS setup reuses the factory driver and container stack after local GPU device-visibility, CDI, Docker, and Buildx validation. It does not install or replace host packages or rewrite the Docker runtime.\n"
+          ;;
+        supported-colossus-baseos)
+          printf "  Qualified BaseOS setup preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages. It verifies their exact inventory, prepares Docker access and packaged CDI, and registers the NVIDIA Docker runtime only when the launch probe proves it is missing, with rollback on failure. It does not install host packages or require a reboot.\n"
+          ;;
+        supported-ai-developer-tools)
+          printf "  Factory Ubuntu with NVIDIA AI Developer Tools reuses its driver and container stack after local GPU, CDI, Docker, and Buildx validation. It may add this account to the Docker group, but does not install or replace host packages, rewrite the Docker runtime, or require a reboot.\n"
+          ;;
+        *)
+          if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+            printf "  Explicit --force-station-install intent bypasses only DGX release-metadata qualification. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
+          else
+            printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
+          fi
+          ;;
+      esac
       printf "  Host setup may add this trusted local account to the docker group, which grants root-equivalent control. This flow is only for trusted single-user development hosts; shared or managed hosts require an organization-approved Docker access path.\n"
       printf "  DGX Station remains Deferred; one DGX OS 7.5 GB300 physical validation passed, with repeat clean-host qualification and CI coverage still pending.\n"
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
@@ -3516,6 +3662,7 @@ maybe_offer_express_install() {
   local platform
   platform="$(detect_express_platform)"
   validate_express_platform_boundary "$platform"
+  validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
   # Not on a platform we have an express recipe for — say nothing.
   if [ -z "$platform" ]; then
@@ -3548,7 +3695,9 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply; then
-      if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        fail_force_station_terminal_required
+      elif [ "${STATION_DEEPSEEK:-}" = "1" ]; then
         fail_station_deepseek_terminal_required
       fi
       info "Skipping express install (unable to read from TTY)."
@@ -3560,7 +3709,9 @@ maybe_offer_express_install() {
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply <&3; then
       exec 3<&-
-      if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        fail_force_station_terminal_required
+      elif [ "${STATION_DEEPSEEK:-}" = "1" ]; then
         fail_station_deepseek_terminal_required
       fi
       info "Skipping express install (unable to read from TTY)."
@@ -3601,6 +3752,7 @@ main() {
   ACCEPT_THIRD_PARTY_SOFTWARE=""
   FRESH=""
   STATION_DEEPSEEK=""
+  FORCE_STATION_INSTALL=""
   for arg in "$@"; do
     case "$arg" in
       --non-interactive)
@@ -3610,6 +3762,7 @@ main() {
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --fresh) FRESH=1 ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
+      --force-station-install) FORCE_STATION_INSTALL=1 ;;
       --version | -v)
         local version_suffix
         version_suffix="$(installer_version_for_display)"
@@ -3641,14 +3794,14 @@ main() {
   # alone clears the preflight below but the install can still partial-fail at
   # run_onboard with the same TTY error, leaving phases 1/2 on disk anyway.
   #
-  # #7008: `--station-deepseek` is the exception — it explicitly selects the
-  # interactive DGX Station express prompt, so accepting the notice must NOT
+  # #7008: Station-only prompt flags are the exception — they explicitly select
+  # the interactive DGX Station express prompt, so accepting the notice must NOT
   # imply non-interactive there. The two signals are orthogonal: one accepts a
-  # licence, the other opts into an interactive express flow. Inferring
+  # license, the other opts into an interactive express flow. Inferring
   # non-interactive from the notice would make the express flow reject its own
-  # required flag (validate_station_deepseek_override).
+  # required flag validation.
   if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ] && [ "${NON_INTERACTIVE:-}" != "1" ] \
-    && [ "${STATION_DEEPSEEK:-}" != "1" ]; then
+    && [ "${STATION_DEEPSEEK:-}" != "1" ] && [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
     NON_INTERACTIVE=1
   fi
 

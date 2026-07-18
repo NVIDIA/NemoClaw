@@ -135,4 +135,50 @@ run_apply
     expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2)");
     expect(output).not.toContain("UNEXPECTED_MUTATION");
   });
+
+  it("rejects forced metadata intent without the exact GB300 PCI identity before mutation (#7138)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-platform-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    const productNamePath = path.join(fixtureRoot, "product_name");
+    const dgxReleasePath = path.join(fixtureRoot, "dgx-release");
+    const pciRoot = writePciIdentityFixture("0x1234");
+    fs.writeFileSync(
+      osReleasePath,
+      'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n',
+    );
+    fs.writeFileSync(productNamePath, "DGX Station GB300\n");
+    fs.writeFileSync(dgxReleasePath, 'DGX_PRETTY_NAME="Unrecognized Station"\n');
+
+    const { result, output } = runStationPrepare(
+      `
+station_os_release_path() { printf '%s' "$OS_RELEASE_PATH"; }
+station_product_name_path() { printf '%s' "$PRODUCT_NAME_PATH"; }
+station_pci_devices_path() { printf '%s' "$PCI_ROOT"; }
+dgx_station_release_path() { printf '%s' "$DGX_RELEASE_PATH"; }
+dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+uname() {
+  case "$*" in
+    -m) printf 'aarch64' ;;
+    -r) printf 'test-kernel' ;;
+    *) return 1 ;;
+  esac
+}
+require_command() { :; }
+acquire_sudo() { :; }
+install_packages() { printf 'UNEXPECTED_MUTATION\n'; }
+FORCE_STATION_INSTALL=1
+run_apply
+`,
+      {
+        OS_RELEASE_PATH: osReleasePath,
+        PRODUCT_NAME_PATH: productNamePath,
+        PCI_ROOT: pciRoot,
+        DGX_RELEASE_PATH: dgxReleasePath,
+      },
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2)");
+    expect(output).not.toContain("UNEXPECTED_MUTATION");
+  });
 });
