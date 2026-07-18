@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildExactMainLiveExeIdentityScript,
   buildExactMainNftInspectionScript,
+  DIRECT_BYPASS_PROBE_CODE,
   inspectExactMainNftRuleset,
   parseExactMainPolicyStatus,
 } from "../live/openshell-exact-main-runtime-contracts.ts";
@@ -146,6 +147,13 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
     expect(script).toContain('nsenter --net="$namespace_path" -- "$nft_path"');
     expect(script).toContain('exec "$nft_path" -j list table inet openshell_bypass');
     expect(script).toContain('if [ "$active_namespace_count" -gt 1 ]');
+  });
+
+  it("accepts immediate refused and permission-denied bypass outcomes", () => {
+    expect(DIRECT_BYPASS_PROBE_CODE).toContain("denial_errnos = {errno.ECONNREFUSED, errno.EPERM}");
+    expect(DIRECT_BYPASS_PROBE_CODE).toContain(
+      'tcp_error.get("errno") not in denial_errnos or udp_error.get("errno") not in denial_errnos',
+    );
   });
 
   it("rejects the feasible sequential-install partial state instead of calling it green", () => {

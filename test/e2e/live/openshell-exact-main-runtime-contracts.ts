@@ -422,7 +422,7 @@ while [ ! -s "$ready" ]; do
 done
 cat "$ready"`;
 
-const DIRECT_BYPASS_PROBE_CODE = String.raw`import errno
+export const DIRECT_BYPASS_PROBE_CODE = String.raw`import errno
 import json
 import socket
 import sys
@@ -466,7 +466,8 @@ tcp_error = result["tcp"]["error"] or {}
 udp_error = result["udp"]["error"] or {}
 if result["tcp"]["connected"] or result["udp"]["echoed"]:
     raise SystemExit(1)
-if tcp_error.get("errno") != errno.ECONNREFUSED or udp_error.get("errno") != errno.ECONNREFUSED:
+denial_errnos = {errno.ECONNREFUSED, errno.EPERM}
+if tcp_error.get("errno") not in denial_errnos or udp_error.get("errno") not in denial_errnos:
     raise SystemExit(1)
 if result["tcp"]["elapsedMs"] >= 2500 or result["udp"]["elapsedMs"] >= 2500:
     raise SystemExit(1)`;
