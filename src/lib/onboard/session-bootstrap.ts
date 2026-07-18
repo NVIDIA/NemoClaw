@@ -82,13 +82,16 @@ export function getCheckpointedSandboxName(
   agent: { name?: string } | null,
   session: Session | null,
 ): string | null {
-  if (!resume || (agent?.name && agent.name !== "openclaw")) return null;
+  if (!resume) return null;
   if (session?.checkpoint) {
     return isDecisionSelected(session.checkpoint.sandboxIdentity)
       ? session.checkpoint.sandboxIdentity.value.name
       : null;
   }
-  return session?.sandboxPromptProgress?.sandboxName === true ? session.sandboxName : null;
+  return (!agent?.name || agent.name === "openclaw") &&
+    session?.sandboxPromptProgress?.sandboxName === true
+    ? session.sandboxName
+    : null;
 }
 
 function mode(nonInteractive: boolean): "non-interactive" | "interactive" {
@@ -207,8 +210,13 @@ function assertRecoverableResumeSandboxName(
     : session?.steps?.sandbox?.status === "complete" ||
       ((!session?.agent || session.agent === "openclaw") &&
         session?.sandboxPromptProgress?.sandboxName === true);
+  const checkpointedSandboxName =
+    checkpoint && isDecisionSelected(checkpoint.sandboxIdentity)
+      ? checkpoint.sandboxIdentity.value.name
+      : null;
   const recoveredSandboxName =
-    input.requestedSandboxName || (nameRecoverable ? session?.sandboxName || null : null);
+    input.requestedSandboxName ||
+    (nameRecoverable ? checkpointedSandboxName || session?.sandboxName || null : null);
   if (input.cannotPrompt && !recoveredSandboxName) {
     deps.error(
       "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",

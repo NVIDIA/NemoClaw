@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { decisionUnset } from "../state/onboard-checkpoint-decision";
+import { decisionSelected, decisionUnset } from "../state/onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
   type CheckpointLoadResult,
@@ -342,6 +342,43 @@ describe("prepareOnboardSession", () => {
 
     expect(result.session?.sandboxName).toBe("checkpointed-box");
     expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("recovers a non-OpenClaw checkpointed sandbox name after a crash before the legacy field was written (#7022)", async () => {
+    const session = createSession({ agent: "hermes", sandboxName: null });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionSelected({ name: "hermes-box", agent: "hermes" }),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const { deps } = createDeps(session);
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(deps.error).not.toHaveBeenCalledWith(
+      "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",
+    );
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+    expect(result.session?.checkpoint?.sandboxIdentity).toEqual(
+      decisionSelected({ name: "hermes-box", agent: "hermes" }),
+    );
   });
 
   it("does not let a stale legacy checkpointed-name marker override an unset checkpoint identity (#7022)", async () => {
