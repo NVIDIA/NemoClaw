@@ -5,6 +5,7 @@ import type {
   DockerContainerInspect,
   DockerGpuCloneRunOptions,
   DockerGpuPatchMode,
+  DockerUlimit,
 } from "./docker-gpu-patch-types";
 import { openshellSandboxCommandEnvValue } from "./docker-startup-command-env";
 
@@ -62,6 +63,56 @@ function dockerGpuHostEndpointFromOpenShellEndpoint(endpoint: string): string | 
 function pushStringFlag(args: string[], flag: string, value: unknown): void {
   const normalized = String(value ?? "").trim();
   if (normalized) args.push(flag, normalized);
+}
+
+function normalizeRequiredUlimit(ulimit: DockerUlimit): DockerUlimit {
+  const name = String(ulimit.name).trim();
+  if (!/^[a-z][a-z0-9_]*$/u.test(name)) {
+    throw new Error(`Invalid Docker ulimit name '${name}'.`);
+  }
+  if (
+    !Number.isSafeInteger(ulimit.soft) ||
+    ulimit.soft < 0 ||
+    !Number.isSafeInteger(ulimit.hard) ||
+    ulimit.hard < ulimit.soft
+  ) {
+    throw new Error(`Invalid Docker ulimit values for '${name}'.`);
+  }
+  return { name, soft: ulimit.soft, hard: ulimit.hard };
+}
+
+export function validateRequiredDockerUlimits(
+  required: readonly DockerUlimit[] | null | undefined,
+): void {
+  for (const ulimit of required ?? []) normalizeRequiredUlimit(ulimit);
+}
+
+function dockerUlimits(
+  inspect: DockerContainerInspect,
+  required: readonly DockerUlimit[] | null | undefined,
+): DockerUlimit[] {
+  const merged = new Map<string, DockerUlimit>();
+  for (const ulimit of inspect.HostConfig?.Ulimits ?? []) {
+    const name = String(ulimit.Name ?? "").trim();
+    const soft = ulimit.Soft;
+    const hard = ulimit.Hard;
+    if (
+      !name ||
+      !Number.isSafeInteger(soft) ||
+      (soft as number) < -1 ||
+      !Number.isSafeInteger(hard) ||
+      (hard as number) < -1 ||
+      ((hard as number) !== -1 && (soft as number) > (hard as number))
+    ) {
+      continue;
+    }
+    merged.set(name, { name, soft: soft as number, hard: hard as number });
+  }
+  for (const ulimit of required ?? []) {
+    const normalized = normalizeRequiredUlimit(ulimit);
+    merged.set(normalized.name, normalized);
+  }
+  return [...merged.values()];
 }
 
 function pushNumberFlag(args: string[], flag: string, value: unknown): void {
@@ -216,6 +267,9 @@ export function buildDockerGpuCloneRunArgs(
       groupAdds.add(normalized);
       args.push("--group-add", normalized);
     }
+  }
+  for (const ulimit of dockerUlimits(inspect, options.requiredUlimits)) {
+    args.push("--ulimit", `${ulimit.name}=${ulimit.soft}:${ulimit.hard}`);
   }
   if (networkMode !== "host") {
     const dnsServers = stringArray(host.Dns);

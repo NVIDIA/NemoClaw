@@ -103,7 +103,7 @@ verify_gpu
       "gpu_bdf=0000:02:00.0 gpu=NVIDIA GB300 role=auxiliary validation=skipped",
     );
     expect(output).toContain(
-      "gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 driver=595.71.05 ecc_corrected=0 ecc_uncorrected=0",
+      "gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 role=inference driver=595.71.05 ecc_corrected=0 ecc_uncorrected=0",
     );
   });
 

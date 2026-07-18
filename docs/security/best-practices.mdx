@@ -516,6 +516,8 @@ If the container runtime restricts `ulimit` modification, the entrypoint logs a 
 
 Managed Deep Agents uses stricter enforcement than the best-effort entrypoint behavior described above.
 The managed Deep Agents image applies the 512-process and 65,536-file-descriptor caps to the long-running sandbox entrypoint tree and to direct managed `dcode` launches.
+During Docker-driver onboarding, NemoClaw also configures the container with exact `nproc=512:512` and `nofile=65536:65536` limits so the managed entrypoint and fresh exec or connect processes start under the same hard caps.
+The container-level limits and managed startup command remain in effect when you stop and start the sandbox or restart the OpenShell gateway.
 It also applies and verifies the caps in Bash login and interactive shells because fresh `openshell sandbox exec` and connect shells do not inherit the dcode entrypoint child's lowered limits.
 For managed Deep Agents, successful verification requires both the soft and hard limits to equal 512 processes and 65,536 file descriptors; a lower inherited file-descriptor default such as 1,024 is not accepted as successful hardening.
 
@@ -524,7 +526,7 @@ The entrypoint and launcher complete this verification before proxy setup or use
 A login or interactive shell remains available when the helper is missing or its limits cannot be verified, but it prints `[SECURITY] Sandbox resource limits were NOT hardened for this shell.`
 OpenShell creates those fresh exec and connect processes outside the entrypoint tree, so an image layer cannot make them inherit the entrypoint child's lowered limits.
 The shell compatibility exception can be removed when OpenShell guarantees that every exec and connect process starts under enforced caps or exposes a fail-closed resource-limit contract.
-Set hard `nproc` and `nofile` limits at the container runtime when you require fail-closed enforcement.
+For custom container launches outside NemoClaw's managed Docker-driver onboarding path, set hard `nproc` and `nofile` limits at the container runtime when you require fail-closed enforcement.
 
 ### Deep Agents Thread Auto-Approval Capability
 
