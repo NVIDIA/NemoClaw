@@ -62,6 +62,8 @@ SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
 
 const MARKER_FILE = "/sandbox/.hermes/memories/rebuild-marker.txt";
 const MARKER_CONTENT = `REBUILD_HM_E2E_${Date.now()}`;
+const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
+const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -736,6 +738,32 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(writeMarker, "write Hermes marker");
 
+  const seedKanban = await host.command(
+    "openshell",
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      SANDBOX_NAME,
+      "--",
+      "sh",
+      "-lc",
+      [
+        "hermes kanban init",
+        `hermes kanban create ${shellQuote(KANBAN_TASK_TITLE)} --initial-status blocked --json`,
+        `mkdir -p ${shellQuote(path.dirname(EXCLUDED_KANBAN_FILE))}`,
+        `printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(EXCLUDED_KANBAN_FILE)}`,
+      ].join(" && "),
+    ],
+    {
+      artifactName: "phase-4-seed-hermes-kanban",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(seedKanban, "seed Hermes default kanban board");
+
   const preEnv = await host.command(
     "openshell",
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/.env"],
@@ -877,6 +905,31 @@ test(STALE_BASE_REBUILD
     expectedVersion,
     `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
   );
+
+  const restoredKanban = await host.command(
+    "openshell",
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "hermes", "kanban", "list", "--json"],
+    {
+      artifactName: "phase-7-list-kanban-after-rebuild",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(restoredKanban, "list Hermes kanban tasks after rebuild");
+  expect(resultText(restoredKanban)).toContain(KANBAN_TASK_TITLE);
+
+  const excludedKanbanState = await host.command(
+    "openshell",
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "test", "!", "-e", EXCLUDED_KANBAN_FILE],
+    {
+      artifactName: "phase-7-verify-excluded-kanban-state",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(excludedKanbanState, "verify excluded Hermes kanban state was not restored");
 
   const restoredEnv = await host.command(
     "openshell",
