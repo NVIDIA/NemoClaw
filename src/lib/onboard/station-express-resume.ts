@@ -82,6 +82,8 @@ const STATION_EXPRESS_RETIREMENT_CLAIM_ATTEMPTS = 3;
 const STATION_EXPRESS_RECEIPT_GENERATION_PATTERN = /^[0-9a-f]{32}$/;
 const STATION_EXPRESS_RECEIPT_REVISION_PATTERN = /^[0-9a-f]{40}$/;
 const STATION_EXPRESS_RETIREMENT_CLAIM_SUFFIX_PATTERN = /^[A-Za-z0-9]+$/;
+const STATION_EXPRESS_RECEIPT_AGENTS = new Set(["openclaw", "hermes", "langchain-deepagents-code"]);
+const STATION_EXPRESS_RECEIPT_POLICY_TIERS = new Set(["restricted", "balanced", "open"]);
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -243,7 +245,17 @@ export function assertStationExpressInstallerResumeSafe(
 
 function readStationExpressInstallerResumeGeneration(stateFile: string): string {
   const lines = fs.readFileSync(stateFile, "utf8").split("\n");
-  if (lines.length !== 4 || lines[3] !== "") {
+  const legacyFormat = lines.length === 4 && lines[3] === "";
+  const currentFormat =
+    lines.length === 7 &&
+    lines[6] === "" &&
+    lines[3]?.startsWith("agent=") &&
+    STATION_EXPRESS_RECEIPT_AGENTS.has(lines[3].slice("agent=".length)) &&
+    lines[4]?.startsWith("sandbox=") &&
+    validSandboxName(lines[4].slice("sandbox=".length)) &&
+    lines[5]?.startsWith("policy_tier=") &&
+    STATION_EXPRESS_RECEIPT_POLICY_TIERS.has(lines[5].slice("policy_tier=".length));
+  if (!legacyFormat && !currentFormat) {
     throw new Error("DGX Station Express installer resume state is malformed.");
   }
   const revision = lines[0]?.startsWith("revision=") ? lines[0].slice("revision=".length) : "";

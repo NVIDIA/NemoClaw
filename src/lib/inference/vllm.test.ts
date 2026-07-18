@@ -519,6 +519,14 @@ describe("vLLM run command", () => {
     expect(flags).not.toContain("device=0,1");
     expect(flags).not.toContain(`'"device=0,1"'`);
   });
+
+  it("fails closed instead of exposing all GPUs when Station GB300 detection is empty", () => {
+    mocks.getGpuIndicesByName.mockReturnValue([]);
+    const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
+
+    expect(profile).not.toBeNull();
+    expect(() => profile!.buildDockerRunFlags!()).toThrow(/requires an NVIDIA GB300 GPU/);
+  });
 });
 
 describe("managed vLLM ownership", () => {
@@ -680,6 +688,7 @@ describe("installVllm model resolution", () => {
 
   it("installs the complete Nemotron Ultra Station recipe without another selection", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    mocks.getGpuIndicesByName.mockReturnValue([0]);
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
     const beforeInstall = vi.fn();
     const promptFn = vi.fn<(q: string) => Promise<string>>();

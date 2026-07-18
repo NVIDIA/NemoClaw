@@ -185,4 +185,40 @@ describe("Docker GPU startup command validation (#6110)", () => {
     expect(dockerRename).not.toHaveBeenCalled();
     expect(dockerRunDetached).not.toHaveBeenCalled();
   });
+
+  it("rejects malformed required ulimits before touching the original container", () => {
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id\n" }));
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+
+    expect(() =>
+      recreateOpenShellDockerSandboxWithGpu(
+        {
+          sandboxName: "alpha",
+          timeoutSecs: 1,
+          requiredUlimits: [{ name: "nofile;id", soft: 65_536, hard: 65_536 }],
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) =>
+            args[0] === "ps"
+              ? "old-container-id\n"
+              : args[0] === "inspect"
+                ? JSON.stringify([inspectFixture()])
+                : "",
+          ),
+          detectSandboxFallbackDns: vi.fn(() => null),
+          dockerRun,
+          dockerRunDetached,
+          dockerRename: vi.fn(() => ({ status: 0 })),
+          dockerRm: vi.fn(() => ({ status: 0 })),
+          dockerStop,
+          readDir: vi.fn(() => null),
+          readFile: vi.fn(() => null),
+        },
+      ),
+    ).toThrow("Invalid Docker ulimit name");
+    expect(dockerRun).not.toHaveBeenCalled();
+    expect(dockerStop).not.toHaveBeenCalled();
+    expect(dockerRunDetached).not.toHaveBeenCalled();
+  });
 });

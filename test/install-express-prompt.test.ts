@@ -232,6 +232,30 @@ detect_express_platform
     ].join("\n");
   }
 
+  function noOtaFactoryRelease(profile: "colossus-baseos" | "ai-developer-tools") {
+    const identity =
+      profile === "colossus-baseos"
+        ? {
+            pretty: "NVIDIA DGX Server",
+            version: "7.5.0-GB300ws-GB200ws",
+            buildDate: "2026-04-02-08-20-16",
+          }
+        : {
+            pretty: "NVIDIA DGX GB300WS",
+            version: "7.5.0",
+            buildDate: "2026-06-16-11-48-10",
+          };
+    return [
+      'DGX_NAME="DGX Server"',
+      `DGX_PRETTY_NAME="${identity.pretty}"`,
+      `DGX_SWBUILD_DATE="${identity.buildDate}"`,
+      `DGX_SWBUILD_VERSION="${identity.version}"`,
+      'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
+      'DGX_SERIAL_NUMBER="host-specific-value"',
+      "",
+    ].join("\n");
+  }
+
   it("parses and documents the DGX Station DeepSeek override", () => {
     const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--station-deepseek", "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
@@ -317,6 +341,44 @@ detect_express_platform
     expect(output).toMatch(/STATION_EXPRESS=1/);
   });
 
+  it.each([
+    [
+      "supported-colossus-baseos",
+      "Qualified BaseOS setup preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages",
+    ],
+    [
+      "supported-ai-developer-tools",
+      "Factory Ubuntu with NVIDIA AI Developer Tools reuses its driver and container stack",
+    ],
+  ])("describes the %s Station mutation boundary before consent", (release, expected) => {
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `source "$INSTALLER_UNDER_TEST" >/dev/null
+classify_dgx_station_release() { printf '%s' "$FACTORY_RELEASE"; }
+describe_express_install 'DGX Station'`,
+      ],
+      {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-consent-")),
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          FACTORY_RELEASE: release,
+        },
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(expected);
+    expect(output).not.toContain("installs missing pinned driver");
+  });
+
   it("normalizes the canonical Ultra served alias to the registered model slug", () => {
     const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
       NEMOCLAW_VLLM_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
@@ -341,6 +403,51 @@ detect_express_platform
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
+    );
+  });
+
+  it("preserves complete Station Express intent across a Docker-group relogin", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-relogin-"));
+    const revision = "a".repeat(40);
+    const generation = "0123456789abcdef0123456789abcdef";
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `source "$INSTALLER_UNDER_TEST" >/dev/null
+_SELECTED_EXPRESS_PLATFORM='DGX Station'
+NEMOCLAW_VLLM_MODEL='deepseek-v4-flash'
+classify_dgx_station_release() { printf 'supported-ai-developer-tools'; }
+station_installer_revision() { printf '${revision}'; }
+station_express_resume_generation() { printf '${generation}'; }
+run_station_host_preparation() { return 11; }
+ensure_station_express_host`,
+      ],
+      {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: home,
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          NEMOCLAW_AGENT: "Hermes",
+          NEMOCLAW_SANDBOX_NAME: "custom-agent",
+          NEMOCLAW_POLICY_TIER: "restricted",
+        },
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(11);
+    expect(fs.readFileSync(path.join(home, ".nemoclaw", "station-express-resume"), "utf8")).toBe(
+      `revision=${revision}\nmodel=deepseek-v4-flash\ngeneration=${generation}\n` +
+        "agent=hermes\nsandbox=custom-agent\npolicy_tier=restricted\n",
+    );
+    expect(output).toContain("A reboot is not required");
+    expect(output).toContain(
+      `NEMOCLAW_INSTALL_TAG=${revision} NEMOCLAW_AGENT=hermes NEMOCLAW_SANDBOX_NAME=custom-agent NEMOCLAW_POLICY_TIER=restricted bash`,
     );
   });
 
@@ -698,6 +805,19 @@ detect_express_platform
     const result = detectExpressPlatformForStockDgxRelease(
       "DGX Station GB300",
       stockDgxRelease(version),
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
+
+  it.each([
+    "colossus-baseos",
+    "ai-developer-tools",
+  ] as const)("recognizes the exact no-OTA %s Station profile", (profile) => {
+    const result = detectExpressPlatformForStockDgxRelease(
+      "DGX Station GB300",
+      noOtaFactoryRelease(profile),
     );
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);

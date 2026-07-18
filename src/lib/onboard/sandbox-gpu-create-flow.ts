@@ -6,7 +6,7 @@ import { redactFull } from "../security/redact";
 import type { SandboxGpuProofResult } from "../state/registry";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
-import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
+import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
@@ -17,6 +17,8 @@ import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-at
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
+
+export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 
 type RunOpenshell = NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
 type RunCaptureOpenshell = NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
@@ -39,6 +41,7 @@ export interface SandboxGpuCreateFlowInput {
   restoreBackupPath: string | null;
   terminalAgent: boolean;
   persistStartupCommand?: boolean;
+  requiredUlimits?: readonly DockerUlimit[] | null;
 }
 
 export interface SandboxGpuCreateFlowDeps {

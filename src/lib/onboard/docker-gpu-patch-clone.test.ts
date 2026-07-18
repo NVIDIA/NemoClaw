@@ -73,6 +73,33 @@ describe("Docker GPU clone envelope", () => {
     );
   });
 
+  it("preserves inspected ulimits and overrides DCode's exact required limits", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.Ulimits = [
+      { Name: "core", Soft: 0, Hard: -1 },
+      { Name: "nofile", Soft: 1024, Hard: 1024 },
+    ];
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"), {
+      requiredUlimits: [
+        { name: "nproc", soft: 512, hard: 512 },
+        { name: "nofile", soft: 65_536, hard: 65_536 },
+      ],
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--ulimit",
+        "core=0:-1",
+        "--ulimit",
+        "nofile=65536:65536",
+        "--ulimit",
+        "nproc=512:512",
+      ]),
+    );
+    expect(args).not.toContain("nofile=1024:1024");
+  });
+
   it("adds SYS_PTRACE to the GPU clone when the baseline container lacks it", () => {
     const inspect = inspectFixture();
     inspect.HostConfig!.CapAdd = ["SYS_ADMIN", "NET_ADMIN"];

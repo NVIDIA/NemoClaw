@@ -3021,7 +3021,9 @@ detect_express_platform() {
   if is_station_gb300_product "$model"; then
     release_state="$(classify_dgx_station_release)"
     case "$release_state" in
-      generic-ubuntu | supported-dgx-os) printf "DGX Station" ;;
+      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+        printf "DGX Station"
+        ;;
       *) printf "Unsupported DGX Station OS" ;;
     esac
     return
@@ -3036,7 +3038,7 @@ validate_express_platform_boundary() {
   case "${1:-}" in
     "Unsupported DGX Station OS")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
-      error "This DGX Station OS image is outside the validated Station express boundary. Use generic Ubuntu 24.04 ARM64 or stock DGX OS 7.2.0, 7.4.0, or 7.5.0 on Station GB300."
+      error "This DGX Station OS image is outside the validated Station express boundary. Use generic Ubuntu 24.04 ARM64, stock DGX OS 7.2.0, 7.4.0, or 7.5.0, or an explicitly qualified Station factory image."
       ;;
     "Unsupported DGX Station generation")
       if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ] || [ -n "${NEMOCLAW_PROVIDER:-}" ]; then return 0; fi
@@ -3173,6 +3175,26 @@ validate_station_express_resume_model() {
   [[ ${#model} -le 255 && "$model" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]
 }
 
+validate_station_express_resume_agent() {
+  case "${1:-}" in
+    openclaw | hermes | langchain-deepagents-code) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_station_express_resume_sandbox() {
+  local sandbox="${1:-}"
+  [[ ${#sandbox} -le 63 ]] \
+    && { [[ "$sandbox" =~ ^[a-z]$ ]] || [[ "$sandbox" =~ ^[a-z][a-z0-9-]*[a-z0-9]$ ]]; }
+}
+
+validate_station_express_resume_policy_tier() {
+  case "${1:-}" in
+    restricted | balanced | open) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 validate_station_express_resume_revision() {
   [[ "${1:-}" =~ ^[0-9a-f]{40}$ ]]
 }
@@ -3242,7 +3264,8 @@ assert_station_express_resume_directory_safe() {
 }
 
 load_station_express_resume() {
-  local state_file revision_line model_line generation_line line_count saved_revision current_revision
+  local state_file revision_line model_line generation_line agent_line sandbox_line policy_tier_line
+  local line_count saved_revision current_revision saved_agent saved_sandbox saved_policy_tier current_agent
   state_file="$(station_express_resume_file)" || return 1
   assert_nemoclaw_state_path_safe "$state_file"
   [[ -e "$state_file" || -L "$state_file" ]] || return 1
@@ -3251,27 +3274,58 @@ load_station_express_resume() {
   revision_line="$(sed -n '1p' "$state_file")"
   model_line="$(sed -n '2p' "$state_file")"
   generation_line="$(sed -n '3p' "$state_file")"
+  agent_line="$(sed -n '4p' "$state_file")"
+  sandbox_line="$(sed -n '5p' "$state_file")"
+  policy_tier_line="$(sed -n '6p' "$state_file")"
   saved_revision="${revision_line#revision=}"
   NEMOCLAW_VLLM_MODEL="${model_line#model=}"
   _STATION_EXPRESS_RESUME_GENERATION="${generation_line#generation=}"
-  if [[ "$line_count" != "3" || "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${NEMOCLAW_VLLM_MODEL}" || "$generation_line" != "generation=${_STATION_EXPRESS_RESUME_GENERATION}" ]] \
+  if [[ "$line_count" == "3" ]]; then
+    saved_agent=openclaw
+    saved_sandbox=my-assistant
+    saved_policy_tier=balanced
+  elif [[ "$line_count" == "6" ]]; then
+    saved_agent="${agent_line#agent=}"
+    saved_sandbox="${sandbox_line#sandbox=}"
+    saved_policy_tier="${policy_tier_line#policy_tier=}"
+  else
+    error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
+  fi
+  if [[ "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${NEMOCLAW_VLLM_MODEL}" || "$generation_line" != "generation=${_STATION_EXPRESS_RESUME_GENERATION}" ]] \
+    || { [[ "$line_count" == "6" ]] && [[ "$agent_line" != "agent=${saved_agent}" || "$sandbox_line" != "sandbox=${saved_sandbox}" || "$policy_tier_line" != "policy_tier=${saved_policy_tier}" ]]; } \
     || ! validate_station_express_resume_revision "$saved_revision" \
     || ! validate_station_express_resume_model "$NEMOCLAW_VLLM_MODEL" \
-    || ! validate_station_express_resume_generation "$_STATION_EXPRESS_RESUME_GENERATION"; then
+    || ! validate_station_express_resume_generation "$_STATION_EXPRESS_RESUME_GENERATION" \
+    || ! validate_station_express_resume_agent "$saved_agent" \
+    || ! validate_station_express_resume_sandbox "$saved_sandbox" \
+    || ! validate_station_express_resume_policy_tier "$saved_policy_tier"; then
     error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
   fi
   current_revision="$(station_installer_revision)"
   if [[ "$current_revision" != "$saved_revision" ]]; then
     error "DGX Station express resume requires NemoClaw revision ${saved_revision}, but this installer is ${current_revision}. Rerun with: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=${saved_revision} bash"
   fi
+  current_agent="${NEMOCLAW_AGENT:-openclaw}"
+  if [[ "$current_agent" != "$saved_agent" ]]; then
+    error "DGX Station express resume requires NEMOCLAW_AGENT=${saved_agent}. Rerun the exact command printed after host preparation."
+  fi
+  NEMOCLAW_SANDBOX_NAME="$saved_sandbox"
+  NEMOCLAW_POLICY_TIER="$saved_policy_tier"
   _STATION_EXPRESS_RESUME_LOADED=1
   export NEMOCLAW_VLLM_MODEL
+  export NEMOCLAW_SANDBOX_NAME
+  export NEMOCLAW_POLICY_TIER
   export NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION="$_STATION_EXPRESS_RESUME_GENERATION"
 }
 
 save_station_express_resume() {
-  local state_file state_dir temp_file revision generation model="${NEMOCLAW_VLLM_MODEL:-}"
+  local state_file state_dir temp_file revision generation
+  local model="${NEMOCLAW_VLLM_MODEL:-}" agent="${NEMOCLAW_AGENT:-openclaw}"
+  local sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}" policy_tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   validate_station_express_resume_model "$model" || error "Cannot save an invalid DGX Station express model selector."
+  validate_station_express_resume_agent "$agent" || error "Cannot save an invalid DGX Station express agent."
+  validate_station_express_resume_sandbox "$sandbox" || error "Cannot save an invalid DGX Station express sandbox name."
+  validate_station_express_resume_policy_tier "$policy_tier" || error "Cannot save an invalid DGX Station express policy tier."
   revision="$(station_installer_revision)"
   state_file="$(station_express_resume_file)" || error "Could not resolve NemoClaw state for DGX Station express resume."
   state_dir="$(ensure_nemoclaw_state_dir)" || error "Could not prepare NemoClaw state for DGX Station express resume."
@@ -3285,7 +3339,8 @@ save_station_express_resume() {
     rm -f "$temp_file"
     error "Could not secure DGX Station express resume state under ${state_dir}."
   }
-  if ! printf 'revision=%s\nmodel=%s\ngeneration=%s\n' "$revision" "$model" "$generation" >"$temp_file"; then
+  if ! printf 'revision=%s\nmodel=%s\ngeneration=%s\nagent=%s\nsandbox=%s\npolicy_tier=%s\n' \
+    "$revision" "$model" "$generation" "$agent" "$sandbox" "$policy_tier" >"$temp_file"; then
     rm -f "$temp_file"
     error "Could not write DGX Station express resume state under ${state_dir}."
   fi
@@ -3296,6 +3351,15 @@ save_station_express_resume() {
   assert_station_express_resume_file_safe "$state_file"
   _STATION_EXPRESS_RESUME_REVISION="$revision"
   _STATION_EXPRESS_RESUME_GENERATION="$generation"
+  _STATION_EXPRESS_RESUME_AGENT="$agent"
+  _STATION_EXPRESS_RESUME_SANDBOX="$sandbox"
+  _STATION_EXPRESS_RESUME_POLICY_TIER="$policy_tier"
+}
+
+station_express_resume_command() {
+  printf 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s NEMOCLAW_AGENT=%s NEMOCLAW_SANDBOX_NAME=%s NEMOCLAW_POLICY_TIER=%s bash' \
+    "$_STATION_EXPRESS_RESUME_REVISION" "$_STATION_EXPRESS_RESUME_AGENT" \
+    "$_STATION_EXPRESS_RESUME_SANDBOX" "$_STATION_EXPRESS_RESUME_POLICY_TIER"
 }
 
 clear_station_express_resume() {
@@ -3390,11 +3454,17 @@ run_station_host_preparation() {
 ensure_station_express_host() {
   [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
 
-  if [[ "$(classify_dgx_station_release)" == "supported-dgx-os" ]]; then
-    info "Validating stock DGX OS GPU device visibility and the local container runtime contract. Host packages and runtime configuration will not be changed."
-  else
-    info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
-  fi
+  local release_state
+  release_state="$(classify_dgx_station_release)"
+  case "$release_state" in
+    supported-dgx-os | supported-ai-developer-tools)
+      info "Validating the Station factory GPU and local container runtime. Host packages and runtime configuration will not be changed."
+      ;;
+    supported-colossus-baseos)
+      info "Validating the pinned BaseOS package inventory and preparing Docker access and CDI. Host packages and the NVIDIA driver will not be changed."
+      ;;
+    *) info "Checking pinned DGX Station host prerequisites. Exact matches are reused." ;;
+  esac
   local status=0
   run_station_host_preparation || status=$?
   case "$status" in
@@ -3403,13 +3473,18 @@ ensure_station_express_host() {
       ;;
     10)
       save_station_express_resume
-      local revision
-      revision="${_STATION_EXPRESS_RESUME_REVISION}"
       warn "DGX Station host prerequisites were installed and require a reboot."
       info "Run: sudo reboot"
       info "After signing in again, rerun the accepted revision:"
-      info "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=${revision} bash"
+      info "$(station_express_resume_command)"
       exit 10
+      ;;
+    11)
+      save_station_express_resume
+      warn "Docker access was granted and requires a new login session. A reboot is not required."
+      info "After signing in again, rerun the accepted revision:"
+      info "$(station_express_resume_command)"
+      exit 11
       ;;
     *)
       error "DGX Station host preparation failed. Review the station-bootstrap log above, correct the reported host state, and rerun the installer."
@@ -3466,11 +3541,20 @@ describe_express_install() {
         inference_summary="managed local vLLM with NVIDIA Nemotron 3 Ultra 550B"
         inference_disclosure="Managed vLLM pulls the pinned Station image and approximately 352 GB model, then runs a local inference container."
       fi
-      if [[ "$(classify_dgx_station_release)" == "supported-dgx-os" ]]; then
-        printf "  Stock DGX OS setup reuses the factory driver and container stack after local GPU device-visibility, CDI, Docker, and Buildx validation. It does not install or replace host packages or rewrite the Docker runtime.\n"
-      else
-        printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
-      fi
+      case "$(classify_dgx_station_release)" in
+        supported-dgx-os)
+          printf "  Stock DGX OS setup reuses the factory driver and container stack after local GPU device-visibility, CDI, Docker, and Buildx validation. It does not install or replace host packages or rewrite the Docker runtime.\n"
+          ;;
+        supported-colossus-baseos)
+          printf "  Qualified BaseOS setup preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages. It verifies their exact inventory, prepares Docker access and packaged CDI, and registers the NVIDIA Docker runtime only when the launch probe proves it is missing, with rollback on failure. It does not install host packages or require a reboot.\n"
+          ;;
+        supported-ai-developer-tools)
+          printf "  Factory Ubuntu with NVIDIA AI Developer Tools reuses its driver and container stack after local GPU, CDI, Docker, and Buildx validation. It may add this account to the Docker group, but does not install or replace host packages, rewrite the Docker runtime, or require a reboot.\n"
+          ;;
+        *)
+          printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
+          ;;
+      esac
       printf "  Host setup may add this trusted local account to the docker group, which grants root-equivalent control. This flow is only for trusted single-user development hosts; shared or managed hosts require an organization-approved Docker access path.\n"
       printf "  DGX Station remains Deferred; one DGX OS 7.5 GB300 physical validation passed, with repeat clean-host qualification and CI coverage still pending.\n"
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"

@@ -76,6 +76,44 @@ function writeDgxReleaseHistory(historyLines: string[]) {
   return release;
 }
 
+function writeNoOtaFactoryRelease(
+  profile: "colossus-baseos" | "ai-developer-tools",
+  overrides: Partial<{ pretty: string; version: string; buildDate: string; platform: string }> = {},
+) {
+  const defaults =
+    profile === "colossus-baseos"
+      ? {
+          pretty: "NVIDIA DGX Server",
+          version: "7.5.0-GB300ws-GB200ws",
+          buildDate: "2026-04-02-08-20-16",
+        }
+      : {
+          pretty: "NVIDIA DGX GB300WS",
+          version: "7.5.0",
+          buildDate: "2026-06-16-11-48-10",
+        };
+  const fields = {
+    ...defaults,
+    platform: "DGX Server for GALAXY-GB300",
+    ...overrides,
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-factory-release-"));
+  const target = path.join(dir, "dgx-release");
+  fs.writeFileSync(
+    target,
+    [
+      'DGX_NAME="DGX Server"',
+      `DGX_PRETTY_NAME="${fields.pretty}"`,
+      `DGX_SWBUILD_DATE="${fields.buildDate}"`,
+      `DGX_SWBUILD_VERSION="${fields.version}"`,
+      `DGX_PLATFORM="${fields.platform}"`,
+      'DGX_SERIAL_NUMBER="host-specific-value"',
+      "",
+    ].join("\n"),
+  );
+  return target;
+}
+
 describe("DGX Station stock DGX OS classification", () => {
   it.each([
     "7.2.0",
@@ -93,7 +131,65 @@ describe("DGX Station stock DGX OS classification", () => {
   });
 
   it.each([
+    ["supported-colossus-baseos", writeNoOtaFactoryRelease("colossus-baseos")],
+    ["supported-ai-developer-tools", writeNoOtaFactoryRelease("ai-developer-tools")],
+  ])("accepts the exact no-OTA factory profile as %s", (expected, release) => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+stat() { printf '0|0|644|256\n'; }
+dgx_station_release_state "$DGX_RELEASE"
+`,
+      { DGX_RELEASE: release },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout).toBe(expected);
+  });
+
+  it.each([
+    [
+      "BaseOS build version drift",
+      writeNoOtaFactoryRelease("colossus-baseos", { version: "7.5.0" }),
+    ],
+    [
+      "BaseOS build date drift",
+      writeNoOtaFactoryRelease("colossus-baseos", { buildDate: "2026-04-03-00-00-00" }),
+    ],
+    [
+      "AI Developer Tools product drift",
+      writeNoOtaFactoryRelease("ai-developer-tools", { pretty: "NVIDIA DGX Server" }),
+    ],
+    [
+      "AI Developer Tools build date drift",
+      writeNoOtaFactoryRelease("ai-developer-tools", { buildDate: "2026-06-17-00-00-00" }),
+    ],
+    [
+      "factory platform drift",
+      writeNoOtaFactoryRelease("ai-developer-tools", {
+        platform: "DGX Server for GALAXY-GB200",
+      }),
+    ],
+  ])("rejects no-OTA factory identity with %s", (_scenario, release) => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+stat() { printf '0|0|644|256\n'; }
+dgx_station_release_state "$DGX_RELEASE"
+`,
+      { DGX_RELEASE: release },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout).toBe("unsupported-dgx-os");
+  });
+
+  it.each([
     ["unreviewed version", writeDgxReleaseFixture("7.6.0")],
+    [
+      "unproven Station platform identity",
+      writeDgxReleaseFixture("7.5.0", 'DGX_PLATFORM="Not Specified"'),
+    ],
     ["missing DGX_OTA_PRETTY_NAME", writeDgxReleaseFixture("7.5.0", "", null)],
     ["BaseOS identity", writeDgxReleaseFixture("7.5.0", "", "NVIDIA BaseOS")],
     ["unknown field", writeDgxReleaseFixture("7.5.0", 'PAYLOAD="$(touch /tmp/nope)"')],
@@ -288,12 +384,102 @@ dgx_station_release_state "$DGX_RELEASE"
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(original.status, `${original.stdout}${original.stderr}`).toBe(0);
     expect(result.stdout).toBe(original.stdout);
-    expect(result.stdout).toMatch(/^(generic-ubuntu|supported-dgx-os|unsupported-dgx-os)$/);
+    expect(result.stdout).toMatch(
+      /^(generic-ubuntu|supported-dgx-os|supported-colossus-baseos|supported-ai-developer-tools|unsupported-dgx-os)$/,
+    );
     expect(result.stderr).toBe("");
   });
 });
 
 describe("DGX Station stock DGX OS runtime validation", () => {
+  it("requires the exact qualified BaseOS package inventory", () => {
+    const exact = runSourced(
+      STATION_PREPARE,
+      `
+installed_version() {
+  local spec
+  for spec in "\${BASEOS_PACKAGE_SPECS[@]}"; do
+    if [[ "\${spec%%=*}" == "$1" ]]; then printf '%s' "\${spec#*=}"; return; fi
+  done
+}
+all_baseos_packages_exact
+`,
+    );
+    expect(exact.result.status, exact.output).toBe(0);
+
+    const drifted = runSourced(
+      STATION_PREPARE,
+      `
+installed_version() {
+  if [[ "$1" == "docker-ce" ]]; then printf '5:30.0.0-1~ubuntu.24.04~noble'; return; fi
+  local spec
+  for spec in "\${BASEOS_PACKAGE_SPECS[@]}"; do
+    if [[ "\${spec%%=*}" == "$1" ]]; then printf '%s' "\${spec#*=}"; return; fi
+  done
+}
+all_baseos_packages_exact
+`,
+    );
+    expect(drifted.result.status, drifted.output).not.toBe(0);
+  });
+
+  it("allows BaseOS failures only with exact packages and the expected cause fingerprint", () => {
+    const qualified = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=colossus-baseos
+all_baseos_packages_exact() { return 0; }
+baseos_fluent_bit_failure_is_qualified() { return 0; }
+is_qualified_factory_failed_unit fluent-bit.service
+`,
+    );
+    expect(qualified.result.status, qualified.output).toBe(0);
+
+    const drifted = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=colossus-baseos
+all_baseos_packages_exact() { return 1; }
+baseos_fluent_bit_failure_is_qualified() { return 0; }
+is_qualified_factory_failed_unit fluent-bit.service
+`,
+    );
+    expect(drifted.result.status, drifted.output).not.toBe(0);
+
+    const changedCause = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=colossus-baseos
+all_baseos_packages_exact() { return 0; }
+baseos_fluent_bit_failure_is_qualified() { return 1; }
+is_qualified_factory_failed_unit fluent-bit.service
+`,
+    );
+    expect(changedCause.result.status, changedCause.output).not.toBe(0);
+  });
+
+  it("rejects a BaseOS failed unit when any systemd or unit-file fingerprint drifts", () => {
+    const exact = runSourced(
+      STATION_PREPARE,
+      `
+systemd_property_matches() { return 0; }
+file_sha256_matches() { return 0; }
+baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init.service HASH enabled 1
+`,
+    );
+    expect(exact.result.status, exact.output).toBe(0);
+
+    const drifted = runSourced(
+      STATION_PREPARE,
+      `
+systemd_property_matches() { [[ "$2" != Result ]]; }
+file_sha256_matches() { return 0; }
+baseos_failed_unit_matches cloud-init.service /usr/lib/systemd/system/cloud-init.service HASH enabled 1
+`,
+    );
+    expect(drifted.result.status, drifted.output).not.toBe(0);
+  });
+
   it("keeps stock DGX OS out of the generic package mutation path", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -304,6 +490,7 @@ require_command() {
 acquire_sudo() { :; }
 common_preflight() { STATION_HOST_PROFILE=stock-dgx-os; }
 verify_dgx_os_runtime_sudo() { printf 'DGX_OS_VALIDATED\n'; }
+ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
 install_packages() { printf 'GENERIC_PACKAGE_MUTATION\n'; return 1; }
 finish_runtime() { printf 'GENERIC_RUNTIME_MUTATION\n'; return 1; }
 run_apply
@@ -316,6 +503,49 @@ run_apply
     expect(output).not.toContain("GENERIC_PACKAGE_MUTATION");
     expect(output).not.toContain("GENERIC_RUNTIME_MUTATION");
     expect(output).not.toContain("UNEXPECTED_REQUIREMENT");
+  });
+
+  it("reconciles only the qualified BaseOS container runtime", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() {
+  [[ "$1" == "sudo" ]] || { printf 'UNEXPECTED_REQUIREMENT %s\n' "$1"; return 1; }
+}
+acquire_sudo() { :; }
+common_preflight() { STATION_HOST_PROFILE=colossus-baseos; }
+finish_runtime() { printf 'BASEOS_RUNTIME_RECONCILED\n'; }
+verify_dgx_os_runtime_sudo() { printf 'BASEOS_RUNTIME_VALIDATED\n'; }
+install_packages() { printf 'PACKAGE_MUTATION\n'; return 1; }
+run_apply
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("BASEOS_RUNTIME_RECONCILED");
+    expect(output).toContain("BASEOS_RUNTIME_VALIDATED");
+    expect(output).toContain("APPLY_RESULT=COMPLETE");
+    expect(output).not.toContain("PACKAGE_MUTATION");
+    expect(output).not.toContain("UNEXPECTED_REQUIREMENT");
+  });
+
+  it("returns a relogin result instead of requesting a reboot for factory Docker access", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() { :; }
+acquire_sudo() { :; }
+common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+verify_dgx_os_runtime_sudo() { printf 'FACTORY_RUNTIME_VALIDATED\n'; }
+ensure_docker_group() { DOCKER_GROUP_ADDED=1; }
+run_apply
+`,
+    );
+
+    expect(result.status, output).toBe(11);
+    expect(output).toContain("FACTORY_RUNTIME_VALIDATED");
+    expect(output).toContain("APPLY_RESULT=LOGIN_REQUIRED");
+    expect(output).not.toContain("REBOOT_REQUIRED");
   });
 
   it("accepts a healthy non-610 factory driver only for stock DGX OS", () => {
@@ -342,10 +572,74 @@ verify_gpu
     expect(generic.output).toContain("Expected driver 610.43.02, found 595.71.05");
   });
 
+  it("validates the GB300 and permits an auxiliary RTX GPU with unavailable ECC", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=ai-developer-tools
+nvidia-smi() {
+  printf 'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
+  printf 'NVIDIA GB300, 610.43.03, 0, 0\n'
+}
+verify_gpu
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("gpu_index=0 gpu=NVIDIA RTX PRO 6000");
+    expect(output).toContain("role=auxiliary validation=skipped");
+    expect(output).toContain("gpu_index=1 gpu=NVIDIA GB300 role=inference");
+  });
+
+  it("requires both factory container probes to expose the GB300 on a mixed-GPU host", () => {
+    const mixed = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=ai-developer-tools
+station_sudo_local_default_docker() {
+  printf 'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
+  printf 'NVIDIA GB300, 610.43.03, 0, 0\n'
+}
+run_dgx_os_cdi_test_sudo
+run_dgx_os_gpus_test_sudo
+`,
+    );
+    expect(mixed.result.status, mixed.output).toBe(0);
+    expect(mixed.output).toContain("gpu_index=1 gpu=NVIDIA GB300 role=inference");
+
+    const rtxOnly = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=ai-developer-tools
+station_sudo_local_default_docker() {
+  printf 'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
+}
+run_dgx_os_cdi_test_sudo
+`,
+    );
+    expect(rtxOnly.result.status, rtxOnly.output).not.toBe(0);
+    expect(rtxOnly.output).toContain("Expected exactly one NVIDIA GB300, found 0");
+  });
+
+  it("requires the qualified BaseOS driver to be loaded", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=colossus-baseos
+nvidia-smi() { printf 'NVIDIA GB300, 595.71.05, 0, 0\n'; }
+verify_gpu
+`,
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("Expected driver 595.58.03, found 595.71.05");
+  });
+
   it("validates stock DGX OS device visibility without rewriting host runtime state", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
+STATION_HOST_PROFILE=stock-dgx-os
 check_dgx_os_runtime_commands() { printf 'COMMANDS_OK\n'; }
 systemctl() {
   case "$*" in
@@ -430,7 +724,7 @@ verify_dgx_os_runtime_sudo
   });
 
   it.each([
-    ["wrong GPU", "NVIDIA GB200, 595.71.05, 0, 0", /Expected NVIDIA GB300/],
+    ["wrong GPU", "NVIDIA GB200, 595.71.05, 0, 0", /Expected exactly one NVIDIA GB300, found 0/],
     ["non-zero volatile ECC", "NVIDIA GB300, 595.71.05, 1, 0", /ECC must be 0\/0/],
     [
       "a failing second GPU row",
