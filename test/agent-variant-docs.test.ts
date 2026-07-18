@@ -81,10 +81,14 @@ title: "Example"
 ## Prerequisites
 
 <AgentOnly variant="openclaw">
+
 - NemoClaw installed.
+
 </AgentOnly>
 <AgentOnly variant="hermes">
+
 - NemoHermes installed.
+
 </AgentOnly>
 - A local model server running.
 `,

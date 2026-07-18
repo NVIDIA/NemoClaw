@@ -291,7 +291,7 @@ Apply this decision rule:
 - Use `<AgentOnly>` when the meaning or procedure differs.
 - Use a separate source page when most of the page is specific to one agent.
 
-This page encodes the two dollar signs as character entities so its own generated variants can display the literal placeholder instead of resolving it.
+This page encodes the two dollar signs as character entities so a future generated variant can display the literal placeholder instead of resolving it.
 
 ### Treat `AgentOnly` as a Build-Time Directive
 
@@ -300,7 +300,8 @@ Agent variant selection does not depend on pathname detection or client-side log
 The canonical source does not need an import because Fern receives only the resolved generated page.
 
 For each navigation target, `scripts/sync-agent-variant-docs.mts` reads the requested variant from `docs/index.yml` and parses the canonical source as text.
-When an `<AgentOnly>` directive lists the active variant, the resolver copies the body into the generated page.
+When an `<AgentOnly>` directive lists the active variant, the resolver copies its content into the generated page.
+It discards blank lines immediately inside the opening and closing tags so wrapper formatting does not split an adjacent Markdown list or paragraph, while preserving blank lines within the retained content.
 When the directive does not list the active variant, the resolver omits the body.
 In both cases, it removes the opening and closing directive tags before writing the generated MDX.
 
@@ -323,7 +324,7 @@ _build/agent-variants/<source-directory>/<source-name>.<variant>.generated.mdx
 The `<variant>` value is `openclaw`, `hermes`, or `deepagents`.
 The directory and base name before the variant suffix must match the canonical source path under `docs/`.
 
-This guide has the following mapping:
+If this source-only guide is added to Fern navigation, it would use the following mapping:
 
 | Variant | Generated target in `docs/index.yml` | Published route suffix |
 |---|---|---|
@@ -339,7 +340,7 @@ The route suffix above comes from the variant, section, and page slug hierarchy 
 The version entry in `fern/docs.yml` points Fern to `docs/index.yml`.
 That index defines the navigation and published route tree for every supported agent variant.
 
-An OpenClaw navigation entry for this guide uses the following shape:
+An OpenClaw navigation entry for this guide would use the following shape:
 
 ```yaml
 - page: "Engineer Agentic Docs"

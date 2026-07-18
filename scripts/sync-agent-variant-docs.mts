@@ -100,7 +100,9 @@ function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVarian
         throw new Error(`nested AgentOnly block at body line ${index + 1}`);
       }
       if (line.match(/^<\/AgentOnly>\s*$/)) {
-        if (openBlock.include) renderedLines.push(...openBlock.lines);
+        if (openBlock.include) {
+          renderedLines.push(...trimAgentOnlyBoundaryBlankLines(openBlock.lines));
+        }
         openBlock = undefined;
         continue;
       }
@@ -130,6 +132,16 @@ function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVarian
   }
 
   return renderedLines.join("\n");
+}
+
+function trimAgentOnlyBoundaryBlankLines(lines: string[]): string[] {
+  let start = 0;
+  let end = lines.length;
+
+  while (start < end && lines[start].trim() === "") start += 1;
+  while (end > start && lines[end - 1].trim() === "") end -= 1;
+
+  return lines.slice(start, end);
 }
 
 function agentOnlyVariantMatches(variant: string, activeVariant: AgentVariant): boolean {
