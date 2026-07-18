@@ -407,6 +407,9 @@ finish_runtime
     expect(result.status, output).toBe(0);
     expect(output).toContain("RESTART_QUIESCENCE");
     expect(output).toContain("systemctl enable --now containerd.service docker.service");
+    expect(output.indexOf("RESTART_QUIESCENCE")).toBeLessThan(
+      output.indexOf("systemctl enable --now containerd.service docker.service"),
+    );
     expect(output).not.toContain("UNEXPECTED_MUTATION_QUIESCENCE");
   });
 
