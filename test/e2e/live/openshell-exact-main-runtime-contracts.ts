@@ -278,17 +278,21 @@ connect_status() {
   fi
   printf '%s\n' "$status"
 }
-first_status=000
-first_attempt=0
-while [ "$first_attempt" -lt 50 ]; do
-  first_attempt=$((first_attempt + 1))
-  first_status=$(connect_status)
-  [ "$first_status" = 200 ] && break
-  sleep 0.1
-done
-printf '%s\n' "$first_status" > "$first_result"
+connect_until_allowed() {
+  result_path=$1
+  allowed_status=000
+  allowed_attempt=0
+  while [ "$allowed_attempt" -lt 50 ]; do
+    allowed_attempt=$((allowed_attempt + 1))
+    allowed_status=$(connect_status)
+    [ "$allowed_status" = 200 ] && break
+    sleep 0.1
+  done
+  printf '%s\n' "$allowed_status" > "$result_path"
+}
+connect_until_allowed "$first_result"
 IFS= read -r _ < "$trigger"
-connect_status > "$second_result"`;
+connect_until_allowed "$second_result"`;
 
 const LIVE_EXE_ONESHOT_SCRIPT = String.raw`set -eu
 endpoint_host=$1
