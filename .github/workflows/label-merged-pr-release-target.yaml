@@ -22,6 +22,12 @@ permissions:
   # targets a pull request; issues:write alone returns 403.
   pull-requests: write
 
+# Serialize assignment with tag-triggered label retirement. queue:max keeps
+# every merge event while the release workflow owns the same coordination lock.
+concurrency:
+  group: release-target-label-operations
+  queue: max
+
 jobs:
   label-release-target:
     if: ${{ github.event_name != 'pull_request_target' || github.event.pull_request.merged == true }}
@@ -40,7 +46,6 @@ jobs:
             const RELEASE_LABEL_DESCRIPTION = 'Release target';
             const RELEASE_TAG_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/;
             const SHA_PATTERN = /^[0-9a-f]{40}$/i;
-            const RECONCILIATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
             const { owner, repo } = context.repo;
             const ensuredLabels = new Set();
 
@@ -136,10 +141,6 @@ jobs:
                 throw new Error(`Release tag ${release.name} does not peel to a commit`);
               }
               release.commit = validateSha(releaseCommit, `commit for release tag ${release.name}`);
-              release.taggedAt = Date.parse(annotatedTag.data.tagger?.date ?? '');
-              if (!Number.isFinite(release.taggedAt)) {
-                throw new Error(`Release tag ${release.name} has an invalid tagger date`);
-              }
               return release.commit;
             }
 
@@ -158,34 +159,14 @@ jobs:
             }
 
             async function resolveTargetForMerge(mergeSha, releaseTags) {
-              let containingRelease;
-              for (const release of releaseTags) {
-                const releaseCommit = await peelReleaseTag(release);
-                const relation = await compareRelation(releaseCommit, mergeSha);
-
-                if (relation === 'behind' || relation === 'identical') {
-                  containingRelease = release;
-                  continue;
-                }
-                if (containingRelease) {
-                  return {
-                    label: containingRelease.name,
-                    boundary: `containing release ${containingRelease.name}`,
-                  };
-                }
-                return {
-                  label: nextPatchLabel(release),
-                  boundary: `release predecessor ${release.name}`,
-                };
-              }
-
-              if (containingRelease) {
-                return {
-                  label: containingRelease.name,
-                  boundary: `containing release ${containingRelease.name}`,
-                };
-              }
-              throw new Error(`No release tag is linearly related to merge ${mergeSha}`);
+              const latestRelease = releaseTags[0];
+              const latestCommit = await peelReleaseTag(latestRelease);
+              const relation = await compareRelation(latestCommit, mergeSha);
+              if (relation === 'behind' || relation === 'identical') return null;
+              return {
+                label: nextPatchLabel(latestRelease),
+                boundary: `release predecessor ${latestRelease.name}`,
+              };
             }
 
             function releaseLabels(pullRequest) {
@@ -307,91 +288,44 @@ jobs:
               return [...pullRequestsByNumber.values()];
             }
 
-            async function applyInterval(interval, processed) {
-              const pullRequests = await collectIntervalPullRequests(interval);
-              for (const pullRequest of pullRequests) {
-                const key = `${interval.label}:${pullRequest.number}`;
-                if (processed.has(key)) continue;
-                processed.add(key);
-                await applyTarget(pullRequest, interval.label, interval.boundary);
-              }
-            }
-
             async function refreshLatestRelease(expectedName, expectedCommit) {
               const releaseTags = await loadReleaseTags();
               const latest = releaseTags[0];
               const latestCommit = await peelReleaseTag(latest);
               return {
                 changed: latest.name !== expectedName || latestCommit !== expectedCommit,
-                latest,
-                latestCommit,
-                releaseTags,
               };
             }
 
             async function reconcileReleaseTargets(releaseTags, restartCount = 0) {
               const latestRelease = releaseTags[0];
               const latestCommit = await peelReleaseTag(latestRelease);
-              const processed = new Set();
-              const reconciliationCutoff = Date.now() - RECONCILIATION_WINDOW_MS;
-
-              for (let index = 0; index < releaseTags.length - 1; index += 1) {
-                const newer = releaseTags[index];
-                const older = releaseTags[index + 1];
-                await peelReleaseTag(newer);
-                if (newer.taggedAt < reconciliationCutoff) break;
-                await applyInterval(
-                  {
-                    base: await peelReleaseTag(older),
-                    head: await peelReleaseTag(newer),
-                    label: newer.name,
-                    boundary: `containing release ${newer.name}`,
-                  },
-                  processed,
-                );
-              }
-
-              const refreshed = await refreshLatestRelease(latestRelease.name, latestCommit);
-              if (refreshed.changed) {
-                if (restartCount >= 2) {
-                  throw new Error('Newest release tag kept changing during reconciliation');
-                }
-                core.warning('Newest release tag changed; restarting reconciliation');
-                return reconcileReleaseTargets(refreshed.releaseTags, restartCount + 1);
-              }
-
               const main = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
               const mainCommit = validateSha(main.data.commit.sha, 'main commit SHA');
               const currentInterval = {
-                base: refreshed.latestCommit,
+                base: latestCommit,
                 head: mainCommit,
-                label: nextPatchLabel(refreshed.latest),
-                boundary: `release predecessor ${refreshed.latest.name}`,
+                label: nextPatchLabel(latestRelease),
+                boundary: `release predecessor ${latestRelease.name}`,
               };
               const currentPullRequests = await collectIntervalPullRequests(currentInterval);
-              const verified = await refreshLatestRelease(
-                refreshed.latest.name,
-                refreshed.latestCommit,
-              );
+              const verified = await refreshLatestRelease(latestRelease.name, latestCommit);
               if (verified.changed) {
                 if (restartCount >= 2) {
                   throw new Error('Newest release tag kept changing during reconciliation');
                 }
                 core.warning('Newest release tag changed; restarting reconciliation');
-                return reconcileReleaseTargets(verified.releaseTags, restartCount + 1);
+                return reconcileReleaseTargets(await loadReleaseTags(), restartCount + 1);
               }
 
               for (const pullRequest of currentPullRequests) {
-                const key = `${currentInterval.label}:${pullRequest.number}`;
-                if (processed.has(key)) continue;
-                processed.add(key);
                 await applyTarget(
                   pullRequest,
                   currentInterval.label,
                   currentInterval.boundary,
                 );
               }
-              core.info(`Reconciled ${processed.size} merged PR release target(s)`);
+              core.info(`Reconciled ${currentPullRequests.length} merged PR release target(s)`);
             }
 
             if (context.eventName === 'pull_request_target') {
@@ -400,7 +334,13 @@ jobs:
               );
               const releaseTags = await loadReleaseTags();
               const target = await resolveTargetForMerge(mergeSha, releaseTags);
-              await applyTarget(pullRequest, target.label, target.boundary);
+              if (target) {
+                await applyTarget(pullRequest, target.label, target.boundary);
+              } else {
+                core.info(
+                  `PR #${pullRequest.number} is already contained in ${releaseTags[0].name}; no release target label added`,
+                );
+              }
             } else {
               const releaseTags = await loadReleaseTags();
               await reconcileReleaseTargets(releaseTags);

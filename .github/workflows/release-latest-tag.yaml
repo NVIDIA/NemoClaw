@@ -16,10 +16,14 @@ on:
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
+# Serialize tag-triggered retirement with every release-label assignment.
+# queue:max keeps merge events instead of replacing a pending run.
 concurrency:
-  group: release-latest-tag
-  cancel-in-progress: false
+  group: release-target-label-operations
+  queue: max
 
 jobs:
   update-latest:
@@ -86,3 +90,16 @@ jobs:
           RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           PUSH_REMOTE_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
         run: scripts/release-latest-tag.sh
+
+      - name: Set up Node for release-label retirement
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Retire the released target label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: >-
+          node --experimental-strip-types --no-warnings scripts/retire-release-label.mts
+          "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
