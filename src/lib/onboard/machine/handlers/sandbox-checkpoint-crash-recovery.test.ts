@@ -559,9 +559,9 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
     const resumedRun = createDeps({ getSandboxReuseState: () => "missing", updateSession });
     const defaultResolve = resumedRun.calls.resolveCreateIntent.getMockImplementation();
-    if (!defaultResolve) throw new Error("default create-intent resolver is unavailable");
+    expect(defaultResolve).toBeDefined();
     resumedRun.calls.resolveCreateIntent.mockImplementation(async (input) => {
-      const resolved = await defaultResolve(input);
+      const resolved = await defaultResolve!(input);
       return {
         ...resolved,
         policy: { ...resolved.policy, basePolicyPath: "/repo/changed-policy.yaml" },
