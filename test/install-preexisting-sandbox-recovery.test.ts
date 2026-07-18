@@ -92,7 +92,7 @@ exit 0
     ensure_docker() { :; }
     ensure_openshell_build_deps() { :; }
     maybe_offer_express_install() { :; }
-    sleep() { :; }
+    sleep() { printf 'sleep=%s\n' "$*" >> "${callLog}"; }
     step() { :; }
     install_nodejs() { :; }
     ensure_supported_runtime() { :; }
@@ -135,6 +135,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.status, result.output).toBe(0);
     expect(result.calls).toEqual([
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "sleep=10",
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
     ]);
     expect(result.output).toContain("Existing sandboxes recovered; skipping generic onboarding");
@@ -152,6 +153,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.status, result.output).toBe(0);
     expect(result.calls).toEqual([
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "sleep=10",
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
       "restore=1 confirmed= argv=onboard",
     ]);
@@ -180,6 +182,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.status).toBe(1);
     expect(result.calls).toEqual([
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
+      "sleep=10",
       'restore=1 confirmed=["legacy-box"] argv=upgrade-sandboxes --auto',
     ]);
     expect(result.output).toContain("Verifying pre-existing sandboxes remain healthy");
