@@ -508,22 +508,24 @@ with tempfile.TemporaryDirectory() as root:
                 raise OSError(control.errno.EPERM, "denied")
             control.os.pidfd_open = pidfd_open_esrch
             control.signal.pidfd_send_signal = pidfd_send_esrch
-            helper_pidfd_open_esrch = real_pidfd_open(expected_gateway.pid)
-            helper_pidfd_send_esrch = real_send(read_fd, control.signal.SIGTERM)
-            control.signal.pidfd_send_signal = pidfd_send_eperm
             try:
-                real_send(read_fd, control.signal.SIGTERM)
-                helper_pidfd_send_eperm = "accepted"
-            except control.ControlError as error:
-                helper_pidfd_send_eperm = error.code
-            if real_os_pidfd_open is None:
-                del control.os.pidfd_open
-            else:
-                control.os.pidfd_open = real_os_pidfd_open
-            if real_signal_pidfd_send is None:
-                del control.signal.pidfd_send_signal
-            else:
-                control.signal.pidfd_send_signal = real_signal_pidfd_send
+                helper_pidfd_open_esrch = real_pidfd_open(expected_gateway.pid)
+                helper_pidfd_send_esrch = real_send(read_fd, control.signal.SIGTERM)
+                control.signal.pidfd_send_signal = pidfd_send_eperm
+                try:
+                    real_send(read_fd, control.signal.SIGTERM)
+                    helper_pidfd_send_eperm = "accepted"
+                except control.ControlError as error:
+                    helper_pidfd_send_eperm = error.code
+            finally:
+                if real_os_pidfd_open is None:
+                    del control.os.pidfd_open
+                else:
+                    control.os.pidfd_open = real_os_pidfd_open
+                if real_signal_pidfd_send is None:
+                    del control.signal.pidfd_send_signal
+                else:
+                    control.signal.pidfd_send_signal = real_signal_pidfd_send
         finally:
             reader.capture = real_capture
             control._pidfd_open = real_pidfd_open
