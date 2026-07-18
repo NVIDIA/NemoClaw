@@ -108,7 +108,7 @@ export type SetupPolicySelectionDeps = {
   selectTierPresetsAndAccess: (
     tierName: string,
     presets: Preset[],
-    extraSelected: string[],
+    initialSelected: string[],
   ) => Promise<Array<Preset & { access: string }>>;
   parsePolicyPresetEnv: (raw: string) => string[];
   env?: NodeJS.ProcessEnv;
