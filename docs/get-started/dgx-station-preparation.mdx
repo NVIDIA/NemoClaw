@@ -16,7 +16,13 @@ Complete this preparation before following the Quickstart on a qualifying DGX St
 
 DGX Station GB300 express install accepts either the generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
 A stock DGX OS image qualifies only when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
-An unknown version, malformed or unsafe marker, NVIDIA BaseOS image, or other Station generation stops before host preparation.
+NemoClaw also recognizes these exact no-OTA factory profiles for bounded qualification.
+Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires both `DGX_OTA_VERSION` and `DGX_OTA_DATE` to be absent, and requires every profile-specific field below:
+
+- April 2026 NVIDIA Colossus BaseOS with `DGX_PRETTY_NAME=NVIDIA DGX Server`, `DGX_SWBUILD_VERSION=7.5.0-GB300ws-GB200ws`, and `DGX_SWBUILD_DATE=2026-04-02-08-20-16`.
+- June 2026 NVIDIA AI Developer Tools with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`, `DGX_SWBUILD_VERSION=7.5.0`, and `DGX_SWBUILD_DATE=2026-06-16-11-48-10`.
+
+An unknown version, malformed or unsafe marker, unmatched no-OTA factory image, or other Station generation stops before host preparation.
 On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
 
 ## Prepare Generic Ubuntu
@@ -41,11 +47,13 @@ After changing pinned packages, the installer exits with status `10`; reboot, si
 
 ## Validate Stock DGX OS
 
-On a qualifying stock DGX OS image, express install validates the factory stack in place against the local default Docker daemon.
+On a qualifying stock DGX OS or exact no-OTA factory image, express install validates the factory stack in place against the local default Docker daemon.
 It requires a loaded GB300 driver with zero volatile corrected and uncorrected ECC errors, active Docker and containerd services, working Docker Buildx, `nvidia-ctk`, the `nvidia.com/gpu=all` CDI device, and successful `nvidia-smi` device-visibility probes through both CDI and `--gpus all`.
-This path does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
+The stock DGX OS and AI Developer Tools paths do not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
+The Colossus BaseOS path requires the exact reviewed package and failed-service fingerprints, preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages, and prepares only Docker access and packaged CDI.
+Only the Colossus BaseOS path registers the NVIDIA Docker runtime when the launch probe proves that the runtime is missing, and it restores the prior daemon configuration if registration fails.
 The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
-Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, its only persistent stock-runtime effect is that the digest-pinned visibility-test image can remain in the Docker cache.
+Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS and AI Developer Tools paths leave only the digest-pinned visibility-test image in the Docker cache.
 
 One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
 Repeat qualification from a clean host and CI coverage remain pending.
