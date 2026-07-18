@@ -97,6 +97,45 @@ verify_docker_container_baseline
     expect(output).toContain("docker_container_baseline=preserved total=2");
   });
 
+  it("allows generic verification to preserve a stopped container baseline (#7153)", () => {
+    const { result, output } = runStationPreparation(
+      `
+DOCKER_BASELINE_CAPTURED=1
+DOCKER_CONTAINER_BASELINE='aaaaaaaaaaaaaaaaaaaaaaaa'
+DOCKER_CONTAINER_BASELINE_TOTAL=1
+package_is_exact() { return 0; }
+verify_gpu() { :; }
+systemctl() { return 0; }
+verify_cdi_refresh_lifecycle() { :; }
+id() { printf 'operator docker\n'; }
+nvidia-ctk() {
+  case "$*" in
+    'cdi list') printf 'nvidia.com/gpu=all\n' ;;
+    '--version') printf 'NVIDIA Container Toolkit CLI version 1.19.1\n' ;;
+    *) return 1 ;;
+  esac
+}
+run_cdi_test_user() { return 0; }
+run_gpus_test_user() { return 0; }
+docker() {
+  case "$*" in
+    'info') return 0 ;;
+    'image inspect '*) return 0 ;;
+    'ps -aq --no-trunc') printf 'aaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+    'version --format {{.Server.Version}}') printf '29.6.1\n' ;;
+    *) return 1 ;;
+  esac
+}
+verify_host
+`,
+      { USER: "operator" },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("docker_container_baseline=preserved total=1");
+    expect(output).toContain("STATION_HOST_READY");
+  });
+
   it("fails closed when container inventory changes after baseline capture (#7153)", () => {
     const { result, output } = runStationPreparation(`
 docker() {
