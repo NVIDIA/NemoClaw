@@ -15,6 +15,8 @@ const STATION_PREPARATION = path.join(
   "dgx-station-preparation.mdx",
 );
 const STATION_QUICKSTART = path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx");
+const PLATFORM_SUPPORT = path.join(REPO_ROOT, "docs", "reference", "platform-support.mdx");
+const VLLM_SETUP = path.join(REPO_ROOT, "docs", "inference", "set-up-vllm.mdx");
 const WINDOWS_PREPARATION = path.join(REPO_ROOT, "docs", "get-started", "windows-preparation.mdx");
 const DOCS_INDEX = path.join(REPO_ROOT, "docs", "index.yml");
 
@@ -24,6 +26,8 @@ describe("DGX Station documentation ownership", () => {
     const prerequisites = fs.readFileSync(PREREQUISITES, "utf-8");
     const stationPreparation = fs.readFileSync(STATION_PREPARATION, "utf-8");
     const quickstart = fs.readFileSync(STATION_QUICKSTART, "utf-8");
+    const platformSupport = fs.readFileSync(PLATFORM_SUPPORT, "utf-8");
+    const vllmSetup = fs.readFileSync(VLLM_SETUP, "utf-8");
     const pinnedValues = [
       "DRIVER_VERSION",
       "DOCKER_VERSION",
@@ -47,6 +51,12 @@ describe("DGX Station documentation ownership", () => {
     }
     expect(stationPreparation).toContain("DGX Server for GALAXY-GB300");
     expect(quickstart).toContain("DGX Server for GALAXY-GB300");
+    expect(stationPreparation).toContain("--force-station-install");
+    expect(stationPreparation).toContain("metadata omits or varies fields");
+    expect(stationPreparation).toContain("Remove the override after");
+    expect(quickstart).toContain("--force-station-install");
+    expect(platformSupport).toContain("explicit temporary metadata override");
+    expect(vllmSetup).toContain("explicit temporary metadata override");
     expect(stationPreparation).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
     expect(stationPreparation).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
     expect(stationPreparation).toContain("[Platform Support](../../reference/platform-support)");

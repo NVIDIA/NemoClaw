@@ -34,8 +34,6 @@ describe("sync-agent-variant-docs", () => {
 
   it("rewrites only NemoClaw CLI invocations for the NemoHermes reference", () => {
     const rendered = renderHermesCommandsVariant(`${FRONTMATTER}
-import { AgentOnly } from "../_components/AgentGuide";
-
 ### \`nemoclaw list\`
 
 \`\`\`bash
@@ -66,8 +64,6 @@ The gateway state path is \`~/.local/state/nemoclaw\`.
 
   it("rewrites only NemoClaw CLI invocations for the NemoDeepAgents reference", () => {
     const rendered = renderDeepAgentsCommandsVariant(`${FRONTMATTER}
-import { AgentOnly } from "../_components/AgentGuide";
-
 ### \`nemoclaw list\`
 
 \`\`\`bash

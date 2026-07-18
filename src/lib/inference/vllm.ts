@@ -274,14 +274,14 @@ const STATION_PROFILE: VllmProfile = {
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
     const indices = getGpuIndicesByName(/GB300/i);
+    if (indices.length === 0) {
+      throw new Error(
+        "DGX Station managed vLLM requires an NVIDIA GB300 GPU, but none was detected",
+      );
+    }
     // Docker parses --gpus as CSV, so multi-device values must retain
     // double quotes inside the argv token to keep the comma in one field.
-    const gpuFlag =
-      indices.length === 0
-        ? "all"
-        : indices.length === 1
-          ? `device=${indices[0]}`
-          : `"device=${indices.join(",")}"`;
+    const gpuFlag = indices.length === 1 ? `device=${indices[0]}` : `"device=${indices.join(",")}"`;
     return vllmDockerRunFlags(gpuFlag);
   },
   pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
@@ -658,13 +658,13 @@ function startContainer(
   model: VllmModelDef,
 ): { ok: boolean; reason?: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
-  const resolvedFlags = profile.buildDockerRunFlags
-    ? profile.buildDockerRunFlags()
-    : profile.dockerRunFlags;
   // The explicit download completed before this long-lived container starts,
   // so do not retain the host Hugging Face token in the serving process.
   let runArgs: string[];
   try {
+    const resolvedFlags = profile.buildDockerRunFlags
+      ? profile.buildDockerRunFlags()
+      : profile.dockerRunFlags;
     runArgs = buildVllmRunArgs(profile, model, resolvedFlags);
   } catch (err) {
     return { ok: false, reason: (err as Error).message };

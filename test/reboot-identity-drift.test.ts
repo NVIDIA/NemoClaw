@@ -112,7 +112,7 @@ if (args[0] === "gateway" && args[1] === "select") {
   process.exit(0);
 }
 
-if (args[0] === "sandbox" && args[1] === "get" && args[2] === ${JSON.stringify(sandboxName)}) {
+if (args[0] === "sandbox" && args[1] === "get" && (args[2] === ${JSON.stringify(sandboxName)} || args[4] === ${JSON.stringify(sandboxName)})) {
   ${sandboxGetBehavior}
 }
 
@@ -201,7 +201,7 @@ if (args[0] === "gateway" && args[1] === "start") {
   process.exit(0);
 }
 
-if (args[0] === "sandbox" && args[1] === "get" && args[2] === ${JSON.stringify(sandboxName)}) {
+if (args[0] === "sandbox" && args[1] === "get" && (args[2] === ${JSON.stringify(sandboxName)} || args[4] === ${JSON.stringify(sandboxName)})) {
   process.stdout.write("Sandbox:\\n\\n  Id: abc\\n  Name: ${sandboxName}\\n  Phase: Ready\\n");
   process.exit(0);
 }

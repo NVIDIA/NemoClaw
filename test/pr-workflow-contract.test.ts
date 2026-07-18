@@ -1058,6 +1058,57 @@ describe("pull request and main workflow contracts", () => {
     expect(stepRuns(sharedActions.staticChecks).join("\n")).not.toContain(
       "skills-frontmatter.test.ts",
     );
+    const trustedRatchetDependencies = requiredStep(
+      sharedActions.staticChecks,
+      "Install base-trusted createRequire verifier dependencies",
+    );
+    const trustedRatchet = requiredStep(
+      sharedActions.staticChecks,
+      "Enforce base-trusted createRequire allowlist ratchet",
+    );
+    expect(trustedRatchetDependencies.run).toBe(
+      'npm ci --ignore-scripts --no-audit --no-fund --prefix "$GITHUB_ACTION_PATH"',
+    );
+    expect(trustedRatchet.run).toBe(
+      'node --experimental-strip-types "$GITHUB_ACTION_PATH/create-require-ratchet.mts"',
+    );
+    expect(
+      requiredStepIndex(
+        sharedActions.staticChecks,
+        "Install base-trusted createRequire verifier dependencies",
+      ),
+    ).toBeLessThan(
+      requiredStepIndex(
+        sharedActions.staticChecks,
+        "Enforce base-trusted createRequire allowlist ratchet",
+      ),
+    );
+    expect(
+      requiredStepIndex(
+        sharedActions.staticChecks,
+        "Enforce base-trusted createRequire allowlist ratchet",
+      ),
+    ).toBeLessThan(requiredStepIndex(sharedActions.staticChecks, "Install dependencies"));
+
+    const ratchetPackage = JSON.parse(
+      readFileSync(".github/actions/ci-static-checks/package.json", "utf8"),
+    ) as { dependencies?: Record<string, string> };
+    const ratchetLock = JSON.parse(
+      readFileSync(".github/actions/ci-static-checks/package-lock.json", "utf8"),
+    ) as {
+      packages?: Record<string, { integrity?: string; version?: string }>;
+    };
+    const ratchetRuntime = readFileSync(
+      ".github/actions/ci-static-checks/create-require-ratchet.mts",
+      "utf8",
+    );
+    expect(ratchetPackage.dependencies).toEqual({ typescript: "6.0.3" });
+    expect(ratchetLock.packages?.["node_modules/typescript"]?.version).toBe("6.0.3");
+    expect(ratchetLock.packages?.["node_modules/typescript"]?.integrity).toMatch(/^sha512-/);
+    expect(ratchetRuntime).toContain(
+      'import ts from "./node_modules/typescript/lib/typescript.js";',
+    );
+    expect(ratchetRuntime).not.toMatch(/from ["']typescript["']/);
   });
 
   // source-shape-contract: security -- Downloaded CI tooling must use a committed digest rather than upstream metadata

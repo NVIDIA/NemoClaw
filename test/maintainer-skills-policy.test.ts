@@ -66,27 +66,33 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(morning).toContain("review, CI, file, and risky-area data");
   });
 
-  it("moves post-tag stragglers to the next patch version", () => {
+  it("moves post-tag stragglers and retires the released label", () => {
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
     const morning = read(".agents/skills/nemoclaw-maintainer-morning/SKILL.md");
     const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
 
-    expect(evening).toContain("automatically bump stragglers to the next patch");
-    expect(release).toContain("scripts/bump-stragglers.ts");
-    expect(release).toContain("Do not run it before Step 4");
+    expect(evening).toContain("automatically carry stragglers to the next patch");
+    expect(evening).toContain("retire the released label");
+    expect(release).toContain("release-latest-tag");
+    expect(release).toContain("signed annotated semver tag");
+    expect(release).toContain("GitHub-Verified");
+    expect(release).toContain("same tag object");
+    expect(release).toContain("Do not run the retirement script directly");
+    expect(release).toContain('--event push --commit "$RELEASE_SHA"');
+    expect(release).toContain("Expected exactly one release-latest-tag push run");
     expect(morning).toContain("post-tag housekeeping was interrupted");
-    expect(priorities).toContain("automatically bump stragglers to the next patch");
+    expect(priorities).toContain("automatically carry stragglers to the next patch");
+    expect(priorities).toContain("delete the released label");
     expect(policy).toContain("automatically move every open straggler to the next patch label");
-    expect(
-      fs.existsSync(
-        path.join(root, ".agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts"),
-      ),
-    ).toBe(true);
+    expect(policy).toContain("delete the released version label");
+    expect(policy).toContain("never renamed or reused");
+    expect(policy).toContain("shared release-label coordination queue");
+    expect(fs.existsSync(path.join(root, "scripts/retire-release-label.mts"))).toBe(true);
   });
 
-  it("records every merged main PR against its ancestry-derived release target", () => {
+  it("keeps release labels temporary and limits post-merge assignment to untagged work", () => {
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
     const projectWorkflow = read(
       ".agents/skills/nemoclaw-maintainer-policies/references/project-workflow.md",
@@ -97,23 +103,25 @@ describe("maintainer skills follow canonical workflow policy", () => {
       label_families: {
         release: { application_policy: string; positive_signals: string[] };
       };
-      quality_rules: { post_merge_release_labeling_allowed: boolean };
+      quality_rules: { post_merge_untagged_release_labeling_allowed: boolean };
     };
 
     expect(policy).toContain("After a PR merges to `main`");
-    expect(policy).toContain("earliest containing release");
-    expect(policy).toContain("completed releases tagged within the seven-day retention window");
-    expect(policy).toContain("never removes an existing version label");
+    expect(policy).toContain("ahead of the latest release tag");
+    expect(policy).toContain("only across the untagged interval");
+    expect(policy).toContain("Tags and commit ancestry are the only durable");
+    expect(policy).not.toContain("earliest containing release");
+    expect(policy).not.toContain("seven-day retention window");
     expect(projectWorkflow).toContain("On open PRs");
     expect(projectWorkflow).toContain("After a PR merges to `main`");
-    expect(projectWorkflow).toContain("historical release attribution");
+    expect(projectWorkflow).toContain("tag comparison range owns durable release membership");
     expect(taxonomy.label_families.release.positive_signals).toContain(
-      "authorized post-merge assignment to a containing release or the next patch release",
+      "authorized post-merge assignment to the next untagged patch release",
     );
     expect(taxonomy.label_families.release.application_policy).toContain(
-      "preserve existing version labels",
+      "carry open items forward and delete the released label",
     );
-    expect(taxonomy.quality_rules.post_merge_release_labeling_allowed).toBe(true);
+    expect(taxonomy.quality_rules.post_merge_untagged_release_labeling_allowed).toBe(true);
   });
 
   it("requires E2E evidence for the release candidate commit or itemized maintainer exceptions", () => {

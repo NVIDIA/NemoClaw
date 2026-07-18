@@ -609,9 +609,9 @@
     "release": {
       "item_kinds": ["issue", "pull_request"],
       "pattern": "^v\\d+\\.\\d+\\.\\d+$",
-      "positive_signals": ["maintainer selected PR for daily work", "open PR activated for day queue", "authorized post-merge assignment to a containing release or the next patch release", "issue tracked as daily release attention signal", "issue flagged as needing PR work for daily release"],
-      "negative_signals": ["readiness claim", "unverified automatic assignment outside an authorized workflow", "issue treated as release inclusion"],
-      "application_policy": "Authorized post-merge automation may add the earliest containing release label, or the next patch label when no release contains a PR merged to main. It must preserve existing version labels."
+      "positive_signals": ["maintainer selected PR for daily work", "open PR activated for day queue", "authorized post-merge assignment to the next untagged patch release", "issue tracked as daily release attention signal", "issue flagged as needing PR work for daily release"],
+      "negative_signals": ["readiness claim", "unverified automatic assignment outside an authorized workflow", "issue treated as release inclusion", "historical release attribution after a tag exists", "renamed or reused released label"],
+      "application_policy": "Authorized post-merge automation may add the next patch label only when a PR merge is ahead of the latest release tag. After the tag and workflow-managed latest are verified, authorized release housekeeping must carry open items forward and delete the released label."
     },
     "agent_owned": {
       "item_kinds": ["issue", "pull_request"],
@@ -632,7 +632,7 @@
     "human_review_required_when_outside_authorization_context": true,
     "agent_owned_label_writes_allowed_when_authorized": true,
     "release_labels_on_issues_allowed": true,
-    "post_merge_release_labeling_allowed": true,
+    "post_merge_untagged_release_labeling_allowed": true,
     "release_label_is_readiness_claim": false
   }
 }
