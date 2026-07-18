@@ -345,6 +345,18 @@ async function assertRuntimeMounts(
   phase: string,
 ): Promise<void> {
   const components = proof.components!;
+  await inspectJson<unknown>(
+    host,
+    containerId,
+    "{{json .HostConfig.Mounts}}",
+    `exact-main-driver-configured-mounts-${phase}`,
+  );
+  await inspectJson<unknown>(
+    host,
+    containerId,
+    "{{json .HostConfig.Tmpfs}}",
+    `exact-main-driver-configured-tmpfs-${phase}`,
+  );
   const mounts = await inspectJson<DockerMount[]>(
     host,
     containerId,
