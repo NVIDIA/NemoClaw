@@ -1487,6 +1487,10 @@ verify_dgx_os_runtime_sudo() {
     || fatal "The local Docker daemon is not reachable with sudo on the Station factory image"
   station_sudo_local_default_docker buildx version >/dev/null 2>&1 \
     || fatal "Docker Buildx is unavailable on the Station factory image"
+  # The June 2026 AI Developer Tools factory image can leave its packaged CDI
+  # refresh units disabled. Image production owns that source state; remove
+  # this repair after clean-host qualification consistently supplies the CDI
+  # device at boot.
   if [[ "$STATION_HOST_PROFILE" == "ai-developer-tools" ]]; then
     if sudo nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all'; then
       info "cdi=nvidia.com/gpu=all source=factory_runtime"

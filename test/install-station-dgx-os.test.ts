@@ -917,6 +917,58 @@ run_apply
     expect(output).not.toContain("systemctl restart containerd.service");
   });
 
+  it.each([
+    ["restart failure", "return 1", "Packaged CDI refresh failed"],
+    ["missing device after restart", "return 0", "did not advertise nvidia.com/gpu=all"],
+  ] as const)("fails closed on AI Developer Tools CDI %s", (_scenario, restartResult, error) => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() { :; }
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+require_docker_mutation_quiescence() { printf 'WORKLOAD_GATE_OK %s\n' "$1"; }
+sudo() {
+  case "$*" in
+    'nvidia-ctk cdi list') return 0 ;;
+    'systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service'|'systemctl start nvidia-cdi-refresh.path') return 0 ;;
+    'systemctl restart nvidia-cdi-refresh.service') ${restartResult} ;;
+    'systemctl status nvidia-cdi-refresh.service --no-pager'|'journalctl -u nvidia-cdi-refresh.service --no-pager -n 50')
+      printf 'SERVICE_DIAGNOSTICS %s\n' "$*"
+      ;;
+    *) printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1 ;;
+  esac
+}
+nvidia-ctk() { return 0; }
+ensure_dgx_os_acceptance_image() { printf 'UNEXPECTED_ACCEPTANCE_IMAGE\n'; return 1; }
+run_dgx_os_cdi_test_sudo() { printf 'UNEXPECTED_CDI_PROBE\n'; return 1; }
+run_dgx_os_gpus_test_sudo() { printf 'UNEXPECTED_GPUS_PROBE\n'; return 1; }
+STATION_HOST_PROFILE=ai-developer-tools
+verify_dgx_os_runtime_sudo
+`,
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toContain("WORKLOAD_GATE_OK");
+    expect(output).toContain("SERVICE_DIAGNOSTICS");
+    expect(output).toContain(error);
+    expect(output).not.toContain("UNEXPECTED_");
+    expect(output).not.toContain("systemctl restart docker.service");
+    expect(output).not.toContain("systemctl restart containerd.service");
+  });
+
   it("keeps forced factory-runtime profiles out of packaged CDI repair", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
