@@ -510,6 +510,11 @@ hermes-box  127.0.0.1  18789  12345  running`;
   it.each([
     ["a recovery marker from a failed action", "GATEWAY_PID=4242\n", "dashboard recovery failed"],
     ["an unavailable managed supervisor", "", "SUPERVISOR_UNAVAILABLE"],
+    [
+      "a staged unavailable managed supervisor",
+      "",
+      "SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement",
+    ],
     ["a non-exact self-recovery marker", "", "prefix SUPERVISOR_UNAVAILABLE suffix"],
     ["an extra self-recovery error", "", "SUPERVISOR_UNAVAILABLE\nGATEWAY_FAILED"],
     ["a self-recovery marker on stdout", "SUPERVISOR_UNAVAILABLE", ""],

@@ -96,4 +96,22 @@ describe("exact-main selected-driver config proof boundary", () => {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
+
+  it("expects graceful gateway recovery to remount tmpfs while retaining durable state", () => {
+    const source = fs.readFileSync(
+      path.join("test", "e2e", "live", "openshell-exact-main-driver-config.ts"),
+      "utf8",
+    );
+    const restart = source.match(
+      /export async function restartAndAssertExactMainDriverConfig[\s\S]*?(?=\nexport async function assertExactMainDriverConfigAfterRebuild)/u,
+    )?.[0];
+
+    expect(restart).toBeDefined();
+    expect(restart).toContain('tmpfsMarker: "absent"');
+    expect(restart).not.toContain('tmpfsMarker: "present"');
+    expect(restart).toContain("baseline.containerId");
+    expect(restart).toContain("baseline.config.configSha256");
+    expect(restart).toContain("durableMarkerValue: options.proof.durableMarkerValue!");
+    expect(restart).toContain('"same-container-tmpfs-remounted-and-durable-state-retained"');
+  });
 });
