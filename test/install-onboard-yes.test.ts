@@ -112,9 +112,11 @@ function runOnboardWithSession(
   const argvLog = path.join(tmp, "argv.txt");
   fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(path.join(home, ".nemoclaw", "onboard-session.json"), JSON.stringify(session));
-  fs.writeFileSync(stubBin, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\nexit 0\n`, {
-    mode: 0o755,
-  });
+  fs.writeFileSync(
+    stubBin,
+    `#!/usr/bin/env bash\nprintf 'AUTO_FRESH=%s\\n' "\${NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION:-}" > "${argvLog}"\nprintf '%s\\n' "$@" >> "${argvLog}"\nexit 0\n`,
+    { mode: 0o755 },
+  );
 
   const snippet = `
     set -e
@@ -217,6 +219,52 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
     expect(argv).not.toContain("--resume");
   });
 
+  it("marks an automatic fresh reset to preserve a loaded Station receipt", () => {
+    const generation = "0123456789abcdef0123456789abcdef";
+    const argv = runOnboardWithSession(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_STATION_EXPRESS: "1",
+        NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION: generation,
+      },
+      {
+        version: 1,
+        status: "in_progress",
+        resumable: true,
+        sandboxName: null,
+        stationExpressIntent: null,
+        steps: { sandbox: { status: "pending" } },
+      },
+    );
+
+    expect(argv).toContain("--fresh");
+    expect(argv).toContain(`AUTO_FRESH=${generation}`);
+  });
+
+  it("does not mark an explicit fresh reset as receipt-preserving", () => {
+    const generation = "0123456789abcdef0123456789abcdef";
+    const argv = runOnboardWithSession(
+      {
+        FRESH: "1",
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_STATION_EXPRESS: "1",
+        NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION: generation,
+      },
+      {
+        version: 1,
+        status: "in_progress",
+        resumable: true,
+        sandboxName: null,
+        stationExpressIntent: null,
+        steps: { sandbox: { status: "pending" } },
+      },
+    );
+
+    expect(argv).toContain("--fresh");
+    expect(argv).toContain("AUTO_FRESH=");
+    expect(argv).not.toContain(`AUTO_FRESH=${generation}`);
+  });
+
   it("still auto-resumes when a sandbox was already created", () => {
     // A sandbox exists to resume into (#2753's legitimate resume path), so the
     // classifier must keep auto-attaching --resume and never --fresh.
@@ -232,6 +280,102 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
     );
     expect(argv).toContain("--resume");
     expect(argv).not.toContain("--fresh");
+  });
+
+  it("resumes the exact Station receipt attempt before sandbox creation", () => {
+    const generation = "0123456789abcdef0123456789abcdef";
+    const argv = runOnboardWithSession(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION: generation,
+      },
+      {
+        version: 1,
+        status: "in_progress",
+        resumable: true,
+        sandboxName: null,
+        stationExpressIntent: {
+          version: 1,
+          model: "nemotron-3-ultra-550b-a55b",
+          sandboxName: "my-assistant",
+          receiptGeneration: generation,
+        },
+        steps: { sandbox: { status: "pending" } },
+      },
+    );
+
+    expect(argv).toContain("--resume");
+    expect(argv).not.toContain("--fresh");
+  });
+
+  it("preserves a mismatched Station receipt instead of automatically starting fresh", () => {
+    const sessionGeneration = "0123456789abcdef0123456789abcdef";
+    const receiptGeneration = "fedcba9876543210fedcba9876543210";
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-receipt-mismatch-"));
+    const home = path.join(tmp, "home");
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    const argvLog = path.join(tmp, "argv.txt");
+    const stubBin = path.join(tmp, "stub-cli");
+    const receiptText =
+      `revision=${"a".repeat(40)}\n` +
+      "model=nemotron-3-ultra-550b-a55b\n" +
+      `generation=${receiptGeneration}\n`;
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(stateDir, "onboard-session.json"),
+      JSON.stringify({
+        version: 1,
+        status: "in_progress",
+        resumable: true,
+        sandboxName: null,
+        stationExpressIntent: {
+          version: 1,
+          model: "nemotron-3-ultra-550b-a55b",
+          sandboxName: "my-assistant",
+          receiptGeneration: sessionGeneration,
+        },
+        steps: { sandbox: { status: "pending" } },
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(receipt, receiptText, { mode: 0o600 });
+    fs.writeFileSync(stubBin, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\n`, {
+      mode: 0o755,
+    });
+
+    try {
+      const snippet = `
+        set -e
+        source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
+        _CLI_BIN="${stubBin}"
+        _CLI_PATH=""
+        show_usage_notice() { :; }
+        info() { :; }
+        warn() { :; }
+        error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
+        run_onboard
+      `;
+      const result = spawnSync("bash", ["-c", snippet], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          FRESH: "",
+          HOME: home,
+          NEMOCLAW_FRESH: "",
+          NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION: receiptGeneration,
+          NON_INTERACTIVE: "1",
+        },
+      });
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status, output).toBe(1);
+      expect(output).toContain("belongs to a different installer receipt");
+      expect(fs.existsSync(argvLog)).toBe(false);
+      expect(fs.readFileSync(receipt, "utf8")).toBe(receiptText);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it.each([
@@ -269,6 +413,50 @@ describe("install.sh run_onboard — session classification (#5626)", () => {
     expect(argv).toContain("onboard");
     expect(argv).not.toContain("--resume");
     expect(argv).not.toContain("--fresh");
+  });
+
+  it("runs onboarding for a new Station receipt despite an older completed session", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-complete-receipt-"));
+    const home = path.join(tmp, "home");
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    const argvLog = path.join(tmp, "argv.txt");
+    const stubBin = path.join(tmp, "stub-cli");
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(stateDir, "onboard-session.json"),
+      JSON.stringify({ version: 1, status: "complete", resumable: false }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      receipt,
+      "revision=0123456789012345678901234567890123456789\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=0123456789abcdef0123456789abcdef\n",
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(stubBin, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvLog}"\n`, {
+      mode: 0o755,
+    });
+    const snippet = `
+      set -e
+      source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
+      _CLI_BIN="${stubBin}"
+      _STATION_EXPRESS_RESUME_LOADED=1
+      NON_INTERACTIVE=1
+      show_usage_notice() { :; }
+      info() { :; }
+      warn() { :; }
+      error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
+      run_onboard
+    `;
+
+    const result = spawnSync("bash", ["-c", snippet], {
+      encoding: "utf-8",
+      env: { ...process.env, HOME: home, NEMOCLAW_GATEWAY_PORT: "8080" },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(receipt)).toBe(true);
+    expect(fs.readFileSync(argvLog, "utf8").split("\n")).toContain("onboard");
   });
 });
 

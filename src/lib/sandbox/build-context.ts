@@ -73,6 +73,7 @@ function stageLegacySandboxBuildContext(
   fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), {
     recursive: true,
   });
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "scripts"));
   fs.cpSync(
     path.join(rootDir, "src", "lib", "messaging"),
     path.join(buildCtx, "src", "lib", "messaging"),
@@ -260,6 +261,7 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
   );
+  normalizeReadModesForDockerCopy(stagedScriptsDir);
 
   return { buildCtx, stagedDockerfile };
 }

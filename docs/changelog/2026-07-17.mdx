@@ -1,0 +1,29 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.86
+
+NemoClaw v0.0.86 enables the Station express recipe on qualified stock DGX OS GB300 systems, makes interrupted Station setup resumable, and fixes model validation, managed vLLM cache checks, sandbox builds, and upgrade guidance.
+
+- DGX Station GB300 express setup now accepts stock DGX OS `7.2.0`, `7.4.0`, and `7.5.0` when strict Station, GB300, release-marker, driver, ECC, Docker, CDI, and GPU-container checks pass.
+  Direct-GPU sandboxes receive only the exact read-only GPU, CPU, memory, NUMA, and NVIDIA module-initialization sysfs paths required for CUDA instead of broad `/sys` access.
+  A clean physical DGX OS `7.5.0` validation completed with local Nemotron Ultra inference, sandbox CUDA, and Hermes file-tool use; DGX Station support remains Deferred pending broader qualification.
+  For more information, refer to [Prerequisites](/user-guide/openclaw/get-started/prerequisites), the [NemoClaw Quickstart](/user-guide/openclaw/get-started/quickstart), and [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support).
+- Interrupted Station Express setup now persists its validated, secret-free provider, model, sandbox, and interaction choices.
+  `nemoclaw onboard --resume` restores those choices and retries the failed managed-vLLM step, while successful onboarding and `--fresh` retire stale Express intent and installer reboot receipts.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+- Managed vLLM cache preflight now checks only the Hugging Face cache paths used by the selected model.
+  Root-owned artifacts from an unrelated model no longer block a model switch, and repair guidance identifies the exact unwritable path.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
+- Manual Google Gemini model IDs are validated against Google's native model catalog before the existing OpenAI-compatible chat-completions probe.
+  Catalog results with or without the `models/` prefix are normalized, non-chat models are filtered out, and API credentials remain outside process arguments.
+  For more information, refer to [Use Google Gemini](/user-guide/openclaw/inference/hosted-inference/use-google-gemini).
+- Sandbox image staging normalizes script and directory permissions before Docker consumes the build context.
+  Fresh installs created under a restrictive `umask` no longer carry root-only modes into later non-root image-build stages.
+- Legacy sandbox recreation now warns before the destructive step that managed recovery restores `.openclaw` state only and does not preserve files elsewhere under `/sandbox`.
+  Back up paths such as `/sandbox/user-data` separately before upgrading.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- The starter prompt now loads focused DGX Spark, DGX Station, or Windows WSL Express instructions only after platform detection, keeping unrelated platform guidance out of general onboarding while preserving each platform's safeguards.
+  The E2E workflow planner also owns typed selector, inference-mode, schema, and Hermes-selection validation before emitting the execution plan.

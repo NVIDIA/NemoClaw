@@ -173,109 +173,17 @@ jobs:
           TARGETS: ${{ inputs.targets }}
         run: |
           set -euo pipefail
-          case "${INFERENCE_MODE}" in
-            mock|internal-nvidia|public-nvidia) ;;
-            *) echo "::error::Invalid inference_mode: ${INFERENCE_MODE}" >&2; exit 1 ;;
-          esac
-          for selector_name in JOBS TARGETS; do
-            selector_value="${!selector_name}"
-            if [ -n "${selector_value}" ] && [[ ! "${selector_value}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-              echo "::error::Invalid ${selector_name,,} input; use comma-separated ids" >&2
-              exit 1
-            fi
-          done
-
-          planner_args=()
-          if [ -n "${JOBS}" ]; then
-            planner_args+=(--jobs "${JOBS}")
-          fi
-          if [ -n "${TARGETS}" ]; then
-            planner_args+=(--targets "${TARGETS}")
-          fi
-          plan="$(npx tsx tools/e2e/workflow-plan.mts "${planner_args[@]}")"
-          plan_filter='
-            type == "object" and
-            (keys | sort) == ["explicitOnlyJobs", "hermesSelected", "matrix", "testMatrix"] and
-            (.matrix | type) == "array" and
-            all(.matrix[];
-              type == "object" and
-              (keys | sort) == ["expectedStateId", "id", "install", "label", "onboarding", "pendingRuntimeSuites", "platform", "requiredSecrets", "runner", "runtime", "suites", "supportReasons", "supported"] and
-              (.id | type == "string" and test("^[a-z0-9]+(?:-[a-z0-9]+)*$")) and
-              (.runner | type == "string" and test("^[A-Za-z0-9_-]+$")) and
-              (.label | type) == "string" and
-              (.platform | type) == "string" and
-              (.install | type) == "string" and
-              (.runtime | type) == "string" and
-              (.onboarding | type) == "string" and
-              (.expectedStateId | type) == "string" and
-              (.supported | type) == "boolean" and
-              all(.suites[], .requiredSecrets[], .supportReasons[], .pendingRuntimeSuites[]; type == "string")
-            ) and
-            (([.matrix[].id] | length) == ([.matrix[].id] | unique | length)) and
-            (.testMatrix | type) == "array" and
-            all(.testMatrix[];
-              type == "object" and
-              (keys | sort) == ["file", "id", "project"] and
-              (.id | test("^[a-z0-9]+(?:-[a-z0-9]+)*$")) and
-              (.file | test("^test/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+[.]test[.](?:js|ts)$")) and
-              ((.project == "e2e-live" and (.file | startswith("test/e2e/live/"))) or
-               (.project == "integration" and (.file | startswith("test/")) and
-                ((.file | startswith("test/e2e/")) | not)))
-            ) and
-            (([.testMatrix[].id] | length) == ([.testMatrix[].id] | unique | length)) and
-            (.hermesSelected | type) == "boolean" and
-            (.explicitOnlyJobs | type) == "array" and
-            all(.explicitOnlyJobs[]; type == "string" and test("^[A-Za-z0-9_-]+$")) and
-            ((.explicitOnlyJobs | length) == (.explicitOnlyJobs | unique | length))
-          '
-          if ! jq -e "${plan_filter}" <<< "${plan}" >/dev/null; then
-            echo "::error::E2E planner returned an invalid output schema" >&2
-            exit 1
-          fi
-
-          expected_hermes_selected=false
-          if { [ -z "${JOBS}" ] && [ -z "${TARGETS}" ]; } \
-            || [[ ",${JOBS}," == *",hermes-e2e,"* ]] \
-            || [[ ",${TARGETS}," == *",hermes-e2e,"* ]]; then
-            expected_hermes_selected=true
-          fi
-          hermes_selected="$(jq -r '.hermesSelected' <<< "${plan}")"
-          if [ "${hermes_selected}" != "${expected_hermes_selected}" ]; then
-            echo "::error::E2E planner changed the trusted Hermes selection" >&2
-            exit 1
-          fi
-
-          matrix="$(jq -c '.matrix' <<< "${plan}")"
-          test_matrix="$(jq -c '.testMatrix' <<< "${plan}")"
-          explicit_only_jobs_csv="$(jq -r '.explicitOnlyJobs | join(",")' <<< "${plan}")"
+          npx tsx tools/e2e/workflow-plan.mts --ci-output
           if [ -n "${CHECKOUT_SHA}" ]; then
+            matrix="$(sed -n 's/^matrix=//p' "${GITHUB_OUTPUT}")"
             expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
             actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
             if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ]; then
+              : > "${GITHUB_OUTPUT}"
               echo "::error::E2E planner matrix does not match controller-selected targets" >&2
               exit 1
             fi
           fi
-          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
-          echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"
-          echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
-          echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"
-
-          MATRIX_JSON="${matrix}" TEST_MATRIX_JSON="${test_matrix}" python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-          import os
-
-          typed_rows = json.loads(os.environ["MATRIX_JSON"])
-          test_rows = json.loads(os.environ["TEST_MATRIX_JSON"])
-          print("## E2E Execution Plan")
-          print()
-          print("| Test | Execution | Runner |")
-          print("| --- | --- | --- |")
-          for row in typed_rows:
-              print(f"| `{row['id']}` | typed registry | `{row['runner']}` |")
-          for row in test_rows:
-              print(f"| `{row['id']}` | shared E2E job | `ubuntu-latest` |")
-          PY
 
   live:
     needs: generate-matrix
@@ -5154,120 +5062,42 @@ jobs:
         with:
           script: |
             const path = require('path');
-            const traceTiming = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
+            const { buildScorecard } = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/coordinate-scorecard.mts'),
             );
             const scorecardJobs = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.mts'),
             );
-            const slackBlocks = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.mts'),
+            const traceTiming = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
             );
             const needs = ${{ toJSON(needs) }};
-            const safeSelector = /^[A-Za-z0-9_-]+$/;
-            const parseSelectors = (value) =>
-              value.split(',').map((name) => name.trim()).filter((name) => safeSelector.test(name));
-            const rawRequestedJobs = process.env.JOBS || '';
-            const rawRequestedTargets = process.env.TARGETS || '';
-            const requestedJobs = parseSelectors(rawRequestedJobs);
-            const requestedTargets = parseSelectors(rawRequestedTargets);
-            const isDispatch = context.eventName === 'workflow_dispatch';
-            const isSelectiveDispatch = scorecardJobs.isSelectiveDispatch(
-              context.eventName,
-              rawRequestedJobs,
-              rawRequestedTargets,
-            );
-            const runMode = isSelectiveDispatch
-              ? 'Selective dispatch'
-              : isDispatch
-                ? 'Manual full run'
-                : 'Scheduled E2E';
-            const metaJobs = [
-              'generate-matrix',
-              'report-to-pr',
-              'scorecard',
-            ];
-            const explicitOnly = parseSelectors(process.env.EXPLICIT_ONLY_JOBS || '');
-            const explicitlySelected = [...requestedJobs, ...requestedTargets];
 
             // GitHub's jobs API is the canonical source because `needs.live`
             // collapses every matrix target into one result and has no job URL.
             // The typed helper owns and tests the degraded `needs` fallback.
             const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
+            const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
+            if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
 
-            const { cancelled, failedJobs, failure, ran, skipped, success, total } =
-              scorecardJobs.summarizeJobs({
-                apiJobs,
-                explicitOnlyJobNames: explicitOnly,
-                explicitlySelected,
-                metaJobNames: metaJobs,
-                needs,
-              });
-            const perfect = ran > 0 && failure === 0 && cancelled === 0;
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const today = new Date().toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            });
-            const { budgetWarningMessage, traceTimingLine, traceSummaryLines } =
-              await traceTiming.buildTraceTimingResult({ github, context, core });
-            if (budgetWarningMessage) core.warning(budgetWarningMessage);
-            const lines = [
-              `## 🌅 NemoClaw E2E Scorecard — ${today}`,
-              '',
-              `**Run mode:** ${runMode}`,
-            ];
-            if (requestedJobs.length > 0) {
-              lines.push(`**Requested jobs:** ${requestedJobs.map((name) => `\`${name}\``).join(', ')}`);
-            }
-            if (requestedTargets.length > 0) {
-              lines.push(`**Requested targets:** ${requestedTargets.map((name) => `\`${name}\``).join(', ')}`);
-            }
-            lines.push(
-              `**Jobs run:** ${ran} of ${total}`,
-              `  ✅ ${success} passed`,
-              `  ❌ ${failure} failed`,
-              `  🚫 ${cancelled} cancelled`,
-              `  ⏭️ ${skipped} skipped`,
-            );
-            if (failedJobs.length > 0) {
-              lines.push('', '**Failed jobs:**');
-              for (const job of failedJobs) {
-                lines.push(job.url ? `  - [${job.name}](${job.url})` : `  - \`${job.name}\``);
-              }
-            }
-            if (perfect) lines.push('', '🎉 **All jobs passed!**');
-            lines.push('', traceTimingLine, ...traceSummaryLines, '', `🔗 [Full run details](${runUrl})`);
-            await core.summary.addRaw(lines.join('\n')).write();
-            const scorecardData = {
-              today,
-              runMode,
+            const { summaryMarkdown, scorecardData, slackData } = buildScorecard({
+              eventName: context.eventName,
               actor: context.actor || '',
-              isSelectiveDispatch,
-              requestedJobs,
-              requestedTargets,
-              total,
-              ran,
-              success,
-              failure,
-              cancelled,
-              skipped,
-              perfect,
-              failedJobs,
-              traceTimingLine,
-              runUrl,
-            };
+              serverUrl: context.serverUrl,
+              repo: context.repo,
+              runId: context.runId,
+              rawJobs: process.env.JOBS || '',
+              rawTargets: process.env.TARGETS || '',
+              rawExplicitOnly: process.env.EXPLICIT_ONLY_JOBS || '',
+              needs,
+              apiJobs,
+              trace,
+              today: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            });
+
+            await core.summary.addRaw(summaryMarkdown).write();
             core.setOutput('scorecardData', JSON.stringify(scorecardData));
-            core.setOutput('slackData', JSON.stringify({
-              channel: slackBlocks.getSlackChannel(scorecardData),
-              payload: {
-                text: slackBlocks.buildFallbackText(scorecardData),
-                attachments: [{
-                  color: slackBlocks.getStatusColor(scorecardData),
-                  blocks: slackBlocks.buildBlocks(scorecardData),
-                }],
-              },
-            }));
+            core.setOutput('slackData', JSON.stringify(slackData));
 
       - name: Post scorecard to Slack
         # Webhook secrets never enter branch-dispatched runs. The payload is
@@ -5290,7 +5120,22 @@ jobs:
               preview: 'SLACK_WEBHOOK_URL_PREVIEW',
             };
             const channel = data?.channel;
-            if (!Object.hasOwn(envByChannel, channel) || !data.payload || typeof data.payload !== 'object') {
+            const payload = data?.payload;
+            const attachments = payload?.attachments;
+            const validPayload =
+              Object.hasOwn(envByChannel, channel) &&
+              payload !== null &&
+              typeof payload === 'object' &&
+              typeof payload.text === 'string' &&
+              Array.isArray(attachments) &&
+              attachments.every(
+                (attachment) =>
+                  attachment !== null &&
+                  typeof attachment === 'object' &&
+                  typeof attachment.color === 'string' &&
+                  Array.isArray(attachment.blocks),
+              );
+            if (!validPayload) {
               core.setFailed('Invalid precomputed Slack payload');
               return;
             }

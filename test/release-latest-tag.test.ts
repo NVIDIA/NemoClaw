@@ -70,12 +70,27 @@ function createFixture(): Fixture {
   const remote = path.join(root, "remote.git");
   const work = path.join(root, "work");
   const summary = path.join(root, "summary.md");
+  const signingKey = path.join(root, "release-signing-key");
 
   run(root, ["git", "init", "--bare", remote]);
+  run(root, [
+    "ssh-keygen",
+    "-q",
+    "-t",
+    "ed25519",
+    "-N",
+    "",
+    "-C",
+    "release-test@example.com",
+    "-f",
+    signingKey,
+  ]);
   fs.mkdirSync(work);
   run(work, ["git", "init"]);
   run(work, ["git", "config", "user.name", "Release Test"]);
   run(work, ["git", "config", "user.email", "release-test@example.com"]);
+  run(work, ["git", "config", "gpg.format", "ssh"]);
+  run(work, ["git", "config", "user.signingkey", signingKey]);
   fs.writeFileSync(path.join(work, "file.txt"), "initial\n");
   run(work, ["git", "add", "file.txt"]);
   run(work, ["git", "commit", "-m", "initial"]);
@@ -103,12 +118,23 @@ function pushTag(fixture: Fixture, tag: string, target = "HEAD", annotated = tru
   run(fixture.work, ["git", "push", "origin", `refs/tags/${tag}`]);
 }
 
-function runReleaseLatest(fixture: Fixture, releaseTag: string): ReturnType<typeof spawnSync> {
+function localTagObject(fixture: Fixture, tag: string): string {
+  return run(fixture.work, ["git", "rev-parse", `refs/tags/${tag}`], {
+    allowFailure: true,
+  }).trim();
+}
+
+function runReleaseLatest(
+  fixture: Fixture,
+  releaseTag: string,
+  expectedReleaseTagObject = localTagObject(fixture, releaseTag) || "0".repeat(40),
+): ReturnType<typeof spawnSync> {
   return spawnSync("bash", [latestScriptPath], {
     cwd: fixture.work,
     encoding: "utf8",
     env: testEnv({
       RELEASE_TAG: releaseTag,
+      EXPECTED_RELEASE_TAG_OBJECT: expectedReleaseTagObject,
       REMOTE_NAME: "origin",
       GITHUB_STEP_SUMMARY: fixture.summary,
     }),
@@ -134,6 +160,7 @@ function runReleaseLatestWithoutIdentity(
     GITHUB_STEP_SUMMARY: fixture.summary,
     HOME: home,
     RELEASE_TAG: releaseTag,
+    EXPECTED_RELEASE_TAG_OBJECT: localTagObject(fixture, releaseTag),
     REMOTE_NAME: "origin",
     XDG_CONFIG_HOME: xdgConfigHome,
   });
@@ -165,6 +192,14 @@ function remoteCommit(fixture: Fixture, ref: string): string {
   return run(fixture.root, ["git", "--git-dir", fixture.remote, "rev-parse", `${ref}^{}`]).trim();
 }
 
+function remoteObject(fixture: Fixture, ref: string): string {
+  return run(fixture.root, ["git", "--git-dir", fixture.remote, "rev-parse", ref]).trim();
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
 function readJson(filePath: string): any {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
@@ -185,6 +220,7 @@ function createPlan(
   expect(plan.previousTag).toBe("v0.0.1");
   expect(plan.nextTag).toBe("v0.0.2");
   expect(plan.originMainCommit).toBe(releaseCommit);
+  expect(plan.operations).toContain(`create signed annotated v0.0.2 tag at ${releaseCommit}`);
   expect(plan.confirmationPhrase).toBe(`CONFIRM RELEASE v0.0.2 ${releaseCommit}`);
   return { plan, result };
 }
@@ -224,6 +260,13 @@ afterEach(() => {
 });
 
 describe("release-latest-tag.sh", () => {
+  it("advertises that release cuts create signed annotated tags", () => {
+    const result = runScript(repoRoot, ["bash", cutScriptPath, "--help"]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("signed annotated semver tag");
+  });
+
   it("promotes latest to the newest annotated semver tag without touching lkg", () => {
     const fixture = createFixture();
     pushTag(fixture, "lkg", fixture.firstCommit);
@@ -234,11 +277,14 @@ describe("release-latest-tag.sh", () => {
 
     expect(result.status).toBe(0);
     expect(remoteCommit(fixture, "refs/tags/latest")).toBe(releaseCommit);
+    expect(remoteObject(fixture, "refs/tags/latest")).toBe(
+      remoteObject(fixture, "refs/tags/v0.0.1"),
+    );
     expect(remoteCommit(fixture, "refs/tags/lkg")).toBe(fixture.firstCommit);
     expect(fs.readFileSync(fixture.summary, "utf8")).toContain("Not touched: `lkg`");
   });
 
-  it("configures a bot identity when promoting latest on a runner without git identity", () => {
+  it("promotes the existing tag object without requiring a runner git identity", () => {
     const fixture = createFixture();
     const releaseCommit = commit(fixture, "release commit");
     pushTag(fixture, "v0.0.1");
@@ -249,11 +295,66 @@ describe("release-latest-tag.sh", () => {
 
     expect(result.status).toBe(0);
     expect(remoteCommit(fixture, "refs/tags/latest")).toBe(releaseCommit);
-    expect(run(fixture.work, ["git", "config", "--local", "user.name"]).trim()).toBe(
-      "github-actions[bot]",
+    expect(remoteObject(fixture, "refs/tags/latest")).toBe(
+      remoteObject(fixture, "refs/tags/v0.0.1"),
     );
-    expect(run(fixture.work, ["git", "config", "--local", "user.email"]).trim()).toBe(
-      "41898282+github-actions[bot]@users.noreply.github.com",
+    expect(
+      run(fixture.work, ["git", "config", "--local", "user.name"], { allowFailure: true }),
+    ).toBe("");
+    expect(
+      run(fixture.work, ["git", "config", "--local", "user.email"], { allowFailure: true }),
+    ).toBe("");
+  });
+
+  it("rejects a release tag object that differs from the GitHub-verified object", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1");
+
+    const result = runReleaseLatest(fixture, "v0.0.1", "f".repeat(40));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("does not match GitHub-verified object");
+    expect(
+      runScript(fixture.root, [
+        "git",
+        "--git-dir",
+        fixture.remote,
+        "show-ref",
+        "--verify",
+        "--quiet",
+        "refs/tags/latest",
+      ]).status,
+    ).not.toBe(0);
+  });
+
+  it("does not overwrite a concurrent remote latest update", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    expect(runReleaseLatest(fixture, "v0.0.1").status).toBe(0);
+    const releaseCommit = commit(fixture, "next release commit");
+    pushTag(fixture, "v0.0.2", releaseCommit);
+    pushTag(fixture, "concurrent-latest", fixture.firstCommit);
+    const concurrentObject = remoteObject(fixture, "refs/tags/concurrent-latest");
+    const hookPath = path.join(fixture.work, ".git", "hooks", "pre-push");
+    fs.writeFileSync(
+      hookPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `git --git-dir=${shellQuote(fixture.remote)} update-ref refs/tags/latest ${concurrentObject}`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    fs.chmodSync(hookPath, 0o755);
+
+    const result = runReleaseLatest(fixture, "v0.0.2");
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("cannot lock ref 'refs/tags/latest'");
+    expect(remoteObject(fixture, "refs/tags/latest")).toBe(concurrentObject);
+    expect(remoteObject(fixture, "refs/tags/latest")).not.toBe(
+      remoteObject(fixture, "refs/tags/v0.0.2"),
     );
   });
 
@@ -355,6 +456,10 @@ describe("release-latest-tag.sh", () => {
 
     expect(cutResult.status).toBe(0);
     expect(remoteCommit(fixture, "refs/tags/v0.0.2")).toBe(releaseCommit);
+    const releaseTagObject = remoteObject(fixture, "refs/tags/v0.0.2");
+    expect(
+      run(fixture.root, ["git", "--git-dir", fixture.remote, "cat-file", "-p", releaseTagObject]),
+    ).toContain("-----BEGIN SSH SIGNATURE-----");
     expect(readJson(path.join(fixture.root, "release", "cut-result.json"))).toMatchObject({
       tag: "v0.0.2",
       targetCommit: releaseCommit,
@@ -371,10 +476,28 @@ describe("release-latest-tag.sh", () => {
     expect(readJson(path.join(fixture.root, "release", "latest-result.json"))).toMatchObject({
       tag: "v0.0.2",
       targetCommit: releaseCommit,
+      semverTagObject: releaseTagObject,
+      latestTagObject: releaseTagObject,
       latestPeeledCommit: releaseCommit,
       lkgPeeledCommitBefore: fixture.firstCommit,
       lkgPeeledCommitAfter: fixture.firstCommit,
     });
+  });
+
+  it("rejects a distinct latest tag object even when it peels to the release commit", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    const { plan } = createPlan(fixture, planPath, releaseCommit);
+    expect(cutFromPlan(fixture, planPath, plan.confirmationPhrase).status).toBe(0);
+    pushTag(fixture, "latest", releaseCommit);
+
+    const waitResult = waitForLatest(fixture, planPath);
+
+    expect(waitResult.status).not.toBe(0);
+    expect(waitResult.stderr).toContain("latest tag object");
+    expect(waitResult.stderr).toContain("does not match v0.0.2 object");
   });
 
   it("rejects a tampered release plan before cutting the tag", () => {
