@@ -121,13 +121,17 @@ function isPolicyBuilderModule(
   );
 }
 
-function requireModuleSpecifier(expression: ts.Expression | undefined): string | null {
+function requireModuleSpecifier(
+  expression: ts.Expression | undefined,
+  checker: ts.TypeChecker,
+): string | null {
   if (
     !expression ||
     !ts.isCallExpression(expression) ||
     !ts.isIdentifier(expression.expression) ||
     expression.expression.text !== "require" ||
-    expression.arguments.length !== 1
+    expression.arguments.length !== 1 ||
+    checker.getSymbolAtLocation(expression.expression)
   ) {
     return null;
   }
@@ -143,7 +147,7 @@ function collectRequiredPolicyBindings(
   identifiers: Set<ts.Symbol>,
   namespaces: Set<ts.Symbol>,
 ): void {
-  const moduleSpecifier = requireModuleSpecifier(declaration.initializer);
+  const moduleSpecifier = requireModuleSpecifier(declaration.initializer, checker);
   if (!moduleSpecifier || !isPolicyBuilderModule(fileName, moduleSpecifier, repoRoot)) return;
   if (ts.isIdentifier(declaration.name)) {
     const symbol = checker.getSymbolAtLocation(declaration.name);
@@ -258,7 +262,38 @@ function literalText(expression: ts.Expression): string | null {
   return ts.isStringLiteralLike(expression) ? expression.text : null;
 }
 
-function isDirectPolicyRead(expression: ts.ArrayLiteralExpression): boolean {
+function isCanonicalOpenshellResolverCall(
+  expression: ts.Expression,
+  fileName: string,
+  repoRoot: string,
+  checker: ts.TypeChecker,
+): boolean {
+  if (
+    !ts.isCallExpression(expression) ||
+    !ts.isIdentifier(expression.expression) ||
+    expression.expression.text !== "resolveOpenshellBinary" ||
+    expression.arguments.length !== 0 ||
+    path.resolve(fileName) !== path.resolve(repoRoot, "src/lib/policy/commands.ts")
+  ) {
+    return false;
+  }
+  const symbol = checker.getSymbolAtLocation(expression.expression);
+  return (
+    symbol?.declarations?.some(
+      (declaration) =>
+        ts.isFunctionDeclaration(declaration) &&
+        declaration.name?.text === "resolveOpenshellBinary" &&
+        path.resolve(declaration.getSourceFile().fileName) === path.resolve(fileName),
+    ) === true
+  );
+}
+
+function isDirectPolicyRead(
+  expression: ts.ArrayLiteralExpression,
+  fileName: string,
+  repoRoot: string,
+  checker: ts.TypeChecker,
+): boolean {
   const first = expression.elements[0];
   if (!first || !ts.isExpression(first)) return false;
   const firstText = literalText(first);
@@ -266,7 +301,7 @@ function isDirectPolicyRead(expression: ts.ArrayLiteralExpression): boolean {
     firstText === "policy"
       ? 0
       : firstText === "openshell" ||
-          (ts.isCallExpression(first) && calledName(first.expression) === "resolveOpenshellBinary")
+          isCanonicalOpenshellResolverCall(first, fileName, repoRoot, checker)
         ? 1
         : -1;
   if (offset < 0) return false;
@@ -295,7 +330,10 @@ export function countPolicyReadCalls(
       isPolicyBuilderCall(node.expression, builderBindings, checker)
     ) {
       readCalls += 1;
-    } else if (ts.isArrayLiteralExpression(node) && isDirectPolicyRead(node)) {
+    } else if (
+      ts.isArrayLiteralExpression(node) &&
+      isDirectPolicyRead(node, fileName, repoRoot, checker)
+    ) {
       readCalls += 1;
     }
     ts.forEachChild(node, visit);
