@@ -3,6 +3,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { spawnExitCode } from "../../core/process-exit";
+import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import type {
   MutableConfigPermsInspection,
   MutableConfigRepairResult,
@@ -10,6 +11,7 @@ import type {
 import type { SandboxEntry } from "../../state/registry";
 import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
 import { buildSandboxExecStdio } from "./exec-stdio";
+import type { GatewaySelectResult } from "./gateway-select";
 import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 export { buildSandboxExecStdio, shouldInheritSandboxExecStdin } from "./exec-stdio";
@@ -84,8 +86,10 @@ export function buildOpenshellExecArgs(
   sandboxName: string,
   command: readonly string[],
   options: SandboxExecOptions = {},
+  gatewayName?: string,
 ): string[] {
   const argv = ["sandbox", "exec", "--name", sandboxName];
+  if (gatewayName) argv.push("-g", gatewayName);
   if (options.workdir) argv.push("--workdir", options.workdir);
   if (options.tty === true) argv.push("--tty");
   if (options.tty === false) argv.push("--no-tty");
@@ -96,8 +100,15 @@ export function buildOpenshellExecArgs(
   return argv;
 }
 
-export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): string[] {
-  return ["sandbox", "exec", "--name", sandboxName, "--", "test", "-d", workdir];
+export function buildWorkdirProbeArgs(
+  sandboxName: string,
+  workdir: string,
+  gatewayName?: string,
+): string[] {
+  const argv = ["sandbox", "exec", "--name", sandboxName];
+  if (gatewayName) argv.push("-g", gatewayName);
+  argv.push("--", "test", "-d", workdir);
+  return argv;
 }
 
 // OpenShell accepts LF/CR in command argv while retaining field-specific
@@ -281,10 +292,11 @@ export async function runSandboxExecCommand(
   options: SandboxExecOptions,
   run: SandboxExecRunner,
   cleanupDeps: SandboxExecCleanupDeps,
+  gatewayName?: string,
 ): Promise<SandboxExecCompletion> {
   let result: SpawnLikeResult;
   try {
-    result = await run(binary, buildOpenshellExecArgs(sandboxName, command, options));
+    result = await run(binary, buildOpenshellExecArgs(sandboxName, command, options, gatewayName));
   } catch (error) {
     result = { status: null, error: error instanceof Error ? error : new Error(String(error)) };
   }
@@ -316,8 +328,11 @@ export function validateWorkdirOrFail(
   sandboxName: string,
   workdir: string,
   run: WorkdirProbeRunner = defaultWorkdirProbeRunner,
+  gatewayName?: string,
 ): void {
-  const outcome = evaluateWorkdirProbe(run(binary, buildWorkdirProbeArgs(sandboxName, workdir)));
+  const outcome = evaluateWorkdirProbe(
+    run(binary, buildWorkdirProbeArgs(sandboxName, workdir, gatewayName)),
+  );
   if (outcome === "missing") {
     console.error(workdirMissingMessage(workdir));
     process.exit(1);
@@ -327,6 +342,12 @@ export function validateWorkdirOrFail(
 function defaultResolveBinary(): string {
   const { getOpenshellBinary } = require("../../adapters/openshell/runtime");
   return getOpenshellBinary();
+}
+
+function defaultSelectGateway(sandboxName: string): GatewaySelectResult {
+  return (
+    require("./gateway-select") as typeof import("./gateway-select")
+  ).selectSandboxOwningGateway(sandboxName);
 }
 
 // Test seams for execSandbox. All default to the production behavior; tests
@@ -340,6 +361,8 @@ export type ExecSandboxDeps = {
   run?: SandboxExecRunner;
   policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
+  /** Select the sandbox's owning gateway before the exec talks to OpenShell. */
+  selectGateway?: (sandboxName: string) => GatewaySelectResult;
 };
 
 export async function execSandbox(
@@ -360,11 +383,31 @@ export async function execSandbox(
     console.error(inputError);
     process.exit(2);
   }
-  const binary = (deps.resolveBinary ?? defaultResolveBinary)();
-  if (options.workdir) {
-    validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
+  try {
+    assertNoOpenShellGatewayEndpointOverride();
+  } catch (error) {
+    console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
   }
-  const emitPolicyDenialHint = preparePolicyHint(CLI_NAME, sandboxName, deps.policyHint);
+  const binary = (deps.resolveBinary ?? defaultResolveBinary)();
+  const gatewaySelection = (deps.selectGateway ?? defaultSelectGateway)(sandboxName);
+  if (gatewaySelection.outcome === "failed") {
+    console.error(
+      `  Failed to select gateway '${gatewaySelection.gatewayName}' for sandbox '${sandboxName}'.`,
+    );
+    process.exit(1);
+  }
+  const gatewayName =
+    gatewaySelection.outcome === "selected" ? gatewaySelection.gatewayName : undefined;
+  if (options.workdir) {
+    validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir, gatewayName);
+  }
+  const emitPolicyDenialHint = preparePolicyHint(
+    CLI_NAME,
+    sandboxName,
+    deps.policyHint,
+    gatewayName,
+  );
   const completion = await runSandboxExecCommand(
     binary,
     sandboxName,
@@ -381,6 +424,7 @@ export async function execSandbox(
       repairMutableConfigPerms: (name) =>
         (require("../../shields") as typeof import("../../shields")).repairMutableConfigPerms(name),
     },
+    gatewayName,
   );
   if (completion.invocationError) {
     console.error(`  Failed to invoke openshell: ${completion.invocationError}`);
