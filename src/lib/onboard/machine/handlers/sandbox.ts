@@ -567,9 +567,11 @@ class SandboxStateFlow<
     if (!checkpoint || !identity) return decision;
 
     const recordedFingerprint = checkpoint.effectGroups.sandbox_create?.fingerprint;
+    const currentLightFingerprint = this.currentSandboxCreateFingerprint(identity.name);
     if (
       recordedFingerprint &&
-      recordedFingerprint !== this.currentSandboxCreateFingerprint(identity.name)
+      recordedFingerprint !== currentLightFingerprint &&
+      !recordedFingerprint.startsWith(`${currentLightFingerprint}|`)
     ) {
       return this.rejectDriftedCheckpointFingerprint(identity.name);
     }
@@ -588,13 +590,16 @@ class SandboxStateFlow<
       : decision;
   }
 
-  private currentSandboxCreateFingerprint(sandboxName: string): string {
+  private currentSandboxCreateFingerprint(
+    sandboxName: string,
+    createIntent?: ResolvedSandboxCreateIntent,
+  ): string {
     const { nemoclawVersion: builtFingerprint } = this.deps.getSandboxAgentRegistryFields(
       this.options.agent,
       !this.options.fromDockerfile,
     );
     const policyFingerprint = this.options.authoritativePolicyTier ?? "default";
-    return [
+    const lightFingerprint = [
       typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
       policyFingerprint,
       this.options.provider,
@@ -604,6 +609,19 @@ class SandboxStateFlow<
       JSON.stringify(this.options.sandboxGpuConfig ?? null),
       [...this.options.hermesToolGateways].sort().join(","),
     ].join("|");
+    return createIntent ? `${lightFingerprint}|${JSON.stringify(createIntent)}` : lightFingerprint;
+  }
+
+  private assertCheckpointCreateInputsStillMatch(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+    createIntent: ResolvedSandboxCreateIntent,
+  ): void {
+    const recordedFingerprint = state.session?.checkpoint?.effectGroups.sandbox_create?.fingerprint;
+    if (!recordedFingerprint) return;
+    if (recordedFingerprint !== this.currentSandboxCreateFingerprint(sandboxName, createIntent)) {
+      this.rejectDriftedCheckpointFingerprint(sandboxName);
+    }
   }
 
   private rejectDriftedCheckpointFingerprint(sandboxName: string): never {
@@ -1110,6 +1128,11 @@ class SandboxStateFlow<
     const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
       this.assertGatewayRouteCompatible(requestedSandboxName);
       this.assertCheckpointBindingsStillLive(state);
+      this.assertCheckpointCreateInputsStillMatch(
+        state,
+        requestedSandboxName,
+        createIntent.resolved,
+      );
       await this.deps.startRecordedStep("sandbox", {
         sandboxName: requestedSandboxName,
         provider: this.options.provider,
@@ -1182,7 +1205,7 @@ class SandboxStateFlow<
         recordCheckpointEffectGroup(
           current,
           "sandbox_create",
-          this.currentSandboxCreateFingerprint(sandboxName),
+          this.currentSandboxCreateFingerprint(sandboxName, createIntent.resolved),
         );
         recordCheckpointEffectGroup(current, "sandbox_register", sandboxName);
         return current;

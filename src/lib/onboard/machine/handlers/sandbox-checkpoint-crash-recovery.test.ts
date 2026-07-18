@@ -480,6 +480,50 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 
+  it("rejects reuse when a resolved createIntent contribution drifted despite an unchanged light fingerprint (#7022)", async () => {
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const { deps: createDeps1 } = createDeps({
+      getSandboxReuseState: () => "missing",
+      updateSession,
+      planRegisteredExtraProviders: () => ({
+        extraProviders: ["provider-a"],
+        staleExtraProviders: [],
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(createDeps1, session),
+      resume: false,
+      sandboxName: "my-assistant",
+    });
+
+    expect(session.checkpoint?.effectGroups.sandbox_create).toBeDefined();
+
+    const { deps: resumeDeps, calls } = createDeps({
+      getSandboxReuseState: () => "missing",
+      updateSession,
+      planRegisteredExtraProviders: () => ({
+        extraProviders: ["provider-b"],
+        staleExtraProviders: [],
+      }),
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(resumeDeps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
+  });
+
   it("re-revalidates checkpoint bindings immediately before the locked destructive create, catching a race after the initial check (#7022)", async () => {
     let liveCheckCount = 0;
     const providerMatchesGatewayCredential = vi.fn(() => {
