@@ -23,7 +23,6 @@ import type {
   AgentHealthProbe,
   AgentLegacyPaths,
   AgentMcpCapability,
-  AgentSelfReport,
   AgentStateFile,
   AgentVersionScheme,
 } from "./definition-types";
@@ -36,7 +35,6 @@ import {
   readMcpCapability,
   readObject,
   readPortArray,
-  readSelfReport,
   readStateFiles,
   readString,
   readStringArray,
@@ -59,7 +57,6 @@ export type {
   AgentMcpAdapter,
   AgentMcpCapability,
   AgentMcpSupport,
-  AgentSelfReport,
   AgentStateFile,
   AgentStateFileStrategy,
   AgentVersionScheme,
@@ -139,7 +136,6 @@ export function loadAgent(name: string): AgentDefinition {
   const dashboard = readDashboard(raw);
   const webAuth = readWebAuth(raw);
   const healthProbe = readHealthProbe(raw);
-  const selfReport = readSelfReport(raw);
   const config = readObject(raw, "config");
   const inference = readInference(raw);
   const mcp = readMcpCapability(raw);
@@ -173,7 +169,6 @@ export function loadAgent(name: string): AgentDefinition {
     phone_home_hosts: phoneHomeHosts,
     forward_ports: forwardPorts,
     health_probe: healthProbe,
-    self_report: selfReport,
     config,
     inference,
     mcp,
@@ -200,10 +195,6 @@ export function loadAgent(name: string): AgentDefinition {
           timeout_seconds: 30,
         }
       );
-    },
-
-    get selfReport(): AgentSelfReport | null {
-      return selfReport ?? null;
     },
 
     get forwardPort(): number {

@@ -160,15 +160,14 @@ export async function collectInferenceChecks(
   }
   // Serving-process leg: the above probes run in a fresh exec with OpenShell's
   // injected env, so they cannot attest what the long-running gateway process
-  // can reach. A manifest declaration is plumbing only until NemoClaw defines
-  // and implements a self-report response contract, so it must not suppress
-  // this honest result (#7003).
+  // can reach. Until NemoClaw defines and implements a process-owned probe
+  // contract, keep this honest result explicit (#7003).
   if (deps.includeServingProcessCheck !== false) {
     checks.push({
       group: "Inference",
       label: "Serving process",
       status: "info",
-      detail: "not checked — serving-process self_report probing is not implemented",
+      detail: "not checked — serving-process probing is not implemented",
     });
   }
   return checks;

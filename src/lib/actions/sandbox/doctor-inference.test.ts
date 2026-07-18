@@ -179,7 +179,7 @@ describe("doctor inference checks", () => {
       expect.objectContaining({
         label: "Serving process",
         status: "info",
-        detail: "not checked — serving-process self_report probing is not implemented",
+        detail: "not checked — serving-process probing is not implemented",
       }),
     );
   });

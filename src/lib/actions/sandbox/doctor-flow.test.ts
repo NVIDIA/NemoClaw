@@ -268,35 +268,38 @@ describe("runSandboxDoctor flow", () => {
   );
 
   it.each([
-    { label: "without", selfReport: null },
-    {
-      label: "with",
-      selfReport: { url: "http://127.0.0.1:18789/health", timeout_seconds: 10 },
-    },
-  ])("keeps serving-process health unchecked for gateway manifests $label self_report (#7003)", async ({
-    selfReport,
-  }) => {
+    "openclaw",
+    "hermes",
+  ] as const)("keeps serving-process health explicitly unchecked for the %s gateway (#7003)", async (agent) => {
     const harness = createDoctorHarness();
     harness.loadAgentSpy.mockReturnValue({
-      name: "openclaw",
+      name: agent,
       runtime: { kind: "gateway" },
-      selfReport,
       configPaths: {
-        dir: "/sandbox/.openclaw",
-        configFile: "openclaw.json",
+        dir: "/sandbox/.agent",
+        configFile: "config.json",
         format: "json",
       },
+    });
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent,
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
     });
 
     const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
-    expect(harness.loadAgentSpy).toHaveBeenCalledWith("openclaw");
+    expect(harness.loadAgentSpy).toHaveBeenCalledWith(agent);
     expect(report?.checks).toContainEqual(
       expect.objectContaining({
         group: "Inference",
         label: "Serving process",
         status: "info",
-        detail: "not checked — serving-process self_report probing is not implemented",
+        detail: "not checked — serving-process probing is not implemented",
       }),
     );
   });
@@ -460,7 +463,6 @@ describe("runSandboxDoctor flow", () => {
     harness.loadAgentSpy.mockReturnValue({
       name: "langchain-deepagents-code",
       runtime: { kind: "terminal", interactive_command: "deepagents" },
-      selfReport: null,
       configPaths: {
         dir: "/sandbox/.deepagents",
         configFile: "config.json",

@@ -3,7 +3,6 @@
 
 import fs from "node:fs";
 import { isPlainObject } from "../core/json-types";
-import { isLoopbackHostname } from "../private-networks";
 import { isSafeModelId } from "../validation";
 import type {
   AgentDashboard,
@@ -11,7 +10,6 @@ import type {
   AgentHealthProbe,
   AgentInference,
   AgentMcpCapability,
-  AgentSelfReport,
   AgentStateFile,
   AgentVersionScheme,
   ManifestRecord,
@@ -67,10 +65,6 @@ export function readStringArray(record: ManifestRecord, key: string): string[] |
 
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 const STATE_FILE_FIELDS = new Set(["path", "strategy", "restore"]);
-const SELF_REPORT_FIELDS = new Set(["url", "timeout_seconds"]);
-const SELF_REPORT_DEFAULT_TIMEOUT_SECONDS = 10;
-const SELF_REPORT_MAX_TIMEOUT_SECONDS = 10;
-const SELF_REPORT_MAX_URL_LENGTH = 2048;
 
 function assertStateFilePath(value: string, field: string): void {
   if (value.length === 0) {
@@ -230,109 +224,6 @@ export function readHealthProbe(record: ManifestRecord): AgentHealthProbe | unde
   }
 
   return undefined;
-}
-
-function selfReportAllowedPorts(record: ManifestRecord): Set<number> {
-  const ports = new Set(readPortArray(record, "forward_ports") ?? []);
-  const healthProbePort = readObject(record, "health_probe")?.port;
-  if (isValidPort(healthProbePort)) ports.add(healthProbePort);
-  return ports;
-}
-
-function validateSelfReportUrl(value: string, allowedPorts: ReadonlySet<number>): string {
-  if (
-    value !== value.trim() ||
-    value.length === 0 ||
-    value.length > SELF_REPORT_MAX_URL_LENGTH ||
-    CONTROL_CHAR_RE.test(value) ||
-    /\s/u.test(value) ||
-    value.includes("%") ||
-    value.includes("\\")
-  ) {
-    throw new Error(
-      "Agent manifest field 'self_report.url' must be a bounded canonical URL without whitespace, control characters, percent escapes, or backslashes",
-    );
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("Agent manifest field 'self_report.url' must be an absolute URL");
-  }
-
-  if (parsed.protocol !== "http:") {
-    throw new Error("Agent manifest field 'self_report.url' must use http");
-  }
-  if (!isLoopbackHostname(parsed.hostname)) {
-    throw new Error("Agent manifest field 'self_report.url' must target a loopback host");
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error("Agent manifest field 'self_report.url' must not include credentials");
-  }
-  const port = Number(parsed.port);
-  if (!parsed.port || !isValidPort(port, 1024)) {
-    throw new Error(
-      "Agent manifest field 'self_report.url' must include an explicit TCP port between 1024 and 65535",
-    );
-  }
-  if (!allowedPorts.has(port)) {
-    throw new Error(
-      "Agent manifest field 'self_report.url' port must be declared by health_probe.port or forward_ports",
-    );
-  }
-  if (parsed.search || parsed.hash) {
-    throw new Error("Agent manifest field 'self_report.url' must not include a query or fragment");
-  }
-  const authorityStart = value.indexOf("://") + 3;
-  const pathStart = value.indexOf("/", authorityStart);
-  const rawPath = pathStart === -1 ? "/" : value.slice(pathStart);
-  const pathSegments = rawPath.slice(1).split("/");
-  if (
-    rawPath === "/" ||
-    rawPath !== parsed.pathname ||
-    pathSegments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
-  ) {
-    throw new Error(
-      "Agent manifest field 'self_report.url' must include a canonical non-root endpoint path without empty or dot segments",
-    );
-  }
-  return value;
-}
-
-export function readSelfReport(record: ManifestRecord): AgentSelfReport | undefined {
-  if (record.self_report === undefined) return undefined;
-  const selfReport = readObject(record, "self_report");
-  if (!selfReport) {
-    throw new Error("Agent manifest field 'self_report' must be an object");
-  }
-  for (const key of Object.keys(selfReport)) {
-    if (!SELF_REPORT_FIELDS.has(key)) {
-      throw new Error(`Agent manifest field 'self_report.${key}' is not allowed`);
-    }
-  }
-
-  const url = readString(selfReport, "url");
-  if (!url) {
-    throw new Error("Agent manifest field 'self_report.url' is required");
-  }
-
-  const timeoutSeconds = selfReport.timeout_seconds ?? SELF_REPORT_DEFAULT_TIMEOUT_SECONDS;
-  if (
-    typeof timeoutSeconds !== "number" ||
-    !Number.isInteger(timeoutSeconds) ||
-    timeoutSeconds < 1 ||
-    timeoutSeconds > SELF_REPORT_MAX_TIMEOUT_SECONDS
-  ) {
-    throw new Error(
-      `Agent manifest field 'self_report.timeout_seconds' must be an integer between 1 and ${String(SELF_REPORT_MAX_TIMEOUT_SECONDS)}`,
-    );
-  }
-
-  return {
-    url: validateSelfReportUrl(url, selfReportAllowedPorts(record)),
-    timeout_seconds: timeoutSeconds,
-  };
 }
 
 export function readDashboard(record: ManifestRecord): AgentDashboard {

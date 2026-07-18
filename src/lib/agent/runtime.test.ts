@@ -39,7 +39,6 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     policyPermissivePath: null,
     pluginDir: null,
     legacyPaths: null,
-    selfReport: null,
     agentDir: "/tmp/agent",
     manifestPath: "/tmp/agent/manifest.yaml",
     ...overrides,

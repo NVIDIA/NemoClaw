@@ -16,11 +16,6 @@ export interface AgentHealthProbe {
   timeout_seconds: number;
 }
 
-export interface AgentSelfReport {
-  url: string;
-  timeout_seconds: number;
-}
-
 export interface AgentConfigPaths {
   dir: string;
   configFile: string;
@@ -121,7 +116,6 @@ export interface AgentDefinition {
   phone_home_hosts?: string[];
   forward_ports?: number[];
   health_probe?: AgentHealthProbe;
-  self_report?: AgentSelfReport;
   config?: ManifestRecord;
   inference?: AgentInference;
   mcp?: AgentMcpCapability;
@@ -134,7 +128,6 @@ export interface AgentDefinition {
   manifestPath: string;
   readonly displayName: string;
   readonly healthProbe: AgentHealthProbe | null;
-  readonly selfReport: AgentSelfReport | null;
   readonly forwardPort: number;
   readonly dashboard: AgentDashboard;
   readonly webAuth: AgentWebAuth;
