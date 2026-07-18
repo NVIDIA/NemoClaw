@@ -190,6 +190,13 @@ export function recreateOpenShellDockerSandboxContainer(
     }
     context.oldContainerId = oldContainerId;
     const inspect = inspectDockerContainer(oldContainerId, deps);
+    console.log(
+      `  Docker mount inspect projection: ${JSON.stringify({
+        configuredMounts: inspect.HostConfig?.Mounts ?? null,
+        configuredTmpfs: inspect.HostConfig?.Tmpfs ?? null,
+        runtimeStructuredMounts: inspect.Mounts?.filter((mount) => mount.Type !== "bind") ?? null,
+      })}`,
+    );
     const configuredImage = String(inspect.Config?.Image || "").trim();
     if (!configuredImage) {
       throw new Error("OpenShell sandbox container inspect did not include an image.");
