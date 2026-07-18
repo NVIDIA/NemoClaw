@@ -19,6 +19,10 @@ describe("gateway restart failure markers", () => {
     > = [
       ["PRIVILEGED_CONTROL_UNAVAILABLE", "privileged control unavailable"],
       ["SUPERVISOR_UNAVAILABLE", "privileged control unavailable"],
+      [
+        "SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement",
+        "privileged control unavailable",
+      ],
       ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
       ["SUPERVISOR_REBUILD_REQUIRED", "privileged control unavailable"],
       ["SUPERVISOR_BUSY", "privileged control unavailable"],
