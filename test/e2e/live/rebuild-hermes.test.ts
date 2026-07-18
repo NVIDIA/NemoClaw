@@ -30,6 +30,7 @@ import {
   requireRebuildHermesInitialImageTag,
 } from "./rebuild-hermes-image-state.ts";
 import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
+import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
 // The migrated scope is the legacy non-interactive shell regression: install.sh,
 // Docker base-image builds, OpenShell provider/sandbox commands, direct Hermes
@@ -950,5 +951,19 @@ test(STALE_BASE_REBUILD
     backupRoot: sandboxBackupRoot,
     leaks,
   });
+
+  // Capture per-phase and total wall time tagged with the runner class so
+  // before/after comparisons for #7144 stay on the same runner class. Written
+  // before the final gate so the timing artifact survives an assertion failure.
+  await artifacts.writeJson(
+    "rebuild-hermes-timing.json",
+    buildRebuildHermesTimingSummary({
+      lane: STALE_BASE_REBUILD ? "stale-base" : "normal",
+      timeline: progress.timeline(),
+      runnerClass: describeRunnerClass(),
+      capturedAtIso: new Date().toISOString(),
+    }),
+  );
+
   expect(leaks, "backup files must not contain credential-shaped values").toEqual([]);
 });
