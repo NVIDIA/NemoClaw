@@ -148,7 +148,7 @@ The registry is separately owned by `src/lib/state/registry.ts`; backup/recovery
 
 | Issue | Gap | Current status |
 |---|---|---|
-| #5961 | Interrupted onboard lacks durable sandbox identity/effect-group metadata | Durable identity and effect-group receipts now captured in the `checkpoint`; `planSandboxCreateReplay` reuses a surviving sandbox and never recreates under a new name. Consuming the decision at the live create executor is a follow-up (#6228) |
+| #5961 | Interrupted onboard lacks durable sandbox identity/effect-group metadata | Durable identity and effect-group receipts now captured in the `checkpoint`; the live sandbox handler consumes `planSandboxCreateReplay`, reuses a surviving exact-identity sandbox, and never recreates under a new name. Remaining apply-boundary interruption coverage belongs to #6228 |
 | #6040 | Only selected malformed terminal snapshots are repaired | Open; #6227 |
 | #6179 | Stale handler results can reach an invalid transition | Open; #6227 |
 | #5954 | Rebuild conflict was discovered after delete | Fixed by #5955 |
