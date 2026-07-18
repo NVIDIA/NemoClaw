@@ -232,6 +232,23 @@ describe("preflightRebuildTargetRuntime web search credential", () => {
     expect(bail).toHaveBeenCalledWith("Brave Search credential preflight failed");
   });
 
+  it("fails closed when the gateway binding does not match the recorded provider (#7097)", async () => {
+    mocks.readGatewayProviderMetadata.mockReturnValue({
+      ...GATEWAY_BINDING_METADATA,
+      credentialKeys: ["TAVILY_API_KEY"],
+    });
+    mocks.ensureValidatedWebSearchCredential.mockRejectedValue(
+      new Error("Brave Search credential is unavailable."),
+    );
+
+    const { result, bail } = await runPreflight();
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.readGatewayProviderMetadata).toHaveBeenCalledOnce();
+    expect(mocks.ensureValidatedWebSearchCredential).toHaveBeenCalledOnce();
+    expect(bail).toHaveBeenCalledWith("Brave Search credential preflight failed");
+  });
+
   it("validates the staged host key instead of reusing the gateway binding", async () => {
     vi.stubEnv("BRAVE_API_KEY", "staged-key");
     mocks.ensureValidatedWebSearchCredential.mockResolvedValue("staged-key");
