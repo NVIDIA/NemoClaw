@@ -16,6 +16,7 @@ const GPU_ENV_KEYS = new Set([
   "NVIDIA_REQUIRE_CUDA",
   "NVIDIA_DISABLE_REQUIRE",
 ]);
+const DOCKER_DEFAULT_TMPFS_OPTIONS = new Set(["noexec", "nosuid", "nodev"]);
 type DockerStructuredMount = NonNullable<
   NonNullable<DockerContainerInspect["HostConfig"]>["Mounts"]
 >[number];
@@ -156,13 +157,18 @@ function dockerTmpfsMountValue(mount: DockerStructuredMount): string {
   if (!target.startsWith("/")) {
     throw new Error("Docker structured mount target must be an absolute container path.");
   }
-  const options: string[] = [];
-  if (optionalMountBoolean(mount.ReadOnly, "ReadOnly")) options.push("ro");
+  const values = [`type=tmpfs`, `dst=${target}`];
+  if (optionalMountBoolean(mount.ReadOnly, "ReadOnly")) values.push("readonly");
   for (const parts of mount.TmpfsOptions?.Options ?? []) {
-    if (!Array.isArray(parts) || parts.length < 1 || parts.length > 2) {
-      throw new Error("Docker tmpfs mount options must contain one or two values.");
+    if (!Array.isArray(parts) || parts.length !== 1) {
+      throw new Error("Docker structured tmpfs options must contain exactly one value.");
     }
-    options.push(parts.map((part) => mountValue(part, "tmpfs option")).join("="));
+    const option = mountValue(parts[0], "tmpfs option");
+    if (!DOCKER_DEFAULT_TMPFS_OPTIONS.has(option)) {
+      throw new Error(
+        `Docker structured tmpfs option '${option}' cannot be preserved during recreation.`,
+      );
+    }
   }
 
   const sizeBytes = mount.TmpfsOptions?.SizeBytes;
@@ -170,16 +176,16 @@ function dockerTmpfsMountValue(mount: DockerStructuredMount): string {
     if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) {
       throw new Error("Docker tmpfs mount size must be a positive safe integer.");
     }
-    options.push(`size=${sizeBytes}`);
+    values.push(`tmpfs-size=${sizeBytes}`);
   }
   const mode = mount.TmpfsOptions?.Mode;
   if (mode !== undefined && mode !== null) {
     if (!Number.isSafeInteger(mode) || mode < 0 || mode > 0o7777) {
       throw new Error("Docker tmpfs mount mode must be a valid non-negative file mode.");
     }
-    options.push(`mode=${mode.toString(8)}`);
+    values.push(`tmpfs-mode=${mode.toString(8)}`);
   }
-  return options.length > 0 ? `${target}:${options.join(",")}` : target;
+  return values.join(",");
 }
 
 function dockerVolumeMountValue(mount: DockerStructuredMount): string {
@@ -215,9 +221,10 @@ function dockerStructuredMountArgs(inspect: DockerContainerInspect): string[] {
   for (const mount of inspect.HostConfig?.Mounts ?? []) {
     switch (mount.Type) {
       case "tmpfs":
-        // The --tmpfs form preserves OpenShell's arbitrary TmpfsOptions.Options,
-        // such as noexec, in addition to the structured size and mode fields.
-        args.push("--tmpfs", dockerTmpfsMountValue(mount));
+        // Docker applies noexec, nosuid, and nodev to tmpfs mounts by default.
+        // Keep the structured representation so Docker inspect and later
+        // recreation retain size and mode alongside that security posture.
+        args.push("--mount", dockerTmpfsMountValue(mount));
         break;
       case "volume":
         args.push("--mount", dockerVolumeMountValue(mount));

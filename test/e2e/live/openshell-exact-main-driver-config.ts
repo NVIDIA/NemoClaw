@@ -91,6 +91,12 @@ type DockerMount = {
   Type?: unknown;
 };
 
+type ConfiguredDockerMount = {
+  Target?: unknown;
+  TmpfsOptions?: unknown;
+  Type?: unknown;
+};
+
 type RuntimeSnapshot = {
   bridgeAddress: string;
   config: ParsedGatewayConfig;
@@ -345,6 +351,34 @@ async function assertRuntimeMounts(
   phase: string,
 ): Promise<void> {
   const components = proof.components!;
+  const configuredMounts = await inspectJson<ConfiguredDockerMount[] | null>(
+    host,
+    containerId,
+    "{{json .HostConfig.Mounts}}",
+    `exact-main-driver-configured-mounts-${phase}`,
+  );
+  expect(Array.isArray(configuredMounts), "Docker HostConfig.Mounts must be structured").toBe(true);
+  expect(configuredMounts?.find((mount) => mount.Target === EXACT_MAIN_TMPFS_TARGET)).toMatchObject(
+    {
+      Type: "tmpfs",
+      Target: EXACT_MAIN_TMPFS_TARGET,
+      TmpfsOptions: {
+        Mode: EXACT_MAIN_TMPFS_MOUNT.mode,
+        SizeBytes: EXACT_MAIN_TMPFS_MOUNT.size_bytes,
+      },
+    },
+  );
+  const configuredTmpfs = await inspectJson<JsonRecord | null>(
+    host,
+    containerId,
+    "{{json .HostConfig.Tmpfs}}",
+    `exact-main-driver-configured-tmpfs-${phase}`,
+  );
+  expect(
+    configuredTmpfs === null ||
+      (isRecord(configuredTmpfs) && !Object.hasOwn(configuredTmpfs, EXACT_MAIN_TMPFS_TARGET)),
+    "the reviewed tmpfs must not use Docker's legacy HostConfig.Tmpfs path",
+  ).toBe(true);
   const mounts = await inspectJson<DockerMount[]>(
     host,
     containerId,
