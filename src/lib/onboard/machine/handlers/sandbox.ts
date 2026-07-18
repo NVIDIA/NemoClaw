@@ -643,21 +643,22 @@ class SandboxStateFlow<
     availableCredentialEnvs: ReadonlySet<string>;
     liveRegisteredProviders: ReadonlySet<string>;
   } {
+    const liveRegisteredBindings = checkpoint.bindings.registeredProviders.filter((binding) =>
+      this.deps.providerMatchesGatewayCredential(binding.name, binding.type, binding.credentialEnv),
+    );
     return {
       availableCredentialEnvs: new Set(
-        Object.keys(this.options.env).filter((name) => Boolean(this.options.env[name]?.trim())),
+        [
+          ...Object.keys(this.options.env).filter((name) =>
+            Boolean(this.options.env[name]?.trim()),
+          ),
+          // Provider setup deliberately scrubs raw credentials from process.env
+          // after registration. The exact live name/type/credential-key binding
+          // is sufficient evidence for that scrubbed credential key (#7022).
+          ...liveRegisteredBindings.map((binding) => binding.credentialEnv),
+        ].filter(Boolean),
       ),
-      liveRegisteredProviders: new Set(
-        checkpoint.bindings.registeredProviders
-          .filter((binding) =>
-            this.deps.providerMatchesGatewayCredential(
-              binding.name,
-              binding.type,
-              binding.credentialEnv,
-            ),
-          )
-          .map((binding) => binding.name),
-      ),
+      liveRegisteredProviders: new Set(liveRegisteredBindings.map((binding) => binding.name)),
     };
   }
 

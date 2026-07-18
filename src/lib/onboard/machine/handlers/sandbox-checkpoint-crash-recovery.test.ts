@@ -564,6 +564,43 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.error.mock.calls.flat().join("\n")).toContain("my-assistant-brave-search");
   });
 
+  it("accepts a scrubbed host credential when its exact registered provider binding remains live (#7022)", async () => {
+    const providerMatchesGatewayCredential = vi.fn(() => true);
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        effectGroups: {},
+        bindings: {
+          credentialEnvs: ["COMPATIBLE_API_KEY"],
+          registeredProviders: [
+            {
+              name: "compatible-endpoint",
+              type: "openai",
+              credentialEnv: "COMPATIBLE_API_KEY",
+            },
+          ],
+        },
+      }),
+    );
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "missing",
+      providerMatchesGatewayCredential,
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      env: {},
+    });
+
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "compatible-endpoint",
+      "openai",
+      "COMPATIBLE_API_KEY",
+    );
+    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
+  });
+
   it("resumes a non-interactive onboarding attempt that crashed after create succeeded but before its completion receipt (#7022)", async () => {
     const recordStepComplete = vi
       .fn()
