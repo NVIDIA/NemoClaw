@@ -63,6 +63,8 @@ describe("Code scanning workflow dependency updates", () => {
 describe("ShellCheck SARIF workflow boundary", () => {
   // source-shape-contract: security -- A sparse trusted checkout, disabled credential persistence, an isolated helper environment, and fail-closed ordering protect SARIF publication
   it("runs only the trusted converter and keeps scanner status separate from conversion failures (#6959)", () => {
+    expect(workflow.jobs.shellcheck).toBeDefined();
+
     const checkout = requiredStep("Checkout");
     expect(checkout.with?.path).toBe("source");
     expect(checkout.with?.["persist-credentials"]).toBe(false);
