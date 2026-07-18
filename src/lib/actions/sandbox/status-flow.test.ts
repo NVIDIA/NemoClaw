@@ -109,6 +109,8 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Model:    nvidia/nemotron");
     expect(output).toContain("Inference: reachable");
     expect(output).toContain("Inference (ollama backend):");
+    expect(output).toContain("Serving process (openclaw gateway):");
+    expect(output).toContain("not checked");
     expect(output).toContain("Host GPU: yes");
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");
@@ -126,6 +128,19 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("omits serving-process status when the gateway is unavailable (#7003)", async () => {
+    const harness = createStatusFlowHarness({
+      lookupState: "missing",
+      servingProcessHealth: null,
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).not.toContain("Serving process");
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it.each([

@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly SCRIPT_VERSION="2026-07-17.4"
+readonly SCRIPT_VERSION="2026-07-18.1"
 readonly REBOOT_REQUIRED_EXIT=10
 readonly LOGIN_REQUIRED_EXIT=11
 readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
@@ -42,6 +42,11 @@ readonly TARGET_DKMS_VERSION="1:3.4.0-1ubuntu1"
 readonly ACCEPTANCE_IMAGE="docker.io/library/ubuntu@sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab"
 readonly STATE_DIR="${HOME}/.local/state/station-bootstrap"
 readonly INSTALL_BOOT_MARKER="${STATE_DIR}/install-boot-id"
+DOCKER_BASELINE_CAPTURED=0
+DOCKER_CONTAINER_BASELINE=""
+DOCKER_CONTAINER_BASELINE_TOTAL=0
+DOCKER_QUERY_OUTPUT=""
+DOCKER_QUERY_USES_SUDO=0
 
 readonly -a PACKAGE_SPECS=(
   "dkms=${TARGET_DKMS_VERSION}"
@@ -731,6 +736,110 @@ host_docker_sudo() {
   fi
 }
 
+query_host_docker() {
+  local output
+  DOCKER_QUERY_OUTPUT=""
+  command -v docker >/dev/null 2>&1 || return 2
+  if output="$(host_docker "$@" 2>/dev/null)"; then
+    DOCKER_QUERY_OUTPUT="$output"
+    return 0
+  fi
+  if [[ "$MODE" == "--apply" ]] && output="$(host_docker_sudo "$@" 2>/dev/null)"; then
+    DOCKER_QUERY_OUTPUT="$output"
+    if ((DOCKER_QUERY_USES_SUDO == 0)); then
+      info "docker_access=sudo_until_group_membership_is_active"
+      DOCKER_QUERY_USES_SUDO=1
+    fi
+    return 0
+  fi
+  if systemctl is-active --quiet docker.service; then
+    fatal "Docker is active but inaccessible to this login; start a new login session with docker-group membership"
+  fi
+  fatal "Docker is installed but inactive, so existing container state cannot be verified safely; start Docker and rerun preparation"
+}
+
+normalize_container_ids() {
+  LC_ALL=C sort -u | awk 'NF'
+}
+
+container_count() {
+  awk 'NF { count++ } END { print count + 0 }'
+}
+
+capture_docker_container_baseline() {
+  local status running running_count
+  ((DOCKER_BASELINE_CAPTURED == 0)) || return 0
+  if query_host_docker ps -aq --no-trunc; then
+    DOCKER_CONTAINER_BASELINE="$(normalize_container_ids <<<"$DOCKER_QUERY_OUTPUT")"
+  else
+    status=$?
+    ((status == 2)) || return "$status"
+    DOCKER_CONTAINER_BASELINE=""
+  fi
+  DOCKER_CONTAINER_BASELINE_TOTAL="$(container_count <<<"$DOCKER_CONTAINER_BASELINE")"
+  DOCKER_BASELINE_CAPTURED=1
+
+  running=""
+  if command -v docker >/dev/null 2>&1; then
+    query_host_docker ps -q --no-trunc
+    running="$(normalize_container_ids <<<"$DOCKER_QUERY_OUTPUT")"
+  fi
+  running_count="$(container_count <<<"$running")"
+  info "docker_container_baseline_total=${DOCKER_CONTAINER_BASELINE_TOTAL} running=${running_count}"
+  if ((DOCKER_CONTAINER_BASELINE_TOTAL > 0)); then
+    warn "Existing Docker container records will be preserved during Station preparation"
+  fi
+}
+
+verify_docker_container_baseline() {
+  local current current_total status
+  ((DOCKER_BASELINE_CAPTURED == 1)) || capture_docker_container_baseline
+  if query_host_docker ps -aq --no-trunc; then
+    current="$(normalize_container_ids <<<"$DOCKER_QUERY_OUTPUT")"
+  else
+    status=$?
+    ((status == 2)) || return "$status"
+    current=""
+  fi
+  current_total="$(container_count <<<"$current")"
+  if [[ "$current" != "$DOCKER_CONTAINER_BASELINE" ]]; then
+    fatal "Docker container inventory changed during Station preparation (before=${DOCKER_CONTAINER_BASELINE_TOTAL}, after=${current_total}); rerun after container activity stops"
+  fi
+  info "docker_container_baseline=preserved total=${current_total}"
+}
+
+require_no_running_docker_containers() {
+  local action=${1:-this host mutation}
+  command -v docker >/dev/null 2>&1 || return 0
+  query_host_docker ps --format '{{.ID}} {{.Names}}'
+  [[ -z "$DOCKER_QUERY_OUTPUT" ]] \
+    || fatal "Running Docker containers block ${action}: ${DOCKER_QUERY_OUTPUT}"
+  info "running_docker_containers=none action=${action}"
+}
+
+require_no_autorestarting_stopped_containers() {
+  local action=${1:-this Docker restart or reboot} line blockers=""
+  local -a container_ids=()
+  command -v docker >/dev/null 2>&1 || return 0
+  query_host_docker ps -aq --no-trunc
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && container_ids+=("$line")
+  done <<<"$DOCKER_QUERY_OUTPUT"
+  ((${#container_ids[@]} == 0)) && return 0
+  query_host_docker inspect \
+    --format '{{.Id}} {{.Name}} {{.State.Running}} {{.HostConfig.RestartPolicy.Name}}' \
+    "${container_ids[@]}"
+  blockers="$(awk '
+    $3 == "false" && $4 != "" && $4 != "no" {
+      sub(/^\//, "", $2)
+      print substr($1, 1, 12) " " $2 " restart=" $4
+    }
+  ' <<<"$DOCKER_QUERY_OUTPUT")"
+  [[ -z "$blockers" ]] \
+    || fatal "Stopped containers with restart policies block ${action}: ${blockers}"
+  info "autorestarting_stopped_containers=none action=${action}"
+}
+
 warn_openibd_remediation() {
   warn "openibd.service configures optional Mellanox RDMA networking; NemoClaw does not require RDMA"
   warn "Check the default route: ip route get 1.1.1.1"
@@ -776,8 +885,8 @@ check_failed_units() {
   ((blocking == 0)) || fatal "Unqualified failed system units block Station preparation"
 }
 
-check_no_workloads() {
-  local processes matches listeners containers=""
+check_agent_and_inference_conflicts() {
+  local processes matches listeners
   processes="$(ps -eo pid=,ppid=,comm=,args=)"
   matches="$(awk -v self="$$" -v parent="$PPID" '
     {
@@ -796,19 +905,28 @@ check_no_workloads() {
   listeners="$(ss -H -ltn 2>/dev/null | awk '$4 ~ /:8000$/ {print}')"
   [[ -z "$listeners" ]] || fatal "Port 8000 is already listening: ${listeners}"
 
-  if command -v docker >/dev/null 2>&1; then
-    if containers="$(host_docker ps -aq 2>/dev/null)"; then
-      :
-    elif [[ "$MODE" == "--apply" ]] && containers="$(host_docker_sudo ps -aq 2>/dev/null)"; then
-      info "docker_access=sudo_until_group_membership_is_active"
-    elif systemctl is-active --quiet docker.service; then
-      fatal "Docker is active but inaccessible to this login; start a new login session with docker-group membership"
-    else
-      fatal "Docker is installed but inactive, so existing container state cannot be verified safely; start Docker and rerun preparation"
-    fi
-  fi
-  [[ -z "$containers" ]] || fatal "Existing Docker containers block host preparation: ${containers}"
-  info "workloads=none port_8000=free"
+  info "agent_inference_workloads=none port_8000=free"
+}
+
+require_docker_mutation_quiescence() {
+  local action=$1
+  check_agent_and_inference_conflicts
+  verify_docker_container_baseline
+  require_no_running_docker_containers "$action"
+}
+
+require_docker_restart_quiescence() {
+  local action=$1
+  require_docker_mutation_quiescence "$action"
+  require_no_autorestarting_stopped_containers "$action"
+  require_docker_mutation_quiescence "$action"
+}
+
+exit_reboot_required() {
+  require_docker_restart_quiescence "rebooting the Station host"
+  info "APPLY_RESULT=REBOOT_REQUIRED"
+  info "Run: sudo reboot"
+  exit "$REBOOT_REQUIRED_EXIT"
 }
 
 loaded_driver_version() {
@@ -906,6 +1024,7 @@ common_preflight() {
   require_command ps
   require_command sed
   require_command sha256sum
+  require_command sort
   require_command ss
   require_command stat
   require_command systemctl
@@ -924,7 +1043,9 @@ common_preflight() {
   check_network
   check_package_managers_idle
   check_failed_units
-  check_no_workloads
+  check_agent_and_inference_conflicts
+  capture_docker_container_baseline
+  require_no_running_docker_containers "initial Station host preparation"
 }
 
 verify_file_sha256() {
@@ -1080,7 +1201,7 @@ install_packages() {
   sudo apt-get update
   validate_package_availability
   simulate_install
-  check_no_workloads
+  require_docker_restart_quiescence "Station prerequisite package installation"
   info "Installing pinned Station prerequisites"
   sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     "${PACKAGE_SPECS[@]}"
@@ -1106,7 +1227,7 @@ ensure_docker_group() {
 
 ensure_cdi_refresh_lifecycle() {
   ((CDI_LIFECYCLE_READY == 0)) || return 0
-  check_no_workloads
+  require_docker_mutation_quiescence "enabling NVIDIA CDI refresh"
   sudo systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service \
     || fatal "Could not enable the packaged NVIDIA CDI refresh lifecycle"
   sudo systemctl start nvidia-cdi-refresh.path \
@@ -1126,7 +1247,7 @@ verify_cdi_refresh_lifecycle() {
 }
 
 refresh_cdi() {
-  check_no_workloads
+  require_docker_mutation_quiescence "refreshing NVIDIA CDI configuration"
   ensure_cdi_refresh_lifecycle
   if ! sudo systemctl restart nvidia-cdi-refresh.service; then
     warn "Packaged CDI refresh failed; collecting diagnostics"
@@ -1269,7 +1390,7 @@ configure_docker_runtime_if_needed() {
   # missing-runtime state. It remains required until this acceptance probe
   # succeeds through a replacement Docker/NVIDIA runtime integration.
   warn "Docker --gpus all failed and Docker reports no NVIDIA runtime; applying the reviewed NVIDIA runtime registration"
-  check_no_workloads
+  require_docker_mutation_quiescence "configuring the NVIDIA Docker runtime"
   ensure_root_directory_safe /etc/docker /etc 0755 "Docker configuration directory"
   ensure_root_directory_safe /var/backups/station-bootstrap /var/backups 0700 "Station bootstrap backup directory"
   backup_dir="$(sudo mktemp -d /var/backups/station-bootstrap/docker-runtime.XXXXXXXXXX)" \
@@ -1284,14 +1405,14 @@ configure_docker_runtime_if_needed() {
     sudo touch "${backup_dir}/daemon.json.absent"
     sudo chmod 0600 "${backup_dir}/daemon.json.absent"
   fi
-  check_no_workloads
+  require_docker_mutation_quiescence "configuring the NVIDIA Docker runtime"
   if ! sudo nvidia-ctk runtime configure --runtime=docker; then
     fail_after_docker_runtime_rollback "$backup_dir" "$previous_daemon" "NVIDIA runtime registration failed"
   fi
   if ! root_regular_file_is_safe /etc/docker/daemon.json ""; then
     fail_after_docker_runtime_rollback "$backup_dir" "$previous_daemon" "NVIDIA runtime registration produced an unsafe Docker daemon configuration"
   fi
-  if ! (check_no_workloads); then
+  if ! (require_docker_restart_quiescence "restarting Docker after NVIDIA runtime registration"); then
     fail_after_docker_runtime_rollback "$backup_dir" "$previous_daemon" "A workload appeared before Docker restart" 0
   fi
   if ! sudo systemctl restart docker.service; then
@@ -1318,6 +1439,9 @@ rollback_docker_runtime_config() {
     sudo rm -f -- /etc/docker/daemon.json || return 1
   fi
   if [[ "$restart_after_restore" == "1" ]]; then
+    if ! (require_docker_restart_quiescence "restarting Docker during runtime rollback"); then
+      return 1
+    fi
     sudo systemctl restart docker.service
   fi
 }
@@ -1331,13 +1455,18 @@ fail_after_docker_runtime_rollback() {
 }
 
 finish_runtime() {
-  check_no_workloads
-  sudo systemctl enable --now containerd.service docker.service
+  if systemctl is-active --quiet containerd.service && systemctl is-active --quiet docker.service; then
+    require_docker_mutation_quiescence "enabling or configuring the Station container runtime"
+    sudo systemctl enable containerd.service docker.service
+  else
+    require_docker_restart_quiescence "starting or configuring the Station container runtime"
+    sudo systemctl enable --now containerd.service docker.service
+  fi
   ensure_docker_group
   ensure_acceptance_image
   ensure_cdi_runtime
   configure_docker_runtime_if_needed
-  [[ -z "$(sudo docker ps -aq)" ]] || fatal "Acceptance tests left a Docker container behind"
+  verify_docker_container_baseline
   info "runtime_setup=complete"
 }
 
@@ -1365,8 +1494,7 @@ verify_dgx_os_runtime_sudo() {
     || fatal "The Station factory image failed the CDI Docker GPU visibility test"
   run_dgx_os_gpus_test_sudo \
     || fatal "The Station factory image failed the Docker --gpus all GPU visibility test"
-  [[ -z "$(station_sudo_local_default_docker ps -aq)" ]] \
-    || fatal "Station factory-image acceptance tests left a Docker container behind"
+  verify_docker_container_baseline
   if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
     info "DGX_OS_HOST_READY host_runtime_mutation=container_image_cache_only"
   else
@@ -1390,8 +1518,7 @@ verify_dgx_os_runtime_user() {
     || fatal "The Station factory image failed the CDI Docker GPU visibility test"
   run_dgx_os_gpus_test_user \
     || fatal "The Station factory image failed the Docker --gpus all GPU visibility test"
-  [[ -z "$(station_local_default_docker ps -aq)" ]] \
-    || fatal "Station factory-image verification left a Docker container behind"
+  verify_docker_container_baseline
   if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
     info "DGX_OS_HOST_READY"
   else
@@ -1411,7 +1538,7 @@ verify_apply_state() {
   verify_cdi_refresh_lifecycle
   nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all' || fatal "CDI verification failed"
   sudo docker image inspect "$ACCEPTANCE_IMAGE" >/dev/null 2>&1 || fatal "Digest-pinned acceptance image is missing"
-  [[ -z "$(sudo docker ps -aq)" ]] || fatal "Verification found a leftover Docker container"
+  verify_docker_container_baseline
   info "STATION_HOST_READY"
 }
 
@@ -1480,7 +1607,7 @@ verify_host() {
   docker image inspect "$ACCEPTANCE_IMAGE" >/dev/null 2>&1 || fatal "Digest-pinned acceptance image is missing; run --apply"
   run_cdi_test_user || fatal "CDI verification did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
   run_gpus_test_user || fatal "Docker --gpus verification did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
-  [[ -z "$(docker ps -aq)" ]] || fatal "Verification left a Docker container behind"
+  verify_docker_container_baseline
   info "docker=$(docker version --format '{{.Server.Version}}') expected_docker=${DOCKER_VERSION} toolkit=$(nvidia-ctk --version | head -n1) expected_toolkit=${TOOLKIT_VERSION}"
   info "STATION_HOST_READY"
 }
@@ -1546,7 +1673,7 @@ run_apply() {
   if reboot_required; then
     if all_packages_exact && ! driver_loaded_exact; then
       warn "A reboot is required before runtime setup can continue"
-      exit "$REBOOT_REQUIRED_EXIT"
+      exit_reboot_required
     fi
     fatal "An unrelated reboot is already pending"
   fi
@@ -1555,35 +1682,28 @@ run_apply() {
     assert_no_package_mismatches
     install_packages
     ensure_docker_group
-    check_no_workloads
+    require_docker_restart_quiescence "enabling the Station container runtime and rebooting"
     sudo systemctl enable containerd.service docker.service nvidia-cdi-refresh.path nvidia-cdi-refresh.service
+    verify_docker_container_baseline
     write_install_boot_marker
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
 
   if install_boot_marker_matches_current_boot; then
     warn "Package installation completed in the current boot"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
 
   driver_loaded_exact || {
     warn "Pinned packages are installed but driver ${DRIVER_VERSION} is not loaded"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   }
 
   finish_runtime
   verify_apply_state
   if ((DOCKER_GROUP_ADDED == 1)); then
     warn "Docker group membership was added and requires a new login before onboarding"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
   rm -f "$INSTALL_BOOT_MARKER"
   info "APPLY_RESULT=COMPLETE"
