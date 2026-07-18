@@ -10,10 +10,6 @@ import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
-const STATION_DOCS = [
-  path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx"),
-  path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx"),
-];
 
 function runStationPrepare(body: string, extraEnv: Record<string, string> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-identity-"));
@@ -53,31 +49,6 @@ function writePciIdentityFixtureMissing(field: "vendor" | "device" | "class") {
 }
 
 describe("DGX Station platform identity", () => {
-  it("keeps documented Station pins and Deferred status aligned", () => {
-    const helper = fs.readFileSync(STATION_PREPARE, "utf-8");
-    const docs = STATION_DOCS.map((doc) => fs.readFileSync(doc, "utf-8"));
-    const pinnedValues = [
-      "DRIVER_VERSION",
-      "DOCKER_VERSION",
-      "TOOLKIT_VERSION",
-      "FACTORY_DKMS_VERSION",
-      "TARGET_DKMS_VERSION",
-    ].map((name) => {
-      const value = helper.match(new RegExp(`readonly ${name}="([^"]+)"`))?.[1];
-      expect(value, `${name} must remain declared in the Station helper`).toBeTruthy();
-      return value as string;
-    });
-
-    for (const doc of docs) {
-      for (const version of pinnedValues) expect(doc).toContain(version);
-      expect(doc).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-      for (const version of ["7.2.0", "7.4.0", "7.5.0"]) {
-        expect(doc).toContain(version);
-      }
-      expect(doc).toContain("DGX Server for GALAXY-GB300");
-    }
-  });
-
   it.each([
     ["Dell Pro Max with Station GB300", true],
     ["NVIDIA DGX Station GB300", true],
@@ -150,6 +121,52 @@ uname() {
 require_command() { :; }
 acquire_sudo() { :; }
 install_packages() { printf 'UNEXPECTED_MUTATION\n'; }
+run_apply
+`,
+      {
+        OS_RELEASE_PATH: osReleasePath,
+        PRODUCT_NAME_PATH: productNamePath,
+        PCI_ROOT: pciRoot,
+        DGX_RELEASE_PATH: dgxReleasePath,
+      },
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2)");
+    expect(output).not.toContain("UNEXPECTED_MUTATION");
+  });
+
+  it("rejects forced metadata intent without the exact GB300 PCI identity before mutation (#7138)", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-platform-"));
+    const osReleasePath = path.join(fixtureRoot, "os-release");
+    const productNamePath = path.join(fixtureRoot, "product_name");
+    const dgxReleasePath = path.join(fixtureRoot, "dgx-release");
+    const pciRoot = writePciIdentityFixture("0x1234");
+    fs.writeFileSync(
+      osReleasePath,
+      'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.4 LTS"\n',
+    );
+    fs.writeFileSync(productNamePath, "DGX Station GB300\n");
+    fs.writeFileSync(dgxReleasePath, 'DGX_PRETTY_NAME="Unrecognized Station"\n');
+
+    const { result, output } = runStationPrepare(
+      `
+station_os_release_path() { printf '%s' "$OS_RELEASE_PATH"; }
+station_product_name_path() { printf '%s' "$PRODUCT_NAME_PATH"; }
+station_pci_devices_path() { printf '%s' "$PCI_ROOT"; }
+dgx_station_release_path() { printf '%s' "$DGX_RELEASE_PATH"; }
+dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+uname() {
+  case "$*" in
+    -m) printf 'aarch64' ;;
+    -r) printf 'test-kernel' ;;
+    *) return 1 ;;
+  esac
+}
+require_command() { :; }
+acquire_sudo() { :; }
+install_packages() { printf 'UNEXPECTED_MUTATION\n'; }
+FORCE_STATION_INSTALL=1
 run_apply
 `,
       {

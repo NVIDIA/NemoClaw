@@ -31,7 +31,7 @@ MATRIX_PATH = REPO_ROOT / "ci" / "platform-matrix.json"
 TABLES = [
     (
         "platform-matrix",
-        "platforms",
+        "platforms_prerequisites",
         [
             REPO_ROOT / "docs" / "get-started" / "prerequisites.mdx",
         ],
@@ -286,38 +286,55 @@ def _validate_matrix(matrix: dict) -> None:
             f"ci/platform-matrix.json: project_status missing required keys: {missing_status}"
         )
 
-    # Reject unmatched backticks in every notes field. The cell escaper relies
+    # Reject unmatched backticks in every generated notes field. The cell escaper relies
     # on alternating in/out-of-code-span segments to leave inline code intact
     # while still encoding MDX hazards in prose; an odd backtick count is
     # ambiguous and would either bypass escaping or corrupt rendered code.
     for section in sections:
         for idx, entry in enumerate(matrix[section]):
-            note = entry.get("notes") or ""
-            if note.count("`") % 2 != 0:
-                raise ValueError(
-                    f"ci/platform-matrix.json: {section}[{idx}].notes has an odd number "
-                    "of backticks; pair every code span before regenerating docs"
-                )
+            note_fields = ["notes"]
+            if section == "platforms" and "prerequisites_notes" in entry:
+                note_fields.append("prerequisites_notes")
+            for field in note_fields:
+                note = entry.get(field) or ""
+                if note.count("`") % 2 != 0:
+                    raise ValueError(
+                        f"ci/platform-matrix.json: {section}[{idx}].{field} has an odd "
+                        "number of backticks; pair every code span before regenerating docs"
+                    )
 
 
 def generate_platform_table(platforms: list[dict]) -> str:
-    """Build a markdown table from platform entries.
+    """Build the setup-oriented platform table for Prerequisites.
 
-    Deferred entries are tracked in the metadata but excluded from
-    user-facing tables because they have no validated setup path yet.
+    Non-deferred entries use their canonical notes. A deferred entry appears
+    only when the matrix supplies `prerequisites_notes`, which records a
+    documented evaluation or preparation path without changing support status.
     """
     header = "| OS | Container runtime | Status | Notes |"
     separator = "|----|-------------------|--------|-------|"
     rows = []
-    for p in platforms:
-        if p["status"] == "deferred":
+    for p in sorted(platforms, key=lambda entry: entry["name"].casefold()):
+        prerequisites_notes = p.get("prerequisites_notes")
+        if p["status"] == "deferred" and not prerequisites_notes:
             continue
         runtimes = ", ".join(p["runtimes"])
+        notes = prerequisites_notes or p["notes"]
         rows.append(
             f"| {_escape_cell(p['name'])} | {_escape_cell(runtimes)} | "
-            f"{_escape_cell(_label(p['status']))} | {_escape_cell(p['notes'])} |"
+            f"{_escape_cell(_label(p['status']))} | {_escape_cell(notes)} |"
         )
     return "\n".join([header, separator, *rows])
+
+
+def generate_platform_prerequisites_block(platforms: list[dict]) -> str:
+    """Render platforms with setup guidance and link to the complete matrix."""
+    table = generate_platform_table(platforms)
+    reference = (
+        "For the complete platform support matrix, including all deferred platforms "
+        "and CI coverage, refer to [Platform Support](../reference/platform-support)."
+    )
+    return f"{table}\n\n{reference}"
 
 
 def generate_provider_table(providers: list[dict]) -> str:
@@ -364,7 +381,7 @@ def generate_platform_table_full(platforms: list[dict]) -> str:
     header = "| OS | Container runtime | Status | PRD priority | CI | Notes |"
     separator = "|----|-------------------|--------|--------------|----|-------|"
     rows = []
-    for p in platforms:
+    for p in sorted(platforms, key=lambda entry: entry["name"].casefold()):
         runtimes = ", ".join(p["runtimes"])
         priority = p.get("prd_priority", "Unset")
         ci = "Yes" if p.get("ci_tested") else "No"
@@ -490,6 +507,7 @@ def generate_status_vocabulary_table(statuses: dict) -> str:
 
 TABLE_GENERATORS = {
     "platforms": generate_platform_table,
+    "platforms_prerequisites": generate_platform_prerequisites_block,
     "providers": generate_provider_table,
     "platforms_full": generate_platform_table_full,
     "providers_full": generate_provider_table_full,
@@ -506,6 +524,7 @@ TABLE_GENERATORS = {
 # The generator key isn't always the matrix dict key. The "full" tables
 # read the same JSON arrays as the partial views but render them differently.
 GENERATOR_MATRIX_KEY = {
+    "platforms_prerequisites": "platforms",
     "platforms_full": "platforms",
     "providers_full": "providers",
     "status_vocabulary": "statuses",
