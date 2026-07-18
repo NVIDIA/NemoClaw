@@ -8,7 +8,7 @@ import {
   CHECKPOINT_SCHEMA_VERSION,
   type OnboardCheckpoint,
 } from "../../../state/onboard-checkpoint-types";
-import { createSession, type Session } from "../../../state/onboard-session";
+import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import {
   type CredentialProviderRegistrationDeps,
   createCredentialProviderRegistration,
@@ -618,7 +618,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
       persistedSession = mutator(persistedSession) ?? persistedSession;
       return persistedSession;
     });
-    const recordStepComplete = vi.fn(async (_stepName: string, updates: Partial<Session>) => {
+    const recordStepComplete = vi.fn(async (_stepName: string, updates: SessionUpdates) => {
       Object.assign(persistedSession, updates);
       crashBeforeEffectReceipts = true;
       return persistedSession;
