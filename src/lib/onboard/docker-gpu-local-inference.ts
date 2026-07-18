@@ -5,12 +5,12 @@ import { getLocalProviderLabel } from "../inference/local";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
   DOCKER_GPU_PATCH_NETWORK_ENV,
-  type DockerGpuPatchMode,
   getDockerGpuPatchNetworkMode,
   printDockerGpuProofFailure,
-  shouldApplyDockerGpuPatch,
 } from "./docker-gpu-patch";
-import { isDockerDesktopWslRuntime } from "./docker-gpu-sandbox-create";
+import type { DockerGpuPatchMode } from "./docker-gpu-patch-types";
+import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
+import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";
 
 const {
@@ -41,16 +41,12 @@ type DockerGpuLocalInferenceConfig = {
 
 type DockerGpuLocalInferenceOptions = {
   dockerDriverGateway: boolean;
+  selectedRoute: SelectedDockerGpuRoute;
   gatewayPort?: number;
-  dockerDesktopWsl?: boolean;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   log?: (message: string) => void;
 };
-
-function resolveDockerDesktopWsl(options: DockerGpuLocalInferenceOptions): boolean {
-  return options.dockerDesktopWsl ?? isDockerDesktopWslRuntime();
-}
 
 function isLocalInferenceProvider(provider: string | null | undefined): provider is string {
   return Boolean(provider && LOCAL_INFERENCE_PROVIDERS.includes(provider));
@@ -59,13 +55,14 @@ function isLocalInferenceProvider(provider: string | null | undefined): provider
 export function shouldSkipGpuBridgeProbe(
   gpuPassthrough: boolean,
   hostGpuPlatform?: string | null,
-  options: Partial<DockerGpuLocalInferenceOptions> = {},
+  selectedRoute: SelectedDockerGpuRoute = "none",
+  options: Omit<Partial<DockerGpuLocalInferenceOptions>, "selectedRoute"> = {},
 ): boolean {
   return (
     gpuPassthrough &&
     shouldUseDockerGpuPatchHostNetwork(
       { sandboxGpuEnabled: true, hostGpuPlatform },
-      { ...options, dockerDriverGateway: true },
+      { ...options, dockerDriverGateway: true, selectedRoute },
     )
   );
 }
@@ -80,12 +77,11 @@ export function shouldUseDockerGpuPatchHostNetwork(
   options: DockerGpuLocalInferenceOptions,
 ): boolean {
   return (
-    shouldApplyDockerGpuPatch(config, {
-      dockerDriverGateway: options.dockerDriverGateway,
-      dockerDesktopWsl: resolveDockerDesktopWsl(options),
-      env: options.env,
-      platform: options.platform,
-    }) && getDockerGpuPatchNetworkMode(options.env ?? process.env) === "host"
+    config.sandboxGpuEnabled &&
+    options.selectedRoute === "compatibility" &&
+    options.dockerDriverGateway &&
+    (options.platform ?? process.platform) === "linux" &&
+    getDockerGpuPatchNetworkMode(options.env ?? process.env) === "host"
   );
 }
 
@@ -111,12 +107,12 @@ export function shouldUseDockerGpuPatchHostNetwork(
  * Scoped to LOCAL inference providers — that is the only case the host-network
  * opt-in was meant to serve, and the only one this breaks. Non-local (cloud /
  * routed / custom) GPU sandboxes keep their requested network mode untouched.
- * Runs at sandbox build time, after the provider is resolved and before the GPU
+ * Runs after the provider and actual route are resolved, before the GPU
  * container recreate reads the network mode.
  *
  * When a downgrade is applied, also re-runs the sandbox bridge reachability
- * probe (with UFW auto-fix): gateway startup skipped it on the assumption that
- * the sandbox would be on host networking, but the sandbox is now committed to
+ * probe (with UFW auto-fix): gateway startup may have skipped it on the assumption
+ * that the sandbox would be on host networking, but the sandbox is now committed to
  * the OpenShell bridge, so a default-deny firewall must fail fast / self-heal
  * before the build rather than surface as a late, opaque failure.
  *
@@ -155,7 +151,11 @@ function defaultReverifyBridgeReachability(gatewayPort?: number): Promise<void> 
   });
 }
 
-export type SandboxExecResult = { status: number; stdout: string; stderr: string } | null;
+export type SandboxExecResult = {
+  status: number;
+  stdout: string;
+  stderr: string;
+} | null;
 
 export type DockerGpuSandboxInferenceVerifyDeps = {
   execInSandbox?: (sandboxName: string, script: string) => SandboxExecResult;
@@ -257,7 +257,10 @@ function probeSandboxRuntimeInference(
         // an exec failure, NOT a missing-curl soft-skip, so we never declare
         // success without actually exercising the runtime (#4509 review).
         const noise = (out || result.stderr || "").slice(0, 160);
-        last = { kind: "exec-failed", detail: `unexpected sandbox exec output: ${noise}` };
+        last = {
+          kind: "exec-failed",
+          detail: `unexpected sandbox exec output: ${noise}`,
+        };
       }
     }
     if (attempt < DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS) {
@@ -289,14 +292,7 @@ export function verifyDockerGpuSandboxLocalInference(
     deps?: DockerGpuSandboxInferenceVerifyDeps;
   },
 ): DockerGpuSandboxInferenceVerification {
-  if (
-    !shouldApplyDockerGpuPatch(config, {
-      dockerDriverGateway: options.dockerDriverGateway,
-      dockerDesktopWsl: resolveDockerDesktopWsl(options),
-      env: options.env,
-      platform: options.platform,
-    })
-  ) {
+  if (options.selectedRoute !== "compatibility") {
     return { status: "skipped", reason: "not-docker-gpu-patch" };
   }
   if (!isLocalInferenceProvider(provider)) {
@@ -385,11 +381,12 @@ export function printDockerGpuSandboxInferenceVerificationFailure(
 export type GpuSandboxAfterReadyOptions = {
   sandboxName: string;
   dockerDriverGateway: boolean;
-  useDockerGpuPatch: boolean;
+  selectedRoute: SelectedDockerGpuRoute;
   verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult;
   verifyGpuOrExit?: (
     verifyDirectSandboxGpu: (sandboxName: string) => SandboxGpuProofResult,
   ) => SandboxGpuProofResult;
+  reportGpuProofFailure?: boolean;
   selectedMode: () => DockerGpuPatchMode | null;
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string;
   env?: NodeJS.ProcessEnv;
@@ -412,33 +409,48 @@ export function verifyGpuSandboxAfterReady(
   provider: string | null | undefined,
   options: GpuSandboxAfterReadyOptions,
 ): void {
+  verifyGpuSandboxAccessAfterReady(config, options);
+  verifyGpuSandboxLocalInferenceAfterReady(config, provider, options);
+}
+
+export function verifyGpuSandboxAccessAfterReady(
+  config: DockerGpuLocalInferenceConfig,
+  options: GpuSandboxAfterReadyOptions,
+): SandboxGpuProofResult {
   try {
     // Capture the CUDA-usability proof result and write it back onto the shared
     // config so onboarding can persist it to the registry and `status` can
     // report proven usability rather than mere configuration (#4231).
-    config.sandboxGpuProof = options.verifyGpuOrExit
+    const proof = options.verifyGpuOrExit
       ? options.verifyGpuOrExit(options.verifyDirectSandboxGpu)
       : options.verifyDirectSandboxGpu(options.sandboxName);
+    config.sandboxGpuProof = proof;
+    return proof;
   } catch (error) {
     // `verifyGpuOrExit` is supplied by the Docker GPU create patch and already
     // prints the richer Error-phase / patched-container diagnostics before
     // rethrowing. Avoid a second generic proof-failure block in that path.
-    if (!options.verifyGpuOrExit) {
+    if (!options.verifyGpuOrExit && options.reportGpuProofFailure !== false) {
       printDockerGpuProofFailure(options.sandboxName, error, options.selectedMode(), {
         runCaptureOpenshell: options.runCaptureOpenshell,
+        additionalSummaryLines: adaptDockerGpuRouteForPatch(options.selectedRoute)
+          .additionalSummaryLines,
       });
     }
     throw error;
   }
+}
 
-  // When the resolved create plan disabled the Docker GPU patch (e.g.
-  // NEMOCLAW_DOCKER_GPU_PATCH=0 honoured outside Docker Desktop WSL), there is
-  // no GPU-patched sandbox to gate, so skip the local inference reachability
-  // gate.
-  if (!options.useDockerGpuPatch) return;
+export function verifyGpuSandboxLocalInferenceAfterReady(
+  config: DockerGpuLocalInferenceConfig,
+  provider: string | null | undefined,
+  options: GpuSandboxAfterReadyOptions,
+): void {
+  if (options.selectedRoute !== "compatibility") return;
   const verification = verifyDockerGpuSandboxLocalInference(config, provider, {
     sandboxName: options.sandboxName,
     dockerDriverGateway: options.dockerDriverGateway,
+    selectedRoute: options.selectedRoute,
     env: options.env,
     platform: options.platform,
     log: options.log,

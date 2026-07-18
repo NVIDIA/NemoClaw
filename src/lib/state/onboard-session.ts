@@ -13,10 +13,12 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord, type JsonObject, type JsonValue } from "../core/json-types";
+import { GATEWAY_PORT } from "../core/ports";
 import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -28,6 +30,14 @@ import {
   isTerminalOnboardMachineState,
 } from "../onboard/machine/transitions";
 import type { OnboardMachineState, OnboardNonTerminalMachineState } from "../onboard/machine/types";
+import {
+  assertStationExpressInstallerResumeMatches,
+  bindStationExpressProviderSelection,
+  isValidStationExpressReceiptGeneration,
+  parseStationExpressResumeIntent,
+  reconcileStationExpressInstallerResumeRetirement,
+  type StationExpressResumeIntent,
+} from "../onboard/station-express-resume";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
   assignSafeToolDisclosureUpdate,
@@ -41,10 +51,11 @@ import {
   shouldUpdateMachine,
 } from "./onboard-step-mutation";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
+import { nemoclawStateRoot } from "./state-root";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
-export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
+export const SESSION_DIR = nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT);
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
 
@@ -123,6 +134,18 @@ export interface OnboardMachineSnapshot {
   recoveryReceipt?: SessionRecoveryReceipt;
 }
 
+export interface SandboxPromptProgress {
+  sandboxName: boolean;
+  webSearch: boolean;
+  messaging: boolean;
+  resourceProfile: boolean;
+}
+
+export interface SessionResourceProfile {
+  cpu: string;
+  memory: string;
+}
+
 export interface Session {
   version: number;
   sessionId: string;
@@ -138,6 +161,10 @@ export interface Session {
   sandboxName: string | null;
   provider: string | null;
   model: string | null;
+  /** Secret-free installer choices needed to retry an interrupted DGX Station Express run. */
+  stationExpressIntent: StationExpressResumeIntent | null;
+  /** Receipt generation durably awaiting exact-match retirement after Station completion. */
+  stationExpressReceiptRetirement: string | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
@@ -147,6 +174,10 @@ export interface Session {
   routerPid: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
+  /** Completed secret-free choices that can be reused by an interrupted sandbox setup. */
+  sandboxPromptProgress: SandboxPromptProgress;
+  /** The selected sandbox resource values; null is an explicit OpenShell-default choice. */
+  resourceProfile: SessionResourceProfile | null;
   /** Selected preference, retained even when a model-specific safeguard downgrades it. */
   toolDisclosure: ToolDisclosure;
   /** Enables credential-free OTLP trace export to NemoClaw's fixed local collector boundary. */
@@ -156,6 +187,8 @@ export interface Session {
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
+  /** Non-secret names of credential providers registered before sandbox setup completed. */
+  stagedCredentialProviders: string[];
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
   // env-name. Persisted across process restarts so a `--resume` run that
@@ -233,6 +266,8 @@ export interface SessionUpdates {
   telegramConfig?: TelegramConfig | null;
   wechatConfig?: WechatConfig | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
+  /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
+  stationExpressModelIdentity?: string;
 }
 
 export interface DebugSessionSummary {
@@ -343,6 +378,63 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
 function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
   if (!isObject(value) || value.fetchEnabled !== true) return null;
   return normalizeWebSearchConfig(value as Partial<WebSearchConfig>);
+}
+
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isValidCheckpointedSandboxName(value: unknown): boolean {
+  return (
+    typeof value === "string" && value.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(value)
+  );
+}
+
+function isValidNullableWebSearchChoice(value: unknown): boolean {
+  return value === null || parseWebSearchConfig(value as SessionJsonValue | undefined) !== null;
+}
+
+function isValidNullableMessagingChoice(value: unknown, sandboxName: unknown): boolean {
+  return (
+    value === null ||
+    (typeof sandboxName === "string" && parseSandboxMessagingPlan(value, { sandboxName }) !== null)
+  );
+}
+
+function isValidNullableResourceChoice(value: unknown): boolean {
+  return value === null || parseSessionResourceProfile(value) !== null;
+}
+
+function parseSandboxPromptProgress(
+  value: unknown,
+  choices: Record<string, unknown>,
+): SandboxPromptProgress {
+  const progress = isObject(value) ? value : {};
+  return {
+    sandboxName:
+      progress.sandboxName === true &&
+      hasOwn(choices, "sandboxName") &&
+      isValidCheckpointedSandboxName(choices.sandboxName),
+    webSearch:
+      progress.webSearch === true &&
+      hasOwn(choices, "webSearchConfig") &&
+      isValidNullableWebSearchChoice(choices.webSearchConfig),
+    messaging:
+      progress.messaging === true &&
+      hasOwn(choices, "messagingPlan") &&
+      isValidNullableMessagingChoice(choices.messagingPlan, choices.sandboxName),
+    resourceProfile:
+      progress.resourceProfile === true &&
+      hasOwn(choices, "resourceProfile") &&
+      isValidNullableResourceChoice(choices.resourceProfile),
+  };
+}
+
+function parseSessionResourceProfile(value: unknown): SessionResourceProfile | null {
+  if (!isObject(value)) return null;
+  const cpu = readString(value.cpu);
+  const memory = readString(value.memory);
+  return cpu !== null && memory !== null ? { cpu, memory } : null;
 }
 
 function parseTelegramConfig(value: unknown): TelegramConfig | null {
@@ -553,6 +645,12 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     sandboxName: overrides.sandboxName ?? null,
     provider: overrides.provider ?? null,
     model: overrides.model ?? null,
+    stationExpressIntent: parseStationExpressResumeIntent(overrides.stationExpressIntent),
+    stationExpressReceiptRetirement: isValidStationExpressReceiptGeneration(
+      overrides.stationExpressReceiptRetirement,
+    )
+      ? overrides.stationExpressReceiptRetirement
+      : null,
     endpointUrl: overrides.endpointUrl ?? null,
     credentialEnv: overrides.credentialEnv ?? null,
     hermesAuthMethod: overrides.hermesAuthMethod ?? null,
@@ -562,12 +660,18 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
+    sandboxPromptProgress: parseSandboxPromptProgress(
+      overrides.sandboxPromptProgress,
+      overrides as Record<string, unknown>,
+    ),
+    resourceProfile: parseSessionResourceProfile(overrides.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
     observabilityEnabled: overrides.observabilityEnabled === true,
     observabilityRequestedExplicitly: overrides.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
+    stagedCredentialProviders: readStringArray(overrides.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
@@ -589,6 +693,25 @@ export function createSession(overrides: Partial<Session> = {}): Session {
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
+  const stationExpressIntent = parseStationExpressResumeIntent(data.stationExpressIntent);
+  if (
+    hasOwn(data, "stationExpressIntent") &&
+    data.stationExpressIntent !== null &&
+    !stationExpressIntent
+  )
+    return null;
+  const stationExpressReceiptRetirement = isValidStationExpressReceiptGeneration(
+    data.stationExpressReceiptRetirement,
+  )
+    ? data.stationExpressReceiptRetirement
+    : null;
+  if (
+    hasOwn(data, "stationExpressReceiptRetirement") &&
+    data.stationExpressReceiptRetirement !== null &&
+    !stationExpressReceiptRetirement
+  ) {
+    return null;
+  }
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -599,6 +722,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     sandboxName: readString(data.sandboxName),
     provider: readString(data.provider),
     model: readString(data.model),
+    stationExpressIntent,
+    stationExpressReceiptRetirement,
     endpointUrl: typeof data.endpointUrl === "string" ? redactUrl(data.endpointUrl) : null,
     credentialEnv: readString(data.credentialEnv),
     hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
@@ -608,12 +733,15 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
+    sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
+    resourceProfile: parseSessionResourceProfile(data.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     observabilityEnabled: data.observabilityEnabled === true,
     observabilityRequestedExplicitly: data.observabilityRequestedExplicitly === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
+    stagedCredentialProviders: readStringArray(data.stagedCredentialProviders) ?? [],
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
@@ -625,6 +753,22 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   });
   normalized.resumable = data.resumable !== false;
   normalized.status = readString(data.status) ?? normalized.status;
+  if (
+    normalized.stationExpressIntent &&
+    (data.resumable !== true ||
+      normalized.mode !== "non-interactive" ||
+      (data.status !== "in_progress" && data.status !== "failed"))
+  ) {
+    return null;
+  }
+  if (
+    normalized.stationExpressReceiptRetirement &&
+    (normalized.status !== "complete" ||
+      normalized.resumable !== false ||
+      normalized.stationExpressIntent !== null)
+  ) {
+    return null;
+  }
 
   if (isObject(data.steps)) {
     for (const [name, step] of Object.entries(data.steps)) {
@@ -632,6 +776,23 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
       if (Object.prototype.hasOwnProperty.call(normalized.steps, name) && parsedStep) {
         normalized.steps[name] = parsedStep;
       }
+    }
+  }
+
+  if (normalized.stationExpressIntent) {
+    const providerComplete = normalized.steps.provider_selection?.status === "complete";
+    const providerBound = Boolean(
+      normalized.stationExpressIntent.servedModel &&
+        normalized.stationExpressIntent.checkpointModel,
+    );
+    if (
+      providerComplete !== providerBound ||
+      (providerComplete &&
+        (normalized.provider !== "vllm-local" ||
+          normalized.model !== normalized.stationExpressIntent.servedModel)) ||
+      (!providerComplete && (normalized.provider !== null || normalized.model !== null))
+    ) {
+      return null;
     }
   }
 
@@ -1212,6 +1373,15 @@ function markStepCompleteWithOptions(
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    const stationExpressIntent =
+      stepName === "provider_selection" && session.stationExpressIntent
+        ? bindStationExpressProviderSelection(
+            session.stationExpressIntent,
+            safeUpdates.provider,
+            safeUpdates.model,
+            updates.stationExpressModelIdentity,
+          )
+        : null;
     const now = new Date().toISOString();
     step.status = "complete";
     step.completedAt = now;
@@ -1219,6 +1389,7 @@ function markStepCompleteWithOptions(
     session.lastCompletedStep = stepName;
     session.failure = null;
     Object.assign(session, safeUpdates);
+    if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
     const nextState = nextMachineStateAfterCompletedStep(stepName, session);
     shouldEmit = Boolean(nextState && shouldUpdateMachine(options));
     if (nextState && shouldEmit) transitionMachineSnapshot(session, nextState, now);
@@ -1408,20 +1579,38 @@ export function finalizeIncompleteOnboardStep(
   return updatedSession;
 }
 
-export function completeSession(updates: SessionUpdates = {}): Session {
+export interface CompleteSessionOptions {
+  emitEvents?: boolean;
+}
+
+export function completeSession(
+  updates: SessionUpdates = {},
+  options: CompleteSessionOptions = {},
+): Session {
   const safeUpdates = filterSafeUpdates(updates);
   let wasComplete = false;
-  const updatedSession = updateSession((session) => {
+  let receiptGeneration: string | null = null;
+  let updatedSession = updateSession((session) => {
+    const intentReceiptGeneration = session.stationExpressIntent?.receiptGeneration ?? null;
+    receiptGeneration = session.stationExpressReceiptRetirement ?? intentReceiptGeneration;
+    if (intentReceiptGeneration) {
+      assertStationExpressInstallerResumeMatches(intentReceiptGeneration);
+    }
     const now = new Date().toISOString();
     wasComplete = session.status === "complete";
     Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
+    session.stationExpressIntent = null;
+    session.stationExpressReceiptRetirement = receiptGeneration;
     session.failure = null;
     transitionMachineSnapshot(session, "complete", now);
     return session;
   });
-  if (Object.keys(safeUpdates).length > 0) {
+  if (receiptGeneration) {
+    updatedSession = reconcileStationExpressReceiptRetirement(receiptGeneration);
+  }
+  if (options.emitEvents !== false && Object.keys(safeUpdates).length > 0) {
     emitOnboardMachineEvent(
       createOnboardMachineEvent({
         type: "context.updated",
@@ -1431,7 +1620,7 @@ export function completeSession(updates: SessionUpdates = {}): Session {
       }),
     );
   }
-  if (!wasComplete) {
+  if (options.emitEvents !== false && !wasComplete) {
     emitOnboardMachineEvent(
       createOnboardMachineEvent({
         type: "onboard.completed",
@@ -1441,6 +1630,48 @@ export function completeSession(updates: SessionUpdates = {}): Session {
     );
   }
   return updatedSession;
+}
+
+function assertStationExpressReceiptRetirementSession(
+  session: Session | null,
+  expectedGeneration: string,
+): asserts session is Session {
+  if (
+    !session ||
+    session.stationExpressReceiptRetirement !== expectedGeneration ||
+    session.status !== "complete" ||
+    session.resumable !== false ||
+    session.stationExpressIntent !== null
+  ) {
+    throw new Error("DGX Station Express receipt retirement state does not match this attempt.");
+  }
+}
+
+export function reconcileStationExpressReceiptRetirement(expectedGeneration: string): Session {
+  if (!isValidStationExpressReceiptGeneration(expectedGeneration)) {
+    throw new Error("DGX Station Express receipt generation is invalid.");
+  }
+  const ownsOnboardLock = heldLockFd === null;
+  if (ownsOnboardLock) {
+    const lock = acquireOnboardLock("nemoclaw onboard (Station receipt retirement recovery)");
+    if (!lock.acquired) {
+      throw new Error(
+        "Cannot reconcile DGX Station Express receipt retirement while another onboarding run is in progress.",
+      );
+    }
+  }
+  try {
+    assertStationExpressReceiptRetirementSession(loadSession(), expectedGeneration);
+    return reconcileStationExpressInstallerResumeRetirement(expectedGeneration, () =>
+      updateSession((session) => {
+        assertStationExpressReceiptRetirementSession(session, expectedGeneration);
+        session.stationExpressReceiptRetirement = null;
+        return session;
+      }),
+    );
+  } finally {
+    if (ownsOnboardLock) releaseOnboardLock();
+  }
 }
 
 export function summarizeForDebug(

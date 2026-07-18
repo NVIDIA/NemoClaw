@@ -16,6 +16,7 @@ import {
 } from "./sandbox-prebuild";
 
 const BUILD_ID = "1234567890";
+const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const temporaryDirectories: string[] = [];
 
 function createBuildContext(
@@ -48,6 +49,7 @@ describe("sandbox BuildKit prebuild", () => {
     vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
     vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+    vi.stubEnv("BUILDX_BUILDER", "external-builder");
     vi.stubEnv("XDG_CONFIG_HOME", "/home/user/.config");
     vi.stubEnv("HTTPS_PROXY", "http://proxy:8080");
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "secret");
@@ -79,6 +81,7 @@ describe("sandbox BuildKit prebuild", () => {
       "RUST_BACKTRACE",
       "OPENSHELL_GATEWAY",
       "GRPC_VERBOSITY",
+      "BUILDX_BUILDER",
     ]) {
       expect(env[key], key).toBeUndefined();
     }
@@ -121,7 +124,11 @@ describe("sandbox BuildKit prebuild", () => {
         env: {},
         buildImage,
       }),
-    ).resolves.toEqual({ createArgs: ["--from", "/other/Dockerfile"], imageRef: null });
+    ).resolves.toEqual({
+      createArgs: ["--from", "/other/Dockerfile"],
+      imageRef: null,
+      imageId: null,
+    });
     expect(buildImage).not.toHaveBeenCalled();
   });
 
@@ -142,7 +149,7 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log,
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null });
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
     expect(buildImage).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("custom Dockerfile"));
   });
@@ -166,7 +173,7 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log: () => {},
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null });
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
     expect(buildImage).not.toHaveBeenCalled();
   });
 
@@ -186,7 +193,7 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log: () => {},
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null });
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
     expect(buildImage).not.toHaveBeenCalled();
   });
 
@@ -208,7 +215,7 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log,
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null });
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
     expect(buildImage).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("failed trust validation"));
   });
@@ -232,7 +239,7 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log: () => {},
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null });
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
     expect(buildImage).not.toHaveBeenCalled();
   });
 
@@ -254,7 +261,7 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log: () => {},
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null });
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
     expect(buildImage).not.toHaveBeenCalled();
   });
 
@@ -280,7 +287,7 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log: () => {},
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null });
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
     expect(buildImage).not.toHaveBeenCalled();
   });
 
@@ -304,7 +311,7 @@ describe("sandbox BuildKit prebuild", () => {
         buildImage,
         log,
       }),
-    ).resolves.toEqual({ createArgs, imageRef: null });
+    ).resolves.toEqual({ createArgs, imageRef: null, imageId: null });
     expect(buildImage).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("too many open files"));
     expect(log).toHaveBeenCalledWith(expect.stringContaining("could not be inspected"));
@@ -324,6 +331,7 @@ describe("sandbox BuildKit prebuild", () => {
       dockerDriverGateway: true,
       env: {},
       buildImage,
+      inspectImageId: () => IMAGE_ID,
       log: () => {},
     });
 
@@ -344,6 +352,7 @@ describe("sandbox BuildKit prebuild", () => {
     expect(result).toEqual({
       createArgs: ["--from", "nemoclaw-sandbox-local:alpha-1234567890", "--name", "alpha"],
       imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+      imageId: IMAGE_ID,
     });
   });
 
@@ -363,7 +372,7 @@ describe("sandbox BuildKit prebuild", () => {
       buildImage,
       log: () => {},
     });
-    expect(result).toEqual({ createArgs, imageRef: null });
+    expect(result).toEqual({ createArgs, imageRef: null, imageId: null });
   });
 
   it("falls back to OpenShell when the Docker helper throws", async () => {
@@ -381,6 +390,6 @@ describe("sandbox BuildKit prebuild", () => {
       },
       log: () => {},
     });
-    expect(result).toEqual({ createArgs, imageRef: null });
+    expect(result).toEqual({ createArgs, imageRef: null, imageId: null });
   });
 });

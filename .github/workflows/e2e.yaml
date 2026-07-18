@@ -19,6 +19,15 @@ on:
         required: false
         default: ""
         type: string
+      inference_mode:
+        description: "Inference adapter mode for compatible Vitest E2E jobs: mock, internal-nvidia, or public-nvidia."
+        required: false
+        default: "mock"
+        type: choice
+        options:
+          - mock
+          - internal-nvidia
+          - public-nvidia
       allow_jetson_runner_queue:
         description: "Repository administrators only: before setting true for jetson-nvmap-gpu, confirm an online Jetson runner in the authoritative NVIDIA/NemoClaw Settings -> Actions -> Runners inventory; queued jobs do not honor timeout-minutes before assignment."
         required: false
@@ -36,6 +45,16 @@ on:
         type: boolean
       checkout_sha:
         description: PR head commit selected by the controller.
+        required: false
+        default: ""
+        type: string
+      base_sha:
+        description: PR base commit selected by the controller.
+        required: false
+        default: ""
+        type: string
+      workflow_sha:
+        description: Trusted E2E workflow commit selected by the controller.
         required: false
         default: ""
         type: string
@@ -68,11 +87,33 @@ jobs:
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      matrix: ${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
     steps:
+      - id: controller_matrix
+        name: Build trusted controller target matrix
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          TARGETS: ${{ inputs.targets }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${TARGETS}" in
+            "")
+              matrix='[]'
+              ;;
+            ubuntu-repo-cloud-langchain-deepagents-code)
+              matrix='[{"id":"ubuntu-repo-cloud-langchain-deepagents-code","runner":"ubuntu-latest","label":"ubuntu-repo-cloud-langchain-deepagents-code"}]'
+              ;;
+            *)
+              echo "::error::PR E2E target is not approved by the trusted controller" >&2
+              exit 1
+              ;;
+          esac
+          printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
@@ -82,7 +123,9 @@ jobs:
       - name: Validate controller dispatch
         if: ${{ inputs.checkout_sha != '' }}
         env:
+          BASE_SHA: ${{ inputs.base_sha }}
           CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
           GITHUB_TOKEN: ${{ github.token }}
           JOBS: ${{ inputs.jobs }}
           PLAN_HASH: ${{ inputs.plan_hash }}
@@ -91,15 +134,19 @@ jobs:
           TARGETS: ${{ inputs.targets }}
           WORKFLOW_EVENT: ${{ github.event_name }}
           WORKFLOW_REF: ${{ github.ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
           [[ "$WORKFLOW_EVENT" == "workflow_dispatch" && "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "::error::PR E2E runs must be dispatched from main"; exit 1; }
           [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::checkout_sha must be a lowercase 40-character SHA"; exit 1; }
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::base_sha must be a lowercase 40-character SHA"; exit 1; }
+          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || { echo "::error::workflow_sha must match the trusted workflow commit"; exit 1; }
           [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || { echo "::error::checked-out commit does not match checkout_sha"; exit 1; }
           [[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]] || { echo "::error::plan_hash must be a lowercase SHA-256"; exit 1; }
           [[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]] || { echo "::error::correlation_id must be a lowercase UUIDv4"; exit 1; }
           [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "::error::pr_number must be a positive integer"; exit 1; }
-          [[ -n "$JOBS" && -z "$TARGETS" ]] || { echo "::error::PR E2E runs require jobs and do not accept targets"; exit 1; }
+          [[ -n "$JOBS" || -n "$TARGETS" ]] || { echo "::error::PR E2E runs require controller-selected jobs or targets"; exit 1; }
+          [[ -z "$TARGETS" || "$TARGETS" == "ubuntu-repo-cloud-langchain-deepagents-code" ]] || { echo "::error::PR E2E target is not approved by the trusted controller"; exit 1; }
 
           pull_json="$(curl --fail --silent --show-error --proto '=https' \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
@@ -109,6 +156,7 @@ jobs:
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open"; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$GITHUB_REPOSITORY" ]] || { echo "::error::pull request must originate from this repository"; exit 1; }
           [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head commit"; exit 1; }
+          [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base commit"; exit 1; }
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -118,107 +166,28 @@ jobs:
       - id: matrix
         name: Generate E2E target matrix
         env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          CONTROLLER_MATRIX: ${{ steps.controller_matrix.outputs.matrix }}
+          INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
         run: |
           set -euo pipefail
-          if [ -n "${JOBS}" ] && [ -n "${TARGETS}" ]; then
-            echo "::error::Use either targets or jobs, not both." >&2
-            exit 1
-          fi
-          for selector_name in JOBS TARGETS; do
-            selector_value="${!selector_name}"
-            if [ -n "${selector_value}" ] && [[ ! "${selector_value}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-              echo "::error::Invalid ${selector_name,,} input; use comma-separated ids" >&2
+          npx tsx tools/e2e/workflow-plan.mts --ci-output
+          if [ -n "${CHECKOUT_SHA}" ]; then
+            matrix="$(sed -n 's/^matrix=//p' "${GITHUB_OUTPUT}")"
+            expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
+            actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
+            if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ]; then
+              : > "${GITHUB_OUTPUT}"
+              echo "::error::E2E planner matrix does not match controller-selected targets" >&2
               exit 1
             fi
-          done
-
-          planner_args=()
-          if [ -n "${JOBS}" ]; then
-            planner_args+=(--jobs "${JOBS}")
-          elif [ -n "${TARGETS}" ]; then
-            planner_args+=(--targets "${TARGETS}")
           fi
-          plan="$(npx tsx tools/e2e/workflow-plan.mts "${planner_args[@]}")"
-          plan_filter='
-            type == "object" and
-            (keys | sort) == ["explicitOnlyJobs", "hermesSelected", "matrix", "testMatrix"] and
-            (.matrix | type) == "array" and
-            all(.matrix[];
-              type == "object" and
-              (keys | sort) == ["expectedStateId", "id", "install", "label", "onboarding", "pendingRuntimeSuites", "platform", "requiredSecrets", "runner", "runtime", "suites", "supportReasons", "supported"] and
-              (.id | type == "string" and test("^[a-z0-9]+(?:-[a-z0-9]+)*$")) and
-              (.runner | type == "string" and test("^[A-Za-z0-9_-]+$")) and
-              (.label | type) == "string" and
-              (.platform | type) == "string" and
-              (.install | type) == "string" and
-              (.runtime | type) == "string" and
-              (.onboarding | type) == "string" and
-              (.expectedStateId | type) == "string" and
-              (.supported | type) == "boolean" and
-              all(.suites[], .requiredSecrets[], .supportReasons[], .pendingRuntimeSuites[]; type == "string")
-            ) and
-            (([.matrix[].id] | length) == ([.matrix[].id] | unique | length)) and
-            (.testMatrix | type) == "array" and
-            all(.testMatrix[];
-              type == "object" and
-              (keys | sort) == ["file", "id", "project"] and
-              (.id | test("^[a-z0-9]+(?:-[a-z0-9]+)*$")) and
-              (.file | test("^test/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+[.]test[.](?:js|ts)$")) and
-              ((.project == "e2e-live" and (.file | startswith("test/e2e/live/"))) or
-               (.project == "integration" and (.file | startswith("test/")) and
-                ((.file | startswith("test/e2e/")) | not)))
-            ) and
-            (([.testMatrix[].id] | length) == ([.testMatrix[].id] | unique | length)) and
-            (.hermesSelected | type) == "boolean" and
-            (.explicitOnlyJobs | type) == "array" and
-            all(.explicitOnlyJobs[]; type == "string" and test("^[A-Za-z0-9_-]+$")) and
-            ((.explicitOnlyJobs | length) == (.explicitOnlyJobs | unique | length))
-          '
-          if ! jq -e "${plan_filter}" <<< "${plan}" >/dev/null; then
-            echo "::error::E2E planner returned an invalid output schema" >&2
-            exit 1
-          fi
-
-          expected_hermes_selected=false
-          selected_csv="${JOBS:-${TARGETS}}"
-          if [ -z "${selected_csv}" ] || [[ ",${selected_csv}," == *",hermes-e2e,"* ]]; then
-            expected_hermes_selected=true
-          fi
-          hermes_selected="$(jq -r '.hermesSelected' <<< "${plan}")"
-          if [ "${hermes_selected}" != "${expected_hermes_selected}" ]; then
-            echo "::error::E2E planner changed the trusted Hermes selection" >&2
-            exit 1
-          fi
-
-          matrix="$(jq -c '.matrix' <<< "${plan}")"
-          test_matrix="$(jq -c '.testMatrix' <<< "${plan}")"
-          explicit_only_jobs_csv="$(jq -r '.explicitOnlyJobs | join(",")' <<< "${plan}")"
-          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
-          echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"
-          echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
-          echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"
-
-          MATRIX_JSON="${matrix}" TEST_MATRIX_JSON="${test_matrix}" python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-          import os
-
-          typed_rows = json.loads(os.environ["MATRIX_JSON"])
-          test_rows = json.loads(os.environ["TEST_MATRIX_JSON"])
-          print("## E2E Execution Plan")
-          print()
-          print("| Test | Execution | Runner |")
-          print("| --- | --- | --- |")
-          for row in typed_rows:
-              print(f"| `{row['id']}` | typed registry | `{row['runner']}` |")
-          for row in test_rows:
-              print(f"| `{row['id']}` | shared E2E job | `ubuntu-latest` |")
-          PY
 
   live:
     needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || inputs.jobs == '') && needs.generate-matrix.outputs.matrix != '[]' }}
+    if: ${{ needs.generate-matrix.outputs.matrix != '[]' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -240,45 +209,11 @@ jobs:
       # explicit because strict YAML decoders reject 100 or more aliases here.
       - &dockerhub-auth
         name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_AUTH_REQUIRED: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
-          DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_USERNAME || '' }}
-          DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_TOKEN || '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker_config="$(mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX")"
-          chmod 700 "${docker_config}"
-          export DOCKER_CONFIG="${docker_config}"
-          printf 'DOCKER_CONFIG=%s\n' "${DOCKER_CONFIG}" >> "${GITHUB_ENV}"
-
-          if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then
-            echo "::notice::Docker Hub credentials are withheld for this ref; continuing with anonymous pulls."
-            exit 0
-          fi
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::error::Docker Hub credentials are required for trusted E2E runs."
-            exit 1
-          fi
-
-          auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"
-          : > "${auth_marker}"
-          chmod 600 "${auth_marker}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if printf '%s' "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "${attempt}" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "${login_succeeded}" -ne 1 ]]; then
-            echo "::error::Docker Hub login failed after 3 attempts."
-            exit 1
-          fi
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928
+        with:
+          auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && '1' || '0' }}
+          username: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_USERNAME || '' }}
+          token: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_TOKEN || '' }}
 
       - name: Configure live E2E trace directory
         env:
@@ -290,32 +225,21 @@ jobs:
 
       # invalidState: the selected PR-modifiable TUI check needs a PTY driver,
       # but the fixed GitHub-hosted runner image does not provide expect.
-      # sourceBoundary: this trusted workflow owns host setup; the PR-controlled
-      # check only verifies and consumes expect without privilege.
+      # sourceBoundary: privileged host setup runs from the first-party
+      # host-dependency-setup action pinned to an immutable full SHA, never the
+      # PR-controlled target ref; the check only consumes expect without privilege.
       # whyNotSourceFix: GitHub-hosted jobs cannot use a repository-owned host
       # image, and caching privileged dpkg state between clean runners is not
       # supported.
       # regressionTest: the workflow-boundary suite pins this target, condition,
-      # ordering, retry contract, and exact one-package apt allowlist.
+      # ordering, action provenance, and package mapping.
       # removalCondition: remove the install when the hosted runner supplies
       # expect or the acceptance check no longer requires a PTY.
       - name: Install Deep Agents Code TUI host dependencies
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::apt-get update failed after 3 attempts." >&2
-              exit 1
-            fi
-            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
-            sleep $((attempt * 5))
-          done
-          sudo apt-get install -y --no-install-recommends expect
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: expect
 
       # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
       # command writes raw traces under runner temp, never under upload roots.
@@ -341,11 +265,12 @@ jobs:
 
       - name: Run live E2E tests
         env:
+          E2E_TARGET_ID: ${{ matrix.id }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TARGET_ID: ${{ matrix.id }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live test/e2e/live/registry-targets.test.ts -t "^${TARGET_ID}$" --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/registry-targets.test.ts --selector "^${TARGET_ID}$"
 
       # The sanitizer reads raw traces only after checking the workflow-owned
       # runner-temp path, then writes the timing-only file into upload roots.
@@ -435,6 +360,7 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
             e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
+            e2e-artifacts/live/risk-signal.json
             e2e-artifacts/live/${{ matrix.id }}/actions/
             e2e-artifacts/live/${{ matrix.id }}/logs/
             e2e-artifacts/live/${{ matrix.id }}/shell/
@@ -504,7 +430,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -539,9 +465,7 @@ jobs:
           export OPENSHELL_GATEWAY_BIN
           echo "Using OPENSHELL_GATEWAY_BIN=$OPENSHELL_GATEWAY_BIN"
           "$OPENSHELL_GATEWAY_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/openshell-gateway-auth-source-contract.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openshell-gateway-auth-source-contract.test.ts
 
       - name: Upload OpenShell gateway auth contract artifacts
         if: always()
@@ -558,17 +482,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    # Three destructive agent scenarios each have a 45-minute Vitest budget,
-    # plus pinned OpenShell installation and cold image setup.
-    timeout-minutes: 180
+    # Keep each destructive agent lifecycle on a fresh runner. This bounds the
+    # blast radius of runner loss and gives every adapter independent evidence.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes, deepagents]
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "mcp-bridge"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: stable
+      NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -612,6 +543,20 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/install-openshell.sh
+          if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
+            mkdir -p "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents"
+            jq -n '{
+              schemaVersion: 1,
+              sourceRepository: "NVIDIA/OpenShell",
+              releaseTag: "v0.0.85",
+              sourceSha: "3dee5570a46076a57a3b056f35f35ebc0861ac85",
+              artifacts: {
+                cli: {binarySha256: "222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8"},
+                gateway: {binarySha256: "33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f"},
+                standaloneSandbox: {binarySha256: "863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2"}
+              }
+            }' > "$E2E_ARTIFACT_DIR/mcp-bridge-deepagents/openshell-exact-main-provenance.json"
+          fi
 
       - name: Run MCP OpenShell provider live test
         run: |
@@ -627,23 +572,28 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/mcp-bridge.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts
+          if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "deepagents" ]]; then
+            npx vitest run --project e2e-live \
+              test/e2e/live/openshell-credential-generation-window.test.ts \
+              -t '^openshell-credential-generation-window$' \
+              --no-file-parallelism \
+              --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          fi
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
         if: always()
         run: >-
           npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/mcp-bridge
+          e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-mcp-bridge
-          path: e2e-artifacts/live/mcp-bridge/
+          name: e2e-mcp-bridge-${{ matrix.agent }}
+          path: e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -658,14 +608,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 180
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes, deepagents]
     env:
       E2E_JOB: "1"
       E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "mcp-bridge-dev"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
-      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
+      NEMOCLAW_MCP_BRIDGE_AGENT: ${{ matrix.agent }}
       NEMOCLAW_OPENSHELL_CHANNEL: dev
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
@@ -738,23 +693,21 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/mcp-bridge.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts
 
       - id: mcp_artifact_secret_scan
         name: Scan MCP artifacts for fixture credentials
         if: always()
         run: >-
           npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
-          e2e-artifacts/live/mcp-bridge-dev
+          e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-mcp-bridge-dev
-          path: e2e-artifacts/live/mcp-bridge-dev/
+          name: e2e-mcp-bridge-dev-${{ matrix.agent }}
+          path: e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -810,9 +763,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/skill-agent.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/skill-agent.test.ts
 
       - name: Upload skill-agent artifacts
         if: always()
@@ -866,9 +817,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-skill-cli.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-skill-cli.test.ts
 
       - name: Upload OpenClaw skill CLI artifacts
         if: always()
@@ -908,9 +857,7 @@ jobs:
         # any future secret-bearing lane must run that file from trusted main.
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/inference-routing.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/inference-routing.test.ts
 
       - name: Upload inference routing artifacts
         if: always()
@@ -955,9 +902,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/cloud-inference.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/cloud-inference.test.ts
 
       - name: Upload cloud inference artifacts
         if: always()
@@ -983,6 +928,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_MODEL: "qwen3.5:9b"
       NEMOCLAW_PROVIDER: "ollama"
       NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
@@ -1014,7 +960,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/gpu-e2e.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/gpu-e2e.test.ts
       - name: Upload GPU E2E artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1074,7 +1020,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/agent-turn-latency.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/agent-turn-latency.test.ts
       - name: Upload agent turn latency artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1116,7 +1062,7 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell || true)"
-          npx vitest run --project e2e-live             test/e2e/live/kimi-inference-compat.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/kimi-inference-compat.test.ts
       - name: Upload Kimi compatibility artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1159,6 +1105,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: "hermes"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.mode }}
       NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       NEMOCLAW_SWITCH_PROVIDER: ${{ matrix.switch_provider }}
       NEMOCLAW_SWITCH_MODEL: ${{ matrix.switch_model }}
@@ -1184,7 +1131,7 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell || true)"
-          npx vitest run --project e2e-live             test/e2e/live/hermes-inference-switch.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-inference-switch.test.ts
       - name: Upload Hermes inference switch artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
@@ -1245,7 +1192,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/brave-search.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/brave-search.test.ts
 
       - name: Upload Brave search artifacts
         if: always()
@@ -1284,7 +1231,7 @@ jobs:
       - name: Run Ollama auth proxy live Vitest test
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live             test/e2e/live/ollama-auth-proxy.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/ollama-auth-proxy.test.ts
 
       - name: Upload Ollama auth proxy artifacts
         if: always()
@@ -1342,7 +1289,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/cron-preflight-inference-local.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/cron-preflight-inference-local.test.ts
 
       - name: Upload cron preflight inference.local artifacts
         if: always()
@@ -1377,28 +1324,16 @@ jobs:
 
       - *dockerhub-auth
 
-      # This free-standing job checks out and executes the PR target ref. It
-      # keeps privileged host dependency setup inline in trusted workflow YAML
-      # rather than loading a repo-local action from the target ref after
-      # checkout. Only expect and iptables are allowed here: the TUI driver and
-      # egress-isolation assertion require them. Workflow contract tests pin
-      # the retry behavior and exact package list.
+      # This free-standing job checks out and executes the PR target ref. Its
+      # privileged host dependency setup loads the first-party
+      # host-dependency-setup action pinned to an immutable full SHA, so the
+      # target ref never runs sudo with its own code. Only expect and iptables
+      # are allowed here: the TUI driver and egress-isolation assertion require
+      # them. Workflow contract tests pin the action provenance and package list.
       - name: "Install issue #4434 host dependencies"
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::apt-get update failed after 3 attempts." >&2
-              exit 1
-            fi
-            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
-            sleep $((attempt * 5))
-          done
-          sudo apt-get install -y --no-install-recommends expect iptables
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: expect iptables
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -1424,9 +1359,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/issue-4434-tui-unreachable-inference.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/issue-4434-tui-unreachable-inference.test.ts
 
       - name: "Upload issue #4434 TUI unreachable inference artifacts"
         if: always()
@@ -1471,9 +1404,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/credential-sanitization.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/credential-sanitization.test.ts
 
       - name: Upload credential sanitization artifacts
         if: always()
@@ -1523,9 +1454,7 @@ jobs:
           NEMOCLAW_PREFERRED_API: openai-completions
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/credential-migration.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/credential-migration.test.ts
 
       - name: Upload credential migration artifacts
         if: always()
@@ -1577,9 +1506,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx vitest run --project e2e-live \
-            test/e2e/live/sessions-agents-cli.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sessions-agents-cli.test.ts
 
       - name: Upload sessions/agents CLI artifacts
         if: always()
@@ -1630,9 +1557,7 @@ jobs:
           SLACK_APP_TOKEN: xapp-test-hermes-slack-app-token
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-slack-e2e.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-slack-e2e.test.ts
 
       - name: Upload Hermes Slack artifacts
         if: always()
@@ -1657,7 +1582,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-e2e
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_E2E_INFERENCE_MODE: ${{ inputs.inference_mode || 'mock' }}
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -1677,12 +1602,10 @@ jobs:
 
       - name: Run Hermes live Vitest test
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-e2e.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-e2e.test.ts
 
       - name: Upload Hermes live Vitest artifacts
         if: always()
@@ -1695,14 +1618,19 @@ jobs:
 
   hermes-gpu-startup:
     needs: generate-matrix
-    if: ${{ contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,') }}
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,')) }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 75
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        scenario: [native, fallback, compatibility-only]
     env:
       E2E_JOB: "1"
-      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "hermes-gpu-startup"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}
+      E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1710,7 +1638,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_SANDBOX_GPU: "1"
-      NEMOCLAW_SANDBOX_NAME: e2e-hermes-gpu-startup
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes-gpu-startup-${{ matrix.scenario }}
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -1718,21 +1646,228 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
+      - name: Checkout trusted Hermes GPU runtime fixture
+        if: ${{ matrix.scenario == 'fallback' }}
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: ${{ github.workflow_sha }}
+          path: .trusted-hermes-gpu-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          sparse-checkout: tools/e2e/hermes-gpu-docker-runtime-fixture.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Install trusted Hermes GPU runtime fixture
+        if: ${{ matrix.scenario == 'fallback' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+          ENV: /dev/null
+          TRUSTED_DISPATCH_SHA: ${{ github.sha }}
+          TRUSTED_FIXTURE_SHA256: e273c4baa7fe89546d64517cf56eafec30aeda7b355971263605ab1327fade02
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          trusted_checkout="$GITHUB_WORKSPACE/.trusted-hermes-gpu-fixture-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trusted_source="$trusted_checkout/tools/e2e/hermes-gpu-docker-runtime-fixture.sh"
+          trusted_fixture="/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}"
+          trusted_state_root=/var/lib/nemoclaw-e2e
+
+          run_trusted_fixture() {
+            /usr/bin/sudo -n /usr/bin/env -i \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              /bin/bash "$trusted_fixture" "$@"
+          }
+
+          [[ "$TRUSTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]] \
+            || { echo "Trusted workflow SHA must be an immutable commit" >&2; exit 1; }
+          [[ "$TRUSTED_DISPATCH_SHA" = "$TRUSTED_WORKFLOW_SHA" ]] \
+            || { echo "Trusted fixture must match the dispatched main workflow" >&2; exit 1; }
+          [[ "$TRUSTED_FIXTURE_SHA256" =~ ^[a-f0-9]{64}$ ]] \
+            || { echo "Trusted fixture SHA-256 must be pinned" >&2; exit 1; }
+          [ "$(/usr/bin/git -C "$trusted_checkout" rev-parse HEAD)" = "$TRUSTED_WORKFLOW_SHA" ] \
+            || { echo "Trusted fixture checkout does not match the workflow SHA" >&2; exit 1; }
+          [ -f "$trusted_source" ] && [ ! -L "$trusted_source" ] \
+            || { echo "Trusted Docker fixture must be a regular non-symlink file" >&2; exit 1; }
+
+          /usr/bin/sudo /usr/bin/install -d -o root -g root -m 0755 /usr/local/libexec/nemoclaw
+          /usr/bin/sudo /usr/bin/install -o root -g root -m 0500 \
+            "$trusted_source" "$trusted_fixture"
+          [ "$(/usr/bin/sudo /usr/bin/stat -c '%a %u %g' "$trusted_fixture")" = "500 0 0" ] \
+            || { echo "Trusted Docker fixture ownership or mode is invalid" >&2; exit 1; }
+          printf '%s  %s\n' "$TRUSTED_FIXTURE_SHA256" "$trusted_fixture" \
+            | /usr/bin/sudo /usr/bin/sha256sum -c -
+          /usr/bin/sudo /usr/bin/cmp -s "$trusted_source" "$trusted_fixture" \
+            || { echo "Installed Docker fixture does not match trusted workflow code" >&2; exit 1; }
+          /usr/bin/sudo /usr/bin/install -d -o root -g root -m 0700 "$trusted_state_root"
+
+          # Recover any root-owned snapshot left by a hard-cancelled earlier run before
+          # PR-controlled build or test code executes on this persistent GPU runner.
+          if ! /usr/bin/sudo /usr/bin/find "$trusted_state_root" -mindepth 1 -maxdepth 1 \
+            -type d -name 'hermes-gpu-fallback-docker-runtime.*' -print0 \
+            | while IFS= read -r -d '' stale_state_dir; do
+                if ! run_trusted_fixture restore \
+                  "$stale_state_dir" /etc/docker/daemon.json >/dev/null; then
+                  exit 1
+                fi
+              done; then
+            echo "Could not recover stale Docker fallback state" >&2
+            exit 1
+          fi
+
       - *dockerhub-auth
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
+      - name: Reassert trusted Node runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        env:
+          BASH_ENV: /dev/null
+          E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+          ENV: /dev/null
+          NODE_OPTIONS: ""
+        with:
+          node-version: "22"
+
       - name: Run Hermes GPU startup live Vitest test
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+          ENV: /dev/null
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-gpu-startup.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+
+          if [ "$E2E_HERMES_GPU_STARTUP_SCENARIO" = fallback ]; then
+            umask 077
+            daemon_json=/etc/docker/daemon.json
+            trusted_fixture="/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}"
+            trusted_state_root=/var/lib/nemoclaw-e2e
+
+            run_trusted_fixture() {
+              /usr/bin/sudo -n /usr/bin/env -i \
+                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                /bin/bash "$trusted_fixture" "$@"
+            }
+
+            mkdir -p "$E2E_ARTIFACT_DIR"
+            [ "$(/usr/bin/sudo /usr/bin/stat -c '%a %u %g' "$trusted_fixture")" = "500 0 0" ] \
+              || { echo "Trusted Docker fixture ownership or mode changed" >&2; exit 1; }
+            /usr/bin/sudo /usr/bin/install -d -o root -g root -m 0700 "$trusted_state_root"
+            state_dir="$(/usr/bin/sudo /usr/bin/mktemp -d \
+              "$trusted_state_root/hermes-gpu-fallback-docker-runtime.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.fallback.XXXXXX")"
+            /usr/bin/sudo /usr/bin/chown root:root "$state_dir"
+            /usr/bin/sudo /usr/bin/chmod 0700 "$state_dir"
+
+            # SOURCE_OF_TRUTH_REVIEW (Hermes GPU fallback fixture; #6110):
+            # invalidState: a cancelled fallback test leaves the runner-global Docker default
+            # runtime changed, contaminating later OpenShell jobs on this self-hosted runner.
+            # sourceBoundary: daemon mutation uses only immutable root-owned workflow_sha
+            # code; the PR test cannot replace the helper or its root-owned snapshot state.
+            # whyNotSourceFix: production must fail closed when GPU attachment is ambiguous;
+            # this fixture needs a real no-GPU partial container on an nvidia-default runner.
+            # regressionTest: hermes-gpu-startup-workflow-boundary requires this same-step trap.
+            # removalCondition: remove the daemon fixture when OpenShell can create a provably
+            # GPU-unattached partial sandbox without consulting Docker's default runtime.
+            restore_docker_default_runtime() {
+              local command_status=$?
+              local restore_status=0
+              local restored_runtime=""
+              trap - EXIT INT TERM
+              set +e
+              restored_runtime="$(run_trusted_fixture restore "$state_dir" "$daemon_json")"
+              restore_status=$?
+              if [ "$restore_status" -eq 0 ] && [ -n "$restored_runtime" ]; then
+                printf '%s\n' "$restored_runtime" \
+                  >"$E2E_ARTIFACT_DIR/docker-default-runtime-restored.txt" \
+                  || restore_status=1
+              fi
+              if [ "$restore_status" -ne 0 ]; then
+                exit 1
+              fi
+              exit "$command_status"
+            }
+
+            # OpenShell leaves Runtime unset after the wrapper strips --gpu, so Docker
+            # otherwise substitutes its daemon default. Force runc only within this
+            # trap-guarded process so production can prove the partial container has no GPU.
+            trap restore_docker_default_runtime EXIT
+            trap 'exit 130' INT
+            trap 'exit 143' TERM
+            original_runtime="$(run_trusted_fixture capture "$state_dir" "$daemon_json")"
+            printf '%s\n' "$original_runtime" \
+              >"$E2E_ARTIFACT_DIR/docker-default-runtime-before.txt"
+            selected_runtime="$(run_trusted_fixture select-runc "$state_dir" "$daemon_json")"
+            printf '%s\n' "$selected_runtime" \
+              >"$E2E_ARTIFACT_DIR/docker-default-runtime-during.txt"
+          fi
+
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-gpu-startup.test.ts
+
+      - name: Recover Docker daemon after Hermes GPU fallback fixture
+        if: always()
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+          ENV: /dev/null
+        run: |
+          set -euo pipefail
+          if [ "$E2E_HERMES_GPU_STARTUP_SCENARIO" != fallback ]; then
+            exit 0
+          fi
+
+          recovery_failed=0
+          restored_runtime=""
+          trusted_fixture="/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}"
+          trusted_state_root=/var/lib/nemoclaw-e2e
+          state_prefix="hermes-gpu-fallback-docker-runtime.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.fallback."
+
+          run_trusted_fixture() {
+            /usr/bin/sudo -n /usr/bin/env -i \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              /bin/bash "$trusted_fixture" "$@"
+          }
+
+          if ! /usr/bin/sudo /usr/bin/find "$trusted_state_root" -mindepth 1 -maxdepth 1 \
+            -type d -name "${state_prefix}*" -print0 \
+            | while IFS= read -r -d '' state_dir; do
+                if ! restored_runtime="$(run_trusted_fixture restore \
+                  "$state_dir" /etc/docker/daemon.json)"; then
+                  exit 1
+                fi
+                if [ -n "$restored_runtime" ]; then
+                  printf '%s\n' "$restored_runtime" \
+                    >"$E2E_ARTIFACT_DIR/docker-default-runtime-restored.txt"
+                fi
+              done; then
+            recovery_failed=1
+          fi
+          if [ "$recovery_failed" -ne 0 ]; then
+            echo "Independent Docker daemon recovery could not prove restoration" >&2
+            exit 1
+          fi
+
+      - name: Remove trusted Hermes GPU runtime fixture
+        if: ${{ always() && matrix.scenario == 'fallback' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+          ENV: /dev/null
+        run: |
+          set -euo pipefail
+          trusted_fixture="/usr/local/libexec/nemoclaw/hermes-gpu-docker-runtime-fixture.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.${E2E_HERMES_GPU_STARTUP_SCENARIO}"
+          /usr/bin/sudo /usr/bin/rm -f -- "$trusted_fixture"
 
       - name: Upload Hermes GPU startup artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-hermes-gpu-startup-${{ matrix.scenario }}
+          path: e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -1774,9 +1909,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-e2e.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-e2e.test.ts
 
       - name: Upload Hermes dashboard live Vitest artifacts
         if: always()
@@ -1826,9 +1959,7 @@ jobs:
           DISCORD_REQUIRE_MENTION: "0"
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-discord.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-discord.test.ts
 
       - name: Upload Hermes Discord artifacts
         if: always()
@@ -1864,26 +1995,14 @@ jobs:
       - *dockerhub-auth
 
       # Expect is a reviewed host-tool consumer for the interactive policy-add
-      # test. Keep this privileged setup inline in trusted workflow YAML. This
-      # job executes a selected target ref, so it must not load a repo-local
-      # action from that ref with sudo privileges. Only expect is allowed here;
-      # iptables is scoped to the issue #4434 egress-isolation job.
+      # test. This job executes a selected target ref, so privileged setup runs
+      # from the first-party host-dependency-setup action pinned to an immutable
+      # full SHA, never that ref. Only expect is allowed here; iptables is scoped
+      # to the issue #4434 egress-isolation job.
       - name: Install network-policy host dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::apt-get update failed after 3 attempts." >&2
-              exit 1
-            fi
-            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
-            sleep $((attempt * 5))
-          done
-          sudo apt-get install -y --no-install-recommends expect
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: expect
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -1904,9 +2023,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/network-policy.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/network-policy.test.ts
 
       - name: Upload network-policy artifacts
         if: always()
@@ -1975,9 +2092,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/common-egress-agent.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/common-egress-agent.test.ts
 
       - name: Upload common-egress agent artifacts
         if: always()
@@ -2024,9 +2139,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/shields-config.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/shields-config.test.ts
 
       - name: Upload shields-config artifacts
         if: always()
@@ -2072,9 +2185,7 @@ jobs:
         # proves two complete down/up cycles on a fresh non-root Hermes sandbox.
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/hermes-shields-config.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/hermes-shields-config.test.ts
 
       - name: Upload Hermes shields-config artifacts
         if: always()
@@ -2134,9 +2245,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/rebuild-openclaw.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-openclaw.test.ts
 
       - name: Upload OpenClaw rebuild artifacts
         if: always()
@@ -2189,9 +2298,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/rebuild-hermes.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts
 
       - name: Upload Hermes rebuild artifacts
         if: always()
@@ -2244,9 +2351,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/rebuild-hermes.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts
 
       - name: Upload Hermes stale-base rebuild artifacts
         if: always()
@@ -2307,9 +2412,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/sandbox-rebuild.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-rebuild.test.ts
 
       - name: Upload sandbox rebuild artifacts
         if: always()
@@ -2372,9 +2475,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/sandbox-rlimits-connect.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-rlimits-connect.test.ts
 
       - name: Upload sandbox rlimit connect artifacts
         if: always()
@@ -2418,9 +2519,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/overlayfs-autofix.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/overlayfs-autofix.test.ts
 
       - name: Upload overlayfs autofix artifacts
         if: always()
@@ -2482,9 +2581,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/state-backup-restore.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/state-backup-restore.test.ts
 
       - name: Upload state backup restore artifacts
         if: always()
@@ -2545,9 +2642,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/upgrade-stale-sandbox.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/upgrade-stale-sandbox.test.ts
 
       - name: Upload upgrade stale sandbox artifacts
         if: always()
@@ -2601,9 +2696,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/double-onboard.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/double-onboard.test.ts
 
       - name: Upload double-onboard Vitest artifacts
         if: always()
@@ -2680,9 +2773,7 @@ jobs:
         # sandbox exec, /dev/nvmap, CUDA cuInit(0), and status-proof boundary.
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/jetson-nvmap-gpu.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/jetson-nvmap-gpu.test.ts
 
       - name: Upload Jetson nvmap GPU artifacts
         if: always()
@@ -2736,9 +2827,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/concurrent-gateway-ports.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/concurrent-gateway-ports.test.ts
 
       - name: Upload concurrent gateway ports Vitest artifacts
         if: always()
@@ -2791,9 +2880,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/onboard-resume.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/onboard-resume.test.ts
 
       - name: Upload onboard-resume artifacts
         if: always()
@@ -2849,9 +2936,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/full-e2e.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/full-e2e.test.ts
 
       - name: Upload full-e2e artifacts
         if: always()
@@ -2919,9 +3004,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx vitest run --project e2e-live \
-            "${{ matrix.test_file }}" \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path "${{ matrix.test_file }}"
 
       - name: Upload security posture artifacts
         if: always()
@@ -2967,31 +3050,20 @@ jobs:
 
       # invalidState: the cloud-onboard DCode TUI check requires a PTY driver,
       # but the fixed GitHub-hosted runner image does not provide expect.
-      # sourceBoundary: this trusted workflow owns host setup; the repository
-      # check only verifies and consumes expect without privilege.
+      # sourceBoundary: privileged host setup runs from the first-party
+      # host-dependency-setup action pinned to an immutable full SHA, never the
+      # repository target ref; the check only consumes expect without privilege.
       # whyNotSourceFix: GitHub-hosted jobs cannot use a repository-owned host
       # image, and caching privileged dpkg state between clean runners is not
       # supported.
-      # regressionTest: workflow-boundary tests pin the ordering and exact
-      # one-package apt allowlist.
+      # regressionTest: workflow-boundary tests pin the ordering, action
+      # provenance, and package mapping.
       # removalCondition: remove when the hosted runner supplies expect or the
       # cloud-onboard acceptance check no longer requires a PTY.
       - name: Install cloud-onboard DCode TUI host dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::apt-get update failed after 3 attempts." >&2
-              exit 1
-            fi
-            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
-            sleep $((attempt * 5))
-          done
-          sudo apt-get install -y --no-install-recommends expect
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: expect
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -3015,9 +3087,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/cloud-onboard.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/cloud-onboard.test.ts
 
       - name: Build trusted cloud-onboard timing summary
         if: always()
@@ -3073,6 +3143,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_MODEL: "qwen3.5:9b"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-double-onboard"
       NEMOCLAW_PROVIDER: "ollama"
       NEMOCLAW_OLLAMA_PROXY_PORT: "11435"
@@ -3104,9 +3175,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/gpu-double-onboard.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/gpu-double-onboard.test.ts
 
       - name: Upload gpu-double-onboard artifacts
         if: always()
@@ -3159,9 +3228,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/onboard-repair.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/onboard-repair.test.ts
 
       - name: Upload onboard-repair artifacts
         if: always()
@@ -3217,9 +3284,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/issue-4462-scope-upgrade-approval.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/issue-4462-scope-upgrade-approval.test.ts
 
       - name: Upload issue-4462-scope-upgrade-approval artifacts
         if: always()
@@ -3268,9 +3333,7 @@ jobs:
           SLACK_APP_TOKEN_B: "xapp-fake-B-rotation-e2e"
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/token-rotation.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/token-rotation.test.ts
 
       - name: Upload token rotation artifacts
         if: always()
@@ -3315,9 +3378,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e"
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/messaging-compatible-endpoint.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/messaging-compatible-endpoint.test.ts
 
       - name: Upload messaging compatible endpoint artifacts
         if: always()
@@ -3329,44 +3390,67 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   openshell-gateway-upgrade:
-    name: OpenShell gateway upgrade (${{ matrix.legacy.id }})
+    name: OpenShell gateway upgrade (${{ matrix.id }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-upgrade,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        legacy:
-          - id: v0.0.36
+        include:
+          - id: v0.0.36-x86_64
+            runner: ubuntu-latest
+            shard: v0-0-36-x86-64
             nemoclaw_ref: v0.0.36
             nemoclaw_commit: "3351fbdd4eb7d9b80ec471545083956327da2b10"
             installer_sha256: "0c42400a0d3867739f1d75d612e069967be4506e169974bbbebf14b7af39144f"
             sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
             openshell_version: 0.0.36
             openclaw_version: 2026.4.24
-          - id: v0.0.55
+          - id: v0.0.55-x86_64
+            runner: ubuntu-latest
+            shard: v0-0-55-x86-64
             nemoclaw_ref: v0.0.55
             nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
             installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
-            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
             openshell_version: 0.0.44
             openclaw_version: 2026.5.22
+          - id: v0.0.55-aarch64
+            runner: ubuntu-24.04-arm
+            shard: v0-0-55-aarch64
+            nemoclaw_ref: v0.0.55
+            nemoclaw_commit: "95d483fe2b6569d68e59493c60f19df09a068e8f"
+            installer_sha256: "ff8cf448e4d17b00421545a1f333262b615b1b0aa236d0cc5aeaf4e2cae2d897"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108"
+            openshell_version: 0.0.44
+            openclaw_version: 2026.5.22
+          - id: v0.0.74-x86_64
+            runner: ubuntu-latest
+            shard: v0-0-74-x86-64
+            nemoclaw_ref: v0.0.74
+            nemoclaw_commit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3"
+            installer_sha256: "a0cd3feca488d247e53d59d7d8246d2b86e75e95acb5e7d78504b3c0c60fd7db"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
+            openshell_version: 0.0.72
+            openclaw_version: 2026.5.27
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openshell-gateway-upgrade"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-upgrade
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gateway-upgrade-survivor"
-      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.legacy.nemoclaw_ref }}
-      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.legacy.nemoclaw_commit }}
-      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.legacy.installer_sha256 }}
-      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.legacy.sandbox_base_image_ref }}
-      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.legacy.openshell_version }}
-      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.legacy.openclaw_version }}
+      NEMOCLAW_OLD_NEMOCLAW_REF: ${{ matrix.nemoclaw_ref }}
+      NEMOCLAW_OLD_NEMOCLAW_COMMIT: ${{ matrix.nemoclaw_commit }}
+      NEMOCLAW_OLD_INSTALLER_SHA256: ${{ matrix.installer_sha256 }}
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.sandbox_base_image_ref }}
+      NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.openshell_version }}
+      NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.openclaw_version }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -3380,23 +3464,21 @@ jobs:
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run OpenShell gateway upgrade live Vitest test
-        # This preserves the legacy ubuntu-latest + Docker/OpenShell runner
-        # lane while covering both the original v0.0.36 fixture and the exact
-        # v0.0.55/OpenShell 0.0.44 source shape from upgrade regression #6114.
+        # Keep the original v0.0.36 fixture on x86_64 and validate the exact
+        # v0.0.55/OpenShell 0.0.44 regression shape on x86_64 and arm64, plus
+        # the immediate v0.0.74/OpenShell 0.0.72 predecessor to this bump.
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx vitest run --project e2e-live \
-            test/e2e/live/openshell-gateway-upgrade.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openshell-gateway-upgrade.test.ts
 
       - name: Upload OpenShell gateway upgrade artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
-          name: e2e-openshell-gateway-upgrade-${{ matrix.legacy.id }}
+          name: e2e-openshell-gateway-upgrade-${{ matrix.id }}
 
       - name: Clean up Docker auth
         if: always()
@@ -3447,9 +3529,7 @@ jobs:
           SLACK_CHANNEL_ID_E2E: ${{ secrets.SLACK_CHANNEL_ID_E2E }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/messaging-providers.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/messaging-providers.test.ts
 
       - name: Upload messaging providers artifacts
         if: always()
@@ -3498,9 +3578,7 @@ jobs:
           COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/launchable-smoke.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/launchable-smoke.test.ts
 
       - name: Upload launchable smoke artifacts
         if: always()
@@ -3544,9 +3622,7 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/model-router-provider-routed-inference.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/model-router-provider-routed-inference.test.ts
 
       - name: Upload Model Router provider-routed inference artifacts
         if: always()
@@ -3589,9 +3665,7 @@ jobs:
         # supplies a sandbox-reachable fake OpenAI-compatible endpoint.
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/snapshot-commands.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/snapshot-commands.test.ts
 
       - name: Upload snapshot commands artifacts
         if: always()
@@ -3655,9 +3729,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx vitest run --project e2e-live \
-            test/e2e/live/sandbox-operations.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-operations.test.ts
 
       - name: Upload sandbox operations artifacts
         if: always()
@@ -3703,9 +3775,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/sandbox-survival.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/sandbox-survival.test.ts
 
       - name: Upload sandbox survival artifacts
         if: always()
@@ -3752,7 +3822,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live             test/e2e/live/diagnostics.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/diagnostics.test.ts
 
       - name: Upload diagnostics artifacts
         if: always()
@@ -3817,10 +3887,7 @@ jobs:
           test -z "${DOCKERHUB_USERNAME:-}"
           test -z "${DOCKERHUB_TOKEN:-}"
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN \
-            npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
-            --silent=false --reporter=default \
-            --reporter=test/e2e/risk-signal-reporter.ts
+            npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-plugin-runtime-exdev.test.ts
 
       - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
         if: always()
@@ -3862,32 +3929,21 @@ jobs:
 
       - *dockerhub-auth
 
-      # The #6194 terminal regression uses Expect as its PTY driver. Keep this
-      # privileged host setup inline in the reviewed workflow: the selected
-      # target ref may consume expect but cannot expand the package allowlist.
+      # The #6194 terminal regression uses Expect as its PTY driver. Privileged
+      # host setup runs from the first-party host-dependency-setup action pinned
+      # to an immutable full SHA: the selected target ref may consume expect but
+      # cannot expand the package allowlist or run sudo with its own code.
       # invalidState: hosted-runner Ubuntu mirrors can fail transiently during update.
-      # sourceBoundary: only this trusted workflow chooses the exact root-installed package.
+      # sourceBoundary: only the pinned trusted action chooses the exact root-installed package.
       # whyNotSourceFix: GitHub's Ubuntu image and configured repository move together, so a
       # fixed package version would make the target brittle across routine runner refreshes.
       # The runner's configured Ubuntu repository is therefore an accepted trust source.
-      # regressionTest: e2e-host-dependency-workflow-boundary rejects package or order drift.
+      # regressionTest: e2e-host-dependency-workflow-boundary rejects package or provenance drift.
       # removalCondition: remove this step when the hosted image provides Expect itself.
       - name: Install OpenClaw TUI host dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::apt-get update failed after 3 attempts." >&2
-              exit 1
-            fi
-            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
-            sleep $((attempt * 5))
-          done
-          sudo apt-get install -y --no-install-recommends expect
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: expect
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -3898,9 +3954,7 @@ jobs:
           COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-tui-chat-correlation.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-tui-chat-correlation.test.ts
 
       - name: Upload OpenClaw TUI chat correlation artifacts
         if: always()
@@ -4032,6 +4086,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: "openclaw"
+      NEMOCLAW_E2E_SHARD: ${{ matrix.mode }}
       NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       NEMOCLAW_SWITCH_PROVIDER: ${{ matrix.switch_provider }}
       NEMOCLAW_SWITCH_MODEL: ${{ matrix.switch_model }}
@@ -4059,9 +4114,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-inference-switch.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-inference-switch.test.ts
 
       - name: Upload OpenClaw inference switch artifacts
         if: always()
@@ -4095,6 +4148,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.agent }}
       NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -4116,9 +4170,7 @@ jobs:
         # leak-scan contract for both OpenClaw and Hermes.
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts
 
       - name: Upload Bedrock Runtime compatible Anthropic artifacts
         if: always()
@@ -4164,9 +4216,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-          npx vitest run --project e2e-live \
-            test/e2e/live/gateway-health-honest.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/gateway-health-honest.test.ts
 
       - name: Upload gateway health honesty artifacts
         if: always()
@@ -4217,7 +4267,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live             test/e2e/live/device-auth-health.test.ts             --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/device-auth-health.test.ts
 
       - name: Upload device auth health artifacts
         if: always()
@@ -4285,9 +4335,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/channels-add-remove.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/channels-add-remove.test.ts
 
       - name: Upload channels add/remove artifacts
         if: always()
@@ -4352,9 +4400,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/telegram-injection.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/telegram-injection.test.ts
 
       - name: Upload Telegram injection artifacts
         if: always()
@@ -4431,9 +4477,7 @@ jobs:
           fi
           export OPENSHELL_BIN
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/channels-stop-start.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/channels-stop-start.test.ts
 
       - name: Upload channels stop/start artifacts
         if: always()
@@ -4501,9 +4545,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-slack-pairing.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-slack-pairing.test.ts
 
       - name: Upload OpenClaw Slack pairing artifacts
         if: always()
@@ -4559,9 +4601,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/issue-2478-crash-loop-recovery.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/issue-2478-crash-loop-recovery.test.ts
 
       - name: "Upload issue #2478 crash-loop recovery artifacts"
         if: always()
@@ -4625,9 +4665,7 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx vitest run --project e2e-live \
-            test/e2e/live/openclaw-discord-pairing.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/openclaw-discord-pairing.test.ts
 
       - name: Upload OpenClaw Discord pairing artifacts
         if: always()
@@ -4702,9 +4740,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/tunnel-lifecycle.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/tunnel-lifecycle.test.ts
 
       - name: Upload tunnel lifecycle artifacts
         if: always()
@@ -4755,9 +4791,7 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-live \
-            test/e2e/live/spark-install.test.ts \
-            --silent=false --reporter=default --reporter=test/e2e/risk-signal-reporter.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/spark-install.test.ts
 
       - name: Upload Spark install artifacts
         if: always()
@@ -4857,10 +4891,19 @@ jobs:
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' }}
     permissions:
       actions: read
+      contents: read
       # The issue-comment endpoint accepts pull request write permission for PR comments.
       # Keep issues: write absent so this job cannot restore general issue routing.
       pull-requests: write
     steps:
+      - name: Check out the trusted E2E reporting helper
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            tools/e2e/report-e2e-results.mts
+          sparse-checkout-cone-mode: false
       - name: Post E2E target results to PR
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -4871,281 +4914,32 @@ jobs:
           JOBS: ${{ inputs.jobs }}
         with:
           script: |
+            const path = require('node:path');
+            const { pathToFileURL } = require('node:url');
+            const { resolveReportPr, loadReportJobs, renderE2eReport } = await import(
+              pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'tools/e2e/report-e2e-results.mts')).href
+            );
             const needs = ${{ toJSON(needs) }};
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const workflowBranch = context.ref.replace('refs/heads/', '');
-            const prNumberInput = process.env.JOB_PR_NUMBER || '';
-            const rawRequestedTargets = process.env.JOB_TARGETS || '';
-            const rawRequestedTestIds = process.env.JOBS || '';
-            const selectorValidationPassed = needs['generate-matrix']?.result === 'success';
-            const requestedTargets = selectorValidationPassed ? rawRequestedTargets : '';
-            const requestedTestIdsCsv = selectorValidationPassed ? rawRequestedTestIds : '';
-            const explicitOnlyReasons = {
-              'openshell-gateway-auth-contract': {
-                job: 'openshell-gateway-auth-contract',
-                target: 'openshell-gateway-auth-contract',
-                reason: 'default dispatch excludes the resource-heavy OpenShell auth-contract probe unless selected',
-              },
-              'mcp-bridge-dev': {
-                job: 'mcp-bridge-dev',
-                target: 'mcp-bridge-dev',
-                reason: 'default dispatch excludes moving OpenShell dev artifacts unless explicitly selected',
-              },
-              'jetson-nvmap-gpu': {
-                job: 'jetson-nvmap-gpu',
-                target: 'jetson-nvmap-gpu',
-                reason: 'default dispatch excludes Jetson; explicit dispatch requires allow_jetson_runner_queue=true after confirming an online Jetson runner because queued jobs do not honor timeout-minutes before assignment',
-              },
-              'sandbox-rlimits-connect': {
-                job: 'sandbox-rlimits-connect',
-                target: 'sandbox-rlimits-connect',
-                reason: 'default dispatch excludes the destructive rlimit fork/connect probe unless selected',
-              },
-            };
-            const explicitOnlySkippedJobs = (process.env.EXPLICIT_ONLY_JOBS || '')
-              .split(',')
-              .filter(Boolean)
-              .map((job) => explicitOnlyReasons[job] ?? {
-                job,
-                target: job,
-                reason: 'default dispatch excludes this explicit-only job unless selected',
-              });
-            const targetsRejected = rawRequestedTargets && !selectorValidationPassed;
-            const testIdsRejected = rawRequestedTestIds && !selectorValidationPassed;
-
-            let prNumber;
-            if (prNumberInput) {
-              if (!/^[1-9][0-9]*$/.test(prNumberInput)) {
-                core.setFailed(`Invalid pr_number input: ${prNumberInput}. Use a positive pull request number.`);
-                return;
-              }
-              prNumber = Number(prNumberInput);
-              if (!Number.isSafeInteger(prNumber)) {
-                core.setFailed(`Invalid pr_number input: ${prNumberInput}. Use a safe positive integer.`);
-                return;
-              }
-              try {
-                const { data: suppliedPr } = await github.rest.pulls.get({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  pull_number: prNumber,
-                });
-                if (suppliedPr.state !== 'open') {
-                  core.setFailed(`PR #${prNumber} is ${suppliedPr.state}; E2E reports only comment on open PRs.`);
-                  return;
-                }
-              } catch (error) {
-                if (error.status === 404) {
-                  core.setFailed(`pr_number ${prNumber} does not identify a pull request in ${context.repo.owner}/${context.repo.repo}.`);
-                  return;
-                }
-                throw error;
-              }
-            } else {
-              const { data: prs } = await github.rest.pulls.list({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                head: `${context.repo.owner}:${workflowBranch}`,
-                state: 'open',
-              });
-              if (prs.length === 0) {
-                core.info(`No open PR found for branch ${workflowBranch} — skipping comment.`);
-                return;
-              }
-              prNumber = prs[0].number;
-            }
-
-            const requestedTestIds = requestedTestIdsCsv
-              .split(',')
-              .map((testId) => testId.trim())
-              .filter(Boolean);
-            const requestedTestIdSet = new Set(requestedTestIds);
-            const selectiveDispatch =
-              requestedTestIds.length > 0 || Boolean(requestedTargets) || targetsRejected || testIdsRejected;
-            const emoji = { success: '✅', failure: '❌', cancelled: '⚠️', skipped: '⏭️' };
-            const safeSelector = /^[A-Za-z0-9_-]+$/;
-            let testIds;
-            try {
-              const testMatrix = JSON.parse(process.env.TEST_MATRIX || '[]');
-              if (!Array.isArray(testMatrix)) throw new Error('matrix must be an array');
-              testIds = testMatrix.map((row) => {
-                if (!row || typeof row !== 'object' || !safeSelector.test(row.id || '')) {
-                  throw new Error('matrix row has an invalid id');
-                }
-                return row.id;
-              });
-              if (new Set(testIds).size !== testIds.length) {
-                throw new Error('matrix repeats a test id');
-              }
-            } catch (error) {
-              core.setFailed(`Invalid test matrix: ${error.message}`);
+            const prNumber = await resolveReportPr({ github, context, core, env: process.env });
+            if (prNumber === undefined) return;
+            const { apiJobs, loaded } = await loadReportJobs({ github, context, core });
+            const report = renderE2eReport({
+              needs,
+              env: process.env,
+              apiJobs,
+              apiJobsLoaded: loaded,
+              context,
+            });
+            if (report.fatal) {
+              core.setFailed(report.fatal);
               return;
             }
-
-            const testResults = new Map();
-            let sharedJobResultsLoaded = false;
-            try {
-              const apiJobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                run_id: context.runId,
-                filter: 'latest',
-                per_page: 100,
-              });
-              const selectedTestIds = new Set(testIds);
-              for (const job of apiJobs) {
-                const match = /^Shared E2E \(([A-Za-z0-9_-]+)\)$/.exec(job.name || '');
-                if (!match || !selectedTestIds.has(match[1])) continue;
-                const result =
-                  job.status === 'completed' &&
-                  ['success', 'failure', 'cancelled', 'skipped'].includes(job.conclusion)
-                    ? job.conclusion
-                    : 'unknown';
-                testResults.set(match[1], { result });
-              }
-              sharedJobResultsLoaded = true;
-            } catch (error) {
-              // The Actions jobs API is the only source of matrix-child conclusions;
-              // `needs['shared-e2e']` exposes only their aggregate. Keep missing children
-              // unknown instead of fabricating per-test evidence. This path is covered
-              // by e2e-report-to-pr-workflow-boundary.test.ts and can be removed when
-              // Actions exposes matrix-child conclusions directly to dependent jobs.
-              core.warning(`Could not load per-test results; reporting them as unknown: ${error.message}`);
-            }
-            const missingTestResults = testIds.filter((id) => !testResults.has(id));
-            if (sharedJobResultsLoaded && missingTestResults.length > 0) {
-              core.warning(`Missing per-test results for ${missingTestResults.join(', ')}; reporting them as unknown.`);
-            }
-            const sharedJobAggregateResult = needs['shared-e2e']?.result;
-            const knownTestResults = testIds.map((id) => testResults.get(id)?.result);
-            const allTestResultsKnown =
-              knownTestResults.length > 0 &&
-              knownTestResults.every((result) => result && result !== 'unknown');
-            const expectedAggregateChildResult =
-              sharedJobAggregateResult === 'failure'
-                ? 'failure'
-                : sharedJobAggregateResult === 'cancelled'
-                  ? 'cancelled'
-                  : undefined;
-            const testAttributionMismatch =
-              allTestResultsKnown &&
-              expectedAggregateChildResult &&
-              !knownTestResults.includes(expectedAggregateChildResult);
-            if (testAttributionMismatch) {
-              core.warning(
-                `Per-test conclusions (${knownTestResults.join(', ')}) contradict shared E2E job aggregate ${sharedJobAggregateResult}; reporting child attribution as unknown.`,
-              );
-              for (const id of testIds) testResults.set(id, { result: 'unknown' });
-            }
-
-            const allEntries = Object.entries(needs).filter(([name]) => name !== 'shared-e2e');
-            if (needs['shared-e2e']) {
-              allEntries.push(
-                ...testIds.map((id) => [id, testResults.get(id) ?? { result: 'unknown' }]),
-              );
-            }
-            allEntries.sort(([a], [b]) => a.localeCompare(b));
-            const missingRequestedTestIds = selectorValidationPassed
-              ? requestedTestIds.filter((testId) => !allEntries.some(([name]) => name === testId))
-              : [];
-            const selectedEntries = requestedTestIds.length > 0
-              ? allEntries.filter(([name]) => requestedTestIdSet.has(name))
-              : selectiveDispatch
-                ? allEntries.filter(
-                    ([name, { result }]) => result !== 'skipped' && name !== 'generate-matrix',
-                  )
-                : allEntries;
-            const reportedEntries = selectedEntries.length > 0
-              ? selectedEntries
-              : selectiveDispatch
-                ? allEntries.filter(([, { result }]) => result !== 'skipped')
-                : allEntries;
-            const rows = reportedEntries.map(
-              ([name, { result }]) => `| ${name} | ${emoji[result] || '❓'} ${result} |`,
-            );
-            for (const name of missingRequestedTestIds) {
-              rows.push(`| ${name} | ❓ not reported |`);
-            }
-
-            const ran = reportedEntries.filter(([, v]) => v.result !== 'skipped');
-            const passed = ran.filter(([, v]) => v.result === 'success');
-            const failed = ran.filter(([, v]) => v.result === 'failure');
-            const skipped = reportedEntries.filter(([, v]) => v.result === 'skipped');
-            const cancelled = ran.filter(([, v]) => v.result === 'cancelled');
-            const unknown = ran.filter(([, v]) => v.result === 'unknown');
-            const sharedJobAggregateFailed = sharedJobAggregateResult === 'failure';
-            const sharedJobAggregateCancelled = sharedJobAggregateResult === 'cancelled';
-            const passingStatus = requestedTestIds.length > 0
-              ? '✅ All requested tests passed'
-              : selectiveDispatch
-                ? '✅ All selected tests passed'
-                : '✅ All default tests passed';
-            const status =
-              failed.length > 0 || missingRequestedTestIds.length > 0 || sharedJobAggregateFailed
-                ? '❌ Some tests failed'
-                : (cancelled.length > 0 || sharedJobAggregateCancelled) && passed.length === 0
-                  ? '⚠️ Run cancelled — no signal'
-                  : cancelled.length > 0 || sharedJobAggregateCancelled
-                    ? '⚠️ Some tests cancelled — partial pass'
-                    : unknown.length > 0
-                      ? '⚠️ Per-test results incomplete'
-                    : skipped.length > 0 && passed.length === 0
-                      ? '⚠️ No selected tests ran'
-                      : passingStatus;
-
-            const lines = [
-              `### E2E Target Results — ${status}`,
-              '',
-              `**Run:** [${context.runId}](${runUrl})`,
-              `**Workflow ref:** \`${workflowBranch}\``,
-              targetsRejected
-                ? '**Requested targets:** _(selector rejected by workflow validation)_'
-                : requestedTargets
-                  ? `**Requested targets:** \`${requestedTargets}\``
-                  : '**Requested targets:** _(default — all supported)_',
-              testIdsRejected
-                ? '**Requested test IDs:** _(selector rejected by workflow validation)_'
-                : requestedTestIdsCsv
-                  ? `**Requested test IDs:** \`${requestedTestIdsCsv}\``
-                  : '**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_',
-              `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped, ${unknown.length} unknown`,
-              '',
-              '| Test | Result |',
-              '|-----|--------|',
-              ...rows,
-            ];
-            if (!selectiveDispatch) {
-              const skippedJobHints = explicitOnlySkippedJobs
-                .map(
-                  ({ job, target, reason }) =>
-                    `\`${job}\` (${reason}; validate with \`jobs=${job}\` or \`targets=${target}\`)`,
-                )
-                .join(', ');
-              lines.push('', `> **Explicit-only jobs skipped:** ${skippedJobHints}.`);
-            }
-            if (failed.length > 0) {
-              const failedNames = failed.map(([name]) => name).join(', ');
-              lines.push('', `> **Failed tests:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);
-            }
-            if (missingRequestedTestIds.length > 0) {
-              lines.push(
-                '',
-                `> **Missing requested test IDs:** ${missingRequestedTestIds.join(', ')}. The reporting workflow needs to include these tests.`,
-              );
-            }
-            if (unknown.length > 0) {
-              const unknownNames = unknown.map(([name]) => name).join(', ');
-              lines.push(
-                '',
-                `> **Unknown per-test results:** ${unknownNames}. Shared E2E job aggregate: ${needs['shared-e2e']?.result ?? 'unavailable'}.`,
-              );
-            }
-
+            for (const warning of report.warnings) core.warning(warning);
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: lines.join('\n'),
+              body: report.body,
             });
 
   # ── Scheduled/manual scorecard ────────────────────────────────────────────
@@ -5177,120 +4971,42 @@ jobs:
         with:
           script: |
             const path = require('path');
-            const traceTiming = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.ts'),
+            const { buildScorecard } = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/coordinate-scorecard.mts'),
             );
             const scorecardJobs = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.ts'),
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.mts'),
             );
-            const slackBlocks = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.ts'),
+            const traceTiming = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
             );
             const needs = ${{ toJSON(needs) }};
-            const safeSelector = /^[A-Za-z0-9_-]+$/;
-            const parseSelectors = (value) =>
-              value.split(',').map((name) => name.trim()).filter((name) => safeSelector.test(name));
-            const rawRequestedJobs = process.env.JOBS || '';
-            const rawRequestedTargets = process.env.TARGETS || '';
-            const requestedJobs = parseSelectors(rawRequestedJobs);
-            const requestedTargets = parseSelectors(rawRequestedTargets);
-            const isDispatch = context.eventName === 'workflow_dispatch';
-            const isSelectiveDispatch = scorecardJobs.isSelectiveDispatch(
-              context.eventName,
-              rawRequestedJobs,
-              rawRequestedTargets,
-            );
-            const runMode = isSelectiveDispatch
-              ? 'Selective dispatch'
-              : isDispatch
-                ? 'Manual full run'
-                : 'Scheduled E2E';
-            const metaJobs = [
-              'generate-matrix',
-              'report-to-pr',
-              'scorecard',
-            ];
-            const explicitOnly = parseSelectors(process.env.EXPLICIT_ONLY_JOBS || '');
-            const explicitlySelected = [...requestedJobs, ...requestedTargets];
 
             // GitHub's jobs API is the canonical source because `needs.live`
             // collapses every matrix target into one result and has no job URL.
             // The typed helper owns and tests the degraded `needs` fallback.
             const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
+            const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
+            if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
 
-            const { cancelled, failedJobs, failure, ran, skipped, success, total } =
-              scorecardJobs.summarizeJobs({
-                apiJobs,
-                explicitOnlyJobNames: explicitOnly,
-                explicitlySelected,
-                metaJobNames: metaJobs,
-                needs,
-              });
-            const perfect = ran > 0 && failure === 0 && cancelled === 0;
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const today = new Date().toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            });
-            const { budgetWarningMessage, traceTimingLine, traceSummaryLines } =
-              await traceTiming.buildTraceTimingResult({ github, context, core });
-            if (budgetWarningMessage) core.warning(budgetWarningMessage);
-            const lines = [
-              `## 🌅 NemoClaw E2E Scorecard — ${today}`,
-              '',
-              `**Run mode:** ${runMode}`,
-            ];
-            if (requestedJobs.length > 0) {
-              lines.push(`**Requested jobs:** ${requestedJobs.map((name) => `\`${name}\``).join(', ')}`);
-            }
-            if (requestedTargets.length > 0) {
-              lines.push(`**Requested targets:** ${requestedTargets.map((name) => `\`${name}\``).join(', ')}`);
-            }
-            lines.push(
-              `**Jobs run:** ${ran} of ${total}`,
-              `  ✅ ${success} passed`,
-              `  ❌ ${failure} failed`,
-              `  🚫 ${cancelled} cancelled`,
-              `  ⏭️ ${skipped} skipped`,
-            );
-            if (failedJobs.length > 0) {
-              lines.push('', '**Failed jobs:**');
-              for (const job of failedJobs) {
-                lines.push(job.url ? `  - [${job.name}](${job.url})` : `  - \`${job.name}\``);
-              }
-            }
-            if (perfect) lines.push('', '🎉 **All jobs passed!**');
-            lines.push('', traceTimingLine, ...traceSummaryLines, '', `🔗 [Full run details](${runUrl})`);
-            await core.summary.addRaw(lines.join('\n')).write();
-            const scorecardData = {
-              today,
-              runMode,
+            const { summaryMarkdown, scorecardData, slackData } = buildScorecard({
+              eventName: context.eventName,
               actor: context.actor || '',
-              isSelectiveDispatch,
-              requestedJobs,
-              requestedTargets,
-              total,
-              ran,
-              success,
-              failure,
-              cancelled,
-              skipped,
-              perfect,
-              failedJobs,
-              traceTimingLine,
-              runUrl,
-            };
+              serverUrl: context.serverUrl,
+              repo: context.repo,
+              runId: context.runId,
+              rawJobs: process.env.JOBS || '',
+              rawTargets: process.env.TARGETS || '',
+              rawExplicitOnly: process.env.EXPLICIT_ONLY_JOBS || '',
+              needs,
+              apiJobs,
+              trace,
+              today: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            });
+
+            await core.summary.addRaw(summaryMarkdown).write();
             core.setOutput('scorecardData', JSON.stringify(scorecardData));
-            core.setOutput('slackData', JSON.stringify({
-              channel: slackBlocks.getSlackChannel(scorecardData),
-              payload: {
-                text: slackBlocks.buildFallbackText(scorecardData),
-                attachments: [{
-                  color: slackBlocks.getStatusColor(scorecardData),
-                  blocks: slackBlocks.buildBlocks(scorecardData),
-                }],
-              },
-            }));
+            core.setOutput('slackData', JSON.stringify(slackData));
 
       - name: Post scorecard to Slack
         # Webhook secrets never enter branch-dispatched runs. The payload is
@@ -5313,7 +5029,22 @@ jobs:
               preview: 'SLACK_WEBHOOK_URL_PREVIEW',
             };
             const channel = data?.channel;
-            if (!Object.hasOwn(envByChannel, channel) || !data.payload || typeof data.payload !== 'object') {
+            const payload = data?.payload;
+            const attachments = payload?.attachments;
+            const validPayload =
+              Object.hasOwn(envByChannel, channel) &&
+              payload !== null &&
+              typeof payload === 'object' &&
+              typeof payload.text === 'string' &&
+              Array.isArray(attachments) &&
+              attachments.every(
+                (attachment) =>
+                  attachment !== null &&
+                  typeof attachment === 'object' &&
+                  typeof attachment.color === 'string' &&
+                  Array.isArray(attachment.blocks),
+              );
+            if (!validPayload) {
               core.setFailed('Invalid precomputed Slack payload');
               return;
             }

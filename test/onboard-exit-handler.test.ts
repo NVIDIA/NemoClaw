@@ -294,6 +294,7 @@ finalPhases.runFinalOnboardFlowSlice = async ({ runtime }) => {
     { sandboxName: "complete-seam", provider: "nvidia", model: "nemotron-test" },
     { state: "post_verify" },
   ));
+  return { context: null, session: await runtime.session() };
 };
 
 const { onboard } = require(${onboardPath});

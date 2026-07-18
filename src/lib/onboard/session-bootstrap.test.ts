@@ -87,6 +87,32 @@ describe("prepareOnboardSession", () => {
     expect(getSession()?.sessionId).not.toBe("old-session");
   });
 
+  it("checkpoints Station Express choices before managed vLLM setup", async () => {
+    const { deps } = createDeps();
+    const stationExpress = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+    };
+
+    const result = await prepareOnboardSession(
+      {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "my-assistant",
+        cannotPrompt: true,
+        nonInteractive: true,
+        stationExpressIntent: stationExpress,
+      },
+      deps,
+    );
+
+    expect(result.session?.stationExpressIntent).toEqual(stationExpress);
+    expect(result.session?.provider).toBeNull();
+    expect(result.session?.model).toBeNull();
+  });
+
   it("defaults a fresh session to progressive disclosure", async () => {
     const { deps } = createDeps();
     const result = await prepareOnboardSession(
@@ -308,6 +334,34 @@ describe("prepareOnboardSession", () => {
       "  so no sandbox name was recorded. Re-run with --name <sandbox> (or set NEMOCLAW_SANDBOX_NAME).",
     );
     expect(deps.exitProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows non-interactive resume with a checkpointed sandbox name", async () => {
+    const session = createSession({
+      sandboxName: "checkpointed-box",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    const { deps } = createDeps(session);
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(result.session?.sandboxName).toBe("checkpointed-box");
+    expect(deps.exitProcess).not.toHaveBeenCalled();
   });
 
   it("allows interactive resume to prompt when no sandbox name was recorded", async () => {

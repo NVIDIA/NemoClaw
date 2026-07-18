@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Buffer } from "node:buffer";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
@@ -10,7 +9,11 @@ import {
   assertExitZero,
   type CommandRunner,
   outputContainsSandbox,
+  resultText,
 } from "./command.ts";
+
+const SANDBOX_ALREADY_ABSENT =
+  /\bNotFound\b|\bNot Found\b|sandbox[^\n]*(?:not found|not present|does not exist)|no such sandbox/i;
 
 /**
  * Default env for openshell-targeted spawns. ShellProbe filters env via
@@ -52,15 +55,6 @@ export function trustedSandboxShellScript(script: string): TrustedSandboxShellSc
   return script as TrustedSandboxShellScript;
 }
 
-function sandboxShellArgument(script: TrustedSandboxShellScript): string {
-  const encodedScript = Buffer.from(script, "utf8").toString("base64");
-  return [
-    "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
-    `_NEMOCLAW_E2E_SCRIPT="$(printf '%s' '${encodedScript}' | base64 -d)" || exit $?`,
-    `eval "$_NEMOCLAW_E2E_SCRIPT"`,
-  ].join("; ");
-}
-
 export class SandboxClient {
   private readonly runner: CommandRunner;
   private readonly openshellPath: string;
@@ -99,6 +93,16 @@ export class SandboxClient {
     });
   }
 
+  async cleanupSandbox(name: string, options: ShellProbeRunOptions = {}): Promise<void> {
+    validateSandboxName(name);
+    const result = await this.openshell(["sandbox", "delete", name], {
+      artifactName: `cleanup-openshell-sandbox-${name}`,
+      ...options,
+    });
+    if (result.exitCode === 0 || SANDBOX_ALREADY_ABSENT.test(resultText(result))) return;
+    assertExitZero(result, `cleanup OpenShell sandbox ${name}`);
+  }
+
   exec(
     name: string,
     command: string[],
@@ -117,13 +121,10 @@ export class SandboxClient {
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
     validateSandboxName(name);
-    return this.openshell(
-      ["sandbox", "exec", "-n", name, "--", "sh", "-lc", sandboxShellArgument(script)],
-      {
-        artifactName: `sandbox-exec-shell-${name}`,
-        ...options,
-      },
-    );
+    return this.openshell(["sandbox", "exec", "-n", name, "--", "sh", "-lc", script], {
+      artifactName: `sandbox-exec-shell-${name}`,
+      ...options,
+    });
   }
 
   upload(

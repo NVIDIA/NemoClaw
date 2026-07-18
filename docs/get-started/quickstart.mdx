@@ -11,24 +11,19 @@ content:
 skill:
   priority: 10
 ---
-import { StarterPromptFallback } from "../_components/StarterPrompt";
-import { StarterPromptButton } from "../_components/StarterPromptButton";
-
 Create a sandboxed OpenClaw agent, then send it a first prompt.
 
-## Set Up with a Coding Agent
+## Set Up with the Starter Prompt on Your Coding Agent
 
 Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
-The prompt points the agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+The prompt points the agent to [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
 It asks the agent to collect your choices before it starts interactive commands and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
 
-<StarterPromptButton />
+<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
 
-<StarterPromptFallback />
+If you prefer to control setup directly, use [Set Up with the Interactive Installer on Your Terminal](#set-up-with-the-interactive-installer-on-your-terminal).
 
-If you prefer to control setup directly, use the interactive installer in [Create Your First Sandboxed Agent](#create-your-first-sandboxed-agent).
-
-## Create Your First Sandboxed Agent
+## Set Up with the Interactive Installer on Your Terminal
 
 If you use the coding-agent prompt in the preceding section, you can skip this procedure or keep it as reference.
 The prompt directs your coding agent to this quickstart, so it has the full setup context.
@@ -116,7 +111,7 @@ Use these details when your first-run path needs more control.
 
     Web search and messaging are optional build-time choices.
     Add them when you need them, then rerun onboarding and accept sandbox recreation when you change those choices later.
-    Refer to [Messaging Channels](../manage-sandboxes/messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling them.
+    Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling them.
   </Accordion>
 
   <Accordion title="Use Docker and supported platforms">
@@ -124,7 +119,14 @@ Use these details when your first-run path needs more control.
     If the installer adds you to the `docker` group, run the printed `newgrp docker` command before you rerun it.
     On macOS, start Docker Desktop or Colima first.
 
-    DGX Spark, DGX Station, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
+    DGX Spark, qualifying Station GB300 hosts, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
+    Station accepts the generic Ubuntu 24.04 ARM64 image and stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
+    On a qualifying Station, accepting the prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
+    [Prepare DGX Station to Install NemoClaw](prerequisites/dgx-station-preparation) defines Station qualification, generic Ubuntu preparation, stock DGX OS validation, repair limits, and reboot handoff.
+    By default, unknown versions, unsafe release markers, NVIDIA BaseOS images, and other Station generations stop before host preparation; set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to bypass Station host automation.
+    For an explicit temporary override on genuine Station GB300 hardware with unrecognized release metadata, follow the `--force-station-install` safeguards in the Station preparation guide.
+    One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
+    Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead; the flag selects the interactive prompt and requires terminal access.
     Refer to [Platform Support](../reference/platform-support) and [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for the current platform behavior.
 
     If `nemoclaw` is not found after installation and you use nvm or fnm, open a new terminal or reload your shell profile.
@@ -189,13 +191,39 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
 
-    On DGX Spark, DGX Station, and Windows WSL, interactive installation offers express install after you accept the third-party software notice.
-    Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
-    DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default, and DGX Station uses `deepseek-v4-flash` by default.
+    On DGX Spark, qualifying Station GB300 hosts, and Windows WSL, interactive installation offers express install after you accept the third-party software notice.
+    After you confirm the interactive express prompt, the installer switches the remaining onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
+    DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default.
+    DGX Station express install explicitly selects `nemotron-3-ultra-550b-a55b` instead of the Station managed-vLLM profile default, `deepseek-v4-flash`, and discloses the approximately `352 GB` model download before confirmation.
+    If the host does not meet the [Station prerequisites](prerequisites/dgx-station-preparation), the installer stops before host preparation.
+    Generic Ubuntu preparation can change pinned packages and then exits with status `10`; reboot, sign in, and run the printed exact-commit command to resume the accepted express recipe.
+    Stock DGX OS validation checks the factory stack in place without installing packages, restarting services, or rewriting the Docker runtime.
+    One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
+    To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
+    The `--station-deepseek` flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
+    The temporary `--force-station-install` flag has the same terminal requirement and bypasses only DGX release-metadata qualification on genuine Station GB300 hardware.
+    Without terminal access, the installer stops before it installs Docker or build dependencies instead of ignoring the flag.
+    For a headless or CI install on a qualifying DGX Station GB300 after host preparation, omit the flag and select the same managed-vLLM recipe explicitly.
+
+    ```bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+      NEMOCLAW_NON_INTERACTIVE=1 \
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+      NEMOCLAW_PROVIDER=install-vllm \
+      NEMOCLAW_VLLM_MODEL=deepseek-v4-flash \
+      NEMOCLAW_SANDBOX_NAME=my-assistant \
+      bash
+    ```
+
     Unless `NEMOCLAW_POLICY_TIER` is set, express install applies policy in `suggested` mode with the `balanced` tier, including the base sandbox policy and supported package, model, web-search, and local-inference presets.
     Express install uses `my-assistant` as the sandbox name across all platforms unless `NEMOCLAW_SANDBOX_NAME` is set.
     Windows WSL selects the Windows-host Ollama setup path.
     Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer to choose a provider yourself.
+
+    <Warning>
+    Express install automates the configuration but does not change DGX Station's Deferred support status.
+    One physical DGX OS 7.5 GB300 validation completed; repeat qualification from a clean host and CI coverage remain pending.
+    </Warning>
 
     The installer auto-launches `nemoclaw onboard` when it can find the new binary.
     If it cannot find the binary or blocking host preflight checks fail, it prints diagnostics and a `To finish setup, run:` block with the explicit `nemoclaw onboard` command.
@@ -214,6 +242,7 @@ Use these details when your first-run path needs more control.
     At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 
     If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell, requires a fresh backup of every registered sandbox before it changes the gateway, and runs `nemoclaw upgrade-sandboxes --auto` after the host upgrade.
+    After backup, it retires the running gateway before replacing OpenShell only when the installed OpenShell version is outside the current release's supported range; an unknown installed version or an invalid or missing range stops the update without retiring the gateway, while any retirement failure stops the update with the sandbox backups preserved.
     Successful recovery rebuilds stale sandboxes, restores validated backups for registered sandboxes that are not Ready, and skips generic onboarding rather than creating an additional sandbox or requesting a new provider credential.
     If the recovery pass exits 0 but a recorded sandbox is not found on its own recorded gateway, such as after `nemoclaw uninstall` removed the gateway and Docker image while preserving `sandboxes.json`, the installer finishes with `Installation completed with warnings` and remediation guidance instead of claiming the sandbox was recovered.
     For pre-fingerprint OpenClaw and Hermes registry entries, confirm that every listed sandbox used a NemoClaw-managed image before recovery onto the current managed image.
@@ -243,7 +272,7 @@ Use these details when your first-run path needs more control.
     <Tip>
     Export the API key before you launch the installer when you do not want the wizard to ask for it.
     For example, run `export NVIDIA_INFERENCE_API_KEY=<your-key>` before the installer.
-    Refer to [Reset a Stored Credential](../manage-sandboxes/lifecycle#reset-a-stored-credential) if you need to clear and re-enter a key.
+    Refer to [Remove and Re-register a Provider Credential](../security/credential-rotation#remove-and-re-register-a-provider-credential) if you need to clear and re-enter a key.
     </Tip>
 
     | Option | Use when | Credential variable |
@@ -311,7 +340,7 @@ Use these details when your first-run path needs more control.
     When you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
     For example, Slack bot tokens must start with `xoxb-`.
     WeChat and WhatsApp are experimental.
-    Refer to [Messaging Channels](../manage-sandboxes/messaging-channels) before enabling them.
+    Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 
     After the sandbox image builds and OpenClaw starts, NemoClaw asks which network policy tier to apply.
     Web search and messaging selections happen first so the sandbox image and policy suggestions stay aligned.
@@ -322,9 +351,11 @@ Use these details when your first-run path needs more control.
     The selector can include destinations such as GitHub, Jira, Slack, Telegram, or local inference.
     Press `r` to switch a selected preset between read-only and read-write when it supports both modes.
 
-    Before it prints the ready summary, NemoClaw checks that the sandbox gateway and dashboard port forward are reachable.
+    Use the final onboarding summary to verify that the sandbox gateway, dashboard port forward, and `inference.local` route are reachable.
     When web search is enabled, it also checks the selected provider configuration and sends a real search request through sandbox egress.
-    Web search, inference-route, and messaging-bridge checks report warnings instead of aborting onboarding when they need more time or configuration.
+    Treat an unreachable route or HTTP 5xx response as a failed readiness check: onboarding marks the sandbox not ready and exits non-zero.
+    Restore the configured endpoint or proxy, run `nemoclaw onboard --resume` to complete the retained onboarding session, then rerun `nemoclaw <sandbox-name> status` to verify the route.
+    Web search and messaging-bridge checks remain warnings when they need more time or configuration.
 
     ```text
     ──────────────────────────────────────────────────
@@ -399,7 +430,9 @@ Run `nemoclaw onboard`, then use [Troubleshooting](../reference/troubleshooting)
 - [NemoClaw Overview](../about/overview) explains what NemoClaw is and what it supports.
 - [Architecture Overview](../about/how-it-works) explains how NemoClaw works.
 - [Ecosystem](../about/ecosystem) explains how OpenClaw, OpenShell, and NemoClaw relate and when to use NemoClaw instead of OpenShell.
-- [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle) covers port forwards, rebuilds, upgrades, and removal.
+- [Run Sandboxes](../manage-sandboxes/operate-sandboxes/run-sandboxes) covers port forwards and routine lifecycle control.
+- [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) covers runtime repair and state-preserving recreation.
+- [Update Sandboxes](../manage-sandboxes/operate-sandboxes/update-sandboxes) and [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) cover host lifecycle changes.
 - [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) explains how to choose or change a model and provider.
 - [Network Policies](../network-policy/approve-network-requests) explains how to manage egress approvals.
-- [AI Agent Docs](../resources/agent-skills) lets your AI coding assistant fetch NemoClaw Markdown docs.
+- [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills) lets your AI coding assistant fetch NemoClaw Markdown docs.

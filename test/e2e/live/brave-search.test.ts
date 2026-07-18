@@ -10,6 +10,7 @@ import {
   assertDockerAvailable,
   assertOptionalBraveEnv,
   assertRawConfigHasNoSecret,
+  cleanupBraveNemoClawSandbox,
   cleanupBraveState,
   commandEnv,
   extractOpenClawAgentText,
@@ -49,8 +50,15 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
   });
   assertDockerAvailable(dockerInfo, skip);
 
-  cleanup.add(`destroy brave search sandbox ${SANDBOX_NAME}`, () =>
-    cleanupBraveState(host, sandbox),
+  cleanup.trackDisposable(`delete Brave search OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-delete-brave-search",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackDisposable(`destroy Brave search sandbox ${SANDBOX_NAME}`, () =>
+    cleanupBraveNemoClawSandbox(host),
   );
   await cleanupBraveState(host, sandbox);
 

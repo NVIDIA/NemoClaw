@@ -166,7 +166,7 @@ function commandEnv(hostedEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
@@ -183,20 +183,9 @@ function parseProbeJson(output: string): CronPreflightProbeJson | undefined {
   return JSON.parse(line) as CronPreflightProbeJson;
 }
 
-function probeShell(): string {
-  const encoded = Buffer.from(PROBE_SOURCE, "utf8").toString("base64");
-  return (
-    [
-      ". /tmp/nemoclaw-proxy-env.sh",
-      '__probe="$(mktemp /tmp/nemoclaw-preflight-probe.XXXXXX.cjs)"',
-      `printf %s '${encoded}' | base64 -d > "$__probe"`,
-    ].join(" && ") + '; node "$__probe"; __rc=$?; rm -f "$__probe"; exit "$__rc"'
-  );
-}
-
-async function cleanupCronSandbox(sandbox: SandboxClient): Promise<void> {
-  await bestEffort(() =>
-    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+async function preCleanCronSandbox(sandbox: SandboxClient): Promise<void> {
+  await preCleanBestEffort(() =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-openshell-delete-cron-preflight",
       env: commandEnv(),
       timeoutMs: 60_000,
@@ -236,25 +225,28 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
     skip(`Docker is required for cron preflight E2E: ${resultText(dockerInfo)}`);
   }
 
-  cleanup.add(`destroy cron preflight sandbox ${SANDBOX_NAME}`, async () => {
-    await bestEffort(() =>
-      host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "cleanup-nemoclaw-destroy-cron-preflight",
-        env: commandEnv(),
-        timeoutMs: 120_000,
-      }),
-    );
-    await cleanupCronSandbox(sandbox);
+  const cleanupEnv = commandEnv();
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-delete-cron-preflight",
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    }),
+  );
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-cron-preflight",
+    env: cleanupEnv,
+    timeoutMs: 120_000,
   });
 
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "pre-cleanup-nemoclaw-destroy-cron-preflight",
       env: commandEnv(),
       timeoutMs: 120_000,
     }),
   );
-  await cleanupCronSandbox(sandbox);
+  await preCleanCronSandbox(sandbox);
 
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
@@ -282,7 +274,7 @@ test("cron preflight reaches managed inference.local provider without EAI_AGAIN"
   expect(install, "install command must run").toBeDefined();
   expect(install?.exitCode, resultText(install as ShellProbeResult)).toBe(0);
 
-  const probe = await host.nemoclaw([SANDBOX_NAME, "exec", "--", "sh", "-c", probeShell()], {
+  const probe = await host.nemoclaw([SANDBOX_NAME, "exec", "--", "node", "-e", PROBE_SOURCE], {
     artifactName: "phase-2-cron-preflight-probe",
     env: commandEnv(hosted.env),
     redactionValues: [apiKey],

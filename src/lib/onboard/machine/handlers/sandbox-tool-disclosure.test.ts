@@ -121,10 +121,12 @@ describe("handleSandboxState tool disclosure", () => {
       [],
       null,
       {
+        resolved: expect.any(Object),
         recreate: true,
         toolDisclosure: requestedMode,
         observabilityEnabled: false,
         extraProviders: [],
+        reuseRegisteredCredentials: true,
       },
     );
   });

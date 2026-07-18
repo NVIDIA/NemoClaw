@@ -41,7 +41,6 @@ unset PYTHONHOME PYTHONPATH
 readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"
 readonly OPENSHELL_ENV_PLACEHOLDER_PREFIX="openshell:resolve:env:"
 readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"
-readonly OPENSHELL_TLS_KEY_PATH="/etc/openshell/tls/client/tls.key"
 readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"
 readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"
 readonly MANAGED_DCODE_AUTO_APPROVAL_FILE="/usr/local/share/nemoclaw/dcode-auto-approval"
@@ -351,14 +350,15 @@ has_credential_name_context() {
   return 1
 }
 
-# SECURITY: OpenShell's supervisor injects this mounted TLS key path into the
-# runtime environment. Allow only the exact name/value pair after the generic
-# value scan. Never allow the name alone, and never apply this exception to the
-# mutable Deep Agents Code .env file.
-is_allowed_openshell_runtime_value() {
-  local name="$1"
-  local value="$2"
-  [ "$name" = "OPENSHELL_TLS_KEY" ] && [ "$value" = "$OPENSHELL_TLS_KEY_PATH" ]
+# OpenShell 8eacb477 (candidate 0.0.85) strips these supervisor identity
+# variables from entrypoint, exec, and connect children. Reject their presence
+# regardless of value so a runtime regression cannot silently expose mounted
+# mTLS identity to dcode.
+is_openshell_supervisor_only_env_name() {
+  case "$1" in
+    OPENSHELL_TLS_CA | OPENSHELL_TLS_CERT | OPENSHELL_TLS_KEY) return 0 ;;
+  esac
+  return 1
 }
 
 # OTLP endpoint variables carry the collector URL, not a credential. The
@@ -440,8 +440,7 @@ is_openshell_env_placeholder_for_name() {
   local canonical revision_prefix revision_suffix versioned revision
 
   # OPENSHELL_TLS_KEY is supervisor infrastructure, not a provider credential.
-  # Only its exact mounted path is accepted from the runtime environment below;
-  # never let a provider placeholder bypass that name/value allowlist.
+  # Never let a provider placeholder bypass that supervisor-only boundary.
   [ "$name" != "OPENSHELL_TLS_KEY" ] || return 1
 
   # Keep this identifier contract aligned with OpenShell provider env keys.
@@ -506,6 +505,9 @@ assert_no_secret_runtime_env() {
     name="${pair%%=*}"
     [ "$name" != "$pair" ] || continue
     value="${pair#*=}"
+    if is_openshell_supervisor_only_env_name "$name"; then
+      refuse_secret_env "runtime environment variable" "$name"
+    fi
     if [[ "$value" == *"$OPENSHELL_ENV_PLACEHOLDER_PREFIX"* ]]; then
       if is_openshell_env_placeholder_for_name "$name" "$value"; then
         continue
@@ -526,7 +528,7 @@ assert_no_secret_runtime_env() {
       fi
       continue
     fi
-    if has_credential_name_context "$name" && [ ${#value} -ge 10 ] && ! is_allowed_openshell_runtime_value "$name" "$value"; then
+    if has_credential_name_context "$name" && [ ${#value} -ge 10 ]; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
   done < <(env -0)
@@ -578,6 +580,9 @@ assert_no_secret_env_file() {
         ;;
     esac
     value="$(trim_whitespace "$value")"
+    if is_openshell_supervisor_only_env_name "$key"; then
+      refuse_secret_env "$env_file" "$key"
+    fi
     if is_dynamic_dotenv_value "$value"; then
       refuse_dynamic_env "$env_file" "$key"
     fi

@@ -10,7 +10,7 @@ Use this skill to add a messaging channel end-to-end without leaking channel-spe
 ## Intake
 
 Gather inputs progressively. Do not ask the full intake checklist in one message.
-Ask exactly one concise clarification at a time, choosing the earliest unresolved blocker:
+Ask one concise clarification at a time, choosing the earliest unresolved blocker:
 
 1. If the channel name is missing, ask for the channel name.
 2. If target agents are missing, ask whether the channel should support OpenClaw, Hermes, or both.
@@ -25,7 +25,7 @@ Use this intake checklist internally while analyzing source:
 - Required credentials and config inputs: token environment variables, bot or app IDs, user IDs, workspace/guild/group IDs, allowlists, app secrets, webhook secrets, socket-mode/app tokens, QR pairing, callback URLs, or proxy settings.
 - Plugin or package install requirements: package name, install manager, version pinning, bundled versus external status, extension ID, and whether the package must be installed during image build.
 - Reachability or health evidence: endpoint or command, HTTP method, auth semantics, success response, invalid-credential response, transient-network behavior, and whether tests need a skip env var for fake credentials.
-- Network reachability: exact hostnames required at runtime, whether they are agent-only or bridge-only, and whether the policy should be opt-in.
+- Network reachability: every hostname used at runtime, whether it is agent-only or bridge-only, and whether the policy should be opt-in.
 
 When asking a follow-up, include the source-derived fact that made the question necessary. Example: "The upstream extension enables a webhook secret, but I do not see whether NemoClaw should prompt for it. Should this be a required input?"
 
@@ -84,7 +84,7 @@ Start with the manifest. Add core code only when the manifest vocabulary cannot 
 - Persist only non-secret state. Plans may contain placeholders, availability flags, and hashes, never raw tokens.
 - Mock external APIs in tests. Unit tests must not call real messaging providers.
 - Use a skip env var for live reachability hooks when fake credentials are valid for local tests.
-- Make policy hostnames exact and scoped to the channel preset.
+- Allow only the channel's runtime hostnames in its policy preset.
 
 ## Verification
 

@@ -419,6 +419,34 @@ describe("handleProviderInferenceState", () => {
     expect(calls.deleteEnv).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
   });
 
+  it("retains Station Express intent without committing a failed managed provider selection", async () => {
+    const setupNim = vi.fn(async () => {
+      throw new Error("injected managed vLLM download failure");
+    });
+    const { deps, calls } = createDeps({ setupNim });
+    const session = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: {
+        version: 1,
+        model: "nemotron-3-ultra-550b-a55b",
+        sandboxName: "my-assistant",
+      },
+    });
+
+    await expect(handleProviderInferenceState(baseOptions(deps, session))).rejects.toThrow(
+      "injected managed vLLM download failure",
+    );
+
+    expect(session.stationExpressIntent).toEqual({
+      version: 1,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+    });
+    expect(session.provider).toBeNull();
+    expect(session.model).toBeNull();
+    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+  });
+
   it("exits through the injected CLI boundary when provider selection is incomplete", async () => {
     const setupNim = vi.fn(async () => ({ ...baseSelection, model: null }));
     const { deps, calls } = createDeps({ setupNim });
@@ -481,7 +509,12 @@ describe("handleProviderInferenceState", () => {
       state: "provider_selection",
       metadata: { repair: "ollama-systemd-loopback" },
     });
-    expect(calls.repair).toHaveBeenCalledWith("ollama-local", deps.isNonInteractive);
+    expect(calls.repair).toHaveBeenCalledWith({
+      provider: "ollama-local",
+      model: "llama3.1",
+      contextWindowFloor: 16_384,
+      isNonInteractive: deps.isNonInteractive,
+    });
     expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
       state: "provider_selection",
       metadata: { repair: "ollama-systemd-loopback" },
@@ -493,6 +526,213 @@ describe("handleProviderInferenceState", () => {
       model: "llama3.1",
     });
     expect(result).toMatchObject({ provider: "ollama-local", model: "llama3.1" });
+  });
+
+  it("reuses a persisted vLLM served alias when resume repairs inference (#7023)", async () => {
+    const persistedServedAlias = "my-ultra-served-alias";
+    const session = createSession({
+      provider: "vllm-local",
+      model: persistedServedAlias,
+      endpointUrl: "http://host.openshell.internal:8000/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => false) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      persistedServedAlias,
+      "vllm-local",
+      "http://host.openshell.internal:8000/v1",
+      null,
+      null,
+      [],
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+    expect(calls.complete).toHaveBeenCalledWith(
+      "inference",
+      expect.objectContaining({ provider: "vllm-local", model: persistedServedAlias }),
+    );
+    expect(result).toMatchObject({ provider: "vllm-local", model: persistedServedAlias });
+  });
+
+  it("keeps a persisted vLLM served alias across a failed repair and resume retry (#7023)", async () => {
+    const persistedServedAlias = "my-ultra-served-alias";
+    const persistedEndpointUrl = "http://host.openshell.internal:8000/v1";
+    const session = createSession({
+      provider: "vllm-local",
+      model: persistedServedAlias,
+      endpointUrl: persistedEndpointUrl,
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+    });
+    session.steps.provider_selection.status = "complete";
+    const setupInference = vi
+      .fn<ProviderInferenceStateOptions<Gpu, Agent, Host>["deps"]["setupInference"]>()
+      .mockRejectedValueOnce(new Error("alias repair failed"))
+      .mockResolvedValueOnce({ ok: true });
+    const { deps, calls } = createDeps({
+      setupInference,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+    calls.complete.mockResolvedValue(session);
+    const resumeOptions = {
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    };
+
+    await expect(handleProviderInferenceState(resumeOptions)).rejects.toThrow(
+      "alias repair failed",
+    );
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalledWith("inference", expect.anything());
+
+    const result = await handleProviderInferenceState(resumeOptions);
+
+    expect(setupInference).toHaveBeenNthCalledWith(
+      1,
+      "my-assistant",
+      persistedServedAlias,
+      "vllm-local",
+      persistedEndpointUrl,
+      null,
+      null,
+      [],
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+    expect(setupInference).toHaveBeenNthCalledWith(
+      2,
+      "my-assistant",
+      persistedServedAlias,
+      "vllm-local",
+      persistedEndpointUrl,
+      null,
+      null,
+      [],
+      expect.objectContaining({
+        gatewayName: "nemoclaw",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.complete).toHaveBeenCalledOnce();
+    expect(calls.complete).toHaveBeenCalledWith(
+      "inference",
+      expect.objectContaining({ provider: "vllm-local", model: persistedServedAlias }),
+    );
+    expect(result).toMatchObject({
+      provider: "vllm-local",
+      model: persistedServedAlias,
+      endpointUrl: persistedEndpointUrl,
+      session: {
+        provider: "vllm-local",
+        model: persistedServedAlias,
+        endpointUrl: persistedEndpointUrl,
+      },
+    });
+  });
+
+  it("reserves the prompted sandbox route when resume skips already-ready inference (#6562)", async () => {
+    const session = createSession({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+    calls.promptName.mockResolvedValueOnce("tm");
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: null,
+    });
+
+    expect(calls.promptName).toHaveBeenCalledWith(null);
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).toHaveBeenCalledWith("tm", {
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
+      gatewayName: "nemoclaw",
+      reservationSessionId: session.sessionId,
+    });
+    expect(result.sandboxName).toBe("tm");
+  });
+
+  it("does not reserve a route when resume skips inference after sandbox completion (#6562)", async () => {
+    const session = createSession({
+      sandboxName: "completed-sandbox",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
+    });
+    session.steps.provider_selection.status = "complete";
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "completed-sandbox",
+    });
+
+    expect(calls.promptName).not.toHaveBeenCalled();
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).not.toHaveBeenCalled();
+    expect(result.sandboxName).toBe("completed-sandbox");
+  });
+
+  it("reserves the prompted sandbox route after redoing provider selection on resume (#6562)", async () => {
+    const session = createSession();
+    const completedSelection = createSession({ sessionId: "resume-selection-session" });
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+    calls.complete.mockResolvedValueOnce(completedSelection);
+    calls.promptName.mockResolvedValueOnce("tm");
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: null,
+    });
+
+    expect(calls.setupNim).toHaveBeenCalledOnce();
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.promptName).toHaveBeenCalledWith(null);
+    expect(calls.reserveRoute).toHaveBeenCalledWith("tm", {
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-responses",
+      gatewayName: "nemoclaw",
+      reservationSessionId: "resume-selection-session",
+    });
+    expect(result.sandboxName).toBe("tm");
   });
 
   it("coerces a resumed anthropic-messages seed for an OpenAI-only agent (#6294)", async () => {
@@ -985,7 +1225,15 @@ describe("handleProviderInferenceState", () => {
     });
 
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
-    expect(calls.reserveRoute).not.toHaveBeenCalled();
+    expect(calls.reserveRoute).toHaveBeenCalledWith("router-sandbox", {
+      provider: "nvidia-router",
+      model: "router/model",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      credentialEnv: null,
+      preferredInferenceApi: null,
+      gatewayName: "nemoclaw",
+      reservationSessionId: session.sessionId,
+    });
   });
 
   // #5974 instance 5: the Model Router Python preflight (`prepareModelRouterVenv`)

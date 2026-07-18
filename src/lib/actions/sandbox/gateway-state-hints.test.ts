@@ -23,6 +23,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
     const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
     const registry = requireDist("../../state/registry.js");
+    const gatewaySelect = requireDist("./gateway-select.js");
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
     vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
     captureOpenshellSpy = vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
@@ -39,6 +40,10 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
       name: "instance-a",
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
+    });
+    vi.spyOn(gatewaySelect, "selectSandboxOwningGateway").mockReturnValue({
+      outcome: "selected",
+      gatewayName: "nemoclaw",
     });
     gatewayState = requireDist("./gateway-state.js");
   });

@@ -9,6 +9,7 @@ import {
 } from "../sandbox-base-image";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
+import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 type DockerRunResult = { status: number | null };
@@ -46,6 +47,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuConfig;
+  selectedGpuRoute?: SelectedDockerGpuRoute;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   preResolvedBaseImageMetadata?: SandboxBaseImageResolutionMetadata | null;
   forceBaseImageRefresh?: boolean;
@@ -118,6 +120,7 @@ export async function prepareSandboxDockerfilePatch({
   dcodeAutoApprovalMode,
   hermesToolGateways,
   sandboxGpuConfig,
+  selectedGpuRoute = "none",
   resolutionHint = null,
   preResolvedBaseImageMetadata = null,
   forceBaseImageRefresh = false,
@@ -170,6 +173,7 @@ export async function prepareSandboxDockerfilePatch({
     sandboxGpuConfig,
     {
       dockerDriverGateway,
+      selectedRoute: selectedGpuRoute,
       gatewayPort,
       log,
     },

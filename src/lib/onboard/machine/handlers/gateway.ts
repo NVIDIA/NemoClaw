@@ -71,7 +71,15 @@ export interface GatewayStateResult {
   stateResult: OnboardStateTransitionResult;
 }
 
-export async function handleGatewayState<Gpu>({
+export async function handleGatewayState<Gpu>(
+  options: GatewayStateOptions<Gpu>,
+): Promise<GatewayStateResult> {
+  return withGatewayTrace(options.initialGatewayReuseState, options.gpuPassthrough, () =>
+    handleGatewayStatePhase(options),
+  );
+}
+
+async function handleGatewayStatePhase<Gpu>({
   resume,
   session,
   initialGatewayReuseState,
@@ -223,9 +231,7 @@ export async function handleGatewayState<Gpu>({
     } else if (gatewayReuseState === "foreign-active") {
       gatewayReuseState = "missing";
     }
-    await withGatewayTrace(gatewayReuseState, gpuPassthrough, () =>
-      deps.startGateway(gpu, { gpuPassthrough }),
-    );
+    await deps.startGateway(gpu, { gpuPassthrough });
     session = await deps.recordStepComplete("gateway");
   }
 

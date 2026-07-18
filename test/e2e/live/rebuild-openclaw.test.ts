@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Buffer } from "node:buffer";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -137,9 +137,35 @@ function openshellBestEffort(
   );
 }
 
+async function cleanupRebuiltNemoClawSandbox(host: HostCliClient, apiKey: string): Promise<void> {
+  const result = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: cliEnv(apiKey),
+    redactionValues: [apiKey],
+    timeoutMs: 2 * 60_000,
+  });
+  assertCleanupSucceededOrAbsent(
+    result,
+    /Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one|sandbox .* not found|no such sandbox/iu,
+    `cleanup rebuilt sandbox ${SANDBOX_NAME}`,
+  );
+}
+
+async function cleanupOldOpenClawBaseImage(host: HostCliClient): Promise<void> {
+  const result = await host.command("docker", ["rmi", OLD_BASE_TAG], {
+    artifactName: "cleanup-docker-rmi-old-base",
+    env: dockerContextEnv(),
+    timeoutMs: OPENSHELL_TIMEOUT_MS,
+  });
+  assertCleanupSucceededOrAbsent(
+    result,
+    /No such image|image .* not found/iu,
+    `cleanup old OpenClaw base image ${OLD_BASE_TAG}`,
+  );
+}
+
 function pythonExecArgs(script: string): string[] {
-  const encoded = Buffer.from(script, "utf8").toString("base64");
-  return ["python3", "-c", `import base64; exec(base64.b64decode('${encoded}'))`];
+  return ["python3", "-c", script];
 }
 
 async function waitForSandboxReady(sandbox: {
@@ -379,39 +405,29 @@ test(
     const registrySnapshot = snapshotFile(REGISTRY_FILE);
     const sessionSnapshot = snapshotFile(SESSION_FILE);
     const sandboxBackupRoot = path.join(BACKUP_ROOT, SANDBOX_NAME);
-    cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
+    cleanup.trackDisposable(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
       restoreFile(REGISTRY_FILE, registrySnapshot);
       restoreFile(SESSION_FILE, sessionSnapshot);
       fs.rmSync(sandboxBackupRoot, { recursive: true, force: true });
     });
-
-    cleanup.add(`destroy rebuilt sandbox ${SANDBOX_NAME}`, async () => {
-      await host.command(
-        "node",
-        [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"],
-        {
-          artifactName: "cleanup-nemoclaw-destroy",
-          env: cliEnv(apiKey),
-          redactionValues: [apiKey],
-          timeoutMs: 2 * 60_000,
-        },
-      );
-      await openshellBestEffort(
-        host,
-        ["sandbox", "delete", SANDBOX_NAME],
-        "cleanup-openshell-sandbox-delete",
-      );
-      await openshellBestEffort(
-        host,
-        ["gateway", "destroy", "-g", "nemoclaw"],
-        "cleanup-openshell-gateway-destroy",
-      );
-      await host.command("docker", ["rmi", OLD_BASE_TAG], {
-        artifactName: "cleanup-docker-rmi-old-base",
+    cleanup.trackDisposable(`remove old OpenClaw base image ${OLD_BASE_TAG}`, () =>
+      cleanupOldOpenClawBaseImage(host),
+    );
+    cleanup.trackGateway(host, "nemoclaw", {
+      artifactName: "cleanup-openshell-gateway-destroy",
+      env: dockerContextEnv(),
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    });
+    cleanup.trackDisposable(`delete rebuilt OpenShell sandbox ${SANDBOX_NAME}`, () =>
+      sandbox.cleanupSandbox(SANDBOX_NAME, {
+        artifactName: "cleanup-openshell-sandbox-delete",
         env: dockerContextEnv(),
         timeoutMs: OPENSHELL_TIMEOUT_MS,
-      });
-    });
+      }),
+    );
+    cleanup.trackDisposable(`destroy rebuilt sandbox ${SANDBOX_NAME}`, () =>
+      cleanupRebuiltNemoClawSandbox(host, apiKey),
+    );
 
     // Phase 1: create a normal current sandbox first so the real gateway and
     // session/credential scaffolding exist, matching the legacy install/onboard

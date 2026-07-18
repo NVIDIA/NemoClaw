@@ -210,7 +210,9 @@ export async function upgradeSandboxes(
   const checkOnly = normalized.check === true;
   const skipConfirm = shouldSkipUpgradeConfirmation(normalized);
 
-  const sandboxes = registry.listSandboxes().sandboxes;
+  const sandboxes = registry
+    .listSandboxes()
+    .sandboxes.filter((sandbox) => !registry.isRouteOnlySandboxReservation(sandbox));
   if (sandboxes.length === 0) {
     console.log("  No sandboxes found in the registry.");
     return;
@@ -361,6 +363,13 @@ export async function upgradeSandboxes(
     for (const recovery of preparedRecoveries) {
       console.log(
         `    ${recovery.sandbox.name}  ${D}${recovery.manifest.timestamp}${R}  (non-Ready)`,
+      );
+      // #7073: the validated manifest records the agent-specific managed state
+      // root restored for this sandbox. Warn before the destructive recreate so
+      // users can back up paths outside that exact root rather than silently
+      // losing them.
+      console.log(
+        `    ${YW}⚠ Recovery restores ${JSON.stringify(recovery.manifest.dir)} state only for this sandbox. Files outside this recorded managed state path (e.g. /sandbox/user-data) are NOT preserved by the recreate — back them up before upgrading.${R}`,
       );
     }
   }

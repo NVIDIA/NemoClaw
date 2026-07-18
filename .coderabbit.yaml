@@ -20,9 +20,9 @@ reviews:
     enabled: true
     drafts: false
 
-  # E2E recommendations intentionally do not live here. The E2E Advisor derives
-  # them from each PR diff and the current workflows instead of a duplicated,
-  # manually synchronized path-to-job catalog.
+  # E2E recommendations intentionally do not live here. The unified PR Review
+  # Advisor derives them from each PR diff and the current workflows instead of
+  # a duplicated, manually synchronized path-to-job catalog.
   path_instructions:
     - path: "docs/**"
       instructions: &fern-doc-links |
@@ -40,7 +40,7 @@ reviews:
           `.mdx` path or a source-directory-relative replacement merely because no
           matching source file exists at that relative path.
         - Before reporting a broken internal route or redirect, resolve it the same
-          way as `scripts/check-docs-published-routes.ts` and check the redirects in
+          way as `scripts/check-docs-published-routes.mts` and check the redirects in
           `fern/docs.yml`. Flag a missing published route, missing generated-page
           source, invalid relevant-variant route, or invalid anchor, but do not
           report a route as broken solely because its filesystem path is absent.
@@ -238,7 +238,7 @@ reviews:
         - Do not duplicate GitHub issue tracking, CI status, or another advisor's
           responsibility.
 
-    - path: "tools/{pr-review-advisor,e2e-advisor}/**"
+    - path: "tools/{advisors,pr-review-advisor}/**"
       instructions: *guardrail
 
 knowledge_base:

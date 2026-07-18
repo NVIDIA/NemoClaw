@@ -9,8 +9,6 @@ keywords: ["nemoclaw tool disclosure", "progressive tool disclosure", "search_to
 content:
   type: "how_to"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 Progressive tool disclosure limits the tool schemas placed in the model's initial context.
 Each supported agent keeps its native discovery mechanism and configuration schema.
 
@@ -84,4 +82,4 @@ Model-specific safety settings can disable progressive search for a model, but c
 - [Troubleshooting](../reference/troubleshooting#tool-calls-appear-as-assistant-text) when the model emits a tool call as assistant text instead of structured output.
 </AgentOnly>
 
-- [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) to configure the tool sources available to the agent.
+- [Add an MCP Server](../manage-sandboxes/mcp-servers/add-an-mcp-server) to configure a managed tool source.

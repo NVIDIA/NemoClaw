@@ -21,7 +21,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-const PROXY_SCRIPT = path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.js");
+const PROXY_SCRIPT = path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.mts");
 const OLLAMA_PORT = parsePort("NEMOCLAW_E2E_OLLAMA_PORT", 11434);
 const PROXY_PORT = parsePort("NEMOCLAW_E2E_OLLAMA_PROXY_PORT", 11435);
 const MODEL = process.env.NEMOCLAW_E2E_OLLAMA_PROXY_MODEL ?? "qwen2.5:0.5b";
@@ -46,14 +46,6 @@ function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 
 function token(): string {
   return randomBytes(24).toString("hex");
-}
-
-async function bestEffort(run: () => Promise<unknown> | unknown): Promise<void> {
-  try {
-    await run();
-  } catch {
-    // Cleanup only.
-  }
 }
 
 async function terminate(child: ChildProcess | undefined): Promise<void> {
@@ -186,10 +178,10 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   const tokenFile = path.join(tokenRoot, ".nemoclaw", "ollama-proxy-token");
   let ollama: ChildProcess | undefined;
   let proxy: ChildProcess | undefined;
-  cleanup.add("stop Ollama auth proxy test processes", async () => {
+  cleanup.trackDisposable("stop Ollama auth proxy test processes", async () => {
     await terminate(proxy);
     await terminate(ollama);
-    await bestEffort(() => rm(tokenRoot, { force: true, recursive: true }));
+    await rm(tokenRoot, { force: true, recursive: true });
   });
 
   const nodeVersion = await host.command("node", ["--version"], {

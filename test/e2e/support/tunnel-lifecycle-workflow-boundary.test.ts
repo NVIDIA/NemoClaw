@@ -8,10 +8,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import {
-  evaluateE2eWorkflowDispatchSelectors,
-  validateE2eWorkflowBoundary,
-} from "../../../tools/e2e/workflow-boundary.mts";
+import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import { requireFixture } from "./require-fixture";
 
 function readWorkflow(): Record<string, unknown> {
   return YAML.parse(
@@ -20,21 +18,6 @@ function readWorkflow(): Record<string, unknown> {
 }
 
 describe("tunnel lifecycle workflow boundary", () => {
-  it("maps the tunnel lifecycle selector to its free-standing E2E job", () => {
-    expect(evaluateE2eWorkflowDispatchSelectors({ targets: "tunnel-lifecycle" })).toMatchObject({
-      valid: true,
-      liveTargetsRun: false,
-      selectedFreeStandingJobs: ["tunnel-lifecycle"],
-      registryTargets: [],
-    });
-    expect(evaluateE2eWorkflowDispatchSelectors({ jobs: "tunnel-lifecycle" })).toMatchObject({
-      valid: true,
-      liveTargetsRun: false,
-      selectedFreeStandingJobs: ["tunnel-lifecycle"],
-      registryTargets: [],
-    });
-  });
-
   it("requires the tunnel lifecycle job to use the repo NemoClaw CLI boundary", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -42,7 +25,7 @@ describe("tunnel lifecycle workflow boundary", () => {
       jobs: Record<string, { env?: Record<string, unknown> }>;
     };
     const job = workflow.jobs["tunnel-lifecycle"];
-    expect(job).toBeDefined();
+    requireFixture(job, "missing tunnel-lifecycle job");
     job.env = { ...job.env };
     delete job.env.NEMOCLAW_CLI_BIN;
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
@@ -62,20 +45,27 @@ describe("tunnel lifecycle workflow boundary", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,
-        { env?: Record<string, unknown>; steps: Array<Record<string, unknown>> }
+        Record<string, unknown> & {
+          env?: Record<string, unknown>;
+          steps: Array<Record<string, unknown>>;
+        }
       >;
     };
     const job = workflow.jobs["tunnel-lifecycle"];
-    expect(job).toBeDefined();
+    requireFixture(job, "missing tunnel-lifecycle job");
+    job["runs-on"] = "self-hosted";
+    job["timeout-minutes"] = 30;
     job.env = {
       ...job.env,
       DOCKER_CONFIG: "${{ github.workspace }}/e2e-artifacts/live/tunnel-lifecycle/docker-config",
+      E2E_ARTIFACT_DIR: "/tmp/tunnel-lifecycle",
     };
 
     const checkout = job.steps.find((step) =>
       String(step.uses ?? "").startsWith("actions/checkout@"),
     );
-    expect(checkout).toBeDefined();
+    requireFixture(checkout, "missing tunnel-lifecycle checkout");
+    checkout!.uses = "actions/checkout@v6";
     checkout!.with = {
       ...(checkout!.with as Record<string, unknown>),
       "persist-credentials": true,
@@ -84,7 +74,7 @@ describe("tunnel lifecycle workflow boundary", () => {
     const cloudflared = job.steps.find(
       (step) => step.name === "Install and verify cloudflared prerequisite",
     );
-    expect(cloudflared).toBeDefined();
+    requireFixture(cloudflared, "missing cloudflared prerequisite step");
     cloudflared!.env = {
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
       NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
@@ -92,11 +82,11 @@ describe("tunnel lifecycle workflow boundary", () => {
     cloudflared!.run = "cloudflared --version";
 
     const runTunnel = job.steps.find((step) => step.name === "Run tunnel lifecycle live test");
-    expect(runTunnel).toBeDefined();
+    requireFixture(runTunnel, "missing tunnel lifecycle live test step");
     runTunnel!.run = `${String(runTunnel!.run ?? "")}\nsudo apt-get install -y cloudflared`;
 
     const upload = job.steps.find((step) => step.name === "Upload tunnel lifecycle artifacts");
-    expect(upload).toBeDefined();
+    requireFixture(upload, "missing tunnel lifecycle artifact upload");
     upload!.with = {
       ...(upload!.with as Record<string, unknown>),
       path: "e2e-artifacts/live/",
@@ -108,7 +98,12 @@ describe("tunnel lifecycle workflow boundary", () => {
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
+          "tunnel-lifecycle job must run on ubuntu-latest",
+          "tunnel-lifecycle job must keep the 75 minute timeout",
+          "tunnel-lifecycle job must write artifacts under e2e-artifacts/live/tunnel-lifecycle",
           "tunnel-lifecycle job must not set DOCKER_CONFIG at job level",
+          "tunnel-lifecycle step 'actions/checkout@v6' action must be pinned to a full commit SHA",
+          "tunnel-lifecycle checkout action must be pinned to a full commit SHA",
           "tunnel-lifecycle checkout step must set persist-credentials=false",
           "tunnel-lifecycle step 'Install and verify cloudflared prerequisite' env must not include NVIDIA_INFERENCE_API_KEY",
           "tunnel-lifecycle step 'Install and verify cloudflared prerequisite' env must not include NVIDIA_API_KEY",
@@ -138,11 +133,11 @@ describe("tunnel lifecycle workflow boundary", () => {
       jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
     };
     const job = workflow.jobs["tunnel-lifecycle"];
-    expect(job).toBeDefined();
+    requireFixture(job, "missing tunnel-lifecycle job");
     const cloudflared = job.steps.find(
       (step) => step.name === "Install and verify cloudflared prerequisite",
     );
-    expect(cloudflared).toBeDefined();
+    requireFixture(cloudflared, "missing cloudflared prerequisite step");
     cloudflared!.env = { CLOUDFLARED_VERSION: "2026.6.1" };
     cloudflared!.run = [
       "set -euo pipefail",

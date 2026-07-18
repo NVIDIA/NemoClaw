@@ -9,8 +9,6 @@ keywords: ["switch nemoclaw model", "change inference model", "nemoclaw inferenc
 content:
   type: "how_to"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 Change the model on an existing provider route with a runtime update or a fresh sandbox recreation.
 The command requires both the provider and model even when the provider does not change.
 
@@ -43,6 +41,9 @@ For a compatible endpoint, omit `--endpoint-url` when the durable registry entry
 NemoClaw reuses the recorded route and does not repoint the gateway.
 If the route metadata is incomplete, NemoClaw stops and tells you to re-run onboarding.
 
+For Hermes, the command also mirrors the selected model into the dashboard profile.
+If it reports that the Dashboard config did not converge, the route and main Hermes config remain committed; follow [Hermes dashboard config did not converge](../../reference/troubleshooting#hermes-dashboard-config-did-not-converge) before using Dashboard Chat.
+
 </AgentOnly>
 
 <AgentOnly variant="deepagents">
@@ -60,11 +61,9 @@ To validate a new model before replacing the current sandbox, onboard it under a
 
 ## Account for Shared Gateways
 
-OpenShell exposes one inference route per gateway.
-Every registered sandbox on the same gateway, including stopped sandboxes, must record the same provider and model.
-NemoClaw exits before changing state when the requested model conflicts with another sandbox on the gateway.
-
-Align the sandboxes to one route, remove a sandbox you no longer need, or onboard a sandbox with another `NEMOCLAW_GATEWAY_PORT`.
+One gateway has one live route even when NemoClaw records different intended routes for its sandboxes.
+Review [Use Shared Gateway Routes](use-shared-gateway-routes) before changing a model that another registered sandbox shares.
+Runtime `inference set` remains fail-closed when the requested change conflicts with another registered sandbox or when route metadata is incomplete.
 
 ## Verify the Change
 
@@ -79,5 +78,6 @@ Use a sandbox-route verification when you also need to prove that the agent can 
 ## Related Topics
 
 - [View the Active Inference Route](view-active-inference-route) to inspect the current provider and model.
+- [Use Shared Gateway Routes](use-shared-gateway-routes) when multiple sandboxes use one gateway.
 - [Switch Providers](switch-providers) to move to another provider family.
 - [Verify the Sandbox Inference Route](../validate-inference/verify-inference-route) to test the agent path.

@@ -11,14 +11,14 @@ import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
 import {
-  bestEffort,
   cleanupSandbox,
   expectExitZero,
   phase6Env,
   resultText,
-  sandboxEncodedSh,
+  runSecondaryCleanup,
   sandboxNode,
   sandboxSh,
+  sandboxShWithArgs,
   shellQuote,
 } from "./phase6-messaging-helpers.ts";
 
@@ -93,7 +93,7 @@ export async function cleanupPairingSandbox(
   prefix: string,
 ): Promise<void> {
   await cleanupSandbox(host, sandboxName, env, redactions, prefix);
-  await bestEffort(() =>
+  await runSecondaryCleanup(() =>
     host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: `${prefix}-openshell-gateway-destroy`,
       env,
@@ -572,7 +572,7 @@ export async function issuePairingRequest(options: {
     options.channel === "slack"
       ? [options.fakeSlackPort ?? "", PAIRING_USER.slack]
       : [PAIRING_USER.discord, DISCORD_DM_CHANNEL];
-  return sandboxEncodedSh(options.sandbox, options.sandboxName, script, args, {
+  return sandboxShWithArgs(options.sandbox, options.sandboxName, script, args, {
     artifactName: `${options.channel}-issue-pairing-request`,
     redactionValues: options.redactions,
     timeoutMs: 120_000,

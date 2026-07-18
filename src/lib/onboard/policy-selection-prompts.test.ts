@@ -180,6 +180,19 @@ describe("createPolicySelectionPromptHelpers", () => {
     expect(stdin.listenerCount("data")).toBe(0);
   });
 
+  it("selectTierPresetsAndAccess honors an exact initial selection", async () => {
+    const { helpers, stdin } = createHarness();
+    const result = helpers.selectTierPresetsAndAccess(
+      "balanced",
+      [{ name: "npm" }, { name: "pypi" }, { name: "github" }],
+      ["npm"],
+    );
+
+    stdin.emit("data", "\r");
+
+    await expect(result).resolves.toEqual([{ name: "npm", access: "read" }]);
+  });
+
   it("selectPolicyTier marks rollback and restores raw mode on SIGTERM", () => {
     const { helpers, markCancelled, processEvents, stdin } = createHarness();
 

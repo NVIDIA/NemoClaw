@@ -1,0 +1,42 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.84
+
+NemoClaw v0.0.84 adds DGX Station Nemotron Ultra express setup, trusted private inference endpoints, model-aware readiness checks, per-gateway host state, and safer recovery for snapshots, onboarding, configuration, messaging, and Hermes runtime changes.
+
+- DGX Station now offers a one-confirmation express path that selects the pinned NVIDIA Nemotron 3 Ultra 550B managed-vLLM recipe, while `--station-deepseek` selects the existing DeepSeek V4 Flash recipe.
+  Verified low Docker or model-cache capacity is advisory during express and other non-interactive setup while the storage checks mature, interactive setup still requires explicit confirmation, and an inconclusive model-cache check still stops non-interactive setup.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and the [NemoClaw Quickstart](/user-guide/openclaw/get-started/quickstart).
+- Custom endpoint onboarding can admit an exact trusted private hostname or IP literal from `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` when it resolves only to RFC1918, CGNAT, or IPv6 ULA destinations.
+  DNS resolution, connection-address pinning, exact-match semantics, and fail-closed blocking for metadata, link-local, multicast, translation, documentation, and other reserved ranges remain enforced.
+  For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security) and [Set Up an OpenAI-Compatible Endpoint](/user-guide/openclaw/inference/custom-endpoints/set-up-openai-compatible-endpoint).
+- Ollama onboarding prefers `NEMOCLAW_MODEL`, accepts `NEMOCLAW_PROVIDER_MODEL` as a compatibility fallback, and uses a requested model as the interactive default when it appears in the rendered model list.
+  Hermes setup now carries its `64000`-token Ollama context floor through daemon configuration, model validation, and generated config, while OpenClaw keeps its existing `16384`-token floor.
+  For more information, refer to [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama) and [Configure Model Limits](/user-guide/openclaw/inference/manage-inference/configure-model-limits).
+- Sandbox status and doctor checks compare the configured Ollama or vLLM model with the provider inventory without issuing a completion or consuming tokens.
+  Onboarding finalization also treats an unreachable or HTTP 5xx inference route as not ready, preserves the session at retryable final verification, and lets `onboard --resume` complete after you repair the same route.
+  For more information, refer to [View Sandbox Status](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/view-sandbox-status) and [Verify the Sandbox Inference Route](/user-guide/openclaw/inference/validate-inference/verify-inference-route).
+- OpenClaw resume checkpoints completed sandbox name, web search, messaging, and resource choices, then reuses validated OpenShell credential registrations when their live bindings still match.
+  Installer failures and rebuild retry output now print complete fresh-install and resume commands that retain the selected agent and sandbox name.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), [Troubleshooting](/user-guide/openclaw/reference/troubleshooting), and [Credential Storage](/user-guide/openclaw/security/credential-storage).
+- A non-default `NEMOCLAW_GATEWAY_PORT` now owns a separate `~/.nemoclaw/gateways/<port>/` host state root for its registry, onboarding state, snapshots, migration files, and local inference adapter state.
+  The default port keeps `~/.nemoclaw/`, and uninstall preserves other port-scoped environments.
+  For more information, refer to [Architecture Details](/user-guide/openclaw/reference/architecture) and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+- OpenClaw snapshots no longer capture machine-local device identity or pairing-token directories, and restore ignores those directories even in older snapshots.
+  OpenClaw regenerates device identity as needed and NemoClaw pairs clients again on connect instead of replacing live pairing state with sanitized snapshot data.
+  For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots).
+- `nemoclaw <name> channels status --channel telegram` now combines non-secret config comparison with a live OpenClaw log-based health probe and reports `healthy`, `idle`, `unreachable`, `token_rejected`, or `not_started`.
+  An unhealthy Telegram channel exits non-zero, and the default summary says when runtime health was not checked instead of presenting an all-green result.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- `nemohermes inference set` re-seeds the isolated Hermes dashboard config after an in-place route change and withholds the synced success message when the dashboard does not converge.
+  Hermes MCP reload also recognizes when the gateway already committed the intended config and integrity state during a concurrent apply-state update, so it returns success instead of starting a destructive rollback.
+  For more information, refer to [Switch Models](/user-guide/hermes/inference/manage-inference/switch-models) and [Manage MCP Servers](/user-guide/hermes/manage-sandboxes/mcp-servers/manage-mcp-servers).
+- Host-side OpenClaw `config set` validates the complete candidate with the installed OpenClaw runtime before replacing live config.
+  Schema failures, validator failures, timeouts, size-limit failures, and concurrent changes leave the existing config in place and do not reach the destructive gateway restart path.
+  For more information, refer to [Understand Runtime Changes](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-runtime-changes).
+- `shields up` and `shields down` can quarantine and recover a transition-lock record only when its recorded process is definitively dead or its process ID was reused.
+  Live, malformed, ambiguous, identity-unavailable, or concurrently replaced lock owners still fail closed with manual recovery guidance.
+  For more information, refer to [Trusted Computing Base](/user-guide/openclaw/security/trusted-computing-base).

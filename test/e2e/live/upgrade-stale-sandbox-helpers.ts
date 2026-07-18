@@ -6,8 +6,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { resultText } from "../fixtures/clients/index.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import {
@@ -19,16 +20,10 @@ import {
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
 
 export { REPO_ROOT };
 
-const BLUEPRINT_RELPATH = path.join("nemoclaw-blueprint", "blueprint.yaml");
-const BLUEPRINT = path.join(REPO_ROOT, BLUEPRINT_RELPATH);
-const BASE_CONTEXT_SCRIPT_RELPATH = path.join("scripts", "lib", "sandbox-rlimits.sh");
-const MCPORTER_RUNTIME_RELPATHS = [
-  path.join("agents", "openclaw", "mcporter-runtime", "package.json"),
-  path.join("agents", "openclaw", "mcporter-runtime", "package-lock.json"),
-];
 const TEST_SANDBOX_PREFIX = "e2e-upgrade-stale";
 export const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
@@ -64,41 +59,12 @@ export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   };
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+async function bestEffortPreclean(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {
     // Cleanup must not mask the primary assertion failure.
   }
-}
-
-function createOldBaseBuildContext(): string {
-  const buildContext = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upgrade-stale-base-"));
-  fs.mkdirSync(path.join(buildContext, path.dirname(BLUEPRINT_RELPATH)), { recursive: true });
-  fs.mkdirSync(path.join(buildContext, path.dirname(BASE_CONTEXT_SCRIPT_RELPATH)), {
-    recursive: true,
-  });
-  const original = fs.readFileSync(BLUEPRINT, "utf8");
-  const minOpenClawVersion = /^(\s*min_openclaw_version:\s*).*/m;
-  expect(
-    minOpenClawVersion.test(original),
-    "blueprint min_openclaw_version line was not found",
-  ).toBe(true);
-  fs.writeFileSync(
-    path.join(buildContext, BLUEPRINT_RELPATH),
-    original.replace(minOpenClawVersion, `$1"${OLD_OPENCLAW_VERSION}"`),
-    "utf8",
-  );
-  fs.copyFileSync(
-    path.join(REPO_ROOT, BASE_CONTEXT_SCRIPT_RELPATH),
-    path.join(buildContext, BASE_CONTEXT_SCRIPT_RELPATH),
-  );
-  for (const relativePath of MCPORTER_RUNTIME_RELPATHS) {
-    const target = path.join(buildContext, relativePath);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(REPO_ROOT, relativePath), target);
-  }
-  return buildContext;
 }
 
 export function writeStaleRegistryEntry(): void {
@@ -161,29 +127,27 @@ export function assertDockerAvailable(
     })();
 }
 
-export function registerStateRestore(cleanup: {
-  add(name: string, run: () => Promise<void> | void): void;
-}): void {
+export function registerStateRestore(cleanup: Pick<CleanupRegistry, "trackDisposable">): void {
   const registrySnapshot = snapshotFile(REGISTRY_FILE);
   const sessionSnapshot = snapshotFile(SESSION_FILE);
-  cleanup.add(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
+  cleanup.trackDisposable(`restore NemoClaw state files for ${SANDBOX_NAME}`, () => {
     restoreFile(REGISTRY_FILE, registrySnapshot);
     restoreFile(SESSION_FILE, sessionSnapshot);
   });
 }
 
-export async function cleanupStaleSandbox(
+export async function precleanStaleSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
 ): Promise<void> {
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-nemoclaw-destroy-upgrade-stale",
       env: commandEnv(),
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
+  await bestEffortPreclean(() =>
     sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
       artifactName: "cleanup-openshell-delete-upgrade-stale",
       env: commandEnv(),
@@ -193,13 +157,14 @@ export async function cleanupStaleSandbox(
 }
 
 export async function cleanupOldImage(host: HostCliClient): Promise<void> {
-  await bestEffort(() =>
-    host.command("docker", ["image", "rm", "-f", OLD_BASE_TAG], {
-      artifactName: "cleanup-docker-image-upgrade-stale",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    }),
-  );
+  const result = await host.command("docker", ["image", "rm", "-f", OLD_BASE_TAG], {
+    artifactName: "cleanup-docker-image-upgrade-stale",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  if (result.exitCode === 0 || /No such image|image[^\n]*not found/i.test(resultText(result)))
+    return;
+  assertExitZero(result, `cleanup Docker image ${OLD_BASE_TAG}`);
 }
 
 export async function installCurrentNemoclaw(
@@ -264,11 +229,9 @@ export async function buildOldOpenClawBase(host: HostCliClient): Promise<ShellPr
   }
 }
 
-export function createFixtureDockerfile(cleanup: {
-  add(name: string, run: () => Promise<void> | void): void;
-}): string {
+export function createFixtureDockerfile(cleanup: Pick<CleanupRegistry, "trackDisposable">): string {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-old-openclaw-"));
-  cleanup.add("remove stale sandbox fixture Dockerfile", () =>
+  cleanup.trackDisposable("remove stale sandbox fixture Dockerfile", () =>
     fs.rmSync(fixtureDir, { recursive: true, force: true }),
   );
   const fixtureDockerfile = path.join(fixtureDir, "Dockerfile");

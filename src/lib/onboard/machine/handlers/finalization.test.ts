@@ -42,6 +42,8 @@ function createDeps(
     diagnostics: vi.fn(() => ["  ✓ verified"]),
     verifyWebSearch: vi.fn(),
     dashboard: vi.fn(),
+    isHealthy: vi.fn(() => true),
+    reportReadiness: vi.fn(),
     error: vi.fn(),
     log: vi.fn(),
   };
@@ -63,6 +65,8 @@ function createDeps(
       formatVerificationDiagnostics: calls.diagnostics,
       verifyWebSearchInsideSandbox: calls.verifyWebSearch,
       printDashboard: calls.dashboard,
+      isDeploymentHealthy: calls.isHealthy,
+      reportDeploymentReadiness: calls.reportReadiness,
       error: calls.error,
       log: calls.log,
       ...overrides,
@@ -104,7 +108,14 @@ describe("handleFinalizationState", () => {
     expect(calls.buildChain).toHaveBeenCalledWith("http://127.0.0.1:18789");
     expect(calls.verify).toHaveBeenCalledWith("my-assistant", { port: 18789 });
     expect(calls.log).toHaveBeenCalledWith("  ✓ verified");
-    expect(calls.dashboard).toHaveBeenCalledWith("my-assistant", "model", "provider", null, null);
+    expect(calls.dashboard).toHaveBeenCalledWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      null,
+      true,
+    );
     expect(calls.postVerify).toHaveBeenCalledOnce();
     expect(result.stateResult).toEqual({
       type: "complete",
@@ -120,6 +131,35 @@ describe("handleFinalizationState", () => {
     expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
   });
 
+  it("prints a not-ready dashboard and returns a resumable failure when verification is unhealthy", async () => {
+    const { deps, calls } = createDeps({ isDeploymentHealthy: vi.fn(() => false) });
+
+    const result = await handleFinalizationState(baseOptions(deps));
+
+    expect(calls.dashboard).toHaveBeenCalledWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      null,
+      false,
+    );
+    expect(calls.reportReadiness).toHaveBeenCalledWith(false);
+    expect(calls.postVerify).toHaveBeenCalledOnce();
+    expect(result.deploymentHealthy).toBe(false);
+    expect(result.stateResult).toEqual({
+      type: "pause",
+      updates: {
+        sandboxName: "my-assistant",
+        provider: "provider",
+        model: "model",
+        hermesAuthMethod: null,
+        hermesToolGateways: [],
+      },
+      metadata: { state: "finalizing", reason: "deployment_not_ready" },
+    });
+  });
+
   it("ensures agent dashboard forwarding before completion for non-OpenClaw agents", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes" };
@@ -130,7 +170,14 @@ describe("handleFinalizationState", () => {
     expect(calls.ensureAgentDashboard.mock.invocationCallOrder[0]).toBeLessThan(
       calls.dashboard.mock.invocationCallOrder[0],
     );
-    expect(calls.dashboard).toHaveBeenCalledWith("my-assistant", "model", "provider", null, agent);
+    expect(calls.dashboard).toHaveBeenCalledWith(
+      "my-assistant",
+      "model",
+      "provider",
+      null,
+      agent,
+      true,
+    );
   });
 
   it("skips dashboard and gateway verification for terminal agents without forwards", async () => {

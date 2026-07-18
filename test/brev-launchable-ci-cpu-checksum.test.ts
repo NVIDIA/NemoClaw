@@ -11,9 +11,18 @@ import { describe, expect, it } from "vitest";
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "brev-launchable-ci-cpu.sh");
 const BREV_LIFECYCLE_SCRIPT_MAX_BYTES = 16 * 1024;
 const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
-const PINNED_ASSET_SHA256 = "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4";
+const PINNED_ASSET_SHA256 = "078fa086f506832c3d47d992e6109f26074bdd55916ce268e47c3971423459eb";
 
 type FakeSystemOptions = {
+  archiveShape?:
+    | "absolute"
+    | "device"
+    | "duplicate"
+    | "extra"
+    | "hardlink"
+    | "safe"
+    | "symlink"
+    | "traversal";
   checksum: "match" | "mismatch" | "unpinned";
   nodeSourceChecksumTool?: boolean;
   openshellVersion?: string;
@@ -106,7 +115,7 @@ exec bash -c "\${1:-}"
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
 if [ "\${1:-}" = "-p" ]; then printf '${options.nodeSourceChecksumTool === false ? "20" : "22"}\\n'; exit 0; fi
-if [ "\${1:-}" = "--version" ]; then printf 'v22.16.0\\n'; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then printf 'v22.19.0\\n'; exit 0; fi
 exit 0
 `,
   );
@@ -133,6 +142,26 @@ exit 0
     path.join(fakeBin, "tar"),
     `#!/usr/bin/env bash
 printf '%s\\n' "$*" >> ${JSON.stringify(tarLog)}
+shape=${JSON.stringify(options.archiveShape ?? "safe")}
+if [ "\${1:-}" = "-tzf" ] && [ "$shape" != "safe" ]; then
+  case "$shape" in
+    absolute) printf '/tmp/openshell\\n' ;;
+    traversal) printf '../openshell\\n' ;;
+    duplicate) printf 'openshell\\nopenshell\\n' ;;
+    extra) printf 'openshell\\nunexpected\\n' ;;
+    *) printf 'openshell\\n' ;;
+  esac
+  exit 0
+fi
+if [ "\${1:-}" = "-tvzf" ] && [ "$shape" != "safe" ]; then
+  case "$shape" in
+    symlink) printf 'lrwxrwxrwx 0/0 0 2026-01-01 00:00 openshell -> target\\n' ;;
+    hardlink) printf 'hrwxr-xr-x 0/0 0 2026-01-01 00:00 openshell link to target\\n' ;;
+    device) printf 'crw-rw-rw- 0/0 1,3 2026-01-01 00:00 openshell\\n' ;;
+    *) printf '%s\\n' '-rwxr-xr-x 0/0 1 2026-01-01 00:00 openshell' ;;
+  esac
+  exit 0
+fi
 exec /usr/bin/tar "$@"
 `,
   );
@@ -176,7 +205,7 @@ done
 case "$(basename "$out")" in
   ${ASSET})
     tmp="$(mktemp -d)"
-    printf '#!/usr/bin/env bash\\nprintf "openshell 0.0.72\\\\n"\\n' > "$tmp/openshell"
+    printf '#!/usr/bin/env bash\\nprintf "openshell 0.0.85\\\\n"\\n' > "$tmp/openshell"
     chmod +x "$tmp/openshell"
     /usr/bin/tar -czf "$out" -C "$tmp" openshell
     rm -rf "$tmp"
@@ -235,7 +264,7 @@ function runLaunchable(options: FakeSystemOptions) {
       ...process.env,
       LAUNCH_LOG: fake.launchLog,
       NEMOCLAW_CLONE_DIR: fake.cloneDir,
-      OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.72",
+      OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.85",
       PATH:
         options.nodeSourceChecksumTool === false ? fake.fakeBin : `${fake.fakeBin}:/usr/bin:/bin`,
       SUDO_USER: "tester",
@@ -298,7 +327,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       const out = combinedLaunchableOutput(result, fake.launchLog);
       expect(result.status, out).toBe(1);
       expect(out).toContain(
-        `OpenShell release checksum for ${ASSET} does not match NemoClaw-pinned v0.0.72 digest`,
+        `OpenShell release checksum for ${ASSET} does not match NemoClaw-pinned v0.0.85 digest`,
       );
       expect(fs.existsSync(fake.tarLog) ? fs.readFileSync(fake.tarLog, "utf-8") : "").toBe("");
       expect(fs.existsSync(fake.sudoLog) ? fs.readFileSync(fake.sudoLog, "utf-8") : "").not.toMatch(
@@ -334,7 +363,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     try {
       const out = combinedLaunchableOutput(result, fake.launchLog);
       expect(result.status, out).toBe(0);
-      expect(out).toContain("OpenShell CLI installed: openshell 0.0.72");
+      expect(out).toContain("OpenShell CLI installed: openshell 0.0.85");
       expect(fs.readFileSync(fake.tarLog, "utf-8")).toContain(`xzf`);
       const sudoLog = fs.readFileSync(fake.sudoLog, "utf-8");
       expect(sudoLog).toMatch(/^install -m 755 .*openshell/m);
@@ -345,6 +374,30 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
         "--version",
       ]);
       expect(out).toContain("CI-Ready CPU launchable setup complete");
+    } finally {
+      fake.cleanup();
+    }
+  });
+
+  it.each([
+    "absolute",
+    "traversal",
+    "duplicate",
+    "extra",
+    "symlink",
+    "hardlink",
+    "device",
+  ] as const)("rejects an unsafe %s archive before extraction or install", (archiveShape) => {
+    const { fake, result } = runLaunchable({ archiveShape, checksum: "match" });
+    try {
+      const out = combinedLaunchableOutput(result, fake.launchLog);
+      expect(result.status, out).toBe(1);
+      expect(out).toContain(`Unsafe OpenShell archive ${ASSET}`);
+      const tarCalls = fs.readFileSync(fake.tarLog, "utf-8");
+      expect(tarCalls).not.toMatch(/^xzf /m);
+      expect(fs.existsSync(fake.sudoLog) ? fs.readFileSync(fake.sudoLog, "utf-8") : "").not.toMatch(
+        /^install -m 755 .*openshell/m,
+      );
     } finally {
       fake.cleanup();
     }

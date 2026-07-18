@@ -8,12 +8,28 @@ import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-bou
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
+const MCP_AGENT_SHARDS = ["openclaw", "hermes", "deepagents"] as const;
+const MATRIX_AGENT_EXPRESSION = "${{ matrix.agent }}";
 const TERMINAL_JOBS = ["report-to-pr", "scorecard"] as const;
 const DOCKER_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const DEV_DOCKER_CLEANUP_NAME = "Revoke Docker auth before unverified dev tooling";
 const DEV_COMPATIBILITY_STEP_NAME = "Classify OpenShell credential-boundary compatibility";
 const DEV_COMPATIBILITY_STEP_ID = "mcp_runtime_compatibility";
 const DEV_COMPATIBILITY_TOOL = "tools/e2e/mcp-bridge-runtime-compatibility.mts";
+const CREDENTIAL_WINDOW_ID = "openshell-credential-generation-window";
+const CREDENTIAL_WINDOW_FILE = `test/e2e/live/${CREDENTIAL_WINDOW_ID}.test.ts`;
+const CREDENTIAL_WINDOW_SHARD = "deepagents";
+const STABLE_RELEASE_SOURCE_SHA = "3dee5570a46076a57a3b056f35f35ebc0861ac85";
+const STABLE_RELEASE_SUPERVISOR_INDEX =
+  "f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9";
+const STABLE_RELEASE_PROVENANCE_TOKENS = [
+  'releaseTag: "v0.0.85"',
+  STABLE_RELEASE_SOURCE_SHA,
+  "222d9d53a142691d7a7de2c692f38e52d24066f9f633d53746c5fef775861bc8",
+  "33bb479d936c3c1b17dd475df05747be9de74564fb67d69a4c33cdd01181d02f",
+  "863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2",
+  "mcp-bridge-deepagents/openshell-exact-main-provenance.json",
+] as const;
 const DEV_COMPATIBILITY_RUN = [
   "set -euo pipefail",
   'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"',
@@ -95,6 +111,8 @@ function validateJobIdentity(
   job: UnknownRecord,
 ): void {
   const env = asRecord(job.env);
+  const strategy = asRecord(job.strategy);
+  const matrix = asRecord(strategy.matrix);
   requireEqual(errors, env.E2E_JOB, "1", `${jobName} must declare E2E_JOB=1`);
   requireEqual(
     errors,
@@ -104,10 +122,29 @@ function validateJobIdentity(
   );
   requireEqual(
     errors,
-    env.NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX,
-    "1",
-    `${jobName} must exercise all three MCP adapters`,
+    job["timeout-minutes"],
+    90,
+    `${jobName} must bound each shard to 90 minutes`,
   );
+  requireEqual(errors, strategy["fail-fast"], false, `${jobName} shards must not fail fast`);
+  if (JSON.stringify(matrix.agent) !== JSON.stringify(MCP_AGENT_SHARDS)) {
+    errors.push(`${jobName} must exercise the reviewed OpenClaw, Hermes, and Deep Agents shards`);
+  }
+  requireEqual(
+    errors,
+    env.NEMOCLAW_MCP_BRIDGE_AGENT,
+    MATRIX_AGENT_EXPRESSION,
+    `${jobName} must select exactly its current MCP agent shard`,
+  );
+  requireEqual(
+    errors,
+    env.NEMOCLAW_E2E_SHARD,
+    MATRIX_AGENT_EXPRESSION,
+    `${jobName} must publish agent-scoped risk evidence`,
+  );
+  if (Object.hasOwn(env, "NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX")) {
+    errors.push(`${jobName} must not enable the retired in-process agent matrix`);
+  }
   requireEqual(
     errors,
     env.NEMOCLAW_RUN_LIVE_E2E,
@@ -117,7 +154,7 @@ function validateJobIdentity(
   requireContains(
     errors,
     env.E2E_ARTIFACT_DIR,
-    `e2e-artifacts/live/${jobName}`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}`,
     `${jobName} must isolate its artifact directory`,
   );
   if (jobName === "mcp-bridge") {
@@ -126,6 +163,18 @@ function validateJobIdentity(
       env.NEMOCLAW_OPENSHELL_CHANNEL,
       "stable",
       "mcp-bridge must pin the stable OpenShell channel",
+    );
+    requireEqual(
+      errors,
+      env.NEMOCLAW_OPENSHELL_EXACT_MAIN_PROOF,
+      "1",
+      "mcp-bridge must enable the exact stable release proof",
+    );
+    requireEqual(
+      errors,
+      env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+      `ghcr.io/nvidia/openshell/supervisor@sha256:${STABLE_RELEASE_SUPERVISOR_INDEX}`,
+      "mcp-bridge must pin the reviewed stable supervisor image",
     );
     if (Object.hasOwn(env, "E2E_DEFAULT_ENABLED")) {
       errors.push("mcp-bridge must remain default-enabled");
@@ -313,6 +362,13 @@ function validateJobExecution(
     );
   } else if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
     errors.push("mcp-bridge stable installer must not authorize unverified dev artifacts");
+  } else {
+    const installRun = asString(install.run);
+    for (const token of STABLE_RELEASE_PROVENANCE_TOKENS) {
+      if (!installRun.includes(token)) {
+        errors.push(`mcp-bridge stable release provenance is missing reviewed identity: ${token}`);
+      }
+    }
   }
   requireContains(
     errors,
@@ -369,8 +425,50 @@ function validateJobExecution(
       errors.push("mcp-bridge stable lane must run its full MCP lifecycle unconditionally");
     }
   }
-  for (const required of ["--project e2e-live", "test/e2e/live/mcp-bridge.test.ts"]) {
+  for (const required of [
+    "tools/e2e/live-vitest-invocation.mts run --test-path",
+    "test/e2e/live/mcp-bridge.test.ts",
+  ]) {
     requireContains(errors, run.run, required, `${jobName} must run the unified MCP live test`);
+  }
+  requireContains(
+    errors,
+    run.run,
+    "tools/e2e/live-vitest-invocation.mts run --test-path",
+    `${jobName} must publish canonical risk-signal evidence`,
+  );
+  if (jobName === "mcp-bridge") {
+    const riskReporter = "--reporter=test/e2e/risk-signal-reporter.ts";
+    const reporterCount = asString(run.run).split(riskReporter).length - 1;
+    if (reporterCount !== 1) {
+      errors.push(
+        "mcp-bridge credential generation-window proof must publish canonical risk-signal evidence",
+      );
+    }
+    requireContains(
+      errors,
+      run.run,
+      `if [[ "$NEMOCLAW_MCP_BRIDGE_AGENT" == "${CREDENTIAL_WINDOW_SHARD}" ]]; then`,
+      "mcp-bridge must isolate the credential generation-window proof to one shard",
+    );
+    requireContains(
+      errors,
+      run.run,
+      CREDENTIAL_WINDOW_FILE,
+      "mcp-bridge must run the credential generation-window lifecycle",
+    );
+    requireContains(
+      errors,
+      run.run,
+      `-t '^${CREDENTIAL_WINDOW_ID}$'`,
+      "mcp-bridge must select the exact credential generation-window proof",
+    );
+    requireContains(
+      errors,
+      run.run,
+      "--no-file-parallelism",
+      "mcp-bridge must serialize the credential generation-window proof",
+    );
   }
   requireEqual(
     errors,
@@ -386,7 +484,7 @@ function validateJobExecution(
   );
   for (const required of [
     "tools/e2e/assert-mcp-artifact-secrets-absent.mts",
-    `e2e-artifacts/live/${jobName}`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}`,
   ]) {
     requireContains(errors, scan.run, required, `${jobName} artifact secret scan is incomplete`);
   }
@@ -406,13 +504,13 @@ function validateJobExecution(
   requireEqual(
     errors,
     uploadOptions.path,
-    `e2e-artifacts/live/${jobName}/`,
+    `e2e-artifacts/live/${jobName}/${MATRIX_AGENT_EXPRESSION}/`,
     `${jobName} artifact upload must use exactly the scanned directory`,
   );
   requireEqual(
     errors,
     uploadOptions.name,
-    `e2e-${jobName}`,
+    `e2e-${jobName}-${MATRIX_AGENT_EXPRESSION}`,
     `${jobName} artifact upload must use its isolated artifact name`,
   );
   if (Object.keys(uploadOptions).sort().join(",") !== "name,path") {

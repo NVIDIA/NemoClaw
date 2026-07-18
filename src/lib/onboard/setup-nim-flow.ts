@@ -6,10 +6,13 @@ import {
   resolveAgentDefaultCloudModel,
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
+import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
+import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
+import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import type { ProviderSelectionResult } from "./machine/handlers/provider-inference";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
 import type {
@@ -152,7 +155,10 @@ export interface SetupNimFlowDeps {
       beforeInstall?: (modelId: string) => void;
     },
   ): Promise<{ ok: boolean }>;
-  handleVllmSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
+  handleVllmSelection(
+    state: SetupNimSelectionState,
+    options?: { managedInstall?: boolean; sparkHost?: boolean },
+  ): Promise<SetupNimSelectionResult>;
   handleRoutedSelection(state: SetupNimSelectionState): Promise<SetupNimSelectionResult>;
   coerceAgentInferenceApi(
     agent: AgentDefinition | null,
@@ -216,6 +222,7 @@ function applyGatewayRouteDiscoveryConstraints(
   }
 }
 
+/** Create the provider-selection flow and seed agent-specific Ollama defaults. */
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
   overrides: Partial<SetupNimFlowDeps> = {},
@@ -249,6 +256,9 @@ export function createSetupNim(
     let allowToolsIncompatible = false;
     let reuseGatewayCredential = false;
     let endpointPinnedAddresses: string[] | undefined;
+    let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
+    let vllmModelIdentity: string | undefined;
+    const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
       writeLine: deps.log,
@@ -266,7 +276,10 @@ export function createSetupNim(
         compatibleEndpointReasoning,
         nimContainer,
         allowToolsIncompatible,
+        ollamaContextWindowFloor: getOllamaContextWindowFloorForAgent(agent?.name ?? null),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+        ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
+        inferenceCapabilityCache,
         nvidiaFeaturedModels,
         openRouterFeaturedModels,
       };
@@ -456,6 +469,7 @@ export function createSetupNim(
             preferredInferenceApi,
             allowToolsIncompatible,
             endpointPinnedAddresses,
+            endpointTrustedPrivateCapability,
           } = state);
           compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
           reuseGatewayCredential = state.reuseGatewayCredentialWithoutLocalKey === true;
@@ -551,6 +565,16 @@ export function createSetupNim(
             if (deps.isNonInteractive()) deps.exitProcess(1);
             continue selectionLoop;
           }
+          if (vllmRunning) {
+            const message =
+              `vLLM is already running on localhost:${String(deps.vllmPort)}. ` +
+              "Select Local vLLM, or stop the existing server before selecting the managed install path.";
+            deps.error(`  ${message}`);
+            if (deps.isNonInteractive()) {
+              deps.abortNonInteractive(message);
+            }
+            continue selectionLoop;
+          }
           const vllmState = createSelectionState();
           preparedVllmState = vllmState;
           const result = await deps.installVllm(vllmProfile, {
@@ -579,7 +603,10 @@ export function createSetupNim(
         if (selected.key === "vllm") {
           const state = preparedVllmState ?? createSelectionState();
           state.model = preparedVllmState?.model ?? requestedModel ?? recoveredModel;
-          const result = await deps.handleVllmSelection(state);
+          const result = await deps.handleVllmSelection(state, {
+            managedInstall: preparedVllmState !== null,
+            sparkHost: gpu?.spark === true,
+          });
           ({
             model,
             provider,
@@ -589,6 +616,7 @@ export function createSetupNim(
             nimContainer,
             allowToolsIncompatible,
           } = state);
+          vllmModelIdentity = state.vllmModelIdentity;
           if (result === "retry-selection") continue selectionLoop;
           break;
         } else if (selected.key === "routed") {
@@ -635,6 +663,9 @@ export function createSetupNim(
       reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,
       ...(recoveredFromSandbox ? { recoveredFromSandbox: true } : {}),
       ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+      ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
+      ...(provider === "vllm-local" && vllmModelIdentity ? { vllmModelIdentity } : {}),
+      inferenceCapabilityCache,
     };
   };
 }

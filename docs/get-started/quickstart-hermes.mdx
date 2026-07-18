@@ -11,25 +11,20 @@ content:
 skill:
   priority: 20
 ---
-import { StarterPromptFallback } from "../_components/StarterPrompt";
-import { StarterPromptButton } from "../_components/StarterPromptButton";
-
 Create a sandboxed Hermes agent, then chat with it from the dashboard or terminal.
 The `nemohermes` command is the NemoClaw CLI with Hermes pre-selected.
 
-## Set Up with a Coding Agent
+## Set Up with the Starter Prompt on Your Coding Agent
 
 Copy this starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want it to guide the installation.
-The prompt points the agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+The prompt points the agent to [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
 It asks the agent to confirm Hermes before it runs commands that create a sandbox or receive credentials and to use the checked-in local credential helper and form only after you approve the exact command that receives credentials.
 
-<StarterPromptButton />
+<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
 
-<StarterPromptFallback />
+If you prefer to control setup directly, use [Set Up with the Interactive Installer on Your Terminal](#set-up-with-the-interactive-installer-on-your-terminal).
 
-If you prefer to control setup directly, use the interactive installer in [Create Your First Sandboxed Agent](#create-your-first-sandboxed-agent).
-
-## Create Your First Sandboxed Agent
+## Set Up with the Interactive Installer on Your Terminal
 
 If you use the coding-agent prompt in the preceding section, you can skip this procedure or keep it as reference.
 The prompt directs your coding agent to this quickstart, so it has the full setup context.
@@ -89,7 +84,7 @@ Use these details when your first-run path needs more control.
     Hermes supports Tavily for web search, not the NemoClaw Brave Search path.
     Select it during onboarding and provide `TAVILY_API_KEY` when prompted.
     The wizard can also configure supported messaging channels and managed Nous tool gateways when you authenticate through Nous Portal OAuth.
-    Refer to [Messaging Channels](../manage-sandboxes/messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling those services.
+    Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling those services.
   </Accordion>
 
   <Accordion title="Automate or repeat onboarding">
@@ -134,7 +129,7 @@ Use these details when your first-run path needs more control.
     ```
 
     Use `nemohermes my-hermes destroy` only when you intend to remove the sandbox.
-    Refer to [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle) for the full lifecycle workflow.
+    Refer to [Recover and Rebuild Sandboxes](../manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes) for the recovery workflow.
   </Accordion>
 
   <Accordion title="Host and Installer Details">
@@ -295,5 +290,5 @@ If `nemohermes` is unavailable after installing, reload your shell profile or fo
 
 - [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) explains how to choose or change a model and provider.
 - [Commands](../reference/commands) explains the `nemohermes` alias and its options.
-- [Backup and Restore](../manage-sandboxes/backup-restore) explains how to preserve sandbox state.
+- [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) explains how to preserve sandbox state.
 - [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity) explains how to inspect OpenShell events and sandbox logs.

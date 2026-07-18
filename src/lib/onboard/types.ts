@@ -54,6 +54,8 @@ export interface ModelValidationFailure extends ValidationFailureLike {
 export type ModelValidationResult = ModelValidationSuccess | ModelValidationFailure;
 
 export interface SandboxCreateIntent {
+  /** Complete secret-free create plan resolved by the onboarding machine. */
+  readonly resolved?: import("./sandbox-create-intent-types").SandboxCreateIntent;
   readonly recreate: boolean;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
   readonly observabilityEnabled: boolean;
@@ -66,6 +68,8 @@ export interface SandboxCreateIntent {
   readonly policyTier?: string | null;
   /** Gateway-level extra providers reconciled immediately before sandbox creation. */
   readonly extraProviders?: readonly string[];
+  /** Internal OpenClaw resume authority for exact registered provider reuse. */
+  readonly reuseRegisteredCredentials?: true;
 }
 
 export type OnboardOptions = {

@@ -44,6 +44,7 @@ import {
   type PolicyValue,
   parseNetworkPolicies,
 } from "./preset-parsing";
+import { splitSemanticFindings, validatePolicySemantics } from "./semantic-validation";
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
@@ -869,6 +870,22 @@ function applyPresetContent(
       );
       return false;
     }
+    const { errors: semanticErrors, warnings: semanticWarnings } = splitSemanticFindings(
+      validatePolicySemantics({ network_policies: np }),
+    );
+    for (const finding of semanticWarnings) {
+      console.warn(
+        `  Preset '${presetName}' has a policy warning at ${finding.path}: ${finding.message}`,
+      );
+    }
+    if (semanticErrors.length > 0) {
+      for (const finding of semanticErrors) {
+        console.error(
+          `  Preset '${presetName}' has an unsafe endpoint at ${finding.path}: ${finding.message}`,
+        );
+      }
+      return false;
+    }
   }
 
   const presetEntries = extractPresetEntries(presetContent);
@@ -1219,6 +1236,22 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
     console.error(
       `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets: ${filePath}`,
     );
+    return null;
+  }
+  const { errors: semanticErrors, warnings: semanticWarnings } = splitSemanticFindings(
+    validatePolicySemantics(parsed),
+  );
+  for (const finding of semanticWarnings) {
+    console.warn(
+      `  Preset '${presetName}' has a policy warning at ${finding.path}: ${finding.message}: ${filePath}`,
+    );
+  }
+  if (semanticErrors.length > 0) {
+    for (const finding of semanticErrors) {
+      console.error(
+        `  Preset '${presetName}' has an unsafe endpoint at ${finding.path}: ${finding.message}: ${filePath}`,
+      );
+    }
     return null;
   }
   const builtin = listPresets().map((p) => p.name);

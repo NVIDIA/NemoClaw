@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { DockerGpuRoutePlan } from "./docker-gpu-route";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
@@ -21,7 +22,6 @@ export type SandboxCreatePolicyRequest = {
   readonly activeMessagingChannels: readonly string[];
   readonly options: {
     readonly directGpu: boolean;
-    readonly dockerGpuPatch: boolean;
     readonly additionalPresets: readonly string[];
     readonly agentName?: string | null;
     readonly policyTier: string | null;
@@ -44,18 +44,21 @@ export type SandboxCreateIntent = {
   readonly messagingProviderRequests: readonly SandboxCreateMessagingProviderRequest[];
   readonly reusableMessagingProviders: readonly string[];
   readonly extraProviders: readonly string[];
+  readonly staleExtraProviders: readonly string[];
   readonly hermesToolGateways: readonly string[];
   readonly policy: SandboxCreatePolicyRequest;
   readonly gpuCreateArgs: readonly string[];
-  readonly useDockerGpuPatch: boolean;
+  readonly resourceCreateArgs: readonly string[];
+  readonly gpuRoutePlan: DockerGpuRoutePlan;
   readonly sandboxGpuLogMessage: string | null;
   readonly disabledChannelNames: readonly string[];
+  readonly extraPlaceholderKeys: readonly string[];
 };
 
 export type ResolveSandboxCreateIntentInput = {
   basePolicyPath: string;
   sandboxName: string;
-  channels: MessagingChannel[];
+  channels: readonly MessagingChannel[];
   enabledChannels: string[] | null;
   disabledChannelNames: ReadonlySet<string>;
   messagingProviderRequests: readonly SandboxCreateMessagingProviderRequest[];
@@ -63,11 +66,14 @@ export type ResolveSandboxCreateIntentInput = {
   reusableMessagingChannels: readonly string[];
   reusableMessagingProviders: readonly string[];
   extraProviders?: readonly string[];
+  staleExtraProviders?: readonly string[];
   hermesToolGateways: readonly string[];
   sandboxGpuConfig: SandboxGpuCreateConfig;
   gpuCreateArgs: readonly string[];
-  useDockerGpuPatch: boolean;
+  resourceCreateArgs?: readonly string[];
+  gpuRoutePlan: DockerGpuRoutePlan;
   sandboxGpuLogMessage: string | null;
+  extraPlaceholderKeys?: readonly string[];
   agentName?: string | null;
   policyTier: string | null;
 };
@@ -76,7 +82,6 @@ export type MaterializeSandboxCreatePlanInput = {
   intent: SandboxCreateIntent;
   buildCtx: string;
   messagingTokenDefs: MessagingTokenDef[];
-  appendResourceFlags(createArgs: string[]): void;
   runProviderPreDeleteCleanup(): void;
   upsertMessagingProviders(
     tokenDefs: MessagingTokenDef[],

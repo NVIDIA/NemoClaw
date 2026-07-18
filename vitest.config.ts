@@ -121,8 +121,11 @@ export default defineConfig({
             "test/package-contract/**",
             "test/install-express-prompt.test.ts",
             "test/install-build-dependency-preflight.test.ts",
+            "test/install-clone-ref.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
+            "test/install-station-dgx-os.test.ts",
+            "test/install-station-host-preparation.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
         },
@@ -138,8 +141,11 @@ export default defineConfig({
           include: [
             "test/install-express-prompt.test.ts",
             "test/install-build-dependency-preflight.test.ts",
+            "test/install-clone-ref.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
+            "test/install-station-dgx-os.test.ts",
+            "test/install-station-host-preparation.test.ts",
             "test/install-openshell-version-check.test.ts",
           ],
           // Slow tests that spawn real bash install.sh processes. Explicit

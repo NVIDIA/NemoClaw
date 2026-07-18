@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
 import { CLI_NAME } from "../cli/branding";
+import { GATEWAY_PORT } from "../core/ports";
 import { prompt as askPrompt } from "../credentials/store";
 import { formatFailedBackupItems } from "../domain/backup-failure";
 import {
@@ -15,6 +18,13 @@ import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandb
 import { parseReadySandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
+import { nemoclawStateRoot, resolveHome } from "../state/state-root";
+import {
+  backupStartedSandboxState,
+  returnSandboxContainerToStopped,
+  type StartedForBackup,
+  startStoppedSandboxContainerForBackup,
+} from "./sandbox/stopped-sandbox-backup";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -29,12 +39,18 @@ export function shouldSkipUnreachableSandboxBackup(env: NodeJS.ProcessEnv): bool
   return env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP === "1";
 }
 
+export function rebuildBackupsDirectory(home: string, gatewayPort: number): string {
+  return path.join(nemoclawStateRoot(home, gatewayPort), "rebuild-backups");
+}
+
 function notRunningBackupSkipMessage(name: string): string {
   return `Skipping '${name}' (not running; start the sandbox/container and rerun '${CLI_NAME} backup-all' so NemoClaw can capture a fresh snapshot)`;
 }
 
 export async function backupAll(): Promise<void> {
-  const { sandboxes } = registry.listSandboxes();
+  const sandboxes = registry
+    .listSandboxes()
+    .sandboxes.filter((sandbox) => !registry.isRouteOnlySandboxReservation(sandbox));
   if (sandboxes.length === 0) {
     console.log("  No sandboxes registered. Nothing to back up.");
     return;
@@ -54,16 +70,29 @@ export async function backupAll(): Promise<void> {
   let unreachableRunning = 0;
   let notRunningSkipped = 0;
   for (const sb of sandboxes) {
+    // A registered docker-driver sandbox whose container is merely stopped is
+    // backupable: start it for the duration of the backup and return it to
+    // its stopped state after (#6500). Anything else that is not Ready keeps
+    // the existing skip (and, under installer-strict mode, the #6114 gate).
+    let startedForBackup: StartedForBackup | null = null;
     if (!readyNames.has(sb.name)) {
-      console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
-      skipped++;
-      notRunningSkipped++;
-      continue;
+      startedForBackup = startStoppedSandboxContainerForBackup(sb.name);
+      if (!startedForBackup) {
+        console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
+        skipped++;
+        notRunningSkipped++;
+        continue;
+      }
+      console.log(`  Starting stopped sandbox '${sb.name}' to back it up...`);
     }
     console.log(`  Backing up '${sb.name}'...`);
-    let result: sandboxState.BackupResult;
+    let result: sandboxState.BackupResult | null = null;
+    let orphanManifestMessage: string | null = null;
+    let returnedToStopped = true;
     try {
-      result = sandboxState.backupSandboxState(sb.name);
+      result = startedForBackup
+        ? await backupStartedSandboxState(sb.name)
+        : sandboxState.backupSandboxState(sb.name);
     } catch (err: unknown) {
       // Source-of-truth review (#5734 / #5819):
       //
@@ -100,10 +129,29 @@ export async function backupAll(): Promise<void> {
       if (!/^Agent '[^']+' not found: .+\/manifest\.yaml$/.test(msg)) {
         throw err;
       }
-      console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${msg}`);
+      orphanManifestMessage = msg;
+    } finally {
+      if (startedForBackup) {
+        if (returnSandboxContainerToStopped(startedForBackup.containerName)) {
+          console.log(`  ${D}Returned '${sb.name}' to its stopped state.${R}`);
+        } else {
+          returnedToStopped = false;
+          console.error(
+            `  ${RD}✗${R} ${sb.name}: backup cleanup failed (could not return its container to the stopped state; the container was left running)`,
+          );
+        }
+      }
+    }
+    if (!returnedToStopped) {
+      failed++;
+      continue;
+    }
+    if (orphanManifestMessage) {
+      console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${orphanManifestMessage}`);
       skipped++;
       continue;
     }
+    if (!result) throw new Error(`Backup for '${sb.name}' completed without a result`);
     if (result.success) {
       console.log(
         `  ${G}✓${R} ${sb.name}: ${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`,
@@ -131,7 +179,7 @@ export async function backupAll(): Promise<void> {
   console.log("");
   console.log(`  Pre-upgrade backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`);
   if (backed > 0) {
-    console.log(`  Backups stored in: ~/.nemoclaw/rebuild-backups/`);
+    console.log(`  Backups stored in: ${rebuildBackupsDirectory(resolveHome(), GATEWAY_PORT)}`);
   }
   if (failed > 0) {
     if (unreachableRunning > 0) {

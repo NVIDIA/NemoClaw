@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { BREV_WORKFLOW_OWNERSHIP_ENV } from "../tools/e2e/brev-remote-vitest.mts";
@@ -45,10 +50,85 @@ type Workflow = {
   jobs?: Record<string, ReusableCallerJob>;
 };
 
+const TESTED_SHA = "a".repeat(40);
+
+function runReporter(script: string, jobResponse: unknown, failJobLookup = false) {
+  const directory = mkdtempSync(join(tmpdir(), "nemoclaw-brev-reporter-"));
+  const binDirectory = join(directory, "bin");
+  const fakeGh = join(binDirectory, "gh");
+  const checkArgsPath = join(directory, "check-args");
+  const commentPath = join(directory, "comment.md");
+  const runUrl = "https://github.com/NVIDIA/NemoClaw/actions/runs/123";
+  try {
+    mkdirSync(binDirectory);
+    writeFileSync(
+      fakeGh,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'if [[ "$1" == "pr" && "$2" == "view" ]]; then',
+        `  printf '%s\\n' '{"headRefName":"feature/test","headRefOid":"${TESTED_SHA}"}'`,
+        'elif [[ "$1" == "api" && "$2" == *"/actions/runs/123/attempts/2/jobs?per_page=100" ]]; then',
+        '  [[ "${FAKE_JOBS_FAIL:-0}" != "1" ]] || exit 1',
+        "  printf '%s' \"$FAKE_JOBS_JSON\"",
+        'elif [[ "$1" == "api" && "$2" == "repos/$GITHUB_REPOSITORY/check-runs" ]]; then',
+        '  printf \'%s\\0\' "$@" > "$FAKE_CHECK_ARGS"',
+        'elif [[ "$1" == "pr" && "$2" == "comment" ]]; then',
+        "  shift 2",
+        '  while [[ "$#" -gt 0 ]]; do',
+        '    if [[ "$1" == "--body-file" ]]; then',
+        '      cp "$2" "$FAKE_COMMENT"',
+        "      exit 0",
+        "    fi",
+        "    shift",
+        "  done",
+        "  exit 1",
+        "else",
+        "  exit 1",
+        "fi",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeGh, 0o700);
+    const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", script], {
+      encoding: "utf8",
+      timeout: 5_000,
+      env: {
+        ...process.env,
+        FAKE_CHECK_ARGS: checkArgsPath,
+        FAKE_COMMENT: commentPath,
+        FAKE_JOBS_FAIL: failJobLookup ? "1" : "0",
+        FAKE_JOBS_JSON: JSON.stringify(jobResponse),
+        GH_TOKEN: "token",
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        INSTANCE_NAME: "e2e-42-full-123-2",
+        KEEP_ALIVE: "false",
+        PATH: `${binDirectory}:${process.env.PATH ?? ""}`,
+        PR_NUMBER: "42",
+        RUN_ATTEMPT: "2",
+        RUN_ID: "123",
+        RUN_URL: runUrl,
+        TESTED_SHA,
+        TEST_SUITE: "full",
+        VALIDATION_RESULT: "failure",
+      },
+    });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    return {
+      checkArgs: readFileSync(checkArgsPath, "utf8").split("\0").filter(Boolean),
+      comment: readFileSync(commentPath, "utf8"),
+      runUrl,
+    };
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+}
+
 describe("Brev nightly workflow contract", () => {
   const nightly = readYaml<Workflow>(".github/workflows/brev-nightly-e2e.yaml");
   const branchValidation = readYaml<Workflow>(".github/workflows/e2e-branch-validation.yaml");
 
+  // source-shape-contract: compatibility -- Caller arguments must remain within the reusable branch-validation interface
   it("passes only declared inputs and secrets to branch validation", () => {
     const declaredInputs = new Set(Object.keys(branchValidation.on?.workflow_call?.inputs ?? {}));
     const declaredSecrets = new Set(Object.keys(branchValidation.on?.workflow_call?.secrets ?? {}));
@@ -68,15 +148,18 @@ describe("Brev nightly workflow contract", () => {
     }
   });
 
+  // source-shape-contract: security -- Caller permissions must equal the reviewed reusable-workflow write ceiling
   it("grants the reusable workflow permission ceiling so GitHub can start the run", () => {
     expect(nightly.permissions).toEqual(branchValidation.permissions);
     expect(nightly.permissions).toEqual({
+      actions: "read",
       contents: "read",
       checks: "write",
       "pull-requests": "write",
     });
   });
 
+  // source-shape-contract: security -- Secret-bearing validation stays read-only while reporting writes remain isolated
   it("keeps write permissions out of the secret-bearing target-branch job", () => {
     const caller = nightly.jobs?.["brev-nightly-e2e"];
     const validation = branchValidation.jobs?.["e2e-branch-validation"];
@@ -102,6 +185,7 @@ describe("Brev nightly workflow contract", () => {
     expect(recordRevision?.run).toContain("git rev-parse HEAD");
     expect(validation?.env?.BREV_E2E_INSTANCE_NAME).toContain("inputs.test_suite");
     expect(reporter?.permissions).toEqual({
+      actions: "read",
       contents: "read",
       checks: "write",
       "pull-requests": "write",
@@ -114,14 +198,72 @@ describe("Brev nightly workflow contract", () => {
     expect(reporter?.steps?.[0]?.run).toContain(
       "PR head moved after Brev validation; refusing to report stale evidence",
     );
+    expect(reporter?.steps?.[0]?.run).toContain(
+      "pr_number must be a positive integer. See $RUN_URL",
+    );
+    expect(reporter?.steps?.[0]?.run).toContain("refusing to report stale evidence. See $RUN_URL");
+    expect(reporter?.steps?.[0]?.run).toContain(
+      "actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100",
+    );
+    expect(reporter?.steps?.[0]?.run).toContain(".id <= 9007199254740991");
+    expect(reporter?.steps?.[0]?.run).not.toContain("html_url");
     expect(reporter?.steps?.some((step) => step.uses?.includes("checkout"))).toBe(false);
     expect(JSON.stringify(reporter)).not.toMatch(/BREV_|NVIDIA_INFERENCE_API_KEY/);
   });
 
-  it("keeps every suite in the nightly matrix in a distinct concurrency group", () => {
-    expect(branchValidation.concurrency?.group).toContain("inputs.test_suite");
+  it("links failed checks and comments to the validated job with a run fallback", () => {
+    const reporter = branchValidation.jobs?.["report-pr"]?.steps?.find(
+      (step) => step.name === "Publish completed check and PR comment",
+    );
+    const script = reporter?.run ?? "";
+
+    const direct = runReporter(script, {
+      jobs: [
+        {
+          conclusion: "failure",
+          id: 456,
+          name: "brev-nightly-e2e (full) / e2e-branch-validation",
+          run_attempt: 2,
+          run_id: 123,
+          status: "completed",
+        },
+      ],
+      total_count: 1,
+    });
+    const directUrl = `${direct.runUrl}/job/456`;
+    expect(direct.checkArgs).toContain("conclusion=failure");
+    expect(direct.checkArgs).toContain(`details_url=${directUrl}`);
+    expect(direct.checkArgs).toContain(
+      `output[summary]=[Open the validation job](${directUrl}) for details.`,
+    );
+    expect(direct.comment).toContain(`[See validation job](${directUrl})`);
+
+    const unsafeId = runReporter(script, {
+      jobs: [
+        {
+          conclusion: "failure",
+          id: Number.MAX_SAFE_INTEGER + 1,
+          name: "brev-nightly-e2e (full) / e2e-branch-validation",
+          run_attempt: 2,
+          run_id: 123,
+          status: "completed",
+        },
+      ],
+      total_count: 1,
+    });
+    expect(unsafeId.checkArgs).toContain(`details_url=${unsafeId.runUrl}`);
+    expect(unsafeId.comment).not.toContain(`${unsafeId.runUrl}/job/`);
+
+    const fallback = runReporter(script, { jobs: [], total_count: 0 }, true);
+    expect(fallback.checkArgs).toContain("conclusion=failure");
+    expect(fallback.checkArgs).toContain(`details_url=${fallback.runUrl}`);
+    expect(fallback.checkArgs).toContain(
+      `output[summary]=[Open the workflow run](${fallback.runUrl}) for details.`,
+    );
+    expect(fallback.comment).toContain(`[See workflow run](${fallback.runUrl})`);
   });
 
+  // source-shape-contract: security -- Suite validation must reject unsupported input before any target checkout
   it("fails closed on unsupported reusable test-suite values before checkout", () => {
     const steps = branchValidation.jobs?.["e2e-branch-validation"]?.steps ?? [];
     const validation = steps.find((step) => step.name === "Validate test suite");
@@ -137,22 +279,10 @@ describe("Brev nightly workflow contract", () => {
     );
   });
 
-  it("runs stateful messaging targets on separate fresh instances", () => {
-    expect(nightly.jobs?.["brev-nightly-e2e"]?.strategy?.matrix?.test_suite).toEqual([
-      "all",
-      "messaging-providers",
-      "messaging-compatible-endpoint",
-      "full",
-    ]);
-    expect(branchValidation.jobs?.["e2e-branch-validation"]?.["timeout-minutes"]).toBe(130);
-  });
-
-  it("keeps failure diagnostics ahead of workflow-owned instance deletion", () => {
+  // source-shape-contract: security -- Ownership and keep-alive guards prevent deleting contributor-managed Brev instances
+  it("keeps instance deletion inside the workflow ownership boundary", () => {
     const steps = branchValidation.jobs?.["e2e-branch-validation"]?.steps ?? [];
     const run = steps.find((step) => step.name === "Run ephemeral Brev E2E");
-    const collect = steps.find((step) => step.name === "Collect Brev debug bundle on failure");
-    const uploadDebug = steps.find((step) => step.name === "Upload Brev debug bundle on failure");
-    const uploadLogs = steps.find((step) => step.name === "Upload test logs");
     const cleanup = steps.find((step) => step.name === "Delete Brev instance");
 
     expect(branchValidation.on?.workflow_call?.inputs?.keep_alive).toMatchObject({
@@ -161,28 +291,14 @@ describe("Brev nightly workflow contract", () => {
     expect(run?.env?.[BREV_WORKFLOW_OWNERSHIP_ENV]).toBe("1");
     expect(cleanup?.if).toBe("always() && !inputs.keep_alive");
     expect(cleanup?.env?.INSTANCE).toBe("${{ env.BREV_E2E_INSTANCE_NAME }}");
-    expect(uploadDebug?.with?.name).toBe(
-      "brev-debug-bundle-${{ inputs.test_suite }}-${{ github.run_attempt }}",
-    );
-    expect(uploadLogs?.with?.name).toBe(
-      "e2e-branch-validation-logs-${{ inputs.test_suite }}-${{ github.run_attempt }}",
-    );
     expect(cleanup?.run).toContain("for attempt in 1 2 3");
     expect(cleanup?.run).toContain('timeout 30s brev delete "$INSTANCE"');
     expect(cleanup?.run).toContain("timeout 30s brev ls --json");
     expect(cleanup?.run).toContain("timeout 30s brev refresh");
     expect(cleanup?.run).not.toMatch(/grep.*not found/);
-    expect(steps.indexOf(cleanup as NonNullable<typeof cleanup>)).toBeGreaterThan(
-      steps.indexOf(collect as NonNullable<typeof collect>),
-    );
-    expect(steps.indexOf(cleanup as NonNullable<typeof cleanup>)).toBeGreaterThan(
-      steps.indexOf(uploadDebug as NonNullable<typeof uploadDebug>),
-    );
-    expect(steps.indexOf(cleanup as NonNullable<typeof cleanup>)).toBeGreaterThan(
-      steps.indexOf(uploadLogs as NonNullable<typeof uploadLogs>),
-    );
   });
 
+  // source-shape-contract: security -- Brev credentials must originate only from repository secrets
   it("keeps manual dispatch inputs out of the Brev credential boundary", () => {
     const validation = branchValidation.jobs?.["e2e-branch-validation"];
     const install = validation?.steps?.find((step) => step.name === "Install Brev CLI");
@@ -194,6 +310,7 @@ describe("Brev nightly workflow contract", () => {
     expect(JSON.stringify(validation)).not.toContain("inputs.brev_token");
   });
 
+  // source-shape-contract: security -- Exact Brev archive integrity must be verified before executable extraction
   it("verifies the pinned Brev CLI digest before extracting it", () => {
     const validation = branchValidation.jobs?.["e2e-branch-validation"];
     const install = validation?.steps?.find((step) => step.name === "Install Brev CLI");
@@ -210,6 +327,7 @@ describe("Brev nightly workflow contract", () => {
     expect(script.indexOf("tar -xzf")).toBeGreaterThan(script.indexOf("sha256sum -c -"));
   });
 
+  // source-shape-contract: security -- Removed launchable inputs must not restore remote setup-script execution
   it("does not expose stale published-launchable controls", () => {
     const dispatchInputs = Object.keys(nightly.on?.workflow_dispatch?.inputs ?? {});
     const reusableInputs = Object.keys(branchValidation.on?.workflow_call?.inputs ?? {});

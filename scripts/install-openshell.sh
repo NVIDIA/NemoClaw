@@ -37,16 +37,16 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 # round-trippable base policies: WebSocket text frames, provider-shaped
 # aliases, REST request bodies, MCP/JSON-RPC L7 enforcement, and
 # `policy get --base` for MCP/JSON-RPC-safe read-modify-write operations.
-MIN_VERSION="0.0.72"
+MIN_VERSION="0.0.85"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.72"
+MAX_VERSION="0.0.85"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
-DEV_MIN_VERSION="0.0.72"
+DEV_MIN_VERSION="0.0.85"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -127,7 +127,7 @@ else
 fi
 
 # invalidState: a consumed OpenShell release asset differs from the digest
-# published for the immutable v0.0.72 release, or a mutable registry tag moves.
+# published for the selected immutable release, or a mutable registry tag moves.
 # sourceBoundary: NVIDIA/OpenShell owns the release workflow, GitHub release
 # assets, and GHCR manifests; NemoClaw owns which exact artifacts it trusts.
 # whyNotSourceFix: NemoClaw cannot retroactively make an upstream publication
@@ -135,34 +135,34 @@ fi
 # regressionTest: test/install-openshell-version-check.test.ts exercises all
 # eight mappings, and scripts/check-installer-hash.sh compares them with the
 # GitHub release API on every PR, main push, weekly run, and manual dispatch.
-# removalCondition: remove these v0.0.72 entries only when NemoClaw drops that
+# removalCondition: remove these entries only when NemoClaw drops that
 # supported release or replaces them with independently verified newer pins.
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.72:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4"
+    v0.0.85:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "078fa086f506832c3d47d992e6109f26074bdd55916ce268e47c3971423459eb"
       ;;
-    v0.0.72:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045"
+    v0.0.85:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "3cf353e7994d5835a233fe0641f9a860779190b054d0f90a04c897be782734b8"
       ;;
-    v0.0.72:openshell-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d"
+    v0.0.85:openshell-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "522c963f9515c7325b978e89022de76227ac245eefe1371292af1424434e2067"
       ;;
-    v0.0.72:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877"
+    v0.0.85:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "718cc9f942f88565cacb13c39717b128d6acc8d336212d42d26243f36ab19ece"
       ;;
-    v0.0.72:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108"
+    v0.0.85:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "09f2823f6e9c5f70f4482b200206eac455d789618da4ebe4acff042d794e7162"
       ;;
-    v0.0.72:openshell-gateway-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb"
+    v0.0.85:openshell-gateway-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "5de3e08ad1bdb0cdd01373999f537edca3d8aca22ae1c29bc9926969fe401e45"
       ;;
-    v0.0.72:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230"
+    v0.0.85:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "94306f057d862cd5c34a0daa7692491733bc5ca528a7b92f9f62f717fb70a9be"
       ;;
-    v0.0.72:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0"
+    v0.0.85:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "2c52b2971aecf125e41ed160d8d2f2addf04031906ca88f120ae3d436dd6b8f7"
       ;;
     *)
       return 1
@@ -173,6 +173,22 @@ openshell_pinned_sha256() {
 openshell_checksum_line() {
   local checksum_file="$1" asset="$2"
   awk -v asset="$asset" '$2 == asset { print; found=1; exit } END { if (!found) exit 1 }' "$checksum_file"
+}
+
+# A pinned digest authenticates bytes, but it does not make extraction safe.
+# Every consumed OpenShell archive must contain exactly the one regular binary
+# selected by its asset name. This rejects absolute/parent paths, extra or
+# duplicate members, and links/devices before tar can write anything.
+validate_openshell_archive() {
+  local archive="$1" expected_member="$2" members verbose
+  members="$(LC_ALL=C tar -tzf "$archive")" \
+    || fail "Unable to list OpenShell archive $(basename "$archive")"
+  [ "$members" = "$expected_member" ] \
+    || fail "Unsafe OpenShell archive $(basename "$archive"): expected exactly one member named $expected_member"
+  verbose="$(LC_ALL=C tar -tvzf "$archive")" \
+    || fail "Unable to inspect OpenShell archive $(basename "$archive")"
+  [[ "$verbose" != *$'\n'* && "${verbose:0:1}" = "-" && "${verbose##* }" = "$expected_member" ]] \
+    || fail "Unsafe OpenShell archive $(basename "$archive"): $expected_member must be one regular file"
 }
 
 version_gte() {
@@ -263,6 +279,16 @@ pinned_sandbox_build_version() {
     f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198 | \
       32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f)
       printf '%s\n' "0.0.72"
+      ;;
+    # OpenShell v0.0.82 standalone sandbox binaries.
+    145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09 | \
+      76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500)
+      printf '%s\n' "0.0.82"
+      ;;
+    # OpenShell v0.0.85 standalone sandbox binaries.
+    863ef21ab7ef623f5e7a8728c4e5532b46bfbae3ace3b800665a1c6353a1f7d2 | \
+      680115dbc2affde0e88261ab09f4044726d1cc9e01de55dc5077d1118f52968d)
+      printf '%s\n' "0.0.85"
       ;;
     *)
       return 1
@@ -746,6 +772,16 @@ for i in "${!ASSETS[@]}"; do
   fi
   (cd "$tmpdir" && printf '%s\n' "$checksum_line" | $SHA_CMD -c -) \
     || fail "SHA-256 checksum verification failed for $asset_name"
+done
+
+for asset_name in "${ASSETS[@]}"; do
+  case "$asset_name" in
+    openshell-gateway-*) expected_member="openshell-gateway" ;;
+    openshell-sandbox-*) expected_member="openshell-sandbox" ;;
+    openshell-*) expected_member="openshell" ;;
+    *) fail "No expected archive member is defined for $asset_name" ;;
+  esac
+  validate_openshell_archive "$tmpdir/$asset_name" "$expected_member"
 done
 
 for asset_name in "${ASSETS[@]}"; do

@@ -96,15 +96,18 @@ function runInPty(snippet: string, env: NodeJS.ProcessEnv): { stdout: string; st
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nc-5978-")), "snippet.sh");
   fs.writeFileSync(file, snippet);
   try {
-    const result = spawnSync(
-      "script",
-      ["-qec", `bash --noprofile --norc -i ${file}`, "/dev/null"],
-      {
-        encoding: "utf-8",
-        timeout: 10_000,
-        env: { ...process.env, ...env, SHLVL: "9" },
-      },
-    );
+    const scriptArgs =
+      process.platform === "darwin"
+        ? ["-q", "/dev/null", "bash", "--noprofile", "--norc", "-i", file]
+        : ["-qec", `bash --noprofile --norc -i ${file}`, "/dev/null"];
+    const result = spawnSync("script", scriptArgs, {
+      encoding: "utf-8",
+      timeout: 10_000,
+      env: { ...process.env, ...env, SHLVL: "9" },
+      // Darwin's script(1) rejects Node's default socket-backed stdin. The
+      // snippet is read from file, so a null stdin preserves the PTY contract.
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     return { stdout: result.stdout ?? "", status: result.status ?? -1 };
   } finally {
     fs.rmSync(path.dirname(file), { recursive: true, force: true });
@@ -306,6 +309,7 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     expect(stdout).not.toContain("logs --tail 50");
   });
 
+  // source-shape-contract: compatibility -- Executing the emitted shell hook twice protects login profile and bashrc coexistence
   it("prints only once when the file is sourced twice in one login shell", () => {
     // A login shell sources both the system profile and bashrc hooks, each of
     // which sources this file and runs its trailing auto-invocation — the

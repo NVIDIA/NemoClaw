@@ -10,12 +10,19 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireSource = createRequire(import.meta.url);
-const { checkAndRecoverSandboxProcesses } = requireSource(
+const { checkAndRecoverSandboxProcesses: checkAndRecoverSandboxProcessesImpl } = requireSource(
   "../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../src/lib/actions/sandbox/process-recovery.js");
 const { ensureSandboxPortForwardForPort } = requireSource(
   "../src/lib/actions/sandbox/forward-recovery.ts",
 ) as typeof import("../src/lib/actions/sandbox/forward-recovery.js");
+
+function checkAndRecoverSandboxProcesses(
+  sandboxName: string,
+  options: Parameters<typeof checkAndRecoverSandboxProcessesImpl>[1] = {},
+) {
+  return checkAndRecoverSandboxProcessesImpl(sandboxName, { isWsl: false, ...options });
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -178,7 +185,13 @@ beta  127.0.0.1  18789  12345  running`;
     ).toBe(false);
   });
 
-  it("restarts a loopback forward when remote dashboard bind is requested (#6024)", () => {
+  it.each([
+    { dashboardBind: "0.0.0.0", isWsl: false, requirement: "remote bind" },
+    { dashboardBind: "", isWsl: true, requirement: "WSL" },
+  ])("restarts a loopback forward when $requirement requires all interfaces (#6024)", ({
+    dashboardBind,
+    isWsl,
+  }) => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../src/lib/agent/runtime.js");
     const registry = requireSource("../src/lib/state/registry.js");
@@ -186,7 +199,7 @@ beta  127.0.0.1  18789  12345  running`;
     const childProcess = requireSource("node:child_process");
     let forwardStarted = false;
 
-    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", dashboardBind);
     vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -216,7 +229,9 @@ beta  127.0.0.1  18789  12345  running`;
       });
 
     expect(
-      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+      withFakeOpenshellBinary(() =>
+        checkAndRecoverSandboxProcesses("beta", { isWsl, quiet: true }),
+      ),
     ).toEqual({
       checked: true,
       wasRunning: true,
@@ -267,23 +282,25 @@ beta  127.0.0.1  18789  12345  running`;
     );
   });
 
-  it("fails closed without starting when an unowned stopped-forward listener never releases", () => {
+  it("fails closed after start reconciliation when a listener remains unowned", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
 
-    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "150");
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "25");
     vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({ status: 0, output: "" });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
     const runOpenshell = vi
       .spyOn(openshellRuntime, "runOpenshell")
-      .mockReturnValue({ status: 0 } as never);
+      .mockImplementation((rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        return { status: Number(args[0] === "forward" && args[1] === "start") } as never;
+      });
 
     expect(ensureSandboxPortForwardForPort("beta", 8642)).toBe(false);
-    expect(
-      runOpenshell.mock.calls.some(
-        ([rawArgs]) => Array.isArray(rawArgs) && rawArgs[0] === "forward" && rawArgs[1] === "start",
-      ),
-    ).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "start", "--background", "8642", "beta"],
+      { ignoreError: true, stdio: "ignore" },
+    );
   });
 
   it("checkAndRecoverSandboxProcesses re-establishes an active Teams messaging host forward from a compact plan when the dashboard forward is healthy", () => {
@@ -495,6 +512,11 @@ hermes-box  127.0.0.1  18789  12345  running`;
   it.each([
     ["a recovery marker from a failed action", "GATEWAY_PID=4242\n", "dashboard recovery failed"],
     ["an unavailable managed supervisor", "", "SUPERVISOR_UNAVAILABLE"],
+    [
+      "a staged unavailable managed supervisor",
+      "",
+      "SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement",
+    ],
     ["a non-exact self-recovery marker", "", "prefix SUPERVISOR_UNAVAILABLE suffix"],
     ["an extra self-recovery error", "", "SUPERVISOR_UNAVAILABLE\nGATEWAY_FAILED"],
     ["a self-recovery marker on stdout", "SUPERVISOR_UNAVAILABLE", ""],
@@ -508,8 +530,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
       stderr,
     }));
 
-    // Preserve managed recovery retries without sleeping between mocked supervisor attempts.
-    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
       (_command: unknown, rawArgs: unknown) => {
         const shellCommand = getSandboxExecShellCommand(rawArgs);
@@ -554,8 +574,7 @@ hermes-box  127.0.0.1  18789  12345  running`;
       recovered: false,
       forwardRecovered: false,
     });
-    const transientFailure = stdout === "" && stderr === "SUPERVISOR_UNAVAILABLE";
-    expect(requestGatewaySupervisorAction).toHaveBeenCalledTimes(transientFailure ? 3 : 1);
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
   });
 

@@ -9,8 +9,12 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export type WorkflowJob = {
+  concurrency?: { group: string; "cancel-in-progress": boolean };
+  environment?: string | { name: string; deployment?: boolean };
   if?: string;
+  name?: string;
   needs?: string | string[];
+  outputs?: Record<string, string>;
   "runs-on"?: string;
   "timeout-minutes"?: number;
   uses?: string;
@@ -47,8 +51,12 @@ export type CompositeAction = {
   };
 };
 
+export function readRepoText(path: string): string {
+  return readFileSync(join(REPO_ROOT, path), "utf-8");
+}
+
 export function readYaml<T>(path: string): T {
-  return YAML.parse(readFileSync(join(REPO_ROOT, path), "utf-8")) as T;
+  return YAML.parse(readRepoText(path)) as T;
 }
 
 export function readWorkflow(): Record<string, unknown> {

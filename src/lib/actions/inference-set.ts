@@ -29,10 +29,13 @@ import {
 } from "../openshell-gateway-endpoint-guard";
 import {
   type AgentConfigTarget,
+  type HermesDashboardReseedResult,
   readSandboxConfig,
   recomputeSandboxConfigHash,
   resolveAgentConfig,
   rewriteConfigUrlsWithDnsPinning,
+  SandboxConfigError,
+  seedHermesDashboardConfig,
   writeSandboxConfig,
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
@@ -92,6 +95,11 @@ export interface InferenceSetResult {
   inSandboxConfigSynced: boolean;
 }
 
+interface InferenceSetMutationResult extends InferenceSetResult {
+  /** Internal post-commit convergence state used before returning to the CLI caller. */
+  dashboardConverged?: boolean;
+}
+
 export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
@@ -110,6 +118,10 @@ export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
     config: ConfigObject,
   ) => void;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
+  seedHermesDashboardConfig: (
+    sandboxName: string,
+    target: AgentConfigTarget,
+  ) => HermesDashboardReseedResult;
   prepareRunOpenshell: () => void;
   captureOpenshell: (
     args: string[],
@@ -212,6 +224,7 @@ function defaultDeps(): InferenceSetDeps {
     readSandboxConfig,
     writeSandboxConfig,
     recomputeSandboxConfigHash,
+    seedHermesDashboardConfig,
     prepareRunOpenshell: () => {
       getOpenshellBinary();
     },
@@ -561,11 +574,41 @@ function assertHermesCompatibleAnthropicOpenAiProvider(
   );
 }
 
+/**
+ * Read the in-sandbox agent config, converting a `SandboxConfigError` (the
+ * in-sandbox config could not be read or parsed — most commonly because the
+ * sandbox container is stopped) into a clean `InferenceSetError`. Callers use
+ * this as a pre-flight gate before the gateway route and registry are mutated,
+ * so an unreadable config aborts the command cleanly instead of crashing with a
+ * raw stack after a half-applied switch (#6997).
+ */
+export function readInSandboxConfigOrFail(
+  deps: Pick<InferenceSetDeps, "readSandboxConfig">,
+  sandboxName: string,
+  target: AgentConfigTarget,
+): ConfigObject {
+  try {
+    return deps.readSandboxConfig(sandboxName, target);
+  } catch (error) {
+    if (error instanceof SandboxConfigError) {
+      const lines = [...error.lines];
+      // `readSandboxConfig` also raises this for a corrupt/unparseable config,
+      // which starting the sandbox would NOT fix — only add the start hint for
+      // the stopped-sandbox case (the one that asks "Is the sandbox running?").
+      if (lines.some((line) => /is the sandbox running/i.test(line))) {
+        lines.push("  Start the sandbox and retry.");
+      }
+      throw new InferenceSetError(lines.join("\n"), error.exitCode);
+    }
+    throw error;
+  }
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps,
   expectedGatewayName: string,
-): Promise<InferenceMutation<InferenceSetResult>> {
+): Promise<InferenceMutation<InferenceSetMutationResult>> {
   // #6321: accept the installer-style provider name onboard uses (e.g.
   // `anthropicCompatible`) as well as the OpenShell provider name, by
   // normalizing to the OpenShell name before validation and all downstream use.
@@ -738,6 +781,13 @@ async function runInferenceSetWithoutHostLock(
     deps,
   );
 
+  // Read the in-sandbox config *before* mutating the gateway route or registry.
+  // If it is unreadable (e.g. a stopped sandbox), the mutations below would have
+  // committed the gateway route and registry first (only the in-sandbox layer is
+  // `rebuild`-recoverable), so gate on the read here to abort cleanly instead of
+  // leaving a half-applied switch across the three config layers (#6997).
+  const config = readInSandboxConfigOrFail(deps, sandboxName, target);
+
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
   const setResult = deps.captureOpenshell(
     openshellInferenceSetArgs({
@@ -783,7 +833,6 @@ async function runInferenceSetWithoutHostLock(
     throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
   }
 
-  const config = deps.readSandboxConfig(sandboxName, target);
   const previousOpenClawInferenceApi = readPreviousOpenClawInferenceApi(agentName, config);
   const preferredInferenceApi =
     explicitPreferredInferenceApi ??
@@ -866,6 +915,25 @@ async function runInferenceSetWithoutHostLock(
       `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
     );
   }
+  // Hermes keeps an isolated dashboard-home config that only mirrors the gateway
+  // config's model routing at sandbox startup. Re-seed it after an in-place
+  // switch so Dashboard Chat (and /api/model/info) converge on the new model
+  // instead of silently staying on the previous one (#6893).
+  //   - "converged": dashboard now matches the switch.
+  //   - "absent":    Dashboard disabled — nothing to converge, still a success.
+  //   - "failed":    warn and fail after the committed mutation is finalized so
+  //                  callers cannot accept a partially converged switch.
+  let dashboardConverged: boolean | undefined;
+  if (agentName === "hermes" && inSandboxConfigSynced) {
+    const reseed = deps.seedHermesDashboardConfig(sandboxName, target);
+    dashboardConverged = reseed !== "failed";
+    if (reseed === "failed") {
+      deps.log(
+        `  Warning: updated the Hermes model route but could not refresh the dashboard ` +
+          `config for '${sandboxName}'. Restart the sandbox to converge Dashboard Chat.`,
+      );
+    }
+  }
   const sessionUpdated = updateMatchingOnboardSession(
     sandboxName,
     provider,
@@ -890,6 +958,7 @@ async function runInferenceSetWithoutHostLock(
         configChanged: patched.changed,
         sessionUpdated,
         inSandboxConfigSynced,
+        dashboardConverged,
       },
     },
     deps,
@@ -931,6 +1000,13 @@ export async function runInferenceSet(
     // it, but retain the outer sandbox lifecycle lock so another process cannot
     // destroy/recreate this name between the committed write and restart.
     completeInferenceGatewayRestart(mutation, deps);
+    if (mutation.result.dashboardConverged === false) {
+      throw new InferenceSetError(
+        `Inference route and main Hermes config were updated for '${mutation.result.sandboxName}', ` +
+          `but the Dashboard config did not converge. The committed route was not rolled back. ` +
+          `Restart the sandbox to converge Dashboard Chat.`,
+      );
+    }
     return mutation.result;
   });
 }

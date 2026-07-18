@@ -6,6 +6,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
+import { cleanupWhenOpenShellAvailable } from "../fixtures/cleanup-resources.ts";
 import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts";
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -14,15 +15,16 @@ import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
 import {
-  bestEffort,
+  runSecondaryCleanup as bestEffortLifecycleCleanup,
   dockerInfo,
   expectExitZero,
   phase6Env,
   resultText,
-  sandboxEncodedSh,
   sandboxNode,
   sandboxSh,
+  sandboxShWithArgs,
   shellQuote,
+  trackPreinstallSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-discord";
@@ -69,14 +71,14 @@ function normalizedCsv(value: string): string {
   return value.replace(/\s+/g, "");
 }
 
-async function cleanupHermesDiscord(
+async function precleanHermesDiscord(
   host: HostCliClient,
   sandboxName: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[],
   prefix: string,
 ): Promise<void> {
-  await bestEffort(() =>
+  await bestEffortLifecycleCleanup(() =>
     host.command("nemoclaw", [sandboxName, "destroy", "--yes"], {
       artifactName: `${prefix}-nemoclaw-destroy`,
       env,
@@ -84,16 +86,16 @@ async function cleanupHermesDiscord(
       timeoutMs: 15 * 60_000,
     }),
   );
-  await bestEffort(() =>
-    host.command("openshell", ["sandbox", "delete", sandboxName], {
+  await bestEffortLifecycleCleanup(() =>
+    host.command(host.openshellCommandPath, ["sandbox", "delete", sandboxName], {
       artifactName: `${prefix}-openshell-sandbox-delete`,
       env,
       redactionValues,
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
-    host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+  await bestEffortLifecycleCleanup(() =>
+    host.command(host.openshellCommandPath, ["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: `${prefix}-openshell-gateway-destroy`,
       env,
       redactionValues,
@@ -109,7 +111,7 @@ async function startHermesFakeDiscordGateway(
   token: string,
   redactionValues: string[],
 ): Promise<FakeDockerApi> {
-  return startFakeDockerApi(host, cleanup.add.bind(cleanup), {
+  return startFakeDockerApi(host, cleanup.trackDisposable.bind(cleanup), {
     kind: "discord-gateway",
     imageScript: "fake-discord-gateway.cjs",
     containerPrefix: "nemoclaw-fake-discord-hermes",
@@ -130,7 +132,7 @@ async function applyHermesFakeDiscordPolicy(options: {
   redactions: string[];
 }): Promise<void> {
   const result = await options.host.command(
-    "openshell",
+    options.host.openshellCommandPath,
     [
       "policy",
       "update",
@@ -303,7 +305,7 @@ async function runHermesPythonDiscordGatewayProof(
   port: string,
   redactionValues: string[],
 ): Promise<ShellProbeResult> {
-  return sandboxEncodedSh(
+  return sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     `FAKE_DISCORD_GATEWAY_CLIENT_HOST=${shellQuote(FAKE_DISCORD_HOST)} FAKE_DISCORD_GATEWAY_CLIENT_PORT=${shellQuote(port)} /opt/hermes/.venv/bin/python - <<'PY'\n${HERMES_DISCORD_PYTHON_GATEWAY_PROOF}\nPY\n`,
@@ -322,7 +324,7 @@ async function assertRawTokenAbsentFromFiles(
   redactionValues: string[],
 ): Promise<void> {
   const tokenB64 = Buffer.from(token, "utf8").toString("base64");
-  const probe = await sandboxEncodedSh(
+  const probe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nif grep -Fq "$token" /sandbox/.hermes/config.yaml /sandbox/.hermes/.env 2>/dev/null; then echo LEAK; else echo OK; fi`,
@@ -347,7 +349,7 @@ async function rawTokenSurfaceProbe(
       : surface === "process"
         ? buildProcessTokenProbe(token)
         : `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nhit="$(grep -rFlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1 || true)"\nif [ -n "$hit" ]; then printf 'FOUND_TOKEN %s\\n' "$hit"; else echo ABSENT; fi`;
-  return sandboxEncodedSh(sandbox, SANDBOX_NAME, script, [], {
+  return sandboxShWithArgs(sandbox, SANDBOX_NAME, script, [], {
     artifactName,
     redactionValues,
     timeoutMs: surface === "filesystem" ? 120_000 : 60_000,
@@ -371,11 +373,40 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
     discordRequireMention: DISCORD_REQUIRE_MENTION,
   });
 
-  cleanup.add(`destroy Hermes Discord sandbox ${SANDBOX_NAME}`, () =>
-    cleanupHermesDiscord(host, SANDBOX_NAME, env, redactionValues, "cleanup-hermes-discord"),
+  const gatewayCleanupOptions = {
+    artifactName: "cleanup-hermes-discord-openshell-gateway-destroy",
+    env,
+    redactionValues,
+    timeoutMs: 120_000,
+  };
+  cleanup.trackGateway(
+    {
+      cleanupGatewayRegistration: (name: string) =>
+        cleanupWhenOpenShellAvailable(
+          host,
+          {
+            artifactName: "cleanup-hermes-discord-probe-openshell-gateway",
+            env,
+            redactionValues,
+            timeoutMs: 30_000,
+          },
+          () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+        ),
+    },
+    "nemoclaw",
+    gatewayCleanupOptions,
+  );
+  trackPreinstallSandboxCleanup(
+    cleanup,
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    env,
+    redactionValues,
+    "cleanup-hermes-discord",
   );
 
-  await cleanupHermesDiscord(host, SANDBOX_NAME, env, redactionValues, "preclean-hermes-discord");
+  await precleanHermesDiscord(host, SANDBOX_NAME, env, redactionValues, "preclean-hermes-discord");
 
   const docker = await dockerInfo(host, env);
   expectExitZero(docker, "Docker is running");
@@ -395,7 +426,12 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
 
   const cliProbe = await host.command(
     "bash",
-    ["-lc", "command -v nemoclaw && openshell --version"],
+    [
+      "-lc",
+      'command -v nemoclaw && command -v "$1" && "$1" --version',
+      "cli-probe-hermes-discord",
+      host.openshellCommandPath,
+    ],
     {
       artifactName: "phase-1-cli-probe",
       env,
@@ -416,7 +452,7 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
   expect(resultText(list)).toContain(SANDBOX_NAME);
 
   const provider = await host.command(
-    "openshell",
+    host.openshellCommandPath,
     ["provider", "get", `${SANDBOX_NAME}-discord-bridge`],
     {
       artifactName: "phase-2-discord-provider-get",
@@ -447,7 +483,7 @@ test("hermes-discord: Hermes Discord schema, credential isolation, native gatewa
   expect(resultText(health!)).toMatch(/"ok"/i);
 
   const expectedRequireMention = DISCORD_REQUIRE_MENTION === "0" ? "false" : "true";
-  const configProbe = await sandboxEncodedSh(
+  const configProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     `EXPECTED_REQUIRE_MENTION=${shellQuote(expectedRequireMention)} python3 - <<'PY'
@@ -494,7 +530,7 @@ PY`,
   expectExitZero(configProbe, "Hermes Discord config shape");
   expect(configProbe.stdout.trim()).toBe("OK");
 
-  const envProbe = await sandboxEncodedSh(
+  const envProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     `EXPECTED_ALLOWED_USERS=${shellQuote(normalizedCsv(DISCORD_ALLOWED_IDS))} EXPECTED_GUILD_IDS=${shellQuote(normalizedCsv(DISCORD_SERVER_IDS))} python3 - <<'PY'
@@ -641,7 +677,7 @@ req.end();
       throw new Error(`Discord API call failed: ${discordApiResult.error}`);
   }
 
-  const bridgeResidue = await sandboxEncodedSh(
+  const bridgeResidue = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     String.raw`set +e
@@ -670,7 +706,7 @@ done`,
   expectExitZero(bridgeResidue, "no local Discord bridge residue probe");
   expect(bridgeResidue.stdout.trim()).toBe("");
 
-  await bestEffort(() =>
+  await bestEffortLifecycleCleanup(() =>
     host.command("docker", ["rm", "-f", fakeGateway.container], {
       artifactName: "phase-8-remove-fake-discord-container-before-rebuild",
       env,
@@ -679,7 +715,7 @@ done`,
     }),
   );
   fs.rmSync(fakeGateway.dir, { recursive: true, force: true });
-  await bestEffort(() =>
+  await bestEffortLifecycleCleanup(() =>
     host.command(
       "bash",
       [
@@ -722,8 +758,8 @@ done`,
       timeoutMs: 15 * 60_000,
     });
     expectExitZero(destroy, "destroy Hermes Discord sandbox");
-    await bestEffort(() =>
-      host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+    await bestEffortLifecycleCleanup(() =>
+      host.command(host.openshellCommandPath, ["gateway", "destroy", "-g", "nemoclaw"], {
         artifactName: "phase-9-openshell-gateway-destroy",
         env,
         redactionValues,

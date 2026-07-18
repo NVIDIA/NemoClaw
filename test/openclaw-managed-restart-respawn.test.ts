@@ -50,7 +50,7 @@ def write_process(
     os.makedirs(os.path.join(process_root, "ns"))
     os.makedirs(os.path.join(process_root, "fd"))
     os.symlink("../net", os.path.join(process_root, "net"))
-    fields = ["S", str(parent_pid)] + (["0"] * 17) + [str(start_time)]
+    fields = ["S", str(parent_pid)] + (["0"] * 15) + ["1", "0", str(start_time)]
     with open(os.path.join(process_root, "stat"), "w", encoding="ascii") as stream:
         stream.write(f"{pid} (managed) {' '.join(fields)}\n")
     with open(os.path.join(process_root, "status"), "w", encoding="ascii") as stream:
@@ -258,31 +258,60 @@ describe("openclaw managed restart respawn (#6868)", () => {
     }
   });
 
-  it("refuses an exit lease that does not name the exact gateway", () => {
+  it("accepts only a lease for the exact gateway and a live root controller", () => {
     const supervisor = fs.readFileSync(SUPERVISOR_LIB, "utf-8");
-    const check = (payloadPid: string) => {
+    const check = (
+      options: {
+        payloadPid?: string;
+        includeMarker?: boolean;
+        symlinkMarker?: boolean;
+        includeController?: boolean;
+        controllerStart?: string;
+        controllerState?: string;
+        controllerUids?: string;
+        controllerAction?: string;
+      } = {},
+    ) => {
+      const {
+        payloadPid = "4242",
+        includeMarker = true,
+        symlinkMarker = false,
+        includeController = true,
+        controllerStart = "888",
+        controllerState = "S",
+        controllerUids = "0\t0\t0\t0",
+        controllerAction = "restart",
+      } = options;
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lease-"));
       const leaseDir = path.join(directory, "run", "nemoclaw");
       fs.mkdirSync(leaseDir, { recursive: true, mode: 0o711 });
-      fs.writeFileSync(
-        path.join(leaseDir, "managed-gateway-expected-exit"),
-        `v1 ${payloadPid} 333 7331 888\n`,
-        {
-          mode: 0o444,
-        },
-      );
+      const marker = path.join(leaseDir, "managed-gateway-expected-exit");
+      if (includeMarker) {
+        if (symlinkMarker) {
+          const attackerMarker = path.join(directory, "attacker-marker");
+          fs.writeFileSync(attackerMarker, `v1 ${payloadPid} 333 7331 888\n`, { mode: 0o444 });
+          fs.symlinkSync(attackerMarker, marker);
+        } else {
+          fs.writeFileSync(marker, `v1 ${payloadPid} 333 7331 888\n`, { mode: 0o444 });
+        }
+      }
       const procRoot = path.join(directory, "proc");
       const controllerRoot = path.join(procRoot, "7331");
-      fs.mkdirSync(controllerRoot, { recursive: true });
-      fs.writeFileSync(
-        path.join(controllerRoot, "stat"),
-        `7331 (python3) ${["S", "1", ...Array(17).fill("0"), "888"].join(" ")}\n`,
-      );
-      fs.writeFileSync(path.join(controllerRoot, "status"), "Uid:\t0\t0\t0\t0\nNSpid:\t7331\n");
-      fs.writeFileSync(
-        path.join(controllerRoot, "cmdline"),
-        `python3\0-I\0/usr/local/lib/nemoclaw/managed-gateway-control.py\0restart\0${NONCE}\0`,
-      );
+      if (includeController) {
+        fs.mkdirSync(controllerRoot, { recursive: true });
+        fs.writeFileSync(
+          path.join(controllerRoot, "stat"),
+          `7331 (python3) ${[controllerState, "1", ...Array(17).fill("0"), controllerStart].join(" ")}\n`,
+        );
+        fs.writeFileSync(
+          path.join(controllerRoot, "status"),
+          `Uid:\t${controllerUids}\nNSpid:\t7331\n`,
+        );
+        fs.writeFileSync(
+          path.join(controllerRoot, "cmdline"),
+          `python3\0-I\0/usr/local/lib/nemoclaw/managed-gateway-control.py\0${controllerAction}\0${NONCE}\0`,
+        );
+      }
       try {
         return runBash([
           'stat() { case "$3" in "$NEMOCLAW_MANAGED_EXPECTED_EXIT_DIR") printf "0:0 711\\n" ;; *) printf "0:0 444 1\\n" ;; esac; }',
@@ -315,8 +344,17 @@ describe("openclaw managed restart respawn (#6868)", () => {
         fs.rmSync(directory, { recursive: true, force: true });
       }
     };
-    expect(check("4242")).toContain("authorized");
+    expect(check()).toContain("authorized");
     // A lease naming a different pid must never authorize this exit.
-    expect(check("4243")).toContain("refused");
+    expect(check({ payloadPid: "4243" })).toContain("refused");
+    // Missing, linked, orphaned, replaced, non-root, or unexpected controllers
+    // must all fail closed as ordinary gateway exits.
+    expect(check({ includeMarker: false })).toContain("refused");
+    expect(check({ symlinkMarker: true })).toContain("refused");
+    expect(check({ includeController: false })).toContain("refused");
+    expect(check({ controllerStart: "889" })).toContain("refused");
+    expect(check({ controllerState: "Z" })).toContain("refused");
+    expect(check({ controllerUids: "1000\t1000\t1000\t1000" })).toContain("refused");
+    expect(check({ controllerAction: "probe" })).toContain("refused");
   });
 });

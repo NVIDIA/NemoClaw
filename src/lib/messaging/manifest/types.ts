@@ -46,6 +46,13 @@ export interface ChannelManifest {
   readonly runtime?: ChannelRuntimeByAgentSpec;
   readonly agentPackages?: readonly ChannelAgentPackageSpec[];
   readonly hooks: readonly ChannelHookSpec[];
+  /**
+   * Opt-in host-side health probe for `channels status --channel <id>`.
+   * "log-tail": the channel ships a runtime preload that writes classified
+   * `[<id>] [default] …` breadcrumbs to the gateway log and has an evaluator
+   * in `sandbox/<id>-diagnostics.ts`. Absent → basic report only.
+   */
+  readonly diagnosticsProbe?: "log-tail";
 }
 
 /** Manifest-owned network policy preset metadata. */
@@ -203,6 +210,16 @@ export interface ChannelRuntimeSecretScanSpec {
 
 export type ChannelAgentPackageManager = "openclaw-plugin" | "hermes-uv-pip";
 
+export interface ChannelAgentPackageRuntimeLockSpec {
+  readonly cachePath: string;
+  readonly installCacheEnvKey: string;
+  readonly lockFile: string;
+  readonly projectsRoot: string;
+  readonly verifierPath: string;
+  readonly offline: true;
+  readonly legacyPeerDeps: true;
+}
+
 /** Agent package/plugin install the sandbox image build should apply. */
 export interface ChannelAgentPackageSpec {
   readonly id: string;
@@ -214,6 +231,7 @@ export interface ChannelAgentPackageSpec {
   readonly integrityByVersion?: Readonly<Record<string, string>>;
   readonly tarballUrl?: string;
   readonly tarballUrlByVersion?: Readonly<Record<string, string>>;
+  readonly runtimeLock?: ChannelAgentPackageRuntimeLockSpec;
   readonly required?: boolean;
 }
 

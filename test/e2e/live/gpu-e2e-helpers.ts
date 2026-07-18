@@ -11,11 +11,13 @@ import { type SandboxClient, validateSandboxName } from "../fixtures/clients/san
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { stripAnsi } from "./json-envelope.ts";
 
 export { REPO_ROOT };
 
 export const CLI = CLI_ENTRYPOINT;
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-ollama";
+const DEFAULT_GPU_E2E_MODEL = "qwen3.5:9b";
 validateSandboxName(SANDBOX_NAME);
 export const PROXY_PORT = tcpPort(process.env.NEMOCLAW_OLLAMA_PROXY_PORT, "11435");
 
@@ -35,6 +37,7 @@ export function env(
     ...buildAvailabilityProbeEnv(base),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_MODEL: base.NEMOCLAW_MODEL ?? DEFAULT_GPU_E2E_MODEL,
     NEMOCLAW_PROVIDER: "ollama",
     NEMOCLAW_OLLAMA_PROXY_PORT: PROXY_PORT,
     NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -54,7 +57,10 @@ function isShellProbeResult(value: unknown): value is ShellProbeResult {
   );
 }
 
-export async function bestEffort(label: string, run: () => Promise<unknown>): Promise<void> {
+export async function preCleanBestEffort(
+  label: string,
+  run: () => Promise<unknown>,
+): Promise<void> {
   try {
     const result = await run();
     if (isShellProbeResult(result) && result.exitCode !== 0) {
@@ -112,22 +118,79 @@ export function chatContent(raw: string): string {
   );
 }
 
+export function hasExactReadyPhase(output: string): boolean {
+  const phaseLines = stripAnsi(output)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("Phase:"));
+  return phaseLines.length === 1 && phaseLines[0] === "Phase: Ready";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * Assert that upstream `openclaw agent --json` completed through the expected inference route.
+ * NemoClaw preserves that upstream stdout without owning its schema, so the live invocation is the
+ * producer-facing contract check. Visible assistant text is intentionally excluded because OpenClaw
+ * can suppress a successful turn as `NO_REPLY`. Replace this assertion when the pinned OpenClaw
+ * runtime exposes a dedicated stable completion signal.
+ */
+export function assertAgentExecutionSucceeded(
+  raw: string,
+  expectedProvider: string,
+  expectedModel: string,
+): void {
+  const envelope = asRecord(JSON.parse(raw));
+  const result = asRecord(envelope?.result);
+  const meta = asRecord(result?.meta);
+  const agentMeta = asRecord(meta?.agentMeta);
+  const trace = asRecord(meta?.executionTrace);
+  const attempts = Array.isArray(trace?.attempts)
+    ? trace.attempts.flatMap((attempt) => {
+        const record = asRecord(attempt);
+        return record ? [record] : [];
+      })
+    : [];
+
+  expect(envelope?.status, "agent command must report success").toBe("ok");
+  expect(envelope?.summary, "agent command must complete").toBe("completed");
+  expect(meta?.aborted, "agent command must not abort").toBe(false);
+  expect(agentMeta?.provider, "agent must use the expected provider").toBe(expectedProvider);
+  expect(agentMeta?.model, "agent must use the expected model").toBe(expectedModel);
+  expect(trace?.winnerProvider, "execution trace must select the expected provider").toBe(
+    expectedProvider,
+  );
+  expect(trace?.winnerModel, "execution trace must select the expected model").toBe(expectedModel);
+  expect(attempts, "execution trace must contain a successful assistant attempt").toContainEqual(
+    expect.objectContaining({
+      provider: expectedProvider,
+      model: expectedModel,
+      result: "success",
+      stage: "assistant",
+    }),
+  );
+}
+
 export async function cleanupGpu(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await bestEffort("destroy GPU sandbox", () =>
+  await preCleanBestEffort("destroy GPU sandbox", () =>
     host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-destroy-gpu",
       env: env(),
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort("delete OpenShell sandbox", () =>
-    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+  await preCleanBestEffort("delete OpenShell sandbox", () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-delete-gpu",
       env: env(),
       timeoutMs: 60_000,
     }),
   );
-  await bestEffort("destroy OpenShell gateway", () =>
+  await preCleanBestEffort("destroy OpenShell gateway", () =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-gateway-destroy-gpu",
       env: env(),
@@ -239,7 +302,7 @@ sleep 2
 curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http://127.0.0.1:$1/api/tags"`,
       "restart-proxy",
       PROXY_PORT,
-      path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.js"),
+      path.join(REPO_ROOT, "scripts", "ollama-auth-proxy.mts"),
     ],
     {
       artifactName: "proxy-restart-from-token",

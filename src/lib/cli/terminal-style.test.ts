@@ -52,7 +52,7 @@ async function withRestoredStreams<T>(callback: () => T | Promise<T>): Promise<T
   }
 }
 
-// styleText's `yellow`/`red`/`green` formats (as of Node 22.16) wrap text in
+// styleText's `yellow`/`red`/`green` formats (as of Node 22.19) wrap text in
 // SGR color codes with a `39` (default-foreground) reset.
 const YELLOW = (s: string) => `\x1b[33m${s}\x1b[39m`;
 const RED = (s: string) => `\x1b[31m${s}\x1b[39m`;

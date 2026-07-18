@@ -16,54 +16,10 @@ function readWorkflows() {
 }
 
 describe("sandbox image workflow boundary", () => {
-  it("reuses workflow setup anchors and ends every image build with cleanup", () => {
-    const { imageWorkflow } = readWorkflows();
-    const imageJobNames = [
-      "build-sandbox-images",
-      "build-hermes-sandbox-image",
-      "build-sandbox-images-arm64",
-    ];
-    const producer = imageWorkflow.jobs["build-sandbox-images"];
-    const canonicalAuth = producer.steps?.find(
-      (step) => step.name === "Authenticate to Docker Hub",
-    );
-    expect(canonicalAuth).toBeDefined();
+  it("accepts the production-image handoff and focused metadata probe", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
 
-    for (const jobName of imageJobNames) {
-      const job = imageWorkflow.jobs[jobName];
-      const auth = job.steps?.find((step) => step.name === "Authenticate to Docker Hub");
-      expect(auth, `${jobName} auth alias`).toBe(canonicalAuth);
-      expect(job.steps?.at(-1)).toEqual({
-        name: "Clean up Docker auth",
-        if: "always()",
-        shell: "bash",
-        run: "bash .github/scripts/docker-auth-cleanup.sh",
-      });
-    }
-
-    const canonicalCheckout = producer.steps?.find((step) => step.name === "Checkout");
-    expect(canonicalCheckout).toBeDefined();
-    for (const job of Object.values(imageWorkflow.jobs)) {
-      expect(job.steps?.find((step) => step.name === "Checkout")).toBe(canonicalCheckout);
-    }
-    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
-    for (const stepName of ["Set up Node", "Install root dependencies"]) {
-      const canonicalStep = hermes.steps?.find((step) => step.name === stepName);
-      expect(canonicalStep).toBeDefined();
-      expect(
-        imageWorkflow.jobs["runtime-overrides"].steps?.find((step) => step.name === stepName),
-      ).toBe(canonicalStep);
-    }
-    const gateway = imageWorkflow.jobs["test-e2e-gateway-isolation"];
-    for (const stepName of ["Download image artifact", "Load image"]) {
-      const canonicalStep = gateway.steps?.find((step) => step.name === stepName);
-      expect(canonicalStep).toBeDefined();
-      for (const jobName of ["runtime-overrides", "test-e2e-port-overrides"]) {
-        expect(imageWorkflow.jobs[jobName].steps?.find((step) => step.name === stepName)).toBe(
-          canonicalStep,
-        );
-      }
-    }
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual([]);
   });
 
   it("rejects auth ordering drift, incomplete cleanup, and registry writes", () => {
@@ -161,6 +117,47 @@ describe("sandbox image workflow boundary", () => {
 
       expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(error);
     }
+  });
+
+  it("keeps messaging plan image probes isolated, guarded, local, and verified", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const probe = imageWorkflow.jobs["messaging-plan-image-boundary"];
+    probe["timeout-minutes"] = 60;
+    probe.needs = "build-sandbox-images";
+    probe.steps!.find((step) => step.name === "Set up Node")!.with!["node-version"] = "22";
+    probe.steps!.push({ ...probe.steps!.find((step) => step.name === "Set up Node")! });
+    probe.steps!.push({
+      name: "Publish probe image",
+      uses: "actions/upload-artifact@0000000000000000000000000000000000000000",
+    });
+
+    const openclaw = probe.steps!.find(
+      (step) => step.name === "Build and verify OpenClaw messaging plan boundary",
+    )!;
+    openclaw.run = openclaw.run!.replace(
+      'scripts/check-production-build-args.sh "${build_args[@]}"',
+      'echo "guard bypassed"',
+    );
+
+    const hermes = probe.steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    hermes.run = hermes.run!.replace(
+      "check-messaging-plan-image-boundary.mts verify",
+      "check-messaging-plan-image-boundary.mts bypass",
+    );
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "messaging plan image boundary must retain its 30-minute budget",
+        "messaging plan image boundary must remain isolated from canonical image jobs",
+        "messaging plan image boundary must set up Node exactly once",
+        "messaging plan image boundary must use Node 22.19.0",
+        'openclaw messaging plan image boundary must include scripts/check-production-build-args.sh "${build_args[@]}"',
+        "hermes messaging plan image boundary must include node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify nemoclaw-hermes-plan-boundary hermes",
+        "messaging plan image boundary must not publish probe image artifacts",
+      ]),
+    );
   });
 
   it("rejects coupling, rebuilding, or failing to reuse the OpenClaw image artifact", () => {
@@ -275,17 +272,62 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("removes duplicate runtime-only jobs from the general E2E workflow and scorecard", () => {
-    const e2eWorkflow = readSandboxImagesWorkflow(".github/workflows/e2e.yaml");
-    const removedJobs = [
-      "runtime-overrides",
-      "hermes-root-entrypoint-smoke",
-      "hermes-sandbox-secret-boundary",
-    ];
+  it("rejects rebuilding, incomplete handoff, or weak metadata-probe tooling", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    const hermesSave = hermes.steps!.find((step) => step.name === "Save Hermes production image")!;
+    hermesSave.run = "echo skipped";
+    const hermesUpload = hermes.steps!.find(
+      (step) => step.name === "Upload Hermes isolation image",
+    )!;
+    hermesUpload.with!.name = "wrong-image";
 
-    for (const jobName of removedJobs) {
-      expect(e2eWorkflow.jobs).not.toHaveProperty(jobName);
-      expect(e2eWorkflow.jobs["report-to-pr"].needs).not.toContain(jobName);
-    }
+    const metadata = imageWorkflow.jobs["state-dir-guard-metadata"];
+    metadata.needs = ["build-sandbox-images"];
+    metadata["timeout-minutes"] = 15;
+    metadata.env!.NEMOCLAW_HERMES_TEST_IMAGE = "rebuilt-hermes";
+    metadata.steps!.push({
+      ...imageWorkflow.jobs["build-sandbox-images"].steps!.find(
+        (step) => step.name === "Authenticate to Docker Hub",
+      )!,
+    });
+    const openclawDownload = metadata.steps!.find(
+      (step) => step.name === "Download OpenClaw production image",
+    )!;
+    openclawDownload.with!.name = "wrong-image";
+    const load = metadata.steps!.find((step) => step.name === "Load production images")!;
+    load.run = "echo skipped";
+    const tools = metadata.steps!.find(
+      (step) => step.name === "Install filesystem metadata tools",
+    )!;
+    tools.run = "sudo apt-get install acl";
+    const probe = metadata.steps!.find(
+      (step) => step.name === "Run installed state-dir guard metadata test",
+    )!;
+    probe["timeout-minutes"] = 5;
+    probe.run = `${probe.run}\ndocker build -t rebuilt-hermes .`;
+    hermes.steps!.push({ ...probe });
+    const upload = metadata.steps!.find(
+      (step) => step.name === "Upload state-dir guard metadata artifacts",
+    )!;
+    delete upload.if;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes producer must save and verify its production image exactly once",
+        "Hermes producer must upload the saved production image before auth cleanup",
+        "state-dir guard metadata must depend on both production image producers",
+        "state-dir guard metadata job must retain its 30-minute budget",
+        "state-dir guard metadata must consume both named prebuilt production images",
+        "state-dir guard metadata must not authenticate to Docker Hub",
+        "state-dir guard metadata must not rebuild either production image",
+        "build-hermes-sandbox-image must not run the failure-isolated state-dir guard probe",
+        "state-dir guard metadata must download the saved OpenClaw production image",
+        "state-dir guard metadata image load must include /tmp/isolation-image.tar.gz | docker load",
+        "state-dir guard metadata tool setup must include sudo apt-get install --yes --no-install-recommends acl attr",
+        "state-dir guard metadata probe must retain its 15-minute budget",
+        "state-dir guard metadata must always use the shared E2E artifact uploader",
+      ]),
+    );
   });
 });

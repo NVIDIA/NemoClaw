@@ -20,8 +20,8 @@ export const POLICY_HINT_PROBE_ATTEMPTS = 3;
 export const POLICY_HINT_PROBE_RETRY_MS = 120;
 export const POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS = 1_000;
 
-export type PolicyDenialLogProbe = (sandboxName: string) => string;
-export type PolicyDenialAuditEnabler = (sandboxName: string) => void;
+export type PolicyDenialLogProbe = (sandboxName: string, gatewayName?: string) => string;
+export type PolicyDenialAuditEnabler = (sandboxName: string, gatewayName?: string) => void;
 
 export type PolicyDenialHintDeps = {
   probeLogs?: PolicyDenialLogProbe;
@@ -45,8 +45,8 @@ function runtimeTimeoutMs(): number {
   return Math.min(getLogsProbeTimeoutMs(), POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS);
 }
 
-function defaultEnableAudit(sandboxName: string): void {
-  const result = captureOpenshell(buildEnableSandboxAuditLogsArgs(sandboxName), {
+function defaultEnableAudit(sandboxName: string, gatewayName?: string): void {
+  const result = captureOpenshell(buildEnableSandboxAuditLogsArgs(sandboxName, gatewayName), {
     ignoreError: true,
     includeStderr: true,
     timeout: runtimeTimeoutMs(),
@@ -56,13 +56,13 @@ function defaultEnableAudit(sandboxName: string): void {
   }
 }
 
-function defaultProbeLogs(sandboxName: string): string {
+function defaultProbeLogs(sandboxName: string, gatewayName?: string): string {
   const options: SandboxLogsOptions = {
     follow: false,
     lines: String(POLICY_HINT_TAIL_LINES),
     since: null,
   };
-  const result = captureOpenshell(buildSandboxLogsArgs(sandboxName, options), {
+  const result = captureOpenshell(buildSandboxLogsArgs(sandboxName, options, gatewayName), {
     ignoreError: true,
     includeStderr: true,
     timeout: runtimeTimeoutMs(),
@@ -90,6 +90,7 @@ export async function maybeEmitPolicyDenialHint(
   hadInvocationError: boolean,
   commandStartedAtMs: number,
   deps: PolicyDenialHintDeps = {},
+  gatewayName?: string,
 ): Promise<string | null> {
   const env = deps.env ?? process.env;
   if (!shouldProbePolicyDenial(commandCode, hadInvocationError, env)) return null;
@@ -101,7 +102,7 @@ export async function maybeEmitPolicyDenialHint(
   const retryDelayMs = deps.retryDelayMs ?? POLICY_HINT_PROBE_RETRY_MS;
 
   try {
-    enableAudit(sandboxName);
+    enableAudit(sandboxName, gatewayName);
   } catch {
     // Deliberately silent: audit setup is optional and retained logs may still
     // contain the denial. Printing this diagnostic, even under a new debug
@@ -112,7 +113,7 @@ export async function maybeEmitPolicyDenialHint(
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let logOutput: string;
     try {
-      logOutput = probeLogs(sandboxName);
+      logOutput = probeLogs(sandboxName, gatewayName);
     } catch {
       // Deliberately silent for the same output-preservation boundary: a failed
       // optional probe must not append host diagnostics to the child's error.

@@ -111,11 +111,46 @@ export function createDeps(
     configureWebSearch: vi.fn(async () => null as WebSearchConfig | null),
     startStep: vi.fn(async () => undefined),
     getRecordedChannels: vi.fn(() => null),
+    showMessagingStage: vi.fn(),
     setupMessaging: vi.fn(async () => [] as string[]),
+    stageCredentialProviders: vi.fn(async () => [] as string[]),
     promptName: vi.fn(async () => "my-assistant"),
     selectResourceProfile: vi.fn(async () => null as ResourceProfile | null),
     stopStale: vi.fn(),
-    reconcileRegisteredExtraProviders: vi.fn(() => [] as string[]),
+    planRegisteredExtraProviders: vi.fn(() => ({
+      extraProviders: [] as string[],
+      staleExtraProviders: [] as string[],
+    })),
+    resolveCreateIntent: vi.fn(
+      async (input: {
+        sandboxName: string;
+        extraProviders: readonly string[];
+        staleExtraProviders: readonly string[];
+      }) => ({
+        sandboxName: input.sandboxName,
+        activeMessagingChannels: [],
+        messagingProviderRequests: [],
+        reusableMessagingProviders: [],
+        extraProviders: [...input.extraProviders],
+        staleExtraProviders: [...input.staleExtraProviders],
+        hermesToolGateways: [],
+        policy: {
+          basePolicyPath: "/repo/policy.yaml",
+          activeMessagingChannels: [],
+          options: {
+            directGpu: false,
+            additionalPresets: [],
+            policyTier: null,
+          },
+        },
+        gpuCreateArgs: [],
+        resourceCreateArgs: [],
+        gpuRoutePlan: "none" as const,
+        sandboxGpuLogMessage: null,
+        disabledChannelNames: [],
+        extraPlaceholderKeys: [],
+      }),
+    ),
     createSandbox: vi.fn(async () => "my-assistant"),
     updateSandbox: vi.fn(),
     complete: vi.fn(async (_stepName: string, updates: SessionUpdates) => {
@@ -130,7 +165,14 @@ export function createDeps(
       throw new Error(`exit ${code}`);
     }),
     withGatewayRouteMutationLock: vi.fn(),
+    withDashboardPortReservationLock: vi.fn(),
   };
+  const runWithDashboardPortReservationLock =
+    overrides.withDashboardPortReservationLock ??
+    (async <T>(operation: () => Promise<T> | T): Promise<T> => {
+      calls.withDashboardPortReservationLock(operation);
+      return await operation();
+    });
   const runWithGatewayRouteMutationLock = async <T>(
     gatewayName: string,
     operation: () => Promise<T> | T,
@@ -177,16 +219,20 @@ export function createDeps(
       configureWebSearch: calls.configureWebSearch,
       startRecordedStep: calls.startStep,
       getRecordedMessagingChannelsForResume: calls.getRecordedChannels,
+      showMessagingStage: calls.showMessagingStage,
       setupMessagingChannels: calls.setupMessaging,
       readMessagingPlanFromEnv: () => null,
       writePlanToEnv: () => undefined,
       clearPlanEnv: calls.clearPlanEnv,
       getRegistrySandboxMessagingPlan: () => null,
+      providerMatchesGatewayCredential: () => false,
+      stageSandboxCredentialProviders: calls.stageCredentialProviders,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,
       stopStaleDashboardListenersForSandbox: calls.stopStale,
       listRegistrySandboxes: () => ({ sandboxes: [{ name: "old" }] }),
-      reconcileRegisteredExtraProviders: calls.reconcileRegisteredExtraProviders,
+      planRegisteredExtraProviders: calls.planRegisteredExtraProviders,
+      resolveSandboxCreateIntent: calls.resolveCreateIntent,
       createSandbox: calls.createSandbox,
       updateSandboxRegistry: calls.updateSandbox,
       getSandboxAgentRegistryFields: () => ({ agent: null }),
@@ -200,6 +246,7 @@ export function createDeps(
       ...overrides,
       checkGatewayRouteCompatibility:
         overrides.checkGatewayRouteCompatibility ?? calls.checkGatewayRouteCompatibility,
+      withDashboardPortReservationLock: runWithDashboardPortReservationLock,
       withGatewayRouteMutationLock: runWithGatewayRouteMutationLock,
     },
     getSession: () => session,

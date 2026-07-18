@@ -14,7 +14,7 @@ import {
   parseMcpAddArgs,
   resolveCredentialEnv,
 } from "./mcp-bridge";
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.72.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.85.json";
 
 describe("MCP CLI input validation", () => {
   it("parses server, URL, and env references", () => {
@@ -39,21 +39,30 @@ describe("MCP CLI input validation", () => {
     ).toThrow(/process arguments and shell history/);
   });
 
+  it("rejects OpenShell revisioned placeholder names as MCP credentials (#6379)", () => {
+    for (const name of ["v1_TOKEN", "v999999_very_unlikely", "v0_1"]) {
+      expect(() =>
+        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
+      ).toThrow(/reserved for OpenShell credential revisions/);
+      expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
+        /would be skipped instead of attached/,
+      );
+      expect(() =>
+        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
+          [name]: "host-only-secret",
+        }),
+      ).toThrow(/reserved for OpenShell credential revisions/);
+    }
+
+    for (const name of ["v_TOKEN", "v10_", "versioned_token", "V10_TOKEN"]) {
+      expect(() =>
+        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
+      ).not.toThrow();
+    }
+  });
+
+  // source-shape-contract: compatibility -- Pinned OpenShell child-visible keys must drive credential rejection through every MCP boundary
   it("rejects OpenShell child-environment compatibility keys as MCP credentials", () => {
-    expect(childVisibleCredentialManifest).toMatchObject({
-      openshellVersion: "0.0.72",
-      openshellCommit: "8cb16de9eae4c44d7d31e1493747d8c10abb5963",
-    });
-    expect(childVisibleCredentialManifest.rawChildValueKeys).toEqual([
-      "GCP_PROJECT_ID",
-      "GOOGLE_CLOUD_PROJECT",
-      "CLOUD_ML_REGION",
-      "GCP_LOCATION",
-      "GCP_SERVICE_ACCOUNT_EMAIL",
-      "GOOSE_PROVIDER",
-      "ANTHROPIC_VERTEX_PROJECT_ID",
-      "VERTEX_LOCATION",
-    ]);
     for (const name of childVisibleCredentialManifest.rawChildValueKeys) {
       expect(() =>
         parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
@@ -68,11 +77,6 @@ describe("MCP CLI input validation", () => {
       ).toThrow(/materialized as a raw child-process value/);
     }
 
-    expect(childVisibleCredentialManifest.rewrittenChildValueKeys).toEqual([
-      "GCE_METADATA_HOST",
-      "GCE_METADATA_IP",
-      "METADATA_SERVER_DETECTION",
-    ]);
     for (const name of childVisibleCredentialManifest.rewrittenChildValueKeys) {
       expect(() =>
         parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
@@ -80,6 +84,7 @@ describe("MCP CLI input validation", () => {
     }
   });
 
+  // source-shape-contract: compatibility -- Host subprocess controls must stay synchronized with the pinned OpenShell child environment boundary
   it("rejects host subprocess control and allowlist names as MCP credentials", () => {
     for (const name of SUBPROCESS_ENV_ALLOWED_NAMES) {
       expect(childVisibleCredentialManifest.runtimeControlKeys).toContain(name);

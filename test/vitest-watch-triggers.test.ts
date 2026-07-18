@@ -33,9 +33,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/openclaw-slack-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-auth-contract-workflow-boundary.test.ts",
   "test/e2e/support/openshell-gateway-upgrade-workflow-boundary.test.ts",
-  "test/e2e/support/overlayfs-autofix-workflow-boundary.test.ts",
   "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
-  "test/e2e/support/rlimit-connect-workflow-boundary.test.ts",
   "test/e2e/support/sandbox-images-workflow-boundary.test.ts",
   "test/e2e/support/sandbox-operations-workflow-boundary.test.ts",
   "test/e2e/support/security-posture-workflow-boundary.test.ts",
@@ -57,6 +55,10 @@ const OPAQUE_INPUTS = [
   "test/e2e/manifests/openclaw-nvidia.yaml",
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
+  ".github/workflows/code-scanning.yaml",
+  ".github/workflows/pr-e2e-gate.yaml",
+  ".github/workflows/platform-vitest-main.yaml",
+  "ci/platform-vitest-macos-requirements.lock",
 ] as const;
 
 function triggeredBy(relativePath: string): string[] {
@@ -64,6 +66,7 @@ function triggeredBy(relativePath: string): string[] {
 }
 
 describe("Vitest opaque-input watch triggers", () => {
+  // source-shape-contract: compatibility -- Root watch mode must install the canonical opaque-input trigger resolver
   it("registers the focused mappings at the root configuration boundary (#6692)", () => {
     expect(rootVitestConfig.test?.watchTriggerPatterns).toBe(vitestWatchTriggerPatterns);
   });
@@ -100,6 +103,19 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-migration-policy.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
+    expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
+      "test/code-scanning-workflow.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/pr-e2e-gate.yaml")).toEqual([
+      "test/pr-e2e-gate-workflow.test.ts",
+      "test/pr-e2e-required.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/platform-vitest-main.yaml")).toEqual([
+      "test/platform-vitest-main-workflow.test.ts",
+    ]);
+    expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
+      "test/platform-vitest-main-workflow.test.ts",
+    ]);
   });
 
   it("returns only concrete test files that exist (#6692)", () => {

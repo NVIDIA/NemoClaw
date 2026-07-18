@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import ts from "typescript";
+import { moduleTagDeclarations, stripModuleTagDeclarations } from "./module-tags.mts";
 
 export const CREDENTIAL_FREE_TEST_TAG = "e2e/credential-free";
 export const SHARED_E2E_JOB_ID = "shared-e2e";
@@ -31,7 +31,6 @@ type VitestFile = {
 };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const MODULE_TAG_BODY_PATTERN = /^@module-tag[\t ]+([A-Za-z0-9/_-]+)$/u;
 const SAFE_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SAFE_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 const E2E_LIVE_CREDENTIAL_FREE_TEST_PATTERN =
@@ -99,63 +98,6 @@ function validateTestFile(file: string, project: CredentialFreeTestProject): voi
   }
 }
 
-type ModuleTagDeclaration = {
-  tag: string;
-  start: number;
-  end: number;
-};
-
-function standaloneModuleTag(comment: string): string | undefined {
-  const body = comment.startsWith("//")
-    ? comment.slice(2).trim()
-    : comment
-        .slice(2, -2)
-        .split(/\r?\n/u)
-        .map((line) => line.replace(/^[\t ]*\**[\t ]?/u, "").trim())
-        .filter(Boolean)
-        .join("\n");
-  return MODULE_TAG_BODY_PATTERN.exec(body)?.[1];
-}
-
-function declarationLineRange(
-  source: string,
-  tokenStart: number,
-  tokenEnd: number,
-): Pick<ModuleTagDeclaration, "start" | "end"> | undefined {
-  const lineStart = source.lastIndexOf("\n", tokenStart - 1) + 1;
-  const nextNewline = source.indexOf("\n", tokenEnd);
-  const lineEnd = nextNewline < 0 ? source.length : nextNewline;
-  if (
-    !/^[\t ]*$/u.test(source.slice(lineStart, tokenStart)) ||
-    !/^[\t \r]*$/u.test(source.slice(tokenEnd, lineEnd))
-  ) {
-    return undefined;
-  }
-  return { start: lineStart, end: nextNewline < 0 ? source.length : nextNewline + 1 };
-}
-
-function moduleTagDeclarations(source: string): ModuleTagDeclaration[] {
-  const scanner = ts.createScanner(
-    ts.ScriptTarget.Latest,
-    false,
-    ts.LanguageVariant.Standard,
-    source,
-  );
-  const declarations: ModuleTagDeclaration[] = [];
-  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
-    if (
-      token !== ts.SyntaxKind.SingleLineCommentTrivia &&
-      token !== ts.SyntaxKind.MultiLineCommentTrivia
-    ) {
-      continue;
-    }
-    const tag = standaloneModuleTag(scanner.getTokenText());
-    const range = declarationLineRange(source, scanner.getTokenPos(), scanner.getTextPos());
-    if (tag && range) declarations.push({ tag, ...range });
-  }
-  return declarations;
-}
-
 function credentialFreeTestTags(source: string, file?: string): string[] {
   const tags = moduleTagDeclarations(source).map(({ tag }) => tag);
   const unknownTag = tags.find((tag) => tag.startsWith("e2e/") && tag !== CREDENTIAL_FREE_TEST_TAG);
@@ -165,18 +107,8 @@ function credentialFreeTestTags(source: string, file?: string): string[] {
   return tags.filter((tag) => tag === CREDENTIAL_FREE_TEST_TAG);
 }
 
-function stripDeclarations(source: string, declarations: readonly ModuleTagDeclaration[]): string {
-  let cursor = 0;
-  let stripped = "";
-  for (const declaration of declarations) {
-    stripped += source.slice(cursor, declaration.start);
-    cursor = declaration.end;
-  }
-  return stripped + source.slice(cursor);
-}
-
 export function stripCredentialFreeTestDeclarations(source: string): string {
-  return stripDeclarations(
+  return stripModuleTagDeclarations(
     source,
     moduleTagDeclarations(source).filter(({ tag }) => tag === CREDENTIAL_FREE_TEST_TAG),
   );

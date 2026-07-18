@@ -66,10 +66,11 @@ Standup converts the recommendation into assignments. Every recommended item sho
 Daily `v0.0.x` labels have different meanings by item kind and PR state:
 
 - On open PRs, the label activates the PR for daily release work. Open labeled PRs that merge by cutoff are candidates for that release.
-- After a PR merges to `main`, authorized automation adds the earliest containing release label, or the next patch label when no release tag contains the merge yet. This is historical release attribution, not evidence that the PR was activated or ready before merge.
+- After a PR merges to `main`, authorized automation adds the next patch label only when the merge is ahead of the latest release tag. This keeps the untagged release queue complete before cutoff.
+- After the release tag and workflow-managed `latest` are verified, the released label is deleted. The tag comparison range owns durable release membership.
 - On issues, the label is an attention, regression-tracking, or "needs PR for this daily release" signal. It does not include the issue in the release by itself.
 
-Open labeled PRs and issues that miss a tagged release are automatically moved to the next patch label during post-tag housekeeping. Merged PR labels remain as additive release attribution. Remove a version label without replacement only when an open item is deferred, superseded, closed, or no longer part of the daily release cycle.
+Open labeled PRs and issues that miss a tagged release are automatically moved to the next patch label during post-tag housekeeping. After no open item remains, housekeeping deletes the released label from the repository. Remove a version label without replacement only when an open item is deferred, superseded, closed, or no longer part of the daily release cycle. Never rename or reuse a released label.
 
 ## Issue Templates
 
@@ -106,4 +107,4 @@ When writes are authorized:
 
 1. Apply field updates first.
 2. Add canonical labels.
-3. Post comments only when the authorization context covers the exact comment text or intent.
+3. Post comments only when the authorization context covers the comment text or intent.

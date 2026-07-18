@@ -3,7 +3,7 @@
 
 import { shellQuote } from "../fixtures/clients/command.ts";
 
-const COMMON_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
+const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
 
 export interface LegacyGatewayUpgradeFixture {
@@ -47,20 +47,33 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
 }
 
 export function oldGatewayUpgradeInstallerArgs(installer: string): string[] {
-  return [installer, ...COMMON_INSTALLER_ARGS, "--fresh"];
+  return [installer, ...NON_INTERACTIVE_INSTALLER_ARGS, "--fresh"];
 }
 
-export function currentGatewayUpgradeInstallerArgs(installer: string): string[] {
-  return [installer, ...COMMON_INSTALLER_ARGS];
+export function currentGatewayUpgradeInstallerArgs(
+  installer: string,
+  options: { interactive?: boolean } = {},
+): string[] {
+  return options.interactive ? [installer] : [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
 }
 
-export function upgradeGatewayCleanupScript(pidFile: string): string {
-  return `if command -v openshell >/dev/null 2>&1; then
-  openshell gateway remove nemoclaw >/dev/null 2>&1 \\
-    || openshell gateway destroy -g nemoclaw >/dev/null 2>&1 \\
-    || openshell gateway destroy >/dev/null 2>&1 \\
-    || true
-fi
+export function expectedLegacyRegistryMetadata(nemoclawRef: string): {
+  nemoclawVersion: string | undefined;
+  fromDockerfile: null | undefined;
+} {
+  switch (nemoclawRef) {
+    case "v0.0.36":
+    case "v0.0.55":
+      return { nemoclawVersion: undefined, fromDockerfile: undefined };
+    case "v0.0.74":
+      return { nemoclawVersion: "0.0.74", fromDockerfile: null };
+    default:
+      throw new Error(`Unsupported gateway-upgrade registry fixture: ${nemoclawRef}`);
+  }
+}
+
+export function upgradeGatewayStateCleanupScript(pidFile: string): string {
+  return `set -e
 volume_prefix=${GATEWAY_VOLUME_PREFIX}
 gateway_volumes="$(docker volume ls -q --filter "name=\${volume_prefix}")"
 while IFS= read -r volume; do
@@ -73,4 +86,14 @@ while IFS= read -r volume; do
   esac
 done <<<"$gateway_volumes"
 rm -f ${shellQuote(pidFile)}`;
+}
+
+export function upgradeGatewayCleanupScript(pidFile: string): string {
+  return `if command -v openshell >/dev/null 2>&1; then
+  openshell gateway remove nemoclaw >/dev/null 2>&1 \\
+    || openshell gateway destroy -g nemoclaw >/dev/null 2>&1 \\
+    || openshell gateway destroy >/dev/null 2>&1 \\
+    || true
+fi
+${upgradeGatewayStateCleanupScript(pidFile)}`;
 }

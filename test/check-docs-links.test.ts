@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.dirname(import.meta.dirname);
 const CHECK_DOCS = path.join(import.meta.dirname, "e2e", "e2e-cloud-experimental", "check-docs.sh");
@@ -87,7 +87,7 @@ describe("check-docs link validation", () => {
         "",
         "[OpenClaw overview](/user-guide/openclaw/about/overview)",
         "[OpenClaw home](/openclaw)",
-        "[OpenClaw hardening](/user-guide/openclaw/manage-sandboxes/sandbox-hardening)",
+        "[OpenClaw hardening](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/review-sandbox-hardening)",
         '<Card title="Hermes overview" href="/user-guide/hermes/about/overview">',
         '<Card title="Hermes home" href="/user-guide/hermes">',
         "",
@@ -116,7 +116,7 @@ describe("check-docs link validation", () => {
     );
     expect(routeRelativeResult.status).toBe(0);
     expect(`${slugAliasResult.stdout}${slugAliasResult.stderr}`).not.toContain(
-      "../manage-sandboxes/sandbox-hardening",
+      "../manage-sandboxes/configure-sandboxes/review-sandbox-hardening",
     );
     expect(slugAliasResult.status).toBe(0);
   });
@@ -170,6 +170,44 @@ describe("check-docs link validation", () => {
       expect(result.status).toBe(0);
     } finally {
       fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("resolves the native changelog root by its published slug", () => {
+    const tempDir = fs.mkdtempSync(path.join(REPO_ROOT, "docs", "check-docs-changelog-"));
+    const sourcePath = path.join(tempDir, "source.mdx");
+    const navPath = path.join(tempDir, "index.yml");
+    const sourceRel = path.relative(path.join(REPO_ROOT, "docs"), sourcePath);
+    try {
+      fs.writeFileSync(sourcePath, "# Reference\n\n[Release Notes](../release-notes)\n");
+      fs.writeFileSync(
+        navPath,
+        [
+          "navigation:",
+          "  - tab: user-guide",
+          "    variants:",
+          '      - title: "OpenClaw"',
+          "        slug: openclaw",
+          "        layout:",
+          "          - changelog: ./changelog",
+          '            title: "Release Notes"',
+          "            slug: release-notes",
+          '          - section: "Reference"',
+          "            slug: reference",
+          "            contents:",
+          '              - page: "Source"',
+          `                path: ${sourceRel}`,
+          "                slug: source",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runCheckDocs(sourcePath, { CHECK_DOCS_FERN_NAV_YML: navPath });
+
+      expect(`${result.stdout}${result.stderr}`).not.toContain("../release-notes");
+      expect(result.status).toBe(0);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 

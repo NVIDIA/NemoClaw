@@ -8,11 +8,7 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
-import {
-  type SandboxClient,
-  trustedSandboxShellScript,
-  validateSandboxName,
-} from "../fixtures/clients/sandbox.ts";
+import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
@@ -104,7 +100,7 @@ export function env(
   };
 }
 
-export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
+export async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
   } catch {}
@@ -373,15 +369,15 @@ function streamTextChunks(id: string, content: string): unknown[] {
 }
 
 export async function cleanupKimi(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
-  await bestEffort(() =>
+  await preCleanBestEffort(() =>
     host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "cleanup-destroy-kimi",
       env: env(),
       timeoutMs: 120_000,
     }),
   );
-  await bestEffort(() =>
-    sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
+  await preCleanBestEffort(() =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "cleanup-delete-kimi",
       env: env(),
       timeoutMs: 60_000,
@@ -548,15 +544,10 @@ export async function assertTrajectory(
   mode: KimiInferenceMode,
 ): Promise<void> {
   const checkScript = buildKimiTrajectoryCheckScript(mode === "mock");
-  const encoded = Buffer.from(checkScript, "utf8").toString("base64");
-  const trajectory = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(`python3 -c "$(printf %s '${encoded}' | base64 -d)"`),
-    {
-      artifactName: "kimi-trajectory-tool-splitting-check",
-      env: env({}, { mode }),
-      timeoutMs: 60_000,
-    },
-  );
+  const trajectory = await sandbox.exec(SANDBOX_NAME, ["python3", "-c", checkScript], {
+    artifactName: "kimi-trajectory-tool-splitting-check",
+    env: env({}, { mode }),
+    timeoutMs: 60_000,
+  });
   expect(trajectory.exitCode, resultText(trajectory)).toBe(0);
 }

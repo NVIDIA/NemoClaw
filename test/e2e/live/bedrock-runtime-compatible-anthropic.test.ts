@@ -12,6 +12,11 @@ import path from "node:path";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
+  cleanupAcquiredResource,
+  cleanupExistingPath,
+  terminateProcessIfRunning,
+} from "../fixtures/cleanup-resources.ts";
+import {
   assertExitZero as expectExitZero,
   resultText,
   shellQuote,
@@ -117,8 +122,7 @@ function isMissingSandboxCleanupOutput(text: string): boolean {
 }
 
 function sandboxShellArgs(script: string): string[] {
-  const encoded = Buffer.from(script, "utf8").toString("base64");
-  return ["sh", "-lc", `printf %s ${shellQuote(encoded)} | base64 -d | sh`];
+  return ["sh", "-lc", script];
 }
 
 function assertAgent(value: string): asserts value is AgentName {
@@ -496,7 +500,7 @@ async function startFakeBedrockRuntimeMock(options: {
   };
 }
 
-async function bestEffort(run: () => Promise<unknown> | unknown): Promise<void> {
+async function bestEffortPreclean(run: () => Promise<unknown> | unknown): Promise<void> {
   try {
     await run();
   } catch {
@@ -549,12 +553,12 @@ async function cleanupOpenShellGateway(host: HostCliClient, home: string): Promi
 }
 
 async function cleanupSandboxState(host: HostCliClient, home: string): Promise<void> {
-  await bestEffort(() => cleanupNemoClawSandbox(host, home));
-  await bestEffort(() => cleanupOpenShellSandbox(host, home));
-  await bestEffort(() => cleanupOpenShellGateway(host, home));
+  await bestEffortPreclean(() => cleanupNemoClawSandbox(host, home));
+  await bestEffortPreclean(() => cleanupOpenShellSandbox(host, home));
+  await bestEffortPreclean(() => cleanupOpenShellGateway(host, home));
 }
 
-function stopBedrockAdapterBestEffort(home: string): void {
+function stopBedrockAdapter(home: string): void {
   const stateFile = path.join(home, ".nemoclaw", "bedrock-runtime-adapter.json");
   const pidFile = path.join(home, ".nemoclaw", "bedrock-runtime-adapter.pid");
   const tokenFile = path.join(home, ".nemoclaw", "bedrock-runtime-adapter-token");
@@ -566,11 +570,7 @@ function stopBedrockAdapterBestEffort(home: string): void {
     if (fs.existsSync(pidFile)) {
       const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
       if (Number.isInteger(pid) && pid > 0 && isBedrockAdapterProcess(pid)) {
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          // Already stopped.
-        }
+        terminateProcessIfRunning(pid);
       }
     }
   } finally {
@@ -580,11 +580,13 @@ function stopBedrockAdapterBestEffort(home: string): void {
   }
 }
 
+const BEDROCK_ADAPTER_LAUNCHER_PATTERN =
+  /(?:^|[^A-Za-z0-9_.-])bedrock-runtime-adapter\.(?:mts|js)(?:$|[^A-Za-z0-9_.-])/;
+
 function isBedrockAdapterProcess(pid: number): boolean {
-  const expectedScript = "bedrock-runtime-adapter.js";
   try {
     const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
-    if (cmdline.includes(expectedScript)) return true;
+    if (BEDROCK_ADAPTER_LAUNCHER_PATTERN.test(cmdline)) return true;
   } catch {
     // Fall back to ps on platforms without procfs.
   }
@@ -593,7 +595,7 @@ function isBedrockAdapterProcess(pid: number): boolean {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
-  return ps.status === 0 && ps.stdout.includes(expectedScript);
+  return ps.status === 0 && BEDROCK_ADAPTER_LAUNCHER_PATTERN.test(ps.stdout);
 }
 
 async function restoreHostsFile(
@@ -602,21 +604,23 @@ async function restoreHostsFile(
   backupDir: string,
   home: string,
 ): Promise<void> {
-  await bestEffort(() =>
-    host.command("sudo", ["cp", backupPath, "/etc/hosts"], {
+  expectExitZero(
+    await host.command("sudo", ["cp", backupPath, "/etc/hosts"], {
       artifactName: "restore-etc-hosts-bedrock-runtime",
       env: testEnv(home),
       timeoutMs: 30_000,
     }),
+    "restore /etc/hosts after Bedrock Runtime mapping",
   );
-  await bestEffort(() =>
-    host.command("sudo", ["rm", "-rf", backupDir], {
+  expectExitZero(
+    await host.command("sudo", ["rm", "-rf", backupDir], {
       artifactName: "remove-etc-hosts-backup-bedrock-runtime",
       env: testEnv(home),
       timeoutMs: 30_000,
     }),
+    "remove Bedrock Runtime hosts backup",
   );
-  await bestEffort(() => fs.rmSync(backupDir, { recursive: true, force: true }));
+  fs.rmSync(backupDir, { recursive: true, force: true });
 }
 
 async function mapBedrockHostToLoopback(
@@ -715,8 +719,8 @@ async function installBedrockTlsRedirect(host: HostCliClient, home: string): Pro
 }
 
 async function removeBedrockTlsRedirect(host: HostCliClient, home: string): Promise<void> {
-  await bestEffort(() =>
-    host.command(
+  expectExitZero(
+    await host.command(
       "sudo",
       [
         "-n",
@@ -731,6 +735,7 @@ async function removeBedrockTlsRedirect(host: HostCliClient, home: string): Prom
         timeoutMs: 30_000,
       },
     ),
+    "remove Bedrock Runtime canonical TLS port redirect",
   );
 }
 
@@ -1303,6 +1308,11 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
   timeout: TEST_TIMEOUT_MS,
 }, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   assertAgent(AGENT);
+  const shard =
+    process.env.GITHUB_ACTIONS === "true"
+      ? process.env.NEMOCLAW_E2E_SHARD
+      : (process.env.NEMOCLAW_E2E_SHARD ?? AGENT);
+  expect(shard).toBe(AGENT);
   validateSandboxName(SANDBOX_NAME);
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bedrock-runtime-home-"));
@@ -1310,24 +1320,39 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
   const hostsBackup = path.join(hostsBackupDir, "hosts");
   let mock: MockBedrockRuntime | undefined;
   let onboarding: RawRunResult | undefined;
+  let tlsRedirectInstalled = false;
 
-  cleanup.add(`remove Bedrock Runtime test home ${home}`, () =>
+  cleanup.trackDisposable(`remove Bedrock Runtime test home ${home}`, () =>
     fs.rmSync(home, { recursive: true, force: true }),
   );
-  cleanup.add(`destroy Bedrock Runtime sandbox ${SANDBOX_NAME}`, () =>
-    cleanupSandboxState(host, home),
+  cleanup.trackGateway(host, "nemoclaw", {
+    artifactName: "cleanup-openshell-gateway-destroy-bedrock-runtime",
+    env: testEnv(home),
+    timeoutMs: 120_000,
+  });
+  cleanup.trackDisposable(`delete Bedrock Runtime OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-sandbox-delete-bedrock-runtime",
+      env: testEnv(home),
+      timeoutMs: 60_000,
+    }),
   );
-  cleanup.add("restore /etc/hosts after Bedrock Runtime mapping", () =>
-    restoreHostsFile(host, hostsBackup, hostsBackupDir, home),
+  cleanup.trackDisposable(`destroy Bedrock Runtime sandbox ${SANDBOX_NAME}`, () =>
+    cleanupNemoClawSandbox(host, home),
   );
-  cleanup.add("remove Bedrock Runtime canonical TLS port redirect", () =>
-    removeBedrockTlsRedirect(host, home),
+  cleanup.trackDisposable("restore /etc/hosts after Bedrock Runtime mapping", () =>
+    cleanupExistingPath(hostsBackup, () =>
+      restoreHostsFile(host, hostsBackup, hostsBackupDir, home),
+    ),
   );
-  cleanup.add("stop Bedrock Runtime adapter", () => stopBedrockAdapterBestEffort(home));
-  cleanup.add("stop fake Bedrock Runtime endpoint", async () => {
+  cleanup.trackDisposable("remove Bedrock Runtime canonical TLS port redirect", () =>
+    cleanupAcquiredResource(tlsRedirectInstalled, () => removeBedrockTlsRedirect(host, home)),
+  );
+  cleanup.trackDisposable("stop Bedrock Runtime adapter", () => stopBedrockAdapter(home));
+  cleanup.trackDisposable("stop fake Bedrock Runtime endpoint", async () => {
     if (mock) await mock.close();
   });
-  cleanup.add("write fake Bedrock Runtime log", async () => {
+  cleanup.trackDisposable("write fake Bedrock Runtime log", async () => {
     if (mock) {
       await artifacts.writeText(
         "fake-bedrock-runtime.log",
@@ -1379,6 +1404,7 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
   await prepareSourceCliAndOpenShell(host, home);
   await mapBedrockHostToLoopback(host, home, hostsBackup, skip);
   await installBedrockTlsRedirect(host, home);
+  tlsRedirectInstalled = true;
   const tls = createBedrockTlsFixture(home);
   mock = await startFakeBedrockRuntimeMock({
     port: BEDROCK_MOCK_PORT,

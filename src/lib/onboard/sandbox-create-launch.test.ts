@@ -17,6 +17,7 @@ import {
 } from "./sandbox-create-launch";
 
 const disabledHermesDashboardState = { config: null, enabled: false };
+const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const temporaryBuildContexts: string[] = [];
 
 function createTrustedBuildContext(): string {
@@ -376,6 +377,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
         dockerDriverGateway: true,
         env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
         buildImage,
+        inspectImageId: () => IMAGE_ID,
         log: vi.fn(),
         origin: "generated",
       },
@@ -384,6 +386,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(result.prebuild).toEqual({
       createArgs: ["--from", "nemoclaw-sandbox-local:demo-build-123", "--name", "demo"],
       imageRef: "nemoclaw-sandbox-local:demo-build-123",
+      imageId: IMAGE_ID,
     });
     expect(result.createCommand).toContain(
       "sandbox create --from nemoclaw-sandbox-local:demo-build-123 --name demo",
@@ -420,6 +423,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(result.prebuild).toEqual({
       createArgs: ["--from", dockerfile, "--name", "demo"],
       imageRef: null,
+      imageId: null,
     });
     expect(result.createCommand).toContain(`sandbox create --from ${dockerfile} --name demo`);
     expect(result.createCommand).not.toContain("nemoclaw-sandbox-local");

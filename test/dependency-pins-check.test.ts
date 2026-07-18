@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { verifyDependencyPins } from "../scripts/checks/dependency-pins";
+import { verifyDependencyPins } from "../scripts/checks/dependency-pins.mts";
 
 const OPENSHELL_MIN = "1.2.3";
 const OPENSHELL_MAX = "1.2.4";
@@ -18,6 +18,12 @@ const ALTERNATE_INTEGRITY =
   "sha512-PzSJiYqmwpTudmakYs2oCJ57OW3VwEJYf8buTuKvuRvcYEUf/KOTu2dD6pLf2XYgDKErpvcDaoSAJ1nGCyvzAA==";
 const HERMES_SEMVER = "7.8.9";
 const MAP_SHA256 = "b".repeat(64);
+const MANIFEST_SHA256 = "c".repeat(64);
+const OPENSHELL_RELEASE_MANIFESTS = [
+  "openshell-checksums-sha256.txt",
+  "openshell-gateway-checksums-sha256.txt",
+  "openshell-sandbox-checksums-sha256.txt",
+] as const;
 
 type FixtureOverrides = Partial<Record<string, string>>;
 
@@ -40,6 +46,19 @@ function writeFixture(root: string, overrides: FixtureOverrides = {}): void {
     `https://registry.npmjs.org/openclaw/-/openclaw-${openclawVersion}.tgz`;
   const openclawArg = `OPENCLAW_${openclawVersion.replace(/[.-]/g, "_")}`;
   const hermesSemver = overrides.hermesSemver ?? HERMES_SEMVER;
+  const credentialManifestName = `openshell-child-visible-credentials.v${openshellMax}.json`;
+  const credentialVersion = overrides.credentialVersion ?? openshellMax;
+  const installerHashVersions = [
+    overrides.installerHashExtraVersion,
+    overrides.installerHashVersion ?? openshellMax,
+  ].filter((version): version is string => version !== undefined);
+  const installerHashAllowlist = installerHashVersions
+    .flatMap((version) =>
+      OPENSHELL_RELEASE_MANIFESTS.filter(
+        (manifest) => manifest !== overrides.installerHashOmitManifest,
+      ).map((manifest) => `  "${version}|${manifest}|${MANIFEST_SHA256}"`),
+    )
+    .join("\n");
 
   const files: Record<string, string> = {
     "nemoclaw-blueprint/blueprint.yaml": `
@@ -52,17 +71,25 @@ MAX_VERSION="${overrides.installerMax ?? openshellMax}"
 PIN_VERSION="${overrides.installerPinExpression ?? "$MAX_VERSION"}"
 `,
     "scripts/check-installer-hash.sh": `
-OPENSHELL_RELEASE_VERSION="${overrides.installerHashVersion ?? openshellMax}"
+readonly -a OPENSHELL_RELEASE_MANIFEST_ALLOWLIST=(
+${installerHashAllowlist}
+)
 `,
     "scripts/brev-launchable-ci-cpu.sh": `
 case "$NEMOCLAW_REF" in
   stable | auto) OPENSHELL_VERSION="v${overrides.brevVersion ?? openshellMax}" ;;
 esac
 `,
-    [`src/lib/actions/sandbox/openshell-child-visible-credentials.v${openshellMax}.json`]:
-      JSON.stringify({
-        openshellVersion: overrides.credentialVersion ?? openshellMax,
-      }),
+    ".github/workflows/e2e.yaml": `
+jobs:
+  openshell-gateway-auth-contract:
+    env:
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "${overrides.workflowPinVersion ?? openshellMax}"
+`,
+    [`src/lib/actions/sandbox/${credentialManifestName}`]: JSON.stringify({
+      openshellCommit: "f".repeat(40),
+      openshellVersion: credentialVersion,
+    }),
     "src/lib/actions/sandbox/mcp-bridge-validation.ts": `
 import boundary from "./openshell-child-visible-credentials.v${overrides.mcpImportVersion ?? openshellMax}.json";
 `,
@@ -83,7 +110,7 @@ const BUILDS = new Map([
 ]);
 `,
     "agents/hermes/Dockerfile": `
-COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v${openshellMax}.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v${overrides.hermesDockerfileBoundaryVersion ?? openshellMax}.json
+COPY src/lib/actions/sandbox/${credentialManifestName} /usr/local/lib/nemoclaw/${`openshell-child-visible-credentials.v${overrides.hermesDockerfileBoundaryVersion ?? openshellMax}.json`}
 `,
     "agents/hermes/mcp-config-transaction.py": `
 BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v${overrides.hermesTransactionBoundaryVersion ?? openshellMax}.json"
@@ -171,6 +198,14 @@ describe("dependency pin drift check", () => {
     );
   });
 
+  it("accepts the blueprint maximum in a multi-release manifest allowlist (#5242)", () => {
+    withFixture(
+      "nemoclaw-dependency-pins-multi-release-",
+      { installerHashExtraVersion: "1.2.3" },
+      (root) => expect(verifyDependencyPins(root)).toEqual([]),
+    );
+  });
+
   it("reports exact operational consumer drift (#5242)", () => {
     withFixture(
       "nemoclaw-dependency-pins-drift-",
@@ -184,6 +219,7 @@ describe("dependency pin drift check", () => {
         supervisorMapVersion: "1.2.3",
         sandboxMapVersion: "1.2.3",
         brevVersion: "1.2.3",
+        workflowPinVersion: "1.2.3",
         credentialVersion: "1.2.3",
         mcpImportVersion: "1.2.3",
         hermesDockerfileBoundaryVersion: "1.2.3",
@@ -203,12 +239,13 @@ describe("dependency pin drift check", () => {
           "OpenShell installer MIN_VERSION: expected 1.2.3, found 1.2.2",
           "OpenShell installer MAX_VERSION: expected 1.2.4, found 1.2.3",
           "OpenShell installer PIN_VERSION: expected $MAX_VERSION, found 1.2.4",
-          "OpenShell installer hash release: expected 1.2.4, found 1.2.3",
+          "OpenShell release-manifest allowlist: expected one complete entry for 1.2.4",
           "OpenShell supported fallback version: expected 1.2.4, found 1.2.3",
           "OpenShell minimum fallback version: expected 1.2.3, found 1.2.2",
           "OpenShell supervisor manifest digest map: expected a reference to 1.2.4",
           "OpenShell sandbox build version map: expected a reference to 1.2.4",
           "Brev launchable stable OpenShell default: expected 1.2.4, found 1.2.3",
+          ".github/workflows/e2e.yaml gateway auth OpenShell version: expected 1.2.4, found 1.2.3",
           "OpenShell credential-boundary manifest version: expected 1.2.4, found 1.2.3",
           "OpenShell credential-boundary import: expected 1.2.4, found 1.2.3",
           "Hermes Dockerfile credential-boundary manifest version: expected 1.2.4, found 1.2.3",
@@ -229,6 +266,11 @@ describe("dependency pin drift check", () => {
 
   it.each([
     {
+      name: "an unsafe OpenShell minimum",
+      overrides: { openshellMin: "../1.2.3" },
+      failure: "nemoclaw-blueprint/blueprint.yaml min_openshell_version must match X.Y.Z",
+    },
+    {
       name: "an unsafe OpenShell maximum",
       overrides: { openshellMax: "../1.2.4" },
       failure: "nemoclaw-blueprint/blueprint.yaml max_openshell_version must match X.Y.Z",
@@ -248,6 +290,18 @@ describe("dependency pin drift check", () => {
     withFixture("nemoclaw-dependency-pins-authority-", overrides, (root) => {
       expect(verifyDependencyPins(root)).toEqual([failure]);
     });
+  });
+
+  it("rejects an incomplete manifest allowlist entry for the blueprint maximum (#5242)", () => {
+    withFixture(
+      "nemoclaw-dependency-pins-incomplete-openshell-allowlist-",
+      { installerHashOmitManifest: "openshell-sandbox-checksums-sha256.txt" },
+      (root) => {
+        expect(verifyDependencyPins(root)).toEqual([
+          "OpenShell release-manifest allowlist: expected one complete entry for 1.2.4",
+        ]);
+      },
+    );
   });
 
   it("rejects an ambiguous operational authority (#5242)", () => {

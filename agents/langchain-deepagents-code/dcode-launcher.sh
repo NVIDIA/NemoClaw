@@ -201,6 +201,11 @@ if [ "$0" = "$MANAGED_EXEC_LAUNCHER" ]; then
     printf '%s\n' 'dcode-managed-exec requires a command.' >&2
     exit 64
   fi
+  # Invalid state: OpenShell can preserve auxiliary descriptors from its
+  # transport, but route-probe evidence must travel only on stdout/stderr.
+  # Close the legacy descriptor before the managed command starts so sandbox
+  # startup code cannot reuse the former fd 3 probe channel (#7031).
+  exec 3>&-
   exec "$@"
 fi
 
@@ -210,17 +215,5 @@ fi
 case "${1:-}" in
   status | whoami | identity | --version | -v | -V) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;
 esac
-
-# DCode's one-shot mode owns and cleans up its server lifecycle before exiting.
-# Keep that established automation path outside the interactive-session
-# supervisor; this also preserves the wrapper's exact parser diagnostics.
-_nemoclaw_dcode_args=("$@")
-for ((_nemoclaw_arg_index = 0; _nemoclaw_arg_index < ${#_nemoclaw_dcode_args[@]}; _nemoclaw_arg_index++)); do
-  _nemoclaw_arg="${_nemoclaw_dcode_args[_nemoclaw_arg_index]}"
-  case "$_nemoclaw_arg" in
-    -n | -n?* | --non-interactive | --non-interactive=*) exec "$MANAGED_DCODE_WRAPPER" "$@" ;;
-  esac
-done
-unset _nemoclaw_dcode_args _nemoclaw_arg_index _nemoclaw_arg
 
 exec /opt/venv/bin/python3 -I "$MANAGED_SESSION_SUPERVISOR" "$MANAGED_DCODE_WRAPPER" "$@"

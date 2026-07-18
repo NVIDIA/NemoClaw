@@ -15,7 +15,6 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
   assertDockerAvailable,
-  bestEffort,
   cleanupDeviceAuthSandbox,
   commandEnv,
   DASHBOARD_PORT,
@@ -49,7 +48,7 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
     publicHost: "host.openshell.internal",
     requireAuth: true,
   });
-  cleanup.add("close device-auth compatible inference fixture", async () => {
+  cleanup.trackDisposable("close device-auth compatible inference fixture", async () => {
     await artifacts.writeJson("compatible-inference-requests.json", inference.requests());
     await inference.close();
   });
@@ -81,10 +80,20 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
   });
   assertDockerAvailable(dockerInfo, skip);
 
-  cleanup.add(`destroy device-auth sandbox ${SANDBOX_NAME}`, () =>
-    cleanupDeviceAuthSandbox(host, sandbox),
+  const cleanupEnv = commandEnv();
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    sandbox.cleanupSandbox(SANDBOX_NAME, {
+      artifactName: "cleanup-openshell-delete-device-auth-health",
+      env: cleanupEnv,
+      timeoutMs: 60_000,
+    }),
   );
-  await bestEffort(() => cleanupDeviceAuthSandbox(host, sandbox));
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy-device-auth-health",
+    env: cleanupEnv,
+    timeoutMs: 120_000,
+  });
+  await cleanupDeviceAuthSandbox(host, sandbox);
 
   const install = await installDeviceAuthSandbox(host, inferenceConfig, installLog);
   expect(install.exitCode, resultText(install)).toBe(0);

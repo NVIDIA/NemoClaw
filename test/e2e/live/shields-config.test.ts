@@ -14,6 +14,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import {
+  cleanupWhenCommandAvailable,
+  cleanupWhenOpenShellAvailable,
+} from "../fixtures/cleanup-resources.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -139,7 +143,7 @@ async function statPath(
   return { ...parsed, raw: result.stdout.trim() };
 }
 
-async function cleanupSandbox(
+async function preCleanSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
   artifactPrefix: string,
@@ -250,10 +254,80 @@ test("shields-config: live shields up/down locks config and detects drift", {
   const hosted = requireHostedInferenceConfig(secrets);
   const apiKey = hosted.apiKey;
 
-  await cleanupSandbox(host, sandbox, "pre-cleanup");
-  cleanup.add(`destroy shields-config sandbox ${SANDBOX_NAME}`, async () => {
-    await cleanupSandbox(host, sandbox, "cleanup");
+  await preCleanSandbox(host, sandbox, "pre-cleanup");
+  cleanup.trackDisposable(`remove shields state for ${SANDBOX_NAME}`, () => {
+    for (const file of [STATE_FILE(SANDBOX_NAME), TIMER_FILE(SANDBOX_NAME), AUDIT_FILE]) {
+      fs.rmSync(file, { force: true });
+    }
+    fs.rmSync(path.join(os.homedir(), ".nemoclaw", "onboard.lock"), {
+      force: true,
+    });
   });
+  const gatewayCleanupOptions = {
+    artifactName: "cleanup-openshell-gateway-destroy",
+    env: commandEnv(),
+    redactionValues: [apiKey],
+    timeoutMs: 60_000,
+  };
+  cleanup.trackGateway(
+    {
+      cleanupGatewayRegistration: (name: string) =>
+        cleanupWhenOpenShellAvailable(
+          host,
+          {
+            artifactName: "cleanup-probe-openshell-gateway",
+            env: gatewayCleanupOptions.env,
+            redactionValues: gatewayCleanupOptions.redactionValues,
+            timeoutMs: 30_000,
+          },
+          () => host.cleanupGatewayRegistration(name, gatewayCleanupOptions),
+        ),
+    },
+    "nemoclaw",
+    gatewayCleanupOptions,
+  );
+  const openshellSandboxCleanupOptions = {
+    artifactName: "cleanup-openshell-sandbox-delete",
+    env: commandEnv(),
+    redactionValues: [apiKey],
+    timeoutMs: 60_000,
+  };
+  cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
+    cleanupWhenOpenShellAvailable(
+      host,
+      {
+        artifactName: "cleanup-probe-openshell-sandbox",
+        env: openshellSandboxCleanupOptions.env,
+        redactionValues: openshellSandboxCleanupOptions.redactionValues,
+        timeoutMs: 30_000,
+      },
+      () => sandbox.cleanupSandbox(SANDBOX_NAME, openshellSandboxCleanupOptions),
+    ),
+  );
+  const nemoclawSandboxCleanupOptions = {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: commandEnv(),
+    redactionValues: [apiKey],
+    timeoutMs: 120_000,
+  };
+  cleanup.trackSandbox(
+    {
+      cleanupSandbox: (name: string) =>
+        cleanupWhenCommandAvailable(
+          host,
+          host.commandPath,
+          {
+            artifactName: "cleanup-probe-nemoclaw-sandbox",
+            env: nemoclawSandboxCleanupOptions.env,
+            redactionValues: nemoclawSandboxCleanupOptions.redactionValues,
+            timeoutMs: 30_000,
+          },
+          () => host.cleanupSandbox(name, nemoclawSandboxCleanupOptions),
+        ),
+    },
+    SANDBOX_NAME,
+    nemoclawSandboxCleanupOptions,
+  );
 
   const install = await installedShellCommand(
     host,
@@ -360,6 +434,15 @@ test("shields-config: live shields up/down locks config and detects drift", {
   });
   expect(shieldsUp.exitCode, resultText(shieldsUp)).toBe(0);
   expect(resultText(shieldsUp)).toContain("Lockdown active");
+  // Keep fixture teardown out of an artificial mutable window if a later
+  // assertion aborts before the explicit final restore below.
+  cleanup.trackDisposable(`restore shields for ${SANDBOX_NAME} before destroy`, async () => {
+    const restore = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+      artifactName: "cleanup-shields-up-before-destroy",
+    });
+    expect(restore.exitCode, resultText(restore)).toBe(0);
+    expect(resultText(restore)).toMatch(/Lockdown (?:is already )?active/);
+  });
 
   const configUp = await statPath(sandbox, CONFIG_PATH, "phase-3-config-perms-up");
   expect(configUp.mode).toMatch(/^4[0-4][0-4]$/);
@@ -609,6 +692,14 @@ test("shields-config: live shields up/down locks config and detects drift", {
   );
   expect(doubleDown.exitCode, resultText(doubleDown)).not.toBe(0);
   expect(resultText(doubleDown)).toContain("already unlocked");
+
+  // The duplicate-down assertion deliberately leaves its first timer active;
+  // restore the target's normal locked posture before generic destruction.
+  const finalUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+    artifactName: "phase-11-restore-shields-up",
+  });
+  expect(finalUp.exitCode, resultText(finalUp)).toBe(0);
+  expect(resultText(finalUp)).toContain("Lockdown active");
 
   await artifacts.target.complete({
     id: "shields-config",

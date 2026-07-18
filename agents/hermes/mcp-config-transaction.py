@@ -29,6 +29,7 @@ import http.client
 import importlib.util
 import ipaddress
 import json
+import logging
 import os
 import grp
 import pwd
@@ -57,7 +58,8 @@ SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]{0,127})$"
 )
-BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.72.json"
+OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = re.compile(r"^v[0-9]+_[A-Za-z0-9_]+$")
+BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.85.json"
 ANSI_ESCAPE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-_])"
 )
@@ -115,7 +117,7 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
     # corrupt, or wrong-version OpenShell boundary manifest.
     # sourceBoundary: NemoClaw owns one reviewed manifest installed beside this
     # helper in images; the second path is the deterministic source-checkout layout.
-    # whyNotSourceFix: OpenShell v0.0.72 has no machine-readable child-env contract.
+    # whyNotSourceFix: OpenShell v0.0.85 has no machine-readable child-env contract.
     # It also deliberately hides the supervisor identity mount from workload
     # children and the Hermes image contains no OpenShell CLI. Executing
     # ``openshell --version`` here would therefore either fail every real
@@ -141,7 +143,10 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
     if manifest_path is None:
         raise RuntimeError("Hermes MCP credential boundary manifest is missing")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict) or manifest.get("openshellVersion") != "0.0.72":
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("openshellVersion") != "0.0.85"
+    ):
         raise RuntimeError("Hermes MCP credential boundary manifest is invalid")
     return manifest
 
@@ -174,7 +179,8 @@ _RUNTIME_CONTROL_PREFIXES = _manifest_strings(
 
 def _credential_name_is_reserved(name: str) -> bool:
     return (
-        name in _RAW_CHILD_VALUE_KEYS
+        OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.fullmatch(name) is not None
+        or name in _RAW_CHILD_VALUE_KEYS
         or name in _REWRITTEN_CHILD_VALUE_KEYS
         or name in _RUNTIME_CONTROL_KEYS
         or any(name.startswith(prefix) for prefix in _RUNTIME_CONTROL_PREFIXES)
@@ -323,7 +329,7 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     }
     if action == "add" and hostname in host_aliases:
         raise ValueError(
-            "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.72"
+            "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85"
         )
     if not (action == "remove" and hostname in host_aliases) and (
         hostname in {"localhost", "local", "internal", "metadata"}
@@ -665,10 +671,12 @@ def apply_transaction_and_reload(
     )
 
     changed = apply_transaction(action, payload)
+    reload_completed = False
     try:
         reloaded = reload_gateway()
         if not reloaded:
             raise RuntimeError("Hermes gateway stopped before managed MCP reload")
+        reload_completed = True
         current_text, _current_snapshot = guard._read_text(CONFIG_PATH)
         if current_text != expected_text:
             raise RuntimeError(
@@ -680,6 +688,27 @@ def apply_transaction_and_reload(
             raise RuntimeError(
                 f"Hermes MCP runtime reload failed with unchanged config ({reload_error})"
             ) from reload_error
+        # After a completed reload, check whether the gateway committed the
+        # apply-state hash advance concurrently with the transaction helper's
+        # verify step. A failed reload cannot use anchor state as runtime proof.
+        # If the config still matches the intended text and both integrity
+        # anchors are current, rolling it back would undo a live configuration.
+        if reload_completed:
+            try:
+                compatibility_hash_path = os.path.join(HERMES_DIR, ".config-hash")
+                integrity = guard.inspect_mcp_integrity_snapshot(
+                    HERMES_DIR,
+                    STRICT_HASH_PATH if privileged else compatibility_hash_path,
+                    compatibility_hash_path if privileged else None,
+                )
+                if integrity.config_text == expected_text and integrity.state == "current":
+                    guard.assert_mcp_integrity_snapshot_current(integrity)
+                    return {"ok": True, "changed": True, "reloaded": True}
+            except Exception as recovery_error:
+                logging.getLogger(__name__).warning(
+                    "Hermes MCP race-recovery verification failed (%s); proceeding to rollback",
+                    type(recovery_error).__name__,
+                )
         rollback_errors: list[str] = []
         try:
             current_text, current_snapshot = guard._read_text(CONFIG_PATH)
@@ -1044,7 +1073,7 @@ def _assert_non_root_lifecycle_identity() -> None:
     # topology.
     # sourceBoundary: OpenShell owns workload topology; NemoClaw owns the
     # immutable root-lifecycle marker and validates it before mutation.
-    # whyNotSourceFix: OpenShell 0.0.72 supports both topologies but exposes no
+    # whyNotSourceFix: OpenShell 0.0.85 supports both topologies but exposes no
     # attested same-UID capability that this packaged helper can query.
     # regressionTest: hermes-mcp-config-transaction.test.ts rejects both probe
     # and add when the root-lifecycle marker identifies the legacy topology.

@@ -17,7 +17,8 @@ const PROCESS_TOKEN = "a".repeat(32);
 
 const runMock = vi.fn(() => ({ status: 0 }));
 
-vi.mock("../runner", () => ({
+vi.mock("../runner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../runner")>()),
   run: runMock,
 }));
 

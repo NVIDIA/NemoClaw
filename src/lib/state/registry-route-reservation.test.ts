@@ -44,6 +44,11 @@ describe("sandbox inference route reservation", () => {
           },
         ],
       });
+      const reservation = registry.getSandbox("alpha");
+      expect(reservation).not.toBeNull();
+      const reservedEntry = reservation as NonNullable<typeof reservation>;
+      expect(reservedEntry.createdAt).toBeUndefined();
+      expect(registry.isRouteOnlySandboxReservation(reservedEntry)).toBe(true);
       expect(registry.getDefault()).toBeNull();
       expect(registry.setDefault("alpha")).toBe(false);
     } finally {
@@ -74,13 +79,18 @@ describe("sandbox inference route reservation", () => {
         gatewayName: "nemoclaw-9090",
       });
 
-      expect(registry.getSandbox("alpha")).toMatchObject({
+      const retargeted = registry.getSandbox("alpha");
+      expect(retargeted).not.toBeNull();
+      const retargetedEntry = retargeted as NonNullable<typeof retargeted>;
+      expect(retargetedEntry).toMatchObject({
         gatewayName: "nemoclaw-9090",
         provider: "anthropic-prod",
         model: "model-b",
         pendingRouteReservation: true,
       });
-      expect(registry.getSandbox("alpha")?.gatewayPort).toBeUndefined();
+      expect(retargetedEntry.createdAt).toEqual(expect.any(String));
+      expect(retargetedEntry.gatewayPort).toBeUndefined();
+      expect(registry.isRouteOnlySandboxReservation(retargetedEntry)).toBe(false);
     } finally {
       await fs.rm(home, { recursive: true, force: true });
     }

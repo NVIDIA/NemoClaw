@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import { isObjectRecord } from "../core/json-types";
+import { GATEWAY_PORT } from "../core/ports";
 import type { InferenceSelection } from "../inference/selection";
 import {
   inferenceSelectionRegistryFields,
@@ -28,6 +29,7 @@ import {
 import type { SandboxMessagingState } from "./registry-messaging";
 import { parseSandboxRegistryEntries, retainedDefaultSandbox } from "./registry-normalization";
 import * as reversibleRemoval from "./registry-reversible-removal";
+import { nemoclawStateRoot } from "./state-root";
 
 export {
   getSandboxEntryDisplayInference,
@@ -161,7 +163,10 @@ export interface SandboxRegistry {
 
 export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
-export const REGISTRY_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "sandboxes.json");
+export const REGISTRY_FILE = path.join(
+  nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
+  "sandboxes.json",
+);
 export const LOCK_DIR = `${REGISTRY_FILE}.lock`;
 export const LOCK_OWNER = path.join(LOCK_DIR, "owner");
 export const LOCK_STALE_MS = 10_000;
@@ -432,9 +437,10 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
 }
 
 /**
- * Prepare a sandbox entry for persistence: normalize messaging state and drop
- * transient #5714 display-only markers plus legacy provider credential hashes
- * that must never reach sandboxes.json.
+ * Prepare a sandbox entry for persistence: canonicalize a no-dashboard port to
+ * null, normalize messaging state, and drop transient #5714 display-only
+ * markers plus legacy provider credential hashes that must never reach
+ * sandboxes.json.
  */
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   // Defensively drop non-durable recovery markers and legacy
@@ -455,6 +461,7 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const { messaging: _messaging, mcp: _mcp, ...rest } = durable;
   return {
     ...rest,
+    ...(rest.dashboardPort === 0 ? { dashboardPort: null } : {}),
     ...(messaging ? { messaging } : {}),
     ...(mcp ? { mcp } : {}),
   };
@@ -590,6 +597,11 @@ export function reserveSandboxInferenceRoute(
     save(data);
     return true;
   });
+}
+
+/** True only for an inference route reserved before sandbox registration. */
+export function isRouteOnlySandboxReservation(entry: SandboxEntry): boolean {
+  return entry.pendingRouteReservation === true && entry.createdAt === undefined;
 }
 
 export function isPendingReservationForSession(

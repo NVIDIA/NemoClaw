@@ -26,14 +26,95 @@ const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "h
 
 const PROC_PATH = "/proc";
 const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
+const SYSFS_PATH = "/sys";
+const DMI_PRODUCT_NAME_PATH = "/sys/class/dmi/id/product_name";
+const PCI_BDF_PATTERN = /^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$/iu;
+const NVIDIA_PCI_VENDOR = "0x10de";
+const DISPLAY_PCI_CLASS_PATTERN = /^0x03[0-9a-f]{4}$/iu;
+const STATION_GB300_SHARED_SYSFS_RELATIVE_PATHS = [
+  "devices/system/cpu",
+  "devices/system/memory",
+  "devices/system/node",
+  "module/nvidia/initstate",
+  "module/nvidia_uvm/initstate",
+] as const;
 
 function isProcEntryOwnedByOpenShell(entry: string): boolean {
   return entry === PROC_PATH || PROC_COMM_READ_WRITE_PATHS.includes(entry);
 }
 
+function deduplicateDirectGpuSysfsEntries(
+  entries: string[],
+  candidates: ReadonlySet<string>,
+): string[] {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    if (!candidates.has(entry)) return true;
+    if (seen.has(entry)) return false;
+    seen.add(entry);
+    return true;
+  });
+}
+
 type DirectGpuPolicyOptions = {
   procReadWrite?: boolean;
+  sysfsReadOnlyPaths?: readonly string[];
 };
+
+export function isStationGb300ProductName(productName: string): boolean {
+  return /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu.test(productName.trim());
+}
+
+function readTrimmedFile(filePath: string): string | null {
+  try {
+    return fs.readFileSync(filePath, "utf-8").trim();
+  } catch {
+    return null;
+  }
+}
+
+export function discoverStationGb300SysfsReadOnlyPaths(
+  productName: string,
+  sysfsRoot = SYSFS_PATH,
+): string[] {
+  if (!isStationGb300ProductName(productName)) return [];
+
+  const readOnlyPaths: string[] = [];
+  const pciDevicesRoot = path.join(sysfsRoot, "bus", "pci", "devices");
+  let pciDeviceNames: string[] = [];
+  try {
+    pciDeviceNames = fs.readdirSync(pciDevicesRoot).sort();
+  } catch {
+    // A Station image without PCI sysfs cannot use the scoped GPU exception.
+  }
+  for (const pciDeviceName of pciDeviceNames) {
+    if (!PCI_BDF_PATTERN.test(pciDeviceName)) continue;
+    const pciDeviceRoot = path.join(pciDevicesRoot, pciDeviceName);
+    const vendor = readTrimmedFile(path.join(pciDeviceRoot, "vendor"))?.toLowerCase();
+    const pciClass = readTrimmedFile(path.join(pciDeviceRoot, "class"));
+    if (vendor === NVIDIA_PCI_VENDOR && pciClass && DISPLAY_PCI_CLASS_PATTERN.test(pciClass)) {
+      readOnlyPaths.push(`${SYSFS_PATH}/bus/pci/devices/${pciDeviceName}`);
+    }
+  }
+  if (readOnlyPaths.length === 0) {
+    throw new Error(
+      `Cannot prepare Station GB300 direct GPU sandbox policy; no NVIDIA display-class PCI device was found under ${pciDevicesRoot}.`,
+    );
+  }
+
+  for (const relativePath of STATION_GB300_SHARED_SYSFS_RELATIVE_PATHS) {
+    if (fs.existsSync(path.join(sysfsRoot, relativePath))) {
+      readOnlyPaths.push(`${SYSFS_PATH}/${relativePath}`);
+    }
+  }
+  return readOnlyPaths;
+}
+
+function discoverHostStationGb300SysfsReadOnlyPaths(): string[] {
+  if (process.platform !== "linux") return [];
+  const productName = readTrimmedFile(DMI_PRODUCT_NAME_PATH);
+  return productName ? discoverStationGb300SysfsReadOnlyPaths(productName) : [];
+}
 
 export function buildDirectGpuPolicyYaml(
   basePolicy: string,
@@ -45,22 +126,50 @@ export function buildDirectGpuPolicyYaml(
   }
   parsed.filesystem_policy = parsed.filesystem_policy || {};
   const fsPolicy = parsed.filesystem_policy;
+  const sysfsReadOnlyPaths = [...(options.sysfsReadOnlyPaths ?? [])];
+  const sysfsReadOnlyPathSet = new Set(sysfsReadOnlyPaths);
   // OpenShell adds /proc as read-write only after GPU devices are present.
   // Remove entries that would block that enrichment or be treated as literal paths.
   const readOnly = Array.isArray(fsPolicy.read_only)
     ? fsPolicy.read_only.map((entry: unknown) => String(entry))
     : [];
-  fsPolicy.read_only = readOnly.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
-  const readWrite = Array.isArray(fsPolicy.read_write)
-    ? fsPolicy.read_write.map((entry: unknown) => String(entry))
-    : [];
-  fsPolicy.read_write = readWrite.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
+  const readWrite = deduplicateDirectGpuSysfsEntries(
+    Array.isArray(fsPolicy.read_write)
+      ? fsPolicy.read_write
+          .map((entry: unknown) => String(entry))
+          .filter((entry: string) => !isProcEntryOwnedByOpenShell(entry))
+      : [],
+    sysfsReadOnlyPathSet,
+  );
+  const readWriteSet = new Set(readWrite);
+  fsPolicy.read_only = deduplicateDirectGpuSysfsEntries(
+    readOnly.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry)),
+    sysfsReadOnlyPathSet,
+  ).filter((entry: string) => !sysfsReadOnlyPathSet.has(entry) || !readWriteSet.has(entry));
+  fsPolicy.read_write = readWrite;
+  if (
+    sysfsReadOnlyPaths.length > 0 &&
+    !fsPolicy.read_only.includes(SYSFS_PATH) &&
+    !fsPolicy.read_write.includes(SYSFS_PATH)
+  ) {
+    // CUDA reads PCI and host topology plus NVIDIA module initialization state
+    // during cuInit(). Grant only those measured sysfs paths through Landlock;
+    // no GPU path needs sysfs write access.
+    const readOnlySet = new Set(fsPolicy.read_only);
+    for (const candidate of sysfsReadOnlyPaths) {
+      if (!readOnlySet.has(candidate) && !readWriteSet.has(candidate)) {
+        fsPolicy.read_only.push(candidate);
+        readOnlySet.add(candidate);
+      }
+    }
+  }
   if (options.procReadWrite && !fsPolicy.read_write.includes(PROC_PATH)) {
-    // Linux Docker-driver GPU patching recreates the container with GPU flags
-    // after `openshell sandbox create`, so OpenShell never sees `--gpu` and
-    // cannot add its native /proc GPU enrichment. Mirror that enrichment here
-    // for the patched path; without it Landlock denies the NVIDIA runtime's
-    // /proc/<pid>/task/<tid>/comm write even though Docker GPU access works.
+    // This exists only for the legacy post-create Docker GPU compatibility
+    // path, which recreates the container after `openshell sandbox create` and
+    // prevents OpenShell from seeing `--gpu`. Mirror native /proc enrichment
+    // until NemoClaw #4316 removes the recreation in
+    // src/lib/onboard/docker-gpu-patch-finalize.ts; remove this grant when
+    // native OpenShell GPU creation replaces that compatibility path.
     fsPolicy.read_write.push(PROC_PATH);
   }
   return YAML.stringify(parsed);
@@ -127,27 +236,37 @@ export function buildDirectSandboxGpuProofCommands(
   ];
 }
 
+function createPolicyTempCleanup(policyPath: string, expectedPrefix: string): () => boolean {
+  return () => {
+    try {
+      cleanupTempDir(policyPath, expectedPrefix);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+}
+
 function prepareDirectGpuSandboxPolicy(
   basePolicyPath: string,
   options: DirectGpuPolicyOptions = {},
 ): InitialSandboxPolicy {
   const basePolicy = fs.readFileSync(basePolicyPath, "utf-8");
   const policyPath = secureTempFile("nemoclaw-gpu-policy", ".yaml");
-  fs.writeFileSync(policyPath, buildDirectGpuPolicyYaml(basePolicy, options), {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
+  const cleanup = createPolicyTempCleanup(policyPath, "nemoclaw-gpu-policy");
+  try {
+    fs.writeFileSync(policyPath, buildDirectGpuPolicyYaml(basePolicy, options), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
   return {
     policyPath,
     appliedPresets: [],
-    cleanup: () => {
-      try {
-        cleanupTempDir(policyPath, "nemoclaw-gpu-policy");
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    cleanup,
   };
 }
 
@@ -202,6 +321,7 @@ export function prepareInitialSandboxCreatePolicy(
   options: {
     directGpu?: boolean;
     dockerGpuPatch?: boolean;
+    stationGb300SysfsReadOnlyPaths?: readonly string[];
     additionalPresets?: string[];
     agentName?: string | null;
     policyTier?: string | null;
@@ -210,123 +330,125 @@ export function prepareInitialSandboxCreatePolicy(
   const directGpuPolicy = options.directGpu
     ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
         procReadWrite: options.dockerGpuPatch === true,
+        sysfsReadOnlyPaths:
+          options.stationGb300SysfsReadOnlyPaths ?? discoverHostStationGb300SysfsReadOnlyPaths(),
       })
     : null;
   let effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;
   const cleanupFns = directGpuPolicy?.cleanup ? [directGpuPolicy.cleanup] : [];
   const buildCleanup = () =>
     cleanupFns.length > 0 ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean) : undefined;
-  // Fail closed: the OpenClaw OTEL preset is added at create time only when the
-  // selected policy tier is known and is not Restricted. When the tier is null
-  // (interactive flow that selects later) the preset is deferred to the
-  // post-boot policy step, so a later Restricted selection cannot leave a
-  // transient host-local OTLP egress allowance during sandbox boot. The same
-  // suppression filter still runs so an explicit `policyTier: "restricted"`
-  // (non-interactive flow) drops openclaw-pricing from `additionalPresets`.
-  const tierKnown = typeof options.policyTier === "string" && options.policyTier.length > 0;
-  const otelCreateTimePresets =
-    tierKnown && options.policyTier !== "restricted"
-      ? requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw")
-      : [];
-  const isHermesPolicyFromPath = isHermesPolicyPath(basePolicyPath);
-  const isHermesPolicy = options.agentName === "hermes" || isHermesPolicyFromPath;
-  const policyAgent = options.agentName ?? (isHermesPolicyFromPath ? "hermes" : null);
-  const messagingCreateTimePresets = isHermesPolicy
-    ? allMessagingChannelPolicyPresets(activeMessagingChannels)
-    : requiredMessagingChannelPolicyPresets(activeMessagingChannels);
-  const requestedCreateTimePresets = filterSuppressedAgentRequiredPresets(
-    [
-      ...new Set([
-        ...messagingCreateTimePresets,
-        ...otelCreateTimePresets,
-        ...(options.additionalPresets || []),
-      ]),
-    ],
-    options.policyTier ?? null,
-    options.agentName ?? null,
-  );
-  const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
-
-  let basePolicy = fs.readFileSync(effectiveBasePolicyPath, "utf-8");
-  if (isHermesPolicy) {
-    const filtered = filterHermesInactiveMessagingPolicies(basePolicy, activeMessagingChannels);
-    if (filtered.changed) {
-      const policyPath = secureTempFile("nemoclaw-agent-policy", ".yaml");
-      fs.writeFileSync(policyPath, filtered.content, { encoding: "utf-8", mode: 0o600 });
-      cleanupFns.push(() => {
-        try {
-          cleanupTempDir(policyPath, "nemoclaw-agent-policy");
-          return true;
-        } catch {
-          return false;
-        }
-      });
-      effectiveBasePolicyPath = policyPath;
-      basePolicy = filtered.content;
+  const cleanupOnError = () => {
+    for (const cleanup of [...cleanupFns].reverse()) {
+      try {
+        cleanup();
+      } catch {
+        // Preserve the policy preparation error; cleanup is best effort and fail-closed upstream.
+      }
     }
-  }
-
-  const basePolicyNames = getNetworkPolicyNames(basePolicy);
-  if (basePolicyNames === null) {
-    return {
-      policyPath: effectiveBasePolicyPath,
-      appliedPresets: [],
-      cleanup: buildCleanup(),
-    };
-  }
-  const existingChannelPresets = activeMessagingChannels.filter((channel) =>
-    basePolicyNames.has(channel),
-  );
-
-  if (requestedCreateTimePresets.length === 0) {
-    return {
-      policyPath: effectiveBasePolicyPath,
-      appliedPresets: dedupe(existingChannelPresets),
-      cleanup: buildCleanup(),
-    };
-  }
-
-  const existingCreateTimePresets = requestedCreateTimePresets.filter((preset) =>
-    basePolicyNames.has(preset),
-  );
-  const createTimePresets = requestedCreateTimePresets.filter(
-    (preset) => !basePolicyNames.has(preset),
-  );
-  if (createTimePresets.length === 0) {
-    return {
-      policyPath: effectiveBasePolicyPath,
-      appliedPresets: dedupe([...existingChannelPresets, ...existingCreateTimePresets]),
-      cleanup: buildCleanup(),
-    };
-  }
-
-  const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
-    agent: policyAgent,
-  });
-  if (mergedPolicy.missingPresets.length > 0) {
-    throw new Error(
-      `Cannot prepare sandbox create policy; missing policy preset(s): ${mergedPolicy.missingPresets.join(", ")}`,
-    );
-  }
-
-  const policyPath = secureTempFile("nemoclaw-initial-policy", ".yaml");
-  fs.writeFileSync(policyPath, mergedPolicy.policy, { encoding: "utf-8", mode: 0o600 });
-  cleanupFns.push(() => {
-    try {
-      cleanupTempDir(policyPath, "nemoclaw-initial-policy");
-      return true;
-    } catch {
-      return false;
-    }
-  });
-
-  return {
-    policyPath,
-    appliedPresets: dedupe([
-      ...existingChannelPresets,
-      ...existingCreateTimePresets,
-      ...mergedPolicy.appliedPresets,
-    ]),
-    cleanup: buildCleanup(),
   };
+  try {
+    // Fail closed: the OpenClaw OTEL preset is added at create time only when the
+    // selected policy tier is known and is not Restricted. When the tier is null
+    // (interactive flow that selects later) the preset is deferred to the
+    // post-boot policy step, so a later Restricted selection cannot leave a
+    // transient host-local OTLP egress allowance during sandbox boot. The same
+    // suppression filter still runs so an explicit `policyTier: "restricted"`
+    // (non-interactive flow) drops openclaw-pricing from `additionalPresets`.
+    const tierKnown = typeof options.policyTier === "string" && options.policyTier.length > 0;
+    const otelCreateTimePresets =
+      tierKnown && options.policyTier !== "restricted"
+        ? requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw")
+        : [];
+    const isHermesPolicyFromPath = isHermesPolicyPath(basePolicyPath);
+    const isHermesPolicy = options.agentName === "hermes" || isHermesPolicyFromPath;
+    const policyAgent = options.agentName ?? (isHermesPolicyFromPath ? "hermes" : null);
+    const messagingCreateTimePresets = isHermesPolicy
+      ? allMessagingChannelPolicyPresets(activeMessagingChannels)
+      : requiredMessagingChannelPolicyPresets(activeMessagingChannels);
+    const requestedCreateTimePresets = filterSuppressedAgentRequiredPresets(
+      [
+        ...new Set([
+          ...messagingCreateTimePresets,
+          ...otelCreateTimePresets,
+          ...(options.additionalPresets || []),
+        ]),
+      ],
+      options.policyTier ?? null,
+      options.agentName ?? null,
+    );
+    const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
+
+    let basePolicy = fs.readFileSync(effectiveBasePolicyPath, "utf-8");
+    if (isHermesPolicy) {
+      const filtered = filterHermesInactiveMessagingPolicies(basePolicy, activeMessagingChannels);
+      if (filtered.changed) {
+        const policyPath = secureTempFile("nemoclaw-agent-policy", ".yaml");
+        cleanupFns.push(createPolicyTempCleanup(policyPath, "nemoclaw-agent-policy"));
+        fs.writeFileSync(policyPath, filtered.content, { encoding: "utf-8", mode: 0o600 });
+        effectiveBasePolicyPath = policyPath;
+        basePolicy = filtered.content;
+      }
+    }
+
+    const basePolicyNames = getNetworkPolicyNames(basePolicy);
+    if (basePolicyNames === null) {
+      return {
+        policyPath: effectiveBasePolicyPath,
+        appliedPresets: [],
+        cleanup: buildCleanup(),
+      };
+    }
+    const existingChannelPresets = activeMessagingChannels.filter((channel) =>
+      basePolicyNames.has(channel),
+    );
+
+    if (requestedCreateTimePresets.length === 0) {
+      return {
+        policyPath: effectiveBasePolicyPath,
+        appliedPresets: dedupe(existingChannelPresets),
+        cleanup: buildCleanup(),
+      };
+    }
+
+    const existingCreateTimePresets = requestedCreateTimePresets.filter((preset) =>
+      basePolicyNames.has(preset),
+    );
+    const createTimePresets = requestedCreateTimePresets.filter(
+      (preset) => !basePolicyNames.has(preset),
+    );
+    if (createTimePresets.length === 0) {
+      return {
+        policyPath: effectiveBasePolicyPath,
+        appliedPresets: dedupe([...existingChannelPresets, ...existingCreateTimePresets]),
+        cleanup: buildCleanup(),
+      };
+    }
+
+    const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
+      agent: policyAgent,
+    });
+    if (mergedPolicy.missingPresets.length > 0) {
+      throw new Error(
+        `Cannot prepare sandbox create policy; missing policy preset(s): ${mergedPolicy.missingPresets.join(", ")}`,
+      );
+    }
+
+    const policyPath = secureTempFile("nemoclaw-initial-policy", ".yaml");
+    cleanupFns.push(createPolicyTempCleanup(policyPath, "nemoclaw-initial-policy"));
+    fs.writeFileSync(policyPath, mergedPolicy.policy, { encoding: "utf-8", mode: 0o600 });
+
+    return {
+      policyPath,
+      appliedPresets: dedupe([
+        ...existingChannelPresets,
+        ...existingCreateTimePresets,
+        ...mergedPolicy.appliedPresets,
+      ]),
+      cleanup: buildCleanup(),
+    };
+  } catch (error) {
+    cleanupOnError();
+    throw error;
+  }
 }

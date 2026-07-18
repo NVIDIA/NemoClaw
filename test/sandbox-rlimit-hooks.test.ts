@@ -561,7 +561,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundary = path.join(
       localLib,
-      "openshell-child-visible-credentials.v0.0.72.json",
+      "openshell-child-visible-credentials.v0.0.85.json",
     );
     const preloadDir = path.join(localLib, "preloads");
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
@@ -620,7 +620,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py", buildMcpDigest)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
         .replaceAll(
-          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json",
+          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
           mcpCredentialBoundary,
         )
         .replaceAll("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js", safetyNet)

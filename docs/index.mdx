@@ -11,8 +11,6 @@ position: 1
 
 import { BadgeLinks } from "./_components/BadgeLinks";
 import { CommandTerminal } from "./_components/CommandTerminal";
-import { StarterPromptFallback } from "./_components/StarterPrompt";
-import { StarterPromptButton } from "./_components/StarterPromptButton";
 
 <BadgeLinks
   badges={[
@@ -44,12 +42,10 @@ Install NemoClaw and run the onboard wizard to get started.
 
 ### From Your Coding Agent
 
-Copy the starter prompt and paste it into your local coding agent, such as Cursor, Claude Code, Codex, Copilot, or another assistant that can run local commands with your approval.
-The prompt tells your agent to use NemoClaw skills when available, bootstrap the docs-routing skill when it is missing, fetch the Markdown docs, ask whether you want OpenClaw, Hermes, or Deep Agents, collect choices one question at a time, and use the checked-in local credential helper and form after you approve the exact command that will receive the credentials.
+Copy the starter prompt into your local coding agent for a guided NemoClaw setup.
+It helps you choose an agent to run in an OpenShell sandbox, asks one question at a time, handles credentials locally and securely, and asks for approval before running commands.
 
-<StarterPromptButton />
-
-<StarterPromptFallback />
+<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
 
 ### From Your Terminal
 
@@ -108,9 +104,9 @@ Use the following resources to explore NemoClaw end-to-end examples, showcases, 
 
 <Cards>
 
-<Card title="Explore Community Examples" href="https://github.com/NVIDIA/nemoclaw-community">
+<Card title="Explore Community Solutions" href="resources/community-contributions">
 
-Browse community-driven examples, showcases, and integrations built from NemoClaw blueprints.
+Learn where to contribute third-party solutions, showcases, and integrations built with NemoClaw.
 
 <Badge intent="tip" minimal outlined>Examples</Badge>
 </Card>

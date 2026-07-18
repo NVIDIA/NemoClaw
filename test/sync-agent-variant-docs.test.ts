@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs";
+import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
 
 const FRONTMATTER = `---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
@@ -34,8 +34,6 @@ describe("sync-agent-variant-docs", () => {
 
   it("rewrites only NemoClaw CLI invocations for the NemoHermes reference", () => {
     const rendered = renderHermesCommandsVariant(`${FRONTMATTER}
-import { AgentOnly } from "../_components/AgentGuide";
-
 ### \`nemoclaw list\`
 
 \`\`\`bash
@@ -66,8 +64,6 @@ The gateway state path is \`~/.local/state/nemoclaw\`.
 
   it("rewrites only NemoClaw CLI invocations for the NemoDeepAgents reference", () => {
     const rendered = renderDeepAgentsCommandsVariant(`${FRONTMATTER}
-import { AgentOnly } from "../_components/AgentGuide";
-
 ### \`nemoclaw list\`
 
 \`\`\`bash
