@@ -25,7 +25,7 @@ describe("CLI dispatch for terminal agents", () => {
         "#!/usr/bin/env bash",
         `marker_file=${JSON.stringify(markerFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",
@@ -55,7 +55,7 @@ describe("CLI dispatch for terminal agents", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("terminal smoke checks passed");
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
-    expect(calls).toContain("sandbox get alpha");
+    expect(calls).toContain("sandbox get -g nemoclaw alpha");
     expect(calls.some((call) => call.includes("NEMOCLAW_AGENT_SMOKE_EXIT"))).toBe(true);
     expect(calls.some((call) => call.includes("nemoclaw-agent-smoke dcode --version"))).toBe(true);
     expect(
