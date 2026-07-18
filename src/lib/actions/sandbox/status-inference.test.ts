@@ -2,10 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { collectSandboxStatusSnapshot, getSandboxStatusInferenceHealth } from "./status";
+import {
+  collectSandboxStatusSnapshot,
+  getSandboxStatusInferenceHealth,
+  getSandboxStatusReport,
+} from "./status";
 
 describe("sandbox status inference.local route health (#6192)", () => {
   function snapshotDeps(options: {
+    agent?: string;
+    lookupState?: "present" | "missing";
     provider?: string;
     liveProvider?: string;
     liveModel?: string;
@@ -23,17 +29,17 @@ describe("sandbox status inference.local route health (#6192)", () => {
     const reportInferenceProbeError = vi.fn();
     const sandbox = {
       name: "alpha",
-      agent: "openclaw",
+      agent: options.agent ?? "openclaw",
       model: "nvidia/nemotron",
       provider,
     };
     return {
       getSandbox: () => sandbox,
       listSandboxes: () => ({ sandboxes: [sandbox], defaultSandbox: "alpha" }),
-      reconcile: async () => ({
-        state: "present" as const,
-        output: "Name: alpha\nPhase: Ready\n",
-      }),
+      reconcile: async () =>
+        options.lookupState === "missing"
+          ? { state: "missing" as const, output: "sandbox alpha not found" }
+          : { state: "present" as const, output: "Name: alpha\nPhase: Ready\n" },
       captureOpenshellForStatusImpl: async () =>
         ({
           status: 0,
@@ -51,6 +57,7 @@ describe("sandbox status inference.local route health (#6192)", () => {
           ? async () => Promise.reject(new Error("openshell unavailable TOKEN=super-secret"))
           : async () => options.routeHealth,
       ),
+      probeTerminalRuntimeHealth: vi.fn(() => ({ kind: "ok" as const, oomKillCount: 0 as const })),
       reportInferenceProbeError,
     };
   }
@@ -83,6 +90,45 @@ describe("sandbox status inference.local route health (#6192)", () => {
     expect(snapshot.inferenceHealth?.subprobes).toEqual([
       expect.objectContaining({ ok: true, probeLabel: "upstream" }),
     ]);
+    expect(snapshot.servingProcessHealth).toEqual({ checked: false });
+
+    const report = await getSandboxStatusReport("alpha", deps);
+    expect(report.servingProcessHealth).toEqual({ checked: false });
+  });
+
+  it("does not invent serving-process health for terminal agents (#7003)", async () => {
+    const deps = snapshotDeps({
+      agent: "langchain-deepagents-code",
+      routeHealth: {
+        ok: true,
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 200,
+        detail: "route reachable",
+      },
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(snapshot.servingProcessHealth).toBeNull();
+    expect(deps.probeTerminalRuntimeHealth).toHaveBeenCalledWith("alpha");
+
+    const report = await getSandboxStatusReport("alpha", deps);
+    expect(report.servingProcessHealth).toBeNull();
+  });
+
+  it("does not invent serving-process health when the gateway is unavailable (#7003)", async () => {
+    const deps = snapshotDeps({
+      lookupState: "missing",
+      routeHealth: null,
+    });
+
+    const snapshot = await collectSandboxStatusSnapshot("alpha", { deps });
+
+    expect(snapshot.servingProcessHealth).toBeNull();
+    expect(deps.probeSandboxInferenceGatewayHealthImpl).not.toHaveBeenCalled();
+
+    const report = await getSandboxStatusReport("alpha", deps);
+    expect(report.servingProcessHealth).toBeNull();
   });
 
   it.each([

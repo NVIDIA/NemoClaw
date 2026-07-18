@@ -389,7 +389,7 @@ installed_version() {
 }
 install_packages() { printf 'INSTALL_PACKAGES\n'; }
 ensure_docker_group() { printf 'ENSURE_DOCKER_GROUP\n'; }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 write_install_boot_marker() { printf 'WRITE_BOOT_MARKER\n'; }
 sudo() { printf 'SUDO %s\n' "$*"; }
 run_apply
@@ -400,7 +400,7 @@ run_apply
     expect(output).toContain("package=dkms status=approved_transition");
     expect(output).toContain("INSTALL_PACKAGES");
     expect(output).toContain("ENSURE_DOCKER_GROUP");
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_RESTART_QUIESCENCE");
     expect(output).toContain("WRITE_BOOT_MARKER");
     expect(output).toContain(
       "systemctl enable containerd.service docker.service nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
@@ -415,7 +415,7 @@ run_apply
 configure_repositories() { printf 'CONFIGURE_REPOSITORIES\n'; }
 validate_package_availability() { printf 'VALIDATE_PACKAGES\n'; }
 simulate_install() { printf 'SIMULATE_INSTALL\n'; }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 package_is_exact() { return 0; }
 sudo() { printf 'SUDO %s\n' "$*"; }
 install_packages
@@ -425,7 +425,7 @@ install_packages
     expect(result.status, output).toBe(0);
     expect(output).toContain("apt-get update");
     expect(output).toContain("apt-get install -y --no-install-recommends");
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_RESTART_QUIESCENCE");
     for (const spec of [
       "libnvidia-container-tools=1.19.1-1",
       "libnvidia-container1=1.19.1-1",
@@ -441,7 +441,7 @@ install_packages
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
 sudo() { printf 'SUDO %s\n' "$*"; }
 run_cdi_test_sudo() { printf 'CDI_TEST\n'; return 0; }
 refresh_cdi() { printf 'REFRESH_CDI\n'; }
@@ -450,7 +450,7 @@ ensure_cdi_runtime
     );
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_MUTATION_QUIESCENCE");
     expect(output).toContain("systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service");
     expect(output).toContain("systemctl start nvidia-cdi-refresh.path");
     expect(output).toContain("cdi_contract=pass_without_configuration_change");
@@ -490,7 +490,7 @@ ps() {
   printf '%s 1 bash bash /tmp/NemoClaw/scripts/install.sh\n' "$PPID"
 }
 ss() { :; }
-check_no_workloads
+check_agent_and_inference_conflicts
 `,
     );
     expect(selfOnly.result.status, selfOnly.output).toBe(0);
@@ -500,53 +500,11 @@ check_no_workloads
       `
 ps() { printf '999 1 python python -m vllm serve model\n'; }
 ss() { :; }
-check_no_workloads
+check_agent_and_inference_conflicts
 `,
     );
     expect(active.result.status, active.output).not.toBe(0);
     expect(active.output).toMatch(/Agent or inference workload is active/);
-  });
-
-  it("uses sudo to inspect containers during apply until Docker group access is active", () => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-MODE='--apply'
-ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"; }
-ss() { :; }
-docker() { return 1; }
-sudo() {
-  if [[ "$1" == "-n" ]]; then shift; fi
-  [[ "$*" == "docker ps -aq" ]] || return 1
-}
-systemctl() { return 0; }
-check_no_workloads
-`,
-      { PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
-    );
-
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("docker_access=sudo_until_group_membership_is_active");
-    expect(output).toContain("workloads=none");
-  });
-
-  it("fails closed when Docker is installed but its container state cannot be queried", () => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-MODE='--apply'
-ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"; }
-ss() { :; }
-docker() { return 1; }
-sudo() { return 1; }
-systemctl() { return 1; }
-check_no_workloads
-`,
-      { PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
-    );
-
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/container state cannot be verified safely/);
   });
 
   it("refuses an installed CUDA keyring version that differs from the pin", () => {
@@ -663,12 +621,14 @@ install_boot_marker_matches_current_boot() { return 1; }
 driver_loaded_exact() { return 0; }
 finish_runtime() { DOCKER_GROUP_ADDED=1; printf 'FINISH_RUNTIME\n'; }
 verify_apply_state() { printf 'VERIFY_APPLY_STATE\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 run_apply
 `,
     );
 
     expect(result.status, output).toBe(10);
     expect(output).toContain("VERIFY_APPLY_STATE");
+    expect(output).toContain("RECHECK_RESTART_QUIESCENCE");
     expect(output).toContain("APPLY_RESULT=REBOOT_REQUIRED");
     expect(output).toMatch(/new login before onboarding/);
   });
@@ -677,7 +637,7 @@ run_apply
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
 sudo() {
   printf 'SUDO %s\n' "$*"
   if [[ "$*" == "systemctl restart nvidia-cdi-refresh.service" ]]; then return 1; fi
@@ -690,7 +650,7 @@ refresh_cdi
     expect(result.status, output).not.toBe(0);
     expect(output).toContain("systemctl status nvidia-cdi-refresh.service --no-pager");
     expect(output).toContain("journalctl -u nvidia-cdi-refresh.service --no-pager -n 50");
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_MUTATION_QUIESCENCE");
     expect(output).toMatch(/repair nvidia-cdi-refresh\.service/);
     expect(output).not.toContain("nvidia-ctk cdi generate");
   });
@@ -699,7 +659,7 @@ refresh_cdi
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
 sudo() {
   printf 'SUDO %s\n' "$*"
   return 0
@@ -710,7 +670,7 @@ refresh_cdi
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_MUTATION_QUIESCENCE");
     expect(output).toMatch(/completed without advertising nvidia\.com\/gpu=all/);
     expect(output).toContain("systemctl status nvidia-cdi-refresh.service --no-pager");
     expect(output).toContain("journalctl -u nvidia-cdi-refresh.service --no-pager -n 50");
@@ -729,13 +689,13 @@ sudo() {
   [[ "$*" == "test -e /etc/docker/daemon.json" ]] && return 1
   printf 'SUDO %s\n' "$*"
 }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; return 1; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; return 1; }
 configure_docker_runtime_if_needed
 `,
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_MUTATION_QUIESCENCE");
     expect(output).not.toContain("nvidia-ctk runtime configure");
     expect(output).not.toContain("systemctl restart docker.service");
   });
@@ -769,7 +729,8 @@ run_gpus_test_sudo() {
 }
 run_cdi_test_sudo() { return 0; }
 docker_has_nvidia_runtime_sudo() { return 1; }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 ensure_root_directory_safe() { :; }
 assert_root_directory_safe() { :; }
 assert_root_regular_file_safe() { :; }
@@ -801,8 +762,12 @@ runtime_configured=0
 run_gpus_test_sudo() { return 1; }
 run_cdi_test_sudo() { return 0; }
 docker_has_nvidia_runtime_sudo() { return 1; }
-check_no_workloads() {
-  printf 'RECHECK_ALL_WORKLOADS configured=%s\n' "$runtime_configured"
+require_docker_mutation_quiescence() {
+  printf 'RECHECK_MUTATION_QUIESCENCE configured=%s\n' "$runtime_configured"
+  return 0
+}
+require_docker_restart_quiescence() {
+  printf 'RECHECK_RESTART_QUIESCENCE configured=%s\n' "$runtime_configured"
   [[ "$runtime_configured" == "0" ]]
 }
 ensure_root_directory_safe() { :; }
@@ -825,7 +790,7 @@ configure_docker_runtime_if_needed
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("RECHECK_ALL_WORKLOADS configured=1");
+    expect(output).toContain("RECHECK_RESTART_QUIESCENCE configured=1");
     expect(output).toContain("rm -f -- /etc/docker/daemon.json");
     expect(output).toMatch(/A workload appeared before Docker restart/);
     expect(output).toMatch(/prior Docker daemon configuration was restored/);
@@ -839,7 +804,8 @@ configure_docker_runtime_if_needed
 run_gpus_test_sudo() { printf 'GPU_PROBE\n'; return 1; }
 run_cdi_test_sudo() { return 0; }
 docker_has_nvidia_runtime_sudo() { return 1; }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 ensure_root_directory_safe() { :; }
 assert_root_directory_safe() { :; }
 assert_root_regular_file_safe() { :; }
@@ -866,7 +832,7 @@ configure_docker_runtime_if_needed
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
 sudo() { printf 'SUDO %s\n' "$*"; }
 nvidia-ctk() {
   [[ "$*" == "cdi list" ]] && printf 'nvidia.com/gpu=all\n'

@@ -9,8 +9,6 @@ keywords: ["nemoclaw security best practices", "sandbox security controls risk f
 content:
   type: "concept"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 NemoClaw ships with deny-by-default security controls across five layers: network, filesystem, process, gateway authentication, and inference.
 You can tune every control, but each change shifts the risk profile.
 This page documents each configurable control, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.

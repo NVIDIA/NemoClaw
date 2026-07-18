@@ -107,8 +107,10 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Sandbox-scoped status for 'alpha'");
     expect(output).toContain("Sandbox: alpha");
     expect(output).toContain("Model:    nvidia/nemotron");
-    expect(output).toContain("Inference: healthy");
+    expect(output).toContain("Inference: reachable");
     expect(output).toContain("Inference (ollama backend):");
+    expect(output).toContain("Serving process (openclaw gateway):");
+    expect(output).toContain("not checked");
     expect(output).toContain("Host GPU: yes");
     expect(output).toContain("last CUDA proof failed: cuInit");
     expect(output).toContain("CUDA initialization failed");
@@ -126,6 +128,19 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("omits serving-process status when the gateway is unavailable (#7003)", async () => {
+    const harness = createStatusFlowHarness({
+      lookupState: "missing",
+      servingProcessHealth: null,
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).not.toContain("Serving process");
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it.each([
@@ -210,6 +225,41 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Inference: healthy");
     expect(output).toContain("Inference (upstream):");
     expect(output).toContain("unreachable");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("distinguishes route reachability from model-invocation health in the rendered labels (#6846)", async () => {
+    const harness = createStatusFlowHarness({
+      inferenceHealth: {
+        ok: true,
+        probed: true,
+        providerLabel: "Inference route",
+        endpoint: "https://inference.local/v1/models",
+        detail: "route reachable",
+        okLabel: "reachable",
+        subprobes: [
+          {
+            ok: true,
+            probed: true,
+            providerLabel: "NVIDIA Endpoints",
+            endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+            detail: "model invocation probe succeeded",
+            probeLabel: "upstream",
+          },
+        ],
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    // The route probe only proves network-path reachability (#6192); the
+    // upstream subprobe is what proves the configured model is invocable
+    // (#6846). Rendering the same word for both would re-introduce the
+    // false-positive this PR fixes.
+    expect(output).toContain("Inference: reachable");
+    expect(output).not.toContain("Inference: healthy");
+    expect(output).toContain("Inference (upstream): healthy");
     expect(process.exitCode).toBeUndefined();
   });
 
