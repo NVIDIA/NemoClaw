@@ -196,6 +196,79 @@ require_no_autorestarting_stopped_containers "restarting Docker"
     expect(output).toContain("background-job restart=unless-stopped");
   });
 
+  it("rechecks running containers after restart-policy inspection (#7153)", () => {
+    const { result, output } = runStationPreparation(`
+DOCKER_BASELINE_CAPTURED=1
+DOCKER_CONTAINER_BASELINE='aaaaaaaaaaaaaaaaaaaaaaaa'
+DOCKER_CONTAINER_BASELINE_TOTAL=1
+ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"; }
+ss() { :; }
+docker() {
+  local running_checks
+  case "$*" in
+    'ps -aq --no-trunc') printf 'aaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+    'ps --format {{.ID}} {{.Names}}')
+      running_checks="$(cat "$HOME/running-checks" 2>/dev/null || printf '0')"
+      running_checks=$((running_checks + 1))
+      printf '%s' "$running_checks" >"$HOME/running-checks"
+      if ((running_checks > 1)); then
+        printf 'aaaaaaaaaaaa background-job\n'
+      fi
+      ;;
+    'inspect --format {{.Id}} {{.Name}} {{.State.Running}} {{.HostConfig.RestartPolicy.Name}} aaaaaaaaaaaaaaaaaaaaaaaa')
+      printf 'aaaaaaaaaaaaaaaaaaaaaaaa /background-job true no\n'
+      ;;
+    *) return 1 ;;
+  esac
+}
+require_docker_restart_quiescence "restarting Docker"
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(/Running Docker containers block restarting Docker/);
+    expect(output).toContain("background-job");
+  });
+
+  it("does not restart Docker during rollback after quiescence is lost (#7153)", () => {
+    const { result, output } = runStationPreparation(`
+root_regular_file_is_safe() { return 0; }
+require_docker_restart_quiescence() {
+  printf 'ROLLBACK_RESTART_BLOCKED\n'
+  return 1
+}
+sudo() { printf 'SUDO %s\n' "$*"; }
+rollback_docker_runtime_config /var/backups/station-bootstrap/docker-runtime.TEST 0 1
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("ROLLBACK_RESTART_BLOCKED");
+    expect(output).toContain("SUDO rm -f -- /etc/docker/daemon.json");
+    expect(output).not.toContain("systemctl restart docker.service");
+  });
+
+  it("does not apply restart-policy blocking when runtime services are already active (#7153)", () => {
+    const { result, output } = runStationPreparation(`
+systemctl() { return 0; }
+require_docker_mutation_quiescence() { printf 'MUTATION_QUIESCENCE\n'; }
+require_docker_restart_quiescence() {
+  printf 'UNEXPECTED_RESTART_QUIESCENCE\n'
+  return 1
+}
+sudo() { printf 'SUDO %s\n' "$*"; }
+ensure_docker_group() { :; }
+ensure_acceptance_image() { :; }
+ensure_cdi_runtime() { :; }
+configure_docker_runtime_if_needed() { :; }
+verify_docker_container_baseline() { :; }
+finish_runtime
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("MUTATION_QUIESCENCE");
+    expect(output).toContain("systemctl enable --now containerd.service docker.service");
+    expect(output).not.toContain("UNEXPECTED_RESTART_QUIESCENCE");
+  });
+
   it("permits a stopped container with restart policy no (#7153)", () => {
     const { result, output } = runStationPreparation(`
 docker() {

@@ -919,6 +919,7 @@ require_docker_restart_quiescence() {
   local action=$1
   require_docker_mutation_quiescence "$action"
   require_no_autorestarting_stopped_containers "$action"
+  require_docker_mutation_quiescence "$action"
 }
 
 loaded_driver_version() {
@@ -1431,6 +1432,9 @@ rollback_docker_runtime_config() {
     sudo rm -f -- /etc/docker/daemon.json || return 1
   fi
   if [[ "$restart_after_restore" == "1" ]]; then
+    if ! (require_docker_restart_quiescence "restarting Docker during runtime rollback"); then
+      return 1
+    fi
     sudo systemctl restart docker.service
   fi
 }
@@ -1444,7 +1448,11 @@ fail_after_docker_runtime_rollback() {
 }
 
 finish_runtime() {
-  require_docker_restart_quiescence "starting or configuring the Station container runtime"
+  if systemctl is-active --quiet containerd.service && systemctl is-active --quiet docker.service; then
+    require_docker_mutation_quiescence "enabling or configuring the Station container runtime"
+  else
+    require_docker_restart_quiescence "starting or configuring the Station container runtime"
+  fi
   sudo systemctl enable --now containerd.service docker.service
   ensure_docker_group
   ensure_acceptance_image
