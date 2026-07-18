@@ -307,6 +307,27 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     );
   });
 
+  it("applies exact required limits while preserving the native GPU route", async () => {
+    const input = createInput();
+    input.persistStartupCommand = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: "native",
+        persistStartupCommand: true,
+        requiredUlimits: input.requiredUlimits,
+      }),
+    );
+  });
+
   it.each([
     {
       failure: "image build",
