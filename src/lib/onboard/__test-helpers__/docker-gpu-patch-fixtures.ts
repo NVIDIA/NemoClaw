@@ -43,6 +43,18 @@ export function createDockerGpuInspectFixture(): DockerContainerInspect {
     },
     HostConfig: {
       Binds: ["/host:/container:rw"],
+      Mounts: [
+        {
+          Type: "tmpfs",
+          Target: "/tmp/nemoclaw-exact-main-driver-config",
+          ReadOnly: false,
+          TmpfsOptions: {
+            Options: [["noexec"]],
+            SizeBytes: 16_777_216,
+            Mode: 0o1777,
+          },
+        },
+      ],
       NetworkMode: "openshell-docker",
       RestartPolicy: { Name: "unless-stopped" },
       CapAdd: ["SYS_ADMIN", "NET_ADMIN"],

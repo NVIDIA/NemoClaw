@@ -16,6 +16,9 @@ const GPU_ENV_KEYS = new Set([
   "NVIDIA_REQUIRE_CUDA",
   "NVIDIA_DISABLE_REQUIRE",
 ]);
+type DockerStructuredMount = NonNullable<
+  NonNullable<DockerContainerInspect["HostConfig"]>["Mounts"]
+>[number];
 
 export const DOCKER_GPU_PATCH_NETWORK_ENV = "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK";
 
@@ -113,6 +116,117 @@ function dockerUlimits(
     merged.set(normalized.name, normalized);
   }
   return [...merged.values()];
+}
+
+function mountValue(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim()) {
+    throw new Error(`Docker structured mount ${label} must be a non-empty trimmed string.`);
+  }
+  if (/[\0,:]/u.test(value)) {
+    throw new Error(`Docker structured mount ${label} contains an unsupported delimiter.`);
+  }
+  return value;
+}
+
+function optionalMountBoolean(value: unknown, label: string): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value !== "boolean") {
+    throw new Error(`Docker structured mount ${label} must be a boolean.`);
+  }
+  return value;
+}
+
+function assertUnusedMountOption(value: unknown, label: string): void {
+  if (value !== undefined && value !== null) {
+    throw new Error(`Docker structured mount has unexpected ${label}.`);
+  }
+}
+
+function dockerTmpfsMountValue(mount: DockerStructuredMount): string {
+  if (String(mount.Source ?? "") !== "") {
+    throw new Error("Docker tmpfs mount must not include a source.");
+  }
+  if (String(mount.Consistency ?? "") !== "") {
+    throw new Error("Docker tmpfs mount consistency is not supported during recreation.");
+  }
+  assertUnusedMountOption(mount.BindOptions, "BindOptions for a tmpfs mount");
+  assertUnusedMountOption(mount.VolumeOptions, "VolumeOptions for a tmpfs mount");
+
+  const target = mountValue(mount.Target, "target");
+  if (!target.startsWith("/")) {
+    throw new Error("Docker structured mount target must be an absolute container path.");
+  }
+  const options: string[] = [];
+  if (optionalMountBoolean(mount.ReadOnly, "ReadOnly")) options.push("ro");
+  for (const parts of mount.TmpfsOptions?.Options ?? []) {
+    if (!Array.isArray(parts) || parts.length < 1 || parts.length > 2) {
+      throw new Error("Docker tmpfs mount options must contain one or two values.");
+    }
+    options.push(parts.map((part) => mountValue(part, "tmpfs option")).join("="));
+  }
+
+  const sizeBytes = mount.TmpfsOptions?.SizeBytes;
+  if (sizeBytes !== undefined && sizeBytes !== null) {
+    if (!Number.isSafeInteger(sizeBytes) || sizeBytes <= 0) {
+      throw new Error("Docker tmpfs mount size must be a positive safe integer.");
+    }
+    options.push(`size=${sizeBytes}`);
+  }
+  const mode = mount.TmpfsOptions?.Mode;
+  if (mode !== undefined && mode !== null) {
+    if (!Number.isSafeInteger(mode) || mode < 0 || mode > 0o7777) {
+      throw new Error("Docker tmpfs mount mode must be a valid non-negative file mode.");
+    }
+    options.push(`mode=${mode.toString(8)}`);
+  }
+  return options.length > 0 ? `${target}:${options.join(",")}` : target;
+}
+
+function dockerVolumeMountValue(mount: DockerStructuredMount): string {
+  if (String(mount.Consistency ?? "") !== "") {
+    throw new Error("Docker volume mount consistency is not supported during recreation.");
+  }
+  assertUnusedMountOption(mount.BindOptions, "BindOptions for a volume mount");
+  assertUnusedMountOption(mount.TmpfsOptions, "TmpfsOptions for a volume mount");
+
+  const source = mountValue(mount.Source, "volume source");
+  const target = mountValue(mount.Target, "target");
+  if (!target.startsWith("/")) {
+    throw new Error("Docker structured mount target must be an absolute container path.");
+  }
+  const values = [`type=volume`, `src=${source}`, `dst=${target}`];
+  if (optionalMountBoolean(mount.ReadOnly, "ReadOnly")) values.push("readonly");
+  const volumeOptions = mount.VolumeOptions;
+  if (optionalMountBoolean(volumeOptions?.NoCopy, "VolumeOptions.NoCopy")) {
+    values.push("volume-nocopy");
+  }
+  if (volumeOptions?.Subpath) {
+    values.push(`volume-subpath=${mountValue(volumeOptions.Subpath, "volume subpath")}`);
+  }
+  if (volumeOptions?.Labels && Object.keys(volumeOptions.Labels).length > 0) {
+    throw new Error("Docker volume mount labels are not supported during recreation.");
+  }
+  assertUnusedMountOption(volumeOptions?.DriverConfig, "VolumeOptions.DriverConfig");
+  return values.join(",");
+}
+
+function dockerStructuredMountArgs(inspect: DockerContainerInspect): string[] {
+  const args: string[] = [];
+  for (const mount of inspect.HostConfig?.Mounts ?? []) {
+    switch (mount.Type) {
+      case "tmpfs":
+        // The --tmpfs form preserves OpenShell's arbitrary TmpfsOptions.Options,
+        // such as noexec, in addition to the structured size and mode fields.
+        args.push("--tmpfs", dockerTmpfsMountValue(mount));
+        break;
+      case "volume":
+        args.push("--mount", dockerVolumeMountValue(mount));
+        break;
+      default:
+        throw new Error(`Unsupported Docker structured mount type '${String(mount.Type)}'.`);
+    }
+  }
+  return args;
 }
 
 function pushNumberFlag(args: string[], flag: string, value: unknown): void {
@@ -235,6 +349,7 @@ export function buildDockerGpuCloneRunArgs(
     if (value !== undefined && value !== null) args.push("--label", `${key}=${value}`);
   }
   for (const bind of stringArray(host.Binds)) args.push("--volume", bind);
+  args.push(...dockerStructuredMountArgs(inspect));
   const networkMode = options.networkMode ?? host.NetworkMode;
   pushStringFlag(args, "--network", networkMode);
   for (const alias of dockerNetworkAliases(inspect, networkMode))

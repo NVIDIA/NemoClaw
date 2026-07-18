@@ -100,6 +100,8 @@ $$nemoclaw <sandbox-name> rebuild
 
 <AgentOnly variant="openclaw">
 The rebuild command preserves the mounted workspace and registered policies while recreating the container.
+After state restoration, NemoClaw clears a session's stale model and provider pin when it still targets the managed `inference` provider but no longer matches the configured default model.
+The session then follows the current default selected through `inference set`, while sessions pinned to another provider remain unchanged.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
