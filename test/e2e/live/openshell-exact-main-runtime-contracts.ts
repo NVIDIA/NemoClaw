@@ -73,7 +73,10 @@ export function parseExactMainPolicyStatus(raw: string): ExactMainPolicyStatus {
   if (!isRecord(parsed)) throw new Error("exact-main policy status must be a JSON object");
   const configRevision = parsed.config_revision;
   const policySource = parsed.policy_source;
-  if (configRevision !== undefined && !Number.isSafeInteger(configRevision)) {
+  if (
+    configRevision !== undefined &&
+    (typeof configRevision !== "number" || !Number.isInteger(configRevision))
+  ) {
     throw new Error("exact-main policy config_revision must be an integer when present");
   }
   if (policySource !== undefined && typeof policySource !== "string") {
