@@ -101,7 +101,7 @@ function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVarian
       }
       if (line.match(/^<\/AgentOnly>\s*$/)) {
         if (openBlock.include) {
-          renderedLines.push(...trimAgentOnlyBoundaryBlankLines(openBlock.lines));
+          renderedLines.push(...trimAgentOnlyListBoundaryBlankLines(openBlock.lines));
         }
         openBlock = undefined;
         continue;
@@ -134,7 +134,10 @@ function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVarian
   return renderedLines.join("\n");
 }
 
-function trimAgentOnlyBoundaryBlankLines(lines: string[]): string[] {
+function trimAgentOnlyListBoundaryBlankLines(lines: string[]): string[] {
+  const firstContentLine = lines.find((line) => line.trim() !== "");
+  if (!firstContentLine?.match(/^\s*(?:[-+*]|\d{1,9}[.)])\s+/)) return lines;
+
   let start = 0;
   let end = lines.length;
 

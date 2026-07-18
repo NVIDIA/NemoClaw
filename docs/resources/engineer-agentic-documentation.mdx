@@ -301,7 +301,8 @@ The canonical source does not need an import because Fern receives only the reso
 
 For each navigation target, `scripts/sync-agent-variant-docs.mts` reads the requested variant from `docs/index.yml` and parses the canonical source as text.
 When an `<AgentOnly>` directive lists the active variant, the resolver copies its content into the generated page.
-It discards blank lines immediately inside the opening and closing tags so wrapper formatting does not split an adjacent Markdown list or paragraph, while preserving blank lines within the retained content.
+When the retained content starts with a Markdown list item, it discards blank lines immediately inside the opening and closing tags so wrapper formatting does not split the list.
+For other retained content, it preserves those boundary blank lines and all interior blank lines so paragraphs and code sections keep their intended separation.
 When the directive does not list the active variant, the resolver omits the body.
 In both cases, it removes the opening and closing directive tags before writing the generated MDX.
 

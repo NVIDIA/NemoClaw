@@ -100,6 +100,27 @@ title: "Example"
     expect(rendered).not.toContain("NemoHermes installed.");
   });
 
+  it("preserves paragraph boundaries around retained variant prose", () => {
+    const rendered = renderAgentVariantPage(
+      `---
+title: "Example"
+---
+Shared paragraph.
+
+<AgentOnly variant="openclaw">
+
+OpenClaw paragraph.
+
+</AgentOnly>
+Following paragraph.
+`,
+      "openclaw",
+    );
+
+    expect(rendered).toContain("Shared paragraph.\n\nOpenClaw paragraph.");
+    expect(rendered).toContain("OpenClaw paragraph.\n\nFollowing paragraph.");
+  });
+
   it("rejects nested AgentOnly blocks before they leak into generated variants", () => {
     const nested = `---
 title: "Example"
