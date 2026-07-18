@@ -140,7 +140,8 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
     const syntax = spawnSync("sh", ["-n"], { encoding: "utf8", input: script });
 
     expect(syntax.status, syntax.stderr).toBe(0);
-    expect(script).toContain("nft_path=$(command -v nft)");
+    expect(script).toContain("/usr/sbin/nft /sbin/nft /usr/bin/nft");
+    expect(script).toContain("nft executable not found");
     expect(script).toContain("/var/run/netns/sandbox-*");
     expect(script).toContain('ip netns pids "$namespace" 2>/dev/null');
     expect(script).toContain('nsenter --net="$namespace_path" -- "$nft_path"');
