@@ -735,6 +735,7 @@ warn_openibd_remediation() {
   warn "openibd.service configures optional Mellanox RDMA networking; NemoClaw does not require RDMA"
   warn "Check the default route: ip route get 1.1.1.1"
   warn "Check NFS mount options: findmnt -rn -t nfs,nfs4 -o TARGET,OPTIONS"
+  warn "These checks are not exhaustive; confirm no RDMA-backed networking, storage, or workloads are in use"
   warn "If this host does not use RDMA, run: sudo systemctl disable openibd.service"
   warn "After disabling the unused service, reboot and rerun the NemoClaw installer"
   warn "If this host uses RDMA, repair OpenIB/OFED before rerunning the installer"

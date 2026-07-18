@@ -21,7 +21,13 @@ function checkFailedUnit(unit: string) {
       "-c",
       `
 source "$SCRIPT_UNDER_TEST" >/dev/null
-systemctl() { printf '%s loaded failed failed fixture\\n' "$FAILED_UNIT"; }
+systemctl() {
+  if [[ "$*" != "--failed --no-legend --plain" ]]; then
+    printf 'unexpected systemctl call: %s\\n' "$*" >&2
+    exit 97
+  fi
+  printf '%s loaded failed failed fixture\\n' "$FAILED_UNIT"
+}
 check_failed_units
 `,
     ],
@@ -46,12 +52,12 @@ describe("DGX Station OpenIB remediation", () => {
     const openibd = checkFailedUnit("openibd.service");
 
     expect(openibd.result.error, openibd.output).toBeUndefined();
-    expect(openibd.result.status, openibd.output).not.toBeNull();
-    expect(openibd.result.status, openibd.output).not.toBe(0);
+    expect(openibd.result.status, openibd.output).toBe(1);
     expect(openibd.output).toMatch(/unqualified failed unit: openibd.service/);
     expect(openibd.output).toMatch(/NemoClaw does not require RDMA/);
     expect(openibd.output).toMatch(/ip route get 1\.1\.1\.1/);
     expect(openibd.output).toMatch(/findmnt -rn -t nfs,nfs4 -o TARGET,OPTIONS/);
+    expect(openibd.output).toMatch(/checks are not exhaustive/);
     expect(openibd.output).toMatch(/sudo systemctl disable openibd.service/);
     expect(openibd.output).toMatch(/repair OpenIB\/OFED/);
     expect(openibd.output).toMatch(/NemoClaw did not change systemd or networking state/);
@@ -62,8 +68,7 @@ describe("DGX Station OpenIB remediation", () => {
     const unrelated = checkFailedUnit("ssh.service");
 
     expect(unrelated.result.error, unrelated.output).toBeUndefined();
-    expect(unrelated.result.status, unrelated.output).not.toBeNull();
-    expect(unrelated.result.status, unrelated.output).not.toBe(0);
+    expect(unrelated.result.status, unrelated.output).toBe(1);
     expect(unrelated.output).toMatch(/unqualified failed unit: ssh.service/);
     expect(unrelated.output).not.toMatch(/NemoClaw does not require RDMA/);
     expect(unrelated.output).not.toMatch(/sudo systemctl disable openibd.service/);
