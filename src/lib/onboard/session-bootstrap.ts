@@ -9,6 +9,7 @@ import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure
 import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import type { ResumeConfigConflict } from "./resume-config";
+import type { StationExpressResumeIntent } from "./station-express-resume";
 
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
@@ -22,6 +23,7 @@ export interface OnboardSessionBootstrapInput {
   envAgent?: string | null;
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
+  stationExpressIntent?: StationExpressResumeIntent | null;
 }
 
 export interface OnboardSessionBootstrapDeps {
@@ -290,6 +292,7 @@ function prepareFreshSession(
       toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
       observabilityEnabled: input.requestedObservabilityEnabled === true,
       observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
+      stationExpressIntent: input.stationExpressIntent ?? null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
     }),
   );

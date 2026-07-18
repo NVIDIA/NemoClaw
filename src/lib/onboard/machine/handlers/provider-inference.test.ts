@@ -419,6 +419,34 @@ describe("handleProviderInferenceState", () => {
     expect(calls.deleteEnv).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
   });
 
+  it("retains Station Express intent without committing a failed managed provider selection", async () => {
+    const setupNim = vi.fn(async () => {
+      throw new Error("injected managed vLLM download failure");
+    });
+    const { deps, calls } = createDeps({ setupNim });
+    const session = createSession({
+      mode: "non-interactive",
+      stationExpressIntent: {
+        version: 1,
+        model: "nemotron-3-ultra-550b-a55b",
+        sandboxName: "my-assistant",
+      },
+    });
+
+    await expect(handleProviderInferenceState(baseOptions(deps, session))).rejects.toThrow(
+      "injected managed vLLM download failure",
+    );
+
+    expect(session.stationExpressIntent).toEqual({
+      version: 1,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+    });
+    expect(session.provider).toBeNull();
+    expect(session.model).toBeNull();
+    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+  });
+
   it("exits through the injected CLI boundary when provider selection is incomplete", async () => {
     const setupNim = vi.fn(async () => ({ ...baseSelection, model: null }));
     const { deps, calls } = createDeps({ setupNim });

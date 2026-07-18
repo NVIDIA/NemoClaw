@@ -41,7 +41,10 @@ navigation:
                 path: _build/agent-variants/get-started/prerequisites.openclaw.generated.mdx
                 slug: prerequisites
                 contents:
-                  - page: "(Windows Only) Windows Prerequisites"
+                  - page: "Additional Setup for DGX Station"
+                    path: _build/agent-variants/get-started/dgx-station-preparation.openclaw.generated.mdx
+                    slug: dgx-station-preparation
+                  - page: "Additional Setup for Windows Machines"
                     path: _build/agent-variants/get-started/windows-preparation.openclaw.generated.mdx
                     slug: windows-preparation
               - page: "Quickstart with OpenClaw"
@@ -403,7 +406,10 @@ navigation:
                 path: _build/agent-variants/get-started/prerequisites.deepagents.generated.mdx
                 slug: prerequisites
                 contents:
-                  - page: "(Windows Only) Windows Prerequisites"
+                  - page: "Additional Setup for DGX Station"
+                    path: _build/agent-variants/get-started/dgx-station-preparation.deepagents.generated.mdx
+                    slug: dgx-station-preparation
+                  - page: "Additional Setup for Windows Machines"
                     path: _build/agent-variants/get-started/windows-preparation.deepagents.generated.mdx
                     slug: windows-preparation
               - page: "Quickstart with Deep Agents"
@@ -651,7 +657,10 @@ navigation:
                 path: _build/agent-variants/get-started/prerequisites.hermes.generated.mdx
                 slug: prerequisites
                 contents:
-                  - page: "(Windows Only) Windows Prerequisites"
+                  - page: "Additional Setup for DGX Station"
+                    path: _build/agent-variants/get-started/dgx-station-preparation.hermes.generated.mdx
+                    slug: dgx-station-preparation
+                  - page: "Additional Setup for Windows Machines"
                     path: _build/agent-variants/get-started/windows-preparation.hermes.generated.mdx
                     slug: windows-preparation
               - page: "Quickstart with Hermes"

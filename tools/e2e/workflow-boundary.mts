@@ -3706,7 +3706,7 @@ function validateInferenceModeGeneration(
   if (env.INFERENCE_MODE !== "${{ inputs.inference_mode || 'mock' }}") {
     errors.push("matrix generation step must pass the defaulted inference mode through env");
   }
-  requireRunContains(errors, step, "Invalid inference_mode: ${INFERENCE_MODE}");
+  requireRunContains(errors, step, "--ci-output");
 }
 
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
@@ -3854,48 +3854,17 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
   validateInferenceModeGeneration(errors, generate, generateEnv);
   requireRunContains(errors, generate, "npx tsx tools/e2e/workflow-plan.mts");
-  requireRunContains(errors, generate, "for selector_name in JOBS TARGETS");
-  requireRunContains(errors, generate, "Invalid ${selector_name,,} input; use comma-separated ids");
-  requireRunContains(errors, generate, 'planner_args+=(--jobs "${JOBS}")');
-  requireRunContains(errors, generate, 'planner_args+=(--targets "${TARGETS}")');
-  requireRunContains(errors, generate, "--targets");
-  requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
-  requireRunDoesNotContain(errors, generate, "Invalid jobs input: ${JOBS}");
-  requireRunDoesNotContain(errors, generate, "Invalid target input: ${TARGETS}");
-  requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
-  requireRunContains(
-    errors,
-    generate,
-    '(keys | sort) == ["explicitOnlyJobs", "hermesSelected", "matrix", "testMatrix"]',
-  );
-  requireRunContains(errors, generate, "([.matrix[].id] | unique | length)");
-  requireRunContains(errors, generate, '(keys | sort) == ["file", "id", "project"]');
-  requireRunContains(errors, generate, "([.testMatrix[].id] | unique | length)");
-  requireRunContains(errors, generate, "E2E planner returned an invalid output schema");
-  requireRunContains(errors, generate, "expected_hermes_selected=false");
-  requireRunContains(errors, generate, "expected_hermes_selected=true");
-  requireRunContains(errors, generate, "E2E planner changed the trusted Hermes selection");
+  requireRunContains(errors, generate, "--ci-output");
   requireRunContains(errors, generate, 'if [ -n "${CHECKOUT_SHA}" ]');
+  requireRunContains(errors, generate, "GITHUB_OUTPUT");
   requireRunContains(errors, generate, "expected_controller_matrix=");
   requireRunContains(errors, generate, "actual_controller_matrix=");
+  requireRunContains(errors, generate, ': > "${GITHUB_OUTPUT}"');
   requireRunContains(
     errors,
     generate,
     "E2E planner matrix does not match controller-selected targets",
   );
-  requireRunContains(
-    errors,
-    generate,
-    'echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"',
-  );
-  requireRunContains(
-    errors,
-    generate,
-    'echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"',
-  );
-  requireRunContains(errors, generate, 'echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"');
-  requireRunContains(errors, generate, "## E2E Execution Plan");
-  requireRunContains(errors, generate, "| Test | Execution | Runner |");
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
