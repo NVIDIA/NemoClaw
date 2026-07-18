@@ -11,8 +11,6 @@ content:
 skill:
   priority: 30
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 Use the lightest recovery operation that repairs the sandbox while preserving its supported state.
 
 ## Recover the Agent Runtime
@@ -100,10 +98,16 @@ $$nemoclaw <sandbox-name> rebuild
 
 <AgentOnly variant="openclaw">
 The rebuild command preserves the mounted workspace and registered policies while recreating the container.
+After state restoration, NemoClaw clears a session's stale model and provider pin when it still targets the managed `inference` provider but no longer matches the configured default model.
+The session then follows the current default selected through `inference set`, while sessions pinned to another provider remain unchanged.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-The rebuild command preserves Hermes state and registered policies while recreating the container.
+The rebuild command preserves Hermes state, registered policies, and managed MCP configuration while recreating the container.
+Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
+After state restore, NemoClaw restores managed MCP configuration through the normal lifecycle, then re-proves or recovers gateway health and performs final MCP reconciliation.
+`rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state.
+Follow the printed recovery guidance, using `$$nemoclaw <sandbox-name> recover` for gateway health and `$$nemoclaw <sandbox-name> mcp restart` for incomplete managed MCP restoration.
 </AgentOnly>
 
 <AgentOnly variant="deepagents">

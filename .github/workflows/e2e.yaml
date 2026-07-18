@@ -173,109 +173,17 @@ jobs:
           TARGETS: ${{ inputs.targets }}
         run: |
           set -euo pipefail
-          case "${INFERENCE_MODE}" in
-            mock|internal-nvidia|public-nvidia) ;;
-            *) echo "::error::Invalid inference_mode: ${INFERENCE_MODE}" >&2; exit 1 ;;
-          esac
-          for selector_name in JOBS TARGETS; do
-            selector_value="${!selector_name}"
-            if [ -n "${selector_value}" ] && [[ ! "${selector_value}" =~ ^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$ ]]; then
-              echo "::error::Invalid ${selector_name,,} input; use comma-separated ids" >&2
-              exit 1
-            fi
-          done
-
-          planner_args=()
-          if [ -n "${JOBS}" ]; then
-            planner_args+=(--jobs "${JOBS}")
-          fi
-          if [ -n "${TARGETS}" ]; then
-            planner_args+=(--targets "${TARGETS}")
-          fi
-          plan="$(npx tsx tools/e2e/workflow-plan.mts "${planner_args[@]}")"
-          plan_filter='
-            type == "object" and
-            (keys | sort) == ["explicitOnlyJobs", "hermesSelected", "matrix", "testMatrix"] and
-            (.matrix | type) == "array" and
-            all(.matrix[];
-              type == "object" and
-              (keys | sort) == ["expectedStateId", "id", "install", "label", "onboarding", "pendingRuntimeSuites", "platform", "requiredSecrets", "runner", "runtime", "suites", "supportReasons", "supported"] and
-              (.id | type == "string" and test("^[a-z0-9]+(?:-[a-z0-9]+)*$")) and
-              (.runner | type == "string" and test("^[A-Za-z0-9_-]+$")) and
-              (.label | type) == "string" and
-              (.platform | type) == "string" and
-              (.install | type) == "string" and
-              (.runtime | type) == "string" and
-              (.onboarding | type) == "string" and
-              (.expectedStateId | type) == "string" and
-              (.supported | type) == "boolean" and
-              all(.suites[], .requiredSecrets[], .supportReasons[], .pendingRuntimeSuites[]; type == "string")
-            ) and
-            (([.matrix[].id] | length) == ([.matrix[].id] | unique | length)) and
-            (.testMatrix | type) == "array" and
-            all(.testMatrix[];
-              type == "object" and
-              (keys | sort) == ["file", "id", "project"] and
-              (.id | test("^[a-z0-9]+(?:-[a-z0-9]+)*$")) and
-              (.file | test("^test/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+[.]test[.](?:js|ts)$")) and
-              ((.project == "e2e-live" and (.file | startswith("test/e2e/live/"))) or
-               (.project == "integration" and (.file | startswith("test/")) and
-                ((.file | startswith("test/e2e/")) | not)))
-            ) and
-            (([.testMatrix[].id] | length) == ([.testMatrix[].id] | unique | length)) and
-            (.hermesSelected | type) == "boolean" and
-            (.explicitOnlyJobs | type) == "array" and
-            all(.explicitOnlyJobs[]; type == "string" and test("^[A-Za-z0-9_-]+$")) and
-            ((.explicitOnlyJobs | length) == (.explicitOnlyJobs | unique | length))
-          '
-          if ! jq -e "${plan_filter}" <<< "${plan}" >/dev/null; then
-            echo "::error::E2E planner returned an invalid output schema" >&2
-            exit 1
-          fi
-
-          expected_hermes_selected=false
-          if { [ -z "${JOBS}" ] && [ -z "${TARGETS}" ]; } \
-            || [[ ",${JOBS}," == *",hermes-e2e,"* ]] \
-            || [[ ",${TARGETS}," == *",hermes-e2e,"* ]]; then
-            expected_hermes_selected=true
-          fi
-          hermes_selected="$(jq -r '.hermesSelected' <<< "${plan}")"
-          if [ "${hermes_selected}" != "${expected_hermes_selected}" ]; then
-            echo "::error::E2E planner changed the trusted Hermes selection" >&2
-            exit 1
-          fi
-
-          matrix="$(jq -c '.matrix' <<< "${plan}")"
-          test_matrix="$(jq -c '.testMatrix' <<< "${plan}")"
-          explicit_only_jobs_csv="$(jq -r '.explicitOnlyJobs | join(",")' <<< "${plan}")"
+          npx tsx tools/e2e/workflow-plan.mts --ci-output
           if [ -n "${CHECKOUT_SHA}" ]; then
+            matrix="$(sed -n 's/^matrix=//p' "${GITHUB_OUTPUT}")"
             expected_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${CONTROLLER_MATRIX}")"
             actual_controller_matrix="$(jq -c 'map({id, runner}) | sort_by(.id)' <<< "${matrix}")"
             if [ "${actual_controller_matrix}" != "${expected_controller_matrix}" ]; then
+              : > "${GITHUB_OUTPUT}"
               echo "::error::E2E planner matrix does not match controller-selected targets" >&2
               exit 1
             fi
           fi
-          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
-          echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"
-          echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
-          echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"
-
-          MATRIX_JSON="${matrix}" TEST_MATRIX_JSON="${test_matrix}" python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import json
-          import os
-
-          typed_rows = json.loads(os.environ["MATRIX_JSON"])
-          test_rows = json.loads(os.environ["TEST_MATRIX_JSON"])
-          print("## E2E Execution Plan")
-          print()
-          print("| Test | Execution | Runner |")
-          print("| --- | --- | --- |")
-          for row in typed_rows:
-              print(f"| `{row['id']}` | typed registry | `{row['runner']}` |")
-          for row in test_rows:
-              print(f"| `{row['id']}` | shared E2E job | `ubuntu-latest` |")
-          PY
 
   live:
     needs: generate-matrix

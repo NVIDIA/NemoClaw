@@ -100,7 +100,9 @@ function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVarian
         throw new Error(`nested AgentOnly block at body line ${index + 1}`);
       }
       if (line.match(/^<\/AgentOnly>\s*$/)) {
-        if (openBlock.include) renderedLines.push(...openBlock.lines);
+        if (openBlock.include) {
+          renderedLines.push(...trimAgentOnlyListBoundaryBlankLines(openBlock.lines));
+        }
         openBlock = undefined;
         continue;
       }
@@ -132,11 +134,47 @@ function stripAgentOnlyBlocksForVariant(body: string, activeVariant: AgentVarian
   return renderedLines.join("\n");
 }
 
+function trimAgentOnlyListBoundaryBlankLines(lines: string[]): string[] {
+  const firstContentLine = lines.find((line) => line.trim() !== "");
+  if (!firstContentLine?.match(/^\s*(?:[-+*]|\d{1,9}[.)])\s+/)) return lines;
+
+  let start = 0;
+  let end = lines.length;
+
+  while (start < end && lines[start].trim() === "") start += 1;
+  while (end > start && lines[end - 1].trim() === "") end -= 1;
+
+  return lines.slice(start, end);
+}
+
 function agentOnlyVariantMatches(variant: string, activeVariant: AgentVariant): boolean {
   return variant
     .split(",")
     .map((item) => item.trim())
     .includes(activeVariant);
+}
+
+function assertStaticallyResolvedVariantPage(
+  body: string,
+  activeVariant: AgentVariant,
+  sourcePath?: string,
+): void {
+  const unresolved: string[] = [];
+  if (/^\s*import\s+.*AgentGuide["'];?\s*$/m.test(body)) {
+    unresolved.push("AgentGuide import");
+  }
+  if (/^\s*<\/?AgentOnly\b/m.test(body)) {
+    unresolved.push("AgentOnly directive");
+  }
+  if (/<(?:AgentCli|AgentProductName|GuideLink)\b/m.test(body)) {
+    unresolved.push("runtime agent component");
+  }
+  if (unresolved.length === 0) return;
+
+  const source = sourcePath ? path.relative(repoRoot, sourcePath) : "agent variant source";
+  throw new Error(
+    `${source} left unresolved ${unresolved.join(", ")} in the ${activeVariant} generated variant`,
+  );
 }
 
 export function renderAgentVariantPage(
@@ -147,10 +185,7 @@ export function renderAgentVariantPage(
   const { frontmatter, body } = splitFrontmatter(source);
   const commandsReference = isCommandsReferenceSource(options.sourcePath);
   const renderedFrontmatter = renderFrontmatter(frontmatter, variant, commandsReference);
-  let renderedBody = stripAgentOnlyBlocksForVariant(
-    body.replace(/^import \{ AgentOnly \} from "\.\.\/_components\/AgentGuide";\n\n?/m, ""),
-    variant,
-  );
+  let renderedBody = stripAgentOnlyBlocksForVariant(body, variant);
   if (commandsReference) {
     renderedBody = transformNemoclawCliInvocations(renderedBody, variant);
   }
@@ -158,6 +193,7 @@ export function renderAgentVariantPage(
     .replaceAll(CLI_SENTINEL, cliForVariant(variant))
     .replace(/\n{3,}/g, "\n\n")
     .trimStart();
+  assertStaticallyResolvedVariantPage(renderedBody, variant, options.sourcePath);
 
   if (options.sourcePath && options.outputPath) {
     renderedBody = rewriteRelativePaths(renderedBody, options.sourcePath, options.outputPath);

@@ -11,8 +11,6 @@ content:
 skill:
   priority: 10
 ---
-import { AgentCli, AgentOnly } from "../_components/AgentGuide";
-
 <AgentOnly variant="openclaw,hermes">
 
 NVIDIA NemoClaw is an open-source reference stack for running always-on AI agents more safely inside OpenShell containers.
@@ -31,7 +29,7 @@ These controls help agents run in clouds, on-premises environments, RTX PCs, and
 NemoClaw pairs hosted inference providers or local model endpoints with a hardened sandbox, routed inference, and declarative egress policy.
 This keeps deployments repeatable and easier to constrain.
 The sandbox runtime comes from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
-NemoClaw adds the blueprint, <AgentCli /> CLI, onboarding, and related tooling as the reference way to run supported agents there.
+NemoClaw adds the blueprint, `$$nemoclaw` CLI, onboarding, and related tooling as the reference way to run supported agents there.
 
 | Capability              | Description                                                                                                                                          |
 |-------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -72,7 +70,7 @@ NemoClaw provides these benefits to mitigate those risks.
 | Sandboxed execution        | Every agent runs inside an OpenShell sandbox with Landlock, seccomp, and network namespace isolation. The sandbox grants no access by default. |
 | Routed inference           | The OpenShell gateway routes model traffic to your selected provider, transparent to the agent. You can switch providers or models. Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider).          |
 | Declarative network policy | YAML defines egress rules. OpenShell blocks unknown hosts and surfaces them to the operator for approval.                 |
-| Single CLI                 | The <AgentCli /> command orchestrates the full stack: gateway, sandbox, inference provider, and network policy.           |
+| Single CLI                 | The `$$nemoclaw` command orchestrates the full stack: gateway, sandbox, inference provider, and network policy.           |
 | Blueprint lifecycle        | Versioned blueprints handle sandbox creation, digest verification, and reproducible setup.                             |
 
 ## Use Cases

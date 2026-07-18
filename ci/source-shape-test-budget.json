@@ -467,6 +467,11 @@
       "category": "security"
     },
     {
+      "file": "test/release-latest-tag-workflow.test.ts",
+      "test": "binds latest promotion to the exact GitHub-verified tag object",
+      "category": "security"
+    },
+    {
       "file": "test/release-lkg-brev-image.test.ts",
       "test": "keeps LKG dispatch inside the trusted secret boundary (#6772)",
       "category": "security"

@@ -13,6 +13,14 @@ runs:
         node-version: "22"
         cache: npm
 
+    - name: Install base-trusted createRequire verifier dependencies
+      shell: bash
+      run: npm ci --ignore-scripts --no-audit --no-fund --prefix "$GITHUB_ACTION_PATH"
+
+    - name: Enforce base-trusted createRequire allowlist ratchet
+      shell: bash
+      run: node --experimental-strip-types "$GITHUB_ACTION_PATH/create-require-ratchet.mts"
+
     - name: Install hadolint
       shell: bash
       run: |

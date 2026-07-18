@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -61,12 +64,35 @@ describe("OpenShell exact-main child contracts", () => {
         { encoding: "utf8" },
       );
       expect(compiled.status, compiled.stderr).toBe(0);
+      expect(source).not.toContain("value.strip().split()[0]");
     }
     const parsed = spawnSync("bash", ["-n"], {
       encoding: "utf8",
       input: CONNECT_CHILD_PROBE,
     });
     expect(parsed.status, parsed.stderr).toBe(0);
+  });
+
+  it("parses proc status entries with an empty value", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-proc-status-"));
+    const statusPath = path.join(directory, "status");
+    try {
+      writeFileSync(statusPath, "Name:\tpython3\nGroups:\t\nCapBnd:\t0000000000000000\n", "utf8");
+      const source = EXEC_CHILD_PROBE.replace(
+        'Path("/proc/self/status")',
+        `Path(${JSON.stringify(statusPath)})`,
+      );
+      const executed = spawnSync("python3", ["-c", source], { encoding: "utf8" });
+
+      expect(executed.status, executed.stderr).toBe(0);
+      expect(JSON.parse(executed.stdout)).toEqual({
+        capBnd: "0000000000000000",
+        supervisorTlsEnvNames: [],
+        surface: "exec",
+      });
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("proves entrypoint, exec, and forced-TTY connect children independently", async () => {
