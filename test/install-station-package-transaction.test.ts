@@ -90,6 +90,7 @@ apt-get() {
   fi
 }
 check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_DOCKER_RESTART\n'; }
 package_state() { printf 'missing\n'; }
 package_is_exact() { return 0; }
 create_apt_transaction_guard() {
@@ -155,6 +156,7 @@ apt-get() {
   fi
 }
 check_no_workloads() { :; }
+require_docker_restart_quiescence() { :; }
 package_state() {
   if [[ "$1" == '${retainedSpec}' ]]; then printf 'exact\n'; else printf 'missing\n'; fi
 }
@@ -381,7 +383,7 @@ sudo() {
   esac
 }
 create_apt_transaction_guard
-bash "$HOME/generated-guard/verify-plan" <<<"$APT_PLAN"
+"$HOME/generated-guard/verify-plan" <<<"$APT_PLAN"
 printf 'GENERATED_HOOK_ACCEPTED\n'
 `,
       {
@@ -398,10 +400,13 @@ printf 'GENERATED_HOOK_ACCEPTED\n'
 
   it("cleans the root-owned transaction guard when the caller exits", () => {
     const { result, output } = runSourced(`
-APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.EXITTEST
-APT_TRANSACTION_HOOK="$APT_TRANSACTION_GUARD_DIR/verify-plan"
 sudo() { printf 'SUDO %s\n' "$*"; }
-trap 'cleanup_apt_transaction_guard' EXIT
+setup_log() { :; }
+run_apply() {
+  APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.EXITTEST
+  APT_TRANSACTION_HOOK="$APT_TRANSACTION_GUARD_DIR/verify-plan"
+}
+main --apply
 `);
 
     expect(result.status, output).toBe(0);

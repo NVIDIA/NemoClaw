@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly SCRIPT_VERSION="2026-07-17.4"
+readonly SCRIPT_VERSION="2026-07-18.1"
 readonly REBOOT_REQUIRED_EXIT=10
 readonly LOGIN_REQUIRED_EXIT=11
 readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
@@ -13,6 +13,7 @@ readonly GB300_PCI_VENDOR="0x10de"
 readonly GB300_PCI_DEVICE="0x31c2"
 readonly GB300_PCI_CLASS_PREFIX="0x03"
 STATION_HOST_PROFILE="generic-ubuntu"
+FORCE_STATION_INSTALL=0
 # The qualified generic image currently ships this OEM telemetry bootcmd. Its
 # exception disappears automatically when the file changes or the bootcmd
 # failure is fixed; update the pin only with a newly audited image.
@@ -41,6 +42,11 @@ readonly TARGET_DKMS_VERSION="1:3.4.0-1ubuntu1"
 readonly ACCEPTANCE_IMAGE="docker.io/library/ubuntu@sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab"
 readonly STATE_DIR="${HOME}/.local/state/station-bootstrap"
 readonly INSTALL_BOOT_MARKER="${STATE_DIR}/install-boot-id"
+DOCKER_BASELINE_CAPTURED=0
+DOCKER_CONTAINER_BASELINE=""
+DOCKER_CONTAINER_BASELINE_TOTAL=0
+DOCKER_QUERY_OUTPUT=""
+DOCKER_QUERY_USES_SUDO=0
 
 readonly -a PACKAGE_SPECS=(
   "dkms=${TARGET_DKMS_VERSION}"
@@ -80,7 +86,7 @@ readonly -a BASEOS_PACKAGE_SPECS=(
 readonly BASEOS_CLOUD_CFG_SHA256="038ba435093de59f4a21021caf6c921d63344e9aae3b88795ee5b2659f43f437"
 readonly BASEOS_CLOUD_INIT_UNIT_SHA256="e13dd95a7bfac6407ea1ce45ed6683c0f4e84c791840d305c937d38ae77d9456"
 readonly BASEOS_FLUENT_BIT_UNIT_SHA256="1854339f563e518894c156d081912595d2d6e175a1ed6692e74e88224b6bad5f"
-readonly BASEOS_FLUENT_BIT_CFG_SHA256="bb380bf6103957cdd7440dfba60107b7a3f50db3c0e75c483a6bfdb5e046201c"
+readonly BASEOS_FLUENT_BIT_CFG_NORMALIZED_SHA256="ffec8b1bcc628877b9a230c6b26313b5ee6b25c20398580832133dbb15349551"
 readonly BASEOS_FLUENT_BIT_PARSERS_SHA256="760e6a347874a6cbdc10c6cd21d82d1ee5388c8573ddfaab05ef37904749dbe1"
 readonly BASEOS_FLUENT_BIT_PLUGINS_SHA256="9d5aad2c1be151b4d35de53a460f9783f98ac3cc815ebc638b0e8489f4ecd577"
 readonly BASEOS_FWUPD_UNIT_SHA256="835e7c291761c247d3cd5c64652b768c6a7fdc7cc72fea1bf70fc92e4cb3cfd5"
@@ -107,6 +113,10 @@ station_product_name_path() {
 
 station_pci_devices_path() {
   printf '%s' /sys/bus/pci/devices
+}
+
+reboot_required() {
+  [[ -e /var/run/reboot-required ]]
 }
 
 dgx_station_release_file_is_safe() {
@@ -272,11 +282,15 @@ on_error() {
 
 usage() {
   cat <<'EOF'
-Usage: prepare-dgx-station-host.sh --check|--apply|--verify
+Usage: prepare-dgx-station-host.sh --check|--apply|--verify [--force-station-install]
 
   --check   Read-only eligibility and current-state report.
   --apply   Install exact prerequisites or finish post-reboot runtime setup.
   --verify  Read-only host verification plus ephemeral GPU container tests.
+  --force-station-install
+            Bypass only the DGX release-metadata allowlist. ARM64 Ubuntu 24.04,
+            Station GB300 hardware, and all factory-runtime health checks still
+            apply. The existing driver and container runtime are preserved.
 
 Exit 10 from --apply means an operator-controlled reboot is required. After
 the reboot, run --apply once more, followed by --verify.
@@ -285,11 +299,22 @@ run --apply again; a reboot is not required.
 EOF
 }
 
-is_valid_mode() {
-  case "${1:-}" in
-    --check | --apply | --verify | --classify-dgx-release) return 0 ;;
-    *) return 1 ;;
-  esac
+parse_args() {
+  local arg
+  MODE=""
+  FORCE_STATION_INSTALL=0
+  for arg in "$@"; do
+    case "$arg" in
+      --check | --apply | --verify | --classify-dgx-release)
+        [[ -z "$MODE" ]] || return 1
+        MODE="$arg"
+        ;;
+      --force-station-install) FORCE_STATION_INSTALL=1 ;;
+      *) return 1 ;;
+    esac
+  done
+  [[ -n "$MODE" ]] || return 1
+  [[ "$MODE" != "--classify-dgx-release" || "$FORCE_STATION_INSTALL" == "0" ]]
 }
 
 is_station_gb300_product() {
@@ -392,6 +417,21 @@ file_sha256_matches() {
   [[ "$actual" == "$expected" ]]
 }
 
+baseos_fluent_bit_config_matches() {
+  local path=$1 expected=$2 actual
+  root_owned_file_is_not_writable_by_group_or_other "$path" || return 1
+  actual="$({
+    LC_ALL=C sed -E \
+      -e 's/^([[:space:]]*Add Hostname) [A-Za-z0-9][A-Za-z0-9._-]*$/\1 <HOSTNAME>/' \
+      -e 's/^([[:space:]]*Add MAC) ([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/\1 <MAC>/' \
+      -e 's/^([[:space:]]*Add IP) ([0-9]{1,3}\.){3}[0-9]{1,3}$/\1 <IP>/' \
+      "$path" \
+      | sha256sum \
+      | awk '{print $1}'
+  } 2>/dev/null)" || return 1
+  [[ "$actual" == "$expected" ]]
+}
+
 systemd_property_matches() {
   local unit=$1 property=$2 expected=$3 actual
   actual="$(systemctl show "$unit" -p "$property" --value 2>/dev/null)" || return 1
@@ -425,7 +465,8 @@ baseos_cloud_init_failure_is_qualified() {
 baseos_fluent_bit_failure_is_qualified() {
   baseos_failed_unit_matches fluent-bit.service \
     /usr/lib/systemd/system/fluent-bit.service "$BASEOS_FLUENT_BIT_UNIT_SHA256" enabled 1 \
-    && file_sha256_matches /etc/fluent-bit/fluent-bit.conf "$BASEOS_FLUENT_BIT_CFG_SHA256" \
+    && baseos_fluent_bit_config_matches \
+      /etc/fluent-bit/fluent-bit.conf "$BASEOS_FLUENT_BIT_CFG_NORMALIZED_SHA256" \
     && file_sha256_matches /etc/fluent-bit/parsers.conf "$BASEOS_FLUENT_BIT_PARSERS_SHA256" \
     && file_sha256_matches /etc/fluent-bit/plugins.conf "$BASEOS_FLUENT_BIT_PLUGINS_SHA256"
 }
@@ -579,7 +620,7 @@ verify_baseos_packages() {
 
 station_uses_factory_runtime() {
   case "$STATION_HOST_PROFILE" in
-    stock-dgx-os | colossus-baseos | ai-developer-tools) return 0 ;;
+    stock-dgx-os | colossus-baseos | ai-developer-tools | forced-factory-runtime) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -618,6 +659,13 @@ check_platform() {
   is_station_gb300_product "$product" || fatal "Expected DGX Station GB300 DMI, found ${product}"
   release_path="$(dgx_station_release_path)"
   release_state="$(dgx_station_release_state "$release_path")"
+  if ((FORCE_STATION_INSTALL == 1)); then
+    case "$release_state" in
+      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+        fatal "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
+        ;;
+    esac
+  fi
   case "$release_state" in
     generic-ubuntu)
       station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
@@ -628,7 +676,14 @@ check_platform() {
     supported-colossus-baseos) STATION_HOST_PROFILE="colossus-baseos" ;;
     supported-ai-developer-tools) STATION_HOST_PROFILE="ai-developer-tools" ;;
     *)
-      fatal "This DGX Station OS image is outside the validated boundary"
+      if ((FORCE_STATION_INSTALL == 1)); then
+        station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
+          || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:${GB300_PCI_DEVICE#0x}) before forced factory-runtime validation"
+        STATION_HOST_PROFILE="forced-factory-runtime"
+        warn "DGX release metadata allowlist bypassed by explicit --force-station-install intent; all hardware and factory-runtime health checks remain required"
+      else
+        fatal "This DGX Station OS image is outside the validated boundary"
+      fi
       ;;
   esac
   info "platform=${product} profile=${STATION_HOST_PROFILE} release=${release_state} os=${PRETTY_NAME} arch=${arch} kernel=$(uname -r)"
@@ -704,6 +759,121 @@ host_docker_sudo() {
   fi
 }
 
+query_host_docker() {
+  local output
+  DOCKER_QUERY_OUTPUT=""
+  command -v docker >/dev/null 2>&1 || return 2
+  if output="$(host_docker "$@" 2>/dev/null)"; then
+    DOCKER_QUERY_OUTPUT="$output"
+    return 0
+  fi
+  if [[ "$MODE" == "--apply" ]] && output="$(host_docker_sudo "$@" 2>/dev/null)"; then
+    DOCKER_QUERY_OUTPUT="$output"
+    if ((DOCKER_QUERY_USES_SUDO == 0)); then
+      info "docker_access=sudo_until_group_membership_is_active"
+      DOCKER_QUERY_USES_SUDO=1
+    fi
+    return 0
+  fi
+  if systemctl is-active --quiet docker.service; then
+    fatal "Docker is active but inaccessible to this login; start a new login session with docker-group membership"
+  fi
+  fatal "Docker is installed but inactive, so existing container state cannot be verified safely; start Docker and rerun preparation"
+}
+
+normalize_container_ids() {
+  LC_ALL=C sort -u | awk 'NF'
+}
+
+container_count() {
+  awk 'NF { count++ } END { print count + 0 }'
+}
+
+capture_docker_container_baseline() {
+  local status running running_count
+  ((DOCKER_BASELINE_CAPTURED == 0)) || return 0
+  if query_host_docker ps -aq --no-trunc; then
+    DOCKER_CONTAINER_BASELINE="$(normalize_container_ids <<<"$DOCKER_QUERY_OUTPUT")"
+  else
+    status=$?
+    ((status == 2)) || return "$status"
+    DOCKER_CONTAINER_BASELINE=""
+  fi
+  DOCKER_CONTAINER_BASELINE_TOTAL="$(container_count <<<"$DOCKER_CONTAINER_BASELINE")"
+  DOCKER_BASELINE_CAPTURED=1
+
+  running=""
+  if command -v docker >/dev/null 2>&1; then
+    query_host_docker ps -q --no-trunc
+    running="$(normalize_container_ids <<<"$DOCKER_QUERY_OUTPUT")"
+  fi
+  running_count="$(container_count <<<"$running")"
+  info "docker_container_baseline_total=${DOCKER_CONTAINER_BASELINE_TOTAL} running=${running_count}"
+  if ((DOCKER_CONTAINER_BASELINE_TOTAL > 0)); then
+    warn "Existing Docker container records will be preserved during Station preparation"
+  fi
+}
+
+verify_docker_container_baseline() {
+  local current current_total status
+  ((DOCKER_BASELINE_CAPTURED == 1)) || capture_docker_container_baseline
+  if query_host_docker ps -aq --no-trunc; then
+    current="$(normalize_container_ids <<<"$DOCKER_QUERY_OUTPUT")"
+  else
+    status=$?
+    ((status == 2)) || return "$status"
+    current=""
+  fi
+  current_total="$(container_count <<<"$current")"
+  if [[ "$current" != "$DOCKER_CONTAINER_BASELINE" ]]; then
+    fatal "Docker container inventory changed during Station preparation (before=${DOCKER_CONTAINER_BASELINE_TOTAL}, after=${current_total}); rerun after container activity stops"
+  fi
+  info "docker_container_baseline=preserved total=${current_total}"
+}
+
+require_no_running_docker_containers() {
+  local action=${1:-this host mutation}
+  command -v docker >/dev/null 2>&1 || return 0
+  query_host_docker ps --format '{{.ID}} {{.Names}}'
+  [[ -z "$DOCKER_QUERY_OUTPUT" ]] \
+    || fatal "Running Docker containers block ${action}: ${DOCKER_QUERY_OUTPUT}"
+  info "running_docker_containers=none action=${action}"
+}
+
+require_no_autorestarting_stopped_containers() {
+  local action=${1:-this Docker restart or reboot} line blockers=""
+  local -a container_ids=()
+  command -v docker >/dev/null 2>&1 || return 0
+  query_host_docker ps -aq --no-trunc
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && container_ids+=("$line")
+  done <<<"$DOCKER_QUERY_OUTPUT"
+  ((${#container_ids[@]} == 0)) && return 0
+  query_host_docker inspect \
+    --format '{{.Id}} {{.Name}} {{.State.Running}} {{.HostConfig.RestartPolicy.Name}}' \
+    "${container_ids[@]}"
+  blockers="$(awk '
+    $3 == "false" && $4 != "" && $4 != "no" {
+      sub(/^\//, "", $2)
+      print substr($1, 1, 12) " " $2 " restart=" $4
+    }
+  ' <<<"$DOCKER_QUERY_OUTPUT")"
+  [[ -z "$blockers" ]] \
+    || fatal "Stopped containers with restart policies block ${action}: ${blockers}"
+  info "autorestarting_stopped_containers=none action=${action}"
+}
+
+warn_openibd_remediation() {
+  warn "openibd.service configures optional Mellanox RDMA networking; NemoClaw does not require RDMA"
+  warn "Check the default route: ip route get 1.1.1.1"
+  warn "Check NFS mount options: findmnt -rn -t nfs,nfs4 -o TARGET,OPTIONS"
+  warn "These checks are not exhaustive; confirm no RDMA-backed networking, storage, or workloads are in use"
+  warn "If this host does not use RDMA, run: sudo systemctl disable openibd.service"
+  warn "After disabling the unused service, reboot and rerun the NemoClaw installer"
+  warn "If this host uses RDMA, repair OpenIB/OFED before rerunning the installer"
+  warn "NemoClaw did not change systemd or networking state"
+}
+
 check_failed_units() {
   local unit failed_output blocking=0 qualified_label
   local -a units=()
@@ -731,14 +901,15 @@ check_failed_units() {
       warn "condition-qualified ${qualified_label} failed unit: ${unit}"
     else
       warn "unqualified failed unit: ${unit}"
+      [[ "$unit" != "openibd.service" ]] || warn_openibd_remediation
       blocking=1
     fi
   done
   ((blocking == 0)) || fatal "Unqualified failed system units block Station preparation"
 }
 
-check_no_workloads() {
-  local processes matches listeners containers=""
+check_agent_and_inference_conflicts() {
+  local processes matches listeners
   processes="$(ps -eo pid=,ppid=,comm=,args=)"
   matches="$(awk -v self="$$" -v parent="$PPID" '
     {
@@ -757,19 +928,28 @@ check_no_workloads() {
   listeners="$(ss -H -ltn 2>/dev/null | awk '$4 ~ /:8000$/ {print}')"
   [[ -z "$listeners" ]] || fatal "Port 8000 is already listening: ${listeners}"
 
-  if command -v docker >/dev/null 2>&1; then
-    if containers="$(host_docker ps -aq 2>/dev/null)"; then
-      :
-    elif [[ "$MODE" == "--apply" ]] && containers="$(host_docker_sudo ps -aq 2>/dev/null)"; then
-      info "docker_access=sudo_until_group_membership_is_active"
-    elif systemctl is-active --quiet docker.service; then
-      fatal "Docker is active but inaccessible to this login; start a new login session with docker-group membership"
-    else
-      fatal "Docker is installed but inactive, so existing container state cannot be verified safely; start Docker and rerun preparation"
-    fi
-  fi
-  [[ -z "$containers" ]] || fatal "Existing Docker containers block host preparation: ${containers}"
-  info "workloads=none port_8000=free"
+  info "agent_inference_workloads=none port_8000=free"
+}
+
+require_docker_mutation_quiescence() {
+  local action=$1
+  check_agent_and_inference_conflicts
+  verify_docker_container_baseline
+  require_no_running_docker_containers "$action"
+}
+
+require_docker_restart_quiescence() {
+  local action=$1
+  require_docker_mutation_quiescence "$action"
+  require_no_autorestarting_stopped_containers "$action"
+  require_docker_mutation_quiescence "$action"
+}
+
+exit_reboot_required() {
+  require_docker_restart_quiescence "rebooting the Station host"
+  info "APPLY_RESULT=REBOOT_REQUIRED"
+  info "Run: sudo reboot"
+  exit "$REBOOT_REQUIRED_EXIT"
 }
 
 loaded_driver_version() {
@@ -873,7 +1053,9 @@ common_preflight() {
   require_command getent
   require_command grep
   require_command ps
+  require_command sed
   require_command sha256sum
+  require_command sort
   require_command ss
   require_command stat
   require_command systemctl
@@ -892,7 +1074,9 @@ common_preflight() {
   check_network
   check_package_managers_idle
   check_failed_units
-  check_no_workloads
+  check_agent_and_inference_conflicts
+  capture_docker_container_baseline
+  require_no_running_docker_containers "initial Station host preparation"
 }
 
 verify_file_sha256() {
@@ -1333,6 +1517,7 @@ install_packages() {
   create_apt_transaction_guard
   simulate_install "${PACKAGE_TRANSACTION_SPECS[@]}"
   check_no_workloads
+  require_docker_restart_quiescence "Station prerequisite package installation"
   info "Installing missing pinned Station prerequisites"
   sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
     apt-get install -y --no-install-recommends --no-remove \
@@ -1362,7 +1547,7 @@ ensure_docker_group() {
 
 ensure_cdi_refresh_lifecycle() {
   ((CDI_LIFECYCLE_READY == 0)) || return 0
-  check_no_workloads
+  require_docker_mutation_quiescence "enabling NVIDIA CDI refresh"
   sudo systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service \
     || fatal "Could not enable the packaged NVIDIA CDI refresh lifecycle"
   sudo systemctl start nvidia-cdi-refresh.path \
@@ -1382,7 +1567,7 @@ verify_cdi_refresh_lifecycle() {
 }
 
 refresh_cdi() {
-  check_no_workloads
+  require_docker_mutation_quiescence "refreshing NVIDIA CDI configuration"
   ensure_cdi_refresh_lifecycle
   if ! sudo systemctl restart nvidia-cdi-refresh.service; then
     warn "Packaged CDI refresh failed; collecting diagnostics"
@@ -1525,7 +1710,7 @@ configure_docker_runtime_if_needed() {
   # missing-runtime state. It remains required until this acceptance probe
   # succeeds through a replacement Docker/NVIDIA runtime integration.
   warn "Docker --gpus all failed and Docker reports no NVIDIA runtime; applying the reviewed NVIDIA runtime registration"
-  check_no_workloads
+  require_docker_mutation_quiescence "configuring the NVIDIA Docker runtime"
   ensure_root_directory_safe /etc/docker /etc 0755 "Docker configuration directory"
   ensure_root_directory_safe /var/backups/station-bootstrap /var/backups 0700 "Station bootstrap backup directory"
   backup_dir="$(sudo mktemp -d /var/backups/station-bootstrap/docker-runtime.XXXXXXXXXX)" \
@@ -1540,14 +1725,14 @@ configure_docker_runtime_if_needed() {
     sudo touch "${backup_dir}/daemon.json.absent"
     sudo chmod 0600 "${backup_dir}/daemon.json.absent"
   fi
-  check_no_workloads
+  require_docker_mutation_quiescence "configuring the NVIDIA Docker runtime"
   if ! sudo nvidia-ctk runtime configure --runtime=docker; then
     fail_after_docker_runtime_rollback "$backup_dir" "$previous_daemon" "NVIDIA runtime registration failed"
   fi
   if ! root_regular_file_is_safe /etc/docker/daemon.json ""; then
     fail_after_docker_runtime_rollback "$backup_dir" "$previous_daemon" "NVIDIA runtime registration produced an unsafe Docker daemon configuration"
   fi
-  if ! (check_no_workloads); then
+  if ! (require_docker_restart_quiescence "restarting Docker after NVIDIA runtime registration"); then
     fail_after_docker_runtime_rollback "$backup_dir" "$previous_daemon" "A workload appeared before Docker restart" 0
   fi
   if ! sudo systemctl restart docker.service; then
@@ -1574,6 +1759,9 @@ rollback_docker_runtime_config() {
     sudo rm -f -- /etc/docker/daemon.json || return 1
   fi
   if [[ "$restart_after_restore" == "1" ]]; then
+    if ! (require_docker_restart_quiescence "restarting Docker during runtime rollback"); then
+      return 1
+    fi
     sudo systemctl restart docker.service
   fi
 }
@@ -1587,13 +1775,18 @@ fail_after_docker_runtime_rollback() {
 }
 
 finish_runtime() {
-  check_no_workloads
-  sudo systemctl enable --now containerd.service docker.service
+  if systemctl is-active --quiet containerd.service && systemctl is-active --quiet docker.service; then
+    require_docker_mutation_quiescence "enabling or configuring the Station container runtime"
+    sudo systemctl enable containerd.service docker.service
+  else
+    require_docker_restart_quiescence "starting or configuring the Station container runtime"
+    sudo systemctl enable --now containerd.service docker.service
+  fi
   ensure_docker_group
   ensure_acceptance_image
   ensure_cdi_runtime
   configure_docker_runtime_if_needed
-  [[ -z "$(sudo docker ps -aq)" ]] || fatal "Acceptance tests left a Docker container behind"
+  verify_docker_container_baseline
   info "runtime_setup=complete"
 }
 
@@ -1621,8 +1814,7 @@ verify_dgx_os_runtime_sudo() {
     || fatal "The Station factory image failed the CDI Docker GPU visibility test"
   run_dgx_os_gpus_test_sudo \
     || fatal "The Station factory image failed the Docker --gpus all GPU visibility test"
-  [[ -z "$(station_sudo_local_default_docker ps -aq)" ]] \
-    || fatal "Station factory-image acceptance tests left a Docker container behind"
+  verify_docker_container_baseline
   if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
     info "DGX_OS_HOST_READY host_runtime_mutation=container_image_cache_only"
   else
@@ -1646,8 +1838,7 @@ verify_dgx_os_runtime_user() {
     || fatal "The Station factory image failed the CDI Docker GPU visibility test"
   run_dgx_os_gpus_test_user \
     || fatal "The Station factory image failed the Docker --gpus all GPU visibility test"
-  [[ -z "$(station_local_default_docker ps -aq)" ]] \
-    || fatal "Station factory-image verification left a Docker container behind"
+  verify_docker_container_baseline
   if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
     info "DGX_OS_HOST_READY"
   else
@@ -1667,7 +1858,7 @@ verify_apply_state() {
   verify_cdi_refresh_lifecycle
   nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all' || fatal "CDI verification failed"
   sudo docker image inspect "$ACCEPTANCE_IMAGE" >/dev/null 2>&1 || fatal "Digest-pinned acceptance image is missing"
-  [[ -z "$(sudo docker ps -aq)" ]] || fatal "Verification found a leftover Docker container"
+  verify_docker_container_baseline
   info "STATION_HOST_READY"
 }
 
@@ -1739,7 +1930,7 @@ verify_host() {
   docker image inspect "$ACCEPTANCE_IMAGE" >/dev/null 2>&1 || fatal "Digest-pinned acceptance image is missing; run --apply"
   run_cdi_test_user || fatal "CDI verification did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
   run_gpus_test_user || fatal "Docker --gpus verification did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
-  [[ -z "$(docker ps -aq)" ]] || fatal "Verification left a Docker container behind"
+  verify_docker_container_baseline
   info "docker=$(docker version --format '{{.Server.Version}}') expected_docker=${DOCKER_VERSION} toolkit=$(nvidia-ctk --version | head -n1) expected_toolkit=${TOOLKIT_VERSION}"
   info "STATION_HOST_READY"
 }
@@ -1773,8 +1964,9 @@ run_apply() {
   common_preflight
 
   if station_uses_factory_runtime; then
-    [[ ! -e /var/run/reboot-required ]] \
-      || fatal "A reboot is pending on the Station factory image; reboot before running Station express install"
+    if reboot_required; then
+      fatal "A reboot is pending on the Station factory image; reboot before running Station express install"
+    fi
     if [[ "$STATION_HOST_PROFILE" == "colossus-baseos" ]]; then
       finish_runtime
     fi
@@ -1801,10 +1993,10 @@ run_apply() {
   require_command readlink
   require_command sha256sum
 
-  if [[ -e /var/run/reboot-required ]]; then
+  if reboot_required; then
     if all_packages_exact && ! driver_loaded_exact; then
       warn "A reboot is required before runtime setup can continue"
-      exit "$REBOOT_REQUIRED_EXIT"
+      exit_reboot_required
     fi
     fatal "An unrelated reboot is already pending"
   fi
@@ -1813,35 +2005,28 @@ run_apply() {
     assert_no_package_mismatches
     install_packages
     ensure_docker_group
-    check_no_workloads
+    require_docker_restart_quiescence "enabling the Station container runtime and rebooting"
     sudo systemctl enable containerd.service docker.service nvidia-cdi-refresh.path nvidia-cdi-refresh.service
+    verify_docker_container_baseline
     write_install_boot_marker
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
 
   if install_boot_marker_matches_current_boot; then
     warn "Package installation completed in the current boot"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
 
   driver_loaded_exact || {
     warn "Pinned packages are installed but driver ${DRIVER_VERSION} is not loaded"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   }
 
   finish_runtime
   verify_apply_state
   if ((DOCKER_GROUP_ADDED == 1)); then
     warn "Docker group membership was added and requires a new login before onboarding"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
   rm -f "$INSTALL_BOOT_MARKER"
   info "APPLY_RESULT=COMPLETE"
@@ -1865,11 +2050,10 @@ run_verify() {
 }
 
 main() {
-  if (($# != 1)) || ! is_valid_mode "${1:-}"; then
+  if ! parse_args "$@"; then
     usage >&2
     exit 2
   fi
-  MODE=$1
   if [[ "$MODE" == "--classify-dgx-release" ]]; then
     dgx_station_release_state
     return 0
