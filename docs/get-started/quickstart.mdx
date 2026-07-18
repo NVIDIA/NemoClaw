@@ -121,19 +121,11 @@ Use these details when your first-run path needs more control.
 
     DGX Spark, qualifying Station GB300 hosts, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
     Station accepts the generic Ubuntu 24.04 ARM64 image and stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
-    Accepting the Station prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
-    Unknown DGX OS versions, malformed or unsafe release markers, NVIDIA BaseOS images, and other Station generations stop before host preparation.
-    Set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue on an unqualified Station without host automation.
-    On generic Ubuntu, host preparation probes the pinned driver, Docker, Buildx, and NVIDIA Container Toolkit versions, reuses exact matches, installs missing pins, and permits only the reviewed factory `dkms` transition.
-    It establishes NVIDIA CDI through the packaged refresh service, then proves both CDI and `--gpus all` with real container launches.
-    If the packaged refresh fails or does not advertise `nvidia.com/gpu=all`, preparation prints service diagnostics and stops for administrator repair instead of generating CDI configuration directly.
-    After it changes pinned packages, the installer exits with status `10` at the required reboot boundary; reboot, sign in, and run the printed exact-commit command to resume the accepted recipe without another prompt.
-    On stock DGX OS, the installer instead validates the existing GB300 driver and volatile ECC state, local Docker and Buildx, `nvidia-ctk` and CDI, and `nvidia-smi` device visibility through both GPU container launch paths.
-    It does not install or replace host packages, enable or restart services, or rewrite the Docker runtime; aside from the private preparation log and separately disclosed `docker`-group membership grant when needed, only the digest-pinned visibility-test image can remain cached.
-    One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
-    This automation does not change Station's Deferred support status; repeat qualification from a clean host and CI coverage remain pending.
-    Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead.
-    The flag selects the interactive express prompt and requires terminal access.
+    On a qualifying Station, accepting the prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
+    [Prepare DGX Station to Install NemoClaw](prerequisites/dgx-station-preparation) defines Station qualification, generic Ubuntu preparation, stock DGX OS validation, repair limits, and reboot handoff.
+    Unknown versions, unsafe release markers, NVIDIA BaseOS images, and other Station generations stop before host preparation; set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to bypass Station host automation.
+    One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
+    Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead; the flag selects the interactive prompt and requires terminal access.
     Refer to [Platform Support](../reference/platform-support) and [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for the current platform behavior.
 
     If `nemoclaw` is not found after installation and you use nvm or fnm, open a new terminal or reload your shell profile.
@@ -202,19 +194,10 @@ Use these details when your first-run path needs more control.
     After you confirm the interactive express prompt, the installer switches the remaining onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
     DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default.
     DGX Station express install explicitly selects `nemotron-3-ultra-550b-a55b` instead of the Station managed-vLLM profile default, `deepseek-v4-flash`, and discloses the approximately `352 GB` model download before confirmation.
-    Before onboarding, the Station path accepts either the generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` with a safe, root-owned `/etc/dgx-release` marker for `DGX Server for GALAXY-GB300`.
-    Unknown versions, malformed or unsafe release markers, NVIDIA BaseOS images, and other Station generations are outside the automatic preparation boundary.
-    Set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to continue without Station host automation.
-    On generic Ubuntu, preparation checks for NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
-    It reuses exact versions, installs missing pinned packages, permits only the reviewed `dkms` transition from `3.0.11-1ubuntu13` to `1:3.4.0-1ubuntu1`, and refuses every other mismatched version.
-    It requires the packaged NVIDIA CDI refresh service to advertise `nvidia.com/gpu=all`, and verifies CDI and `--gpus all` with real container launches.
-    If the packaged refresh fails or omits that device, preparation prints service diagnostics and stops for administrator repair instead of generating CDI configuration directly.
-    If NVIDIA Docker runtime registration or a post-change acceptance probe fails, preparation restores the prior Docker daemon configuration.
-    Changing pinned packages exits with status `10` for a reboot; after you sign in and run the printed exact-commit command, the accepted express recipe resumes without another prompt.
-    On stock DGX OS, the path instead validates the existing GB300 driver and zero-error volatile ECC state, local Docker and Buildx, `nvidia-ctk` and CDI, and `nvidia-smi` device visibility through both CDI and `--gpus all`.
-    It does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime; aside from the private preparation log and separately disclosed `docker`-group membership grant when needed, only the digest-pinned visibility-test image can remain cached.
-    One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
-    This automation does not change Station's Deferred support status; repeat qualification from a clean host and CI coverage remain pending.
+    If the host does not meet the [Station prerequisites](prerequisites/dgx-station-preparation), the installer stops before host preparation.
+    Generic Ubuntu preparation can change pinned packages and then exits with status `10`; reboot, sign in, and run the printed exact-commit command to resume the accepted express recipe.
+    Stock DGX OS validation checks the factory stack in place without installing packages, restarting services, or rewriting the Docker runtime.
+    One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
     To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
     The `--station-deepseek` flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
     Without terminal access, the installer stops before it installs Docker or build dependencies instead of ignoring the flag.
