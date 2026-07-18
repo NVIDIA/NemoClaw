@@ -13,6 +13,7 @@ readonly GB300_PCI_VENDOR="0x10de"
 readonly GB300_PCI_DEVICE="0x31c2"
 readonly GB300_PCI_CLASS_PREFIX="0x03"
 STATION_HOST_PROFILE="generic-ubuntu"
+FORCE_STATION_INSTALL=0
 # The qualified generic image currently ships this OEM telemetry bootcmd. Its
 # exception disappears automatically when the file changes or the bootcmd
 # failure is fixed; update the pin only with a newly audited image.
@@ -269,11 +270,15 @@ on_error() {
 
 usage() {
   cat <<'EOF'
-Usage: prepare-dgx-station-host.sh --check|--apply|--verify
+Usage: prepare-dgx-station-host.sh --check|--apply|--verify [--force-station-install]
 
   --check   Read-only eligibility and current-state report.
   --apply   Install exact prerequisites or finish post-reboot runtime setup.
   --verify  Read-only host verification plus ephemeral GPU container tests.
+  --force-station-install
+            Bypass only the DGX release-metadata allowlist. ARM64 Ubuntu 24.04,
+            Station GB300 hardware, and all factory-runtime health checks still
+            apply. The existing driver and container runtime are preserved.
 
 Exit 10 from --apply means an operator-controlled reboot is required. After
 the reboot, run --apply once more, followed by --verify.
@@ -282,11 +287,22 @@ run --apply again; a reboot is not required.
 EOF
 }
 
-is_valid_mode() {
-  case "${1:-}" in
-    --check | --apply | --verify | --classify-dgx-release) return 0 ;;
-    *) return 1 ;;
-  esac
+parse_args() {
+  local arg
+  MODE=""
+  FORCE_STATION_INSTALL=0
+  for arg in "$@"; do
+    case "$arg" in
+      --check | --apply | --verify | --classify-dgx-release)
+        [[ -z "$MODE" ]] || return 1
+        MODE="$arg"
+        ;;
+      --force-station-install) FORCE_STATION_INSTALL=1 ;;
+      *) return 1 ;;
+    esac
+  done
+  [[ -n "$MODE" ]] || return 1
+  [[ "$MODE" != "--classify-dgx-release" || "$FORCE_STATION_INSTALL" == "0" ]]
 }
 
 is_station_gb300_product() {
@@ -556,7 +572,7 @@ verify_baseos_packages() {
 
 station_uses_factory_runtime() {
   case "$STATION_HOST_PROFILE" in
-    stock-dgx-os | colossus-baseos | ai-developer-tools) return 0 ;;
+    stock-dgx-os | colossus-baseos | ai-developer-tools | forced-factory-runtime) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -605,7 +621,12 @@ check_platform() {
     supported-colossus-baseos) STATION_HOST_PROFILE="colossus-baseos" ;;
     supported-ai-developer-tools) STATION_HOST_PROFILE="ai-developer-tools" ;;
     *)
-      fatal "This DGX Station OS image is outside the validated boundary"
+      if ((FORCE_STATION_INSTALL == 1)); then
+        STATION_HOST_PROFILE="forced-factory-runtime"
+        warn "DGX release metadata allowlist bypassed by explicit --force-station-install intent; all hardware and factory-runtime health checks remain required"
+      else
+        fatal "This DGX Station OS image is outside the validated boundary"
+      fi
       ;;
   esac
   info "platform=${product} profile=${STATION_HOST_PROFILE} release=${release_state} os=${PRETTY_NAME} arch=${arch} kernel=$(uname -r)"
@@ -1543,11 +1564,10 @@ run_verify() {
 }
 
 main() {
-  if (($# != 1)) || ! is_valid_mode "${1:-}"; then
+  if ! parse_args "$@"; then
     usage >&2
     exit 2
   fi
-  MODE=$1
   if [[ "$MODE" == "--classify-dgx-release" ]]; then
     dgx_station_release_state
     return 0

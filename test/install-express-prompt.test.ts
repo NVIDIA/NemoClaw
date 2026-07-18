@@ -43,8 +43,9 @@ detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
 print_banner() { :; }
 ensure_docker() { :; }
 ensure_openshell_build_deps() { :; }
-# Stop immediately after the real express prompt configures the DeepSeek
-# recipe, before setup-jetson.sh or any installation side effect can run.
+# Stop immediately after the real Station express prompt configures its recipe,
+# before setup-jetson.sh or any installation side effect can run.
+classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-ubuntu}"; }
 bash() {
   printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s\\n" \
     "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \
@@ -148,7 +149,11 @@ sys.exit(exit_code)
     );
   }
 
-  function detectExpressPlatform(productName: string, releasePath: string) {
+  function detectExpressPlatform(
+    productName: string,
+    releasePath: string,
+    extraEnv: Record<string, string> = {},
+  ) {
     return spawnSync(
       "bash",
       [
@@ -197,6 +202,7 @@ detect_express_platform
           ),
           EXPRESS_PRODUCT_NAME: productName,
           EXPRESS_DGX_RELEASE_PATH: releasePath,
+          ...extraEnv,
         },
       },
     );
@@ -266,6 +272,19 @@ detect_express_platform
     expect(result.status, output).toBe(0);
     expect(output).toMatch(
       /--station-deepseek\s+Use DeepSeek V4 Flash for DGX Station express install/,
+    );
+  });
+
+  it("parses and documents the metadata-only Station override", () => {
+    const result = spawnSync("bash", [INSTALLER_PAYLOAD, "--force-station-install", "--help"], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf-8",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(
+      /--force-station-install\s+Bypass only the DGX release-metadata allowlist/,
     );
   });
 
@@ -489,6 +508,22 @@ ensure_station_express_host`,
 
   it.each([
     {
+      name: "a forced Station install on DGX Spark",
+      args: ["--force-station-install"],
+      platform: "DGX Spark",
+      env: {},
+      message:
+        /--force-station-install requires DGX Station GB300 hardware \(detected: DGX Spark\)/,
+    },
+    {
+      name: "a forced Station install in non-interactive mode",
+      args: ["--force-station-install", "--non-interactive"],
+      platform: "DGX Station",
+      env: {},
+      message:
+        /--force-station-install selects the DGX Station express prompt and cannot be combined with non-interactive mode \(triggered by: the --non-interactive flag\)/,
+    },
+    {
       name: "a Station-only flag on DGX Spark",
       args: ["--station-deepseek"],
       platform: "DGX Spark",
@@ -601,6 +636,46 @@ main "$@"
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
+    expect(output).not.toMatch(/cannot be combined with non-interactive mode/);
+  });
+
+  it.each<{
+    name: string;
+    extraEnv: Record<string, string>;
+    entrypointArgs: string[];
+  }>([
+    {
+      name: "environment notice acceptance",
+      extraEnv: {
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        EXPRESS_RELEASE_STATE: "unsupported-dgx-os",
+      },
+      entrypointArgs: ["--force-station-install"],
+    },
+    {
+      name: "the CLI notice-acceptance flag",
+      extraEnv: { EXPRESS_RELEASE_STATE: "unsupported-dgx-os" },
+      entrypointArgs: ["--force-station-install", "--yes-i-accept-third-party-software"],
+    },
+  ])("reaches and accepts the forced Station express prompt through main with $name", ({
+    extraEnv,
+    entrypointArgs,
+  }) => {
+    const result = runExpressPromptWithTty(
+      "\n",
+      "pipe",
+      "DGX Station",
+      extraEnv,
+      "accepted-station-main",
+      entrypointArgs,
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Explicit --force-station-install intent bypasses only/);
+    expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
+    expect(output).toMatch(/Using express install for DGX Station/);
+    expect(output).toMatch(/PROVIDER=install-vllm/);
     expect(output).not.toMatch(/cannot be combined with non-interactive mode/);
   });
 
@@ -822,6 +897,41 @@ detect_express_platform
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
     expect(result.stdout).toBe("DGX Station");
+  });
+
+  it("requires explicit intent before treating unrecognized metadata as Station Express", () => {
+    const releasePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dgx-release-force-")),
+      "dgx-release",
+    );
+    fs.writeFileSync(
+      releasePath,
+      [
+        'DGX_NAME="DGX Server"',
+        'DGX_PRETTY_NAME="NVIDIA DGX GB300WS"',
+        'DGX_SWBUILD_DATE="2026-04-02-08-20-16"',
+        'DGX_SWBUILD_VERSION="7.5.0-GB300ws-GB200ws"',
+        'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
+        "",
+      ].join("\n"),
+    );
+
+    const rejected = detectExpressPlatform("DGX Station GB300", releasePath);
+    const forced = detectExpressPlatform("DGX Station GB300", releasePath, {
+      FORCE_STATION_INSTALL: "1",
+    });
+
+    expect(rejected.status, `${rejected.stdout}${rejected.stderr}`).toBe(0);
+    expect(rejected.stdout).toBe("Unsupported DGX Station OS");
+    expect(forced.status, `${forced.stdout}${forced.stderr}`).toBe(0);
+    expect(forced.stdout).toBe("DGX Station");
+  });
+
+  it("does not let the metadata override impersonate Station GB300 hardware", () => {
+    const result = detectExpressPlatform("DGX Spark", "", { FORCE_STATION_INSTALL: "1" });
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Spark");
   });
 
   it.each([

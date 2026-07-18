@@ -6,10 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
+const STATION_REVISION = "a".repeat(40);
+const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 
 function runSourced(script: string, body: string, extraEnv: Record<string, string> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-dgx-os-"));
@@ -29,7 +31,7 @@ function runSourced(script: string, body: string, extraEnv: Record<string, strin
       killSignal: "SIGKILL",
     },
   );
-  return { result, output: `${result.stdout}${result.stderr}` };
+  return { home, result, output: `${result.stdout}${result.stderr}` };
 }
 
 function writeDgxReleaseFixture(
@@ -389,9 +391,143 @@ dgx_station_release_state "$DGX_RELEASE"
     );
     expect(result.stderr).toBe("");
   });
+
+  it("uses explicit intent to bypass only unsupported release metadata", () => {
+    const forced = runSourced(
+      STATION_PREPARE,
+      `
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
+printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$HOME/os-release"; }
+station_product_name_path() { printf '%s' "$HOME/product-name"; }
+dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
+dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+FORCE_STATION_INSTALL=1
+check_platform
+printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
+`,
+    );
+
+    expect(forced.result.status, forced.output).toBe(0);
+    expect(forced.output).toContain("release metadata allowlist bypassed");
+    expect(forced.output).toContain("PROFILE=forced-factory-runtime");
+
+    const unforced = runSourced(
+      STATION_PREPARE,
+      `
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
+printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$HOME/os-release"; }
+station_product_name_path() { printf '%s' "$HOME/product-name"; }
+dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
+dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+check_platform
+`,
+    );
+
+    expect(unforced.result.status, unforced.output).not.toBe(0);
+    expect(unforced.output).toContain("outside the validated boundary");
+  });
+
+  it("parses the metadata override only alongside a preparation mode", () => {
+    const accepted = runSourced(
+      STATION_PREPARE,
+      `
+parse_args --apply --force-station-install
+printf 'MODE=%s FORCE=%s\n' "$MODE" "$FORCE_STATION_INSTALL"
+`,
+    );
+    const classifier = runSourced(
+      STATION_PREPARE,
+      "parse_args --classify-dgx-release --force-station-install",
+    );
+
+    expect(accepted.result.status, accepted.output).toBe(0);
+    expect(accepted.output).toContain("MODE=--apply FORCE=1");
+    expect(classifier.result.status, classifier.output).not.toBe(0);
+  });
+
+  it("does not let explicit metadata intent bypass architecture validation", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+uname() { printf 'x86_64\n'; }
+FORCE_STATION_INSTALL=1
+check_platform
+`,
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("Expected ARM64, found x86_64");
+  });
+});
+
+describe("DGX Station forced metadata installer handoff", () => {
+  it("forwards explicit intent only to Station host preparation", () => {
+    const { home, result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+SCRIPT_DIR="$HOME"
+touch "$SCRIPT_DIR/prepare-dgx-station-host.sh"
+bash() { printf 'HELPER_ARGS=%s\n' "$*"; }
+FORCE_STATION_INSTALL=1
+run_station_host_preparation
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(
+      `HELPER_ARGS=${path.join(home, "prepare-dgx-station-host.sh")} --apply --force-station-install`,
+    );
+  });
+
+  it("preserves explicit intent in the relogin command", () => {
+    const { result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+_SELECTED_EXPRESS_PLATFORM='DGX Station'
+NEMOCLAW_VLLM_MODEL='deepseek-v4-flash'
+FORCE_STATION_INSTALL=1
+station_installer_revision() { printf '${STATION_REVISION}'; }
+station_express_resume_generation() { printf '${STATION_GENERATION}'; }
+run_station_host_preparation() { return 11; }
+ensure_station_express_host
+`,
+    );
+
+    expect(result.status, output).toBe(11);
+    expect(output).toContain("bash -s -- --force-station-install");
+  });
 });
 
 describe("DGX Station stock DGX OS runtime validation", () => {
+  it("preserves packages and the runtime for a forced metadata profile", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() {
+  [[ "$1" == "sudo" ]] || { printf 'UNEXPECTED_REQUIREMENT %s\n' "$1"; return 1; }
+}
+acquire_sudo() { :; }
+common_preflight() { STATION_HOST_PROFILE=forced-factory-runtime; }
+verify_dgx_os_runtime_sudo() { printf 'FACTORY_RUNTIME_VALIDATED\n'; }
+ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
+install_packages() { printf 'PACKAGE_MUTATION\n'; return 1; }
+finish_runtime() { printf 'RUNTIME_MUTATION\n'; return 1; }
+run_apply
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("FACTORY_RUNTIME_VALIDATED");
+    expect(output).toContain("APPLY_RESULT=COMPLETE");
+    expect(output).not.toContain("PACKAGE_MUTATION");
+    expect(output).not.toContain("RUNTIME_MUTATION");
+    expect(output).not.toContain("UNEXPECTED_REQUIREMENT");
+  });
+
   it("requires the exact qualified BaseOS package inventory", () => {
     const exact = runSourced(
       STATION_PREPARE,

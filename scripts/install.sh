@@ -748,6 +748,7 @@ usage() {
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
+  printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -3024,7 +3025,13 @@ detect_express_platform() {
       generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
         printf "DGX Station"
         ;;
-      *) printf "Unsupported DGX Station OS" ;;
+      *)
+        if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+          printf "DGX Station"
+        else
+          printf "Unsupported DGX Station OS"
+        fi
+        ;;
     esac
     return
   fi
@@ -3074,6 +3081,36 @@ express_prompt_can_read_tty() {
 
 fail_station_deepseek_terminal_required() {
   error "--station-deepseek selects the DGX Station express prompt, which needs an interactive terminal. Re-run from a terminal (for a curl|bash pipe, /dev/tty must be available), or omit --station-deepseek and configure the install non-interactively."
+}
+
+fail_force_station_terminal_required() {
+  error "--force-station-install selects the DGX Station express prompt, which needs an interactive terminal. Re-run from a terminal (for a curl|bash pipe, /dev/tty must be available), or omit --force-station-install."
+}
+
+validate_force_station_install_override() {
+  local platform="$1"
+  if [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
+    return 0
+  fi
+  if [ "$platform" != "DGX Station" ]; then
+    error "--force-station-install requires DGX Station GB300 hardware (detected: ${platform:-unsupported platform})."
+  fi
+  if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
+    error "--force-station-install cannot be combined with NEMOCLAW_NO_EXPRESS=1. Remove one override."
+  fi
+  if [ "${NON_INTERACTIVE:-}" = "1" ]; then
+    local trigger_note=""
+    if [ -n "${NON_INTERACTIVE_SOURCE:-}" ]; then
+      trigger_note=" (triggered by: ${NON_INTERACTIVE_SOURCE})"
+    fi
+    error "--force-station-install selects the DGX Station express prompt and cannot be combined with non-interactive mode${trigger_note}."
+  fi
+  if [ -n "${NEMOCLAW_PROVIDER:-}" ]; then
+    error "--force-station-install conflicts with NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER}. Remove the provider override to use Station express install."
+  fi
+  if ! express_prompt_can_read_tty; then
+    fail_force_station_terminal_required
+  fi
 }
 
 validate_station_deepseek_override() {
@@ -3129,6 +3166,7 @@ preflight_explicit_express_flags() {
   local platform
   platform="$(detect_express_platform)"
   validate_express_platform_boundary "$platform"
+  validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
 }
 
@@ -3360,6 +3398,9 @@ station_express_resume_command() {
   printf 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s NEMOCLAW_AGENT=%s NEMOCLAW_SANDBOX_NAME=%s NEMOCLAW_POLICY_TIER=%s bash' \
     "$_STATION_EXPRESS_RESUME_REVISION" "$_STATION_EXPRESS_RESUME_AGENT" \
     "$_STATION_EXPRESS_RESUME_SANDBOX" "$_STATION_EXPRESS_RESUME_POLICY_TIER"
+  if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    printf ' -s -- --force-station-install'
+  fi
 }
 
 clear_station_express_resume() {
@@ -3447,8 +3488,12 @@ run_station_host_preparation() {
   # selected ref before executing this payload. Keep the sibling lookup and
   # fail-closed check so Station preparation cannot drift from that ref.
   local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
+  local -a helper_args=(--apply)
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
-  bash "$helper" --apply
+  if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+    helper_args+=(--force-station-install)
+  fi
+  bash "$helper" "${helper_args[@]}"
 }
 
 ensure_station_express_host() {
@@ -3463,7 +3508,14 @@ ensure_station_express_host() {
     supported-colossus-baseos)
       info "Validating the pinned BaseOS package inventory and preparing Docker access and CDI. Host packages and the NVIDIA driver will not be changed."
       ;;
-    *) info "Checking pinned DGX Station host prerequisites. Exact matches are reused." ;;
+    *)
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        warn "Proceeding with explicit --force-station-install intent; DGX release metadata qualification is bypassed, but Station GB300 hardware and factory-runtime health checks remain required."
+        info "Validating the existing Station GPU and local container runtime. Host packages, the NVIDIA driver, and runtime configuration will not be changed."
+      else
+        info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
+      fi
+      ;;
   esac
   local status=0
   run_station_host_preparation || status=$?
@@ -3552,7 +3604,11 @@ describe_express_install() {
           printf "  Factory Ubuntu with NVIDIA AI Developer Tools reuses its driver and container stack after local GPU, CDI, Docker, and Buildx validation. It may add this account to the Docker group, but does not install or replace host packages, rewrite the Docker runtime, or require a reboot.\n"
           ;;
         *)
-          printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
+          if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+            printf "  Explicit --force-station-install intent bypasses only DGX release-metadata qualification. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
+          else
+            printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
+          fi
           ;;
       esac
       printf "  Host setup may add this trusted local account to the docker group, which grants root-equivalent control. This flow is only for trusted single-user development hosts; shared or managed hosts require an organization-approved Docker access path.\n"
@@ -3600,6 +3656,7 @@ maybe_offer_express_install() {
   local platform
   platform="$(detect_express_platform)"
   validate_express_platform_boundary "$platform"
+  validate_force_station_install_override "$platform"
   validate_station_deepseek_override "$platform"
   # Not on a platform we have an express recipe for — say nothing.
   if [ -z "$platform" ]; then
@@ -3685,6 +3742,7 @@ main() {
   ACCEPT_THIRD_PARTY_SOFTWARE=""
   FRESH=""
   STATION_DEEPSEEK=""
+  FORCE_STATION_INSTALL=""
   for arg in "$@"; do
     case "$arg" in
       --non-interactive)
@@ -3694,6 +3752,7 @@ main() {
       --yes-i-accept-third-party-software) ACCEPT_THIRD_PARTY_SOFTWARE=1 ;;
       --fresh) FRESH=1 ;;
       --station-deepseek) STATION_DEEPSEEK=1 ;;
+      --force-station-install) FORCE_STATION_INSTALL=1 ;;
       --version | -v)
         local version_suffix
         version_suffix="$(installer_version_for_display)"
@@ -3725,14 +3784,14 @@ main() {
   # alone clears the preflight below but the install can still partial-fail at
   # run_onboard with the same TTY error, leaving phases 1/2 on disk anyway.
   #
-  # #7008: `--station-deepseek` is the exception — it explicitly selects the
-  # interactive DGX Station express prompt, so accepting the notice must NOT
+  # #7008: Station-only prompt flags are the exception — they explicitly select
+  # the interactive DGX Station express prompt, so accepting the notice must NOT
   # imply non-interactive there. The two signals are orthogonal: one accepts a
-  # licence, the other opts into an interactive express flow. Inferring
+  # license, the other opts into an interactive express flow. Inferring
   # non-interactive from the notice would make the express flow reject its own
-  # required flag (validate_station_deepseek_override).
+  # required flag validation.
   if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ] && [ "${NON_INTERACTIVE:-}" != "1" ] \
-    && [ "${STATION_DEEPSEEK:-}" != "1" ]; then
+    && [ "${STATION_DEEPSEEK:-}" != "1" ] && [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
     NON_INTERACTIVE=1
   fi
 
