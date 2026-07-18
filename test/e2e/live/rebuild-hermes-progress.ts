@@ -90,8 +90,8 @@ export function startRebuildHermesProgress(
   let stopped = false;
   let stoppedAt = overallStartedAt;
 
-  const completeActivePhase = () => {
-    completedPhases.push({ label: phaseLabel, elapsedMs: now() - phaseStartedAt });
+  const completeActivePhase = (completedAt = now()) => {
+    completedPhases.push({ label: phaseLabel, elapsedMs: completedAt - phaseStartedAt });
   };
 
   const logBestEffort = (state: "started" | "running" | "finished") => {
@@ -134,7 +134,7 @@ export function startRebuildHermesProgress(
       if (stopped) return;
       stopped = true;
       stoppedAt = now();
-      completeActivePhase();
+      completeActivePhase(stoppedAt);
       clearTimer(timer);
       logBestEffort("finished");
     },

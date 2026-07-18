@@ -61,6 +61,24 @@ describe("Hermes rebuild timing timeline", () => {
       totalMs: 5_000,
     });
   });
+
+  it("uses the same stop timestamp for the final phase and total", () => {
+    const { options } = timelineHarness();
+    let clockMs = 1_000;
+    options.now = () => {
+      const current = clockMs;
+      clockMs += 1_000;
+      return current;
+    };
+    const progress = startRebuildHermesProgress("phase 7 verification", options);
+
+    progress.stop();
+
+    expect(progress.timeline()).toEqual({
+      phases: [{ label: "phase 7 verification", elapsedMs: 2_000 }],
+      totalMs: 2_000,
+    });
+  });
 });
 
 describe("Hermes rebuild timing summary", () => {
