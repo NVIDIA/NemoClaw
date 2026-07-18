@@ -403,6 +403,7 @@ station_os_release_path() { printf '%s' "$HOME/os-release"; }
 station_product_name_path() { printf '%s' "$HOME/product-name"; }
 dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
 dgx_station_release_state() { printf 'unsupported-dgx-os'; }
+station_has_exact_gb300_pci_gpu() { return 0; }
 FORCE_STATION_INSTALL=1
 check_platform
 printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
@@ -429,6 +430,57 @@ check_platform
 
     expect(unforced.result.status, unforced.output).not.toBe(0);
     expect(unforced.output).toContain("outside the validated boundary");
+  });
+
+  it.each([
+    "generic-ubuntu",
+    "supported-dgx-os",
+    "supported-colossus-baseos",
+    "supported-ai-developer-tools",
+  ])("rejects explicit metadata intent for recognized %s before preparation (#7138)", (releaseState) => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
+printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$HOME/os-release"; }
+station_product_name_path() { printf '%s' "$HOME/product-name"; }
+dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
+dgx_station_release_state() { printf '%s' "$RELEASE_STATE"; }
+FORCE_STATION_INSTALL=1
+check_platform
+printf 'PREPARATION_REACHED\n'
+`,
+      { RELEASE_STATE: releaseState },
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain(
+      `This host is already supported (${releaseState}); omit --force-station-install`,
+    );
+    expect(output).not.toContain("PREPARATION_REACHED");
+  });
+
+  it("keeps generic Ubuntu preparation unchanged without explicit metadata intent (#7138)", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+printf 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04"\n' >"$HOME/os-release"
+printf 'NVIDIA DGX Station GB300\n' >"$HOME/product-name"
+uname() { printf 'aarch64\n'; }
+station_os_release_path() { printf '%s' "$HOME/os-release"; }
+station_product_name_path() { printf '%s' "$HOME/product-name"; }
+dgx_station_release_path() { printf '%s' "$HOME/dgx-release"; }
+dgx_station_release_state() { printf 'generic-ubuntu'; }
+station_has_exact_gb300_pci_gpu() { return 0; }
+check_platform
+printf 'PROFILE=%s\n' "$STATION_HOST_PROFILE"
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROFILE=generic-ubuntu");
   });
 
   it("parses the metadata override only alongside a preparation mode", () => {

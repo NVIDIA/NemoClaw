@@ -631,6 +631,13 @@ check_platform() {
   is_station_gb300_product "$product" || fatal "Expected DGX Station GB300 DMI, found ${product}"
   release_path="$(dgx_station_release_path)"
   release_state="$(dgx_station_release_state "$release_path")"
+  if ((FORCE_STATION_INSTALL == 1)); then
+    case "$release_state" in
+      generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+        fatal "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
+        ;;
+    esac
+  fi
   case "$release_state" in
     generic-ubuntu)
       station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
@@ -642,6 +649,8 @@ check_platform() {
     supported-ai-developer-tools) STATION_HOST_PROFILE="ai-developer-tools" ;;
     *)
       if ((FORCE_STATION_INSTALL == 1)); then
+        station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
+          || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:${GB300_PCI_DEVICE#0x}) before forced factory-runtime validation"
         STATION_HOST_PROFILE="forced-factory-runtime"
         warn "DGX release metadata allowlist bypassed by explicit --force-station-install intent; all hardware and factory-runtime health checks remain required"
       else

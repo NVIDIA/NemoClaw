@@ -3088,13 +3088,19 @@ fail_force_station_terminal_required() {
 }
 
 validate_force_station_install_override() {
-  local platform="$1"
+  local platform="$1" release_state
   if [ "${FORCE_STATION_INSTALL:-}" != "1" ]; then
     return 0
   fi
   if [ "$platform" != "DGX Station" ]; then
     error "--force-station-install requires DGX Station GB300 hardware (detected: ${platform:-unsupported platform})."
   fi
+  release_state="$(classify_dgx_station_release)"
+  case "$release_state" in
+    generic-ubuntu | supported-dgx-os | supported-colossus-baseos | supported-ai-developer-tools)
+      error "--force-station-install is only for unrecognized DGX Station release metadata. This host is already supported (${release_state}); omit --force-station-install."
+      ;;
+  esac
   if [ "${NEMOCLAW_NO_EXPRESS:-}" = "1" ]; then
     error "--force-station-install cannot be combined with NEMOCLAW_NO_EXPRESS=1. Remove one override."
   fi
@@ -3689,7 +3695,9 @@ maybe_offer_express_install() {
     describe_express_install "$platform"
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply; then
-      if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        fail_force_station_terminal_required
+      elif [ "${STATION_DEEPSEEK:-}" = "1" ]; then
         fail_station_deepseek_terminal_required
       fi
       info "Skipping express install (unable to read from TTY)."
@@ -3701,7 +3709,9 @@ maybe_offer_express_install() {
     printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply <&3; then
       exec 3<&-
-      if [ "${STATION_DEEPSEEK:-}" = "1" ]; then
+      if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
+        fail_force_station_terminal_required
+      elif [ "${STATION_DEEPSEEK:-}" = "1" ]; then
         fail_station_deepseek_terminal_required
       fi
       info "Skipping express install (unable to read from TTY)."

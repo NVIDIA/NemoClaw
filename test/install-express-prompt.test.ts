@@ -59,6 +59,7 @@ else:
     script = r'''
 source "$INSTALLER_UNDER_TEST" >/dev/null
 detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
+classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-ubuntu}"; }
 NON_INTERACTIVE="\${NON_INTERACTIVE:-}"
 NEMOCLAW_PROVIDER="\${NEMOCLAW_PROVIDER:-}"
 NEMOCLAW_NO_EXPRESS="\${NEMOCLAW_NO_EXPRESS:-}"
@@ -519,10 +520,24 @@ ensure_station_express_host`,
       name: "a forced Station install in non-interactive mode",
       args: ["--force-station-install", "--non-interactive"],
       platform: "DGX Station",
-      env: {},
+      env: { EXPRESS_RELEASE_STATE: "unsupported-dgx-os" },
       message:
         /--force-station-install selects the DGX Station express prompt and cannot be combined with non-interactive mode \(triggered by: the --non-interactive flag\)/,
     },
+    ...[
+      "generic-ubuntu",
+      "supported-dgx-os",
+      "supported-colossus-baseos",
+      "supported-ai-developer-tools",
+    ].map((releaseState) => ({
+      name: `an unnecessary forced Station install on ${releaseState}`,
+      args: ["--force-station-install"],
+      platform: "DGX Station",
+      env: { EXPRESS_RELEASE_STATE: releaseState },
+      message: new RegExp(
+        `This host is already supported \\(${releaseState}\\); omit --force-station-install`,
+      ),
+    })),
     {
       name: "a Station-only flag on DGX Spark",
       args: ["--station-deepseek"],
@@ -570,6 +585,7 @@ ensure_station_express_host`,
         `
 source "$INSTALLER_UNDER_TEST" >/dev/null
 detect_express_platform() { printf "%s" "$EXPRESS_PLATFORM"; }
+classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-ubuntu}"; }
 ensure_docker() { printf "ensure_docker\\n" >>"$MUTATION_LOG"; }
 ensure_openshell_build_deps() { printf "ensure_openshell_build_deps\\n" >>"$MUTATION_LOG"; }
 main "$@"
@@ -759,6 +775,20 @@ sys.exit(result.returncode)
     expect(result.status, output).not.toBe(0);
     expect(output).toMatch(/--station-deepseek.*needs an interactive terminal/);
     expect(output).not.toMatch(/Using express install/);
+    expect(output).not.toMatch(/RESULT NON_INTERACTIVE=/);
+  });
+
+  it("fails closed if the forced Station prompt becomes unreadable after preflight (#7138)", () => {
+    const result = runExpressPromptWithTty("", "tty", "DGX Station", {
+      EXPRESS_RELEASE_STATE: "unsupported-dgx-os",
+      FORCE_EXPRESS_PROMPT_READ_FAILURE: "1",
+      FORCE_STATION_INSTALL: "1",
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.error, output).toBeUndefined();
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(/--force-station-install.*needs an interactive terminal/);
+    expect(output).not.toMatch(/Skipping express install/);
     expect(output).not.toMatch(/RESULT NON_INTERACTIVE=/);
   });
 
