@@ -102,6 +102,33 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("binds controller dispatch to the exact checkout, plan, and correlation identity (#6955)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const validation = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Validate controller dispatch",
+    )!;
+    validation.run = validation
+      .run!.replace('[[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]]', '[[ -n "$CHECKOUT_SHA" ]]')
+      .replace('[[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]]', '[[ -n "$PLAN_HASH" ]]')
+      .replace(
+        '[[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]',
+        '[[ -n "$CORRELATION_ID" ]]',
+      )
+      .replace(
+        `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
+        `[[ -n "$(jq -r '.head.sha' <<< "$pull_json")" ]]`,
+      );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        'Controller validation must retain "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
+        'Controller validation must retain "$PLAN_HASH" =~ ^[a-f0-9]{64}$',
+        'Controller validation must retain "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$',
+        `Controller validation must retain [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
+      ]),
+    );
+  });
+
   it("keeps every planned job wired to bound evidence", () => {
     const workflow = readE2eOperationsWorkflow();
     const job = workflow.jobs["cloud-onboard"];

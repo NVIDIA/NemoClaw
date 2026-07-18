@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { JsonObject } from "../../core/json-types";
-import type { Session, SessionUpdates } from "../../state/onboard-session";
+import type { CompleteSessionOptions, Session, SessionUpdates } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import {
   RECORD_ONLY_STEP_MUTATION_OPTIONS,
@@ -43,7 +43,7 @@ export interface OnboardRuntimeDeps {
   markStepSkipped(stepName: string): Session;
   markStepFailed(stepName: string, message?: string | null, options?: StepMutationOptions): Session;
   markStepFailedRecordOnly(stepName: string, message?: string | null): Session;
-  completeSession(updates?: SessionUpdates): Session;
+  completeSession(updates?: SessionUpdates, options?: CompleteSessionOptions): Session;
   filterSafeUpdates(updates: SessionUpdates): Partial<Session>;
   emitEvent(event: OnboardMachineEvent): void;
   now(): string;
@@ -261,15 +261,18 @@ export class OnboardRuntime {
 
     const safeUpdates = this.deps.filterSafeUpdates(updates);
     const fields = Object.keys(safeUpdates);
-    const enteredAt = this.deps.now();
-    const updated = this.deps.updateSession((session) => {
-      Object.assign(session, safeUpdates);
-      session.status = "complete";
-      session.resumable = false;
-      session.failure = null;
-      session.machine = snapshotFor("complete", enteredAt, session.machine.revision + 1);
-      return session;
-    });
+    let updated = this.deps.completeSession(updates, { emitEvents: false });
+    if (updated.machine.state !== "complete") {
+      const enteredAt = this.deps.now();
+      updated = this.deps.updateSession((session) => {
+        Object.assign(session, safeUpdates);
+        session.status = "complete";
+        session.resumable = false;
+        session.failure = null;
+        session.machine = snapshotFor("complete", enteredAt, session.machine.revision + 1);
+        return session;
+      });
+    }
 
     if (fields.length > 0) {
       this.emit("context.updated", updated, {

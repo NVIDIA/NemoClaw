@@ -32,7 +32,7 @@ type JsonRecord = Record<string, unknown>;
 
 export interface ExactMainPolicyStatus {
   activeVersion: number;
-  configRevision?: number;
+  configRevision?: string;
   hash: string;
   policySource?: string;
   sandbox: string;
@@ -73,15 +73,22 @@ export function parseExactMainPolicyStatus(raw: string): ExactMainPolicyStatus {
   if (!isRecord(parsed)) throw new Error("exact-main policy status must be a JSON object");
   const configRevision = parsed.config_revision;
   const policySource = parsed.policy_source;
-  if (configRevision !== undefined && !Number.isSafeInteger(configRevision)) {
-    throw new Error("exact-main policy config_revision must be an integer when present");
+  let exactConfigRevision: string | undefined;
+  if (configRevision !== undefined) {
+    const matches = [...raw.matchAll(/"config_revision"\s*:\s*(0|[1-9][0-9]*)(?=\s*[,}])/gu)];
+    if (matches.length !== 1 || matches[0][1] === undefined) {
+      throw new Error(
+        "exact-main policy config_revision must be one non-negative JSON integer when present",
+      );
+    }
+    exactConfigRevision = matches[0][1];
   }
   if (policySource !== undefined && typeof policySource !== "string") {
     throw new Error("exact-main policy policy_source must be a string when present");
   }
   return {
     activeVersion: requiredInteger(parsed, "active_version"),
-    ...(configRevision === undefined ? {} : { configRevision: Number(configRevision) }),
+    ...(exactConfigRevision === undefined ? {} : { configRevision: exactConfigRevision }),
     hash: requiredString(parsed, "hash"),
     ...(policySource === undefined ? {} : { policySource }),
     sandbox: requiredString(parsed, "sandbox"),
@@ -95,13 +102,6 @@ function containsObject(value: unknown, predicate: (candidate: JsonRecord) => bo
   if (!isRecord(value)) return false;
   if (predicate(value)) return true;
   return Object.values(value).some((entry) => containsObject(entry, predicate));
-}
-
-function containsScalar(value: unknown, expected: string | number): boolean {
-  if (value === expected) return true;
-  if (Array.isArray(value)) return value.some((entry) => containsScalar(entry, expected));
-  if (!isRecord(value)) return false;
-  return Object.values(value).some((entry) => containsScalar(entry, expected));
 }
 
 function hasVerdict(rule: JsonRecord, verdict: "accept" | "reject"): boolean {
@@ -125,11 +125,17 @@ function nftRuleMatchesReject(
   family: "ipv4" | "ipv6",
   protocol: "tcp" | "udp",
 ): boolean {
+  const rejectType = family === "ipv4" ? "icmp" : "icmpv6";
   return (
     hasVerdict(rule, "reject") &&
-    hasMatch(rule, { key: "nfproto" }, family) &&
     hasMatch(rule, { key: "l4proto" }, protocol) &&
-    containsScalar(rule, "port-unreachable")
+    containsObject(
+      rule,
+      (candidate) =>
+        isRecord(candidate.reject) &&
+        candidate.reject.type === rejectType &&
+        candidate.reject.expr === "port-unreachable",
+    )
   );
 }
 
@@ -276,9 +282,21 @@ connect_status() {
   fi
   printf '%s\n' "$status"
 }
-connect_status > "$first_result"
+connect_until_allowed() {
+  result_path=$1
+  allowed_status=000
+  allowed_attempt=0
+  while [ "$allowed_attempt" -lt 50 ]; do
+    allowed_attempt=$((allowed_attempt + 1))
+    allowed_status=$(connect_status)
+    [ "$allowed_status" = 200 ] && break
+    sleep 0.1
+  done
+  printf '%s\n' "$allowed_status" > "$result_path"
+}
+connect_until_allowed "$first_result"
 IFS= read -r _ < "$trigger"
-connect_status > "$second_result"`;
+connect_until_allowed "$second_result"`;
 
 const LIVE_EXE_ONESHOT_SCRIPT = String.raw`set -eu
 endpoint_host=$1
@@ -340,7 +358,7 @@ export function buildExactMainLiveExeIdentityScript(mcpUrl: string): string {
     "}",
     'wait_for_result "$first"',
     "old_first=$(tr -d '\\r\\n' < \"$first\")",
-    '[ "$old_first" = 200 ]',
+    '[ "$old_first" = 200 ] || { printf \'expected initial live-exe CONNECT 200, got %s\\n\' "$old_first" >&2; exit 1; }',
     'replacement="$root/live-bash.next"',
     'cp "$live" "$replacement"',
     "printf '\\nNEMOCLAW_EXACT_MAIN_REPLACEMENT\\n' >> \"$replacement\"",
@@ -353,7 +371,7 @@ export function buildExactMainLiveExeIdentityScript(mcpUrl: string): string {
     "printf 'go\\n' > \"$trigger\"",
     'wait_for_result "$second"',
     "old_second=$(tr -d '\\r\\n' < \"$second\")",
-    '[ "$old_second" = 200 ]',
+    '[ "$old_second" = 200 ] || { printf \'expected retained live-exe CONNECT 200, got %s\\n\' "$old_second" >&2; exit 1; }',
     'wait "$old_pid"',
     'old_pid=""',
     `new_status=$("$live" -c "$oneshot_script" exact-main-new ${shellQuote(endpoint.hostname)} ${endpointPort} | tr -d '\\r\\n')`,
@@ -363,9 +381,7 @@ export function buildExactMainLiveExeIdentityScript(mcpUrl: string): string {
     "printf 'NEMOCLAW_LIVE_EXE_OLD_LINK=%s\\n' \"$old_exe\"",
     "printf 'NEMOCLAW_LIVE_EXE_OLD_HASH=%s\\n' \"$old_hash\"",
     "printf 'NEMOCLAW_LIVE_EXE_NEW_HASH=%s\\n' \"$new_hash\"",
-    '[ "$old_first" = 200 ]',
-    '[ "$old_second" = 200 ]',
-    '[ "$new_status" = 403 ]',
+    '[ "$new_status" = 403 ] || { printf \'expected replacement live-exe CONNECT 403, got %s\\n\' "$new_status" >&2; exit 1; }',
   ].join("\n");
 }
 
@@ -420,7 +436,7 @@ while [ ! -s "$ready" ]; do
 done
 cat "$ready"`;
 
-const DIRECT_BYPASS_PROBE_CODE = String.raw`import errno
+export const DIRECT_BYPASS_PROBE_CODE = String.raw`import errno
 import json
 import socket
 import sys
@@ -464,7 +480,8 @@ tcp_error = result["tcp"]["error"] or {}
 udp_error = result["udp"]["error"] or {}
 if result["tcp"]["connected"] or result["udp"]["echoed"]:
     raise SystemExit(1)
-if tcp_error.get("errno") != errno.ECONNREFUSED or udp_error.get("errno") != errno.ECONNREFUSED:
+denial_errnos = {errno.ECONNREFUSED, errno.EPERM}
+if tcp_error.get("errno") not in denial_errnos or udp_error.get("errno") not in denial_errnos:
     raise SystemExit(1)
 if result["tcp"]["elapsedMs"] >= 2500 or result["udp"]["elapsedMs"] >= 2500:
     raise SystemExit(1)`;
@@ -494,20 +511,42 @@ async function findSandboxContainer(
   return ids[0] ?? "";
 }
 
+export function buildExactMainNftInspectionScript(): string {
+  return [
+    "nft_path=",
+    "for candidate in /usr/sbin/nft /sbin/nft /usr/bin/nft; do",
+    '  if [ -x "$candidate" ]; then nft_path="$candidate"; break; fi',
+    "done",
+    "[ -n \"$nft_path\" ] || { printf 'nft executable not found\\n' >&2; exit 127; }",
+    "active_namespace_count=0",
+    "namespace_path=",
+    "for namespace_candidate in /var/run/netns/sandbox-*; do",
+    '  [ -e "$namespace_candidate" ] || continue',
+    "  namespace=${namespace_candidate##*/}",
+    '  [ -n "$(ip netns pids "$namespace" 2>/dev/null)" ] || continue',
+    "  active_namespace_count=$((active_namespace_count + 1))",
+    '  namespace_path="$namespace_candidate"',
+    "done",
+    'if [ "$active_namespace_count" -gt 1 ]; then',
+    "  printf 'expected at most one active sandbox netns, got %s\\n' \"$active_namespace_count\" >&2",
+    "  ip netns list >&2 || true",
+    "  exit 1",
+    "fi",
+    'if [ "$active_namespace_count" -eq 1 ]; then',
+    '  exec nsenter --net="$namespace_path" -- "$nft_path" -j list table inet openshell_bypass',
+    "fi",
+    'exec "$nft_path" -j list table inet openshell_bypass',
+  ].join("\n");
+}
+
 async function inspectNftRules(
   host: HostCliClient,
   containerId: string,
   artifactName: string,
 ): Promise<{ inspection: ExactMainNftInspection; raw: string }> {
-  const script = [
-    "set -- /var/run/netns/sandbox-*",
-    '[ "$#" -eq 1 ] && [ -e "$1" ] || { printf \'expected exactly one sandbox netns\\n\' >&2; exit 1; }',
-    "namespace=${1##*/}",
-    'exec ip netns exec "$namespace" nft -j list table inet openshell_bypass',
-  ].join("\n");
   const result = await host.command(
     "docker",
-    ["exec", "--user", "0", containerId, "sh", "-ceu", script],
+    ["exec", "--user", "0", containerId, "sh", "-ceu", buildExactMainNftInspectionScript()],
     { artifactName, env: buildAvailabilityProbeEnv(), timeoutMs: 30_000 },
   );
   expectExitZero(result, "inspect exact-main nft bypass rules");

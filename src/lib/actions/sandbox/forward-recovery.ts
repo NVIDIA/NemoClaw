@@ -196,8 +196,12 @@ export function ensureSandboxPortForwardForPort(
   // before the old SSH listener is guaranteed to release its host port. A
   // blind stop -> start can therefore collide with the just-stopped process.
   // Preserve authoritative owner metadata while waiting: accept a target-
-  // owned forward that recovered on its own, reject another sandbox, and only
-  // start after an otherwise-unowned local listener has actually quiesced.
+  // owned forward that recovered on its own, reject another sandbox, and
+  // prefer starting only after an otherwise-unowned local listener has
+  // quiesced. If an authoritative list remains ownerless while the listener
+  // stays reachable, `forward start` is still the reconciliation operation:
+  // its result is accepted below only after the list reports the exact target
+  // owner. An unavailable list and forced bind replacement remain fail-closed.
   // NemoClaw must compensate while the supported OpenShell 0.0.85
   // contract remains supported; test/process-recovery.test.ts locks both the
   // delayed-release and fail-closed cases. Remove this wait only after every
@@ -209,7 +213,7 @@ export function ensureSandboxPortForwardForPort(
       health: forwardHealth,
       portReleased: false,
     };
-    const stopSettled = waitUntil(
+    waitUntil(
       () => {
         stopState.health = isSandboxPortForwardHealthy(sandboxName, port, expectedBind);
         stopState.portReleased = !isLocalForwardReachable(port);
@@ -227,7 +231,10 @@ export function ensureSandboxPortForwardForPort(
       },
     );
     if (stopState.health === true && !forceRestart) return acceptSuccessfulForward();
-    if (stopState.health === "occupied" || !stopSettled || !stopState.portReleased) return false;
+    if (stopState.health === "occupied") return false;
+    if (!stopState.portReleased && (forceRestart || stopState.health === null)) {
+      return false;
+    }
   }
 
   if (!beforeStart()) return false;
@@ -242,7 +249,13 @@ export function ensureSandboxPortForwardForPort(
       stdio: "ignore",
     },
   );
-  if (startResult.status !== 0) return false;
+  // OpenShell 0.0.85 returns an error when start preflight finds a validated
+  // live forward for the requested port. Recovery cannot change that upstream
+  // CLI contract, so a reachable listener settles against the authoritative
+  // forward list below; an absent listener still fails fast. Remove this
+  // tolerance once every supported OpenShell release makes `forward start`
+  // idempotent for an already-tracked live forward.
+  if (startResult.status !== 0 && !isLocalForwardReachable(port)) return false;
 
   // `forward start --background` can return before its authoritative list
   // entry becomes visible. Poll for the exact live sandbox+port owner instead
