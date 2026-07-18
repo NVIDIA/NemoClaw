@@ -163,9 +163,13 @@ function createSetupHarness({
       tierUpdates.push({ sandboxName, policyTier });
     },
     getRecordedPolicyTier: () => recordedPolicyTier,
-    selectTierPresetsAndAccess: async (selectedTier, presets, extraSelected) => {
+    selectTierPresetsAndAccess: async (selectedTier, presets, initialSelected) => {
       const promptHarness = createPromptHarness();
-      return promptHarness.helpers.selectTierPresetsAndAccess(selectedTier, presets, extraSelected);
+      return promptHarness.helpers.selectTierPresetsAndAccess(
+        selectedTier,
+        presets,
+        initialSelected,
+      );
     },
     parsePolicyPresetEnv,
     env: {
