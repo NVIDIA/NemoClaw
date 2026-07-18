@@ -922,6 +922,7 @@ sudo() {
 ensure_dgx_os_acceptance_image() { printf 'IMAGE_CACHE_READY\n'; }
 run_dgx_os_cdi_test_sudo() { printf 'CDI_TEST_OK\n'; }
 run_dgx_os_gpus_test_sudo() { printf 'GPUS_TEST_OK\n'; }
+verify_docker_container_baseline() { printf 'CONTAINER_BASELINE_PRESERVED\n'; }
 verify_dgx_os_runtime_sudo
 `,
     );
@@ -931,6 +932,7 @@ verify_dgx_os_runtime_sudo
     expect(output).toContain("IMAGE_CACHE_READY");
     expect(output).toContain("CDI_TEST_OK");
     expect(output).toContain("GPUS_TEST_OK");
+    expect(output).toContain("CONTAINER_BASELINE_PRESERVED");
     expect(output).toContain("DGX_OS_HOST_READY host_runtime_mutation=container_image_cache_only");
     expect(output).not.toContain("UNEXPECTED_SYSTEMCTL");
     expect(output).not.toContain("UNEXPECTED_DOCKER");

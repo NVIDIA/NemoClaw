@@ -25,6 +25,7 @@ import {
   type SandboxStatusAgentInfo,
   type SandboxStatusRouteDrift,
   type SandboxStatusSnapshot,
+  type ServingProcessHealth,
 } from "./status-snapshot";
 
 export interface SandboxStatusTextContext
@@ -37,6 +38,7 @@ export interface SandboxStatusTextContext
     | "routeDrift"
     | "inferenceHealth"
     | "terminalRuntimeHealth"
+    | "servingProcessHealth"
   > {
   sandboxName: string;
   statusAgent: SandboxStatusAgentInfo;
@@ -95,6 +97,15 @@ function printInferenceProbeLine(probe: ProviderHealthStatus): void {
   console.log(`      ${probe.detail}`);
 }
 
+function printServingProcessHealth(
+  statusAgent: SandboxStatusAgentInfo,
+  health: ServingProcessHealth | null,
+): void {
+  if (!health) return;
+  const label = `Serving process (${statusAgent.agentDisplayName.toLowerCase()} gateway)`;
+  console.log(`    ${label}: ${D}not checked${R}`);
+}
+
 function printInferenceStatus(context: SandboxStatusTextContext): void {
   if (context.inferenceHealth) {
     printInferenceProbeLine(context.inferenceHealth);
@@ -105,6 +116,7 @@ function printInferenceStatus(context: SandboxStatusTextContext): void {
   if (context.lookup.state !== "present") {
     console.log("    Inference: not verified (gateway/sandbox state not verified)");
   }
+  printServingProcessHealth(context.statusAgent, context.servingProcessHealth);
 }
 
 function inferenceHealthExitCode(inferenceHealth: ProviderHealthStatus | null): number | null {
