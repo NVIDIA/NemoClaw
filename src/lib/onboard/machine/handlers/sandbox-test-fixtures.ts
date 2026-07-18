@@ -94,8 +94,9 @@ export function createDeps(
       ResourceProfile
     >["deps"]
   > = {},
+  initialSession: Session = createSession(),
 ) {
-  let session = createSession();
+  let session = initialSession;
   const calls = {
     checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
     note: vi.fn(),

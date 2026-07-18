@@ -142,6 +142,7 @@ function realStageSandboxCredentialProviders(
   return {
     stageSandboxCredentialProviders,
     providerMatchesGatewayCredential: registration.providerMatchesGatewayCredential,
+    runOpenshell,
   };
 }
 
@@ -356,8 +357,11 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     );
   });
 
-  it("safely replays web-search provider registration through the real adapter after a crash between staging and its checkpoint receipt (#7022)", async () => {
-    const { stageSandboxCredentialProviders, providerMatchesGatewayCredential } =
+  it.each([
+    "interactive",
+    "non-interactive",
+  ] as const)("replays %s web-search provider registration without duplicating the external effect after receipt loss (#7022)", async (mode) => {
+    const { stageSandboxCredentialProviders, providerMatchesGatewayCredential, runOpenshell } =
       realStageSandboxCredentialProviders(
         [
           {
@@ -369,16 +373,20 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
         ],
         true,
       );
-    const { deps, getSession } = createDeps({
-      getSandboxReuseState: () => "missing",
-      configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
-      stageSandboxCredentialProviders,
-      providerMatchesGatewayCredential,
-    });
-
-    await expect(handleSandboxState({ ...baseOptions(deps), resume: false })).rejects.toThrow(
-      "gateway connection dropped mid-registration",
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw", mode });
+    const { deps, getSession } = createDeps(
+      {
+        getSandboxReuseState: () => "missing",
+        configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
+        stageSandboxCredentialProviders,
+        providerMatchesGatewayCredential,
+      },
+      session,
     );
+
+    await expect(
+      handleSandboxState({ ...baseOptions(deps, session), resume: false }),
+    ).rejects.toThrow("gateway connection dropped mid-registration");
 
     const crashedSession = getSession();
     expect(crashedSession.checkpoint?.effectGroups.web_search_provider).toBeUndefined();
@@ -392,6 +400,9 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     });
 
     expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
+    expect(
+      runOpenshell.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "create"),
+    ).toHaveLength(1);
     const resumedSession = getSession();
     expect(resumedSession.checkpoint?.effectGroups.web_search_provider).toBeDefined();
     expect(resumedSession.checkpoint?.bindings.registeredProviders).toEqual([
@@ -399,8 +410,11 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     ]);
   });
 
-  it("safely replays messaging provider registration through the real adapter after a crash between staging and its checkpoint receipt (#7022)", async () => {
-    const { stageSandboxCredentialProviders, providerMatchesGatewayCredential } =
+  it.each([
+    "interactive",
+    "non-interactive",
+  ] as const)("replays %s messaging provider registration without duplicating the external effect after receipt loss (#7022)", async (mode) => {
+    const { stageSandboxCredentialProviders, providerMatchesGatewayCredential, runOpenshell } =
       realStageSandboxCredentialProviders(
         [
           {
@@ -411,17 +425,21 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
         ],
         true,
       );
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw", mode });
     const messagingPlan = makeMinimalPlan("my-assistant", "openclaw", ["discord"]);
-    const { deps, getSession } = createDeps({
-      getSandboxReuseState: () => "missing",
-      readMessagingPlanFromEnv: () => messagingPlan,
-      stageSandboxCredentialProviders,
-      providerMatchesGatewayCredential,
-    });
-
-    await expect(handleSandboxState({ ...baseOptions(deps), resume: false })).rejects.toThrow(
-      "gateway connection dropped mid-registration",
+    const { deps, getSession } = createDeps(
+      {
+        getSandboxReuseState: () => "missing",
+        readMessagingPlanFromEnv: () => messagingPlan,
+        stageSandboxCredentialProviders,
+        providerMatchesGatewayCredential,
+      },
+      session,
     );
+
+    await expect(
+      handleSandboxState({ ...baseOptions(deps, session), resume: false }),
+    ).rejects.toThrow("gateway connection dropped mid-registration");
 
     const crashedSession = getSession();
     expect(crashedSession.checkpoint?.effectGroups.messaging_providers).toBeUndefined();
@@ -434,6 +452,9 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     });
 
     expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
+    expect(
+      runOpenshell.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "create"),
+    ).toHaveLength(1);
     const resumedSession = getSession();
     expect(resumedSession.checkpoint?.effectGroups.messaging_providers).toBeDefined();
     expect(resumedSession.checkpoint?.bindings.registeredProviders).toEqual([
