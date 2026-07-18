@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -170,7 +171,7 @@ function escapeRegExp(value: string): string {
 
 function extractShellFunction(source: string, name: string, origin: string): string {
   const match = source.match(new RegExp(`${escapeRegExp(name)}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) throw new Error(`Expected ${name} in ${origin}`);
+  assert(match, `Expected ${name} in ${origin}`);
   return `${name}() {${match[1]}\n}`;
 }
 
@@ -180,25 +181,15 @@ function extractShellFunction(source: string, name: string, origin: string): str
 // exit, so every occurrence is exercised. Missing markers are a wiring error,
 // not a behavior expectation, so resolve or throw rather than assert on source.
 function extractRespawnGuards(source: string): string[] {
-  const lines = source.split("\n");
-  const guards: string[] = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    if (lines[index].trim() !== 'if [ "$RC" -eq 0 ] \\') continue;
-    const body: string[] = [];
-    let cursor = index;
-    while (cursor < lines.length) {
-      body.push(lines[cursor].trim());
-      if (lines[cursor].trim() === "fi") break;
-      cursor += 1;
-    }
-    if (body.at(-1) !== "fi") {
-      throw new Error("Unterminated respawn guard in scripts/nemoclaw-start.sh");
-    }
-    guards.push(body.join("\n"));
-  }
-  if (guards.length === 0) {
-    throw new Error("Expected the openclaw respawn guard in scripts/nemoclaw-start.sh");
-  }
+  const guards = (
+    source.match(/^[ \t]*if \[ "\$RC" -eq 0 \] \\\n(?:[^\n]*\n){4}[ \t]*fi$/gm) ?? []
+  ).map((guard) =>
+    guard
+      .split("\n")
+      .map((line) => line.trim())
+      .join("\n"),
+  );
+  assert.equal(guards.length, 2, "Expected both openclaw respawn guards in nemoclaw-start.sh");
   return guards;
 }
 
@@ -263,8 +254,7 @@ describe("openclaw managed restart respawn (#6868)", () => {
     const check = (
       options: {
         payloadPid?: string;
-        includeMarker?: boolean;
-        symlinkMarker?: boolean;
+        markerKind?: "regular" | "missing" | "symlink";
         includeController?: boolean;
         controllerStart?: string;
         controllerState?: string;
@@ -274,8 +264,7 @@ describe("openclaw managed restart respawn (#6868)", () => {
     ) => {
       const {
         payloadPid = "4242",
-        includeMarker = true,
-        symlinkMarker = false,
+        markerKind = "regular",
         includeController = true,
         controllerStart = "888",
         controllerState = "S",
@@ -286,32 +275,36 @@ describe("openclaw managed restart respawn (#6868)", () => {
       const leaseDir = path.join(directory, "run", "nemoclaw");
       fs.mkdirSync(leaseDir, { recursive: true, mode: 0o711 });
       const marker = path.join(leaseDir, "managed-gateway-expected-exit");
-      if (includeMarker) {
-        if (symlinkMarker) {
+      const markerWriters = {
+        regular: () => fs.writeFileSync(marker, `v1 ${payloadPid} 333 7331 888\n`, { mode: 0o444 }),
+        missing: () => undefined,
+        symlink: () => {
           const attackerMarker = path.join(directory, "attacker-marker");
           fs.writeFileSync(attackerMarker, `v1 ${payloadPid} 333 7331 888\n`, { mode: 0o444 });
           fs.symlinkSync(attackerMarker, marker);
-        } else {
-          fs.writeFileSync(marker, `v1 ${payloadPid} 333 7331 888\n`, { mode: 0o444 });
-        }
-      }
+        },
+      } satisfies Record<"regular" | "missing" | "symlink", () => unknown>;
+      markerWriters[markerKind]();
       const procRoot = path.join(directory, "proc");
       const controllerRoot = path.join(procRoot, "7331");
-      if (includeController) {
-        fs.mkdirSync(controllerRoot, { recursive: true });
-        fs.writeFileSync(
-          path.join(controllerRoot, "stat"),
-          `7331 (python3) ${[controllerState, "1", ...Array(17).fill("0"), controllerStart].join(" ")}\n`,
-        );
-        fs.writeFileSync(
-          path.join(controllerRoot, "status"),
-          `Uid:\t${controllerUids}\nNSpid:\t7331\n`,
-        );
-        fs.writeFileSync(
-          path.join(controllerRoot, "cmdline"),
-          `python3\0-I\0/usr/local/lib/nemoclaw/managed-gateway-control.py\0${controllerAction}\0${NONCE}\0`,
-        );
-      }
+      const writeController = includeController
+        ? () => {
+            fs.mkdirSync(controllerRoot, { recursive: true });
+            fs.writeFileSync(
+              path.join(controllerRoot, "stat"),
+              `7331 (python3) ${[controllerState, "1", ...Array(17).fill("0"), controllerStart].join(" ")}\n`,
+            );
+            fs.writeFileSync(
+              path.join(controllerRoot, "status"),
+              `Uid:\t${controllerUids}\nNSpid:\t7331\n`,
+            );
+            fs.writeFileSync(
+              path.join(controllerRoot, "cmdline"),
+              `python3\0-I\0/usr/local/lib/nemoclaw/managed-gateway-control.py\0${controllerAction}\0${NONCE}\0`,
+            );
+          }
+        : () => undefined;
+      writeController();
       try {
         return runBash([
           'stat() { case "$3" in "$NEMOCLAW_MANAGED_EXPECTED_EXIT_DIR") printf "0:0 711\\n" ;; *) printf "0:0 444 1\\n" ;; esac; }',
@@ -349,8 +342,8 @@ describe("openclaw managed restart respawn (#6868)", () => {
     expect(check({ payloadPid: "4243" })).toContain("refused");
     // Missing, linked, orphaned, replaced, non-root, or unexpected controllers
     // must all fail closed as ordinary gateway exits.
-    expect(check({ includeMarker: false })).toContain("refused");
-    expect(check({ symlinkMarker: true })).toContain("refused");
+    expect(check({ markerKind: "missing" })).toContain("refused");
+    expect(check({ markerKind: "symlink" })).toContain("refused");
     expect(check({ includeController: false })).toContain("refused");
     expect(check({ controllerStart: "889" })).toContain("refused");
     expect(check({ controllerState: "Z" })).toContain("refused");
