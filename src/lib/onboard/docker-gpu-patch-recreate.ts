@@ -19,6 +19,7 @@ import {
   dockerContainerName,
   parseDockerInspectJson,
   sameContainerId,
+  validateRequiredDockerUlimits,
 } from "./docker-gpu-patch-clone";
 import {
   DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
@@ -165,6 +166,7 @@ export function recreateOpenShellDockerSandboxContainer(
     modeAttempts: [],
   };
   try {
+    validateRequiredDockerUlimits(options.requiredUlimits);
     const containerIds = findOpenShellDockerSandboxContainerIds(options.sandboxName, deps);
     const oldContainerId = containerIds[0];
     if (!oldContainerId) {

@@ -188,6 +188,7 @@ describe("Docker GPU startup command validation (#6110)", () => {
 
   it("rejects malformed required ulimits before touching the original container", () => {
     const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id\n" }));
     const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
 
     expect(() =>
@@ -206,7 +207,7 @@ describe("Docker GPU startup command validation (#6110)", () => {
                 : "",
           ),
           detectSandboxFallbackDns: vi.fn(() => null),
-          dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+          dockerRun,
           dockerRunDetached,
           dockerRename: vi.fn(() => ({ status: 0 })),
           dockerRm: vi.fn(() => ({ status: 0 })),
@@ -216,6 +217,7 @@ describe("Docker GPU startup command validation (#6110)", () => {
         },
       ),
     ).toThrow("Invalid Docker ulimit name");
+    expect(dockerRun).not.toHaveBeenCalled();
     expect(dockerStop).not.toHaveBeenCalled();
     expect(dockerRunDetached).not.toHaveBeenCalled();
   });

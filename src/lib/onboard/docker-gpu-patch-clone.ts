@@ -81,6 +81,12 @@ function normalizeRequiredUlimit(ulimit: DockerUlimit): DockerUlimit {
   return { name, soft: ulimit.soft, hard: ulimit.hard };
 }
 
+export function validateRequiredDockerUlimits(
+  required: readonly DockerUlimit[] | null | undefined,
+): void {
+  for (const ulimit of required ?? []) normalizeRequiredUlimit(ulimit);
+}
+
 function dockerUlimits(
   inspect: DockerContainerInspect,
   required: readonly DockerUlimit[] | null | undefined,
