@@ -622,7 +622,10 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
   });
 
-  it("resumes a non-interactive onboarding attempt that crashed after create succeeded but before its completion receipt (#7022)", async () => {
+  it.each([
+    "interactive",
+    "non-interactive",
+  ] as const)("resumes a %s onboarding attempt that crashed after create succeeded but before its completion receipt (#7022)", async (mode) => {
     const recordStepComplete = vi
       .fn()
       .mockRejectedValueOnce(new Error("process crashed after create"));
@@ -630,7 +633,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
       getSandboxReuseState: () => "missing",
       recordStepComplete,
     });
-    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw", mode });
 
     await expect(
       handleSandboxState({
@@ -665,8 +668,11 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(resumeCalls.recordSkip).toHaveBeenCalled();
   });
 
-  it("backfills effect receipts after a crash following sandbox registration (#7022)", async () => {
-    let persistedSession = createSession({ sessionId: "sess-1", agent: "openclaw" });
+  it.each([
+    "interactive",
+    "non-interactive",
+  ] as const)("backfills effect receipts after a %s crash following sandbox registration (#7022)", async (mode) => {
+    let persistedSession = createSession({ sessionId: "sess-1", agent: "openclaw", mode });
     const updateSession = vi.fn((mutator: (value: Session) => Session | void) => {
       persistedSession = mutator(persistedSession) ?? persistedSession;
       return persistedSession;
