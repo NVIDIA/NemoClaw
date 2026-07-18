@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  assertStationExpressInstallerResumeMatches,
   clearStationExpressInstallerResume,
   withStationExpressResumeEnvironment,
 } from "../src/lib/onboard/station-express-resume";
@@ -1115,6 +1116,9 @@ ensure_station_express_host
         "agent=openclaw\nsandbox=my-assistant\npolicy_tier=balanced\n",
     );
     expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
+    expect(() =>
+      assertStationExpressInstallerResumeMatches(STATION_GENERATION, { HOME: home }),
+    ).not.toThrow();
     expect(output).toContain(`NEMOCLAW_INSTALL_TAG=${STATION_REVISION}`);
   });
 
