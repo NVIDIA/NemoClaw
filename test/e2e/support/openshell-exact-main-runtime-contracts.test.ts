@@ -140,10 +140,11 @@ describe("OpenShell exact-main policy, nft, and process-identity proof helpers",
     const syntax = spawnSync("sh", ["-n"], { encoding: "utf8", input: script });
 
     expect(syntax.status, syntax.stderr).toBe(0);
+    expect(script).toContain("nft_path=$(command -v nft)");
     expect(script).toContain("/var/run/netns/sandbox-*");
     expect(script).toContain('ip netns pids "$namespace" 2>/dev/null');
-    expect(script).toContain('nsenter --net="$namespace_path"');
-    expect(script).toContain("exec nft -j list table inet openshell_bypass");
+    expect(script).toContain('nsenter --net="$namespace_path" -- "$nft_path"');
+    expect(script).toContain('exec "$nft_path" -j list table inet openshell_bypass');
     expect(script).toContain('if [ "$active_namespace_count" -gt 1 ]');
   });
 

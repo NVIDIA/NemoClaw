@@ -499,6 +499,7 @@ async function findSandboxContainer(
 
 export function buildExactMainNftInspectionScript(): string {
   return [
+    "nft_path=$(command -v nft)",
     "active_namespace_count=0",
     "namespace_path=",
     "for candidate in /var/run/netns/sandbox-*; do",
@@ -514,9 +515,9 @@ export function buildExactMainNftInspectionScript(): string {
     "  exit 1",
     "fi",
     'if [ "$active_namespace_count" -eq 1 ]; then',
-    '  exec nsenter --net="$namespace_path" -- nft -j list table inet openshell_bypass',
+    '  exec nsenter --net="$namespace_path" -- "$nft_path" -j list table inet openshell_bypass',
     "fi",
-    "exec nft -j list table inet openshell_bypass",
+    'exec "$nft_path" -j list table inet openshell_bypass',
   ].join("\n");
 }
 
