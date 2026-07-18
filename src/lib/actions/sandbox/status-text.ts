@@ -88,7 +88,7 @@ function printInferenceProbeLine(probe: ProviderHealthStatus): void {
     return;
   }
   if (probe.ok) {
-    console.log(`    ${label}: ${G}healthy${R} (${probe.endpoint})`);
+    console.log(`    ${label}: ${G}${probe.okLabel ?? "healthy"}${R} (${probe.endpoint})`);
     return;
   }
   console.log(`    ${label}: ${RD}${probe.failureLabel || "unreachable"}${R} (${probe.endpoint})`);

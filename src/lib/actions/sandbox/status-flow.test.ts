@@ -107,7 +107,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Sandbox-scoped status for 'alpha'");
     expect(output).toContain("Sandbox: alpha");
     expect(output).toContain("Model:    nvidia/nemotron");
-    expect(output).toContain("Inference: healthy");
+    expect(output).toContain("Inference: reachable");
     expect(output).toContain("Inference (ollama backend):");
     expect(output).toContain("Host GPU: yes");
     expect(output).toContain("last CUDA proof failed: cuInit");
@@ -210,6 +210,41 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("Inference: healthy");
     expect(output).toContain("Inference (upstream):");
     expect(output).toContain("unreachable");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("distinguishes route reachability from model-invocation health in the rendered labels (#6846)", async () => {
+    const harness = createStatusFlowHarness({
+      inferenceHealth: {
+        ok: true,
+        probed: true,
+        providerLabel: "Inference route",
+        endpoint: "https://inference.local/v1/models",
+        detail: "route reachable",
+        okLabel: "reachable",
+        subprobes: [
+          {
+            ok: true,
+            probed: true,
+            providerLabel: "NVIDIA Endpoints",
+            endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+            detail: "model invocation probe succeeded",
+            probeLabel: "upstream",
+          },
+        ],
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    // The route probe only proves network-path reachability (#6192); the
+    // upstream subprobe is what proves the configured model is invocable
+    // (#6846). Rendering the same word for both would re-introduce the
+    // false-positive this PR fixes.
+    expect(output).toContain("Inference: reachable");
+    expect(output).not.toContain("Inference: healthy");
+    expect(output).toContain("Inference (upstream): healthy");
     expect(process.exitCode).toBeUndefined();
   });
 

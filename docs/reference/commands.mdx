@@ -9,8 +9,6 @@ keywords: ["nemoclaw cli commands", "nemoclaw command reference", "nemo-deepagen
 content:
   type: "reference"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 <AgentOnly variant="openclaw">
 
 The `$$nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes.
@@ -1218,7 +1216,7 @@ The main `Inference` line reports one of these states:
 
 | State | Meaning |
 |-------|---------|
-| `healthy` | The route returned an HTTP status from `200` through `499`. Authentication responses such as `401` and `403` confirm route reachability. |
+| `reachable` | The route returned an HTTP status from `200` through `499`. Authentication responses such as `401` and `403` confirm route reachability. |
 | `unhealthy` | The route returned an HTTP status from `500` through `599`. |
 | `unreachable` | The route had a transport failure, returned no final HTTP status (`000` or an interim `100` through `199`), or returned an invalid status outside `100` through `599`. |
 | `not probed` | NemoClaw could not run the authoritative route probe from a reachable sandbox. |
@@ -1226,6 +1224,9 @@ The main `Inference` line reports one of these states:
 
 An authentication response confirms that the route is reachable, not that provider credentials are valid.
 The command can also print direct host-side provider checks such as `Inference (upstream)` and provider-specific subprobes.
+For supported remote providers, this diagnostic sends an authenticated request to the configured model and accepts only a recognized Chat Completions, streaming Chat Completions, or Anthropic Messages response.
+It uses a 3-second connection timeout, a 5-second total timeout, and an 8-token output limit.
+If the request reaches the time limit, NemoClaw reports the provider as `not probed` and leaves model health unverified instead of reporting it as unhealthy.
 These checks are diagnostic only and do not override the authoritative `inference.local` result or determine the command exit status.
 
 Local providers add host-side backend diagnostics.
@@ -1345,7 +1346,7 @@ The rebuild reuses the existing sandbox name and preserved manifest-defined stat
 ### `$$nemoclaw <name> doctor`
 
 Run a focused health check for one sandbox and the host services it depends on.
-The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, provider reachability, Ollama reachability, and the cloudflared tunnel state.
+The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, configured-provider model invocation, Ollama reachability, and the cloudflared tunnel state.
 <AgentOnly variant="openclaw,hermes">
 For gateway-based agents, it also reports messaging channel conflicts.
 </AgentOnly>
@@ -1353,7 +1354,7 @@ For gateway-based agents, it also reports messaging channel conflicts.
 For inference health, `doctor` treats the probe to `https://inference.local/v1/models` from inside the sandbox as authoritative.
 HTTP responses from `200` through `499`, including `401` and `403`, pass this check.
 HTTP `500` through `599`, interim `100` through `199`, transport failures with status `000`, invalid status values, and an unavailable authoritative probe fail the check.
-Direct provider and upstream probes are diagnostics only, so their failure does not fail `doctor` when the authoritative in-sandbox route is healthy.
+Direct provider and upstream probes use the same authenticated model-invocation checks as status and remain diagnostic only, so their failure does not fail `doctor` when the authoritative in-sandbox route is reachable.
 
 Warnings do not make the command fail.
 Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate.
