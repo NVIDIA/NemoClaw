@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -67,6 +68,11 @@ function validateActionMutation(options: {
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
+}
+
+function writeExecutable(filePath: string, source: string): void {
+  fs.writeFileSync(filePath, source);
+  fs.chmodSync(filePath, 0o755);
 }
 
 describe("E2E host dependency action boundary (#6961)", () => {
@@ -151,6 +157,77 @@ describe("E2E host dependency action boundary (#6961)", () => {
     )!;
     install["continue-on-error"] = true;
     expect(validateE2eWorkflow(workflow)).toContain("live host dependency setup must fail closed");
+  });
+
+  it("executes the host helper with validated packages and bounded retries (#6961)", () => {
+    expect(fs.statSync(SCRIPT_PATH).mode & 0o111).not.toBe(0);
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-dependency-script-"));
+    const fakeBin = path.join(directory, "bin");
+    const callsPath = path.join(directory, "sudo-calls");
+    fs.mkdirSync(fakeBin);
+    writeExecutable(path.join(fakeBin, "sleep"), "#!/usr/bin/env bash\nexit 0\n");
+    writeExecutable(
+      path.join(fakeBin, "sudo"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "\${SUDO_CALLS}"
+if [[ "$1 $2" == "apt-get update" ]]; then
+  attempt="$(grep -c '^apt-get update$' "\${SUDO_CALLS}")"
+  if [[ "\${attempt}" -lt "\${APT_UPDATE_SUCCESS_ATTEMPT}" ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+if [[ "$1 $2" == "apt-get install" ]]; then
+  exit 0
+fi
+exit 64
+`,
+    );
+
+    const runSetup = (packages: string, successAttempt = 1) => {
+      fs.rmSync(callsPath, { force: true });
+      return spawnSync(SCRIPT_PATH, [], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          APT_UPDATE_SUCCESS_ATTEMPT: String(successAttempt),
+          HOST_DEPENDENCY_PACKAGES: packages,
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          SUDO_CALLS: callsPath,
+        },
+      });
+    };
+
+    try {
+      for (const invalidPackages of ["", "   ", "expect\ncurl", "curl"]) {
+        const rejected = runSetup(invalidPackages);
+        expect(rejected.status).toBe(1);
+        expect(fs.existsSync(callsPath)).toBe(false);
+      }
+
+      const retried = runSetup("expect iptables", 3);
+      expect(retried.status, retried.stderr).toBe(0);
+      expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
+        "apt-get update",
+        "apt-get update",
+        "apt-get update",
+        "apt-get install -y --no-install-recommends expect iptables",
+      ]);
+
+      const exhausted = runSetup("expect", 4);
+      expect(exhausted.status).toBe(1);
+      expect(fs.readFileSync(callsPath, "utf8").trim().split("\n")).toEqual([
+        "apt-get update",
+        "apt-get update",
+        "apt-get update",
+      ]);
+      expect(`${exhausted.stdout}${exhausted.stderr}`).toContain(
+        "apt-get update failed after 3 attempts",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("rejects installing the OpenClaw TUI host dependency after workspace preparation", () => {
