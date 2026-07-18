@@ -1,14 +1,36 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
+import { describe, expect, it } from "vitest";
+import YAML from "yaml";
+
+import {
+  validateE2eWorkflow,
+  validateHostDependencyAction,
+} from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow as readE2eWorkflow } from "../../helpers/e2e-workflow-contract.ts";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const ACTION_PATH = path.join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "host-dependency-setup",
+  "action.yaml",
+);
+const SCRIPT_PATH = path.join(REPO_ROOT, ".github", "scripts", "host-dependency-setup.sh");
+const ACTION_USES =
+  "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@296b34d821b11aa1bc8d8713264695ade17c66cb";
 
 interface WorkflowStep {
   name?: string;
-  run?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
 }
 
 interface Workflow {
@@ -28,43 +50,97 @@ function requireStepIndex(steps: WorkflowStep[], stepName: string): number {
   return index >= 0 ? index : throwMissingStep(stepName);
 }
 
-describe("inline E2E host dependency boundary", () => {
+function validateActionMutation(options: {
+  mutateAction?: (source: string) => string;
+  mutateScript?: (source: string) => string;
+}): string[] {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-dependency-action-"));
+  const actionPath = path.join(directory, "action.yaml");
+  const scriptPath = path.join(directory, "host-dependency-setup.sh");
+  try {
+    const actionSource = fs.readFileSync(ACTION_PATH, "utf8");
+    fs.writeFileSync(actionPath, options.mutateAction?.(actionSource) ?? actionSource);
+    const scriptSource = fs.readFileSync(SCRIPT_PATH, "utf8");
+    fs.writeFileSync(scriptPath, options.mutateScript?.(scriptSource) ?? scriptSource);
+    return validateHostDependencyAction(actionPath, scriptPath);
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+}
+
+describe("E2E host dependency action boundary (#6961)", () => {
+  // source-shape-contract: security -- Privileged apt host setup must stay bound to the reviewed immutable action provenance.
+  it("binds the host-dependency action and helper to their immutable reviewed revision (#6961)", () => {
+    expect(validateHostDependencyAction()).toEqual([]);
+
+    const mappingErrors = validateActionMutation({
+      mutateAction: (source) => {
+        const action = YAML.parse(source) as Record<string, unknown>;
+        const runs = action.runs as { steps: Array<Record<string, unknown>> };
+        runs.steps[0].env = { HOST_DEPENDENCY_PACKAGES: "${{ inputs.packages }} curl" };
+        return YAML.stringify(action);
+      },
+    });
+    expect(mappingErrors).toContain(
+      "host-dependency-setup action content must match the action reviewed at its immutable commit pin",
+    );
+    expect(mappingErrors).toContain(
+      "host-dependency-setup action must preserve its exact single-input package mapping and pinned helper invocation",
+    );
+
+    expect(
+      validateActionMutation({ mutateScript: (source) => `${source}# unreviewed drift\n` }),
+    ).toContain(
+      "host-dependency-setup script content must match the helper reviewed at its immutable commit pin",
+    );
+  });
+
   it.each([
     {
       jobName: "live",
       stepName: "Install Deep Agents Code TUI host dependencies",
-      expected:
-        "live host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
+      packages: "expect",
     },
     {
       jobName: "network-policy",
       stepName: "Install network-policy host dependencies",
-      expected:
-        "network-policy host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
+      packages: "expect",
     },
     {
       jobName: "cloud-onboard",
       stepName: "Install cloud-onboard DCode TUI host dependencies",
-      expected:
-        "cloud-onboard host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
+      packages: "expect",
     },
     {
       jobName: "issue-4434-tui-unreachable-inference",
       stepName: "Install issue #4434 host dependencies",
-      expected:
-        "issue-4434-tui-unreachable-inference host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect iptables'",
+      packages: "expect iptables",
     },
     {
       jobName: "openclaw-tui-chat-correlation",
       stepName: "Install OpenClaw TUI host dependencies",
-      expected:
-        "openclaw-tui-chat-correlation host dependency install must be exactly 'sudo apt-get install -y --no-install-recommends expect'",
+      packages: "expect",
     },
-  ])("rejects package allowlist drift in $jobName", ({ jobName, stepName, expected }) => {
+  ])("rejects package allowlist drift in $jobName", ({ jobName, stepName, packages }) => {
     const workflow = readWorkflow();
     const install = workflow.jobs[jobName]?.steps.find((step) => step.name === stepName)!;
-    install.run = (install.run ?? "").replace(/(sudo apt-get install[^\n]+)/u, "$1 curl");
-    expect(validateE2eWorkflow(workflow)).toContain(expected);
+    install.with = { ...(install.with ?? {}), packages: `${packages} curl` };
+    expect(validateE2eWorkflow(workflow)).toContain(
+      `${jobName} host dependency install must map only '${packages}'`,
+    );
+  });
+
+  it("rejects host dependency setup that abandons the pinned action", () => {
+    const workflow = readWorkflow();
+    const install = workflow.jobs.live?.steps.find(
+      (step) => step.name === "Install Deep Agents Code TUI host dependencies",
+    )!;
+    install.with = undefined;
+    install.uses =
+      "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@0000000000000000000000000000000000000000";
+    expect(validateE2eWorkflow(workflow)).toContain(
+      `live host dependency setup must invoke only ${ACTION_USES}`,
+    );
   });
 
   it("rejects installing the OpenClaw TUI host dependency after workspace preparation", () => {

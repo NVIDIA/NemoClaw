@@ -137,6 +137,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
+      "test": "binds the host-dependency action and helper to their immutable reviewed revision (#6961)",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/e2e-expected-state.test.ts",
       "test": "compiles absence probes for every preflight failure contract",
       "category": "security"

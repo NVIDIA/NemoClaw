@@ -54,6 +54,19 @@ const DEFAULT_DOCKER_HUB_AUTH_SCRIPT_PATH = join(
   "scripts",
   "docker-auth-setup.sh",
 );
+const DEFAULT_HOST_DEPENDENCY_ACTION_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "host-dependency-setup",
+  "action.yaml",
+);
+const DEFAULT_HOST_DEPENDENCY_SCRIPT_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "scripts",
+  "host-dependency-setup.sh",
+);
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -114,6 +127,13 @@ const DOCKER_HUB_AUTH_PROVENANCE = {
   scriptSha256: "853a3f742f057c29ed465b63bed1ec8d8f306a1c046877a8556cadf290ef0cb6",
 } as const;
 const DOCKER_HUB_AUTH_USES = DOCKER_HUB_AUTH_PROVENANCE.reference;
+const HOST_DEPENDENCY_ACTION_PROVENANCE = {
+  reference:
+    "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@296b34d821b11aa1bc8d8713264695ade17c66cb",
+  actionSha256: "1ac05a0e0a0159fa0850eb82fccb0704d0e49b15bc6f2d6e3b6bb04c7ab94923",
+  scriptSha256: "a129adced277a9c96ef9911d75353beb229be5af083e4c2d921dcffdb64fa57d",
+} as const;
+const HOST_DEPENDENCY_ACTION_USES = HOST_DEPENDENCY_ACTION_PROVENANCE.reference;
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
 // The general E2E workflow runs on schedule/manual dispatch. Its event set is
 // intentionally distinct from the reusable image workflow's push/manual boundary.
@@ -193,6 +213,64 @@ export function validateDockerHubAuthAction(
   if (!isDeepStrictEqual(asRecord(YAML.parse(actionSource)), expectedAction)) {
     errors.push(
       "docker-auth-setup action must preserve its exact three-input environment mapping and pinned helper invocation",
+    );
+  }
+
+  return errors;
+}
+
+export function validateHostDependencyAction(
+  actionPath = DEFAULT_HOST_DEPENDENCY_ACTION_PATH,
+  scriptPath = DEFAULT_HOST_DEPENDENCY_SCRIPT_PATH,
+): string[] {
+  const actionSource = readFileSync(actionPath, "utf8");
+  const scriptSource = readFileSync(scriptPath, "utf8");
+  const errors: string[] = [];
+
+  if (
+    createHash("sha256").update(actionSource).digest("hex") !==
+    HOST_DEPENDENCY_ACTION_PROVENANCE.actionSha256
+  ) {
+    errors.push(
+      "host-dependency-setup action content must match the action reviewed at its immutable commit pin",
+    );
+  }
+  if (
+    createHash("sha256").update(scriptSource).digest("hex") !==
+    HOST_DEPENDENCY_ACTION_PROVENANCE.scriptSha256
+  ) {
+    errors.push(
+      "host-dependency-setup script content must match the helper reviewed at its immutable commit pin",
+    );
+  }
+
+  const expectedAction = {
+    name: "host-dependency-setup",
+    description:
+      "Install reviewed apt host dependencies with bounded retries from a trusted pinned action.",
+    inputs: {
+      packages: {
+        description: "Space-separated apt packages from the reviewed allowlist (expect, iptables).",
+        required: true,
+      },
+    },
+    runs: {
+      using: "composite",
+      steps: [
+        {
+          name: "Install host dependencies",
+          shell: "bash",
+          env: {
+            HOST_DEPENDENCY_PACKAGES: "${{ inputs.packages }}",
+          },
+          run: 'bash "${{ github.action_path }}/../../scripts/host-dependency-setup.sh"',
+        },
+      ],
+    },
+  };
+  if (!isDeepStrictEqual(asRecord(YAML.parse(actionSource)), expectedAction)) {
+    errors.push(
+      "host-dependency-setup action must preserve its exact single-input package mapping and pinned helper invocation",
     );
   }
 
@@ -616,7 +694,7 @@ function requireUploadPathDoesNotContain(
   }
 }
 
-function validateInlineHostDependencyInstall(
+function validateHostDependencyActionStep(
   errors: string[],
   jobName: string,
   steps: readonly WorkflowStep[],
@@ -624,27 +702,24 @@ function validateInlineHostDependencyInstall(
   expectedPackages: readonly string[],
 ): void {
   const step = requireJobStep(errors, jobName, steps, stepName);
-  if (step?.uses) {
-    errors.push(`${jobName} host dependency setup must stay inline in trusted workflow YAML`);
+  if (!step) return;
+  if (step.uses !== HOST_DEPENDENCY_ACTION_USES) {
+    errors.push(`${jobName} host dependency setup must invoke only ${HOST_DEPENDENCY_ACTION_USES}`);
   }
-  for (const fragment of [
-    "for attempt in 1 2 3",
-    "sudo apt-get update",
-    'if [ "$attempt" -eq 3 ]; then',
-    "apt-get update failed after 3 attempts",
-    "sleep $((attempt * 5))",
-  ]) {
-    requireRunContains(errors, step, fragment);
+  if (step.run !== undefined || step.shell !== undefined || step.env !== undefined) {
+    errors.push(
+      `${jobName} host dependency setup must invoke the pinned action, not an inline script`,
+    );
   }
 
-  const installPrefix = "sudo apt-get install -y --no-install-recommends ";
-  const installLines = stringValue(step?.run)
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("sudo apt-get install "));
-  const expectedInstall = `${installPrefix}${expectedPackages.join(" ")}`;
-  if (installLines.length !== 1 || installLines[0] !== expectedInstall) {
-    errors.push(`${jobName} host dependency install must be exactly '${expectedInstall}'`);
+  const withInputs = asRecord(step.with);
+  const expectedPackagesValue = expectedPackages.join(" ");
+  if (withInputs.packages !== expectedPackagesValue) {
+    errors.push(`${jobName} host dependency install must map only '${expectedPackagesValue}'`);
+  }
+  const unexpectedWith = Object.keys(withInputs).filter((name) => name !== "packages");
+  if (unexpectedWith.length > 0) {
+    errors.push(`${jobName} host dependency setup must expose only the packages input`);
   }
 }
 
@@ -1104,7 +1179,7 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("network-policy checkout step must set persist-credentials=false");
   }
 
-  validateInlineHostDependencyInstall(
+  validateHostDependencyActionStep(
     errors,
     jobName,
     steps,
@@ -1136,7 +1211,7 @@ function validateIssue4434HostDependencies(errors: string[], jobs: WorkflowRecor
     errors.push(`workflow missing ${jobName} job`);
     return;
   }
-  validateInlineHostDependencyInstall(
+  validateHostDependencyActionStep(
     errors,
     jobName,
     asSteps(job.steps),
@@ -1156,7 +1231,7 @@ function validateOpenclawTuiChatCorrelationHostDependencies(
     return;
   }
   const steps = asSteps(job.steps);
-  validateInlineHostDependencyInstall(
+  validateHostDependencyActionStep(
     errors,
     jobName,
     steps,
@@ -3987,7 +4062,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
     steps,
     "Install Deep Agents Code TUI host dependencies",
   );
-  validateInlineHostDependencyInstall(
+  validateHostDependencyActionStep(
     errors,
     "live",
     steps,
@@ -4215,7 +4290,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
 
   const cloudOnboardSteps = asSteps(asRecord(jobs["cloud-onboard"]).steps);
-  validateInlineHostDependencyInstall(
+  validateHostDependencyActionStep(
     errors,
     "cloud-onboard",
     cloudOnboardSteps,
@@ -4436,6 +4511,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   return [
     ...validateDockerHubAuthAction(),
+    ...validateHostDependencyAction(),
     ...validateE2eWorkflow(readWorkflowRecord(workflowPath)),
   ];
 }
