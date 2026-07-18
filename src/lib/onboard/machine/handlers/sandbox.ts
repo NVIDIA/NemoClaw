@@ -609,7 +609,17 @@ class SandboxStateFlow<
       JSON.stringify(this.options.sandboxGpuConfig ?? null),
       [...this.options.hermesToolGateways].sort().join(","),
     ].join("|");
-    return createIntent ? `${lightFingerprint}|${JSON.stringify(createIntent)}` : lightFingerprint;
+    if (!createIntent) return lightFingerprint;
+    // Extra providers are live gateway attachments, not durable build intent.
+    // Resume deliberately re-plans them so newly live providers are attached
+    // and stale records are omitted. Binding those ambient lists into the
+    // receipt would reject the established repair/resume reconciliation path.
+    const {
+      extraProviders: _extraProviders,
+      staleExtraProviders: _staleExtraProviders,
+      ...durableCreateIntent
+    } = createIntent;
+    return `${lightFingerprint}|${JSON.stringify(durableCreateIntent)}`;
   }
 
   private assertCheckpointCreateInputsStillMatch(

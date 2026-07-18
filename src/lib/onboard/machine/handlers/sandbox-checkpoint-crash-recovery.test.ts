@@ -501,7 +501,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 
-  it("rejects reuse when a resolved createIntent contribution drifted despite an unchanged light fingerprint (#7022)", async () => {
+  it("reconciles changed live extra providers without treating gateway attachments as durable build drift (#7022)", async () => {
     const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
     const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
       mutator(session);
@@ -529,20 +529,55 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
       updateSession,
       planRegisteredExtraProviders: () => ({
         extraProviders: ["provider-b"],
-        staleExtraProviders: [],
+        staleExtraProviders: ["provider-a"],
       }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(resumeDeps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
+    expect(calls.error).not.toHaveBeenCalled();
+  });
+
+  it("rejects stable resolved create-intent drift despite an unchanged light fingerprint (#7022)", async () => {
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const firstRun = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+
+    await handleSandboxState({
+      ...baseOptions(firstRun.deps, session),
+      resume: false,
+      sandboxName: "my-assistant",
+    });
+
+    const resumedRun = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+    const defaultResolve = resumedRun.calls.resolveCreateIntent.getMockImplementation();
+    if (!defaultResolve) throw new Error("default create-intent resolver is unavailable");
+    resumedRun.calls.resolveCreateIntent.mockImplementation(async (input) => {
+      const resolved = await defaultResolve(input);
+      return {
+        ...resolved,
+        policy: { ...resolved.policy, basePolicyPath: "/repo/changed-policy.yaml" },
+      };
     });
 
     await expect(
       handleSandboxState({
-        ...baseOptions(resumeDeps, session),
+        ...baseOptions(resumedRun.deps, session),
         resume: true,
         sandboxName: "my-assistant",
       }),
     ).rejects.toThrow("exit 1");
 
-    expect(calls.createSandbox).not.toHaveBeenCalled();
-    expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
+    expect(resumedRun.calls.createSandbox).not.toHaveBeenCalled();
+    expect(resumedRun.calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 
   it("re-revalidates checkpoint bindings immediately before the locked destructive create, catching a race after the initial check (#7022)", async () => {
