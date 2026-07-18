@@ -304,7 +304,7 @@ NEMOCLAW_DASHBOARD_BIND=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
 Use `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` again on later `$$nemoclaw <sandbox> connect` calls.
 If the sandbox was originally created without remote bind, recreate it with the same onboard command plus `--recreate-sandbox` before connecting remotely.
 
-Docker-driver gateways on OpenShell 0.0.72 reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` while gateway JWT auth is active.
+Docker-driver gateways on OpenShell 0.0.85 reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` while gateway JWT auth is active.
 
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and only when other hosts on the network should be able to reach the gateway.
 
@@ -312,14 +312,14 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.72 directly supports Linux hosts with glibc 2.28 or newer.
+OpenShell 0.0.85 directly supports Linux hosts with glibc 2.28 or newer.
 On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container.
 Leave it unset on supported hosts.
 
 The compatibility container uses host networking and mounts the host Docker socket read-only.
 A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host.
 The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon.
-See the [OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the accepted boundary and removal conditions.
+See the [OpenShell gateway compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the unchanged container boundary and removal conditions.
 
 Refer to [Environment Variables](commands#environment-variables) for the full list of port overrides.
 

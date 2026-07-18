@@ -79,7 +79,7 @@
     "docs:clean": "rm -rf .fern-cache fern/.fern-cache docs/_build",
     "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && (node -e \"require.resolve('p-retry')\" >/dev/null 2>&1 || npm install --omit=dev --ignore-scripts) && if [ -d .git ]; then bash scripts/npm-link-or-shim.sh; if command -v prek >/dev/null 2>&1; then prek install; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
     "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && test -s .version && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc",
-    "typecheck:scorecard": "tsc --noEmit --types node --strict scripts/scorecard/analyze-trace-timing.mts"
+    "typecheck:scorecard": "tsc --noEmit --types node --strict --allowImportingTsExtensions --module preserve --moduleResolution bundler scripts/scorecard/coordinate-scorecard.mts scripts/scorecard/analyze-trace-timing.mts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1046.0",

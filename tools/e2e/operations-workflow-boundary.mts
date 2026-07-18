@@ -184,15 +184,19 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
     '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+    '"$PLAN_HASH" =~ ^[a-f0-9]{64}$',
+    '"$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
-    '[[ -n "$JOBS" && -z "$TARGETS" ]]',
+    '[[ -n "$JOBS" || -n "$TARGETS" ]]',
+    '[[ -z "$TARGETS" || "$TARGETS" == "ubuntu-repo-cloud-langchain-deepagents-code" ]]',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "'.state'",
     "'.head.repo.full_name // \"\"'",
-    "'.head.sha'",
+    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
   ]) {
     if (!validationScript.includes(fragment)) {
@@ -427,17 +431,15 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   requireNode24GithubScript(errors, generate, "scorecard generator");
   const generateScript = String(generate.with?.script ?? "");
   for (const fragment of [
+    "scripts/scorecard/coordinate-scorecard.mts",
+    "buildScorecard",
     "scripts/scorecard/analyze-trace-timing.mts",
     "traceTiming.buildTraceTimingResult",
     "buildTraceTimingResult({ github, context, core })",
-    "budgetWarningMessage",
-    "core.warning(budgetWarningMessage)",
+    "trace.budgetWarningMessage",
+    "core.warning(trace.budgetWarningMessage)",
     "scripts/scorecard/summarize-jobs.mts",
-    "scorecardJobs.isSelectiveDispatch",
     "scorecardJobs.loadWorkflowRunJobs",
-    "scorecardJobs.summarizeJobs",
-    "scripts/scorecard/build-slack-blocks.mts",
-    "slackBlocks.buildBlocks",
     "core.summary",
     "scorecardData",
     "slackData",

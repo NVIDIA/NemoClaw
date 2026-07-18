@@ -126,6 +126,7 @@ export async function restoreMcpAfterRebuild(
 }
 
 export function postRestoreCompleted(status: {
+  hermesGatewayRestoreUnverified: boolean;
   messagingHostForwardUnverified: boolean;
   mcpBridgeRestoreUnverified: boolean;
   mutableConfigHashRefreshUnverified: boolean;
@@ -135,6 +136,7 @@ export function postRestoreCompleted(status: {
 }): boolean {
   return (
     status.restoreSucceeded &&
+    !status.hermesGatewayRestoreUnverified &&
     !status.mutablePermsRepairUnverified &&
     !status.mutableConfigHashRefreshUnverified &&
     !status.messagingHostForwardUnverified &&
