@@ -55,8 +55,8 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain("metadata omits or varies fields");
     expect(stationPreparation).toContain("Remove the override after");
     expect(quickstart).toContain("--force-station-install");
-    expect(platformSupport).toContain("maintainer-directed temporary metadata override");
-    expect(vllmSetup).toContain("maintainer-directed temporary metadata override");
+    expect(platformSupport).toContain("explicit temporary metadata override");
+    expect(vllmSetup).toContain("explicit temporary metadata override");
     expect(stationPreparation).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
     expect(stationPreparation).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
     expect(stationPreparation).toContain("[Platform Support](../../reference/platform-support)");

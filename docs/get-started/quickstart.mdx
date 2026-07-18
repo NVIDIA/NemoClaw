@@ -124,7 +124,7 @@ Use these details when your first-run path needs more control.
     On a qualifying Station, accepting the prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
     [Prepare DGX Station to Install NemoClaw](prerequisites/dgx-station-preparation) defines Station qualification, generic Ubuntu preparation, stock DGX OS validation, repair limits, and reboot handoff.
     By default, unknown versions, unsafe release markers, NVIDIA BaseOS images, and other Station generations stop before host preparation; set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to bypass Station host automation.
-    For a maintainer-directed temporary override on genuine Station GB300 hardware with unrecognized release metadata, follow the `--force-station-install` safeguards in the Station preparation guide.
+    For an explicit temporary override on genuine Station GB300 hardware with unrecognized release metadata, follow the `--force-station-install` safeguards in the Station preparation guide.
     One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
     Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead; the flag selects the interactive prompt and requires terminal access.
     Refer to [Platform Support](../reference/platform-support) and [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for the current platform behavior.

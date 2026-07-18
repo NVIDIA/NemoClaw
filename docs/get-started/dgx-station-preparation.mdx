@@ -20,7 +20,8 @@ By default, an unknown version, malformed or unsafe marker, NVIDIA BaseOS image,
 On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
 
 <Warning title="Temporary Metadata Override">
-Use `--force-station-install` only when a NemoClaw maintainer directs you to continue on a genuine DGX Station GB300 whose DGX release metadata is not recognized.
+Use `--force-station-install` only on a genuine DGX Station GB300 when automatic Station detection rejects its DGX release metadata.
+The flag handles metadata variants not yet recognized by NemoClaw; it is not a general compatibility bypass.
 The flag bypasses only the `/etc/dgx-release` allowlist.
 It still requires ARM64 Ubuntu 24.04, DGX Station GB300 hardware identity, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent, inference, or Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
 The override preserves the existing factory driver, packages, and container-runtime configuration; it does not install or repair missing factory components.
