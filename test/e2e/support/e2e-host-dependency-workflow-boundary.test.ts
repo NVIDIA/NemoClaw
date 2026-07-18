@@ -185,9 +185,9 @@ exit 64
 `,
     );
 
-    const runSetup = (packages: string, successAttempt = 1) => {
+    const runSetup = (packages: string, successAttempt = 1, args: string[] = []) => {
       fs.rmSync(callsPath, { force: true });
-      return spawnSync(SCRIPT_PATH, [], {
+      return spawnSync(SCRIPT_PATH, args, {
         encoding: "utf8",
         env: {
           ...process.env,
@@ -200,6 +200,11 @@ exit 64
     };
 
     try {
+      const unexpectedArgument = runSetup("expect", 1, ["unexpected"]);
+      expect(unexpectedArgument.status).toBe(1);
+      expect(unexpectedArgument.stderr).toContain("does not accept arguments");
+      expect(fs.existsSync(callsPath)).toBe(false);
+
       for (const invalidPackages of ["", "   ", "expect\ncurl", "curl"]) {
         const rejected = runSetup(invalidPackages);
         expect(rejected.status).toBe(1);
