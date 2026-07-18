@@ -14,7 +14,16 @@ if [[ -z "${HOST_DEPENDENCY_PACKAGES:-}" ]]; then
   exit 1
 fi
 
+if [[ "${HOST_DEPENDENCY_PACKAGES}" == *[$'\t\r\n']* ]]; then
+  echo "::error::Host dependency packages must be space-separated on one line." >&2
+  exit 1
+fi
+
 read -r -a requested_packages <<<"${HOST_DEPENDENCY_PACKAGES}"
+if ((${#requested_packages[@]} == 0)); then
+  echo "::error::Host dependency setup requires at least one package." >&2
+  exit 1
+fi
 allowlist=" expect iptables "
 for package in "${requested_packages[@]}"; do
   if [[ "${allowlist}" != *" ${package} "* ]]; then
