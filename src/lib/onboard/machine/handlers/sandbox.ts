@@ -597,6 +597,12 @@ class SandboxStateFlow<
     return [
       typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
       policyFingerprint,
+      this.options.provider,
+      this.options.model,
+      this.options.preferredInferenceApi ?? "default",
+      this.options.fromDockerfile ?? "",
+      JSON.stringify(this.options.sandboxGpuConfig ?? null),
+      [...this.options.hermesToolGateways].sort().join(","),
     ].join("|");
   }
 
@@ -1146,7 +1152,7 @@ class SandboxStateFlow<
       );
       // createSandbox() owns the build fingerprint. In particular, reusing an
       // image must not stamp it with the current version and hide build drift.
-      const { nemoclawVersion: builtFingerprint, ...agentRegistryFields } =
+      const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
         this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
       // Preserve the validated route and credential env-var name, never a credential value.
       this.deps.updateSandboxRegistry(sandboxName, {
@@ -1176,10 +1182,7 @@ class SandboxStateFlow<
         recordCheckpointEffectGroup(
           current,
           "sandbox_create",
-          [
-            typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
-            this.options.authoritativePolicyTier ?? "default",
-          ].join("|"),
+          this.currentSandboxCreateFingerprint(sandboxName),
         );
         recordCheckpointEffectGroup(current, "sandbox_register", sandboxName);
         return current;

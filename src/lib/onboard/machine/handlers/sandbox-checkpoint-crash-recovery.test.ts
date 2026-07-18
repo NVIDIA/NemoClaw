@@ -24,6 +24,19 @@ vi.mock("../../messaging-channel-setup", () => ({
 
 vi.mocked(detectMessagingChannelsFromEnv).mockReturnValue([]);
 
+function defaultCreateFingerprint(sandboxName = "my-assistant"): string {
+  return [
+    sandboxName,
+    "default",
+    "provider",
+    "model",
+    "openai-completions",
+    "",
+    JSON.stringify({ sandboxGpuEnabled: false, mode: "0" }),
+    "",
+  ].join("|");
+}
+
 function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardCheckpoint {
   return {
     schemaVersion: CHECKPOINT_SCHEMA_VERSION,
@@ -37,7 +50,7 @@ function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardC
     effectGroups: {
       sandbox_create: {
         completedAt: "2026-01-01T00:00:00.000Z",
-        fingerprint: "my-assistant|default",
+        fingerprint: defaultCreateFingerprint(),
       },
     },
     bindings: { credentialEnvs: [], registeredProviders: [] },
@@ -443,6 +456,23 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
         ...baseOptions(deps, session),
         resume: true,
         sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
+  });
+
+  it("rejects reuse when a resolved policy or package input drifted despite an unchanged build version and policy tier (#7022)", async () => {
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
+    const session = sessionWithCheckpoint(crashedCheckpoint());
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        hermesToolGateways: ["nous-web"],
       }),
     ).rejects.toThrow("exit 1");
 
