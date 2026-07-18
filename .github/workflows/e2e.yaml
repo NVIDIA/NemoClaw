@@ -209,45 +209,11 @@ jobs:
       # explicit because strict YAML decoders reject 100 or more aliases here.
       - &dockerhub-auth
         name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_AUTH_REQUIRED: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
-          DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_USERNAME || '' }}
-          DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_TOKEN || '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker_config="$(mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX")"
-          chmod 700 "${docker_config}"
-          export DOCKER_CONFIG="${docker_config}"
-          printf 'DOCKER_CONFIG=%s\n' "${DOCKER_CONFIG}" >> "${GITHUB_ENV}"
-
-          if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then
-            echo "::notice::Docker Hub credentials are withheld for this ref; continuing with anonymous pulls."
-            exit 0
-          fi
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::error::Docker Hub credentials are required for trusted E2E runs."
-            exit 1
-          fi
-
-          auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"
-          : > "${auth_marker}"
-          chmod 600 "${auth_marker}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if printf '%s' "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "${attempt}" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "${login_succeeded}" -ne 1 ]]; then
-            echo "::error::Docker Hub login failed after 3 attempts."
-            exit 1
-          fi
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928
+        with:
+          auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && '1' || '0' }}
+          username: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_USERNAME || '' }}
+          token: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_TOKEN || '' }}
 
       - name: Configure live E2E trace directory
         env:
@@ -259,32 +225,21 @@ jobs:
 
       # invalidState: the selected PR-modifiable TUI check needs a PTY driver,
       # but the fixed GitHub-hosted runner image does not provide expect.
-      # sourceBoundary: this trusted workflow owns host setup; the PR-controlled
-      # check only verifies and consumes expect without privilege.
+      # sourceBoundary: privileged host setup runs from the first-party
+      # host-dependency-setup action pinned to an immutable full SHA, never the
+      # PR-controlled target ref; the check only consumes expect without privilege.
       # whyNotSourceFix: GitHub-hosted jobs cannot use a repository-owned host
       # image, and caching privileged dpkg state between clean runners is not
       # supported.
       # regressionTest: the workflow-boundary suite pins this target, condition,
-      # ordering, retry contract, and exact one-package apt allowlist.
+      # ordering, action provenance, and package mapping.
       # removalCondition: remove the install when the hosted runner supplies
       # expect or the acceptance check no longer requires a PTY.
       - name: Install Deep Agents Code TUI host dependencies
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::apt-get update failed after 3 attempts." >&2
-              exit 1
-            fi
-            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
-            sleep $((attempt * 5))
-          done
-          sudo apt-get install -y --no-install-recommends expect
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: expect
 
       # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
       # command writes raw traces under runner temp, never under upload roots.
@@ -1369,28 +1324,16 @@ jobs:
 
       - *dockerhub-auth
 
-      # This free-standing job checks out and executes the PR target ref. It
-      # keeps privileged host dependency setup inline in trusted workflow YAML
-      # rather than loading a repo-local action from the target ref after
-      # checkout. Only expect and iptables are allowed here: the TUI driver and
-      # egress-isolation assertion require them. Workflow contract tests pin
-      # the retry behavior and exact package list.
+      # This free-standing job checks out and executes the PR target ref. Its
+      # privileged host dependency setup loads the first-party
+      # host-dependency-setup action pinned to an immutable full SHA, so the
+      # target ref never runs sudo with its own code. Only expect and iptables
+      # are allowed here: the TUI driver and egress-isolation assertion require
+      # them. Workflow contract tests pin the action provenance and package list.
       - name: "Install issue #4434 host dependencies"
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::apt-get update failed after 3 attempts." >&2
-              exit 1
-            fi
-            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
-            sleep $((attempt * 5))
-          done
-          sudo apt-get install -y --no-install-recommends expect iptables
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: expect iptables
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -2052,26 +1995,14 @@ jobs:
       - *dockerhub-auth
 
       # Expect is a reviewed host-tool consumer for the interactive policy-add
-      # test. Keep this privileged setup inline in trusted workflow YAML. This
-      # job executes a selected target ref, so it must not load a repo-local
-      # action from that ref with sudo privileges. Only expect is allowed here;
-      # iptables is scoped to the issue #4434 egress-isolation job.
+      # test. This job executes a selected target ref, so privileged setup runs
+      # from the first-party host-dependency-setup action pinned to an immutable
+      # full SHA, never that ref. Only expect is allowed here; iptables is scoped
+      # to the issue #4434 egress-isolation job.
       - name: Install network-policy host dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::apt-get update failed after 3 attempts." >&2
-              exit 1
-            fi
-            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
-            sleep $((attempt * 5))
-          done
-          sudo apt-get install -y --no-install-recommends expect
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: expect
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -3119,31 +3050,20 @@ jobs:
 
       # invalidState: the cloud-onboard DCode TUI check requires a PTY driver,
       # but the fixed GitHub-hosted runner image does not provide expect.
-      # sourceBoundary: this trusted workflow owns host setup; the repository
-      # check only verifies and consumes expect without privilege.
+      # sourceBoundary: privileged host setup runs from the first-party
+      # host-dependency-setup action pinned to an immutable full SHA, never the
+      # repository target ref; the check only consumes expect without privilege.
       # whyNotSourceFix: GitHub-hosted jobs cannot use a repository-owned host
       # image, and caching privileged dpkg state between clean runners is not
       # supported.
-      # regressionTest: workflow-boundary tests pin the ordering and exact
-      # one-package apt allowlist.
+      # regressionTest: workflow-boundary tests pin the ordering, action
+      # provenance, and package mapping.
       # removalCondition: remove when the hosted runner supplies expect or the
       # cloud-onboard acceptance check no longer requires a PTY.
       - name: Install cloud-onboard DCode TUI host dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::apt-get update failed after 3 attempts." >&2
-              exit 1
-            fi
-            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
-            sleep $((attempt * 5))
-          done
-          sudo apt-get install -y --no-install-recommends expect
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: expect
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
@@ -4009,32 +3929,21 @@ jobs:
 
       - *dockerhub-auth
 
-      # The #6194 terminal regression uses Expect as its PTY driver. Keep this
-      # privileged host setup inline in the reviewed workflow: the selected
-      # target ref may consume expect but cannot expand the package allowlist.
+      # The #6194 terminal regression uses Expect as its PTY driver. Privileged
+      # host setup runs from the first-party host-dependency-setup action pinned
+      # to an immutable full SHA: the selected target ref may consume expect but
+      # cannot expand the package allowlist or run sudo with its own code.
       # invalidState: hosted-runner Ubuntu mirrors can fail transiently during update.
-      # sourceBoundary: only this trusted workflow chooses the exact root-installed package.
+      # sourceBoundary: only the pinned trusted action chooses the exact root-installed package.
       # whyNotSourceFix: GitHub's Ubuntu image and configured repository move together, so a
       # fixed package version would make the target brittle across routine runner refreshes.
       # The runner's configured Ubuntu repository is therefore an accepted trust source.
-      # regressionTest: e2e-host-dependency-workflow-boundary rejects package or order drift.
+      # regressionTest: e2e-host-dependency-workflow-boundary rejects package or provenance drift.
       # removalCondition: remove this step when the hosted image provides Expect itself.
       - name: Install OpenClaw TUI host dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            if sudo apt-get update; then
-              break
-            fi
-            if [ "$attempt" -eq 3 ]; then
-              echo "::error::apt-get update failed after 3 attempts." >&2
-              exit 1
-            fi
-            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
-            sleep $((attempt * 5))
-          done
-          sudo apt-get install -y --no-install-recommends expect
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
+        with:
+          packages: expect
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28

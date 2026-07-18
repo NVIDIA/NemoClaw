@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
+
+import { expectedProjectForTestPath } from "./vitest-project-overlap.mts";
 
 export type Violation = {
   chain?: string[];
@@ -56,8 +58,15 @@ export function isScannedTestPath(relativePath: string): boolean {
 
 export function isFastProjectTestPath(relativePath: string): boolean {
   const normalized = relativePath.replaceAll("\\", "/");
-  if (normalized.startsWith("src/") && normalized.split("/").includes(".claude")) return false;
-  return /^(?:src|nemoclaw\/src|test\/e2e\/support)\/.+\.test\.ts$/.test(normalized);
+  if (normalized.split("/").includes(".claude")) return false;
+  if (!/\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/.test(normalized)) return false;
+  const project = expectedProjectForTestPath(normalized);
+  return (
+    project === "cli" ||
+    project === "integration" ||
+    project === "plugin" ||
+    project === "e2e-support"
+  );
 }
 
 function isScannedTestFile(absolutePath: string): boolean {
@@ -69,10 +78,13 @@ function* walk(
   acceptsFile: (absolutePath: string) => boolean = isScannedTestFile,
 ): Generator<string> {
   if (!existsSync(directory)) return;
+  const rootStats = lstatSync(directory);
+  if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) return;
   for (const entry of readdirSync(directory)) {
     if (SKIP_DIRS.has(entry)) continue;
     const absolutePath = path.join(directory, entry);
-    const stats = statSync(absolutePath);
+    const stats = lstatSync(absolutePath);
+    if (stats.isSymbolicLink()) continue;
     if (stats.isDirectory()) yield* walk(absolutePath, acceptsFile);
     else if (stats.isFile() && acceptsFile(absolutePath)) yield absolutePath;
   }
@@ -861,18 +873,23 @@ function resolveRepoModule(importer: string, specifier: string): ResolvedRepoMod
     .resolvedModule?.resolvedFileName;
   if (!resolved) return undefined;
   const absolutePath = path.resolve(resolved);
-  const compiledTarget = resolvedCompiledInternalTarget(absolutePath);
-  if (compiledTarget) return { absolutePath, compiledTarget };
-  return isRepoSourceModule(absolutePath) ? { absolutePath } : undefined;
+  let canonicalPath: string;
+  try {
+    canonicalPath = realpathSync(absolutePath);
+  } catch {
+    return undefined;
+  }
+  const compiledTarget = resolvedCompiledInternalTarget(canonicalPath);
+  if (compiledTarget) return { absolutePath: canonicalPath, compiledTarget };
+  return isRepoSourceModule(canonicalPath) ? { absolutePath: canonicalPath } : undefined;
 }
 
-function collectFastProjectEntries(): string[] {
-  const acceptsFile = (absolutePath: string) => isFastProjectTestPath(repoPath(absolutePath));
-  return [
-    ...walk(path.join(REPO_ROOT, "src"), acceptsFile),
-    ...walk(path.join(REPO_ROOT, "nemoclaw", "src"), acceptsFile),
-    ...walk(path.join(REPO_ROOT, "test", "e2e", "support"), acceptsFile),
-  ].sort();
+export function collectFastProjectEntries(repoRoot = REPO_ROOT): string[] {
+  const acceptsFile = (absolutePath: string) =>
+    isFastProjectTestPath(path.relative(repoRoot, absolutePath).split(path.sep).join("/"));
+  return ["src", "nemoclaw/src", "test"]
+    .flatMap((root) => [...walk(path.join(repoRoot, root), acceptsFile)])
+    .sort();
 }
 
 export function findFastProjectTransitiveViolations(

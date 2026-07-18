@@ -85,6 +85,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Checkout trusted CI actions
@@ -340,7 +341,7 @@ jobs:
       # covered without executing a mutable replacement action.
       - name: Validate changed live E2E mock parity (bootstrap)
         if: ${{ steps.trusted-shard-capabilities.outputs.e2e-support != 'true' && matrix.shard == 1 }}
-        run: npx tsx scripts/checks/e2e-mock-parity.ts --base HEAD^1 --head HEAD^2
+        run: npx tsx scripts/checks/e2e-mock-parity.mts --base HEAD^1 --head HEAD^2
 
       - name: Run E2E support shard (bootstrap)
         if: ${{ steps.trusted-shard-capabilities.outputs.e2e-support != 'true' }}

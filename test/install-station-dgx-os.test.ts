@@ -790,6 +790,219 @@ run_apply
     expect(output).not.toContain("UNEXPECTED_REQUIREMENT");
   });
 
+  it("keeps healthy AI Developer Tools CDI validation-only", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() {
+  [[ "$1" == "sudo" ]] || { printf 'UNEXPECTED_REQUIREMENT %s\n' "$1"; return 1; }
+}
+acquire_sudo() { :; }
+common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version'|'ps -aq') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+sudo() {
+  case "$*" in
+    'nvidia-ctk cdi list') printf 'nvidia.com/gpu=all\n' ;;
+    *) printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1 ;;
+  esac
+}
+refresh_cdi() { printf 'UNEXPECTED_CDI_REFRESH\n'; return 1; }
+ensure_dgx_os_acceptance_image() { printf 'IMAGE_CACHE_READY\n'; }
+run_dgx_os_cdi_test_sudo() { printf 'DIGEST_PINNED_CDI_PROBE_OK\n'; }
+run_dgx_os_gpus_test_sudo() { printf 'DIGEST_PINNED_GPUS_PROBE_OK\n'; }
+ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
+install_packages() { printf 'UNEXPECTED_PACKAGE_MUTATION\n'; return 1; }
+finish_runtime() { printf 'UNEXPECTED_RUNTIME_MUTATION\n'; return 1; }
+run_apply
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toContain("cdi=nvidia.com/gpu=all source=factory_runtime");
+    expect(output).toContain("DIGEST_PINNED_CDI_PROBE_OK");
+    expect(output).toContain("DIGEST_PINNED_GPUS_PROBE_OK");
+    expect(output.indexOf("FACTORY_GATES_OK")).toBeLessThan(
+      output.indexOf("cdi=nvidia.com/gpu=all source=factory_runtime"),
+    );
+    expect(output).toContain("APPLY_RESULT=COMPLETE");
+    expect(output).not.toContain("UNEXPECTED_");
+  });
+
+  it("repairs missing AI Developer Tools CDI through the packaged lifecycle before validation", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+cdi_ready=0
+require_command() {
+  [[ "$1" == "sudo" ]] || { printf 'UNEXPECTED_REQUIREMENT %s\n' "$1"; return 1; }
+}
+acquire_sudo() { :; }
+common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version'|'ps -aq') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+require_docker_mutation_quiescence() { printf 'WORKLOAD_GATE_OK %s\n' "$1"; }
+sudo() {
+  case "$*" in
+    'nvidia-ctk cdi list')
+      ((cdi_ready == 1)) && printf 'nvidia.com/gpu=all\n'
+      ;;
+    'systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service'|'systemctl start nvidia-cdi-refresh.path')
+      printf 'PACKAGED_LIFECYCLE %s\n' "$*"
+      ;;
+    'systemctl restart nvidia-cdi-refresh.service')
+      printf 'PACKAGED_LIFECYCLE %s\n' "$*"
+      cdi_ready=1
+      ;;
+    *) printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1 ;;
+  esac
+}
+nvidia-ctk() {
+  [[ "$*" == "cdi list" && "$cdi_ready" == "1" ]] && printf 'nvidia.com/gpu=all\n'
+}
+ensure_dgx_os_acceptance_image() { printf 'IMAGE_CACHE_READY\n'; }
+run_dgx_os_cdi_test_sudo() { printf 'DIGEST_PINNED_CDI_PROBE_OK\n'; }
+run_dgx_os_gpus_test_sudo() { printf 'DIGEST_PINNED_GPUS_PROBE_OK\n'; }
+ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
+install_packages() { printf 'UNEXPECTED_PACKAGE_MUTATION\n'; return 1; }
+finish_runtime() { printf 'UNEXPECTED_RUNTIME_MUTATION\n'; return 1; }
+configure_docker_runtime_if_needed() { printf 'UNEXPECTED_DOCKER_RUNTIME_MUTATION\n'; return 1; }
+run_apply
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toContain("WORKLOAD_GATE_OK");
+    expect(output).toContain(
+      "PACKAGED_LIFECYCLE systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
+    );
+    expect(output).toContain("PACKAGED_LIFECYCLE systemctl start nvidia-cdi-refresh.path");
+    expect(output).toContain("PACKAGED_LIFECYCLE systemctl restart nvidia-cdi-refresh.service");
+    expect(output).toContain("cdi=nvidia.com/gpu=all source=packaged_refresh_service");
+    expect(output).toContain("DIGEST_PINNED_CDI_PROBE_OK");
+    expect(output).toContain("DIGEST_PINNED_GPUS_PROBE_OK");
+    expect(output.indexOf("FACTORY_GATES_OK")).toBeLessThan(
+      output.indexOf("PACKAGED_LIFECYCLE systemctl enable"),
+    );
+    expect(output.indexOf("cdi=nvidia.com/gpu=all source=packaged_refresh_service")).toBeLessThan(
+      output.indexOf("DIGEST_PINNED_CDI_PROBE_OK"),
+    );
+    expect(output).toContain("APPLY_RESULT=COMPLETE");
+    expect(output).not.toContain("UNEXPECTED_");
+    expect(output).not.toContain("nvidia-ctk cdi generate");
+    expect(output).not.toContain("systemctl restart docker.service");
+    expect(output).not.toContain("systemctl restart containerd.service");
+  });
+
+  it.each([
+    ["restart failure", "return 1", "Packaged CDI refresh failed"],
+    ["missing device after restart", "return 0", "did not advertise nvidia.com/gpu=all"],
+  ] as const)("fails closed on AI Developer Tools CDI %s", (_scenario, restartResult, error) => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() { :; }
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+require_docker_mutation_quiescence() { printf 'WORKLOAD_GATE_OK %s\n' "$1"; }
+sudo() {
+  case "$*" in
+    'nvidia-ctk cdi list') return 0 ;;
+    'systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service'|'systemctl start nvidia-cdi-refresh.path') return 0 ;;
+    'systemctl restart nvidia-cdi-refresh.service') ${restartResult} ;;
+    'systemctl status nvidia-cdi-refresh.service --no-pager'|'journalctl -u nvidia-cdi-refresh.service --no-pager -n 50')
+      printf 'SERVICE_DIAGNOSTICS %s\n' "$*"
+      ;;
+    *) printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1 ;;
+  esac
+}
+nvidia-ctk() { return 0; }
+ensure_dgx_os_acceptance_image() { printf 'UNEXPECTED_ACCEPTANCE_IMAGE\n'; return 1; }
+run_dgx_os_cdi_test_sudo() { printf 'UNEXPECTED_CDI_PROBE\n'; return 1; }
+run_dgx_os_gpus_test_sudo() { printf 'UNEXPECTED_GPUS_PROBE\n'; return 1; }
+STATION_HOST_PROFILE=ai-developer-tools
+verify_dgx_os_runtime_sudo
+`,
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toContain("WORKLOAD_GATE_OK");
+    expect(output).toContain("SERVICE_DIAGNOSTICS");
+    expect(output).toContain(error);
+    expect(output).not.toContain("UNEXPECTED_");
+    expect(output).not.toContain("systemctl restart docker.service");
+    expect(output).not.toContain("systemctl restart containerd.service");
+  });
+
+  it("keeps forced factory-runtime profiles out of packaged CDI repair", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=forced-factory-runtime
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+sudo() {
+  [[ "$*" == "nvidia-ctk cdi list" ]] || { printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1; }
+}
+refresh_cdi() { printf 'UNEXPECTED_CDI_REFRESH\n'; return 1; }
+verify_dgx_os_runtime_sudo
+`,
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toMatch(/does not advertise the nvidia\.com\/gpu=all CDI device/);
+    expect(output).not.toContain("UNEXPECTED_");
+    expect(output).not.toContain("nvidia-cdi-refresh");
+  });
+
   it("returns a relogin result instead of requesting a reboot for factory Docker access", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -797,6 +1010,9 @@ run_apply
 require_command() { :; }
 acquire_sudo() { :; }
 common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+sudo() {
+  [[ "$*" == "nvidia-ctk cdi list" ]] && printf 'nvidia.com/gpu=all\n'
+}
 verify_dgx_os_runtime_sudo() { printf 'FACTORY_RUNTIME_VALIDATED\n'; }
 ensure_docker_group() { DOCKER_GROUP_ADDED=1; }
 run_apply

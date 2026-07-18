@@ -73,11 +73,17 @@ After changing pinned packages, the installer exits with status `10`; reboot, si
 
 On a qualifying stock DGX OS or exact no-OTA factory image, express install validates the factory stack in place against the local default Docker daemon.
 It requires a loaded GB300 driver with zero volatile corrected and uncorrected ECC errors, active Docker and containerd services, working Docker Buildx, `nvidia-ctk`, the `nvidia.com/gpu=all` CDI device, and successful `nvidia-smi` device-visibility probes through both CDI and `--gpus all`.
-The stock DGX OS and AI Developer Tools paths do not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
+The stock DGX OS path does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
+The AI Developer Tools path preserves those boundaries when `nvidia.com/gpu=all` is already present.
+When that CDI device is missing, the AI Developer Tools path first confirms that no workloads are active, then enables the packaged `nvidia-cdi-refresh.path` and `nvidia-cdi-refresh.service` units, starts the path unit, restarts the refresh service, and checks the device again.
+It stops with service diagnostics if packaged refresh fails or omits the device.
+It never generates CDI directly, rewrites the Docker runtime, or restarts Docker or containerd.
+This compatibility repair is owned by the June 2026 AI Developer Tools factory-image boundary, which can leave its packaged CDI units disabled; it can be removed after repeat clean-host qualification shows that the qualified image consistently advertises `nvidia.com/gpu=all` at boot.
 The Colossus BaseOS path requires the exact reviewed package and failed-service fingerprints, preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages, and prepares only Docker access and packaged CDI.
 Only the Colossus BaseOS path registers the NVIDIA Docker runtime when the launch probe proves that the runtime is missing, and it restores the prior daemon configuration if registration fails.
 The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
-Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS and AI Developer Tools paths leave only the digest-pinned visibility-test image in the Docker cache.
+Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS path leaves only the digest-pinned visibility-test image in the Docker cache.
+The AI Developer Tools path can also leave the packaged CDI refresh units enabled when it repairs a missing device.
 
 One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
 Repeat qualification from a clean host and CI coverage remain pending.

@@ -815,6 +815,9 @@ describe("pull request and main workflow contracts", () => {
         "${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}",
       "cancel-in-progress": true,
     });
+    expect(
+      requiredWorkflowStep(prWorkflow.jobs["static-checks"], "Checkout").with?.["fetch-depth"],
+    ).toBe(0);
     for (const [jobName, stepName, trustedActionPath, mainActionPath] of [
       [
         "static-checks",
@@ -1017,7 +1020,6 @@ describe("pull request and main workflow contracts", () => {
     expect(parityStep.run).toContain("base=HEAD^1");
     expect(parityStep.run).toContain("head=HEAD^2");
     expect(parityStep.run).toContain('base="$PUSH_BASE_SHA"');
-
     const trustedCapabilityProbe = requiredWorkflowStep(
       prWorkflow.jobs["cli-test-shards"],
       "Detect trusted E2E support sharding",

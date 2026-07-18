@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -35,6 +35,8 @@ const LOCAL_ISSUE_REFERENCE_PATTERN = /(?<![\w/-])#\d+\b/;
 const ISSUE_SUFFIX_PATTERN = /\s\(#\d+(?:\s*(?:,|\/|and)\s*#\d+)*\)$/;
 const PLACEHOLDER_ONLY_PATTERN = /^(?:%[sdifjo]|\$\{…\})$/;
 
+type TestCallName = TestTitleViolation["call"];
+
 function scriptKindFor(filePath: string): ts.ScriptKind {
   if (/\.tsx$/i.test(filePath)) return ts.ScriptKind.TSX;
   if (/\.jsx$/i.test(filePath)) return ts.ScriptKind.JSX;
@@ -47,6 +49,30 @@ function rootCallName(expression: ts.Expression): string | null {
   if (ts.isPropertyAccessExpression(expression)) return rootCallName(expression.expression);
   if (ts.isCallExpression(expression)) return rootCallName(expression.expression);
   return null;
+}
+
+function vitestCallAliases(sourceFile: ts.SourceFile): ReadonlyMap<string, TestCallName> {
+  const aliases = new Map<string, TestCallName>();
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !ts.isStringLiteral(statement.moduleSpecifier) ||
+      statement.moduleSpecifier.text !== "vitest"
+    ) {
+      continue;
+    }
+    if (statement.importClause?.isTypeOnly) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if (element.isTypeOnly) continue;
+      const importedName = element.propertyName?.text ?? element.name.text;
+      if (TEST_CALL_NAMES.has(importedName)) {
+        aliases.set(element.name.text, importedName as TestCallName);
+      }
+    }
+  }
+  return aliases;
 }
 
 function literalTitle(argument: ts.Expression | undefined): string | null {
@@ -102,10 +128,12 @@ export function scanTestTitleStyle(file: string, source: string): readonly TestT
     scriptKindFor(file),
   );
   const violations: TestTitleViolation[] = [];
+  const aliases = vitestCallAliases(sourceFile);
 
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
-      const call = rootCallName(node.expression);
+      const root = rootCallName(node.expression);
+      const call = root === null ? null : (aliases.get(root) ?? root);
       const title = literalTitle(node.arguments[0]);
       if (call !== null && TEST_CALL_NAMES.has(call) && title !== null) {
         const location = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
@@ -114,7 +142,7 @@ export function scanTestTitleStyle(file: string, source: string): readonly TestT
             file,
             line: location.line + 1,
             column: location.character + 1,
-            call: call as TestTitleViolation["call"],
+            call: call as TestCallName,
             title,
             ...violation,
           });
@@ -136,13 +164,13 @@ function isSkipped(absolutePath: string): boolean {
 function* walkTestFiles(directory: string): Generator<string> {
   if (!existsSync(directory) || isSkipped(directory)) return;
 
-  for (const entry of readdirSync(directory)) {
-    const absolutePath = path.join(directory, entry);
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue;
+    const absolutePath = path.join(directory, entry.name);
     if (isSkipped(absolutePath)) continue;
-    const stats = statSync(absolutePath);
-    if (stats.isDirectory()) {
+    if (entry.isDirectory()) {
       yield* walkTestFiles(absolutePath);
-    } else if (stats.isFile() && TEST_FILE_PATTERN.test(entry)) {
+    } else if (entry.isFile() && TEST_FILE_PATTERN.test(entry.name)) {
       yield absolutePath;
     }
   }

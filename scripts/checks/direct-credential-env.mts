@@ -13,8 +13,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
-import { SUPPORTED_CREDENTIAL_ENV_NAMES } from "../../src/lib/security/credential-env";
 
+const { SUPPORTED_CREDENTIAL_ENV_NAMES } = await import("../../src/lib/security/credential-env");
 const CREDENTIAL_ENV_KEYS = SUPPORTED_CREDENTIAL_ENV_NAMES;
 
 const MESSAGE =
@@ -251,7 +251,7 @@ function scriptKindForPath(filePath: string): ts.ScriptKind {
 function main(): void {
   const filePaths = process.argv.slice(2).filter((arg) => arg !== "--");
   if (filePaths.length === 0) {
-    console.error("Usage: tsx scripts/checks/direct-credential-env.ts FILE...");
+    console.error("Usage: tsx scripts/checks/direct-credential-env.mts FILE...");
     process.exitCode = 2;
     return;
   }

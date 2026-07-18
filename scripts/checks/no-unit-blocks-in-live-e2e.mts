@@ -29,17 +29,23 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const LIVE_DIR = path.join(REPO_ROOT, "test", "e2e", "live");
 const TEST_FILE_PATTERN = /\.(?:test|spec)\.(?:[cm]?[jt]s)$/;
-// Match the vitest unit primitive `it(` — including `it.each(`, `it.only(`,
-// `it.skip(`, etc. — as a call at a statement boundary. The leading boundary
-// (line start or whitespace) prevents matching inside a custom identifier, and
-// requiring a call paren after the optional member keeps non-call references
-// from matching.
-const IT_PRIMITIVE_PATTERN =
-  /(?:^|[\s;{(])it(?:\.(?:each|only|skip|todo|fails|concurrent|sequential))?\s*\(/;
+const IT_PRIMITIVE_MEMBERS = new Set([
+  "concurrent",
+  "each",
+  "fails",
+  "for",
+  "only",
+  "runIf",
+  "sequential",
+  "skip",
+  "skipIf",
+  "todo",
+]);
 
 export type LiveUnitBlockViolation = {
   readonly file: string;
@@ -67,17 +73,31 @@ function* walkFiles(dir: string): Generator<string> {
 export function findLiveUnitBlocks(source: string, file: string): LiveUnitBlockViolation[] {
   const violations: LiveUnitBlockViolation[] = [];
   const lines = source.split(/\r\n|\r|\n/);
-  for (let i = 0; i < lines.length; i += 1) {
-    const text = lines[i] ?? "";
-    const trimmed = text.trimStart();
-    // Skip import lines (`import { it, test } from "vitest"`) and comments.
-    if (trimmed.startsWith("import ") || trimmed.startsWith("//") || trimmed.startsWith("*")) {
-      continue;
-    }
-    if (IT_PRIMITIVE_PATTERN.test(text)) {
-      violations.push({ file, line: i + 1, text: trimmed });
-    }
+  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const reportedLines = new Set<number>();
+
+  function isItPrimitive(expression: ts.LeftHandSideExpression): boolean {
+    if (ts.isIdentifier(expression)) return expression.text === "it";
+    return (
+      ts.isPropertyAccessExpression(expression) &&
+      IT_PRIMITIVE_MEMBERS.has(expression.name.text) &&
+      isItPrimitive(expression.expression)
+    );
   }
+
+  function visit(node: ts.Node): void {
+    if (ts.isCallExpression(node) && isItPrimitive(node.expression)) {
+      const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+      const text = (lines[line - 1] ?? "").trimStart();
+      if (!text.startsWith("*") && !reportedLines.has(line)) {
+        reportedLines.add(line);
+        violations.push({ file, line, text });
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
   return violations;
 }
 

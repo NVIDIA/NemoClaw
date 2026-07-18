@@ -41,6 +41,10 @@ runs:
       shell: bash
       run: npm install --ignore-scripts
 
+    - name: Enforce base-trusted createRequire allowlist ratchet
+      shell: bash
+      run: npx tsx "$GITHUB_ACTION_PATH/create-require-ratchet.mts"
+
     - name: Validate config schemas
       shell: bash
       run: npm run validate:configs

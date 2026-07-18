@@ -214,6 +214,9 @@ function deriveDependencyPins(rootDir: string = REPO_ROOT): {
     },
   };
 
+  if (pins.openshell.minVersion && !NUMERIC_VERSION_RE.test(pins.openshell.minVersion)) {
+    failures.push("nemoclaw-blueprint/blueprint.yaml min_openshell_version must match X.Y.Z");
+  }
   if (pins.openshell.maxVersion && !NUMERIC_VERSION_RE.test(pins.openshell.maxVersion)) {
     failures.push("nemoclaw-blueprint/blueprint.yaml max_openshell_version must match X.Y.Z");
   }
