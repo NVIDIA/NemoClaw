@@ -100,13 +100,6 @@ function containsObject(value: unknown, predicate: (candidate: JsonRecord) => bo
   return Object.values(value).some((entry) => containsObject(entry, predicate));
 }
 
-function containsScalar(value: unknown, expected: string | number): boolean {
-  if (value === expected) return true;
-  if (Array.isArray(value)) return value.some((entry) => containsScalar(entry, expected));
-  if (!isRecord(value)) return false;
-  return Object.values(value).some((entry) => containsScalar(entry, expected));
-}
-
 function hasVerdict(rule: JsonRecord, verdict: "accept" | "reject"): boolean {
   return containsObject(rule, (candidate) => Object.hasOwn(candidate, verdict));
 }
@@ -128,11 +121,17 @@ function nftRuleMatchesReject(
   family: "ipv4" | "ipv6",
   protocol: "tcp" | "udp",
 ): boolean {
+  const rejectType = family === "ipv4" ? "icmp" : "icmpv6";
   return (
     hasVerdict(rule, "reject") &&
-    hasMatch(rule, { key: "nfproto" }, family) &&
     hasMatch(rule, { key: "l4proto" }, protocol) &&
-    containsScalar(rule, "port-unreachable")
+    containsObject(
+      rule,
+      (candidate) =>
+        isRecord(candidate.reject) &&
+        candidate.reject.type === rejectType &&
+        candidate.reject.expr === "port-unreachable",
+    )
   );
 }
 

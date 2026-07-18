@@ -21,7 +21,6 @@ function rejectRule(family: "ipv4" | "ipv6", protocol: "tcp" | "udp") {
     rule: {
       chain: "output",
       expr: [
-        match({ meta: { key: "nfproto" } }, family),
         match({ meta: { key: "l4proto" } }, protocol),
         {
           reject: {
