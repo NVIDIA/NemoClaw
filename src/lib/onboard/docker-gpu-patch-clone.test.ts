@@ -11,7 +11,7 @@ import {
 } from "./docker-gpu-patch";
 
 describe("Docker GPU clone envelope", () => {
-  it("builds clone args that preserve OpenShell labels and runtime settings", () => {
+  it("builds clone args that preserve OpenShell labels, mounts, and runtime settings", () => {
     const args = buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("gpus"));
 
     expect(args).toEqual(
@@ -32,6 +32,8 @@ describe("Docker GPU clone envelope", () => {
         "openshell.ai/sandbox-name=alpha",
         "--volume",
         "/host:/container:rw",
+        "--tmpfs",
+        "/tmp/nemoclaw-exact-main-driver-config:noexec,size=16777216,mode=1777",
         "--network",
         "openshell-docker",
         "--network-alias",
@@ -54,6 +56,26 @@ describe("Docker GPU clone envelope", () => {
       ]),
     );
     expect(args).not.toEqual(expect.arrayContaining(["--env", "NVIDIA_VISIBLE_DEVICES=void"]));
+  });
+
+  it("preserves OpenShell structured volume options", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.Mounts!.push({
+      Type: "volume",
+      Source: "sandbox-cache",
+      Target: "/sandbox/cache",
+      ReadOnly: true,
+      VolumeOptions: { NoCopy: true, Subpath: "project" },
+    });
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("startup-command"));
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--mount",
+        "type=volume,src=sandbox-cache,dst=/sandbox/cache,readonly,volume-nocopy,volume-subpath=project",
+      ]),
+    );
   });
 
   it("adds OpenShell's sandbox command env when the inspected container lacks one", () => {
