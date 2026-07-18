@@ -25,12 +25,13 @@ const ACTION_PATH = path.join(
 );
 const SCRIPT_PATH = path.join(REPO_ROOT, ".github", "scripts", "host-dependency-setup.sh");
 const ACTION_USES =
-  "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@296b34d821b11aa1bc8d8713264695ade17c66cb";
+  "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75";
 
 interface WorkflowStep {
   name?: string;
   uses?: string;
   with?: Record<string, unknown>;
+  "continue-on-error"?: boolean;
 }
 
 interface Workflow {
@@ -141,6 +142,15 @@ describe("E2E host dependency action boundary (#6961)", () => {
     expect(validateE2eWorkflow(workflow)).toContain(
       `live host dependency setup must invoke only ${ACTION_USES}`,
     );
+  });
+
+  it("rejects host dependency setup that tolerates failure with continue-on-error", () => {
+    const workflow = readWorkflow();
+    const install = workflow.jobs.live?.steps.find(
+      (step) => step.name === "Install Deep Agents Code TUI host dependencies",
+    )!;
+    install["continue-on-error"] = true;
+    expect(validateE2eWorkflow(workflow)).toContain("live host dependency setup must fail closed");
   });
 
   it("rejects installing the OpenClaw TUI host dependency after workspace preparation", () => {

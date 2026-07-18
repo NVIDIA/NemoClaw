@@ -329,7 +329,7 @@ jobs:
       # expect or the acceptance check no longer requires a PTY.
       - name: Install Deep Agents Code TUI host dependencies
         if: ${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@296b34d821b11aa1bc8d8713264695ade17c66cb
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
         with:
           packages: expect
 
@@ -1423,7 +1423,7 @@ jobs:
       # are allowed here: the TUI driver and egress-isolation assertion require
       # them. Workflow contract tests pin the action provenance and package list.
       - name: "Install issue #4434 host dependencies"
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@296b34d821b11aa1bc8d8713264695ade17c66cb
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
         with:
           packages: expect iptables
 
@@ -2092,7 +2092,7 @@ jobs:
       # full SHA, never that ref. Only expect is allowed here; iptables is scoped
       # to the issue #4434 egress-isolation job.
       - name: Install network-policy host dependencies
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@296b34d821b11aa1bc8d8713264695ade17c66cb
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
         with:
           packages: expect
 
@@ -3153,7 +3153,7 @@ jobs:
       # removalCondition: remove when the hosted runner supplies expect or the
       # cloud-onboard acceptance check no longer requires a PTY.
       - name: Install cloud-onboard DCode TUI host dependencies
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@296b34d821b11aa1bc8d8713264695ade17c66cb
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
         with:
           packages: expect
 
@@ -4033,7 +4033,7 @@ jobs:
       # regressionTest: e2e-host-dependency-workflow-boundary rejects package or provenance drift.
       # removalCondition: remove this step when the hosted image provides Expect itself.
       - name: Install OpenClaw TUI host dependencies
-        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@296b34d821b11aa1bc8d8713264695ade17c66cb
+        uses: NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75
         with:
           packages: expect
 

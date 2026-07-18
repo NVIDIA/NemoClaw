@@ -129,9 +129,9 @@ const DOCKER_HUB_AUTH_PROVENANCE = {
 const DOCKER_HUB_AUTH_USES = DOCKER_HUB_AUTH_PROVENANCE.reference;
 const HOST_DEPENDENCY_ACTION_PROVENANCE = {
   reference:
-    "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@296b34d821b11aa1bc8d8713264695ade17c66cb",
+    "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75",
   actionSha256: "1ac05a0e0a0159fa0850eb82fccb0704d0e49b15bc6f2d6e3b6bb04c7ab94923",
-  scriptSha256: "a129adced277a9c96ef9911d75353beb229be5af083e4c2d921dcffdb64fa57d",
+  scriptSha256: "2e910ed80b5dcf9aaf94230371fe586376c46f6df8fcbd76229063cbda1852c8",
 } as const;
 const HOST_DEPENDENCY_ACTION_USES = HOST_DEPENDENCY_ACTION_PROVENANCE.reference;
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
@@ -710,6 +710,9 @@ function validateHostDependencyActionStep(
     errors.push(
       `${jobName} host dependency setup must invoke the pinned action, not an inline script`,
     );
+  }
+  if (step["continue-on-error"] !== undefined) {
+    errors.push(`${jobName} host dependency setup must fail closed`);
   }
 
   const withInputs = asRecord(step.with);
