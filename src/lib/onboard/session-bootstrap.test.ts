@@ -87,6 +87,32 @@ describe("prepareOnboardSession", () => {
     expect(getSession()?.sessionId).not.toBe("old-session");
   });
 
+  it("checkpoints Station Express choices before managed vLLM setup", async () => {
+    const { deps } = createDeps();
+    const stationExpress = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+    };
+
+    const result = await prepareOnboardSession(
+      {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "my-assistant",
+        cannotPrompt: true,
+        nonInteractive: true,
+        stationExpressIntent: stationExpress,
+      },
+      deps,
+    );
+
+    expect(result.session?.stationExpressIntent).toEqual(stationExpress);
+    expect(result.session?.provider).toBeNull();
+    expect(result.session?.model).toBeNull();
+  });
+
   it("defaults a fresh session to progressive disclosure", async () => {
     const { deps } = createDeps();
     const result = await prepareOnboardSession(

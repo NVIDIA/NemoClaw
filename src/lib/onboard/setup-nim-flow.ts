@@ -257,6 +257,7 @@ export function createSetupNim(
     let reuseGatewayCredential = false;
     let endpointPinnedAddresses: string[] | undefined;
     let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
+    let vllmModelIdentity: string | undefined;
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
@@ -615,6 +616,7 @@ export function createSetupNim(
             nimContainer,
             allowToolsIncompatible,
           } = state);
+          vllmModelIdentity = state.vllmModelIdentity;
           if (result === "retry-selection") continue selectionLoop;
           break;
         } else if (selected.key === "routed") {
@@ -662,6 +664,7 @@ export function createSetupNim(
       ...(recoveredFromSandbox ? { recoveredFromSandbox: true } : {}),
       ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
       ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
+      ...(provider === "vllm-local" && vllmModelIdentity ? { vllmModelIdentity } : {}),
       inferenceCapabilityCache,
     };
   };

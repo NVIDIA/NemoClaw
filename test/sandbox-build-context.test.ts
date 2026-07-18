@@ -113,7 +113,9 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
     writeFixture(path.join("scripts", "verify-wechat-runtime-lock.mts"));
-    writeFixture(path.join("scripts", "lib", "reviewed-npm-archive.mts"));
+    writeFixture(path.join("scripts", "lib", "reviewed-npm-archive.mts"), "fixture\n", 0o700);
+    fs.chmodSync(path.join(sourceRoot, "scripts"), 0o700);
+    fs.chmodSync(path.join(sourceRoot, "scripts", "lib"), 0o700);
   }
 
   function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {
@@ -185,6 +187,16 @@ describe("sandbox build context staging", () => {
 
   function expectStagedToolDisclosureContract(buildCtx: string) {
     expect(fs.existsSync(path.join(buildCtx, "src", "lib", "tool-disclosure.ts"))).toBe(true);
+  }
+
+  function expectStagedScriptModes(buildCtx: string) {
+    const stagedScripts = path.join(buildCtx, "scripts");
+    const stagedLib = path.join(stagedScripts, "lib");
+    const stagedHelper = path.join(stagedLib, "reviewed-npm-archive.mts");
+
+    expect((fs.statSync(stagedScripts).mode & 0o777).toString(8)).toBe("755");
+    expect((fs.statSync(stagedLib).mode & 0o777).toString(8)).toBe("755");
+    expect((fs.statSync(stagedHelper).mode & 0o777).toString(8)).toBe("755");
   }
 
   it("normalizes copied blueprint modes with chmod a+rX semantics", () => {
@@ -275,6 +287,46 @@ describe("sandbox build context staging", () => {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
       expectStagedNemoclawModes(buildCtx);
+    } finally {
+      fs.rmSync(sourceRoot, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("optimized staging makes copied scripts readable under a restrictive umask (#7071)", () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-script-mode-"));
+
+    try {
+      writeBuildContextFixture(sourceRoot);
+      const previousUmask = process.umask(0o077);
+      try {
+        const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
+        expectStagedScriptModes(buildCtx);
+      } finally {
+        process.umask(previousUmask);
+      }
+    } finally {
+      fs.rmSync(sourceRoot, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy staging makes copied scripts readable under a restrictive umask (#7071)", () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-build-context-legacy-script-mode-"),
+    );
+
+    try {
+      writeBuildContextFixture(sourceRoot);
+      const previousUmask = process.umask(0o077);
+      try {
+        const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
+        expectStagedScriptModes(buildCtx);
+      } finally {
+        process.umask(previousUmask);
+      }
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
