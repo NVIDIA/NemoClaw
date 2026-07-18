@@ -7,6 +7,7 @@ import { decisionSelected, decisionUnset } from "../state/onboard-checkpoint-dec
 import {
   CHECKPOINT_SCHEMA_VERSION,
   type CheckpointLoadResult,
+  type OnboardCheckpoint,
 } from "../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionRecoveryReceipt } from "../state/onboard-session";
 import type { ResumeConfigConflict } from "./resume-config";
@@ -372,7 +373,7 @@ describe("prepareOnboardSession", () => {
 
   it("recovers a non-OpenClaw checkpointed sandbox name after a crash before the legacy field was written (#7022)", async () => {
     const session = createSession({ agent: "hermes", sandboxName: null });
-    session.checkpoint = {
+    const checkpoint: OnboardCheckpoint = {
       schemaVersion: CHECKPOINT_SCHEMA_VERSION,
       sessionId: session.sessionId,
       machineState: "sandbox",
@@ -384,7 +385,12 @@ describe("prepareOnboardSession", () => {
       effectGroups: {},
       bindings: { credentialEnvs: [], registeredProviders: [] },
     };
-    const { deps } = createDeps(session);
+    session.checkpoint = checkpoint;
+    const { deps } = createDeps(session, {
+      resolveResumeCheckpoint: vi.fn(
+        (): CheckpointLoadResult => ({ status: "loaded", checkpoint }),
+      ),
+    });
 
     const result = await prepareOnboardSession(
       {
