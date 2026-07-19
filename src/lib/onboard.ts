@@ -106,6 +106,7 @@ const {
 const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
+  discloseInitialSandboxPolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
 const {
   getSelectionDrift,
@@ -2719,13 +2720,7 @@ async function createSandboxWithBaseImageResolution(
     upsertMessagingProviders,
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
-    discloseInitialSandboxPolicy: (policy) => {
-      if (policy.appliedPresets.length === 0) return;
-      console.log(
-        `  Including policy preset(s) at sandbox boot: ${policy.appliedPresets.join(", ")}`,
-      );
-      policies.logPresetScope(fs.readFileSync(policy.policyPath, "utf8"));
-    },
+    discloseInitialSandboxPolicy,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
