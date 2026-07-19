@@ -928,12 +928,17 @@ function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult
 
 type WaitForSandboxReadyOptions = {
   defaultTimeoutSec?: number;
+  retryCommand?: string;
   successLogs?: readonly string[];
 };
 
 function waitForSandboxReadyOrExit(
   sandboxName: string,
-  { defaultTimeoutSec = 120, successLogs = [] }: WaitForSandboxReadyOptions = {},
+  {
+    defaultTimeoutSec = 120,
+    retryCommand = "connect",
+    successLogs = [],
+  }: WaitForSandboxReadyOptions = {},
 ): void {
   const rawTimeout = process.env.NEMOCLAW_CONNECT_TIMEOUT;
   let timeout = defaultTimeoutSec;
@@ -950,10 +955,14 @@ function waitForSandboxReadyOrExit(
   const interval = 3;
   const startedAt = Date.now();
   const deadline = startedAt + timeout * 1000;
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
   const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
   const remainingMs = () => Math.max(1, deadline - Date.now());
   const runSandboxList = (): SandboxListProbe => {
-    const result = captureOpenshell(["sandbox", "list"], {
+    // Gateway selection is process-global and another CLI can change it while
+    // this command waits. Pin each poll to the registry-recorded owner so a
+    // same-named sandbox on a sibling gateway cannot satisfy readiness.
+    const result = captureOpenshell(["sandbox", "list", "-g", gatewayName], {
       ignoreError: true,
       timeout: remainingMs(),
     });
@@ -1027,11 +1036,12 @@ function waitForSandboxReadyOrExit(
   }
 
   if (!ready) {
+    const suggestedTimeout = Math.max(300, timeout * 2);
     console.error("");
     console.error(`  Timed out after ${timeout}s waiting for sandbox '${sandboxName}'.`);
     console.error("  Check: openshell sandbox list");
     console.error(
-      `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=300 ${CLI_NAME} ${sandboxName} connect`,
+      `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=${suggestedTimeout} ${CLI_NAME} ${sandboxName} ${retryCommand}`,
     );
     process.exit(1);
   }
@@ -1087,10 +1097,13 @@ export async function connectSandbox(
   }
 
   if (probeOnly) {
-    waitForSandboxReadyOrExit(sandboxName, { defaultTimeoutSec: 300 });
-    // `sandbox list` uses OpenShell's process-global gateway selection. Re-pin
-    // and re-observe the owning gateway after a potentially long wait before
-    // any in-sandbox process or host-forward mutation.
+    waitForSandboxReadyOrExit(sandboxName, {
+      defaultTimeoutSec: 300,
+      retryCommand: "connect --probe-only",
+    });
+    // Re-pin and re-observe the owning gateway after a potentially long wait
+    // before any in-sandbox process or host-forward mutation. The readiness
+    // polls are already owner-scoped; this also catches registry changes.
     await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
     return await runSandboxConnectProbe(sandboxName);
   }

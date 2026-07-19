@@ -52,6 +52,7 @@ describe("connectSandbox probe-only observe mode", () => {
 
   it("re-observes the live sandbox after delayed readiness before process or forward recovery (#7173)", async () => {
     const harness = createConnectHarness({
+      registryEntry: { gatewayPort: 8091 },
       listOutputs: ["alpha Starting", "alpha Ready"],
       processCheck: {
         checked: true,
@@ -74,6 +75,16 @@ describe("connectSandbox probe-only observe mode", () => {
       },
     );
     expect(listInvocations).toHaveLength(2);
+    const listArgs = harness.captureOpenshellSpy.mock.calls
+      .map((call) => call[0])
+      .filter(
+        (args): args is string[] =>
+          Array.isArray(args) && args[0] === "sandbox" && args[1] === "list",
+      );
+    expect(listArgs).toEqual([
+      ["sandbox", "list", "-g", "nemoclaw-8091"],
+      ["sandbox", "list", "-g", "nemoclaw-8091"],
+    ]);
     const liveLookupOrder = harness.ensureLiveSandboxSpy.mock.invocationCallOrder;
     expect(liveLookupOrder).toHaveLength(2);
     const recoveryOrder = harness.checkAndRecoverSpy.mock.invocationCallOrder;
@@ -96,8 +107,8 @@ describe("connectSandbox probe-only observe mode", () => {
     expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
   });
 
-  it("exits on timeout when sandbox never reports Ready on probeOnly", async () => {
-    process.env.NEMOCLAW_CONNECT_TIMEOUT = "1";
+  it("suggests a longer equivalent retry when probe-only readiness times out", async () => {
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(300_001);
     const harness = createConnectHarness({ listOutput: "alpha Starting" });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
@@ -105,6 +116,7 @@ describe("connectSandbox probe-only observe mode", () => {
     );
 
     const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(errors).toContain("Timed out after 1s waiting for sandbox 'alpha'");
+    expect(errors).toContain("Timed out after 300s waiting for sandbox 'alpha'");
+    expect(errors).toContain("NEMOCLAW_CONNECT_TIMEOUT=600 nemoclaw alpha connect --probe-only");
   });
 });
