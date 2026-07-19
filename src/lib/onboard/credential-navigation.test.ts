@@ -1,14 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import * as credentials from "../credentials/store";
 
 import {
   BACK_TO_SELECTION,
   getNavigationChoice,
+  replaceNamedCredential,
   returningToProviderSelection,
   shouldReturnToProviderSelection,
 } from "./credential-navigation";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  delete process.env.NEMOCLAW_TEST_NAVIGATION_KEY;
+});
 
 describe("credential prompt navigation helpers (#6005)", () => {
   it("accepts the short b token as back so the advertised key works", () => {
@@ -17,6 +25,24 @@ describe("credential prompt navigation helpers (#6005)", () => {
     expect(getNavigationChoice("back")).toBe("back");
     expect(getNavigationChoice("exit")).toBe("exit");
     expect(getNavigationChoice("nvapi-xxxx")).toBeNull();
+  });
+
+  it("routes a trimmed short b token through the real secret prompt without staging it", async () => {
+    vi.spyOn(credentials, "prompt").mockResolvedValue(" B ");
+    const saveCredential = vi.spyOn(credentials, "saveCredential");
+    const exitOnboard = vi.fn(() => {
+      throw new Error("unexpected exit");
+    }) as unknown as () => never;
+
+    const result = await replaceNamedCredential({
+      envName: "NEMOCLAW_TEST_NAVIGATION_KEY",
+      label: "Test credential",
+      exitOnboardFromPrompt: exitOnboard,
+    });
+
+    expect(result).toBe(BACK_TO_SELECTION);
+    expect(saveCredential).not.toHaveBeenCalled();
+    expect(process.env.NEMOCLAW_TEST_NAVIGATION_KEY).toBeUndefined();
   });
 
   it("treats both the shared back sentinel and credential back intents as provider-selection navigation", () => {

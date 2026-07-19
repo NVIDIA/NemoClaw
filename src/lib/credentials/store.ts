@@ -155,7 +155,7 @@ export function normalizeCredentialValue(value: CredentialInput): string {
 export function getCredentialPromptIntent(value: CredentialInput): CredentialPromptIntent {
   const normalized = normalizeCredentialValue(value);
   const navigation = normalized.toLowerCase();
-  if (navigation === "back") return { kind: "back" };
+  if (navigation === "b" || navigation === "back") return { kind: "back" };
   if (navigation === "exit" || navigation === "quit") return { kind: "exit" };
   if (navigation === "?" || navigation === "help") return { kind: "help" };
   return { kind: "credential", value: normalized };
