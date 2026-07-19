@@ -6,6 +6,7 @@ import os from "node:os";
 
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeOutputEvent } from "../fixtures/shell-probe.ts";
+import type { RebuildHermesTimeline, RebuildHermesTimingPhase } from "./rebuild-hermes-timing.ts";
 
 interface RebuildHermesResourceSnapshot {
   freeMemoryBytes: number;
@@ -32,6 +33,7 @@ export interface RebuildHermesProgress {
   onOutput: (event: ShellProbeOutputEvent) => void;
   phase: (label: string) => void;
   stop: () => void;
+  timeline: () => RebuildHermesTimeline;
 }
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
@@ -80,10 +82,17 @@ export function startRebuildHermesProgress(
   const clearTimer = options.clearTimer ?? ((timer) => clearInterval(timer as NodeJS.Timeout));
   const logLine = options.logLine ?? ((line) => process.stdout.write(`${line}\n`));
   const sampleResources = options.sampleResources ?? defaultResourceSnapshot;
+  const overallStartedAt = now();
+  const completedPhases: RebuildHermesTimingPhase[] = [];
   let phaseLabel = initialPhase;
-  let phaseStartedAt = now();
+  let phaseStartedAt = overallStartedAt;
   let lastOutputAt: number | null = null;
   let stopped = false;
+  let stoppedAt = overallStartedAt;
+
+  const completeActivePhase = (completedAt = now()) => {
+    completedPhases.push({ label: phaseLabel, elapsedMs: completedAt - phaseStartedAt });
+  };
 
   const logBestEffort = (state: "started" | "running" | "finished") => {
     try {
@@ -115,6 +124,7 @@ export function startRebuildHermesProgress(
     phase(label) {
       if (stopped) return;
       logBestEffort("finished");
+      completeActivePhase();
       phaseLabel = label;
       phaseStartedAt = now();
       lastOutputAt = null;
@@ -123,8 +133,17 @@ export function startRebuildHermesProgress(
     stop() {
       if (stopped) return;
       stopped = true;
+      stoppedAt = now();
+      completeActivePhase(stoppedAt);
       clearTimer(timer);
       logBestEffort("finished");
+    },
+    timeline() {
+      const current = now();
+      const phases = stopped
+        ? [...completedPhases]
+        : [...completedPhases, { label: phaseLabel, elapsedMs: current - phaseStartedAt }];
+      return { phases, totalMs: (stopped ? stoppedAt : current) - overallStartedAt };
     },
   };
 }

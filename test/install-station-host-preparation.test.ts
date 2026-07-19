@@ -79,9 +79,10 @@ describe("DGX Station host preparation", () => {
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=generic-ubuntu
+station_pci_device_is_gb300() { return 0; }
 sudo() {
   printf 'SUDO %s\\n' "$*" >&2
-  printf 'NVIDIA GB300, 610.43.02, 0, 0\\n'
+  printf '00000000:01:00.0, NVIDIA GB300, 610.43.02, 0, 0\\n'
 }
 run_cdi_test_sudo
 run_gpus_test_sudo
@@ -95,7 +96,7 @@ run_gpus_test_sudo
       `SUDO docker run --rm --device nvidia.com/gpu=all ${image} nvidia-smi --query-gpu=`,
     );
     expect(output).toContain(`SUDO docker run --rm --gpus all ${image} nvidia-smi --query-gpu=`);
-    expect(output).toContain("gpu=NVIDIA GB300 role=inference");
+    expect(output).toContain("gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 role=inference");
   });
 
   it.each([
@@ -415,8 +416,15 @@ run_apply
 configure_repositories() { printf 'CONFIGURE_REPOSITORIES\n'; }
 validate_package_availability() { printf 'VALIDATE_PACKAGES\n'; }
 simulate_install() { printf 'SIMULATE_INSTALL\n'; }
+check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
 require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
+package_state() { printf 'missing\n'; }
 package_is_exact() { return 0; }
+create_apt_transaction_guard() {
+  APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
+  APT_TRANSACTION_HOOK="$APT_TRANSACTION_GUARD_DIR/verify-plan"
+}
+cleanup_apt_transaction_guard() { :; }
 sudo() { printf 'SUDO %s\n' "$*"; }
 install_packages
 `,
@@ -436,7 +444,6 @@ install_packages
     }
     expect(output).toContain("pinned_packages=installed");
   });
-
   it("does not refresh CDI when the GPU launch probe already passes", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -961,7 +968,10 @@ PAYLOAD
 set -euo pipefail
 case "\${1:-}" in
   --classify-dgx-release) printf 'CLASSIFY_STATION\\n' >&2; printf 'generic-ubuntu' ;;
-  --apply) printf 'PREPARE_STATION\\n' ;;
+  --apply)
+    printf '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.4 mode=--apply log=/tmp/station-prepare.log\\n'
+    printf 'PREPARE_STATION\\n'
+    ;;
   *) exit 2 ;;
 esac
 HELPER
@@ -992,12 +1002,14 @@ exit 0
       killSignal: "SIGKILL",
     });
     const output = `${result.stdout}${result.stderr}`;
+    const preparationLogIndex = output.indexOf("DGX Station host preparation log");
 
     expect(result.status, output).toBe(0);
     expect(output).toContain("CLASSIFY_STATION");
     expect(output).toContain("DGX Station host prerequisites are ready");
-    expect(output.indexOf("PREPARE_STATION")).toBeGreaterThanOrEqual(0);
-    expect(output.indexOf("PREPARE_STATION")).toBeLessThan(output.indexOf("ENSURE_DOCKER"));
+    expect(preparationLogIndex).toBeGreaterThanOrEqual(0);
+    expect(preparationLogIndex).toBeLessThan(output.indexOf("ENSURE_DOCKER"));
+    expect(output).not.toContain("PREPARE_STATION");
     expect(output.indexOf("ENSURE_DOCKER")).toBeLessThan(output.indexOf("ENSURE_BUILD_DEPS"));
   });
 

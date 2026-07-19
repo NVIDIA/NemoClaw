@@ -4137,7 +4137,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
     let selectedMessagingChannels: string[] = [];
-    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSession(
+    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSessionValidated(
       {
         resume,
         fresh,

@@ -9,6 +9,24 @@ import { describe, expect, it } from "vitest";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
+  function runInstallerSourced(body: string) {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-sourced-"));
+    const result = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-c", `source "$INSTALLER_UNDER_TEST" >/dev/null\n${body}`],
+      {
+        cwd: path.resolve(import.meta.dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          HOME: home,
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+        },
+      },
+    );
+    return { result, output: `${result.stdout}${result.stderr}` };
+  }
+
   function runExpressPromptWithTty(
     answer: string,
     stdinMode: "pipe" | "tty",
@@ -359,6 +377,45 @@ detect_express_platform
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
     expect(output).toMatch(/STATION_EXPRESS=1/);
+  });
+
+  it("keeps Station preparation details in the log while showing warnings and errors", () => {
+    const { result, output } = runInstallerSourced(`
+printf '%s\n' \
+  '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.4 mode=--apply log=/tmp/station-prepare.log' \
+  '[station-prepare] 2026-07-17T07:59:07Z platform=Dell Pro Max with Station GB300 profile=generic-ubuntu' \
+  '[station-prepare] 2026-07-17T07:59:08Z WARNING: condition-qualified generic-image failed unit: cloud-init.service' \
+  'NVIDIA-SMI 610.43.02' \
+  '[station-prepare] 2026-07-17T07:59:20Z ERROR: example failure' \
+  | filter_station_host_preparation_output
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("DGX Station host preparation log: /tmp/station-prepare.log");
+    expect(output).toContain("condition-qualified generic-image failed unit: cloud-init.service");
+    expect(output).toContain("ERROR: example failure");
+    expect(output).not.toMatch(/platform=Dell Pro Max|NVIDIA-SMI/);
+  });
+
+  it("preserves the Station helper exit status while filtering installer output", () => {
+    const { result, output } = runInstallerSourced(`
+bash() {
+  printf '%s\n' \
+    '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.4 mode=--apply log=/tmp/station-prepare.log' \
+    '[station-prepare] 2026-07-17T07:59:08Z runtime_setup=complete'
+  return 10
+}
+if run_station_host_preparation; then
+  printf 'STATUS=0\n'
+else
+  printf 'STATUS=%s\n' "$?"
+fi
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("STATUS=10");
+    expect(output).toContain("DGX Station host preparation log: /tmp/station-prepare.log");
+    expect(output).not.toContain("runtime_setup=complete");
   });
 
   it.each([

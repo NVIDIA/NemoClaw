@@ -522,16 +522,17 @@ describe("DGX Station forced metadata installer handoff", () => {
       INSTALLER_PAYLOAD,
       `
 SCRIPT_DIR="$HOME"
-touch "$SCRIPT_DIR/prepare-dgx-station-host.sh"
-bash() { printf 'HELPER_ARGS=%s\n' "$*"; }
+cat >"$SCRIPT_DIR/prepare-dgx-station-host.sh" <<'HELPER'
+printf '%s\n' "$*" >"$HOME/helper-args"
+HELPER
 FORCE_STATION_INSTALL=1
 run_station_host_preparation
 `,
     );
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain(
-      `HELPER_ARGS=${path.join(home, "prepare-dgx-station-host.sh")} --apply --force-station-install`,
+    expect(fs.readFileSync(path.join(home, "helper-args"), "utf8")).toBe(
+      "--apply --force-station-install\n",
     );
   });
 
@@ -1029,7 +1030,8 @@ run_apply
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=stock-dgx-os
-nvidia-smi() { printf 'NVIDIA GB300, 595.71.05, 0, 0\n'; }
+station_pci_device_is_gb300() { return 0; }
+nvidia-smi() { printf '00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0\n'; }
 verify_gpu
 `,
     );
@@ -1040,7 +1042,8 @@ verify_gpu
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=generic-ubuntu
-nvidia-smi() { printf 'NVIDIA GB300, 595.71.05, 0, 0\n'; }
+station_pci_device_is_gb300() { return 0; }
+nvidia-smi() { printf '00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0\n'; }
 verify_gpu
 `,
     );
@@ -1053,18 +1056,19 @@ verify_gpu
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=ai-developer-tools
+station_pci_device_is_gb300() { [[ "$1" == "0000:01:00.0" ]]; }
 nvidia-smi() {
-  printf 'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
-  printf 'NVIDIA GB300, 610.43.03, 0, 0\n'
+  printf '00000000:02:00.0, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
+  printf '00000000:01:00.0, NVIDIA GB300, 610.43.03, 0, 0\n'
 }
 verify_gpu
 `,
     );
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain("gpu_index=0 gpu=NVIDIA RTX PRO 6000");
+    expect(output).toContain("gpu_bdf=0000:02:00.0 gpu=NVIDIA RTX PRO 6000");
     expect(output).toContain("role=auxiliary validation=skipped");
-    expect(output).toContain("gpu_index=1 gpu=NVIDIA GB300 role=inference");
+    expect(output).toContain("gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 role=inference");
   });
 
   it("requires both factory container probes to expose the GB300 on a mixed-GPU host", () => {
@@ -1072,29 +1076,31 @@ verify_gpu
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=ai-developer-tools
+station_pci_device_is_gb300() { [[ "$1" == "0000:01:00.0" ]]; }
 station_sudo_local_default_docker() {
-  printf 'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
-  printf 'NVIDIA GB300, 610.43.03, 0, 0\n'
+  printf '00000000:02:00.0, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
+  printf '00000000:01:00.0, NVIDIA GB300, 610.43.03, 0, 0\n'
 }
 run_dgx_os_cdi_test_sudo
 run_dgx_os_gpus_test_sudo
 `,
     );
     expect(mixed.result.status, mixed.output).toBe(0);
-    expect(mixed.output).toContain("gpu_index=1 gpu=NVIDIA GB300 role=inference");
+    expect(mixed.output).toContain("gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 role=inference");
 
     const rtxOnly = runSourced(
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=ai-developer-tools
+station_pci_device_is_gb300() { [[ "$1" == "0000:01:00.0" ]]; }
 station_sudo_local_default_docker() {
-  printf 'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
+  printf '00000000:02:00.0, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
 }
 run_dgx_os_cdi_test_sudo
 `,
     );
     expect(rtxOnly.result.status, rtxOnly.output).not.toBe(0);
-    expect(rtxOnly.output).toContain("Expected exactly one NVIDIA GB300, found 0");
+    expect(rtxOnly.output).toContain("Expected exactly one NVIDIA GB300 PCI device, found 0");
   });
 
   it("requires the qualified BaseOS driver to be loaded", () => {
@@ -1102,7 +1108,8 @@ run_dgx_os_cdi_test_sudo
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=colossus-baseos
-nvidia-smi() { printf 'NVIDIA GB300, 595.71.05, 0, 0\n'; }
+station_pci_device_is_gb300() { return 0; }
+nvidia-smi() { printf '00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0\n'; }
 verify_gpu
 `,
     );
@@ -1202,18 +1209,30 @@ verify_dgx_os_runtime_sudo
   });
 
   it.each([
-    ["wrong GPU", "NVIDIA GB200, 595.71.05, 0, 0", /Expected exactly one NVIDIA GB300, found 0/],
-    ["non-zero volatile ECC", "NVIDIA GB300, 595.71.05, 1, 0", /ECC must be 0\/0/],
     [
-      "a failing second GPU row",
-      "NVIDIA GB300, 595.71.05, 0, 0\nNVIDIA GB300, 595.71.05, 0, 1",
+      "a missing GB300 PCI identity",
+      "00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0",
+      "return 1",
+      /Expected exactly one NVIDIA GB300 PCI device, found 0/,
+    ],
+    [
+      "non-zero volatile ECC",
+      "00000000:01:00.0, NVIDIA GB300, 595.71.05, 1, 0",
+      "return 0",
       /ECC must be 0\/0/,
     ],
-  ])("fails stock validation for %s", (_scenario, row, message) => {
+    [
+      "a failing second GPU row",
+      "00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0\n00000000:02:00.0, NVIDIA GB300, 595.71.05, 0, 1",
+      "return 0",
+      /ECC must be 0\/0/,
+    ],
+  ])("fails stock validation for %s", (_scenario, row, pciResult, message) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=stock-dgx-os
+station_pci_device_is_gb300() { ${pciResult}; }
 nvidia-smi() { printf '%s\n' "$GPU_ROW"; }
 verify_gpu
 `,
