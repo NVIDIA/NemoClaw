@@ -607,7 +607,10 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
   }, 90_000);
 
   it("emits a strict pre-phase baseline through the real CLI", () => {
-    const result = runHelper(["baseline"], { E2E_PHASE: "unit-test" });
+    const result = runHelper(["baseline"], {
+      DOCKER_OOM_CONTAINER: "",
+      E2E_PHASE: "unit-test",
+    });
     expect(result.status).toBe(0);
     expect(parseBaselineLine(result.stdout)).toEqual({
       phase: "unit-test",
