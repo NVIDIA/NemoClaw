@@ -17,15 +17,12 @@ let navigationKeyBeforeTest: string | undefined;
 
 beforeEach(() => {
   navigationKeyBeforeTest = process.env.NEMOCLAW_TEST_NAVIGATION_KEY;
+  vi.stubEnv("NEMOCLAW_TEST_NAVIGATION_KEY", navigationKeyBeforeTest);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
-  if (navigationKeyBeforeTest === undefined) {
-    delete process.env.NEMOCLAW_TEST_NAVIGATION_KEY;
-  } else {
-    process.env.NEMOCLAW_TEST_NAVIGATION_KEY = navigationKeyBeforeTest;
-  }
+  vi.unstubAllEnvs();
 });
 
 describe("credential prompt navigation helpers (#6005)", () => {
