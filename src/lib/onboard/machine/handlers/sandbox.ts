@@ -218,6 +218,7 @@ export interface SandboxStateOptions<
     ): import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan;
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
+      inferenceProvider?: string | null;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
@@ -1115,6 +1116,7 @@ class SandboxStateFlow<
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
+      inferenceProvider: this.options.provider,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
       agent: this.options.agent,
