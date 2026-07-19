@@ -416,13 +416,12 @@ run_apply
 configure_repositories() { printf 'CONFIGURE_REPOSITORIES\n'; }
 validate_package_availability() { printf 'VALIDATE_PACKAGES\n'; }
 simulate_install() { printf 'SIMULATE_INSTALL\n'; }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
 require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 package_state() { printf 'missing\n'; }
 package_is_exact() { return 0; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
-  APT_TRANSACTION_HOOK="$APT_TRANSACTION_GUARD_DIR/verify-plan"
+  APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
 }
 cleanup_apt_transaction_guard() { :; }
 sudo() { printf 'SUDO %s\n' "$*"; }
