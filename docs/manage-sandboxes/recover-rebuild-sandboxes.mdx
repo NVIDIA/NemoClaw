@@ -89,7 +89,8 @@ These commands do not restart, replace, or reap the shared host OpenShell gatewa
 If the host gateway RPC returns an error while these sandbox-scoped commands run, they surface the error with explicit next-step guidance and exit rather than swapping the shared gateway out from under other sandboxes.
 
 To repair the host gateway itself, use `openshell status`, `openshell gateway start --name <gateway>`, or run `$$nemoclaw onboard` again.
-Only the onboarding path and `$$nemoclaw <name> gateway restart` are permitted to reap or replace the shared host gateway.
+Other workflows, including onboarding, rebuild, and `doctor --fix`, can explicitly recover the named host gateway when their operation requires it.
+`$$nemoclaw <name> gateway restart` instead restarts only the supported agent gateway inside the named sandbox.
 </AgentOnly>
 
 ## Rebuild While Preserving State
