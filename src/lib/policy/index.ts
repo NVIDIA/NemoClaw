@@ -1009,8 +1009,7 @@ function applyPresetContent(
     options,
     "expectedExistingNetworkPolicyContent",
   );
-  const policyChanged =
-    requiresOwnedKeyRefresh || !policyDocumentsMatch(currentPolicy, merged);
+  const policyChanged = requiresOwnedKeyRefresh || !policyDocumentsMatch(currentPolicy, merged);
 
   // Run before creating temp resources so a missing-binary exit doesn't
   // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
