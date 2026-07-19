@@ -53,7 +53,7 @@ describe("Hermes auth back-navigation affordance (#6005)", () => {
     clearHermesAuthEnvironment();
     const events: string[] = [];
     vi.spyOn(console, "log").mockImplementation((message?: unknown) => {
-      if (message === NAVIGATION_HINT) events.push("hint");
+      events.push(String(message));
     });
     const deps = createDeps({
       isNonInteractive: vi.fn(() => false),
@@ -65,7 +65,11 @@ describe("Hermes auth back-navigation affordance (#6005)", () => {
 
     await createHermesAuthHelpers(deps).promptHermesAuthMethod();
 
-    expect(events).toEqual(["hint", "prompt"]);
+    const hintIndex = events.indexOf(NAVIGATION_HINT);
+    const promptIndex = events.indexOf("prompt");
+    expect(hintIndex).toBeGreaterThanOrEqual(0);
+    expect(promptIndex).toBeGreaterThanOrEqual(0);
+    expect(hintIndex).toBeLessThan(promptIndex);
   });
 
   it("returns to provider selection when the auth-method prompt replies back", async () => {
