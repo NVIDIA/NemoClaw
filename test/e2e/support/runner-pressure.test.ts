@@ -634,13 +634,41 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
     });
   }, 90_000);
 
+  it("initializes private evidence files before the live test", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runner-evidence-"));
+    const baselinePath = path.join(directory, "baseline.jsonl");
+    const phaseBaselinesPath = path.join(directory, "phase-baselines.jsonl");
+    const classificationPath = path.join(directory, "classification.jsonl");
+    try {
+      const result = runHelper(["initialize-evidence"], {
+        DOCKER_OOM_CONTAINER: "",
+        E2E_PHASE: "unit-test",
+        E2E_RESOURCE_BASELINE_FILE: baselinePath,
+        E2E_RESOURCE_PHASE_BASELINES_FILE: phaseBaselinesPath,
+        E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
+      });
+      expect(result.status).toBe(0);
+      expect(parseBaselineLine(fs.readFileSync(baselinePath, "utf8")).phase).toBe("unit-test");
+      expect(fs.readFileSync(phaseBaselinesPath, "utf8")).toBe("");
+      expect(fs.readFileSync(classificationPath, "utf8")).toBe("");
+      for (const file of [baselinePath, phaseBaselinesPath, classificationPath]) {
+        expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+      }
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  }, 90_000);
+
   it.each([
     "assertion",
     "timeout",
   ] as const)("classifies a trusted harness %s artifact through the real CLI", (outcome) => {
     withEvidenceFiles(outcome, (baselinePath, outcomePath) => {
+      const classificationPath = path.join(path.dirname(baselinePath), "classification.jsonl");
+      fs.writeFileSync(classificationPath, "", { mode: 0o600 });
       const result = runHelper(["classify"], {
         E2E_RESOURCE_BASELINE_FILE: baselinePath,
+        E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
         E2E_TEST_OUTCOME_FILE: outcomePath,
       });
       expect(result.status).toBe(0);
@@ -649,7 +677,74 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
       expect(
         JSON.parse((line as string).slice(CLASSIFICATION_LINE_PREFIX.length)).classification,
       ).toBe(outcome);
+      expect(fs.readFileSync(classificationPath, "utf8").trim()).toBe(line);
     });
+  }, 90_000);
+
+  it.each([
+    "symlink",
+    "hardlink",
+  ] as const)("rejects %s-substituted baseline, phase, and classification evidence", (linkKind) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-linked-evidence-"));
+    const baselinePath = path.join(directory, "baseline.jsonl");
+    const phaseBaselinesPath = path.join(directory, "phase-baselines.jsonl");
+    const classificationPath = path.join(directory, "classification.jsonl");
+    const outcomePath = path.join(directory, LIVE_TEST_OUTCOME_FILE);
+    const canonicalBaseline = `${renderBaselineLine({
+      phase: "unit-test",
+      at: "2026-07-18T00:00:00.000Z",
+      cgroupOomKills: 0,
+      kernelOomKillCount: 0,
+      containerOomKilled: false,
+    })}\n`;
+    const canonicalClassification = `${renderClassificationLine({
+      classification: "assertion",
+      reason: "protected target",
+    })}\n`;
+    const link = (target: string, linkedPath: string) => {
+      if (linkKind === "symlink") fs.symlinkSync(target, linkedPath);
+      else fs.linkSync(target, linkedPath);
+    };
+    const environment = {
+      DOCKER_OOM_CONTAINER: "",
+      E2E_PHASE: "unit-test",
+      E2E_RESOURCE_BASELINE_FILE: baselinePath,
+      E2E_RESOURCE_PHASE_BASELINES_FILE: phaseBaselinesPath,
+      E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
+      E2E_TEST_OUTCOME_FILE: outcomePath,
+    };
+    try {
+      fs.writeFileSync(outcomePath, renderLiveTestOutcome("assertion"), { mode: 0o600 });
+
+      const baselineTarget = path.join(directory, "baseline-target.jsonl");
+      fs.writeFileSync(baselineTarget, canonicalBaseline, { mode: 0o600 });
+      link(baselineTarget, baselinePath);
+      fs.writeFileSync(phaseBaselinesPath, "", { mode: 0o600 });
+      fs.writeFileSync(classificationPath, "", { mode: 0o600 });
+      expect(runHelper(["classify"], environment).status).not.toBe(0);
+      expect(fs.readFileSync(baselineTarget, "utf8")).toBe(canonicalBaseline);
+
+      fs.unlinkSync(baselinePath);
+      fs.writeFileSync(baselinePath, canonicalBaseline, { mode: 0o600 });
+      fs.unlinkSync(phaseBaselinesPath);
+      const phaseTarget = path.join(directory, "phase-target.jsonl");
+      fs.writeFileSync(phaseTarget, "", { mode: 0o600 });
+      link(phaseTarget, phaseBaselinesPath);
+      expect(runHelper(["classify"], environment).status).not.toBe(0);
+      expect(fs.readFileSync(phaseTarget, "utf8")).toBe("");
+
+      fs.unlinkSync(phaseBaselinesPath);
+      fs.writeFileSync(phaseBaselinesPath, "", { mode: 0o600 });
+      fs.unlinkSync(classificationPath);
+      const classificationTarget = path.join(directory, "classification-target.jsonl");
+      fs.writeFileSync(classificationTarget, canonicalClassification, { mode: 0o600 });
+      link(classificationTarget, classificationPath);
+      expect(runHelper(["initialize-evidence"], environment).status).not.toBe(0);
+      expect(runHelper(["validate-classification"], environment).status).not.toBe(0);
+      expect(fs.readFileSync(classificationTarget, "utf8")).toBe(canonicalClassification);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   }, 90_000);
 
   it("rejects missing or malformed pre-phase evidence before classification", () => {

@@ -15,10 +15,14 @@
  *                    PSI, or Docker.
  * - `baseline`     — emit the numeric/boolean pre-phase OOM baseline consumed
  *                    by `classify` after the phase.
+ * - `initialize-evidence` — create the baseline, phase ledger, and terminal
+ *                    classification files privately before the live test.
  * - `classify`     — emit one `E2E_TERMINAL_CLASSIFICATION` line from
  *                    the trusted live-harness artifact named by
  *                    `E2E_TEST_OUTCOME_FILE` plus phase-specific on-host
- *                    OOM/disk evidence. Requires the baseline file named by
+ *                    OOM/disk evidence, and write it through a no-follow
+ *                    descriptor when `E2E_TERMINAL_CLASSIFICATION_FILE` is
+ *                    configured. Requires the baseline file named by
  *                    `E2E_RESOURCE_BASELINE_FILE`.
  * - `validate-classification` — fail closed unless the named classification
  *                    artifact contains exactly one canonical terminal line.
@@ -35,6 +39,11 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { readLiveTestOutcome } from "./live-test-outcome.mts";
+import {
+  appendPrivateRegularFile,
+  readPrivateRegularFile,
+  writePrivateRegularFile,
+} from "./private-file.ts";
 import {
   assertPhaseLabel,
   classifyFailure,
@@ -62,6 +71,9 @@ import {
 
 const CGROUP_ROOT = "/sys/fs/cgroup";
 const CONTAINER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+const BASELINE_FILE_MAX_BYTES = 4096;
+const PHASE_BASELINES_FILE_MAX_BYTES = 128 * BASELINE_FILE_MAX_BYTES;
+const CLASSIFICATION_FILE_MAX_BYTES = 2048;
 
 function readTextOrNull(path: string): string | null {
   try {
@@ -169,10 +181,32 @@ function assertEvidencePath(path: string | undefined, variableName: string): str
 /** Append one phase baseline without replacing the immutable workflow baseline. */
 export function appendResourcePhaseBaseline(path: string, phase: string): void {
   const validatedPath = assertEvidencePath(path, "E2E_RESOURCE_PHASE_BASELINES_FILE");
-  fs.appendFileSync(validatedPath, `${renderBaselineLine(collectResourceBaseline(phase))}\n`, {
-    encoding: "utf-8",
-    mode: 0o600,
+  appendPrivateRegularFile(validatedPath, `${renderBaselineLine(collectResourceBaseline(phase))}\n`, {
+    maxBytes: PHASE_BASELINES_FILE_MAX_BYTES,
   });
+}
+
+/** Create the trusted evidence files before PR-controlled live tests execute. */
+function runInitializeEvidence(): void {
+  const phase = assertPhaseLabel(process.env.E2E_PHASE);
+  const baselinePath = assertEvidencePath(
+    process.env.E2E_RESOURCE_BASELINE_FILE,
+    "E2E_RESOURCE_BASELINE_FILE",
+  );
+  const phaseBaselinesPath = assertEvidencePath(
+    process.env.E2E_RESOURCE_PHASE_BASELINES_FILE,
+    "E2E_RESOURCE_PHASE_BASELINES_FILE",
+  );
+  const classificationPath = assertEvidencePath(
+    process.env.E2E_TERMINAL_CLASSIFICATION_FILE,
+    "E2E_TERMINAL_CLASSIFICATION_FILE",
+  );
+  writePrivateRegularFile(
+    baselinePath,
+    `${renderBaselineLine(collectResourceBaseline(phase))}\n`,
+  );
+  writePrivateRegularFile(phaseBaselinesPath, "");
+  writePrivateRegularFile(classificationPath, "");
 }
 
 function readRequiredBaseline(): ResourceBaseline {
@@ -180,10 +214,8 @@ function readRequiredBaseline(): ResourceBaseline {
     process.env.E2E_RESOURCE_BASELINE_FILE,
     "E2E_RESOURCE_BASELINE_FILE",
   );
-  const text = readTextOrNull(path);
-  if (text === null) {
-    throw new Error("E2E_RESOURCE_BASELINE_FILE could not be read");
-  }
+  const text = readPrivateRegularFile(path, { maxBytes: BASELINE_FILE_MAX_BYTES });
+  if (text === null) throw new Error("E2E_RESOURCE_BASELINE_FILE could not be read");
   return parseBaselineLine(text);
 }
 
@@ -191,10 +223,8 @@ function readPhaseBaselines(): ResourceBaseline[] {
   const configuredPath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
   if (!configuredPath) return [];
   const path = assertEvidencePath(configuredPath, "E2E_RESOURCE_PHASE_BASELINES_FILE");
-  const text = readTextOrNull(path);
-  if (text === null) {
-    throw new Error("E2E_RESOURCE_PHASE_BASELINES_FILE could not be read");
-  }
+  const text = readPrivateRegularFile(path, { maxBytes: PHASE_BASELINES_FILE_MAX_BYTES });
+  if (text === null) throw new Error("E2E_RESOURCE_PHASE_BASELINES_FILE could not be read");
   const lines = text.split(/\r?\n/u).filter((line) => line.length > 0);
   if (lines.length > 128) {
     throw new Error("phase baseline artifact exceeds the 128-phase bound");
@@ -207,10 +237,8 @@ function runValidateClassification(): void {
     process.env.E2E_TERMINAL_CLASSIFICATION_FILE,
     "E2E_TERMINAL_CLASSIFICATION_FILE",
   );
-  const text = readTextOrNull(path);
-  if (text === null) {
-    throw new Error("E2E_TERMINAL_CLASSIFICATION_FILE could not be read");
-  }
+  const text = readPrivateRegularFile(path, { maxBytes: CLASSIFICATION_FILE_MAX_BYTES });
+  if (text === null) throw new Error("E2E_TERMINAL_CLASSIFICATION_FILE could not be read");
   const lines = text.split(/\r?\n/u).filter((line) => line.length > 0);
   if (lines.length !== 1) {
     throw new Error("terminal classification artifact must contain exactly one line");
@@ -241,12 +269,18 @@ function runClassify(): void {
     diskFreeBytes: disk?.freeBytes ?? null,
     inodesFree: disk?.inodesFree ?? null,
   });
-  console.log(
-    renderClassificationLine({
-      ...classified,
-      reason: `${classified.reason}; compared against phase '${baseline.phase}'`,
-    }),
-  );
+  const line = renderClassificationLine({
+    ...classified,
+    reason: `${classified.reason}; compared against phase '${baseline.phase}'`,
+  });
+  const classificationPath = process.env.E2E_TERMINAL_CLASSIFICATION_FILE;
+  if (classificationPath) {
+    writePrivateRegularFile(
+      assertEvidencePath(classificationPath, "E2E_TERMINAL_CLASSIFICATION_FILE"),
+      `${line}\n`,
+    );
+  }
+  console.log(line);
 }
 
 function assertClassification(value: string | undefined): TerminalClassification | null {
@@ -281,6 +315,9 @@ function main(): number {
     case "baseline":
       runBaseline();
       return 0;
+    case "initialize-evidence":
+      runInitializeEvidence();
+      return 0;
     case "classify":
       runClassify();
       return 0;
@@ -292,7 +329,7 @@ function main(): number {
       return 0;
     default:
       console.error(
-        "usage: runner-pressure.mts <snapshot|baseline|classify|validate-classification|decide-retry>",
+        "usage: runner-pressure.mts <snapshot|baseline|initialize-evidence|classify|validate-classification|decide-retry>",
       );
       return 2;
   }

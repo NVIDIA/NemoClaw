@@ -31,6 +31,7 @@ describe("runner-pressure E2E workflow boundary (#7146)", () => {
       mutate: (script: string) =>
         script
           .replace("runner-pressure.mts snapshot", "runner-pressure.mts omitted-snapshot")
+          .replace("runner-pressure.mts initialize-evidence", "runner-pressure.mts baseline")
           .replace("E2E_RESOURCE_PHASE_BASELINES_FILE", "OMITTED_PHASE_BASELINES_FILE"),
       error:
         "must emit snapshots and retain immutable workflow plus append-only phase baselines before its live test",
