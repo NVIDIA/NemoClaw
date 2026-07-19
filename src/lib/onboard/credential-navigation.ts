@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as credentials from "../credentials/store";
-import { BACK_TO_SELECTION, type BackToSelection, isBackToSelection } from "../navigation";
+import {
+  BACK_TO_SELECTION,
+  type BackToSelection,
+  isBackToSelection,
+  printNavigationHint,
+} from "../navigation";
 
 export type BackNavigationResult = BackToSelection | { kind: "back" };
 export type { BackToSelection };
@@ -12,7 +17,7 @@ export function getNavigationChoice(value = ""): "back" | "exit" | null {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
-  if (normalized === "back") return "back";
+  if (normalized === "back" || normalized === "b") return "back";
   if (normalized === "exit" || normalized === "quit") return "exit";
   return null;
 }
@@ -80,6 +85,8 @@ export async function replaceNamedCredential({
     console.log(`  Get your ${label} from: ${helpUrl}`);
     console.log("");
   }
+
+  printNavigationHint();
 
   while (true) {
     const key = await readCredentialValue(`  ${label}: `, exitOnboardFromPrompt);

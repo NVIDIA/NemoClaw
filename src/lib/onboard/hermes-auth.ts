@@ -4,6 +4,7 @@
 import { normalizeCredentialValue } from "../credentials/store";
 import type { HermesAuthMethod } from "../hermes-provider-auth";
 import * as hermesProviderAuth from "../hermes-provider-auth";
+import { printNavigationHint } from "../navigation";
 
 export type { HermesAuthMethod };
 
@@ -126,6 +127,7 @@ export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHel
 
     const defaultIdx =
       (requested ? methods.findIndex((method) => method.key === requested) : 0) + 1;
+    printNavigationHint();
     const choice = await deps.prompt(`  Choose [${defaultIdx}]: `);
     const navigation = deps.getNavigationChoice(choice);
     if (navigation === "back") return deps.backToSelection;
@@ -159,6 +161,7 @@ export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHel
     console.log("");
     console.log("  Hermes Provider Nous API Key");
     console.log(`  Create or copy a key from ${HERMES_NOUS_API_KEY_HELP_URL}`);
+    printNavigationHint();
     const rawKey = await deps.prompt("  Nous API Key: ", {
       secret: true,
     });

@@ -5,11 +5,20 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   BACK_TO_SELECTION,
+  getNavigationChoice,
   returningToProviderSelection,
   shouldReturnToProviderSelection,
 } from "./credential-navigation";
 
 describe("credential prompt navigation helpers", () => {
+  it("accepts the short b token as back so the advertised key works", () => {
+    expect(getNavigationChoice("b")).toBe("back");
+    expect(getNavigationChoice(" B ")).toBe("back");
+    expect(getNavigationChoice("back")).toBe("back");
+    expect(getNavigationChoice("exit")).toBe("exit");
+    expect(getNavigationChoice("nvapi-xxxx")).toBeNull();
+  });
+
   it("treats both the shared back sentinel and credential back intents as provider-selection navigation", () => {
     const exitOnboard = vi.fn(() => {
       throw new Error("unexpected exit");

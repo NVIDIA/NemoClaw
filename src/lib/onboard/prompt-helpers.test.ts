@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
-import { promptOrDefault, selectFromNumberedMenuOrExit } from "./prompt-helpers";
+import {
+  getNavigationChoice,
+  promptOrDefault,
+  selectFromNumberedMenuOrExit,
+} from "./prompt-helpers";
 
 function makeDeps(promptReply: string) {
   return {
@@ -12,6 +16,28 @@ function makeDeps(promptReply: string) {
     prompt: vi.fn().mockResolvedValue(promptReply),
   };
 }
+
+describe("getNavigationChoice back token", () => {
+  it("treats the short b token as back so the advertised key works", () => {
+    expect(getNavigationChoice("b")).toBe("back");
+    expect(getNavigationChoice(" B ")).toBe("back");
+  });
+
+  it("still treats the full back word as back", () => {
+    expect(getNavigationChoice("back")).toBe("back");
+  });
+
+  it("keeps exit and quit mapped to exit", () => {
+    expect(getNavigationChoice("exit")).toBe("exit");
+    expect(getNavigationChoice("quit")).toBe("exit");
+  });
+
+  it("returns null for ordinary values", () => {
+    expect(getNavigationChoice("brave")).toBeNull();
+    expect(getNavigationChoice("2")).toBeNull();
+    expect(getNavigationChoice("")).toBeNull();
+  });
+});
 
 describe("promptOrDefault interactive default fallback (#4387)", () => {
   it("returns defaultValue when the user just presses Enter (empty reply)", async () => {
