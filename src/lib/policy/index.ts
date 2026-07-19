@@ -1000,7 +1000,16 @@ function applyPresetContent(
   const presetState = classifyPresetEntries(currentPolicy, presetEntries);
   logPresetScopeForState(presetName, presetContent, presetState);
 
-  const policyChanged = !policyDocumentsMatch(currentPolicy, merged);
+  // Ownership-aware callers use a successful `policy set --wait` as part of
+  // their live-policy/registry transaction, even when the desired document is
+  // byte-for-byte equivalent to the current policy. Skipping that submission
+  // would let the caller commit its ownership reservation without observing a
+  // failed gateway mutation. Ordinary preset re-application remains a no-op.
+  const requiresOwnedKeyRefresh = Object.prototype.hasOwnProperty.call(
+    options,
+    "expectedExistingNetworkPolicyContent",
+  );
+  const policyChanged = requiresOwnedKeyRefresh || !policyDocumentsMatch(currentPolicy, merged);
 
   // Run before creating temp resources so a missing-binary exit doesn't
   // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).

@@ -209,7 +209,7 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
       expect(result.stdout).toMatch(/--dry-run: 'custom-rule' not applied\./);
     });
 
-    it("sanitizes hostile custom-preset terminal controls in dry-run output (#7179)", () => {
+    it("renders hostile custom-preset terminal controls visibly during dry-run (#7179)", () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-control-"));
       const file = path.join(tmp, "custom-control.yaml");
       fs.writeFileSync(
