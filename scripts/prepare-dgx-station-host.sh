@@ -1436,7 +1436,7 @@ create_apt_transaction_guard() {
   assert_root_directory_safe "$APT_TRANSACTION_GUARD_DIR" "APT transaction guard directory"
   assert_root_regular_file_safe "$hook_path" 0700 "APT transaction guard"
   assert_root_regular_file_safe "$targets_path" 0600 "APT transaction target manifest"
-  APT_TRANSACTION_HOOK=$hook_path
+  APT_TRANSACTION_HOOK="/bin/bash ${hook_path}"
 }
 
 validate_apt_simulation() {
@@ -1496,12 +1496,13 @@ validate_apt_simulation() {
 
 simulate_install() {
   local simulation
-  [[ "$APT_TRANSACTION_HOOK" =~ ^/run/nemoclaw-apt-transaction\.[A-Za-z0-9]+/verify-plan$ ]] \
+  [[ "$APT_TRANSACTION_GUARD_DIR" =~ ^/run/nemoclaw-apt-transaction\.[A-Za-z0-9]+$ &&
+    "$APT_TRANSACTION_HOOK" == "/bin/bash ${APT_TRANSACTION_GUARD_DIR}/verify-plan" ]] \
     || fatal "APT transaction guard is not ready"
   simulation="$(sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
     apt-get -s install --no-install-recommends --no-remove \
     -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
-    -o "DPkg::Tools::options::${APT_TRANSACTION_HOOK}::Version=3" "$@")" \
+    -o "DPkg::Tools::options::/bin/bash::Version=3" "$@")" \
     || fatal "APT simulation failed"
   printf '%s\n' "$simulation"
   validate_apt_simulation "$simulation" "$@"
@@ -1516,13 +1517,12 @@ install_packages() {
   validate_package_availability "${PACKAGE_TRANSACTION_SPECS[@]}"
   create_apt_transaction_guard
   simulate_install "${PACKAGE_TRANSACTION_SPECS[@]}"
-  check_no_workloads
   require_docker_restart_quiescence "Station prerequisite package installation"
   info "Installing missing pinned Station prerequisites"
   sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
     apt-get install -y --no-install-recommends --no-remove \
     -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
-    -o "DPkg::Tools::options::${APT_TRANSACTION_HOOK}::Version=3" \
+    -o "DPkg::Tools::options::/bin/bash::Version=3" \
     "${PACKAGE_TRANSACTION_SPECS[@]}"
   cleanup_apt_transaction_guard
 
