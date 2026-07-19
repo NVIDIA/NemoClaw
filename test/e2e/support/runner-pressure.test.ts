@@ -1,0 +1,466 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { describe, expect, it } from "vitest";
+
+import {
+  assertPhaseLabel,
+  CLASSIFICATION_LINE_PREFIX,
+  classifyFailure,
+  decideRetry,
+  detectRunnerLoss,
+  MIN_DISK_FREE_BYTES,
+  MIN_INODES_FREE,
+  parseCgroupMemoryEvents,
+  parseCgroupScalar,
+  parseDockerSize,
+  parseDockerStats,
+  parseDockerSystemDf,
+  parseLoadAverages,
+  parseMeminfo,
+  parsePressure,
+  parseTopProcesses,
+  renderClassificationLine,
+  renderSnapshotLine,
+  SNAPSHOT_LINE_MAX_LENGTH,
+  SNAPSHOT_LINE_PREFIX,
+  type FailureEvidence,
+  type ResourceSnapshot,
+} from "../../../tools/e2e/runner-pressure-core.mts";
+
+const HELPER = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../tools/e2e/runner-pressure.mts",
+);
+
+function runHelper(args: string[], env: Record<string, string>) {
+  return spawnSync(process.execPath, ["--experimental-strip-types", HELPER, ...args], {
+    encoding: "utf-8",
+    env: { ...process.env, ...env },
+  });
+}
+
+const MEMINFO_FIXTURE = [
+  "MemTotal:       16384000 kB",
+  "MemFree:          204800 kB",
+  "MemAvailable:   12288000 kB",
+  "Cached:         10240000 kB",
+  "SReclaimable:     512000 kB",
+  "SwapTotal:       4194304 kB",
+  "SwapFree:        4194304 kB",
+].join("\n");
+
+function baseEvidence(): FailureEvidence {
+  return {
+    testOutcome: "none",
+    cgroupOomKills: 0,
+    kernelOomKilled: false,
+    containerOomKilled: false,
+    memFreeKb: 204800,
+    memAvailableKb: 12288000,
+    diskFreeBytes: 40 * 1024 ** 3,
+    inodesFree: 1_000_000,
+  };
+}
+
+function baseSnapshot(): ResourceSnapshot {
+  return {
+    phase: "rebuild-hermes.image-build",
+    at: "2026-07-18T00:00:00.000Z",
+    meminfo: parseMeminfo(MEMINFO_FIXTURE),
+    load: { load1: 3.5, load5: 2.1, load15: 1.0 },
+    cgroup: {
+      currentBytes: 9 * 1024 ** 3,
+      peakBytes: 12 * 1024 ** 3,
+      limitBytes: null,
+      events: { oom: 0, oomKill: 0 },
+    },
+    memoryPressure: { someAvg10: 12.5, someAvg60: 4.2, fullAvg10: 1.1, fullAvg60: 0.3 },
+    ioPressure: { someAvg10: 0.0, someAvg60: 0.0, fullAvg10: 0.0, fullAvg60: 0.0 },
+    topProcesses: [
+      { comm: "node", rssKb: 900000 },
+      { comm: "dockerd", rssKb: 400000 },
+    ],
+    containers: [
+      {
+        name: "e2e-rebuild-hermes",
+        cpuPercent: 95.2,
+        memBytes: 8 * 1024 ** 3,
+        memLimitBytes: null,
+      },
+    ],
+    dockerDisk: {
+      imagesBytes: 20 * 1024 ** 3,
+      containersBytes: 1024 ** 3,
+      buildCacheBytes: 5 * 1024 ** 3,
+    },
+    disk: {
+      freeBytes: 30 * 1024 ** 3,
+      totalBytes: 80 * 1024 ** 3,
+      inodesFree: 2_000_000,
+      inodesTotal: 4_000_000,
+    },
+  };
+}
+
+describe("host measurement parsers (#7146)", () => {
+  it("reads MemAvailable, Cached, SReclaimable, and swap from /proc/meminfo", () => {
+    const sample = parseMeminfo(MEMINFO_FIXTURE);
+    expect(sample).toEqual({
+      memTotalKb: 16384000,
+      memFreeKb: 204800,
+      memAvailableKb: 12288000,
+      cachedKb: 10240000,
+      sReclaimableKb: 512000,
+      swapTotalKb: 4194304,
+      swapFreeKb: 4194304,
+    });
+  });
+
+  it("keeps absent meminfo fields null instead of guessing", () => {
+    const sample = parseMeminfo("MemTotal: 1024 kB\nBogus line\n");
+    expect(sample.memTotalKb).toBe(1024);
+    expect(sample.memAvailableKb).toBeNull();
+    expect(sample.swapFreeKb).toBeNull();
+  });
+
+  it("parses load averages and rejects unrecognized loadavg shapes", () => {
+    expect(parseLoadAverages("3.52 2.10 1.05 2/1234 99999\n")).toEqual({
+      load1: 3.52,
+      load5: 2.1,
+      load15: 1.05,
+    });
+    expect(parseLoadAverages("not a loadavg")).toBeNull();
+  });
+
+  it("treats the cgroup 'max' sentinel as an absent limit", () => {
+    expect(parseCgroupScalar("9663676416\n")).toBe(9663676416);
+    expect(parseCgroupScalar("max\n")).toBeNull();
+    expect(parseCgroupScalar("garbage")).toBeNull();
+  });
+
+  it("reads oom and oom_kill counters from memory.events", () => {
+    const events = parseCgroupMemoryEvents("low 0\nhigh 44\nmax 12\noom 3\noom_kill 2\n");
+    expect(events).toEqual({ oom: 3, oomKill: 2 });
+    expect(parseCgroupMemoryEvents("")).toEqual({ oom: 0, oomKill: 0 });
+  });
+
+  it("reads some/full pressure stall averages from PSI files", () => {
+    const psi = parsePressure(
+      "some avg10=12.50 avg60=4.20 avg300=1.00 total=123456\nfull avg10=1.10 avg60=0.30 avg300=0.10 total=6543\n",
+    );
+    expect(psi).toEqual({ someAvg10: 12.5, someAvg60: 4.2, fullAvg10: 1.1, fullAvg60: 0.3 });
+  });
+
+  it("keeps only comm and rss for top processes, sorted and bounded", () => {
+    const ps = [
+      "node             900000",
+      "dockerd          400000",
+      "sshd               8000",
+      "vitest           700000",
+      "tar              100000",
+      "bash               4000",
+      "gpg                2000",
+    ].join("\n");
+    const top = parseTopProcesses(ps);
+    expect(top).toHaveLength(5);
+    expect(top[0]).toEqual({ comm: "node", rssKb: 900000 });
+    expect(top.map((p) => p.rssKb)).toEqual([...top.map((p) => p.rssKb)].sort((a, b) => b - a));
+  });
+
+  it("converts Docker size strings across decimal and binary units", () => {
+    expect(parseDockerSize("0B")).toBe(0);
+    expect(parseDockerSize("75.5kB")).toBe(75500);
+    expect(parseDockerSize("1.5MiB")).toBe(1572864);
+    expect(parseDockerSize("2GiB")).toBe(2147483648);
+    expect(parseDockerSize("weird")).toBeNull();
+  });
+
+  it("parses docker stats lines and skips malformed ones", () => {
+    const stats = [
+      JSON.stringify({ Name: "e2e-rebuild-hermes", CPUPerc: "95.2%", MemUsage: "8GiB / 15.6GiB" }),
+      "not json",
+      JSON.stringify({ CPUPerc: "1%" }),
+    ].join("\n");
+    const rows = parseDockerStats(stats);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.name).toBe("e2e-rebuild-hermes");
+    expect(rows[0]?.memBytes).toBe(8 * 1024 ** 3);
+    expect(rows[0]?.cpuPercent).toBe(95.2);
+  });
+
+  it("attributes docker disk use to images, containers, and build cache", () => {
+    const df = [
+      JSON.stringify({ Type: "Images", Size: "20GiB", Reclaimable: "4GiB" }),
+      JSON.stringify({ Type: "Containers", Size: "1GiB", Reclaimable: "0B" }),
+      JSON.stringify({ Type: "Build Cache", Size: "5GiB", Reclaimable: "5GiB" }),
+    ].join("\n");
+    expect(parseDockerSystemDf(df)).toEqual({
+      imagesBytes: 20 * 1024 ** 3,
+      containersBytes: 1024 ** 3,
+      buildCacheBytes: 5 * 1024 ** 3,
+    });
+  });
+});
+
+describe("bounded secret-safe snapshot line (#7146)", () => {
+  it("emits one prefixed line whose fields all come from the allowlisted shape", () => {
+    const line = renderSnapshotLine(baseSnapshot());
+    expect(line.startsWith(SNAPSHOT_LINE_PREFIX)).toBe(true);
+    const payload = JSON.parse(line.slice(SNAPSHOT_LINE_PREFIX.length));
+    expect(Object.keys(payload).sort()).toEqual([
+      "at",
+      "cgroup",
+      "containers",
+      "disk",
+      "dockerDisk",
+      "ioPressure",
+      "load",
+      "meminfo",
+      "memoryPressure",
+      "phase",
+      "topProcesses",
+      "v",
+    ]);
+    expect(payload.meminfo.memAvailableKb).toBe(12288000);
+    expect(payload.cgroup.limitBytes).toBeNull();
+  });
+
+  it("never emits fields outside the allowlist even when collectors misbehave", () => {
+    const poisoned = baseSnapshot() as ResourceSnapshot & Record<string, unknown>;
+    poisoned.leakedToken = "ghp_secret_value";
+    (poisoned.meminfo as unknown as Record<string, unknown>).AWS_SECRET_ACCESS_KEY = "leak";
+    const line = renderSnapshotLine(poisoned);
+    expect(line).not.toContain("leak");
+    expect(line).not.toContain("ghp_secret_value");
+    expect(line).not.toContain("AWS_SECRET_ACCESS_KEY");
+  });
+
+  it("stays within the line bound by dropping lists before scalars", () => {
+    const bloated = baseSnapshot();
+    bloated.topProcesses = Array.from({ length: 500 }, (_, i) => ({
+      comm: `proc-${i}-${"x".repeat(200)}`,
+      rssKb: i,
+    }));
+    bloated.containers = Array.from({ length: 500 }, (_, i) => ({
+      name: `container-${i}-${"y".repeat(200)}`,
+      cpuPercent: 1,
+      memBytes: 1,
+      memLimitBytes: 1,
+    }));
+    const line = renderSnapshotLine(bloated);
+    expect(line.length).toBeLessThanOrEqual(SNAPSHOT_LINE_MAX_LENGTH);
+    const payload = JSON.parse(line.slice(SNAPSHOT_LINE_PREFIX.length));
+    expect(payload.meminfo.memAvailableKb).toBe(12288000);
+  });
+
+  it("rejects phase labels that could inject argv options", () => {
+    expect(assertPhaseLabel("rebuild-hermes.image-build")).toBe("rebuild-hermes.image-build");
+    for (const bad of [undefined, "", "-oProxyCommand=x", "a b", "a$(x)", "a".repeat(80)]) {
+      expect(() => assertPhaseLabel(bad)).toThrow(/phase label/);
+    }
+  });
+});
+
+describe("terminal failure classification (#7146)", () => {
+  it("never classifies low raw MemFree alone as OOM", () => {
+    const classified = classifyFailure({
+      ...baseEvidence(),
+      memFreeKb: 1024,
+      memAvailableKb: 8_000_000,
+    });
+    expect(classified.classification).toBe("unknown");
+    expect(classified.reason).toContain("MemFree");
+  });
+
+  it("classifies a harness-reported assertion as assertion", () => {
+    const classified = classifyFailure({ ...baseEvidence(), testOutcome: "assertion" });
+    expect(classified.classification).toBe("assertion");
+  });
+
+  it("keeps an assertion deterministic even under background memory pressure", () => {
+    const classified = classifyFailure({
+      ...baseEvidence(),
+      testOutcome: "assertion",
+      memFreeKb: 1024,
+    });
+    expect(classified.classification).toBe("assertion");
+  });
+
+  it("classifies a container OOM kill from Docker evidence", () => {
+    const classified = classifyFailure({ ...baseEvidence(), containerOomKilled: true });
+    expect(classified.classification).toBe("container-oom");
+  });
+
+  it("classifies a cgroup oom_kill counter as process OOM", () => {
+    const classified = classifyFailure({ ...baseEvidence(), cgroupOomKills: 2 });
+    expect(classified.classification).toBe("process-oom");
+    expect(classified.reason).toContain("2");
+  });
+
+  it("classifies kernel OOM evidence as process OOM", () => {
+    const classified = classifyFailure({ ...baseEvidence(), kernelOomKilled: true });
+    expect(classified.classification).toBe("process-oom");
+  });
+
+  it("classifies exhausted workspace space or inodes as disk pressure", () => {
+    expect(
+      classifyFailure({ ...baseEvidence(), diskFreeBytes: MIN_DISK_FREE_BYTES - 1 }).classification,
+    ).toBe("disk-pressure");
+    expect(
+      classifyFailure({ ...baseEvidence(), inodesFree: MIN_INODES_FREE - 1 }).classification,
+    ).toBe("disk-pressure");
+  });
+
+  it("classifies a harness timeout without resource evidence as timeout", () => {
+    const classified = classifyFailure({ ...baseEvidence(), testOutcome: "timeout" });
+    expect(classified.classification).toBe("timeout");
+  });
+
+  it("prefers positive OOM evidence over a timeout it likely caused", () => {
+    const classified = classifyFailure({
+      ...baseEvidence(),
+      testOutcome: "timeout",
+      cgroupOomKills: 1,
+    });
+    expect(classified.classification).toBe("process-oom");
+  });
+
+  it("classifies an ambiguous failure as unknown", () => {
+    expect(classifyFailure(baseEvidence()).classification).toBe("unknown");
+  });
+
+  it("renders a machine-readable classification line", () => {
+    const line = renderClassificationLine({ classification: "disk-pressure", reason: "floor" });
+    expect(line.startsWith(CLASSIFICATION_LINE_PREFIX)).toBe(true);
+    expect(JSON.parse(line.slice(CLASSIFICATION_LINE_PREFIX.length))).toEqual({
+      v: 1,
+      classification: "disk-pressure",
+      reason: "floor",
+    });
+  });
+});
+
+describe("runner-loss signature and retry policy (#7146)", () => {
+  it("requires a positive loss signature, not just a failed job", () => {
+    expect(
+      detectRunnerLoss({
+        terminalClassificationPresent: false,
+        jobConclusion: "failure",
+        runnerLostMarkerCount: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("detects loss when the runner disappeared before classification", () => {
+    expect(
+      detectRunnerLoss({
+        terminalClassificationPresent: false,
+        jobConclusion: "cancelled",
+        runnerLostMarkerCount: 0,
+      }),
+    ).toBe(true);
+    expect(
+      detectRunnerLoss({
+        terminalClassificationPresent: false,
+        jobConclusion: "failure",
+        runnerLostMarkerCount: 1,
+      }),
+    ).toBe(true);
+  });
+
+  it("never treats an attempt that produced a terminal classification as loss", () => {
+    expect(
+      detectRunnerLoss({
+        terminalClassificationPresent: true,
+        jobConclusion: "cancelled",
+        runnerLostMarkerCount: 3,
+      }),
+    ).toBe(false);
+  });
+
+  it("gives an ordinary assertion zero automatic retries", () => {
+    const decision = decideRetry({ runnerLoss: false, classification: "assertion", attempt: 1 });
+    expect(decision.retry).toBe(false);
+    expect(decision.reason).toContain("assertion");
+  });
+
+  it("never retries classified OOM, disk-pressure, timeout, or unknown failures", () => {
+    for (const classification of [
+      "process-oom",
+      "container-oom",
+      "disk-pressure",
+      "timeout",
+      "unknown",
+    ] as const) {
+      expect(decideRetry({ runnerLoss: false, classification, attempt: 1 }).retry).toBe(false);
+    }
+  });
+
+  it("permits exactly one retry for a confirmed runner loss and links the attempts", () => {
+    const first = decideRetry({ runnerLoss: true, classification: null, attempt: 1 });
+    expect(first.retry).toBe(true);
+    expect(first.reason).toContain("linking both attempts");
+    const second = decideRetry({ runnerLoss: true, classification: null, attempt: 2 });
+    expect(second.retry).toBe(false);
+    expect(second.reason).toContain("single permitted");
+  });
+
+  it("rejects a non-positive attempt number", () => {
+    expect(() => decideRetry({ runnerLoss: true, classification: null, attempt: 0 })).toThrow(
+      /positive integer/,
+    );
+  });
+});
+
+describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
+  it("emits a bounded snapshot line even on hosts without cgroup or Docker", () => {
+    const result = runHelper(["snapshot"], { E2E_PHASE: "unit-test-phase" });
+    expect(result.status).toBe(0);
+    const line = result.stdout.split("\n").find((l) => l.startsWith(SNAPSHOT_LINE_PREFIX));
+    expect(line).toBeDefined();
+    const payload = JSON.parse((line as string).slice(SNAPSHOT_LINE_PREFIX.length));
+    expect(payload.phase).toBe("unit-test-phase");
+    expect((line as string).length).toBeLessThanOrEqual(SNAPSHOT_LINE_MAX_LENGTH);
+  }, 90_000);
+
+  it("classifies a harness assertion through the real CLI", () => {
+    const result = runHelper(["classify"], { TEST_OUTCOME: "assertion" });
+    expect(result.status).toBe(0);
+    const line = result.stdout.split("\n").find((l) => l.startsWith(CLASSIFICATION_LINE_PREFIX));
+    expect(line).toBeDefined();
+    expect(
+      JSON.parse((line as string).slice(CLASSIFICATION_LINE_PREFIX.length)).classification,
+    ).toBe("assertion");
+  }, 90_000);
+
+  it("prints a no-retry decision for an assertion and a retry for first runner loss", () => {
+    const assertion = runHelper(["decide-retry"], {
+      E2E_RUNNER_LOSS: "false",
+      E2E_CLASSIFICATION: "assertion",
+      E2E_ATTEMPT: "1",
+    });
+    expect(assertion.status).toBe(0);
+    expect(JSON.parse(assertion.stdout.trim()).retry).toBe(false);
+
+    const loss = runHelper(["decide-retry"], {
+      E2E_RUNNER_LOSS: "true",
+      E2E_CLASSIFICATION: "",
+      E2E_ATTEMPT: "1",
+    });
+    expect(loss.status).toBe(0);
+    expect(JSON.parse(loss.stdout.trim()).retry).toBe(true);
+  }, 90_000);
+
+  it("fails closed on a missing or unsupported subcommand", () => {
+    for (const args of [[], ["snapshotx"], ["run"]]) {
+      const result = runHelper(args, {});
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("usage:");
+    }
+  }, 90_000);
+});
