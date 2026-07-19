@@ -724,6 +724,86 @@ function stopModelRouter(
   if (stopped.size === 0) runtime.log("No model router processes found");
 }
 
+const HERMES_FORWARD_WATCHER_STATE_SUBDIR = "state";
+const HERMES_FORWARD_WATCHER_FILE_PATTERN = /^hermes-(.+)-(\d+)\.forward\.pid$/;
+
+function isHermesForwardWatcherPid(
+  pid: number,
+  watcherScript: string,
+  runtime: UninstallRuntime,
+): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!pidExists(pid, runtime)) return false;
+  const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
+  return result.status === 0 && result.stdout.includes(watcherScript);
+}
+
+function tryStopHermesForwardWatcherPid(pid: number, runtime: UninstallRuntime): boolean {
+  runtime.kill(pid);
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped Hermes forward watcher ${pid}`);
+    return true;
+  }
+  runtime.kill(pid, "SIGKILL");
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped Hermes forward watcher ${pid}`);
+    return true;
+  }
+  runtime.warn(`Failed to stop Hermes forward watcher ${pid}`);
+  return false;
+}
+
+function stopSandboxScopedForward(port: string, sandbox: string, runtime: UninstallRuntime): void {
+  if (!runtime.commandExists("openshell")) return;
+  runtime.run("openshell", ["forward", "stop", port, sandbox], { env: runtime.env });
+}
+
+function stopHermesForwardWatchers(paths: UninstallPaths, runtime: UninstallRuntime): boolean {
+  const stateDir = path.join(paths.nemoclawStateDir, HERMES_FORWARD_WATCHER_STATE_SUBDIR);
+  let entries: string[] = [];
+  if (runtime.existsSync(stateDir)) {
+    try {
+      entries = fs.readdirSync(stateDir);
+    } catch {
+      entries = [];
+    }
+  }
+  const pidFiles = entries.filter((name) => HERMES_FORWARD_WATCHER_FILE_PATTERN.test(name));
+  if (pidFiles.length === 0) {
+    runtime.log("No Hermes forward watchers found");
+    return true;
+  }
+
+  let allStopped = true;
+  for (const name of pidFiles) {
+    const match = HERMES_FORWARD_WATCHER_FILE_PATTERN.exec(name);
+    if (!match) continue;
+    const [, sandbox, port] = match;
+    const pidFile = path.join(stateDir, name);
+    const watcherScript = `${pidFile}.js`;
+
+    let pid: number | null = null;
+    try {
+      pid = Number.parseInt(fs.readFileSync(pidFile, "utf-8").trim(), 10);
+    } catch {
+      pid = null;
+    }
+
+    if (
+      pid !== null &&
+      Number.isFinite(pid) &&
+      pid > 0 &&
+      pidOwnedByCurrentUser(pid, runtime) &&
+      isHermesForwardWatcherPid(pid, watcherScript, runtime)
+    ) {
+      if (!tryStopHermesForwardWatcherPid(pid, runtime)) allStopped = false;
+    }
+
+    stopSandboxScopedForward(port, sandbox, runtime);
+  }
+  return allStopped;
+}
+
 function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
   if (!runtime.commandExists("pgrep")) {
     runtime.warn("pgrep not found; skipping orphaned openshell process cleanup.");
@@ -1295,6 +1375,7 @@ function executePlan(
           commandExists: runtime.commandExists,
         });
         stopOrphanedOpenShell(runtime);
+        if (!stopHermesForwardWatchers(paths, runtime)) ok = false;
       } else {
         runtime.log("Sibling gateways remain; kept shared helper and forward services.");
       }
