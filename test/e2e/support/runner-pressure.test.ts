@@ -51,6 +51,11 @@ const HELPER = path.resolve(
   "../../../tools/e2e/runner-pressure.mts",
 );
 
+const LINK_CREATORS = {
+  symlink: (target: string, linkedPath: string) => fs.symlinkSync(target, linkedPath),
+  hardlink: (target: string, linkedPath: string) => fs.linkSync(target, linkedPath),
+} as const;
+
 function runHelper(args: string[], env: Record<string, string>) {
   return spawnSync(process.execPath, ["--experimental-strip-types", HELPER, ...args], {
     encoding: "utf-8",
@@ -701,10 +706,7 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
       classification: "assertion",
       reason: "protected target",
     })}\n`;
-    const link = (target: string, linkedPath: string) => {
-      if (linkKind === "symlink") fs.symlinkSync(target, linkedPath);
-      else fs.linkSync(target, linkedPath);
-    };
+    const link = LINK_CREATORS[linkKind];
     const environment = {
       DOCKER_OOM_CONTAINER: "",
       E2E_PHASE: "unit-test",
