@@ -197,10 +197,13 @@ resolve_nemoclaw_gateway_port() {
   local port="${NEMOCLAW_GATEWAY_PORT:-8080}"
   port="${port#"${port%%[![:space:]]*}"}"
   port="${port%"${port##*[![:space:]]}"}"
-  if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+  if [[ ! "$port" =~ ^0*([0-9]{1,5})$ ]]; then
     error "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535."
   fi
-  port="$((10#$port))"
+  port="$((10#${BASH_REMATCH[1]}))"
+  if [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+    error "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535."
+  fi
   if [ "$port" -ge 18789 ] && [ "$port" -le 18799 ]; then
     error "NEMOCLAW_GATEWAY_PORT must not overlap the 18789-18799 dashboard port range."
   fi
