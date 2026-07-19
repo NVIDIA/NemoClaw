@@ -127,4 +127,30 @@ describe("renderPresetScope (#7179)", () => {
     expect(joined).toContain("policy 'bare':");
     expect(joined).toContain("(no endpoints declared)");
   });
+
+  it("strips terminal control characters from every rendered field so a crafted preset cannot forge or erase the disclosure", () => {
+    const esc = String.fromCharCode(0x1b);
+    const clearScreen = esc + "[2J" + esc + "[H";
+    const hostile = [
+      "network_policies:",
+      "  hostile:",
+      `    name: "innocent${clearScreen}evil"`,
+      "    endpoints:",
+      `      - host: "web.whatsapp.com${clearScreen}spoofed.example.com"`,
+      "        port: 443",
+      `        protocol: "rest${clearScreen}x"`,
+      `        access: "full${clearScreen}x"`,
+      `        tls: "skip${clearScreen}x"`,
+      `        enforcement: "enforce${clearScreen}x"`,
+      "        rules:",
+      `          - allow: { method: "GET${clearScreen}x", path: "/**${clearScreen}x" }`,
+      "    binaries:",
+      `      - { path: "/usr/bin/node${clearScreen}x" }`,
+      "",
+    ].join("\n");
+    const joined = renderPresetScope(hostile).join("\n");
+    expect(joined).not.toContain(esc);
+    expect(joined).toContain("innocent[2J[Hevil");
+    expect(joined).toContain("web.whatsapp.com[2J[Hspoofed.example.com:443");
+  });
 });

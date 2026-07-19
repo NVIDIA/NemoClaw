@@ -972,7 +972,7 @@ async function addSandboxChannelUnlocked(
   }
 
   if (dryRun) {
-    policies.logPresetScope(presetContent);
+    policies.logSandboxPresetScopeIfNew(sandboxName, canonical, presetContent);
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
     return;
   }
@@ -1438,6 +1438,12 @@ async function sandboxChannelsSetEnabled(
   }
 
   if (dryRun) {
+    if (!disabled) {
+      const presetContent = policies.loadPresetForSandbox(sandboxName, normalized);
+      if (presetContent) {
+        policies.logSandboxPresetScopeIfNew(sandboxName, normalized, presetContent);
+      }
+    }
     console.log(`  --dry-run: would ${verb} channel '${normalized}' for '${sandboxName}'.`);
     return;
   }

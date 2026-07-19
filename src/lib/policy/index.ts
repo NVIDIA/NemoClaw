@@ -34,7 +34,7 @@ import {
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./merge";
-import { findUnexpectedExistingPolicyKey } from "./preset-ownership";
+import { findUnexpectedExistingPolicyKey, presetIntroducesNewEgress } from "./preset-ownership";
 import {
   isPolicyDocument,
   isPolicyObject,
@@ -578,6 +578,13 @@ function mergePresetNamesIntoPolicy(
       continue;
     }
 
+    if (presetContent && presetIntroducesNewEgress(currentPolicy, presetContent)) {
+      logPresetScope(presetContent);
+    } else if (presetContent) {
+      console.log(
+        `  Preset '${presetName}' already matches the sandbox's live network policy; no new egress.`,
+      );
+    }
     merged = mergePresetIntoPolicy(merged, presetEntries);
     appliedPresets.push(presetName);
   }
@@ -831,6 +838,36 @@ function selectForRemoval(
 }
 
 /**
+ * Print the full effective-egress disclosure for `presetContent` against a
+ * sandbox's live policy, or a no-new-egress note when the preset's declared
+ * policies already match what is live. Used by preview paths (`--dry-run`)
+ * that show what a mutation would do without performing it, so they cannot
+ * misreport a no-op as new egress. If the live policy cannot be read, fails
+ * open toward disclosure (unlike the mutating paths, which fail closed and
+ * refuse to apply).
+ */
+function logSandboxPresetScopeIfNew(
+  sandboxName: string,
+  presetName: string,
+  presetContent: string,
+): void {
+  let rawPolicy: string | null = null;
+  try {
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
+  } catch {
+    /* Fall through to disclosure below. */
+  }
+  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
+  if (!currentPolicy || presetIntroducesNewEgress(currentPolicy, presetContent)) {
+    logPresetScope(presetContent);
+    return;
+  }
+  console.log(
+    `  Preset '${presetName}' already matches the sandbox's live network policy; no new egress.`,
+  );
+}
+
+/**
  * Apply raw preset content (already loaded in memory) to a running sandbox.
  * Validates the sandbox name, extracts the `network_policies` entries, merges
  * them into the sandbox's current policy, runs `openshell policy set --wait`,
@@ -936,7 +973,13 @@ function applyPresetContent(
   }
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
-  logPresetScope(presetContent);
+  if (presetIntroducesNewEgress(currentPolicy, presetContent)) {
+    logPresetScope(presetContent);
+  } else {
+    console.log(
+      `  Preset '${presetName}' already matches the sandbox's live network policy; no new egress.`,
+    );
+  }
 
   // Run before creating temp resources so a missing-binary exit doesn't
   // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
@@ -1059,7 +1102,12 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     );
     return false;
   }
-  const presetContents: string[] = [];
+  // Every disclosure below compares against this pre-batch snapshot, not the
+  // progressively merged policy, so it always answers "is this new relative
+  // to what is live right now" rather than "new relative to earlier presets
+  // in this same batch".
+  const originalPolicy = merged;
+  const presetEntriesByName: { presetName: string; presetContent: string }[] = [];
 
   for (const presetName of uniquePresetNames) {
     const presetContent = loadPresetForSandbox(sandboxName, presetName);
@@ -1074,12 +1122,18 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
       return false;
     }
 
-    presetContents.push(presetContent);
+    presetEntriesByName.push({ presetName, presetContent });
     merged = mergePresetIntoPolicy(merged, presetEntries);
   }
 
-  for (const presetContent of presetContents) {
-    logPresetScope(presetContent);
+  for (const { presetName, presetContent } of presetEntriesByName) {
+    if (presetIntroducesNewEgress(originalPolicy, presetContent)) {
+      logPresetScope(presetContent);
+    } else {
+      console.log(
+        `  Preset '${presetName}' already matches the sandbox's live network policy; no new egress.`,
+      );
+    }
   }
 
   // Run before creating temp resources so a missing-binary exit doesn't
@@ -1534,6 +1588,7 @@ export {
   loadPresetForSandbox,
   loadPresetFromFile,
   logPresetScope,
+  logSandboxPresetScopeIfNew,
   mergePresetIntoPolicy,
   mergePresetNamesIntoPolicy,
   networkPoliciesHasAllowedIps,

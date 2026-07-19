@@ -4,6 +4,17 @@
 import { isObjectRecord } from "../core/json-types";
 import { type PolicyValue, parseNetworkPolicies } from "./preset-parsing";
 
+// Every rendered field is parsed straight from a preset YAML, which for
+// --from-file/--from-dir presets is arbitrary user-supplied content: strip
+// terminal control characters so a crafted host/protocol/path cannot forge
+// or erase the disclosure block before the user reads it (no escape-sequence
+// forgery in operator terminals).
+const CONTROL_CHARS_RE = new RegExp("[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]", "g");
+
+function sanitizeForTerminal(value: string): string {
+  return value.replace(CONTROL_CHARS_RE, "");
+}
+
 type RuleScope = {
   action: "allow" | "deny";
   methods: string[];
@@ -31,20 +42,22 @@ export type PresetScope = {
 };
 
 function toStringOrUndefined(value: PolicyValue | undefined): string | undefined {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return sanitizeForTerminal(value);
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return undefined;
 }
 
 function toPortOrUndefined(value: unknown): number | string | undefined {
   if (typeof value === "number") return value;
-  if (typeof value === "string" && value.length > 0) return value;
+  if (typeof value === "string" && value.length > 0) return sanitizeForTerminal(value);
   return undefined;
 }
 
 function stringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
-  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) {
+    return value.filter((v): v is string => typeof v === "string").map(sanitizeForTerminal);
+  }
+  if (typeof value === "string") return [sanitizeForTerminal(value)];
   return [];
 }
 
@@ -74,10 +87,12 @@ function collectBinaries(policy: Record<string, unknown>): string[] {
   const out: string[] = [];
   for (const entry of binaries) {
     if (typeof entry === "string") {
-      out.push(entry);
+      out.push(sanitizeForTerminal(entry));
       continue;
     }
-    if (isObjectRecord(entry) && typeof entry.path === "string") out.push(entry.path);
+    if (isObjectRecord(entry) && typeof entry.path === "string") {
+      out.push(sanitizeForTerminal(entry.path));
+    }
   }
   return out;
 }
@@ -88,13 +103,14 @@ function extractPresetScope(content: string): PresetScope | null {
   const policies: PolicyScope[] = [];
   for (const [rawName, rawPolicy] of Object.entries(parsed)) {
     if (!isObjectRecord(rawPolicy)) continue;
-    const name = typeof rawPolicy.name === "string" ? rawPolicy.name : rawName;
+    const name = sanitizeForTerminal(typeof rawPolicy.name === "string" ? rawPolicy.name : rawName);
     const endpoints: EndpointScope[] = [];
     const rawEndpoints = rawPolicy.endpoints;
     if (Array.isArray(rawEndpoints)) {
       for (const rawEndpoint of rawEndpoints) {
         if (!isObjectRecord(rawEndpoint)) continue;
-        const host = typeof rawEndpoint.host === "string" ? rawEndpoint.host : null;
+        const host =
+          typeof rawEndpoint.host === "string" ? sanitizeForTerminal(rawEndpoint.host) : null;
         if (!host) continue;
         endpoints.push({
           host,

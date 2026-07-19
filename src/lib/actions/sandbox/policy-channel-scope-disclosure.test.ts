@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import * as defs from "../../agent/defs";
 import * as policy from "../../policy";
+import * as runner from "../../runner";
 import * as registry from "../../state/registry";
 import { addSandboxChannel } from "./policy-channel";
 
@@ -101,5 +102,35 @@ describe("channels add --dry-run discloses effective preset egress before mutati
     expect(scopeHeader).toBeGreaterThan(-1);
     expect(wouldEnable).toBeGreaterThan(scopeHeader);
     void exitMock;
+  });
+
+  it("does not claim new egress when the channel's preset already matches the live policy (#7179)", async () => {
+    const liveWhatsappPolicy = [
+      "version: 1",
+      "network_policies:",
+      "  whatsapp:",
+      "    name: whatsapp",
+      "    endpoints:",
+      "      - host: web.whatsapp.com",
+      "        port: 443",
+      "        access: full",
+      "        tls: skip",
+      "      - host: raw.githubusercontent.com",
+      "        port: 443",
+      "        protocol: rest",
+      "        enforcement: enforce",
+      "        rules:",
+      "          - allow: { method: GET, path: '/WhiskeySockets/Baileys/master/src/Defaults/index.ts' }",
+      "    binaries:",
+      "      - { path: /usr/local/bin/node }",
+      "",
+    ].join("\n");
+    vi.spyOn(runner, "runCapture").mockReturnValue(liveWhatsappPolicy);
+
+    await addSandboxChannel("sb-scope", { channel: "whatsapp", dryRun: true });
+
+    const output = collectLogOutput();
+    expect(output).not.toContain("Effective egress that would be opened:");
+    expect(output).toContain("already matches the sandbox's live network policy; no new egress.");
   });
 });

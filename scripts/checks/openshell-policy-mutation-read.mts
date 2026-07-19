@@ -44,7 +44,7 @@ export const MUTATION_READS: readonly AuditedMutationRead[] = [
   },
   {
     relativePath: "src/lib/policy/index.ts",
-    expectedReadCalls: 6,
+    expectedReadCalls: 7,
     baseCommand: "runCapture(buildPolicyGetCommand(sandboxName))",
     unsafeBaseCommand: "runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true })",
     fullCommand: "runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true })",
