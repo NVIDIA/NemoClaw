@@ -25,6 +25,7 @@ import {
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
+import { decideRetry, detectRunnerLoss } from "./runner-pressure-core.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
@@ -226,6 +227,7 @@ type CheckRun = {
   external_id?: string | null;
   status?: string;
   conclusion?: string | null;
+  details_url?: string | null;
   output?: { title?: string; summary?: string };
   app?: { id?: number } | null;
 };
@@ -924,6 +926,46 @@ function retryableFailureReason(check: CheckRun): RetryableFailureReason | undef
   return reason as RetryableFailureReason;
 }
 
+function priorRunnerLossRunUrls(
+  repository: string,
+  history: readonly CheckRun[],
+  currentCheckId: number,
+): string[] {
+  const prefix = `https://github.com/${repository}/actions/runs/`;
+  const priorRunnerLossChecks = history.filter(
+    (check) => check.id !== currentCheckId && retryableFailureReason(check) === "child-cancelled",
+  );
+  if (priorRunnerLossChecks.length > 1) {
+    throw new Error("Runner-loss retry history exceeds the single permitted retry");
+  }
+  return priorRunnerLossChecks.map((check) => {
+    const url = check.details_url;
+    if (
+      typeof url !== "string" ||
+      !url.startsWith(prefix) ||
+      !/^[1-9][0-9]*$/u.test(url.slice(prefix.length))
+    ) {
+      throw new Error("Runner-loss retry history has an invalid child-run URL");
+    }
+    return url;
+  });
+}
+
+function withRunnerLossLineage(
+  verdict: PrGateVerdict,
+  priorRunUrls: readonly string[],
+  currentRunUrl: string,
+): PrGateVerdict {
+  if (priorRunUrls.length === 0) return verdict;
+  const links = [...priorRunUrls, currentRunUrl].map(
+    (url, index) => `[attempt ${index + 1}](${url})`,
+  );
+  return {
+    ...verdict,
+    summary: `${verdict.summary}\nRunner-loss retry lineage: ${links.join(" → ")}.`,
+  };
+}
+
 function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
   if (checks.length === 0) return undefined;
   const ordered = [...checks].sort((left, right) => left.id - right.id);
@@ -943,7 +985,7 @@ function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
   return current;
 }
 
-async function matchingPrGateChecks(options: {
+async function matchingPrGateHistory(options: {
   repository: string;
   token: string;
   headSha: string;
@@ -957,9 +999,22 @@ async function matchingPrGateChecks(options: {
   if (sameIdentity.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
     throw new Error("PR gate check identity was claimed by an unexpected GitHub App");
   }
-  const current = currentExactDiffCheck(
-    sameIdentity.filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID),
-  );
+  const history = sameIdentity
+    .filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID)
+    .sort((left, right) => left.id - right.id);
+  currentExactDiffCheck(history);
+  return history;
+}
+
+async function matchingPrGateChecks(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+  baseSha: string;
+  prNumber: number;
+}): Promise<CheckRun[]> {
+  const history = await matchingPrGateHistory(options);
+  const current = history.at(-1);
   return current ? [current] : [];
 }
 
@@ -1616,13 +1671,14 @@ function ciFailureReport(options: {
   };
 }
 
-function e2eFailureReport(options: {
+export function e2eFailureReport(options: {
   repository: string;
   runId: number;
   workflowConclusion: string | null;
   jobs: readonly WorkflowJob[];
   jobDetailsAvailable: boolean;
   jobDetailsComplete: boolean;
+  runnerLossAttempt: number;
 }): PrGateVerdict {
   const runUrl = `https://github.com/${options.repository}/actions/runs/${options.runId}`;
   const conclusion = normalizedCiMetadata(
@@ -1650,11 +1706,24 @@ function e2eFailureReport(options: {
       options.jobDetailsComplete &&
       options.jobs.length > 0 &&
       options.jobs.every((job) => job.conclusion === "cancelled"));
+  const runnerLoss = detectRunnerLoss({
+    terminalClassificationPresent: false,
+    jobConclusion: conclusivelyCancelled ? "cancelled" : "failure",
+    runnerLostMarkerCount: 0,
+  });
+  const retryDecision = decideRetry({
+    runnerLoss,
+    classification: null,
+    attempt: options.runnerLossAttempt,
+  });
+  if (conclusivelyCancelled) {
+    summary.push(`Runner-loss policy: ${retryDecision.reason}.`);
+  }
   return {
     conclusion: "failure",
     title,
     summary: summary.join("\n"),
-    ...(conclusivelyCancelled ? { retryableFailureReason: "child-cancelled" as const } : {}),
+    ...(retryDecision.retry ? { retryableFailureReason: "child-cancelled" as const } : {}),
   };
 }
 
@@ -2728,16 +2797,22 @@ export async function finishPrGate(options: {
     }
     const workflowConclusion =
       child.status === "completed" ? child.conclusion : `unfinished (${child.status})`;
-    const matchingChecks = await matchingPrGateChecks({
+    const matchingHistory = await matchingPrGateHistory({
       repository,
       token,
       headSha: state.commitSha,
       baseSha: state.baseSha,
       prNumber: state.prNumber,
     });
-    if (matchingChecks.length !== 1 || matchingChecks[0]!.id !== options.checkRunId) {
+    if (matchingHistory.at(-1)?.id !== options.checkRunId) {
       throw new Error("controller state does not match the exact PR gate check");
     }
+    const priorRunnerLossUrls = priorRunnerLossRunUrls(
+      repository,
+      matchingHistory,
+      options.checkRunId,
+    );
+    const runnerLossAttempt = priorRunnerLossUrls.length + 1;
     const finalizeObsoleteExactDiff = async (): Promise<boolean> => {
       try {
         await requireLiveExactDiff({
@@ -2823,8 +2898,10 @@ export async function finishPrGate(options: {
         jobs,
         jobDetailsAvailable,
         jobDetailsComplete,
+        runnerLossAttempt,
       });
     }
+    verdict = withRunnerLossLineage(verdict, priorRunnerLossUrls, childRunUrl);
     if (await finalizeObsoleteExactDiff()) return;
     await completeCheck(context, token, verdict, childRunUrl);
     appendOutput("finalized", "true");

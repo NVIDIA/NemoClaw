@@ -4,6 +4,11 @@
 import fs from "node:fs";
 import os from "node:os";
 
+import {
+  appendResourcePhaseBaseline,
+  collectResourceSnapshot,
+} from "../../../tools/e2e/runner-pressure.mts";
+import { renderSnapshotLine } from "../../../tools/e2e/runner-pressure-core.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeOutputEvent } from "../fixtures/shell-probe.ts";
 
@@ -26,6 +31,8 @@ export interface RebuildHermesProgressOptions {
   clearTimer?: (timer: TimerHandle) => void;
   logLine?: (line: string) => void;
   sampleResources?: () => RebuildHermesResourceSnapshot;
+  sampleResourceEvidence?: (phase: string) => string;
+  recordResourceBaseline?: (phase: string) => void;
 }
 
 export interface RebuildHermesProgress {
@@ -65,6 +72,14 @@ function formatResources(sampleResources: () => RebuildHermesResourceSnapshot): 
   }
 }
 
+function resourcePhaseLabel(label: string): string {
+  const suffix = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-|-$/gu, "");
+  return `rebuild-hermes.${suffix}`;
+}
+
 /**
  * Keep the long Hermes scenario visible without forwarding command output,
  * which may contain credentials. The timestamp-only output observer records
@@ -80,10 +95,28 @@ export function startRebuildHermesProgress(
   const clearTimer = options.clearTimer ?? ((timer) => clearInterval(timer as NodeJS.Timeout));
   const logLine = options.logLine ?? ((line) => process.stdout.write(`${line}\n`));
   const sampleResources = options.sampleResources ?? defaultResourceSnapshot;
+  const sampleResourceEvidence =
+    options.sampleResourceEvidence ??
+    ((phase) => renderSnapshotLine(collectResourceSnapshot(resourcePhaseLabel(phase))));
+  const recordResourceBaseline =
+    options.recordResourceBaseline ??
+    ((phase) => {
+      const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
+      if (baselinePath) appendResourcePhaseBaseline(baselinePath, resourcePhaseLabel(phase));
+    });
   let phaseLabel = initialPhase;
   let phaseStartedAt = now();
   let lastOutputAt: number | null = null;
   let stopped = false;
+
+  const recordBaselineBestEffort = () => {
+    try {
+      recordResourceBaseline(phaseLabel);
+    } catch {
+      // Diagnostics must not change the live result. Classification retains
+      // the immutable pre-test baseline when the phase ledger is unavailable.
+    }
+  };
 
   const logBestEffort = (state: "started" | "running" | "finished") => {
     try {
@@ -96,11 +129,13 @@ export function startRebuildHermesProgress(
       logLine(
         `[rebuild-hermes] ${phaseLabel} ${state} (${elapsedSeconds}s elapsed; ${outputAge}; ${formatResources(sampleResources)})`,
       );
+      logLine(sampleResourceEvidence(phaseLabel));
     } catch {
       // Diagnostics must not change the live test result.
     }
   };
 
+  recordBaselineBestEffort();
   logBestEffort("started");
   const timer = setTimer(
     () => logBestEffort("running"),
@@ -118,6 +153,7 @@ export function startRebuildHermesProgress(
       phaseLabel = label;
       phaseStartedAt = now();
       lastOutputAt = null;
+      recordBaselineBestEffort();
       logBestEffort("started");
     },
     stop() {

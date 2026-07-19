@@ -11,6 +11,7 @@ import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import {
   abandonPrGate,
   cancelPrGate,
+  e2eFailureReport,
   findSignalFiles,
   finishPrGate,
   type PrGateState,
@@ -37,6 +38,43 @@ const CORRELATION_ID = "12345678-1234-4123-8123-123456789abc";
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+});
+
+describe("PR E2E runner-loss retry policy (#7146)", () => {
+  const cancelledJobs = [
+    {
+      id: 77,
+      name: "Hermes rebuild",
+      conclusion: "cancelled",
+      steps: [{ name: "Run Hermes rebuild live test", conclusion: "cancelled" }],
+    },
+  ];
+
+  it("marks only the first conclusively cancelled child attempt retryable", () => {
+    const first = e2eFailureReport({
+      repository: "NVIDIA/NemoClaw",
+      runId: 23,
+      workflowConclusion: "cancelled",
+      jobs: cancelledJobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: true,
+      runnerLossAttempt: 1,
+    });
+    const second = e2eFailureReport({
+      repository: "NVIDIA/NemoClaw",
+      runId: 24,
+      workflowConclusion: "cancelled",
+      jobs: cancelledJobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: true,
+      runnerLossAttempt: 2,
+    });
+
+    expect(first.retryableFailureReason).toBe("child-cancelled");
+    expect(first.summary).toContain("single permitted retry");
+    expect(second.retryableFailureReason).toBeUndefined();
+    expect(second.summary).toContain("already consumed");
+  });
 });
 
 function githubResponse(value?: unknown, status = 200): Response {
@@ -246,6 +284,84 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
 }
 
 describe("PR E2E controller lifecycle", () => {
+  it("links the original runner-loss run when its single retry passes", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-lineage-"));
+    const outputPath = path.join(workDir, "github-output");
+    const statePath = path.join(workDir, "controller-state.json");
+    const evidencePath = path.join(workDir, "evidence");
+    const gate = state();
+    const serializedState = `${JSON.stringify(gate, null, 2)}\n`;
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    fs.writeFileSync(statePath, serializedState, { mode: 0o600 });
+    fs.mkdirSync(evidencePath);
+    writePassingEvidence(evidencePath, gate);
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    const prior = exactPrGateCheck({
+      id: 16,
+      status: "completed",
+      conclusion: "failure",
+      details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/22",
+      output: {
+        title: "Selected E2E did not pass",
+        summary: "The child was cancelled.\n\n<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->",
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => githubResponse(workflowRun(gate)),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 2, check_runs: [prior, exactPrGateCheck()] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => prGateMutationResponse(request),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(
+        finishPrGate({
+          statePath,
+          stateHash: sha256(serializedState),
+          evidencePath,
+          checkRunId: 17,
+          childRunId: 23,
+          evidenceOutcome: "success",
+        }),
+      ).resolves.toBeUndefined();
+      const completion = requests.find(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(completion?.body).toMatchObject({
+        status: "completed",
+        conclusion: "success",
+        output: {
+          summary: expect.stringContaining(
+            "[attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/22) → [attempt 2](https://github.com/NVIDIA/NemoClaw/actions/runs/23)",
+          ),
+        },
+      });
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("cancels the child and closes the check when startup fails after dispatch", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-start-"));
     const outputPath = path.join(workDir, "github-output");

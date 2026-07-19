@@ -2,21 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
 import {
+  assertCanonicalTimestamp,
   assertPhaseLabel,
+  BASELINE_LINE_PREFIX,
   CLASSIFICATION_LINE_PREFIX,
   classifyFailure,
+  countKernelOomKills,
   decideRetry,
   detectRunnerLoss,
+  type FailureEvidence,
   MIN_DISK_FREE_BYTES,
   MIN_INODES_FREE,
+  parseBaselineLine,
   parseCgroupMemoryEvents,
   parseCgroupScalar,
+  parseClassificationLine,
   parseDockerSize,
   parseDockerStats,
   parseDockerSystemDf,
@@ -24,12 +32,13 @@ import {
   parseMeminfo,
   parsePressure,
   parseTopProcesses,
+  type ResourceSnapshot,
+  renderBaselineLine,
   renderClassificationLine,
   renderSnapshotLine,
   SNAPSHOT_LINE_MAX_LENGTH,
   SNAPSHOT_LINE_PREFIX,
-  type FailureEvidence,
-  type ResourceSnapshot,
+  selectFailureBaseline,
 } from "../../../tools/e2e/runner-pressure-core.mts";
 
 const HELPER = path.resolve(
@@ -42,6 +51,26 @@ function runHelper(args: string[], env: Record<string, string>) {
     encoding: "utf-8",
     env: { ...process.env, ...env },
   });
+}
+
+function withBaselineFile<T>(callback: (baselinePath: string) => T): T {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runner-pressure-"));
+  const baselinePath = path.join(directory, "baseline.jsonl");
+  fs.writeFileSync(
+    baselinePath,
+    `${renderBaselineLine({
+      phase: "unit-test",
+      at: "2026-07-18T00:00:00.000Z",
+      cgroupOomKills: 0,
+      kernelOomKillCount: 0,
+      containerOomKilled: false,
+    })}\n`,
+  );
+  try {
+    return callback(baselinePath);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }
 
 const MEMINFO_FIXTURE = [
@@ -57,9 +86,12 @@ const MEMINFO_FIXTURE = [
 function baseEvidence(): FailureEvidence {
   return {
     testOutcome: "none",
-    cgroupOomKills: 0,
-    kernelOomKilled: false,
-    containerOomKilled: false,
+    cgroupOomKillsBefore: 0,
+    cgroupOomKillsAfter: 0,
+    kernelOomKillCountBefore: 0,
+    kernelOomKillCountAfter: 0,
+    containerOomKilledBefore: false,
+    containerOomKilledAfter: false,
     memFreeKb: 204800,
     memAvailableKb: 12288000,
     diskFreeBytes: 40 * 1024 ** 3,
@@ -81,13 +113,9 @@ function baseSnapshot(): ResourceSnapshot {
     },
     memoryPressure: { someAvg10: 12.5, someAvg60: 4.2, fullAvg10: 1.1, fullAvg60: 0.3 },
     ioPressure: { someAvg10: 0.0, someAvg60: 0.0, fullAvg10: 0.0, fullAvg60: 0.0 },
-    topProcesses: [
-      { comm: "node", rssKb: 900000 },
-      { comm: "dockerd", rssKb: 400000 },
-    ],
+    topProcesses: [{ rssKb: 900000 }, { rssKb: 400000 }],
     containers: [
       {
-        name: "e2e-rebuild-hermes",
         cpuPercent: 95.2,
         memBytes: 8 * 1024 ** 3,
         memLimitBytes: null,
@@ -156,7 +184,7 @@ describe("host measurement parsers (#7146)", () => {
     expect(psi).toEqual({ someAvg10: 12.5, someAvg60: 4.2, fullAvg10: 1.1, fullAvg60: 0.3 });
   });
 
-  it("keeps only comm and rss for top processes, sorted and bounded", () => {
+  it("keeps only RSS ranks for top processes, sorted and bounded", () => {
     const ps = [
       "node             900000",
       "dockerd          400000",
@@ -168,7 +196,8 @@ describe("host measurement parsers (#7146)", () => {
     ].join("\n");
     const top = parseTopProcesses(ps);
     expect(top).toHaveLength(5);
-    expect(top[0]).toEqual({ comm: "node", rssKb: 900000 });
+    expect(top[0]).toEqual({ rssKb: 900000 });
+    expect(JSON.stringify(top)).not.toContain("node");
     expect(top.map((p) => p.rssKb)).toEqual([...top.map((p) => p.rssKb)].sort((a, b) => b - a));
   });
 
@@ -180,17 +209,18 @@ describe("host measurement parsers (#7146)", () => {
     expect(parseDockerSize("weird")).toBeNull();
   });
 
-  it("parses docker stats lines and skips malformed ones", () => {
+  it("parses docker stats without names and selects the largest consumers", () => {
     const stats = [
-      JSON.stringify({ Name: "e2e-rebuild-hermes", CPUPerc: "95.2%", MemUsage: "8GiB / 15.6GiB" }),
+      JSON.stringify({ Name: "token-small", CPUPerc: "99%", MemUsage: "1GiB / 15.6GiB" }),
+      JSON.stringify({ Name: "token-largest", CPUPerc: "1%", MemUsage: "9GiB / 15.6GiB" }),
+      JSON.stringify({ Name: "token-middle", CPUPerc: "95.2%", MemUsage: "8GiB / 15.6GiB" }),
       "not json",
       JSON.stringify({ CPUPerc: "1%" }),
     ].join("\n");
-    const rows = parseDockerStats(stats);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.name).toBe("e2e-rebuild-hermes");
-    expect(rows[0]?.memBytes).toBe(8 * 1024 ** 3);
-    expect(rows[0]?.cpuPercent).toBe(95.2);
+    const rows = parseDockerStats(stats, 2);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.memBytes)).toEqual([9 * 1024 ** 3, 8 * 1024 ** 3]);
+    expect(JSON.stringify(rows)).not.toContain("token-");
   });
 
   it("attributes docker disk use to images, containers, and build cache", () => {
@@ -228,26 +258,35 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
     ]);
     expect(payload.meminfo.memAvailableKb).toBe(12288000);
     expect(payload.cgroup.limitBytes).toBeNull();
+    expect(payload.topProcesses[0]).toEqual({ rank: 1, rssKb: 900000 });
+    expect(payload.containers[0]).toEqual({
+      rank: 1,
+      cpuPercent: 95.2,
+      memBytes: 8 * 1024 ** 3,
+      memLimitBytes: null,
+    });
   });
 
   it("never emits fields outside the allowlist even when collectors misbehave", () => {
     const poisoned = baseSnapshot() as ResourceSnapshot & Record<string, unknown>;
     poisoned.leakedToken = "ghp_secret_value";
     (poisoned.meminfo as unknown as Record<string, unknown>).AWS_SECRET_ACCESS_KEY = "leak";
+    (poisoned.topProcesses[0] as unknown as Record<string, unknown>).comm = "ghp_process_secret";
+    (poisoned.containers[0] as unknown as Record<string, unknown>).name = "ghp_container_secret";
     const line = renderSnapshotLine(poisoned);
     expect(line).not.toContain("leak");
     expect(line).not.toContain("ghp_secret_value");
     expect(line).not.toContain("AWS_SECRET_ACCESS_KEY");
+    expect(line).not.toContain("ghp_process_secret");
+    expect(line).not.toContain("ghp_container_secret");
   });
 
-  it("stays within the line bound by dropping lists before scalars", () => {
+  it("stays within the line bound by limiting ranked lists before rendering", () => {
     const bloated = baseSnapshot();
     bloated.topProcesses = Array.from({ length: 500 }, (_, i) => ({
-      comm: `proc-${i}-${"x".repeat(200)}`,
       rssKb: i,
     }));
     bloated.containers = Array.from({ length: 500 }, (_, i) => ({
-      name: `container-${i}-${"y".repeat(200)}`,
       cpuPercent: 1,
       memBytes: 1,
       memLimitBytes: 1,
@@ -256,6 +295,8 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
     expect(line.length).toBeLessThanOrEqual(SNAPSHOT_LINE_MAX_LENGTH);
     const payload = JSON.parse(line.slice(SNAPSHOT_LINE_PREFIX.length));
     expect(payload.meminfo.memAvailableKb).toBe(12288000);
+    expect(payload.topProcesses).toHaveLength(5);
+    expect(payload.containers).toHaveLength(5);
   });
 
   it("rejects phase labels that could inject argv options", () => {
@@ -264,9 +305,54 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
       expect(() => assertPhaseLabel(bad)).toThrow(/phase label/);
     }
   });
+
+  it("accepts only a bounded canonical UTC timestamp", () => {
+    expect(assertCanonicalTimestamp("2026-07-18T00:00:00.000Z")).toBe("2026-07-18T00:00:00.000Z");
+    for (const bad of [
+      undefined,
+      "",
+      "2026-07-18",
+      "2026-07-18T00:00:00Z",
+      "2026-02-31T00:00:00.000Z",
+      `2026-07-18T00:00:00.000Z${"ghp_secret".repeat(500)}`,
+    ]) {
+      expect(() => assertCanonicalTimestamp(bad)).toThrow(/timestamp/);
+    }
+  });
 });
 
 describe("terminal failure classification (#7146)", () => {
+  it("round-trips a strict numeric/boolean phase baseline", () => {
+    const line = renderBaselineLine({
+      phase: "rebuild-hermes.image-build",
+      at: "2026-07-18T00:00:00.000Z",
+      cgroupOomKills: 3,
+      kernelOomKillCount: 2,
+      containerOomKilled: false,
+    });
+    expect(line.startsWith(BASELINE_LINE_PREFIX)).toBe(true);
+    expect(parseBaselineLine(line)).toEqual({
+      phase: "rebuild-hermes.image-build",
+      at: "2026-07-18T00:00:00.000Z",
+      cgroupOomKills: 3,
+      kernelOomKillCount: 2,
+      containerOomKilled: false,
+    });
+    expect(() =>
+      parseBaselineLine(
+        `${BASELINE_LINE_PREFIX}{"v":1,"phase":"unit-test","at":"2026-07-18T00:00:00.000Z","cgroupOomKills":0,"kernelOomKillCount":0,"containerOomKilled":false,"token":"ghp_secret"}`,
+      ),
+    ).toThrow(/shape/);
+  });
+
+  it("counts explicit kernel OOM-kill records for phase deltas", () => {
+    expect(
+      countKernelOomKills(
+        "old line\nOut of memory: Killed process 42 (node)\nOut of memory: Killed process 99 (docker)\n",
+      ),
+    ).toBe(2);
+  });
+
   it("never classifies low raw MemFree alone as OOM", () => {
     const classified = classifyFailure({
       ...baseEvidence(),
@@ -292,19 +378,72 @@ describe("terminal failure classification (#7146)", () => {
   });
 
   it("classifies a container OOM kill from Docker evidence", () => {
-    const classified = classifyFailure({ ...baseEvidence(), containerOomKilled: true });
+    const classified = classifyFailure({ ...baseEvidence(), containerOomKilledAfter: true });
     expect(classified.classification).toBe("container-oom");
   });
 
-  it("classifies a cgroup oom_kill counter as process OOM", () => {
-    const classified = classifyFailure({ ...baseEvidence(), cgroupOomKills: 2 });
+  it("classifies a phase-local cgroup oom_kill delta as process OOM", () => {
+    const classified = classifyFailure({
+      ...baseEvidence(),
+      cgroupOomKillsBefore: 3,
+      cgroupOomKillsAfter: 5,
+    });
     expect(classified.classification).toBe("process-oom");
     expect(classified.reason).toContain("2");
   });
 
-  it("classifies kernel OOM evidence as process OOM", () => {
-    const classified = classifyFailure({ ...baseEvidence(), kernelOomKilled: true });
+  it("classifies a phase-local kernel OOM record delta as process OOM", () => {
+    const classified = classifyFailure({
+      ...baseEvidence(),
+      kernelOomKillCountBefore: 4,
+      kernelOomKillCountAfter: 5,
+    });
     expect(classified.classification).toBe("process-oom");
+  });
+
+  it("does not attribute OOM evidence that predates the failing phase", () => {
+    const classified = classifyFailure({
+      ...baseEvidence(),
+      cgroupOomKillsBefore: 3,
+      cgroupOomKillsAfter: 3,
+      kernelOomKillCountBefore: 2,
+      kernelOomKillCountAfter: 2,
+      containerOomKilledBefore: true,
+      containerOomKilledAfter: true,
+    });
+    expect(classified.classification).toBe("unknown");
+  });
+
+  it("selects the last phase baseline before an OOM instead of cleanup sampled after it", () => {
+    const initial = {
+      phase: "workflow",
+      at: "2026-07-18T00:00:00.000Z",
+      cgroupOomKills: 3,
+      kernelOomKillCount: 1,
+      containerOomKilled: false,
+    };
+    const failingPhase = {
+      ...initial,
+      phase: "rebuild-hermes.phase-6",
+      at: "2026-07-18T00:01:00.000Z",
+    };
+    const cleanup = {
+      ...initial,
+      phase: "rebuild-hermes.cleanup",
+      at: "2026-07-18T00:02:00.000Z",
+      cgroupOomKills: 4,
+    };
+    const current = { ...cleanup, phase: "workflow", at: "2026-07-18T00:03:00.000Z" };
+    const currentWithoutOom = {
+      ...initial,
+      at: "2026-07-18T00:03:00.000Z",
+    };
+
+    expect(selectFailureBaseline(initial, [failingPhase, cleanup], current)).toEqual(failingPhase);
+    expect(selectFailureBaseline(initial, [failingPhase], currentWithoutOom)).toEqual(initial);
+    expect(() =>
+      selectFailureBaseline(initial, [{ ...failingPhase, cgroupOomKills: 2 }], current),
+    ).toThrow("not monotonic");
   });
 
   it("classifies exhausted workspace space or inodes as disk pressure", () => {
@@ -325,7 +464,7 @@ describe("terminal failure classification (#7146)", () => {
     const classified = classifyFailure({
       ...baseEvidence(),
       testOutcome: "timeout",
-      cgroupOomKills: 1,
+      cgroupOomKillsAfter: 1,
     });
     expect(classified.classification).toBe("process-oom");
   });
@@ -342,6 +481,20 @@ describe("terminal failure classification (#7146)", () => {
       classification: "disk-pressure",
       reason: "floor",
     });
+  });
+
+  it("strictly parses one bounded terminal classification", () => {
+    const line = renderClassificationLine({ classification: "assertion", reason: "test failed" });
+    expect(parseClassificationLine(line)).toEqual({
+      classification: "assertion",
+      reason: "test failed",
+    });
+    expect(() => parseClassificationLine(`${line.slice(0, -1)},"token":"ghp_secret"}`)).toThrow(
+      "unsupported shape",
+    );
+    expect(() =>
+      renderClassificationLine({ classification: "unknown", reason: "secret\nsecond line" }),
+    ).toThrow("bounded printable ASCII");
   });
 });
 
@@ -401,6 +554,21 @@ describe("runner-loss signature and retry policy (#7146)", () => {
     }
   });
 
+  it("fails closed when runner-loss evidence contradicts a terminal classification", () => {
+    for (const classification of [
+      "assertion",
+      "timeout",
+      "process-oom",
+      "container-oom",
+      "disk-pressure",
+      "unknown",
+    ] as const) {
+      const decision = decideRetry({ runnerLoss: true, classification, attempt: 1 });
+      expect(decision.retry).toBe(false);
+      expect(decision.reason).toContain("terminal");
+    }
+  });
+
   it("permits exactly one retry for a confirmed runner loss and links the attempts", () => {
     const first = decideRetry({ runnerLoss: true, classification: null, attempt: 1 });
     expect(first.retry).toBe(true);
@@ -428,14 +596,86 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
     expect((line as string).length).toBeLessThanOrEqual(SNAPSHOT_LINE_MAX_LENGTH);
   }, 90_000);
 
-  it("classifies a harness assertion through the real CLI", () => {
-    const result = runHelper(["classify"], { TEST_OUTCOME: "assertion" });
+  it("emits a strict pre-phase baseline through the real CLI", () => {
+    const result = runHelper(["baseline"], { E2E_PHASE: "unit-test" });
     expect(result.status).toBe(0);
-    const line = result.stdout.split("\n").find((l) => l.startsWith(CLASSIFICATION_LINE_PREFIX));
-    expect(line).toBeDefined();
-    expect(
-      JSON.parse((line as string).slice(CLASSIFICATION_LINE_PREFIX.length)).classification,
-    ).toBe("assertion");
+    expect(parseBaselineLine(result.stdout)).toEqual({
+      phase: "unit-test",
+      at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+      cgroupOomKills: expect.any(Number),
+      kernelOomKillCount: expect.any(Number),
+      containerOomKilled: false,
+    });
+  }, 90_000);
+
+  it("classifies a harness assertion through the real CLI", () => {
+    withBaselineFile((baselinePath) => {
+      const result = runHelper(["classify"], {
+        TEST_OUTCOME: "assertion",
+        E2E_RESOURCE_BASELINE_FILE: baselinePath,
+      });
+      expect(result.status).toBe(0);
+      const line = result.stdout.split("\n").find((l) => l.startsWith(CLASSIFICATION_LINE_PREFIX));
+      expect(line).toBeDefined();
+      expect(
+        JSON.parse((line as string).slice(CLASSIFICATION_LINE_PREFIX.length)).classification,
+      ).toBe("assertion");
+    });
+  }, 90_000);
+
+  it("rejects missing or malformed pre-phase evidence before classification", () => {
+    const missing = runHelper(["classify"], { TEST_OUTCOME: "none" });
+    expect(missing.status).not.toBe(0);
+    expect(missing.stderr).toContain("E2E_RESOURCE_BASELINE_FILE");
+
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runner-pressure-bad-"));
+    const baselinePath = path.join(directory, "baseline.jsonl");
+    try {
+      fs.writeFileSync(baselinePath, `${BASELINE_LINE_PREFIX}{"v":1,"token":"ghp_secret"}\n`);
+      const malformed = runHelper(["classify"], {
+        TEST_OUTCOME: "none",
+        E2E_RESOURCE_BASELINE_FILE: baselinePath,
+      });
+      expect(malformed.status).not.toBe(0);
+      expect(malformed.stderr).toContain("unsupported shape");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  it("consumes exactly one canonical terminal classification artifact", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-classification-"));
+    const classificationPath = path.join(directory, "classification.jsonl");
+    try {
+      fs.writeFileSync(
+        classificationPath,
+        `${renderClassificationLine({ classification: "timeout", reason: "phase timed out" })}\n`,
+      );
+      const valid = runHelper(["validate-classification"], {
+        E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
+      });
+      expect(valid.status).toBe(0);
+      expect(valid.stdout.trim()).toBe("timeout");
+
+      fs.writeFileSync(classificationPath, `${CLASSIFICATION_LINE_PREFIX}{"v":1}\n`);
+      const malformed = runHelper(["validate-classification"], {
+        E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
+      });
+      expect(malformed.status).not.toBe(0);
+      expect(malformed.stderr).toContain("unsupported shape");
+
+      fs.writeFileSync(
+        classificationPath,
+        `${renderClassificationLine({ classification: "timeout", reason: "first" })}\n${renderClassificationLine({ classification: "unknown", reason: "second" })}\n`,
+      );
+      const duplicate = runHelper(["validate-classification"], {
+        E2E_TERMINAL_CLASSIFICATION_FILE: classificationPath,
+      });
+      expect(duplicate.status).not.toBe(0);
+      expect(duplicate.stderr).toContain("exactly one line");
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   }, 90_000);
 
   it("prints a no-retry decision for an assertion and a retry for first runner loss", () => {
@@ -446,6 +686,14 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
     });
     expect(assertion.status).toBe(0);
     expect(JSON.parse(assertion.stdout.trim()).retry).toBe(false);
+
+    const contradiction = runHelper(["decide-retry"], {
+      E2E_RUNNER_LOSS: "true",
+      E2E_CLASSIFICATION: "assertion",
+      E2E_ATTEMPT: "1",
+    });
+    expect(contradiction.status).toBe(0);
+    expect(JSON.parse(contradiction.stdout.trim()).retry).toBe(false);
 
     const loss = runHelper(["decide-retry"], {
       E2E_RUNNER_LOSS: "true",

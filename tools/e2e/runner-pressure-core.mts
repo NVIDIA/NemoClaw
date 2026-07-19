@@ -23,12 +23,11 @@
  * second progress framework.
  */
 
-const COMM_MAX_LENGTH = 32;
-const CONTAINER_NAME_MAX_LENGTH = 64;
 const TOP_PROCESS_LIMIT = 5;
 const CONTAINER_STAT_LIMIT = 5;
 export const SNAPSHOT_LINE_PREFIX = "E2E_RESOURCE_SNAPSHOT ";
 export const CLASSIFICATION_LINE_PREFIX = "E2E_TERMINAL_CLASSIFICATION ";
+export const BASELINE_LINE_PREFIX = "E2E_RESOURCE_BASELINE ";
 export const SNAPSHOT_LINE_MAX_LENGTH = 4096;
 
 /** Free-space floors below which a failure is attributed to disk pressure. */
@@ -144,21 +143,19 @@ export function parsePressure(text: string): PressureSample {
 }
 
 export interface ProcessSample {
-  comm: string;
   rssKb: number;
 }
 
 /**
- * Parse `ps -eo comm=,rss=` output into the top RSS consumers. Only the comm
- * name is retained — never argv — so command payloads and credentials in
- * process arguments cannot enter the evidence stream.
+ * Parse `ps -eo rss=` output into the top RSS consumers. Process-controlled
+ * names and argv are intentionally discarded so they cannot enter evidence.
  */
 export function parseTopProcesses(text: string, limit = TOP_PROCESS_LIMIT): ProcessSample[] {
   const rows: ProcessSample[] = [];
   for (const line of text.split("\n")) {
-    const match = /^(\S.*?)\s+(\d+)\s*$/u.exec(line.trim());
+    const match = /(?:^|\s)(\d+)\s*$/u.exec(line.trim());
     if (!match) continue;
-    rows.push({ comm: (match[1] as string).slice(0, COMM_MAX_LENGTH), rssKb: Number(match[2]) });
+    rows.push({ rssKb: Number(match[1]) });
   }
   rows.sort((a, b) => b.rssKb - a.rssKb);
   return rows.slice(0, limit);
@@ -186,7 +183,6 @@ export function parseDockerSize(value: string): number | null {
 }
 
 export interface ContainerStatSample {
-  name: string;
   cpuPercent: number | null;
   memBytes: number | null;
   memLimitBytes: number | null;
@@ -194,7 +190,8 @@ export interface ContainerStatSample {
 
 /**
  * Parse `docker stats --no-stream --format '{{json .}}'` lines. Malformed
- * lines are skipped; names are truncated to a bounded length.
+ * lines are skipped. Container-controlled names are intentionally discarded.
+ * Rows are sorted before limiting so evidence reports the largest consumers.
  */
 export function parseDockerStats(
   text: string,
@@ -212,19 +209,21 @@ export function parseDockerStats(
     }
     if (typeof parsed !== "object" || parsed === null) continue;
     const record = parsed as Record<string, unknown>;
-    if (typeof record.Name !== "string") continue;
     const memParts = typeof record.MemUsage === "string" ? record.MemUsage.split("/") : [];
     const cpuMatch =
       typeof record.CPUPerc === "string" ? /^(\d+(?:\.\d+)?)%$/u.exec(record.CPUPerc.trim()) : null;
     rows.push({
-      name: record.Name.slice(0, CONTAINER_NAME_MAX_LENGTH),
       cpuPercent: cpuMatch ? Number(cpuMatch[1]) : null,
       memBytes: memParts[0] !== undefined ? parseDockerSize(memParts[0]) : null,
       memLimitBytes: memParts[1] !== undefined ? parseDockerSize(memParts[1]) : null,
     });
-    if (rows.length >= limit) break;
   }
-  return rows;
+  rows.sort(
+    (a, b) =>
+      (b.memBytes ?? Number.NEGATIVE_INFINITY) - (a.memBytes ?? Number.NEGATIVE_INFINITY) ||
+      (b.cpuPercent ?? Number.NEGATIVE_INFINITY) - (a.cpuPercent ?? Number.NEGATIVE_INFINITY),
+  );
+  return rows.slice(0, limit);
 }
 
 export interface DockerDiskSample {
@@ -289,6 +288,7 @@ export interface ResourceSnapshot {
 }
 
 const PHASE_LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+const CANONICAL_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
 /**
  * Validate a phase label before it enters argv or the evidence stream. The
@@ -302,12 +302,24 @@ export function assertPhaseLabel(value: string | undefined): string {
   return value;
 }
 
+/** Accept only the fixed-width UTC representation produced by toISOString. */
+export function assertCanonicalTimestamp(value: string | undefined): string {
+  if (!value || !CANONICAL_TIMESTAMP_PATTERN.test(value)) {
+    throw new Error("snapshot timestamp must be a canonical UTC ISO-8601 value");
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString() !== value) {
+    throw new Error("snapshot timestamp must be a canonical UTC ISO-8601 value");
+  }
+  return value;
+}
+
 const number_ = (value: number | null | undefined): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
 /**
  * Serialize a snapshot to one bounded line. Every field is copied explicitly —
- * numbers, comm names, and container names only — so content outside the
+ * numbers and fixed rank values only — so content outside the
  * allowlisted shape (environment values, command payloads, tokens) cannot be
  * emitted even if a collector is compromised or misbehaves. Lists are dropped
  * before scalars if the line would exceed the bound.
@@ -317,7 +329,7 @@ export function renderSnapshotLine(snapshot: ResourceSnapshot): string {
     const safe = {
       v: 1,
       phase: assertPhaseLabel(snapshot.phase),
-      at: snapshot.at,
+      at: assertCanonicalTimestamp(snapshot.at),
       meminfo:
         snapshot.meminfo === null
           ? null
@@ -358,11 +370,11 @@ export function renderSnapshotLine(snapshot: ResourceSnapshot): string {
       topProcesses: withLists
         ? snapshot.topProcesses
             .slice(0, TOP_PROCESS_LIMIT)
-            .map((p) => ({ comm: p.comm.slice(0, COMM_MAX_LENGTH), rssKb: number_(p.rssKb) }))
+            .map((p, index) => ({ rank: index + 1, rssKb: number_(p.rssKb) }))
         : [],
       containers: withLists
-        ? snapshot.containers.slice(0, CONTAINER_STAT_LIMIT).map((c) => ({
-            name: c.name.slice(0, CONTAINER_NAME_MAX_LENGTH),
+        ? snapshot.containers.slice(0, CONTAINER_STAT_LIMIT).map((c, index) => ({
+            rank: index + 1,
             cpuPercent: number_(c.cpuPercent),
             memBytes: number_(c.memBytes),
             memLimitBytes: number_(c.memLimitBytes),
@@ -404,6 +416,121 @@ function renderPressure(sample: PressureSample | null): PressureSample | null {
 
 // ── Terminal classification ──────────────────────────────────────────────────
 
+export interface ResourceBaseline {
+  phase: string;
+  at: string;
+  cgroupOomKills: number;
+  kernelOomKillCount: number;
+  containerOomKilled: boolean;
+}
+
+function assertCounter(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${field} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
+/** Count only explicit kernel OOM-kill records, never arbitrary diagnostics. */
+export function countKernelOomKills(text: string): number {
+  return text.match(/\bOut of memory:\s+Killed process\b/gu)?.length ?? 0;
+}
+
+/** Serialize the numeric/boolean pre-phase OOM baseline to a bounded line. */
+export function renderBaselineLine(baseline: ResourceBaseline): string {
+  return `${BASELINE_LINE_PREFIX}${JSON.stringify({
+    v: 1,
+    phase: assertPhaseLabel(baseline.phase),
+    at: assertCanonicalTimestamp(baseline.at),
+    cgroupOomKills: assertCounter(baseline.cgroupOomKills, "cgroupOomKills"),
+    kernelOomKillCount: assertCounter(baseline.kernelOomKillCount, "kernelOomKillCount"),
+    containerOomKilled: baseline.containerOomKilled === true,
+  })}`;
+}
+
+/** Parse a baseline emitted by renderBaselineLine and reject all other shapes. */
+export function parseBaselineLine(line: string): ResourceBaseline {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith(BASELINE_LINE_PREFIX)) {
+    throw new Error(`resource baseline must start with ${BASELINE_LINE_PREFIX.trim()}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed.slice(BASELINE_LINE_PREFIX.length));
+  } catch {
+    throw new Error("resource baseline must contain valid JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("resource baseline must be an object");
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    record.v !== 1 ||
+    typeof record.containerOomKilled !== "boolean" ||
+    Object.keys(record).sort().join(",") !==
+      "at,cgroupOomKills,containerOomKilled,kernelOomKillCount,phase,v"
+  ) {
+    throw new Error("resource baseline has an unsupported shape");
+  }
+  return {
+    phase: assertPhaseLabel(typeof record.phase === "string" ? record.phase : undefined),
+    at: assertCanonicalTimestamp(typeof record.at === "string" ? record.at : undefined),
+    cgroupOomKills: assertCounter(record.cgroupOomKills, "cgroupOomKills"),
+    kernelOomKillCount: assertCounter(record.kernelOomKillCount, "kernelOomKillCount"),
+    containerOomKilled: record.containerOomKilled,
+  };
+}
+
+function baselineHasPositiveOomDelta(
+  baseline: ResourceBaseline,
+  current: ResourceBaseline,
+): boolean {
+  return (
+    current.cgroupOomKills > baseline.cgroupOomKills ||
+    current.kernelOomKillCount > baseline.kernelOomKillCount ||
+    (!baseline.containerOomKilled && current.containerOomKilled)
+  );
+}
+
+/**
+ * Select the latest recorded phase that predates positive OOM evidence. A
+ * cleanup phase sampled after the kill is intentionally skipped so it cannot
+ * erase attribution to the phase that was active when the counter changed.
+ */
+export function selectFailureBaseline(
+  initial: ResourceBaseline,
+  phaseBaselines: readonly ResourceBaseline[],
+  current: ResourceBaseline,
+): ResourceBaseline {
+  const initialAt = Date.parse(assertCanonicalTimestamp(initial.at));
+  const currentAt = Date.parse(assertCanonicalTimestamp(current.at));
+  if (
+    currentAt < initialAt ||
+    current.cgroupOomKills < initial.cgroupOomKills ||
+    current.kernelOomKillCount < initial.kernelOomKillCount
+  ) {
+    throw new Error("current OOM evidence contradicts the workflow baseline");
+  }
+  let previousAt = initialAt;
+  for (const baseline of phaseBaselines) {
+    const baselineAt = Date.parse(assertCanonicalTimestamp(baseline.at));
+    if (
+      baselineAt < previousAt ||
+      baselineAt > currentAt ||
+      baseline.cgroupOomKills < initial.cgroupOomKills ||
+      baseline.kernelOomKillCount < initial.kernelOomKillCount
+    ) {
+      throw new Error("phase baseline ledger is not monotonic from the workflow baseline");
+    }
+    previousAt = baselineAt;
+  }
+  for (let index = phaseBaselines.length - 1; index >= 0; index -= 1) {
+    const candidate = phaseBaselines[index]!;
+    if (baselineHasPositiveOomDelta(candidate, current)) return candidate;
+  }
+  return initial;
+}
+
 export const TERMINAL_CLASSIFICATIONS = [
   "assertion",
   "timeout",
@@ -418,12 +545,15 @@ export type TerminalClassification = (typeof TERMINAL_CLASSIFICATIONS)[number];
 export interface FailureEvidence {
   /** What the test harness itself reported for the failing run. */
   testOutcome: "assertion" | "timeout" | "none";
-  /** cgroup `memory.events` oom_kill counter for the run's cgroup. */
-  cgroupOomKills: number;
-  /** Kernel OOM evidence where the hosted environment permits reading it. */
-  kernelOomKilled: boolean;
-  /** Docker `.State.OOMKilled` for the container under test, when known. */
-  containerOomKilled: boolean;
+  /** Pre-phase and post-phase cgroup `memory.events` oom_kill counters. */
+  cgroupOomKillsBefore: number;
+  cgroupOomKillsAfter: number;
+  /** Pre-phase and post-phase explicit kernel OOM-kill record counts. */
+  kernelOomKillCountBefore: number;
+  kernelOomKillCountAfter: number;
+  /** Docker `.State.OOMKilled` before and after the phase, when known. */
+  containerOomKilledBefore: boolean;
+  containerOomKilledAfter: boolean;
   memFreeKb: number | null;
   memAvailableKb: number | null;
   diskFreeBytes: number | null;
@@ -435,6 +565,27 @@ export interface ClassifiedFailure {
   reason: string;
 }
 
+const CLASSIFICATION_REASON_MAX_LENGTH = 512;
+
+function assertClassificationReason(value: unknown): string {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > CLASSIFICATION_REASON_MAX_LENGTH ||
+    /[^\x20-\x7e]/u.test(value)
+  ) {
+    throw new Error("classification reason must be bounded printable ASCII");
+  }
+  return value;
+}
+
+function positiveCounterDelta(before: number, after: number): number {
+  if (!Number.isSafeInteger(before) || before < 0 || !Number.isSafeInteger(after) || after < 0) {
+    return 0;
+  }
+  return Math.max(0, after - before);
+}
+
 /**
  * Classify an ordinary (non-runner-loss) failure from positive evidence only.
  * Low raw `MemFree` is never treated as OOM: page cache makes a healthy host
@@ -442,25 +593,33 @@ export interface ClassifiedFailure {
  * evidence.
  */
 export function classifyFailure(evidence: FailureEvidence): ClassifiedFailure {
+  const cgroupOomKillDelta = positiveCounterDelta(
+    evidence.cgroupOomKillsBefore,
+    evidence.cgroupOomKillsAfter,
+  );
+  const kernelOomKillDelta = positiveCounterDelta(
+    evidence.kernelOomKillCountBefore,
+    evidence.kernelOomKillCountAfter,
+  );
   if (evidence.testOutcome === "assertion") {
     return {
       classification: "assertion",
       reason: "the test harness reported an assertion failure; this is deterministic evidence",
     };
   }
-  if (evidence.containerOomKilled) {
+  if (!evidence.containerOomKilledBefore && evidence.containerOomKilledAfter) {
     return {
       classification: "container-oom",
       reason: "Docker reported OOMKilled=true for the container under test",
     };
   }
-  if (evidence.cgroupOomKills > 0 || evidence.kernelOomKilled) {
+  if (cgroupOomKillDelta > 0 || kernelOomKillDelta > 0) {
     return {
       classification: "process-oom",
       reason:
-        evidence.cgroupOomKills > 0
-          ? `cgroup memory.events recorded ${evidence.cgroupOomKills} oom_kill event(s)`
-          : "the kernel log recorded an OOM kill",
+        cgroupOomKillDelta > 0
+          ? `cgroup memory.events increased by ${cgroupOomKillDelta} oom_kill event(s) during the phase`
+          : `the kernel log gained ${kernelOomKillDelta} OOM-kill record(s) during the phase`,
     };
   }
   if (
@@ -490,8 +649,38 @@ export function renderClassificationLine(classified: ClassifiedFailure): string 
   return `${CLASSIFICATION_LINE_PREFIX}${JSON.stringify({
     v: 1,
     classification: classified.classification,
-    reason: classified.reason,
+    reason: assertClassificationReason(classified.reason),
   })}`;
+}
+
+/** Parse one terminal line and reject missing, malformed, or extended shapes. */
+export function parseClassificationLine(line: string): ClassifiedFailure {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith(CLASSIFICATION_LINE_PREFIX)) {
+    throw new Error(`terminal classification must start with ${CLASSIFICATION_LINE_PREFIX.trim()}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed.slice(CLASSIFICATION_LINE_PREFIX.length));
+  } catch {
+    throw new Error("terminal classification must contain valid JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("terminal classification must be an object");
+  }
+  const record = parsed as Record<string, unknown>;
+  if (
+    record.v !== 1 ||
+    typeof record.classification !== "string" ||
+    !TERMINAL_CLASSIFICATIONS.includes(record.classification as TerminalClassification) ||
+    Object.keys(record).sort().join(",") !== "classification,reason,v"
+  ) {
+    throw new Error("terminal classification has an unsupported shape");
+  }
+  return {
+    classification: record.classification as TerminalClassification,
+    reason: assertClassificationReason(record.reason),
+  };
 }
 
 // ── Runner-loss signature and retry policy ───────────────────────────────────
@@ -538,11 +727,16 @@ export function decideRetry(input: RetryDecisionInput): RetryDecision {
   if (!Number.isInteger(input.attempt) || input.attempt < 1) {
     throw new Error("attempt must be a positive integer");
   }
-  if (!input.runnerLoss) {
-    const classification = input.classification ?? "unknown";
+  if (input.classification !== null) {
     return {
       retry: false,
-      reason: `classification '${classification}' is never retried; only a confirmed hosted-runner loss is`,
+      reason: `classification '${input.classification}' is terminal and cannot be overridden by runner-loss evidence`,
+    };
+  }
+  if (!input.runnerLoss) {
+    return {
+      retry: false,
+      reason: "an unclassified failure is never retried; only a confirmed hosted-runner loss is",
     };
   }
   if (input.attempt > 1) {
