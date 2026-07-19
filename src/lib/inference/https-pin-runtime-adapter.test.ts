@@ -41,7 +41,8 @@ function listen(server: http.Server): Promise<string> {
   });
 }
 
-const TEST_TOKEN = "test-control-plane-token";
+const CONTROL_TOKEN = "test-control-plane-token";
+const ROUTE_TOKEN = "test-route-token";
 
 function readRequestBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -54,7 +55,7 @@ function readRequestBody(req: http.IncomingMessage): Promise<string> {
 
 describe("createHttpsPinRuntimeAdapterServer health and auth (#6141)", () => {
   it("exposes an unauthenticated health endpoint without leaking the token", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/health`);
@@ -62,17 +63,58 @@ describe("createHttpsPinRuntimeAdapterServer health and auth (#6141)", () => {
     const body = (await response.json()) as { ok: boolean; routeCount: number; tokenHash: string };
     expect(body).toMatchObject({ ok: true, routeCount: 0 });
     expect(typeof body.tokenHash).toBe("string");
-    expect(JSON.stringify(body)).not.toContain(TEST_TOKEN);
+    expect(JSON.stringify(body)).not.toContain(CONTROL_TOKEN);
   });
 
-  it("rejects control-plane and route requests without a valid bearer token", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+  it("rejects control-plane requests without a valid control token", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
+    const putBody = JSON.stringify({
+      targetBaseUrl: "http://example.com/",
+      pinnedAddresses: ["127.0.0.1"],
+      providerType: "openai",
+      credentialValue: "sk-secret",
+      routeToken: ROUTE_TOKEN,
+    });
 
-    const missingAuth = await fetch(`${baseUrl}/route/anything`);
+    const missingAuth = await fetch(`${baseUrl}/control/routes/route-1`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: putBody,
+    });
     expect(missingAuth.status).toBe(401);
 
-    const wrongAuth = await fetch(`${baseUrl}/route/anything`, {
+    const wrongAuth = await fetch(`${baseUrl}/control/routes/route-1`, {
+      method: "PUT",
+      headers: { Authorization: "Bearer wrong-token", "Content-Type": "application/json" },
+      body: putBody,
+    });
+    expect(wrongAuth.status).toBe(401);
+
+    const body = (await wrongAuth.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("unauthorized");
+  });
+
+  it("rejects route requests without that route's own valid bearer token", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
+    const baseUrl = await listen(adapter);
+
+    await fetch(`${baseUrl}/control/routes/route-1`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetBaseUrl: "http://example.com/",
+        pinnedAddresses: ["127.0.0.1"],
+        providerType: "openai",
+        credentialValue: "sk-secret",
+        routeToken: ROUTE_TOKEN,
+      }),
+    });
+
+    const missingAuth = await fetch(`${baseUrl}/route/route-1`);
+    expect(missingAuth.status).toBe(401);
+
+    const wrongAuth = await fetch(`${baseUrl}/route/route-1`, {
       headers: { Authorization: "Bearer wrong-token" },
     });
     expect(wrongAuth.status).toBe(401);
@@ -82,11 +124,11 @@ describe("createHttpsPinRuntimeAdapterServer health and auth (#6141)", () => {
   });
 
   it("returns 404 for an unknown path", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/nonexistent`, {
-      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}` },
     });
     expect(response.status).toBe(404);
   });
@@ -103,17 +145,18 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
     const upstreamBaseUrl = await listen(upstream);
     const upstreamPort = new URL(upstreamBaseUrl).port;
 
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
     const putResponse = await fetch(`${baseUrl}/control/routes/route-1`, {
       method: "PUT",
-      headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         targetBaseUrl: `http://real-upstream.example:${upstreamPort}/base`,
         pinnedAddresses: ["127.0.0.1"],
         providerType: "openai",
         credentialValue: "sk-upstream-secret",
+        routeToken: ROUTE_TOKEN,
       }),
     });
     expect(putResponse.status).toBe(200);
@@ -124,7 +167,7 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
 
     const forwardResponse = await fetch(`${baseUrl}/route/route-1/chat/completions`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${ROUTE_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({ hello: "world" }),
     });
     expect(forwardResponse.status).toBe(200);
@@ -144,23 +187,24 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
     const upstreamBaseUrl = await listen(upstream);
     const upstreamPort = new URL(upstreamBaseUrl).port;
 
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
     await fetch(`${baseUrl}/control/routes/route-anthropic`, {
       method: "PUT",
-      headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         targetBaseUrl: `http://real-upstream.example:${upstreamPort}/base`,
         pinnedAddresses: ["127.0.0.1"],
         providerType: "anthropic",
         credentialValue: "sk-ant-secret",
+        routeToken: ROUTE_TOKEN,
       }),
     });
 
     await fetch(`${baseUrl}/route/route-anthropic/v1/messages`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${ROUTE_TOKEN}`, "Content-Type": "application/json" },
       body: "{}",
     });
 
@@ -177,13 +221,14 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
     const upstreamPort = new URL(upstreamBaseUrl).port;
 
     const adapter = createHttpsPinRuntimeAdapterServer({
-      token: TEST_TOKEN,
+      controlToken: CONTROL_TOKEN,
       initialRoutes: {
         "bootstrap-route": {
           targetBaseUrl: `http://real-upstream.example:${upstreamPort}/base`,
           pinnedAddresses: ["127.0.0.1"],
           providerType: "openai",
           credentialValue: "sk-bootstrap",
+          routeToken: ROUTE_TOKEN,
         },
       },
     });
@@ -193,18 +238,18 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
     await expect(health.json()).resolves.toMatchObject({ routeCount: 1 });
 
     const response = await fetch(`${baseUrl}/route/bootstrap-route/`, {
-      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+      headers: { Authorization: `Bearer ${ROUTE_TOKEN}` },
     });
     expect(response.status).toBe(200);
   });
 
   it("rejects PUT bodies missing required fields with 400 invalid_route", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/control/routes/route-1`, {
       method: "PUT",
-      headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({ targetBaseUrl: "http://example.com/" }),
     });
     expect(response.status).toBe(400);
@@ -212,17 +257,18 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
   });
 
   it("rejects PUT bodies with an unparseable targetBaseUrl with 400 invalid_route", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/control/routes/route-1`, {
       method: "PUT",
-      headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         targetBaseUrl: "not-a-url",
         pinnedAddresses: ["127.0.0.1"],
         providerType: "openai",
         credentialValue: "sk-secret",
+        routeToken: ROUTE_TOKEN,
       }),
     });
     expect(response.status).toBe(400);
@@ -230,34 +276,36 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
   });
 
   it("rejects PUT bodies with an unsupported providerType with 400 invalid_route", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/control/routes/route-1`, {
       method: "PUT",
-      headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         targetBaseUrl: "http://example.com/",
         pinnedAddresses: ["127.0.0.1"],
         providerType: "gemini",
         credentialValue: "sk-secret",
+        routeToken: ROUTE_TOKEN,
       }),
     });
     expect(response.status).toBe(400);
   });
 
   it("rejects oversized control-plane bodies with 413", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/control/routes/route-1`, {
       method: "PUT",
-      headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         targetBaseUrl: "http://example.com/",
         pinnedAddresses: ["127.0.0.1"],
         providerType: "openai",
         credentialValue: "x".repeat(20 * 1024),
+        routeToken: ROUTE_TOKEN,
       }),
     });
     expect(response.status).toBe(413);
@@ -265,21 +313,21 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
   });
 
   it("returns 404 for a GET on the control-routes path (PUT only)", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/control/routes/route-1`, {
-      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}` },
     });
     expect(response.status).toBe(404);
   });
 
   it("returns 404 route_not_found for an unregistered route id", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
     const baseUrl = await listen(adapter);
 
     const response = await fetch(`${baseUrl}/route/never-registered`, {
-      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}` },
     });
     expect(response.status).toBe(404);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "route_not_found" } });
@@ -289,13 +337,13 @@ describe("createHttpsPinRuntimeAdapterServer control plane (#6141)", () => {
 describe("createHttpsPinRuntimeAdapterServer orphaned route recovery (#6141)", () => {
   it("returns 503 route_needs_recovery for a route orphaned by the last respawn, distinct from an unknown route", async () => {
     const adapter = createHttpsPinRuntimeAdapterServer({
-      token: TEST_TOKEN,
+      controlToken: CONTROL_TOKEN,
       orphanedRouteIds: ["orphan-1"],
     });
     const baseUrl = await listen(adapter);
 
     const orphaned = await fetch(`${baseUrl}/route/orphan-1/v1/messages`, {
-      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}` },
     });
     expect(orphaned.status).toBe(503);
     await expect(orphaned.json()).resolves.toMatchObject({
@@ -303,7 +351,7 @@ describe("createHttpsPinRuntimeAdapterServer orphaned route recovery (#6141)", (
     });
 
     const neverKnown = await fetch(`${baseUrl}/route/never-known/v1/messages`, {
-      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}` },
     });
     expect(neverKnown.status).toBe(404);
     await expect(neverKnown.json()).resolves.toMatchObject({ error: { code: "route_not_found" } });
@@ -318,24 +366,25 @@ describe("createHttpsPinRuntimeAdapterServer orphaned route recovery (#6141)", (
     const upstreamPort = new URL(upstreamBaseUrl).port;
 
     const adapter = createHttpsPinRuntimeAdapterServer({
-      token: TEST_TOKEN,
+      controlToken: CONTROL_TOKEN,
       orphanedRouteIds: ["healed-route"],
     });
     const baseUrl = await listen(adapter);
 
     await fetch(`${baseUrl}/control/routes/healed-route`, {
       method: "PUT",
-      headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         targetBaseUrl: `http://real-upstream.example:${upstreamPort}/base`,
         pinnedAddresses: ["127.0.0.1"],
         providerType: "openai",
         credentialValue: "sk-healed",
+        routeToken: ROUTE_TOKEN,
       }),
     });
 
     const response = await fetch(`${baseUrl}/route/healed-route/`, {
-      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+      headers: { Authorization: `Bearer ${ROUTE_TOKEN}` },
     });
     expect(response.status).toBe(200);
   });
@@ -391,7 +440,7 @@ function dispatchFakeRequest(
 
 describe("createHttpsPinRuntimeAdapterServer control-plane loopback restriction (#6141)", () => {
   it("rejects a route registration whose connection did not arrive over loopback", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
 
     // The container-gateway address the sandbox actually connects from when
     // it reaches the adapter through `host.openshell.internal` -- distinct
@@ -400,12 +449,13 @@ describe("createHttpsPinRuntimeAdapterServer control-plane loopback restriction 
       method: "PUT",
       url: "/control/routes/route-1",
       remoteAddress: "172.17.0.2",
-      authorization: `Bearer ${TEST_TOKEN}`,
+      authorization: `Bearer ${CONTROL_TOKEN}`,
       body: {
         targetBaseUrl: "http://internal.example/base",
         pinnedAddresses: ["10.0.0.5"],
         providerType: "openai",
         credentialValue: "sk-should-not-register",
+        routeToken: ROUTE_TOKEN,
       },
     });
     expect(response.status).toBe(404);
@@ -419,18 +469,19 @@ describe("createHttpsPinRuntimeAdapterServer control-plane loopback restriction 
   });
 
   it("still allows route registration over loopback", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
 
     const response = await dispatchFakeRequest(adapter, {
       method: "PUT",
       url: "/control/routes/route-1",
       remoteAddress: "127.0.0.1",
-      authorization: `Bearer ${TEST_TOKEN}`,
+      authorization: `Bearer ${CONTROL_TOKEN}`,
       body: {
         targetBaseUrl: "http://real-upstream.example/base",
         pinnedAddresses: ["127.0.0.1"],
         providerType: "openai",
         credentialValue: "sk-upstream-secret",
+        routeToken: ROUTE_TOKEN,
       },
     });
     expect(response.status).toBe(200);
@@ -446,7 +497,7 @@ describe("createHttpsPinRuntimeAdapterServer route forwarding private-network re
   // instead gets the gate's own "not_found" code.
 
   it("rejects a route-forward request whose connection arrives from a public address", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
 
     // A peer that reached this 0.0.0.0-bound port from outside the intended
     // Docker-bridge sandbox boundary -- an address the adapter should never
@@ -456,36 +507,142 @@ describe("createHttpsPinRuntimeAdapterServer route forwarding private-network re
       method: "GET",
       url: "/route/never-registered",
       remoteAddress: "203.0.113.5",
-      authorization: `Bearer ${TEST_TOKEN}`,
+      authorization: `Bearer ${CONTROL_TOKEN}`,
     });
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ error: { code: "not_found" } });
   });
 
   it("still passes a route-forward request from the Docker-bridge sandbox address through to route lookup", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
 
     const response = await dispatchFakeRequest(adapter, {
       method: "GET",
       url: "/route/never-registered",
       remoteAddress: "172.17.0.2",
-      authorization: `Bearer ${TEST_TOKEN}`,
+      authorization: `Bearer ${CONTROL_TOKEN}`,
     });
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ error: { code: "route_not_found" } });
   });
 
   it("still passes a route-forward request over loopback through to route lookup", async () => {
-    const adapter = createHttpsPinRuntimeAdapterServer({ token: TEST_TOKEN });
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
 
     const response = await dispatchFakeRequest(adapter, {
       method: "GET",
       url: "/route/never-registered",
       remoteAddress: "127.0.0.1",
-      authorization: `Bearer ${TEST_TOKEN}`,
+      authorization: `Bearer ${CONTROL_TOKEN}`,
     });
     expect(response.status).toBe(404);
     expect(response.body).toMatchObject({ error: { code: "route_not_found" } });
+  });
+});
+
+describe("createHttpsPinRuntimeAdapterServer per-route credential isolation (#6906)", () => {
+  it("rejects route A's token against route B and never forwards to route B's upstream", async () => {
+    const upstreamARequests: Array<{ headers: http.IncomingHttpHeaders }> = [];
+    const upstreamA = http.createServer(async (req, res) => {
+      upstreamARequests.push({ headers: req.headers });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, upstream: "a" }));
+    });
+    const upstreamABaseUrl = await listen(upstreamA);
+    const upstreamAPort = new URL(upstreamABaseUrl).port;
+
+    const upstreamBRequests: Array<{ headers: http.IncomingHttpHeaders }> = [];
+    const upstreamB = http.createServer(async (req, res) => {
+      upstreamBRequests.push({ headers: req.headers });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, upstream: "b" }));
+    });
+    const upstreamBBaseUrl = await listen(upstreamB);
+    const upstreamBPort = new URL(upstreamBBaseUrl).port;
+
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
+    const baseUrl = await listen(adapter);
+
+    const ROUTE_TOKEN_A = "route-a-token";
+    const ROUTE_TOKEN_B = "route-b-token";
+
+    await fetch(`${baseUrl}/control/routes/route-a`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetBaseUrl: `http://real-upstream-a.example:${upstreamAPort}/base`,
+        pinnedAddresses: ["127.0.0.1"],
+        providerType: "openai",
+        credentialValue: "sk-upstream-a-secret",
+        routeToken: ROUTE_TOKEN_A,
+      }),
+    });
+    await fetch(`${baseUrl}/control/routes/route-b`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetBaseUrl: `http://real-upstream-b.example:${upstreamBPort}/base`,
+        pinnedAddresses: ["127.0.0.1"],
+        providerType: "openai",
+        credentialValue: "sk-upstream-b-secret",
+        routeToken: ROUTE_TOKEN_B,
+      }),
+    });
+
+    // Route A's own token against route A succeeds and reaches upstream A.
+    const ownRouteA = await fetch(`${baseUrl}/route/route-a/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ROUTE_TOKEN_A}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ hello: "a" }),
+    });
+    expect(ownRouteA.status).toBe(200);
+    expect(upstreamARequests).toHaveLength(1);
+
+    // Adversarial: route A's token replayed against route B must be
+    // rejected, and upstream B must never see the forwarded request.
+    const crossRoute = await fetch(`${baseUrl}/route/route-b/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ROUTE_TOKEN_A}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ hello: "cross" }),
+    });
+    expect([401, 404]).toContain(crossRoute.status);
+    expect(upstreamBRequests).toHaveLength(0);
+    if (crossRoute.status === 401) {
+      const body = (await crossRoute.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("unauthorized");
+    }
+
+    // Route B's own token against route B still succeeds and reaches
+    // upstream B, proving the rejection above was scoping, not breakage.
+    const ownRouteB = await fetch(`${baseUrl}/route/route-b/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ROUTE_TOKEN_B}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ hello: "b" }),
+    });
+    expect(ownRouteB.status).toBe(200);
+    expect(upstreamBRequests).toHaveLength(1);
+  });
+
+  it("rejects the control-plane token when replayed against a route's data-plane path", async () => {
+    const adapter = createHttpsPinRuntimeAdapterServer({ controlToken: CONTROL_TOKEN });
+    const baseUrl = await listen(adapter);
+
+    await fetch(`${baseUrl}/control/routes/route-1`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetBaseUrl: "http://real-upstream.example/base",
+        pinnedAddresses: ["127.0.0.1"],
+        providerType: "openai",
+        credentialValue: "sk-secret",
+        routeToken: ROUTE_TOKEN,
+      }),
+    });
+
+    const response = await fetch(`${baseUrl}/route/route-1`, {
+      headers: { Authorization: `Bearer ${CONTROL_TOKEN}` },
+    });
+    expect(response.status).toBe(401);
   });
 });
 

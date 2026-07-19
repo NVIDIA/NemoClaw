@@ -51,6 +51,7 @@ import {
   buildHttpsPinRouteLoopbackBaseUrl,
   computeHttpsPinRouteId,
   HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST,
+  HTTPS_PIN_RUNTIME_ADAPTER_CONTROL_TOKEN_ENV,
   HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_HOST,
   HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_ORIGIN,
   HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
@@ -104,6 +105,11 @@ interface RouteRuntime {
   pinnedAddresses: string[];
   providerType: HttpsPinCredentialProviderType;
   credentialValue: string;
+  // Distinct random bearer token for this route only (#6906): the sandbox
+  // authorized for this route authenticates data-plane requests with this
+  // value, never the shared control-plane token, so a sandbox holding one
+  // route's token cannot replay it against a different route.
+  routeToken: string;
 }
 
 interface RoutePersistedMeta {
@@ -281,15 +287,22 @@ function parseRoutePutBody(raw: JsonObject): RouteRuntime {
   const providerType =
     raw.providerType === "anthropic" || raw.providerType === "openai" ? raw.providerType : null;
   const credentialValue = typeof raw.credentialValue === "string" ? raw.credentialValue : "";
+  const routeToken = typeof raw.routeToken === "string" ? raw.routeToken : "";
   const pinnedAddresses = Array.isArray(raw.pinnedAddresses)
     ? raw.pinnedAddresses.filter(
         (entry): entry is string => typeof entry === "string" && entry.length > 0,
       )
     : [];
-  if (!targetBaseUrl || !providerType || !credentialValue || pinnedAddresses.length === 0) {
+  if (
+    !targetBaseUrl ||
+    !providerType ||
+    !credentialValue ||
+    !routeToken ||
+    pinnedAddresses.length === 0
+  ) {
     throw new ForwardHttpError(
       400,
-      "targetBaseUrl, providerType, credentialValue, and pinnedAddresses are required.",
+      "targetBaseUrl, providerType, credentialValue, routeToken, and pinnedAddresses are required.",
       "invalid_route",
     );
   }
@@ -298,7 +311,7 @@ function parseRoutePutBody(raw: JsonObject): RouteRuntime {
   } catch {
     throw new ForwardHttpError(400, `"${targetBaseUrl}" is not a valid URL.`, "invalid_route");
   }
-  return { targetBaseUrl, pinnedAddresses, providerType, credentialValue };
+  return { targetBaseUrl, pinnedAddresses, providerType, credentialValue, routeToken };
 }
 
 /**
@@ -306,9 +319,16 @@ function parseRoutePutBody(raw: JsonObject): RouteRuntime {
  * seeded from `initialRoutes` at startup and otherwise populated by
  * authenticated `PUT /control/routes/:routeId` calls from
  * `ensureHttpsPinRuntimeAdapter`.
+ *
+ * Two distinct bearer credentials are in play (#6906): `controlToken`
+ * authenticates only the host-only, loopback-restricted control plane
+ * (`PUT /control/routes/:id`); each route's own `routeToken` authenticates
+ * only data-plane requests to that exact route (`/route/:id`). A sandbox
+ * holding one route's token never learns or can pass the control token, and
+ * cannot authenticate against any other route's data-plane path with it.
  */
 export function createHttpsPinRuntimeAdapterServer(options: {
-  token: string;
+  controlToken: string;
   initialRoutes?: Record<string, RouteRuntime>;
   orphanedRouteIds?: string[];
   logger?: AdapterLogger;
@@ -326,22 +346,8 @@ export function createHttpsPinRuntimeAdapterServer(options: {
       if (req.method === "GET" && url.pathname === "/health") {
         sendJson(res, 200, {
           ok: true,
-          tokenHash: adapterTokenHash(options.token),
+          tokenHash: adapterTokenHash(options.controlToken),
           routeCount: routes.size,
-        });
-        return;
-      }
-
-      if (!authMatches(req.headers.authorization, options.token)) {
-        sendJson(res, 401, {
-          error: { message: "Unauthorized", type: "unauthorized", code: "unauthorized" },
-        });
-        logAdapterEvent(logger, "request_rejected", {
-          method: req.method || "unknown",
-          path: url.pathname,
-          status: 401,
-          reason: "unauthorized",
-          durationMs: Date.now() - started,
         });
         return;
       }
@@ -353,10 +359,11 @@ export function createHttpsPinRuntimeAdapterServer(options: {
           // Route registration accepts a caller-supplied targetBaseUrl and
           // pinnedAddresses with no SSRF re-validation here -- that only
           // happens host-side in ensureHttpsPinRuntimeAdapter before it
-          // calls this endpoint over loopback. The sandbox authenticates
-          // with this same bearer token to reach /route/:id, so without
-          // this check it could also call /control/routes/:id directly and
-          // register a route pointed at an internal address.
+          // calls this endpoint over loopback. A sandbox authenticates
+          // data-plane requests with its own route token, never the control
+          // token, so without this check it could still try to reach
+          // /control/routes/:id directly and register a route pointed at an
+          // internal address.
           sendJson(res, 404, {
             error: { message: "Not found", type: "not_found", code: "not_found" },
           });
@@ -364,6 +371,18 @@ export function createHttpsPinRuntimeAdapterServer(options: {
             routeId,
             status: 404,
             reason: "control_plane_non_loopback",
+            durationMs: Date.now() - started,
+          });
+          return;
+        }
+        if (!authMatches(req.headers.authorization, options.controlToken)) {
+          sendJson(res, 401, {
+            error: { message: "Unauthorized", type: "unauthorized", code: "unauthorized" },
+          });
+          logAdapterEvent(logger, "request_rejected", {
+            routeId,
+            status: 401,
+            reason: "control_plane_unauthorized",
             durationMs: Date.now() - started,
           });
           return;
@@ -392,10 +411,9 @@ export function createHttpsPinRuntimeAdapterServer(options: {
       if (routeMatch) {
         routeId = routeMatch[1];
         if (!isPrivateNetworkRemoteAddress(req.socket.remoteAddress)) {
-          // The bearer token is a single value shared by every route on this
-          // adapter, so a peer that reaches this port from outside the
-          // intended sandbox-to-host boundary must not be able to replay it
-          // against a real, already-registered route.
+          // Each route's token is scoped to that route alone, but a peer
+          // that reaches this port from outside the intended sandbox-to-host
+          // boundary still must not be able to probe route state at all.
           sendJson(res, 404, {
             error: { message: "Not found", type: "not_found", code: "not_found" },
           });
@@ -436,6 +454,23 @@ export function createHttpsPinRuntimeAdapterServer(options: {
             routeId,
             status: 404,
             reason: "route_not_found",
+            durationMs: Date.now() - started,
+          });
+          return;
+        }
+        // Route-scoped auth (#6906): compared against this specific route's
+        // own token, never the shared control token or any other route's
+        // token, so a sandbox authorized for a different route (or holding
+        // no credential at all) is rejected here before the request ever
+        // reaches this route's real upstream.
+        if (!authMatches(req.headers.authorization, route.routeToken)) {
+          sendJson(res, 401, {
+            error: { message: "Unauthorized", type: "unauthorized", code: "unauthorized" },
+          });
+          logAdapterEvent(logger, "request_rejected", {
+            routeId,
+            status: 401,
+            reason: "route_unauthorized",
             durationMs: Date.now() - started,
           });
           return;
@@ -482,6 +517,7 @@ function parseBootstrapRoute(
       pinnedAddresses?: unknown;
       providerType?: unknown;
       credentialValue?: unknown;
+      routeToken?: unknown;
     };
     if (typeof parsed.routeId !== "string" || !parsed.routeId) return null;
     const route = parseRoutePutBody(parsed as JsonObject);
@@ -502,12 +538,14 @@ function parseOrphanedRouteIds(raw: string | undefined): string[] {
 }
 
 export function startHttpsPinRuntimeAdapterFromEnv(): http.Server {
-  const token = process.env[HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV];
+  const controlToken = process.env[HTTPS_PIN_RUNTIME_ADAPTER_CONTROL_TOKEN_ENV];
   const port = Number(
     process.env.NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT || HTTPS_PIN_RUNTIME_ADAPTER_PORT,
   );
 
-  if (!token) throw new Error(`${HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV} is required`);
+  if (!controlToken) {
+    throw new Error(`${HTTPS_PIN_RUNTIME_ADAPTER_CONTROL_TOKEN_ENV} is required`);
+  }
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error("NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT must be a valid port");
   }
@@ -522,7 +560,11 @@ export function startHttpsPinRuntimeAdapterFromEnv(): http.Server {
     process.env.NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ORPHANED_ROUTE_IDS,
   );
 
-  const server = createHttpsPinRuntimeAdapterServer({ token, initialRoutes, orphanedRouteIds });
+  const server = createHttpsPinRuntimeAdapterServer({
+    controlToken,
+    initialRoutes,
+    orphanedRouteIds,
+  });
   server.listen(port, HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST, () => {
     defaultAdapterLogger("adapter_ready", {
       bindHost: HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST,
@@ -581,12 +623,13 @@ async function waitForAdapterHealth(
 }
 
 function putRoute(options: {
-  token: string;
+  controlToken: string;
   routeId: string;
   targetBaseUrl: string;
   pinnedAddresses: string[];
   providerType: HttpsPinCredentialProviderType;
   credentialValue: string;
+  routeToken: string;
 }): Promise<void> {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify({
@@ -594,6 +637,7 @@ function putRoute(options: {
       pinnedAddresses: options.pinnedAddresses,
       providerType: options.providerType,
       credentialValue: options.credentialValue,
+      routeToken: options.routeToken,
     });
     const req = http.request(
       {
@@ -602,7 +646,7 @@ function putRoute(options: {
         path: `/control/routes/${options.routeId}`,
         method: "PUT",
         headers: {
-          Authorization: `Bearer ${options.token}`,
+          Authorization: `Bearer ${options.controlToken}`,
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(payload),
         },
@@ -729,21 +773,28 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
     options.provider,
     options.endpointUrl,
   );
-  const token = await ensureAdapterProcess({
+  // Minted fresh on every call, distinct from every other route's token and
+  // from the adapter's own control-plane token (#6906): this is the only
+  // credential the sandbox that owns this route ever receives, and it
+  // authenticates data-plane requests to this route alone.
+  const routeToken = crypto.randomBytes(24).toString("hex");
+  const controlToken = await ensureAdapterProcess({
     routeId,
     endpointUrl: options.endpointUrl,
     pinnedAddresses,
     providerType: options.providerType,
     credentialValue: options.credentialValue,
+    routeToken,
   });
 
   await putRoute({
-    token,
+    controlToken,
     routeId,
     targetBaseUrl: options.endpointUrl,
     pinnedAddresses,
     providerType: options.providerType,
     credentialValue: options.credentialValue,
+    routeToken,
   });
   persistRouteState(routeId, {
     targetBaseUrl: options.endpointUrl,
@@ -762,7 +813,10 @@ export async function ensureHttpsPinRuntimeAdapter(options: {
     localBaseUrl: buildHttpsPinRouteLoopbackBaseUrl(routeId, options.endpointUrl),
     logPath: LOG_PATH,
     credentialEnv: HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV,
-    token,
+    // Route-scoped, not the adapter's shared control-plane token (#6906):
+    // this is what the caller stages as the sandbox-facing credential, so
+    // each route's sandbox only ever learns its own token.
+    token: routeToken,
     routeId,
     pinnedAddresses,
   };
@@ -844,13 +898,14 @@ function validateAdapterPortConfiguration(): void {
   );
 }
 
-/** Returns a live adapter token, reusing the running process when possible or spawning a fresh one. */
+/** Returns a live adapter control token, reusing the running process when possible or spawning a fresh one. */
 async function ensureAdapterProcessLocked(bootstrap: {
   routeId: string;
   endpointUrl: string;
   pinnedAddresses: string[];
   providerType: HttpsPinCredentialProviderType;
   credentialValue: string;
+  routeToken: string;
 }): Promise<string> {
   validateAdapterPortConfiguration();
   const priorToken = readLocalAdapterTextFile(TOKEN_PATH);
@@ -864,10 +919,11 @@ async function ensureAdapterProcessLocked(bootstrap: {
   }
 
   killStaleAdapter();
-  // Reusing a still-valid persisted token (rather than always minting a new
-  // one) keeps previously registered OpenShell provider credentials working
-  // across an adapter respawn whenever possible.
-  const token = priorToken || crypto.randomBytes(24).toString("hex");
+  // Reusing a still-valid persisted control token (rather than always
+  // minting a new one) keeps the running adapter process's identity stable
+  // across a respawn whenever possible. This is the host-only control-plane
+  // token (#6906) -- never staged into a sandbox.
+  const controlToken = priorToken || crypto.randomBytes(24).toString("hex");
   // A fresh process starts with an empty in-memory route map -- every route
   // other than the one being bootstrapped now is unrecoverable this restart,
   // since credentials are never persisted to disk (see module doc comment).
@@ -883,13 +939,14 @@ async function ensureAdapterProcessLocked(bootstrap: {
     scriptPath: getAdapterScriptPath(),
     env: {
       NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT: String(HTTPS_PIN_RUNTIME_ADAPTER_PORT),
-      [HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV]: token,
+      [HTTPS_PIN_RUNTIME_ADAPTER_CONTROL_TOKEN_ENV]: controlToken,
       NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_BOOTSTRAP_ROUTE: JSON.stringify({
         routeId: bootstrap.routeId,
         targetBaseUrl: bootstrap.endpointUrl,
         pinnedAddresses: bootstrap.pinnedAddresses,
         providerType: bootstrap.providerType,
         credentialValue: bootstrap.credentialValue,
+        routeToken: bootstrap.routeToken,
       }),
       NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_ORPHANED_ROUTE_IDS: JSON.stringify(orphanedRouteIds),
     },
@@ -902,12 +959,12 @@ async function ensureAdapterProcessLocked(bootstrap: {
   });
   try {
     persistLocalAdapterPid(PID_PATH, child.pid);
-    if (!(await waitForAdapterHealth(token))) {
+    if (!(await waitForAdapterHealth(controlToken))) {
       throw new Error(
         `HTTPS Pin Runtime adapter did not become healthy on ${HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_ORIGIN}`,
       );
     }
-    writeLocalAdapterSecretFile(TOKEN_PATH, token);
+    writeLocalAdapterSecretFile(TOKEN_PATH, controlToken);
     // Keep the orphaned routes recorded (still without credentials) instead
     // of dropping them: `persistRouteState` supersedes an entry here the
     // moment its owner re-runs `inference set`, which is how a route heals.
@@ -921,7 +978,7 @@ async function ensureAdapterProcessLocked(bootstrap: {
     removeLocalAdapterFile(STATE_PATH);
     throw err;
   }
-  return token;
+  return controlToken;
 }
 
 function ensureAdapterProcess(bootstrap: {
@@ -930,6 +987,7 @@ function ensureAdapterProcess(bootstrap: {
   pinnedAddresses: string[];
   providerType: HttpsPinCredentialProviderType;
   credentialValue: string;
+  routeToken: string;
 }): Promise<string> {
   return withAdapterLock(() => ensureAdapterProcessLocked(bootstrap));
 }

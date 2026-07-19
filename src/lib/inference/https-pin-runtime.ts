@@ -23,9 +23,24 @@ import { isIP } from "node:net";
 import { HTTPS_PIN_RUNTIME_ADAPTER_PORT } from "../core/ports";
 import { isOpenShellManagedHost } from "./endpoint-ssrf-preflight";
 
-/** Local shared bearer token OpenShell uses to reach this adapter. Never the real upstream credential. */
+/**
+ * Env var name under which a sandbox's own route-scoped data-plane bearer
+ * token is staged (one distinct random value per route, minted by
+ * `ensureHttpsPinRuntimeAdapter`). Never the real upstream credential, and
+ * never shared across routes -- a sandbox authorized for one route must not
+ * be able to replay this value against a different route on the same shared
+ * adapter (#6906).
+ */
 export const HTTPS_PIN_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV =
   "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_TOKEN";
+/**
+ * Env var name for the adapter process's own control-plane bearer token,
+ * used only for the host-only, loopback-restricted `PUT /control/routes/:id`
+ * call. Kept separate from the per-route data-plane token above: this value
+ * is never given to a sandbox (#6906).
+ */
+export const HTTPS_PIN_RUNTIME_ADAPTER_CONTROL_TOKEN_ENV =
+  "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_CONTROL_TOKEN";
 export const HTTPS_PIN_RUNTIME_ADAPTER_BIND_HOST = "0.0.0.0";
 export const HTTPS_PIN_RUNTIME_ADAPTER_LOOPBACK_HOST = "127.0.0.1";
 export const HTTPS_PIN_RUNTIME_ADAPTER_SANDBOX_HOST = "host.openshell.internal";
