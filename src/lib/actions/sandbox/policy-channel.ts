@@ -913,6 +913,30 @@ function discloseChannelPresetScope(
   policies.logPresetScopeForState(presetName, presetContent, gatewayState);
 }
 
+function loadValidateAndDiscloseChannelPreset(
+  sandboxName: string,
+  channelName: string,
+  verb: "add" | "start",
+): void {
+  const presetContent = policies.loadPresetForSandbox(sandboxName, channelName);
+  const presetPolicyKeys =
+    presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
+  if (presetContent === null || presetPolicyKeys.length === 0) {
+    if (presetContent === null) {
+      console.error(`  Cannot load policy preset for channel '${channelName}'.`);
+    } else {
+      console.error(
+        `  Preset YAML for channel '${channelName}' has no parseable entries under 'network_policies:'.`,
+      );
+    }
+    console.error(
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels ${verb} ${channelName}`,
+    );
+    process.exit(1);
+  }
+  discloseChannelPresetScope(sandboxName, channelName, presetContent);
+}
+
 function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession> {
   try {
     return onboardSession.loadSession();
@@ -965,24 +989,9 @@ async function addSandboxChannelUnlocked(
     process.exit(1);
   }
 
-  const presetContent = policies.loadPresetForSandbox(sandboxName, canonical);
-  const presetPolicyKeys =
-    presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
-  if (presetContent === null || presetPolicyKeys.length === 0) {
-    if (presetContent !== null && presetPolicyKeys.length === 0) {
-      console.error(
-        `  Preset YAML for channel '${canonical}' has no parseable entries under 'network_policies:'.`,
-      );
-    }
-    console.error(
-      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${canonical}`,
-    );
-    process.exit(1);
-  }
-
   // Disclose before credential collection, conflict prompts, or any gateway /
   // registry mutation. The core apply path rechecks immediately before set.
-  discloseChannelPresetScope(sandboxName, canonical, presetContent);
+  loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add");
 
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
@@ -1450,17 +1459,7 @@ async function sandboxChannelsSetEnabled(
   }
 
   if (!disabled) {
-    const presetContent = policies.loadPresetForSandbox(sandboxName, normalized);
-    const presetPolicyKeys =
-      presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
-    if (presetContent === null || presetPolicyKeys.length === 0) {
-      console.error(`  Cannot load policy preset for channel '${normalized}'.`);
-      console.error(
-        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels start ${normalized}`,
-      );
-      process.exit(1);
-    }
-    discloseChannelPresetScope(sandboxName, normalized, presetContent);
+    loadValidateAndDiscloseChannelPreset(sandboxName, normalized, "start");
   }
 
   if (dryRun) {
