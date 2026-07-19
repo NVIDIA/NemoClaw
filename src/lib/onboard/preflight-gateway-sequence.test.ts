@@ -58,13 +58,12 @@ function harness(overrides: {
     destroyGateway,
     destroyGatewayForReuse,
     runOpenshell,
-    dockerInspect: (args) => {
+    dockerInspect: () => {
       inspectCalls += 1;
-      void args;
-      // First inspect probes for the orphan; the post-removal inspect reports
-      // the container gone so volume/registry cleanup proceeds.
-      if (!(overrides.orphanContainerPresent ?? false)) return { status: 1 };
-      return { status: inspectCalls === 1 ? 0 : 1 };
+      // Only the first inspect finds the orphan; the post-removal inspect
+      // reports the container gone so volume/registry cleanup proceeds.
+      const present = (overrides.orphanContainerPresent ?? false) && inspectCalls === 1;
+      return { status: present ? 0 : 1 };
     },
     dockerStop,
     dockerRm,
