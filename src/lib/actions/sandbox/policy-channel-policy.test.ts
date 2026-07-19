@@ -123,7 +123,9 @@ describe("addSandboxPolicy", () => {
     await addSandboxPolicy("test-sandbox");
 
     expect(promptMock).toHaveBeenCalledWith("  Apply 'pypi' to sandbox 'test-sandbox'? [Y/n]: ");
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi");
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi", {
+      suppressDisclosure: true,
+    });
   });
 
   it("skips applying an interactively selected preset when confirmation is declined", async () => {
@@ -149,7 +151,9 @@ describe("addSandboxPolicy", () => {
     await addSandboxPolicy("test-sandbox", { preset: "pypi", yes: true });
 
     expect(promptMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi");
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi", {
+      suppressDisclosure: true,
+    });
   });
 
   it("honors non-interactive mode when an explicit preset is provided", async () => {
@@ -158,7 +162,9 @@ describe("addSandboxPolicy", () => {
     await addSandboxPolicy("test-sandbox", { preset: "pypi" });
 
     expect(promptMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi");
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi", {
+      suppressDisclosure: true,
+    });
   });
 
   it("fails fast in non-interactive mode without an explicit preset", async () => {
@@ -276,7 +282,9 @@ describe("addSandboxPolicy", () => {
 
     expect(printedText()).toContain(expected);
     expect(printedText()).toContain(detail);
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", preset);
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", preset, {
+      suppressDisclosure: true,
+    });
   });
 
   it("prints Discord validation guidance when the preset name is provided", async () => {
@@ -285,7 +293,9 @@ describe("addSandboxPolicy", () => {
     expect(printedText()).toContain("curl is not in the preset binary allowlist");
     expect(printedText()).toContain("Node HTTPS");
     expect(promptMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "discord");
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "discord", {
+      suppressDisclosure: true,
+    });
   });
 
   it("does not print messaging guidance when a non-messaging preset is selected", async () => {
@@ -293,7 +303,9 @@ describe("addSandboxPolicy", () => {
 
     expect(printedText()).not.toContain("only opens network egress to the");
     expect(printedText()).not.toContain("re-run 'nemoclaw onboard' and select");
-    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi");
+    expect(applyPresetMock).toHaveBeenCalledWith("test-sandbox", "pypi", {
+      suppressDisclosure: true,
+    });
   });
 });
 

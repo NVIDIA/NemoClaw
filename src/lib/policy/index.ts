@@ -912,6 +912,7 @@ function applyPresetContent(
     expectedExistingNetworkPolicyContent?: string | null;
     nonFatal?: boolean;
     skipRegistryUpdate?: boolean;
+    suppressDisclosure?: boolean;
   } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
@@ -998,7 +999,9 @@ function applyPresetContent(
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
   const presetState = classifyPresetEntries(currentPolicy, presetEntries);
-  logPresetScopeForState(presetName, presetContent, presetState);
+  if (!options.suppressDisclosure) {
+    logPresetScopeForState(presetName, presetContent, presetState);
+  }
 
   // Ownership-aware callers use a successful `policy set --wait` as part of
   // their live-policy/registry transaction, even when the desired document is

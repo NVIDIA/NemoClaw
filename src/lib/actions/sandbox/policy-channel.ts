@@ -196,7 +196,7 @@ async function addSandboxPolicyUnlocked(
     if (confirm.trim().toLowerCase().startsWith("n")) return;
   }
 
-  if (!policies.applyPreset(sandboxName, answer)) {
+  if (!policies.applyPreset(sandboxName, answer, { suppressDisclosure: true })) {
     process.exit(1);
   }
   syncSessionPolicyPresetsWithRegistry(sandboxName, answer, "add");
@@ -250,6 +250,7 @@ async function applyExternalPreset(
   try {
     const result = policies.applyPresetContent(sandboxName, loaded.presetName, loaded.content, {
       custom: { sourcePath: path.resolve(filePath) },
+      suppressDisclosure: true,
     });
     if (result !== false) {
       // Custom presets share the registry slot with built-ins (customPolicies
@@ -1014,7 +1015,11 @@ async function addSandboxChannelUnlocked(
   // host-side credential to acquire; register the bridge now and let the
   // operator complete pairing after rebuild.
   if (manifest.auth.mode === "in-sandbox-qr") {
-    if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
+    if (
+      !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+        disclosureAlreadyShown: true,
+      })
+    ) {
       process.exit(1);
     }
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
@@ -1066,7 +1071,11 @@ async function addSandboxChannelUnlocked(
   await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, acquired);
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
 
-  if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
+  if (
+    !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
+      disclosureAlreadyShown: true,
+    })
+  ) {
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {
       wasAlreadyEnabled,
       priorCreds,
@@ -1153,9 +1162,12 @@ export function applyChannelPresetIfAvailable(
   sandboxName: string,
   channelName: string,
   retryAction: "add" | "start" = "add",
+  options: { disclosureAlreadyShown?: boolean } = {},
 ): boolean {
   try {
-    const applied = policies.applyPreset(sandboxName, channelName);
+    const applied = options.disclosureAlreadyShown
+      ? policies.applyPreset(sandboxName, channelName, { suppressDisclosure: true })
+      : policies.applyPreset(sandboxName, channelName);
     if (!applied) {
       console.error(
         `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,
@@ -1477,7 +1489,12 @@ async function sandboxChannelsSetEnabled(
   // registry and backup manifest carry the enabled plan's policy intent.
   // If policy application fails, put the plan back in its disabled state so
   // runtime configuration cannot later be rebuilt without the required egress.
-  if (!disabled && !applyChannelPresetIfAvailable(sandboxName, normalized, "start")) {
+  if (
+    !disabled &&
+    !applyChannelPresetIfAvailable(sandboxName, normalized, "start", {
+      disclosureAlreadyShown: true,
+    })
+  ) {
     const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, normalized, true);
     if (!rolledBack) {
       console.error(

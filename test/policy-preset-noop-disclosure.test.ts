@@ -19,9 +19,15 @@ type Scenario = {
   currentPolicy: string;
   presetNames: string[];
   batch?: boolean;
+  suppressDisclosure?: boolean;
 };
 
-function runScenario({ currentPolicy, presetNames, batch = false }: Scenario) {
+function runScenario({
+  currentPolicy,
+  presetNames,
+  batch = false,
+  suppressDisclosure = false,
+}: Scenario) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preset-disclosure-"));
   tempRoots.push(root);
   const currentPolicyPath = path.join(root, "current.yaml");
@@ -57,7 +63,7 @@ exit 1
 
   const invocation = batch
     ? `policies.applyPresets("alpha", ${JSON.stringify(presetNames)})`
-    : `policies.applyPreset("alpha", ${JSON.stringify(presetNames[0])})`;
+    : `policies.applyPreset("alpha", ${JSON.stringify(presetNames[0])}, ${JSON.stringify({ suppressDisclosure })})`;
   const script = `
 const fs = require("node:fs");
 const policies = require(${POLICY_MODULE});
@@ -147,5 +153,18 @@ describe("preset no-op egress disclosure (#7179)", () => {
     );
     expect(output).not.toContain("Preset 'npm' is already effective");
     expect(payload.calls).toEqual(["policy set"]);
+  });
+
+  it("does not print a duplicate scope when the caller already disclosed it", () => {
+    const { output, payload } = runScenario({
+      currentPolicy: "version: 1\nnetwork_policies: {}\n",
+      presetNames: ["npm"],
+      suppressDisclosure: true,
+    });
+
+    expect(output).not.toContain("Effective egress");
+    expect(output).not.toContain("Preset 'npm' is already effective");
+    expect(payload.calls).toEqual(["policy set"]);
+    expect(payload.registry.policies).toEqual(["npm"]);
   });
 });
