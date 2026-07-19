@@ -185,6 +185,13 @@ describe("Brev nightly workflow contract", () => {
     expect(validation?.outputs?.tested_sha).toBe("${{ steps.tested-ref.outputs.sha }}");
     expect(recordRevision?.run).toContain("git rev-parse HEAD");
     expect(validation?.env?.BREV_E2E_INSTANCE_NAME).toContain("inputs.test_suite");
+
+    const validationActions = (validation?.steps ?? [])
+      .map((step) => step.uses)
+      .filter((uses): uses is string => Boolean(uses));
+    expect(validationActions.length).toBeGreaterThan(0);
+    expect(validationActions.filter((uses) => !/@[0-9a-f]{40}$/.test(uses))).toEqual([]);
+
     expect(reporter?.permissions).toEqual({
       actions: "read",
       contents: "read",
