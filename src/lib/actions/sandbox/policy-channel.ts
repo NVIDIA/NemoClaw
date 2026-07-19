@@ -904,6 +904,47 @@ function hydrateAddChannelEnvFromStoredState(sandboxName: string): void {
   hydrateMessagingChannelConfig(getStoredMessagingChannelConfig(sandboxName, savedSession));
 }
 
+function discloseChannelPresetScope(
+  sandboxName: string,
+  presetName: string,
+  presetContent: string,
+): void {
+  const gatewayState = policies.getPresetContentGatewayState(sandboxName, presetContent);
+  policies.logPresetScopeForState(presetName, presetContent, gatewayState);
+}
+
+/**
+ * Load the policy preset for `channelId`, exiting with a specific error if it
+ * is missing or has no parseable `network_policies` entries, then disclose
+ * its effective egress before any credential collection, conflict prompt, or
+ * gateway / registry mutation. `verb` names the caller's subcommand for the
+ * restore hint (e.g. "add", "start").
+ */
+function loadAndDiscloseChannelPreset(
+  sandboxName: string,
+  channelId: string,
+  verb: string,
+): string {
+  const presetContent = policies.loadPresetForSandbox(sandboxName, channelId);
+  const presetPolicyKeys =
+    presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
+  if (presetContent === null || presetPolicyKeys.length === 0) {
+    if (presetContent === null) {
+      console.error(`  Cannot load policy preset for channel '${channelId}'.`);
+    } else {
+      console.error(
+        `  Preset YAML for channel '${channelId}' has no parseable entries under 'network_policies:'.`,
+      );
+    }
+    console.error(
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels ${verb} ${channelId}`,
+    );
+    process.exit(1);
+  }
+  discloseChannelPresetScope(sandboxName, channelId, presetContent);
+  return presetContent;
+}
+
 function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession> {
   try {
     return onboardSession.loadSession();
@@ -956,23 +997,9 @@ async function addSandboxChannelUnlocked(
     process.exit(1);
   }
 
-  const presetContent = policies.loadPresetForSandbox(sandboxName, canonical);
-  const presetPolicyKeys =
-    presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
-  if (presetContent === null || presetPolicyKeys.length === 0) {
-    if (presetContent !== null && presetPolicyKeys.length === 0) {
-      console.error(
-        `  Preset YAML for channel '${canonical}' has no parseable entries under 'network_policies:'.`,
-      );
-    }
-    console.error(
-      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${canonical}`,
-    );
-    process.exit(1);
-  }
+  const presetContent = loadAndDiscloseChannelPreset(sandboxName, canonical, "add");
 
   if (dryRun) {
-    policies.logSandboxPresetScopeIfNew(sandboxName, canonical, presetContent);
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
     return;
   }
@@ -1437,13 +1464,11 @@ async function sandboxChannelsSetEnabled(
     return;
   }
 
+  if (!disabled) {
+    loadAndDiscloseChannelPreset(sandboxName, normalized, "start");
+  }
+
   if (dryRun) {
-    if (!disabled) {
-      const presetContent = policies.loadPresetForSandbox(sandboxName, normalized);
-      if (presetContent) {
-        policies.logSandboxPresetScopeIfNew(sandboxName, normalized, presetContent);
-      }
-    }
     console.log(`  --dry-run: would ${verb} channel '${normalized}' for '${sandboxName}'.`);
     return;
   }

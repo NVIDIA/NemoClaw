@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import * as defs from "../../agent/defs";
 import * as policy from "../../policy";
-import * as runner from "../../runner";
 import * as registry from "../../state/registry";
 import { addSandboxChannel } from "./policy-channel";
 
@@ -51,6 +50,7 @@ beforeEach(() => {
   vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("openclaw"));
   vi.spyOn(policy, "loadPresetForSandbox").mockReturnValue(WHATSAPP_PRESET);
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["whatsapp"]);
+  vi.spyOn(policy, "getPresetContentGatewayState").mockReturnValue("absent");
 });
 
 afterEach(() => {
@@ -105,32 +105,12 @@ describe("channels add --dry-run discloses effective preset egress before mutati
   });
 
   it("does not claim new egress when the channel's preset already matches the live policy (#7179)", async () => {
-    const liveWhatsappPolicy = [
-      "version: 1",
-      "network_policies:",
-      "  whatsapp:",
-      "    name: whatsapp",
-      "    endpoints:",
-      "      - host: web.whatsapp.com",
-      "        port: 443",
-      "        access: full",
-      "        tls: skip",
-      "      - host: raw.githubusercontent.com",
-      "        port: 443",
-      "        protocol: rest",
-      "        enforcement: enforce",
-      "        rules:",
-      "          - allow: { method: GET, path: '/WhiskeySockets/Baileys/master/src/Defaults/index.ts' }",
-      "    binaries:",
-      "      - { path: /usr/local/bin/node }",
-      "",
-    ].join("\n");
-    vi.spyOn(runner, "runCapture").mockReturnValue(liveWhatsappPolicy);
+    vi.spyOn(policy, "getPresetContentGatewayState").mockReturnValue("match");
 
     await addSandboxChannel("sb-scope", { channel: "whatsapp", dryRun: true });
 
     const output = collectLogOutput();
     expect(output).not.toContain("Effective egress that would be opened:");
-    expect(output).toContain("already matches the sandbox's live network policy; no new egress.");
+    expect(output).toContain("is already effective; no new egress would be opened.");
   });
 });

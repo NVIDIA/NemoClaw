@@ -4,17 +4,6 @@
 import { isObjectRecord } from "../core/json-types";
 import { type PolicyValue, parseNetworkPolicies } from "./preset-parsing";
 
-// Every rendered field is parsed straight from a preset YAML, which for
-// --from-file/--from-dir presets is arbitrary user-supplied content: strip
-// terminal control characters so a crafted host/protocol/path cannot forge
-// or erase the disclosure block before the user reads it (no escape-sequence
-// forgery in operator terminals).
-const CONTROL_CHARS_RE = new RegExp("[\\u0000-\\u0008\\u000b-\\u001f\\u007f-\\u009f]", "g");
-
-function sanitizeForTerminal(value: string): string {
-  return value.replace(CONTROL_CHARS_RE, "");
-}
-
 type RuleScope = {
   action: "allow" | "deny";
   methods: string[];
@@ -41,23 +30,43 @@ export type PresetScope = {
   policies: PolicyScope[];
 };
 
+type RenderPresetScopeOptions = {
+  heading?: string;
+};
+
+const UNICODE_FORMAT_CONTROL = /^\p{Cf}$/u;
+
+/** Render untrusted YAML scalars without allowing terminal-control sequences. */
+export function escapeTerminalText(value: string): string {
+  return [...value]
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      const isC0 = codePoint <= 0x1f;
+      const isDeleteOrC1 = codePoint >= 0x7f && codePoint <= 0x9f;
+      const isLineSeparator = codePoint === 0x2028 || codePoint === 0x2029;
+      if (!isC0 && !isDeleteOrC1 && !isLineSeparator && !UNICODE_FORMAT_CONTROL.test(character)) {
+        return character;
+      }
+      return `\\u{${codePoint.toString(16).padStart(4, "0")}}`;
+    })
+    .join("");
+}
+
 function toStringOrUndefined(value: PolicyValue | undefined): string | undefined {
-  if (typeof value === "string") return sanitizeForTerminal(value);
+  if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return undefined;
 }
 
 function toPortOrUndefined(value: unknown): number | string | undefined {
   if (typeof value === "number") return value;
-  if (typeof value === "string" && value.length > 0) return sanitizeForTerminal(value);
+  if (typeof value === "string" && value.length > 0) return value;
   return undefined;
 }
 
 function stringArray(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.filter((v): v is string => typeof v === "string").map(sanitizeForTerminal);
-  }
-  if (typeof value === "string") return [sanitizeForTerminal(value)];
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
+  if (typeof value === "string") return [value];
   return [];
 }
 
@@ -87,12 +96,10 @@ function collectBinaries(policy: Record<string, unknown>): string[] {
   const out: string[] = [];
   for (const entry of binaries) {
     if (typeof entry === "string") {
-      out.push(sanitizeForTerminal(entry));
+      out.push(entry);
       continue;
     }
-    if (isObjectRecord(entry) && typeof entry.path === "string") {
-      out.push(sanitizeForTerminal(entry.path));
-    }
+    if (isObjectRecord(entry) && typeof entry.path === "string") out.push(entry.path);
   }
   return out;
 }
@@ -103,14 +110,13 @@ function extractPresetScope(content: string): PresetScope | null {
   const policies: PolicyScope[] = [];
   for (const [rawName, rawPolicy] of Object.entries(parsed)) {
     if (!isObjectRecord(rawPolicy)) continue;
-    const name = sanitizeForTerminal(typeof rawPolicy.name === "string" ? rawPolicy.name : rawName);
+    const name = typeof rawPolicy.name === "string" ? rawPolicy.name : rawName;
     const endpoints: EndpointScope[] = [];
     const rawEndpoints = rawPolicy.endpoints;
     if (Array.isArray(rawEndpoints)) {
       for (const rawEndpoint of rawEndpoints) {
         if (!isObjectRecord(rawEndpoint)) continue;
-        const host =
-          typeof rawEndpoint.host === "string" ? sanitizeForTerminal(rawEndpoint.host) : null;
+        const host = typeof rawEndpoint.host === "string" ? rawEndpoint.host : null;
         if (!host) continue;
         endpoints.push({
           host,
@@ -129,29 +135,34 @@ function extractPresetScope(content: string): PresetScope | null {
 }
 
 function formatEndpoint(endpoint: EndpointScope): string[] {
-  const port = endpoint.port ?? "?";
+  const port = escapeTerminalText(String(endpoint.port ?? "?"));
   const modeBits: string[] = [];
-  if (endpoint.access) modeBits.push(`access: ${endpoint.access}`);
-  if (endpoint.protocol) modeBits.push(`protocol: ${endpoint.protocol}`);
-  if (endpoint.tls) modeBits.push(`tls: ${endpoint.tls}`);
-  if (endpoint.enforcement) modeBits.push(`enforcement: ${endpoint.enforcement}`);
+  if (endpoint.access) modeBits.push(`access: ${escapeTerminalText(endpoint.access)}`);
+  if (endpoint.protocol) modeBits.push(`protocol: ${escapeTerminalText(endpoint.protocol)}`);
+  if (endpoint.tls) modeBits.push(`tls: ${escapeTerminalText(endpoint.tls)}`);
+  if (endpoint.enforcement) {
+    modeBits.push(`enforcement: ${escapeTerminalText(endpoint.enforcement)}`);
+  }
   const modeSuffix = modeBits.length > 0 ? ` (${modeBits.join(", ")})` : "";
-  const header = `      - ${endpoint.host}:${port}${modeSuffix}`;
+  const header = `      - ${escapeTerminalText(endpoint.host)}:${port}${modeSuffix}`;
   if (endpoint.rules.length === 0) return [header];
   const ruleLines = endpoint.rules.map((rule) => {
-    const methods = rule.methods.join(", ");
-    const paths = rule.paths.join(", ");
+    const methods = rule.methods.map(escapeTerminalText).join(", ");
+    const paths = rule.paths.map(escapeTerminalText).join(", ");
     return `          ${rule.action}: ${methods}  ${paths}`;
   });
   return [header, ...ruleLines];
 }
 
-export function renderPresetScope(content: string): string[] {
+export function renderPresetScope(
+  content: string,
+  options: RenderPresetScopeOptions = {},
+): string[] {
   const scope = extractPresetScope(content);
   if (!scope || scope.policies.length === 0) return [];
-  const lines: string[] = ["  Effective egress that would be opened:"];
+  const lines: string[] = [options.heading ?? "  Effective egress that would be opened:"];
   for (const policy of scope.policies) {
-    lines.push(`    policy '${policy.name}':`);
+    lines.push(`    policy '${escapeTerminalText(policy.name)}':`);
     if (policy.endpoints.length === 0) {
       lines.push("      (no endpoints declared)");
     } else {
@@ -162,7 +173,7 @@ export function renderPresetScope(content: string): string[] {
     if (policy.binaries.length > 0) {
       lines.push("      binaries:");
       for (const bin of policy.binaries) {
-        lines.push(`        - ${bin}`);
+        lines.push(`        - ${escapeTerminalText(bin)}`);
       }
     }
   }

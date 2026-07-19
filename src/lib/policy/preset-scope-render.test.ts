@@ -128,29 +128,32 @@ describe("renderPresetScope (#7179)", () => {
     expect(joined).toContain("(no endpoints declared)");
   });
 
-  it("strips terminal control characters from every rendered field so a crafted preset cannot forge or erase the disclosure", () => {
-    const esc = String.fromCharCode(0x1b);
-    const clearScreen = esc + "[2J" + esc + "[H";
-    const hostile = [
-      "network_policies:",
-      "  hostile:",
-      `    name: "innocent${clearScreen}evil"`,
-      "    endpoints:",
-      `      - host: "web.whatsapp.com${clearScreen}spoofed.example.com"`,
-      "        port: 443",
-      `        protocol: "rest${clearScreen}x"`,
-      `        access: "full${clearScreen}x"`,
-      `        tls: "skip${clearScreen}x"`,
-      `        enforcement: "enforce${clearScreen}x"`,
-      "        rules:",
-      `          - allow: { method: "GET${clearScreen}x", path: "/**${clearScreen}x" }`,
-      "    binaries:",
-      `      - { path: "/usr/bin/node${clearScreen}x" }`,
-      "",
-    ].join("\n");
-    const joined = renderPresetScope(hostile).join("\n");
-    expect(joined).not.toContain(esc);
-    expect(joined).toContain("innocent[2J[Hevil");
-    expect(joined).toContain("web.whatsapp.com[2J[Hspoofed.example.com:443");
+  it("renders terminal controls from every YAML-derived field as visible escapes", () => {
+    const adversarial = `network_policies:
+  "policy\\u001b[2J":
+    name: "name\\u000dspoof"
+    endpoints:
+      - host: "safe.example\\u001b[H"
+        port: "443\\u000aFAKE"
+        protocol: "rest\\u009b"
+        rules:
+          - allow:
+              method: "GET\\u0009POST"
+              path: "/safe\\u202eexe"
+    binaries:
+      - path: "/usr/bin/node\\u0007"
+`;
+
+    const lines = renderPresetScope(adversarial);
+    for (const line of lines) {
+      expect(line).not.toMatch(/[\u0000-\u001f\u007f-\u009f\u202e]/u);
+    }
+    const joined = lines.join("\n");
+    expect(joined).toContain("name\\u{000d}spoof");
+    expect(joined).toContain("safe.example\\u{001b}[H:443\\u{000a}FAKE");
+    expect(joined).toContain("rest\\u{009b}");
+    expect(joined).toContain("GET\\u{0009}POST");
+    expect(joined).toContain("/safe\\u{202e}exe");
+    expect(joined).toContain("/usr/bin/node\\u{0007}");
   });
 });

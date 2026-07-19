@@ -70,10 +70,10 @@ describe("policy channel remove/enable flows", () => {
 
     const lines = logSpy.mock.calls.map((call) => call.map(String).join(" "));
     const joined = lines.join("\n");
-    expect(joined).toContain("Effective egress that would be opened:");
+    expect(joined).toContain("Effective egress scope to be applied (live delta unavailable):");
     expect(joined).toContain("- api.telegram.org:443 (protocol: rest, enforcement: enforce)");
     const scopeHeader = lines.findIndex((line) =>
-      line.includes("Effective egress that would be opened:"),
+      line.includes("Effective egress scope to be applied (live delta unavailable):"),
     );
     const wouldStart = lines.findIndex((line) => line.includes("--dry-run: would start channel"));
     expect(scopeHeader).toBeGreaterThan(-1);
@@ -115,7 +115,7 @@ describe("policy channel remove/enable flows", () => {
 
     const joined = logSpy.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
     expect(joined).not.toContain("Effective egress that would be opened:");
-    expect(joined).toContain("already matches the sandbox's live network policy; no new egress.");
+    expect(joined).toContain("is already effective; no new egress would be opened.");
     expect(exitSpy).not.toHaveBeenCalled();
   });
 });

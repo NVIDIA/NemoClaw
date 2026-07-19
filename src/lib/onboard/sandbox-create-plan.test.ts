@@ -241,6 +241,10 @@ describe("resolveSandboxCreateIntent", () => {
         events.push("policy");
         return { policyPath: "/tmp/policy.yaml", appliedPresets: ["telegram"] };
       }),
+      discloseInitialSandboxPolicy: (policy) => {
+        events.push("disclose");
+        expect(policy.appliedPresets).toEqual(["telegram"]);
+      },
       runProviderPreDeleteCleanup: () => events.push("cleanup"),
       upsertMessagingProviders: vi.fn((receivedTokenDefs) => {
         events.push("upsert");
@@ -253,7 +257,7 @@ describe("resolveSandboxCreateIntent", () => {
       },
     });
 
-    expect(events).toEqual(["policy", "cleanup", "upsert", "hermes"]);
+    expect(events).toEqual(["policy", "disclose", "cleanup", "upsert", "hermes"]);
     expect(result.createArgs).toEqual([
       "--from",
       "/tmp/nemoclaw-build-1/Dockerfile",
@@ -275,6 +279,51 @@ describe("resolveSandboxCreateIntent", () => {
     ]);
     expect(serializedIntent).not.toContain("telegram-super-secret");
     expect(JSON.stringify(intent)).toBe(serializedIntent);
+  });
+
+  it("cleans up the prepared policy when disclosure fails before provider effects (#7179)", () => {
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "sandbox",
+      channels,
+      enabledChannels: [],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: [],
+      primaryMessagingCredentialEnvKeys: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      gpuCreateArgs: [],
+      gpuRoutePlan: "native-only",
+      sandboxGpuLogMessage: null,
+      policyTier: null,
+    });
+    const cleanupPolicy = vi.fn(() => true);
+    const cleanupProviders = vi.fn();
+    const upsertProviders = vi.fn(() => []);
+
+    expect(() =>
+      materializeSandboxCreatePlan({
+        intent,
+        buildCtx: "/tmp/nemoclaw-build-1",
+        messagingTokenDefs: [],
+        prepareInitialSandboxCreatePolicy: vi.fn(() => ({
+          policyPath: "/tmp/policy.yaml",
+          appliedPresets: [],
+          cleanup: cleanupPolicy,
+        })),
+        discloseInitialSandboxPolicy: () => {
+          throw new Error("disclosure failed");
+        },
+        runProviderPreDeleteCleanup: cleanupProviders,
+        upsertMessagingProviders: upsertProviders,
+        getHermesToolGatewayProviderName: vi.fn(),
+      }),
+    ).toThrow("disclosure failed");
+    expect(cleanupPolicy).toHaveBeenCalledOnce();
+    expect(cleanupProviders).not.toHaveBeenCalled();
+    expect(upsertProviders).not.toHaveBeenCalled();
   });
 
   it("rejects changed credential availability before running effects", () => {

@@ -11,18 +11,6 @@ function policyMap(content: string): Record<string, unknown> {
 }
 
 /**
- * Return whether applying `presetContent` on top of `currentPolicy` would add
- * or change any network_policies key. False means the preset's declared
- * policies already match what is live, so disclosing "effective egress that
- * would be opened" would misrepresent a no-op mutation as new egress.
- */
-export function presetIntroducesNewEgress(currentPolicy: string, presetContent: string): boolean {
-  const current = policyMap(currentPolicy);
-  const incoming = policyMap(presetContent);
-  return Object.entries(incoming).some(([key, value]) => !isDeepStrictEqual(current[key], value));
-}
-
-/**
  * Return the first incoming key whose live value is not exactly the value the
  * caller previously proved it owned. A null expected document owns no keys.
  */
