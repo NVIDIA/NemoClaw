@@ -89,13 +89,12 @@ apt-get() {
     done
   fi
 }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
-require_docker_restart_quiescence() { printf 'RECHECK_DOCKER_RESTART\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_DOCKER_RESTART %s\n' "$1"; }
 package_state() { printf 'missing\n'; }
 package_is_exact() { return 0; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
-  APT_TRANSACTION_HOOK="$APT_TRANSACTION_GUARD_DIR/verify-plan"
+  APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
 }
 cleanup_apt_transaction_guard() {
   printf 'CLEANUP_GUARD\n'
@@ -124,14 +123,17 @@ cat "$HOME/apt-cache-calls"
     expect(aptCommands).toEqual(
       [
         ...EXPECTED_PACKAGE_SPECS.map((spec) => `APT_CACHE show ${spec}`),
-        `APT_GET -s install --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/run/nemoclaw-apt-transaction.TEST/verify-plan::Version=3 ${expectedTuple}`,
-        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/run/nemoclaw-apt-transaction.TEST/verify-plan::Version=3 ${expectedTuple}`,
+        `APT_GET -s install --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
+        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
       ].sort(),
     );
     expect(output).toContain(
       "SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get -s install --no-install-recommends --no-remove",
     );
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    const quiescenceMarker = "RECHECK_DOCKER_RESTART Station prerequisite package installation";
+    const installMarker = "SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y";
+    expect(output).toContain(quiescenceMarker);
+    expect(output.indexOf(installMarker)).toBeGreaterThan(output.indexOf(quiescenceMarker));
     expect(output).toContain("CLEANUP_GUARD");
     expect(output).toContain("pinned_packages=installed");
   });
@@ -155,7 +157,6 @@ apt-get() {
     done
   fi
 }
-check_no_workloads() { :; }
 require_docker_restart_quiescence() { :; }
 package_state() {
   if [[ "$1" == '${retainedSpec}' ]]; then printf 'exact\n'; else printf 'missing\n'; fi
@@ -163,7 +164,7 @@ package_state() {
 package_is_exact() { return 0; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
-  APT_TRANSACTION_HOOK="$APT_TRANSACTION_GUARD_DIR/verify-plan"
+  APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
 }
 cleanup_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=""
@@ -191,8 +192,8 @@ cat "$HOME/apt-cache-calls"
     expect(aptCommands).toEqual(
       [
         ...missingSpecs.map((spec) => `APT_CACHE show ${spec}`),
-        `APT_GET -s install --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/run/nemoclaw-apt-transaction.TEST/verify-plan::Version=3 ${expectedTuple}`,
-        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/run/nemoclaw-apt-transaction.TEST/verify-plan::Version=3 ${expectedTuple}`,
+        `APT_GET -s install --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
+        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
       ].sort(),
     );
     expect(aptCommands.join("\n")).not.toContain(retainedSpec);
@@ -216,7 +217,7 @@ installed_version() { if [[ "$1" == "libc6" ]]; then printf '2.39-0ubuntu8'; fi;
 package_is_exact() { return 0; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
-  APT_TRANSACTION_HOOK="$APT_TRANSACTION_GUARD_DIR/verify-plan"
+  APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
 }
 sudo() {
   printf 'SUDO %s\n' "$*"
@@ -358,7 +359,7 @@ install_packages
     }
   });
 
-  it("emits an executable root-hook payload bound to its target manifest", () => {
+  it("emits a noexec-safe root-hook command bound to its target manifest", () => {
     const { result, output } = runSourced(
       `
 PACKAGE_TRANSACTION_SPECS=('${DOCKER_CE_SPEC}')
@@ -378,12 +379,18 @@ sudo() {
       cat >"$HOME/generated-guard/\${2##*/}"
       ;;
     chmod)
-      command chmod "$2" "$HOME/generated-guard/\${3##*/}"
+      printf 'SUDO %s\n' "$*"
+      if [[ "$3" == /run/nemoclaw-apt-transaction.GENERATED ]]; then
+        command chmod "$2" "$HOME/generated-guard"
+      else
+        command chmod "$2" "$HOME/generated-guard/\${3##*/}"
+      fi
       ;;
   esac
 }
 create_apt_transaction_guard
-"$HOME/generated-guard/verify-plan" <<<"$APT_PLAN"
+/bin/bash "$HOME/generated-guard/verify-plan" <<<"$APT_PLAN"
+printf 'APT_HOOK=%s\n' "$APT_TRANSACTION_HOOK"
 printf 'GENERATED_HOOK_ACCEPTED\n'
 `,
       {
@@ -396,6 +403,11 @@ printf 'GENERATED_HOOK_ACCEPTED\n'
 
     expect(result.status, output).toBe(0);
     expect(output).toContain("GENERATED_HOOK_ACCEPTED");
+    expect(output).toContain(
+      "APT_HOOK=/bin/bash /run/nemoclaw-apt-transaction.GENERATED/verify-plan",
+    );
+    expect(output).toContain("SUDO chmod 0700 /run/nemoclaw-apt-transaction.GENERATED/verify-plan");
+    expect(output).toContain("SUDO chmod 0600 /run/nemoclaw-apt-transaction.GENERATED/targets");
   });
 
   it("cleans the root-owned transaction guard when the caller exits", () => {
@@ -404,7 +416,7 @@ sudo() { printf 'SUDO %s\n' "$*"; }
 setup_log() { :; }
 run_apply() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.EXITTEST
-  APT_TRANSACTION_HOOK="$APT_TRANSACTION_GUARD_DIR/verify-plan"
+  APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
 }
 main --apply
 `);
