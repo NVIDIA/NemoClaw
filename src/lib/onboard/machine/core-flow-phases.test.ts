@@ -217,6 +217,7 @@ function createPhases(
       resolveSandboxCreateIntent: vi.fn(
         async ({ sandboxName, extraProviders, staleExtraProviders }) => ({
           sandboxName,
+          inferenceProvider: null,
           activeMessagingChannels: [],
           messagingProviderRequests: [],
           reusableMessagingProviders: [],

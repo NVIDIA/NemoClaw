@@ -130,6 +130,7 @@ export function createDeps(
         staleExtraProviders: readonly string[];
       }) => ({
         sandboxName: input.sandboxName,
+        inferenceProvider: null,
         activeMessagingChannels: [],
         messagingProviderRequests: [],
         reusableMessagingProviders: [],

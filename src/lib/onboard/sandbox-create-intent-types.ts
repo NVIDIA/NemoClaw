@@ -40,6 +40,7 @@ export type SandboxCreatePolicyRequest = {
  */
 export type SandboxCreateIntent = {
   readonly sandboxName: string;
+  readonly inferenceProvider: string | null;
   readonly activeMessagingChannels: readonly string[];
   readonly messagingProviderRequests: readonly SandboxCreateMessagingProviderRequest[];
   readonly reusableMessagingProviders: readonly string[];
@@ -58,6 +59,7 @@ export type SandboxCreateIntent = {
 export type ResolveSandboxCreateIntentInput = {
   basePolicyPath: string;
   sandboxName: string;
+  inferenceProvider?: string | null;
   channels: readonly MessagingChannel[];
   enabledChannels: string[] | null;
   disabledChannelNames: ReadonlySet<string>;

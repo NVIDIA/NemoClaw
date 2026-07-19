@@ -2287,6 +2287,7 @@ async function createSandboxWithBaseImageResolution(
     createIntent?.resolved ??
     (await sandboxCreateIntentResolver.resolve({
       sandboxName,
+      inferenceProvider: provider,
       enabledChannels,
       webSearchConfig,
       agent,
