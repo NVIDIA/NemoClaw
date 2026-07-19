@@ -19,6 +19,7 @@ import {
 } from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { warnLine } from "../cli/terminal-style";
+import { markPhaseActivity } from "../core/phase-activity";
 import { VLLM_PORT } from "../core/ports";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
@@ -1154,6 +1155,20 @@ export function resolveVllmServedModelId(modelId: string, extraServeArgs: string
 // Public entry point. Returns ok=false on any prereq, pull, run, or load
 // failure, plus when the user declines the confirmation prompt.
 export async function installVllm(
+  profile: VllmProfile,
+  opts: InstallVllmOptions,
+): Promise<{ ok: boolean }> {
+  // The whole managed install can run inside the provider-selection machine
+  // state, so name the real sub-stage for the onboarding heartbeat. (#7156)
+  const releasePhaseActivity = markPhaseActivity("vLLM install");
+  try {
+    return await runVllmInstall(profile, opts);
+  } finally {
+    releasePhaseActivity();
+  }
+}
+
+async function runVllmInstall(
   profile: VllmProfile,
   opts: InstallVllmOptions,
 ): Promise<{ ok: boolean }> {
