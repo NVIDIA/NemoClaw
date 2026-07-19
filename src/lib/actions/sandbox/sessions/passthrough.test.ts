@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const readOnlyExecMock = vi.hoisted(() => vi.fn());
+const legacyCliExecMock = vi.hoisted(() => vi.fn());
 const execMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureLiveMock = vi.hoisted(() => vi.fn(async () => ({})));
 const getSandboxMock = vi.hoisted(() =>
@@ -19,6 +20,9 @@ const getSandboxMock = vi.hoisted(() =>
 
 vi.mock("../../../adapters/openshell/sandbox-control-routing", () => ({
   execSandboxReadOnlyWithGrpcFallback: readOnlyExecMock,
+}));
+vi.mock("../../../adapters/openshell/sandbox-control", () => ({
+  openShellSandboxControl: { exec: legacyCliExecMock },
 }));
 vi.mock("../exec", async () => {
   const actual = await vi.importActual<typeof import("../exec")>("../exec");
@@ -227,10 +231,11 @@ describe("runSessionsPassthrough", () => {
 
   beforeEach(() => {
     readOnlyExecMock.mockReset();
+    legacyCliExecMock.mockReset();
     execMock.mockClear();
     ensureLiveMock.mockClear();
     getSandboxMock.mockReset();
-    getSandboxMock.mockReturnValue(null);
+    getSandboxMock.mockReturnValue({ agent: "openclaw" });
     stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -426,7 +431,7 @@ describe("runSessionsPassthrough", () => {
 
   it("defaults to the openclaw binary + filter path when the registry has no entry (#6247)", async () => {
     getSandboxMock.mockReturnValue(null);
-    readOnlyExecMock.mockResolvedValueOnce({
+    legacyCliExecMock.mockResolvedValueOnce({
       status: 0,
       stdout: "Sessions listed: 0\n",
       stderr: "",
@@ -435,7 +440,8 @@ describe("runSessionsPassthrough", () => {
     await runSessionsPassthrough("alpha", { extraArgs: [] });
 
     expect(execMock).not.toHaveBeenCalled();
-    expect(readOnlyExecMock).toHaveBeenCalledWith("nemoclaw", {
+    expect(readOnlyExecMock).not.toHaveBeenCalled();
+    expect(legacyCliExecMock).toHaveBeenCalledWith({
       sandboxName: "alpha",
       command: ["openclaw", "sessions"],
       maxOutputBytes: 64 * 1024 * 1024,

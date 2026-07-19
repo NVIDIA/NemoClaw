@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { openShellSandboxControl } from "../../../adapters/openshell/sandbox-control";
 import { execSandboxReadOnlyWithGrpcFallback } from "../../../adapters/openshell/sandbox-control-routing";
 import { CLI_NAME } from "../../../cli/branding";
 import { resolveSandboxGatewayName } from "../../../onboard/gateway-binding";
@@ -232,11 +233,17 @@ export async function runSessionsPassthrough(
   else if (inSandboxBinary === "hermes") command.push("list");
   for (const arg of extraArgs) command.push(arg);
   if (isFilterableListPassthrough(verb) && inSandboxBinary === "openclaw") {
-    const result = await execSandboxReadOnlyWithGrpcFallback(resolveSandboxGatewayName(sandbox), {
+    const request = {
       sandboxName,
       command,
       maxOutputBytes: SESSIONS_LIST_CAPTURE_MAX_BUFFER_BYTES,
-    });
+    };
+    // Without a registry row, the live check above may have validated the
+    // sandbox on whichever gateway is currently active. Preserve that legacy
+    // CLI route instead of guessing the default gateway for direct gRPC.
+    const result = sandbox
+      ? await execSandboxReadOnlyWithGrpcFallback(resolveSandboxGatewayName(sandbox), request)
+      : await openShellSandboxControl.exec(request);
     const { code, errorMessage } = computeExitCode(result);
     const capturedOutput = capturedStdout(result);
     const capturedError = capturedStderr(result);
