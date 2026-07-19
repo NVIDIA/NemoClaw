@@ -80,14 +80,16 @@ Use `nemo-deepagents <sandbox-name> status`, `logs`, `connect`, and `rebuild` fo
 If the terminal runtime reports degraded health, rebuild the sandbox instead of using `recover` or `gateway restart`.
 </AgentOnly>
 
+<AgentOnly variant="openclaw,hermes">
 ### Host OpenShell Gateway Versus In-Sandbox Agent Recovery
 
 `recover` and `start` repair the in-sandbox agent gateway and the host-side port forwards for one named sandbox.
 They do not restart, replace, or reap the shared host OpenShell gateway process.
 If the host gateway RPC returns an error while these sandbox-scoped commands run, they surface the error with explicit next-step guidance and exit rather than swapping the shared gateway out from under other sandboxes.
 
-To repair the host gateway itself, use `openshell status`, `openshell gateway start --name <gateway>`, or run `nemoclaw onboard` again.
+To repair the host gateway itself, use `openshell status`, `openshell gateway start --name <gateway>`, or run `$$nemoclaw onboard` again.
 Only the onboarding path and `nemoclaw <name> gateway restart` are permitted to reap or replace the shared host gateway.
+</AgentOnly>
 
 ## Rebuild While Preserving State
 
