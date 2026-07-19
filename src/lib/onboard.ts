@@ -106,6 +106,7 @@ const {
 const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
+  discloseInitialSandboxPolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
 const {
   getSelectionDrift,
@@ -2283,21 +2284,8 @@ async function createSandboxWithBaseImageResolution(
   const extraProviderPlan = createIntent?.extraProviders
     ? { extraProviders: createIntent.extraProviders, staleExtraProviders: [] }
     : planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell });
-  const resolvedCreateIntent =
-    createIntent?.resolved ??
-    (await sandboxCreateIntentResolver.resolve({
-      sandboxName,
-      enabledChannels,
-      webSearchConfig,
-      agent,
-      sandboxGpuConfig: effectiveSandboxGpuConfig,
-      resourceProfile,
-      hermesToolGateways,
-      extraProviders: extraProviderPlan.extraProviders,
-      staleExtraProviders: extraProviderPlan.staleExtraProviders,
-      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
-      ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}),
-    }));
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const resolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
   const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
     {
       sandboxName,
@@ -2719,14 +2707,10 @@ async function createSandboxWithBaseImageResolution(
     upsertMessagingProviders,
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+    discloseInitialSandboxPolicy,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
-  }
-  if (initialSandboxPolicy.appliedPresets.length > 0) {
-    console.log(
-      `  Including policy preset(s) at sandbox boot: ${initialSandboxPolicy.appliedPresets.join(", ")}`,
-    );
   }
   if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
@@ -2801,7 +2785,7 @@ async function createSandboxWithBaseImageResolution(
       prebuild,
       restoreBackupPath,
       terminalAgent: agentDefs.isTerminalAgent(agent),
-      persistStartupCommand: dockerDriverGateway === true && agent?.name === "hermes",
+      ...sandboxGpuCreateFlow.resolveDockerStartupCommandPatch(agent, dockerDriverGateway),
     },
     {
       runOpenshell,
@@ -3837,12 +3821,12 @@ async function selectPolicyTier(): Promise<string> {
 async function selectTierPresetsAndAccess(
   tierName: string,
   allPresets: Array<{ name: string; description?: string }>,
-  extraSelected: string[] = [],
+  initialSelected?: string[],
 ): Promise<Array<{ name: string; access: string }>> {
   return getPolicySelectionPromptHelpers().selectTierPresetsAndAccess(
     tierName,
     allPresets,
-    extraSelected,
+    initialSelected,
   );
 }
 
@@ -4000,7 +3984,7 @@ async function preflightAuthoritativeRebuildTarget(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-const onboard = onboardEntryOptions.withNonInteractiveEnvironment(runOnboard);
+const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
@@ -4055,7 +4039,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   }
   // Validate provider/model hints before preflight so configuration errors are not reported as Docker failures.
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  resumeConfig.preflightEarlyOnboardEnvForResume(isNonInteractive(), opts.authoritativeResumeConfig === true);
+  const stationSessionInput = onboardEntryOptions.prepareSessionInput(runtimeControlRequests, requestedSandboxName, resume, () => resumeConfig.preflightEarlyOnboardEnvForResume(isNonInteractive(), opts.authoritativeResumeConfig === true));
   const ownsOnboardLock = opts.onboardLockAlreadyHeld !== true;
   const lockResult = ownsOnboardLock
     ? onboardSession.acquireOnboardLock(
@@ -4137,7 +4121,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
     let selectedMessagingChannels: string[] = [];
-    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSession(
+    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSessionValidated(
       {
         resume,
         fresh,
@@ -4148,7 +4132,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
-        ...runtimeControlRequests,
+        ...stationSessionInput,
       },
       {
         loadSession: onboardSession.loadSession,

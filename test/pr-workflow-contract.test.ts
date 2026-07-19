@@ -815,6 +815,9 @@ describe("pull request and main workflow contracts", () => {
         "${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}",
       "cancel-in-progress": true,
     });
+    expect(
+      requiredWorkflowStep(prWorkflow.jobs["static-checks"], "Checkout").with?.["fetch-depth"],
+    ).toBe(0);
     for (const [jobName, stepName, trustedActionPath, mainActionPath] of [
       [
         "static-checks",
@@ -1017,7 +1020,6 @@ describe("pull request and main workflow contracts", () => {
     expect(parityStep.run).toContain("base=HEAD^1");
     expect(parityStep.run).toContain("head=HEAD^2");
     expect(parityStep.run).toContain('base="$PUSH_BASE_SHA"');
-
     const trustedCapabilityProbe = requiredWorkflowStep(
       prWorkflow.jobs["cli-test-shards"],
       "Detect trusted E2E support sharding",
@@ -1058,6 +1060,60 @@ describe("pull request and main workflow contracts", () => {
     expect(stepRuns(sharedActions.staticChecks).join("\n")).not.toContain(
       "skills-frontmatter.test.ts",
     );
+    const trustedRatchetDependencies = requiredStep(
+      sharedActions.staticChecks,
+      "Install base-trusted createRequire verifier dependencies",
+    );
+    const trustedRatchet = requiredStep(
+      sharedActions.staticChecks,
+      "Enforce base-trusted createRequire allowlist ratchet",
+    );
+    expect(trustedRatchetDependencies.run).toBe(
+      'npm ci --ignore-scripts --no-audit --no-fund --prefix "$GITHUB_ACTION_PATH"',
+    );
+    expect(trustedRatchet.run).toBe(
+      'node --experimental-strip-types "$GITHUB_ACTION_PATH/create-require-ratchet.mts"',
+    );
+    expect(stepRuns(sharedActions.staticChecks)).not.toContain(
+      'npx tsx "$GITHUB_ACTION_PATH/create-require-ratchet.mts"',
+    );
+    expect(
+      requiredStepIndex(
+        sharedActions.staticChecks,
+        "Install base-trusted createRequire verifier dependencies",
+      ),
+    ).toBeLessThan(
+      requiredStepIndex(
+        sharedActions.staticChecks,
+        "Enforce base-trusted createRequire allowlist ratchet",
+      ),
+    );
+    expect(
+      requiredStepIndex(
+        sharedActions.staticChecks,
+        "Enforce base-trusted createRequire allowlist ratchet",
+      ),
+    ).toBeLessThan(requiredStepIndex(sharedActions.staticChecks, "Install dependencies"));
+
+    const ratchetPackage = JSON.parse(
+      readFileSync(".github/actions/ci-static-checks/package.json", "utf8"),
+    ) as { dependencies?: Record<string, string> };
+    const ratchetLock = JSON.parse(
+      readFileSync(".github/actions/ci-static-checks/package-lock.json", "utf8"),
+    ) as {
+      packages?: Record<string, { integrity?: string; version?: string }>;
+    };
+    const ratchetRuntime = readFileSync(
+      ".github/actions/ci-static-checks/create-require-ratchet.mts",
+      "utf8",
+    );
+    expect(ratchetPackage.dependencies).toEqual({ typescript: "6.0.3" });
+    expect(ratchetLock.packages?.["node_modules/typescript"]?.version).toBe("6.0.3");
+    expect(ratchetLock.packages?.["node_modules/typescript"]?.integrity).toMatch(/^sha512-/);
+    expect(ratchetRuntime).toContain(
+      'import ts from "./node_modules/typescript/lib/typescript.js";',
+    );
+    expect(ratchetRuntime).not.toMatch(/from ["']typescript["']/);
   });
 
   // source-shape-contract: security -- Downloaded CI tooling must use a committed digest rather than upstream metadata

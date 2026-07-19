@@ -9,8 +9,6 @@ keywords: ["nemoclaw troubleshooting", "nemoclaw debug sandbox issues", "opencla
 content:
   type: "reference"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 {/* markdownlint-disable MD014 */}
 
 This page covers common installation, onboarding, and runtime issues, along with resolution steps.
@@ -2272,7 +2270,9 @@ When shared gateway cleanup would be unsafe, follow the targeted destroy or gate
 Recent NVIDIA Container Toolkit installs configure the Docker daemon for Container Device Interface (CDI) device injection, which OpenShell's `gateway start --gpu` then auto-selects.
 If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
 Outside Station Express, the standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and can fall back to generating the spec directly with `nvidia-ctk`.
-Station Express requires the packaged refresh lifecycle to work; if it fails or omits `nvidia.com/gpu=all`, inspect `nvidia-cdi-refresh.service`, repair it, and rerun the printed exact-commit install command.
+Station Express never falls back to direct CDI generation.
+The generic Ubuntu, Colossus BaseOS, and exact AI Developer Tools paths require the packaged refresh lifecycle to work; if it fails or omits `nvidia.com/gpu=all`, inspect `nvidia-cdi-refresh.service`, repair it, and rerun the printed exact-commit install command.
+Other factory-runtime profiles stop when the CDI device is missing without enabling or restarting the refresh units.
 If you run `$$nemoclaw onboard` directly, preflight prints the manual remediation instead.
 The native Linux fix is the same on Docker hosts whose `docker info` advertises a non-empty `CDISpecDirs`.
 On WSL with Docker Desktop, Docker may advertise CDI directories even though `--device nvidia.com/gpu=all` is not usable from the WSL distro.

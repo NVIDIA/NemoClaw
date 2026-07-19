@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { hashCredential } from "../../../security/credential-hash";
-import { createSession } from "../../../state/onboard-session";
+import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
+import {
+  CHECKPOINT_SCHEMA_VERSION,
+  type OnboardCheckpoint,
+} from "../../../state/onboard-checkpoint-types";
+import { createSession, type Session } from "../../../state/onboard-session";
 import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
 
 const channelIds = ["telegram", "unsupported"];
@@ -154,12 +159,40 @@ function completedCheckpointSession(
   return session;
 }
 
+function withMessagingCheckpoint(
+  session: Session,
+  selectedChannels: string[],
+  disabledChannels: string[] = [],
+): Session {
+  const checkpoint: OnboardCheckpoint = {
+    schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+    sessionId: session.sessionId,
+    machineState: session.machine.state,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    sandboxIdentity: decisionUnset(),
+    webSearch: decisionUnset(),
+    messaging: decisionSelected({ selectedChannels, disabledChannels }),
+    resourceProfile: decisionUnset(),
+    effectGroups: {},
+    bindings: { credentialEnvs: [], registeredProviders: [] },
+  };
+  session.checkpoint = checkpoint;
+  return session;
+}
+
 function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
   return {
     note: vi.fn(),
     showMessagingStage: vi.fn(),
     getRecordedMessagingChannelsForResume: vi.fn(() => null),
-    setupMessagingChannels: vi.fn(async () => ["telegram"]),
+    setupMessagingChannels: vi.fn(
+      async (
+        _agent: unknown,
+        _existingChannels: string[] | null,
+        _sandboxName: string,
+        _options?: { readonly selectionCompleted?: boolean },
+      ) => ["telegram"],
+    ),
     readMessagingPlanFromEnv: vi
       .fn()
       .mockReturnValueOnce(plans[0] ?? null)
@@ -345,5 +378,57 @@ describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
     );
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: persistedPlan, selectedChannels: ["telegram"] });
+  });
+
+  it("does not reconcile when the checkpointed channel selection matches the durable plan (#7022)", async () => {
+    const persistedPlan = telegramPlan(hashCredential("123456:previous-token") ?? "");
+    const deps = reconcileDeps([null]);
+    deps.providerMatchesGatewayCredential.mockReturnValueOnce(true);
+    const session = withMessagingCheckpoint(
+      completedCheckpointSession(persistedPlan, ["alpha-telegram-bridge"]),
+      ["telegram"],
+    );
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(deps.note).not.toHaveBeenCalledWith(
+      expect.stringContaining("Reconciling messaging selection"),
+    );
+    expect(result).toEqual({ plan: persistedPlan, selectedChannels: ["telegram"] });
+  });
+
+  it("reconciles the messaging selection with the checkpoint when the durable plan disagrees (#7022)", async () => {
+    const persistedPlan = telegramPlan(hashCredential("123456:previous-token") ?? "");
+    const deps = reconcileDeps([null]);
+    deps.setupMessagingChannels.mockImplementationOnce(
+      async (_agent: unknown, existing: string[] | null) => existing ?? [],
+    );
+    const session = withMessagingCheckpoint(completedCheckpointSession(persistedPlan), ["discord"]);
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.note).toHaveBeenCalledWith(
+      expect.stringContaining("Reconciling messaging selection"),
+    );
+    expect(deps.setupMessagingChannels).toHaveBeenCalledWith(
+      { name: "openclaw" },
+      ["discord"],
+      "alpha",
+      { selectionCompleted: true },
+    );
+    expect(result.selectedChannels).toEqual(["discord"]);
   });
 });

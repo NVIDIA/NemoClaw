@@ -17,6 +17,18 @@ import {
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import {
+  decisionValue,
+  isDecisionSelected,
+  isDecisionUnset,
+} from "../../../state/onboard-checkpoint-decision";
+import type {
+  CheckpointEffectGroupName,
+  CheckpointProviderBinding,
+  CheckpointResourceProfile,
+  CheckpointSandboxIdentity,
+  OnboardCheckpoint,
+} from "../../../state/onboard-checkpoint-types";
 import type {
   HermesAuthMethod,
   Session,
@@ -26,6 +38,23 @@ import type {
 import type { SandboxEntry } from "../../../state/registry";
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
+import {
+  recordCheckpointBindings,
+  recordCheckpointEffectGroup,
+  recordCheckpointMessaging,
+  recordCheckpointResourceProfile,
+  recordCheckpointSandboxIdentity,
+  recordCheckpointWebSearch,
+} from "../../checkpoint-record";
+import {
+  checkpointProvesSandboxStepComplete,
+  planEffectGroupReplay,
+  planSandboxCreateReplay,
+} from "../../checkpoint-replay";
+import {
+  bindingRevalidationGuidance,
+  revalidateCheckpointBindings,
+} from "../../checkpoint-revalidate";
 import { withDashboardPortReservationLock as withHostDashboardPortReservationLock } from "../../dashboard-port";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import {
@@ -179,7 +208,7 @@ export interface SandboxStateOptions<
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
-    }): Promise<readonly string[]>;
+    }): Promise<readonly CheckpointProviderBinding[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
     stopStaleDashboardListenersForSandbox(sandboxes: unknown[], sandboxName: string): void;
@@ -189,6 +218,7 @@ export interface SandboxStateOptions<
     ): import("../../extra-provider-reconciliation").ExtraProviderReconciliationPlan;
     resolveSandboxCreateIntent(input: {
       sandboxName: string;
+      inferenceProvider?: string | null;
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
@@ -332,6 +362,16 @@ function observabilityRequestValidationError(
   return null;
 }
 
+function checkpointIdentityForResumeTarget(
+  checkpoint: OnboardCheckpoint,
+  sandboxName: string | null,
+  agentName: string,
+): CheckpointSandboxIdentity | null {
+  if (!isDecisionSelected(checkpoint.sandboxIdentity)) return null;
+  const identity = checkpoint.sandboxIdentity.value;
+  return identity.name === sandboxName && identity.agent === agentName ? identity : null;
+}
+
 class SandboxStateFlow<
   Gpu,
   Agent,
@@ -468,7 +508,9 @@ class SandboxStateFlow<
     const decision = decideSandboxResume({
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
-      sandboxStepComplete: state.session?.steps?.sandbox?.status === "complete",
+      sandboxStepComplete: state.session?.checkpoint
+        ? checkpointProvesSandboxStepComplete(state.session)
+        : state.session?.steps?.sandbox?.status === "complete",
       sandboxReuseState,
       inferenceRouteConfigChanged: hasHermesCompatibleAnthropicInferenceRouteDrift({
         agentName: (this.options.agent as { name?: string } | null)?.name,
@@ -500,7 +542,157 @@ class SandboxStateFlow<
       ...toolDisclosureSignals,
       ...dcodeResumeSignals,
     });
-    return dcodeResume.preserveManagedDcodeRegistryEntry(this.options, decision);
+    const managedDcodeDecision = dcodeResume.preserveManagedDcodeRegistryEntry(
+      this.options,
+      decision,
+    );
+    return this.applyCheckpointCrashRecovery(managedDcodeDecision, state, sandboxReuseState);
+  }
+
+  // A "create" decision from decideSandboxResume means only that the sandbox
+  // step was never marked complete; it does not check whether a previous run
+  // already executed the destructive create effect before crashing. When a
+  // durable checkpoint proves that (recorded identity + a sandbox_create
+  // effect receipt), disambiguate using live state instead of blindly
+  // recreating under the same name (#5961, #6228).
+  private applyCheckpointCrashRecovery(
+    decision: SandboxResumeDecision,
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxReuseState: string,
+  ): SandboxResumeDecision {
+    if (decision.kind !== "create") return decision;
+    const checkpoint = state.session?.checkpoint;
+    const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+    const identity =
+      checkpoint && checkpointIdentityForResumeTarget(checkpoint, state.sandboxName, agentName);
+    if (!checkpoint || !identity) return decision;
+
+    const recordedFingerprint = checkpoint.effectGroups.sandbox_create?.fingerprint;
+    const currentLightFingerprint = this.currentSandboxCreateFingerprint(identity.name);
+    if (
+      recordedFingerprint &&
+      recordedFingerprint !== currentLightFingerprint &&
+      !recordedFingerprint.startsWith(`${currentLightFingerprint}|`)
+    ) {
+      return this.rejectDriftedCheckpointFingerprint(identity.name);
+    }
+
+    const bindingCheck = revalidateCheckpointBindings(
+      checkpoint,
+      this.checkpointBindingAvailability(checkpoint),
+    );
+    if (bindingCheck.status === "stale") return this.rejectStaleCheckpointBindings(bindingCheck);
+
+    const replay = planSandboxCreateReplay(checkpoint, {
+      liveSandboxExists: sandboxReuseState === "ready",
+    });
+    return replay.action === "reuse" && replay.identity.name === state.sandboxName
+      ? { kind: "reuse" }
+      : decision;
+  }
+
+  private currentSandboxCreateFingerprint(
+    sandboxName: string,
+    createIntent?: ResolvedSandboxCreateIntent,
+  ): string {
+    const { nemoclawVersion: builtFingerprint } = this.deps.getSandboxAgentRegistryFields(
+      this.options.agent,
+      !this.options.fromDockerfile,
+    );
+    const policyFingerprint = this.options.authoritativePolicyTier ?? "default";
+    const lightFingerprint = [
+      typeof builtFingerprint === "string" ? builtFingerprint : sandboxName,
+      policyFingerprint,
+      this.options.provider,
+      this.options.model,
+      this.options.preferredInferenceApi ?? "default",
+      this.options.fromDockerfile ?? "",
+      JSON.stringify(this.options.sandboxGpuConfig ?? null),
+      [...this.options.hermesToolGateways].sort().join(","),
+    ].join("|");
+    if (!createIntent) return lightFingerprint;
+    // Extra providers are live gateway attachments, not durable build intent.
+    // Resume deliberately re-plans them so newly live providers are attached
+    // and stale records are omitted. Binding those ambient lists into the
+    // receipt would reject the established repair/resume reconciliation path.
+    const {
+      extraProviders: _extraProviders,
+      staleExtraProviders: _staleExtraProviders,
+      ...durableCreateIntent
+    } = createIntent;
+    return `${lightFingerprint}|${JSON.stringify(durableCreateIntent)}`;
+  }
+
+  private assertCheckpointCreateInputsStillMatch(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+    createIntent: ResolvedSandboxCreateIntent,
+  ): void {
+    const recordedFingerprint = state.session?.checkpoint?.effectGroups.sandbox_create?.fingerprint;
+    if (!recordedFingerprint) return;
+    if (recordedFingerprint !== this.currentSandboxCreateFingerprint(sandboxName, createIntent)) {
+      this.rejectDriftedCheckpointFingerprint(sandboxName);
+    }
+  }
+
+  private rejectDriftedCheckpointFingerprint(sandboxName: string): never {
+    this.deps.error(
+      `  A previous onboarding attempt recorded sandbox '${sandboxName}' with different build or policy inputs than this run requests.`,
+    );
+    this.deps.error("  Pass --recreate-sandbox to rebuild it with the current settings.");
+    return this.deps.exitProcess(1);
+  }
+
+  private providerBindingsLive(checkpoint: OnboardCheckpoint): boolean {
+    if (checkpoint.bindings.registeredProviders.length === 0) return false;
+    return checkpoint.bindings.registeredProviders.every((binding) =>
+      this.deps.providerMatchesGatewayCredential(binding.name, binding.type, binding.credentialEnv),
+    );
+  }
+
+  private checkpointBindingAvailability(checkpoint: OnboardCheckpoint): {
+    availableCredentialEnvs: ReadonlySet<string>;
+    liveRegisteredProviders: ReadonlySet<string>;
+  } {
+    const liveRegisteredBindings = checkpoint.bindings.registeredProviders.filter((binding) =>
+      this.deps.providerMatchesGatewayCredential(binding.name, binding.type, binding.credentialEnv),
+    );
+    return {
+      availableCredentialEnvs: new Set(
+        [
+          ...Object.keys(this.options.env).filter((name) =>
+            Boolean(this.options.env[name]?.trim()),
+          ),
+          // Provider setup deliberately scrubs raw credentials from process.env
+          // after registration. The exact live name/type/credential-key binding
+          // is sufficient evidence for that scrubbed credential key (#7022).
+          ...liveRegisteredBindings.map((binding) => binding.credentialEnv),
+        ].filter(Boolean),
+      ),
+      liveRegisteredProviders: new Set(liveRegisteredBindings.map((binding) => binding.name)),
+    };
+  }
+
+  private rejectStaleCheckpointBindings(
+    bindingCheck: Extract<ReturnType<typeof revalidateCheckpointBindings>, { status: "stale" }>,
+  ): never {
+    const guidance = bindingRevalidationGuidance(bindingCheck);
+    if (guidance) this.deps.error(guidance);
+    this.deps.error(
+      "  A previous onboarding attempt was interrupted after starting sandbox creation.",
+    );
+    this.deps.error("  Re-run with the required credentials available to continue safely.");
+    return this.deps.exitProcess(1);
+  }
+
+  private assertCheckpointBindingsStillLive(state: SandboxStepState<WebSearchConfig>): void {
+    const checkpoint = state.session?.checkpoint;
+    if (!checkpoint) return;
+    const bindingCheck = revalidateCheckpointBindings(
+      checkpoint,
+      this.checkpointBindingAvailability(checkpoint),
+    );
+    if (bindingCheck.status === "stale") this.rejectStaleCheckpointBindings(bindingCheck);
   }
 
   private applyObservabilityRequest(
@@ -618,11 +810,49 @@ class SandboxStateFlow<
         reason: "resume",
         sandboxName: state.sandboxName,
       });
+      const recordedSession = this.backfillReusedSandboxCheckpointReceipts(
+        skippedSession,
+        state.sandboxName,
+      );
       return {
         ...state,
-        session: skippedSession,
+        session: recordedSession,
         selectedMessagingChannels: messaging.selectedChannels,
       };
+    });
+  }
+
+  private backfillReusedSandboxCheckpointReceipts(
+    session: Session,
+    sandboxName: string | null,
+  ): Session {
+    if (!sandboxName || !session.checkpoint) return session;
+    const agentName = (this.options.agent as { name?: string } | null)?.name ?? "openclaw";
+    if (!checkpointIdentityForResumeTarget(session.checkpoint, sandboxName, agentName)) {
+      return session;
+    }
+    if (
+      session.checkpoint.effectGroups.sandbox_create &&
+      session.checkpoint.effectGroups.sandbox_register
+    ) {
+      return session;
+    }
+    return this.deps.updateSession((current) => {
+      const checkpoint = current.checkpoint;
+      if (!checkpoint || !checkpointIdentityForResumeTarget(checkpoint, sandboxName, agentName)) {
+        return current;
+      }
+      if (!checkpoint.effectGroups.sandbox_create) {
+        recordCheckpointEffectGroup(
+          current,
+          "sandbox_create",
+          this.currentSandboxCreateFingerprint(sandboxName),
+        );
+      }
+      if (!checkpoint.effectGroups.sandbox_register) {
+        recordCheckpointEffectGroup(current, "sandbox_register", sandboxName);
+      }
+      return current;
     });
   }
 
@@ -688,10 +918,13 @@ class SandboxStateFlow<
     const explicitlyConfigured = parseExplicitWebSearchProvider(
       this.options.env[WEB_SEARCH_PROVIDER_ENV],
     ).specified;
+    const checkpoint = state.session?.checkpoint;
     const completedSelection =
       this.resumesSandboxPrompts &&
       this.options.resume &&
-      state.session?.sandboxPromptProgress?.webSearch === true;
+      (checkpoint
+        ? !isDecisionUnset(checkpoint.webSearch)
+        : state.session?.sandboxPromptProgress?.webSearch === true);
     if (!this.options.authoritativeResumeConfig && !explicitlyConfigured && !completedSelection) {
       return this.deps.configureWebSearch(
         null,
@@ -699,10 +932,17 @@ class SandboxStateFlow<
         state.webSearchSupportProbePath,
       );
     }
+    const checkpointedValue = checkpoint
+      ? (decisionValue(checkpoint.webSearch) as unknown as WebSearchConfig | null)
+      : null;
     if (completedSelection && !explicitlyConfigured && !state.webSearchSupportDropped) {
-      this.deps.note("  [resume] Reusing web search selection: disabled.");
+      this.deps.note(
+        checkpointedValue
+          ? "  [resume] Reusing checkpointed web search selection."
+          : "  [resume] Reusing web search selection: disabled.",
+      );
     }
-    return null;
+    return checkpointedValue ? Promise.resolve(checkpointedValue) : null;
   }
 
   private checkpointWebSearch(
@@ -713,6 +953,10 @@ class SandboxStateFlow<
     const session = this.deps.updateSession((current) => {
       current.webSearchConfig = webSearchConfig as unknown as Session["webSearchConfig"];
       current.sandboxPromptProgress.webSearch = true;
+      recordCheckpointWebSearch(
+        current,
+        webSearchConfig as unknown as SharedWebSearchConfig | null,
+      );
       return current;
     });
     return { ...state, session, webSearchConfig };
@@ -736,10 +980,31 @@ class SandboxStateFlow<
       }
       current.sandboxName = sandboxName;
       current.sandboxPromptProgress.sandboxName = true;
+      recordCheckpointSandboxIdentity(
+        current,
+        sandboxName,
+        current.agent ?? (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
+      );
       return current;
     });
     if (messagingInvalidated) this.deps.clearPlanEnv();
     return { ...state, session, sandboxName };
+  }
+
+  private recordSandboxIdentityForCreate(
+    state: SandboxStepState<WebSearchConfig>,
+    sandboxName: string,
+  ): SandboxStepState<WebSearchConfig> {
+    if (this.resumesSandboxPrompts) return state;
+    const session = this.deps.updateSession((current) => {
+      recordCheckpointSandboxIdentity(
+        current,
+        sandboxName,
+        current.agent ?? (this.options.agent as { name?: string } | null)?.name ?? "openclaw",
+      );
+      return current;
+    });
+    return { ...state, session };
   }
 
   private checkpointMessaging(
@@ -752,6 +1017,7 @@ class SandboxStateFlow<
     const session = this.deps.updateSession((current) => {
       current.messagingPlan = messaging.plan;
       current.sandboxPromptProgress.messaging = true;
+      recordCheckpointMessaging(current, messaging.plan);
       return current;
     });
     return {
@@ -765,8 +1031,17 @@ class SandboxStateFlow<
     sandboxName: string,
     enabledChannels: readonly string[],
     webSearchConfig: WebSearchConfig | null,
+    group: CheckpointEffectGroupName,
+    checkpoint: OnboardCheckpoint | null,
   ): Promise<void> {
     if (!this.resumesSandboxPrompts || (!webSearchConfig && enabledChannels.length === 0)) return;
+    if (
+      checkpoint &&
+      planEffectGroupReplay(checkpoint, group, this.providerBindingsLive(checkpoint)).action ===
+        "skip"
+    ) {
+      return;
+    }
     const registeredProviders = await this.deps.withGatewayRouteMutationLock(
       this.options.gatewayName,
       () =>
@@ -779,6 +1054,17 @@ class SandboxStateFlow<
     );
     if (registeredProviders.length > 0) {
       this.deps.note("  ✓ Registered selected credentials with OpenShell for resume.");
+      this.deps.updateSession((current) => {
+        recordCheckpointBindings(current, {
+          registeredProviders,
+        });
+        recordCheckpointEffectGroup(
+          current,
+          group,
+          registeredProviders.map((binding) => binding.name).join(","),
+        );
+        return current;
+      });
     }
   }
 
@@ -786,13 +1072,19 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>;
     resourceProfile: ResourceProfile | null;
   }> {
+    const checkpoint = state.session?.checkpoint;
+    const completedSelection = checkpoint
+      ? !isDecisionUnset(checkpoint.resourceProfile)
+      : state.session?.sandboxPromptProgress?.resourceProfile === true;
     if (
       this.resumesSandboxPrompts &&
       this.options.resume &&
-      state.session?.sandboxPromptProgress?.resourceProfile === true &&
+      completedSelection &&
       !hasResourceProfileEnvOverride(this.options.env)
     ) {
-      const resourceProfile = state.session.resourceProfile as ResourceProfile | null;
+      const resourceProfile = (
+        checkpoint ? decisionValue(checkpoint.resourceProfile) : state.session?.resourceProfile
+      ) as ResourceProfile | null;
       this.deps.note(
         resourceProfile
           ? "  [resume] Reusing resource profile selection."
@@ -806,6 +1098,7 @@ class SandboxStateFlow<
     const session = this.deps.updateSession((current) => {
       current.resourceProfile = resourceProfile as SessionResourceProfile | null;
       current.sandboxPromptProgress.resourceProfile = true;
+      recordCheckpointResourceProfile(current, resourceProfile as CheckpointResourceProfile | null);
       return current;
     });
     return { state: { ...state, session }, resourceProfile };
@@ -823,6 +1116,7 @@ class SandboxStateFlow<
     const reuseRegisteredCredentials = this.resumesSandboxPrompts && this.options.resume;
     const resolved = await this.deps.resolveSandboxCreateIntent({
       sandboxName,
+      inferenceProvider: this.options.provider,
       enabledChannels: state.selectedMessagingChannels,
       webSearchConfig: state.webSearchConfig,
       agent: this.options.agent,
@@ -883,6 +1177,12 @@ class SandboxStateFlow<
     );
     const createAndRecord = async (): Promise<SandboxStepState<WebSearchConfig>> => {
       this.assertGatewayRouteCompatible(requestedSandboxName);
+      this.assertCheckpointBindingsStillLive(state);
+      this.assertCheckpointCreateInputsStillMatch(
+        state,
+        requestedSandboxName,
+        createIntent.resolved,
+      );
       await this.deps.startRecordedStep("sandbox", {
         sandboxName: requestedSandboxName,
         provider: this.options.provider,
@@ -939,7 +1239,7 @@ class SandboxStateFlow<
       });
       // Finalization marks the default so a cancelled onboarding cannot leave a
       // partially configured sandbox selected as the default.
-      const completedSession = await this.deps.recordStepComplete(
+      await this.deps.recordStepComplete(
         "sandbox",
         this.deps.toSessionUpdates({
           sandboxName,
@@ -951,7 +1251,16 @@ class SandboxStateFlow<
           hermesToolGateways: effectiveHermesToolGateways,
         }),
       );
-      return { ...state, sandboxName, session: completedSession };
+      const recordedSession = this.deps.updateSession((current) => {
+        recordCheckpointEffectGroup(
+          current,
+          "sandbox_create",
+          this.currentSandboxCreateFingerprint(sandboxName, createIntent.resolved),
+        );
+        recordCheckpointEffectGroup(current, "sandbox_register", sandboxName);
+        return current;
+      });
+      return { ...state, sandboxName, session: recordedSession };
     };
     const withGatewayLock = () =>
       this.deps.withGatewayRouteMutationLock(this.options.gatewayName, createAndRecord);
@@ -988,6 +1297,7 @@ class SandboxStateFlow<
     if (!nextState.sandboxName) {
       nextState = this.checkpointSandboxName(nextState, requestedSandboxName);
     }
+    nextState = this.recordSandboxIdentityForCreate(nextState, requestedSandboxName);
     const webSearchConfig = await this.resolveWebSearchForCreation(nextState);
     const webSearchConfigChanged =
       nextState.webSearchConfigChanged ||
@@ -1007,6 +1317,8 @@ class SandboxStateFlow<
       requestedSandboxName,
       [],
       nextState.webSearchConfig,
+      "web_search_provider",
+      nextState.session?.checkpoint ?? null,
     );
     const messaging = await reconcileSandboxMessaging({
       resume: this.options.resume,
@@ -1020,6 +1332,8 @@ class SandboxStateFlow<
       requestedSandboxName,
       nextState.selectedMessagingChannels,
       null,
+      "messaging_providers",
+      nextState.session?.checkpoint ?? null,
     );
     return this.createAndRecordSandbox(nextState, requestedSandboxName, messaging.plan, decision);
   }

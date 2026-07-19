@@ -107,12 +107,12 @@ revision, or closed PR can leave the controller green while coordination is
 failed or cancelled and the native job is non-passing. Only a successful native
 `E2E / PR Gate` for the current head and base satisfies the required check. An
 eligible prerequisite-CI failure records the versioned retry reason
-`prerequisite-ci`. A selected child records `child-cancelled` only when the
-workflow is cancelled or a complete job listing shows that every non-passing
-job was cancelled. Assertion failures and other selected-E2E outcomes do not
-receive a retry reason. An unexpected controller error still fails the
-controller workflow and fails coordination closed, which prevents the native
-job from passing.
+`prerequisite-ci`. A selected child records `child-cancelled` only when a
+trusted hosted-runner-loss marker is present and no terminal classification
+was produced; cancellation alone is not retryable. Assertion failures and
+other selected-E2E outcomes do not receive a retry reason. An unexpected
+controller error still fails the controller workflow and fails coordination
+closed, which prevents the native job from passing.
 
 On open, synchronization, reopen, transition out of draft, or base retarget,
 `.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate Coordination` for

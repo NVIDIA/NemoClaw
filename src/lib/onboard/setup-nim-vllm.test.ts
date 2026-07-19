@@ -101,6 +101,7 @@ describe("setupNim vLLM route containment", () => {
 
     await expect(handler(selection)).resolves.toBe("selected");
     expect(selection.model).toBe("nemotron-ultra");
+    expect(selection.vllmModelIdentity).toBe("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4");
     expect(validate).toHaveBeenCalledWith(
       "Local vLLM",
       "http://127.0.0.1:8000/v1",
@@ -108,6 +109,31 @@ describe("setupNim vLLM route containment", () => {
       null,
     );
     expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it("carries the reported checkpoint identity for a managed arbitrary served name", async () => {
+    const selection = state("nemotron-ultra");
+    selection.assertRouteCompatible = () => ({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    const handler = createSetupNimVllmHandler(
+      deps({
+        runCapture: () =>
+          JSON.stringify({
+            data: [
+              {
+                id: "nemotron-ultra",
+                root: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+              },
+            ],
+          }),
+      }),
+    );
+
+    await expect(handler(selection, { managedInstall: true })).resolves.toBe("selected");
+    expect(selection.vllmModelIdentity).toBe("nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4");
   });
 
   it("rejects a root-matched served alias during managed install (#7023)", async () => {

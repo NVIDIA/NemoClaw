@@ -30,6 +30,7 @@ import {
   requireRebuildHermesInitialImageTag,
 } from "./rebuild-hermes-image-state.ts";
 import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
+import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
 // The migrated scope is the legacy non-interactive shell regression: install.sh,
 // Docker base-image builds, OpenShell provider/sandbox commands, direct Hermes
@@ -62,6 +63,8 @@ SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
 
 const MARKER_FILE = "/sandbox/.hermes/memories/rebuild-marker.txt";
 const MARKER_CONTENT = `REBUILD_HM_E2E_${Date.now()}`;
+const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
+const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -736,6 +739,32 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(writeMarker, "write Hermes marker");
 
+  const seedKanban = await host.command(
+    "openshell",
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      SANDBOX_NAME,
+      "--",
+      "sh",
+      "-lc",
+      [
+        "hermes kanban init",
+        `hermes kanban create ${shellQuote(KANBAN_TASK_TITLE)} --initial-status blocked --json`,
+        `mkdir -p ${shellQuote(path.dirname(EXCLUDED_KANBAN_FILE))}`,
+        `printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(EXCLUDED_KANBAN_FILE)}`,
+      ].join(" && "),
+    ],
+    {
+      artifactName: "phase-4-seed-hermes-kanban",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(seedKanban, "seed Hermes default kanban board");
+
   const preEnv = await host.command(
     "openshell",
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/.env"],
@@ -785,30 +814,20 @@ test(STALE_BASE_REBUILD
   });
 
   switch (STALE_BASE_REBUILD) {
-    case false: {
-      progress.phase("phase 5 current base build");
-      const buildCurrentBase = await host.command(
-        "docker",
-        [
-          "build",
-          "-f",
-          path.join(REPO_ROOT, "agents", "hermes", "Dockerfile.base"),
-          "-t",
-          CURRENT_BASE_TAG,
-          REPO_ROOT,
-        ],
-        {
-          artifactName: "phase-5-docker-build-current-hermes-base",
-          env: testEnv(apiKey),
-          redactionValues,
-          timeoutMs: DOCKER_BUILD_TIMEOUT_MS,
-          captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
-          onOutput: progress.onOutput,
-        },
+    case false:
+      // The authoritative `nemoclaw <sandbox> rebuild` below constructs the
+      // current Hermes base exactly once through its forced-build path: the
+      // seeded old sandbox carries no resolvable base-image metadata, so rebuild
+      // rebuilds the base from Dockerfile.base. Building the same base here
+      // during setup prepared the identical expensive apt/uv/npm layers twice in
+      // one job without adding coverage, so the redundant setup build is gone
+      // while phase 6 keeps exercising the real forced-build path (#7144).
+      progress.phase("phase 5 current base built by authoritative rebuild");
+      await artifacts.writeText(
+        "phase-5-current-base-note.txt",
+        "Current Hermes base is constructed once by the authoritative rebuild in phase 6; the redundant setup build was removed. (#7144)\n",
       );
-      expectExitZero(buildCurrentBase, "docker build current Hermes base image");
       break;
-    }
     case true:
       progress.phase("phase 5 stale base setup");
       await artifacts.writeText(
@@ -877,6 +896,31 @@ test(STALE_BASE_REBUILD
     expectedVersion,
     `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
   );
+
+  const restoredKanban = await host.command(
+    "openshell",
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "hermes", "kanban", "list", "--json"],
+    {
+      artifactName: "phase-7-list-kanban-after-rebuild",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(restoredKanban, "list Hermes kanban tasks after rebuild");
+  expect(resultText(restoredKanban)).toContain(KANBAN_TASK_TITLE);
+
+  const excludedKanbanState = await host.command(
+    "openshell",
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "test", "!", "-e", EXCLUDED_KANBAN_FILE],
+    {
+      artifactName: "phase-7-verify-excluded-kanban-state",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(excludedKanbanState, "verify excluded Hermes kanban state was not restored");
 
   const restoredEnv = await host.command(
     "openshell",
@@ -950,5 +994,19 @@ test(STALE_BASE_REBUILD
     backupRoot: sandboxBackupRoot,
     leaks,
   });
+
+  // Capture per-phase and total wall time tagged with the runner class so
+  // before/after comparisons for #7144 stay on the same runner class. Written
+  // before the final gate so the timing artifact survives an assertion failure.
+  await artifacts.writeJson(
+    "rebuild-hermes-timing.json",
+    buildRebuildHermesTimingSummary({
+      lane: STALE_BASE_REBUILD ? "stale-base" : "normal",
+      timeline: progress.timeline(),
+      runnerClass: describeRunnerClass(),
+      capturedAtIso: new Date().toISOString(),
+    }),
+  );
+
   expect(leaks, "backup files must not contain credential-shaped values").toEqual([]);
 });

@@ -1,0 +1,99 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Prepare DGX Station to Install NemoClaw"
+sidebar-title: "Additional Setup for DGX Station"
+description: "Qualify and prepare a DGX Station GB300 for NemoClaw express install."
+description-agent: "Covers DGX Station GB300 qualification, generic Ubuntu preparation, stock DGX OS validation, and reboot handoff. Use when preparing a DGX Station for NemoClaw express install."
+keywords: ["nemoclaw dgx station setup", "nemoclaw dgx station gb300", "nemoclaw station express install"]
+content:
+  type: "reference"
+---
+
+Complete this preparation before following the Quickstart on a qualifying DGX Station GB300.
+
+## Qualify Your DGX Station
+
+DGX Station GB300 express install accepts either the generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
+A stock DGX OS image qualifies only when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
+NemoClaw also recognizes these exact no-OTA factory profiles for bounded qualification.
+Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires both `DGX_OTA_VERSION` and `DGX_OTA_DATE` to be absent, and requires every profile-specific field below:
+
+- April 2026 NVIDIA Colossus BaseOS with `DGX_PRETTY_NAME=NVIDIA DGX Server`, `DGX_SWBUILD_VERSION=7.5.0-GB300ws-GB200ws`, and `DGX_SWBUILD_DATE=2026-04-02-08-20-16`.
+- June 2026 NVIDIA AI Developer Tools with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`, `DGX_SWBUILD_VERSION=7.5.0`, and `DGX_SWBUILD_DATE=2026-06-16-11-48-10`.
+
+By default, an unknown version, malformed or unsafe marker, unmatched no-OTA factory image, or other Station generation stops before host preparation.
+On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
+
+Station preparation preserves existing stopped Docker container records, captures their IDs before its probes, and stops if that inventory changes during preparation.
+Running containers still block initial preparation and every Docker configuration change.
+Before a Docker restart or host reboot, stopped containers with a restart policy other than `no` also block preparation because they could start automatically.
+
+<Warning title="Temporary Metadata Override">
+Use `--force-station-install` only on a genuine DGX Station GB300 when automatic Station detection rejects its DGX release metadata.
+The flag handles metadata variants not yet recognized by NemoClaw; it is not a general compatibility bypass.
+The flag bypasses only the `/etc/dgx-release` allowlist.
+It still requires ARM64 Ubuntu 24.04, DGX Station GB300 hardware identity, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent, inference, or Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
+The override preserves the existing factory driver, packages, and container-runtime configuration; it does not install or repair missing factory components.
+It cannot enable Station Express on another Station generation or hardware platform.
+This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the exact automatic allowlist.
+Remove the override after those images publish recognized metadata or NemoClaw replaces the exact allowlist with a separately qualified platform-family and runtime-capability check.
+
+Run the override from an interactive terminal:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --force-station-install
+```
+
+Add `--station-deepseek` to the same command to select DeepSeek V4 Flash.
+The installer records the override in the printed relogin command when Docker-group access requires a new session.
+</Warning>
+
+## Prepare Generic Ubuntu
+
+On the generic Ubuntu path, accepting express install prepares the host with NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
+Preparation probes package and runtime state first, reuses exact matches, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
+It permits only the reviewed factory transition from `dkms` `3.0.11-1ubuntu13` to `1:3.4.0-1ubuntu1`.
+
+After reboot, preparation enables NVIDIA's packaged CDI refresh path and service, requires the `nvidia.com/gpu=all` device, and verifies it with a real container launch.
+If the packaged refresh fails or does not produce that device, preparation prints service diagnostics and stops for administrator repair.
+It does not bypass the packaged lifecycle with direct CDI generation.
+If the `docker --gpus all` acceptance probe fails, preparation registers the NVIDIA Docker runtime only when `docker info` diagnoses that runtime as absent; any other launch failure stops without changing daemon configuration.
+If registration or a post-change acceptance probe fails, preparation restores the prior Docker daemon configuration; if restoration fails, it reports the backup path and stops.
+After successful registration, the runtime remains configured until the same acceptance probe succeeds through a replacement Docker and NVIDIA runtime integration.
+
+Preparation requires Secure Boot to be disabled, matching headers for the running kernel, at least 20 GiB free on the root filesystem, and no active agent, inference, or Docker workloads.
+It also stops when systemd reports a failed unit unless the unit matches an exact, condition-qualified state from the generic Station image: the pinned OEM `cloud-init` telemetry failure, a network-wait failure while current network health is established, masked `fwupd`, or an SSSD socket on a host without SSSD configuration.
+Any other failed unit blocks preparation for administrator review.
+It does not install a host CUDA toolkit or Docker Compose.
+If any other existing prerequisite version differs, preparation stops instead of changing it automatically.
+After changing pinned packages, the installer exits with status `10`; reboot, sign in, and run the printed command, which pins the exact accepted NemoClaw commit before resuming express setup.
+
+## Validate Stock DGX OS
+
+On a qualifying stock DGX OS or exact no-OTA factory image, express install validates the factory stack in place against the local default Docker daemon.
+It requires a loaded GB300 driver with zero volatile corrected and uncorrected ECC errors, active Docker and containerd services, working Docker Buildx, `nvidia-ctk`, the `nvidia.com/gpu=all` CDI device, and successful `nvidia-smi` device-visibility probes through both CDI and `--gpus all`.
+The stock DGX OS path does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
+The AI Developer Tools path preserves those boundaries when `nvidia.com/gpu=all` is already present.
+When that CDI device is missing, the AI Developer Tools path first confirms that no workloads are active, then enables the packaged `nvidia-cdi-refresh.path` and `nvidia-cdi-refresh.service` units, starts the path unit, restarts the refresh service, and checks the device again.
+It stops with service diagnostics if packaged refresh fails or omits the device.
+It never generates CDI directly, rewrites the Docker runtime, or restarts Docker or containerd.
+This compatibility repair is owned by the June 2026 AI Developer Tools factory-image boundary, which can leave its packaged CDI units disabled; it can be removed after repeat clean-host qualification shows that the qualified image consistently advertises `nvidia.com/gpu=all` at boot.
+The Colossus BaseOS path requires the exact reviewed package and failed-service fingerprints, preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages, and prepares only Docker access and packaged CDI.
+Only the Colossus BaseOS path registers the NVIDIA Docker runtime when the launch probe proves that the runtime is missing, and it restores the prior daemon configuration if registration fails.
+The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
+Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS path leaves only the digest-pinned visibility-test image in the Docker cache.
+The AI Developer Tools path can also leave the packaged CDI refresh units enabled when it repairs a missing device.
+
+One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
+Repeat qualification from a clean host and CI coverage remain pending.
+For the complete support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
+
+<Warning title="DGX Station Support Status">
+DGX Station remains Deferred.
+Repeat qualification from a clean host and CI coverage remain pending before any support-status promotion.
+</Warning>
+
+## Next Step
+
+After your host passes preparation or validation, continue with the [Quickstart](../quickstart).

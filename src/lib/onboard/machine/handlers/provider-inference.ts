@@ -71,6 +71,8 @@ export interface ProviderSelectionResult {
   endpointPinnedAddresses?: string[];
   endpointTrustedPrivateCapability?: TrustedPrivateEndpointCapability;
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
+  /** Checkpoint identity proven while validating a local vLLM served alias. */
+  vllmModelIdentity?: string;
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
@@ -351,6 +353,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let endpointPinnedAddresses: string[] | undefined;
   let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
+  let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
@@ -493,6 +496,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         deps.repairLocalInferenceSystemdOverrideOrExit(localInferenceRepairOptions);
       }
     } else {
+      // An incomplete Station Express resume intentionally retries setupNim here. The outer
+      // Station resume wrapper restores the exact provider/model as non-interactive env input,
+      // so this re-runs the failed managed install without presenting selection prompts and
+      // obtains a fresh checkpoint identity before the provider step is committed.
       await deps.startRecordedStep("provider_selection");
       const recoverRecordedProvider = providerRecovery.shouldRecover();
       const selection = await withProviderSelectionTrace(
@@ -541,6 +548,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       endpointPinnedAddresses = selection.endpointPinnedAddresses;
       endpointTrustedPrivateCapability = selection.endpointTrustedPrivateCapability;
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
+      vllmModelIdentity = selection.vllmModelIdentity;
       shouldRecordProviderSelection = true;
     }
 
@@ -586,6 +594,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             : preferredInferenceApi,
           compatibleEndpointReasoning,
           nimContainer,
+          stationExpressModelIdentity: vllmModelIdentity,
         }),
       );
     }

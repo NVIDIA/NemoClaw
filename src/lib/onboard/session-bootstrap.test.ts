@@ -3,6 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { decisionSelected, decisionUnset } from "../state/onboard-checkpoint-decision";
+import {
+  CHECKPOINT_SCHEMA_VERSION,
+  type CheckpointLoadResult,
+  type OnboardCheckpoint,
+} from "../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionRecoveryReceipt } from "../state/onboard-session";
 import type { ResumeConfigConflict } from "./resume-config";
 import { type OnboardSessionBootstrapDeps, prepareOnboardSession } from "./session-bootstrap";
@@ -53,6 +59,7 @@ function createDeps(
     exitProcess: vi.fn((code: number) => {
       throw new ExitError(code);
     }) as (code: number) => never,
+    resolveResumeCheckpoint: vi.fn((): CheckpointLoadResult => ({ status: "none" })),
     ...overrides,
   };
   return { deps, getSession: () => session };
@@ -85,6 +92,32 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.observabilityEnabled).toBe(true);
     expect(result.session?.observabilityRequestedExplicitly).toBe(true);
     expect(getSession()?.sessionId).not.toBe("old-session");
+  });
+
+  it("checkpoints Station Express choices before managed vLLM setup", async () => {
+    const { deps } = createDeps();
+    const stationExpress = {
+      version: 1 as const,
+      model: "nemotron-3-ultra-550b-a55b",
+      sandboxName: "my-assistant",
+    };
+
+    const result = await prepareOnboardSession(
+      {
+        resume: false,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: "my-assistant",
+        cannotPrompt: true,
+        nonInteractive: true,
+        stationExpressIntent: stationExpress,
+      },
+      deps,
+    );
+
+    expect(result.session?.stationExpressIntent).toEqual(stationExpress);
+    expect(result.session?.provider).toBeNull();
+    expect(result.session?.model).toBeNull();
   });
 
   it("defaults a fresh session to progressive disclosure", async () => {
@@ -336,6 +369,91 @@ describe("prepareOnboardSession", () => {
 
     expect(result.session?.sandboxName).toBe("checkpointed-box");
     expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
+
+  it("recovers a non-OpenClaw checkpointed sandbox name after a crash before the legacy field was written (#7022)", async () => {
+    const session = createSession({ agent: "hermes", sandboxName: null });
+    const checkpoint: OnboardCheckpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionSelected({ name: "hermes-box", agent: "hermes" }),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    session.checkpoint = checkpoint;
+    const { deps } = createDeps(session, {
+      resolveResumeCheckpoint: vi.fn(
+        (): CheckpointLoadResult => ({ status: "loaded", checkpoint }),
+      ),
+    });
+
+    const result = await prepareOnboardSession(
+      {
+        resume: true,
+        fresh: false,
+        requestedFromDockerfile: null,
+        requestedSandboxName: null,
+        cannotPrompt: true,
+        nonInteractive: true,
+      },
+      deps,
+    );
+
+    expect(deps.error).not.toHaveBeenCalledWith(
+      "  Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,",
+    );
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+    expect(result.session?.checkpoint?.sandboxIdentity).toEqual(
+      decisionSelected({ name: "hermes-box", agent: "hermes" }),
+    );
+  });
+
+  it("does not let a stale legacy checkpointed-name marker override an unset checkpoint identity (#7022)", async () => {
+    const session = createSession({
+      sandboxName: "stale-box",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: false,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionUnset(),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const { deps } = createDeps(session);
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          cannotPrompt: true,
+          nonInteractive: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(ExitError);
+
+    expect(deps.error).toHaveBeenCalledWith(
+      "  so no sandbox name was recorded. Re-run with --name <sandbox> (or set NEMOCLAW_SANDBOX_NAME).",
+    );
   });
 
   it("allows interactive resume to prompt when no sandbox name was recorded", async () => {

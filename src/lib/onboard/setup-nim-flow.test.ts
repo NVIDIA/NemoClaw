@@ -754,8 +754,9 @@ describe("createSetupNim", () => {
         credentialEnv: null,
         preferredInferenceApi: "openai-completions",
       });
-      state.provider = "vllm";
+      state.provider = "vllm-local";
       state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.vllmModelIdentity = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4";
       return "selected";
     });
     const setupNim = createSetupNim(
@@ -791,9 +792,10 @@ describe("createSetupNim", () => {
     );
     expect(result).toMatchObject({
       model: servedModel,
-      provider: "vllm",
+      provider: "vllm-local",
       endpointUrl: "http://127.0.0.1:8000/v1",
       preferredInferenceApi: "openai-completions",
+      vllmModelIdentity: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
     });
   });
 

@@ -5,17 +5,19 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  assertStationExpressInstallerResumeMatches,
+  clearStationExpressInstallerResume,
+  withStationExpressResumeEnvironment,
+} from "../src/lib/onboard/station-express-resume";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const PUBLIC_BOOTSTRAP = path.join(REPO_ROOT, "install.sh");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const STATION_REVISION = "a".repeat(40);
-const STATION_DOCS = [
-  path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx"),
-  path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx"),
-];
+const STATION_GENERATION = "0123456789abcdef0123456789abcdef";
 
 function runSourced(script: string, body: string, extraEnv: Record<string, string> = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-host-"));
@@ -38,34 +40,50 @@ function runSourced(script: string, body: string, extraEnv: Record<string, strin
   return { home, result, output: `${result.stdout}${result.stderr}` };
 }
 
+function runNonInteractiveStationSelector(home: string) {
+  const result = spawnSync(
+    "bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-c",
+      `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf 'DGX Station'; }
+station_installer_revision() { printf '${STATION_REVISION}'; }
+NON_INTERACTIVE='1'
+NEMOCLAW_PROVIDER=''
+NEMOCLAW_NO_EXPRESS=''
+maybe_offer_express_install
+printf 'RESULT PROVIDER=%s STATION_EXPRESS=%s\n' "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_STATION_EXPRESS:-}"
+`,
+    ],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        HOME: home,
+        PATH: TEST_SYSTEM_PATH,
+        INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+      },
+      timeout: 15_000,
+      killSignal: "SIGKILL",
+    },
+  );
+  return { result, output: `${result.stdout}${result.stderr}` };
+}
+
 describe("DGX Station host preparation", () => {
-  it("keeps documented Station pins and Deferred status aligned", () => {
-    const helper = fs.readFileSync(STATION_PREPARE, "utf-8");
-    const docs = STATION_DOCS.map((doc) => fs.readFileSync(doc, "utf-8"));
-    const pinnedValues = [
-      "DRIVER_VERSION",
-      "DOCKER_VERSION",
-      "TOOLKIT_VERSION",
-      "FACTORY_DKMS_VERSION",
-      "TARGET_DKMS_VERSION",
-    ].map((name) => {
-      const value = helper.match(new RegExp(`readonly ${name}="([^"]+)"`))?.[1];
-      expect(value, `${name} must remain declared in the Station helper`).toBeTruthy();
-      return value as string;
-    });
-
-    for (const doc of docs) {
-      for (const version of pinnedValues) expect(doc).toContain(version);
-      expect(doc).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-      expect(doc).toMatch(/physical (?:DGX Station )?hardware|physical end-to-end validation/);
-    }
-  });
-
-  it("uses the documented plain-Ubuntu driver-injection probe for CDI and --gpus", () => {
+  it("uses the documented plain-Ubuntu probe and verifies the GB300 row", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-sudo() { printf 'SUDO %s\\n' "$*"; }
+STATION_HOST_PROFILE=generic-ubuntu
+station_pci_device_is_gb300() { return 0; }
+sudo() {
+  printf 'SUDO %s\\n' "$*" >&2
+  printf '00000000:01:00.0, NVIDIA GB300, 610.43.02, 0, 0\\n'
+}
 run_cdi_test_sudo
 run_gpus_test_sudo
 `,
@@ -75,9 +93,10 @@ run_gpus_test_sudo
       "docker.io/library/ubuntu@sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab";
     expect(result.status, output).toBe(0);
     expect(output).toContain(
-      `SUDO docker run --rm --device nvidia.com/gpu=all ${image} nvidia-smi`,
+      `SUDO docker run --rm --device nvidia.com/gpu=all ${image} nvidia-smi --query-gpu=`,
     );
-    expect(output).toContain(`SUDO docker run --rm --gpus all ${image} nvidia-smi`);
+    expect(output).toContain(`SUDO docker run --rm --gpus all ${image} nvidia-smi --query-gpu=`);
+    expect(output).toContain("gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 role=inference");
   });
 
   it.each([
@@ -98,20 +117,6 @@ package_state 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'
 
     expect(result.status, output).toBe(0);
     expect(result.stdout.trim()).toBe(expected);
-  });
-
-  it.each([
-    ["Dell Pro Max with Station GB300", true],
-    ["NVIDIA DGX Station GB300", true],
-    ["NVIDIA DGX Station A100", false],
-    ["Dell Pro Max with Station GB200", false],
-    ["Dell Pro Max with GB300", false],
-  ])("accepts only Station GB300 DMI: %s", (product, accepted) => {
-    const { result } = runSourced(STATION_PREPARE, `is_station_product "$PRODUCT"`, {
-      PRODUCT: product,
-    });
-
-    expect(result.status === 0).toBe(accepted);
   });
 
   it("allows only the reviewed factory DKMS transition", () => {
@@ -385,7 +390,7 @@ installed_version() {
 }
 install_packages() { printf 'INSTALL_PACKAGES\n'; }
 ensure_docker_group() { printf 'ENSURE_DOCKER_GROUP\n'; }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 write_install_boot_marker() { printf 'WRITE_BOOT_MARKER\n'; }
 sudo() { printf 'SUDO %s\n' "$*"; }
 run_apply
@@ -396,7 +401,7 @@ run_apply
     expect(output).toContain("package=dkms status=approved_transition");
     expect(output).toContain("INSTALL_PACKAGES");
     expect(output).toContain("ENSURE_DOCKER_GROUP");
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_RESTART_QUIESCENCE");
     expect(output).toContain("WRITE_BOOT_MARKER");
     expect(output).toContain(
       "systemctl enable containerd.service docker.service nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
@@ -411,8 +416,14 @@ run_apply
 configure_repositories() { printf 'CONFIGURE_REPOSITORIES\n'; }
 validate_package_availability() { printf 'VALIDATE_PACKAGES\n'; }
 simulate_install() { printf 'SIMULATE_INSTALL\n'; }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
+package_state() { printf 'missing\n'; }
 package_is_exact() { return 0; }
+create_apt_transaction_guard() {
+  APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
+  APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
+}
+cleanup_apt_transaction_guard() { :; }
 sudo() { printf 'SUDO %s\n' "$*"; }
 install_packages
 `,
@@ -421,7 +432,7 @@ install_packages
     expect(result.status, output).toBe(0);
     expect(output).toContain("apt-get update");
     expect(output).toContain("apt-get install -y --no-install-recommends");
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_RESTART_QUIESCENCE");
     for (const spec of [
       "libnvidia-container-tools=1.19.1-1",
       "libnvidia-container1=1.19.1-1",
@@ -432,12 +443,11 @@ install_packages
     }
     expect(output).toContain("pinned_packages=installed");
   });
-
   it("does not refresh CDI when the GPU launch probe already passes", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
 sudo() { printf 'SUDO %s\n' "$*"; }
 run_cdi_test_sudo() { printf 'CDI_TEST\n'; return 0; }
 refresh_cdi() { printf 'REFRESH_CDI\n'; }
@@ -446,7 +456,7 @@ ensure_cdi_runtime
     );
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_MUTATION_QUIESCENCE");
     expect(output).toContain("systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service");
     expect(output).toContain("systemctl start nvidia-cdi-refresh.path");
     expect(output).toContain("cdi_contract=pass_without_configuration_change");
@@ -486,7 +496,7 @@ ps() {
   printf '%s 1 bash bash /tmp/NemoClaw/scripts/install.sh\n' "$PPID"
 }
 ss() { :; }
-check_no_workloads
+check_agent_and_inference_conflicts
 `,
     );
     expect(selfOnly.result.status, selfOnly.output).toBe(0);
@@ -496,53 +506,11 @@ check_no_workloads
       `
 ps() { printf '999 1 python python -m vllm serve model\n'; }
 ss() { :; }
-check_no_workloads
+check_agent_and_inference_conflicts
 `,
     );
     expect(active.result.status, active.output).not.toBe(0);
     expect(active.output).toMatch(/Agent or inference workload is active/);
-  });
-
-  it("uses sudo to inspect containers during apply until Docker group access is active", () => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-MODE='--apply'
-ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"; }
-ss() { :; }
-docker() { return 1; }
-sudo() {
-  if [[ "$1" == "-n" ]]; then shift; fi
-  [[ "$*" == "docker ps -aq" ]] || return 1
-}
-systemctl() { return 0; }
-check_no_workloads
-`,
-      { PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
-    );
-
-    expect(result.status, output).toBe(0);
-    expect(output).toContain("docker_access=sudo_until_group_membership_is_active");
-    expect(output).toContain("workloads=none");
-  });
-
-  it("fails closed when Docker is installed but its container state cannot be queried", () => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-MODE='--apply'
-ps() { printf '%s %s bash bash prepare-dgx-station-host.sh --apply\n' "$$" "$PPID"; }
-ss() { :; }
-docker() { return 1; }
-sudo() { return 1; }
-systemctl() { return 1; }
-check_no_workloads
-`,
-      { PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
-    );
-
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/container state cannot be verified safely/);
   });
 
   it("refuses an installed CUDA keyring version that differs from the pin", () => {
@@ -659,12 +627,14 @@ install_boot_marker_matches_current_boot() { return 1; }
 driver_loaded_exact() { return 0; }
 finish_runtime() { DOCKER_GROUP_ADDED=1; printf 'FINISH_RUNTIME\n'; }
 verify_apply_state() { printf 'VERIFY_APPLY_STATE\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 run_apply
 `,
     );
 
     expect(result.status, output).toBe(10);
     expect(output).toContain("VERIFY_APPLY_STATE");
+    expect(output).toContain("RECHECK_RESTART_QUIESCENCE");
     expect(output).toContain("APPLY_RESULT=REBOOT_REQUIRED");
     expect(output).toMatch(/new login before onboarding/);
   });
@@ -673,7 +643,7 @@ run_apply
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
 sudo() {
   printf 'SUDO %s\n' "$*"
   if [[ "$*" == "systemctl restart nvidia-cdi-refresh.service" ]]; then return 1; fi
@@ -686,7 +656,7 @@ refresh_cdi
     expect(result.status, output).not.toBe(0);
     expect(output).toContain("systemctl status nvidia-cdi-refresh.service --no-pager");
     expect(output).toContain("journalctl -u nvidia-cdi-refresh.service --no-pager -n 50");
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_MUTATION_QUIESCENCE");
     expect(output).toMatch(/repair nvidia-cdi-refresh\.service/);
     expect(output).not.toContain("nvidia-ctk cdi generate");
   });
@@ -695,7 +665,7 @@ refresh_cdi
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
 sudo() {
   printf 'SUDO %s\n' "$*"
   return 0
@@ -706,7 +676,7 @@ refresh_cdi
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_MUTATION_QUIESCENCE");
     expect(output).toMatch(/completed without advertising nvidia\.com\/gpu=all/);
     expect(output).toContain("systemctl status nvidia-cdi-refresh.service --no-pager");
     expect(output).toContain("journalctl -u nvidia-cdi-refresh.service --no-pager -n 50");
@@ -725,13 +695,13 @@ sudo() {
   [[ "$*" == "test -e /etc/docker/daemon.json" ]] && return 1
   printf 'SUDO %s\n' "$*"
 }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; return 1; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; return 1; }
 configure_docker_runtime_if_needed
 `,
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("RECHECK_ALL_WORKLOADS");
+    expect(output).toContain("RECHECK_MUTATION_QUIESCENCE");
     expect(output).not.toContain("nvidia-ctk runtime configure");
     expect(output).not.toContain("systemctl restart docker.service");
   });
@@ -765,7 +735,8 @@ run_gpus_test_sudo() {
 }
 run_cdi_test_sudo() { return 0; }
 docker_has_nvidia_runtime_sudo() { return 1; }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 ensure_root_directory_safe() { :; }
 assert_root_directory_safe() { :; }
 assert_root_regular_file_safe() { :; }
@@ -797,8 +768,12 @@ runtime_configured=0
 run_gpus_test_sudo() { return 1; }
 run_cdi_test_sudo() { return 0; }
 docker_has_nvidia_runtime_sudo() { return 1; }
-check_no_workloads() {
-  printf 'RECHECK_ALL_WORKLOADS configured=%s\n' "$runtime_configured"
+require_docker_mutation_quiescence() {
+  printf 'RECHECK_MUTATION_QUIESCENCE configured=%s\n' "$runtime_configured"
+  return 0
+}
+require_docker_restart_quiescence() {
+  printf 'RECHECK_RESTART_QUIESCENCE configured=%s\n' "$runtime_configured"
   [[ "$runtime_configured" == "0" ]]
 }
 ensure_root_directory_safe() { :; }
@@ -821,7 +796,7 @@ configure_docker_runtime_if_needed
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("RECHECK_ALL_WORKLOADS configured=1");
+    expect(output).toContain("RECHECK_RESTART_QUIESCENCE configured=1");
     expect(output).toContain("rm -f -- /etc/docker/daemon.json");
     expect(output).toMatch(/A workload appeared before Docker restart/);
     expect(output).toMatch(/prior Docker daemon configuration was restored/);
@@ -835,7 +810,8 @@ configure_docker_runtime_if_needed
 run_gpus_test_sudo() { printf 'GPU_PROBE\n'; return 1; }
 run_cdi_test_sudo() { return 0; }
 docker_has_nvidia_runtime_sudo() { return 1; }
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 ensure_root_directory_safe() { :; }
 assert_root_directory_safe() { :; }
 assert_root_regular_file_safe() { :; }
@@ -862,7 +838,7 @@ configure_docker_runtime_if_needed
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
-check_no_workloads() { printf 'RECHECK_ALL_WORKLOADS\n'; }
+require_docker_mutation_quiescence() { printf 'RECHECK_MUTATION_QUIESCENCE\n'; }
 sudo() { printf 'SUDO %s\n' "$*"; }
 nvidia-ctk() {
   [[ "$*" == "cdi list" ]] && printf 'nvidia.com/gpu=all\n'
@@ -989,8 +965,14 @@ PAYLOAD
   cat > "$target/scripts/prepare-dgx-station-host.sh" <<'HELPER'
 #!/usr/bin/env bash
 set -euo pipefail
-[ "\${1:-}" = "--apply" ]
-printf 'PREPARE_STATION\\n'
+case "\${1:-}" in
+  --classify-dgx-release) printf 'CLASSIFY_STATION\\n' >&2; printf 'generic-ubuntu' ;;
+  --apply)
+    printf '[station-prepare] 2026-07-17T07:59:07Z version=2026-07-17.4 mode=--apply log=/tmp/station-prepare.log\\n'
+    printf 'PREPARE_STATION\\n'
+    ;;
+  *) exit 2 ;;
+esac
 HELPER
   chmod +x "$target/scripts/install.sh" "$target/scripts/prepare-dgx-station-host.sh"
   exit 0
@@ -1019,11 +1001,14 @@ exit 0
       killSignal: "SIGKILL",
     });
     const output = `${result.stdout}${result.stderr}`;
+    const preparationLogIndex = output.indexOf("DGX Station host preparation log");
 
     expect(result.status, output).toBe(0);
+    expect(output).toContain("CLASSIFY_STATION");
     expect(output).toContain("DGX Station host prerequisites are ready");
-    expect(output.indexOf("PREPARE_STATION")).toBeGreaterThanOrEqual(0);
-    expect(output.indexOf("PREPARE_STATION")).toBeLessThan(output.indexOf("ENSURE_DOCKER"));
+    expect(preparationLogIndex).toBeGreaterThanOrEqual(0);
+    expect(preparationLogIndex).toBeLessThan(output.indexOf("ENSURE_DOCKER"));
+    expect(output).not.toContain("PREPARE_STATION");
     expect(output.indexOf("ENSURE_DOCKER")).toBeLessThan(output.indexOf("ENSURE_BUILD_DEPS"));
   });
 
@@ -1046,6 +1031,26 @@ prepare_installer_host
       "ENSURE_DOCKER",
       "ENSURE_BUILD_DEPS",
     ]);
+  });
+
+  it("pins Station preparation to the local default Docker context (#7103)", () => {
+    const { result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+DOCKER_HOST='tcp://remote.example:2376'
+DOCKER_CONTEXT='remote-cluster'
+maybe_offer_express_install() { _SELECTED_EXPRESS_PLATFORM='DGX Station'; }
+ensure_station_express_host() {
+  printf 'PREPARE DOCKER_HOST=%s DOCKER_CONTEXT=%s\n' "\${DOCKER_HOST-unset}" "\${DOCKER_CONTEXT-unset}"
+}
+ensure_docker() { :; }
+ensure_openshell_build_deps() { :; }
+prepare_installer_host
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout.trim()).toBe("PREPARE DOCKER_HOST=unset DOCKER_CONTEXT=default");
   });
 
   it("skips Station preparation before Docker bootstrap on non-Station platforms", () => {
@@ -1075,6 +1080,7 @@ prepare_installer_host
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
 station_installer_revision() { printf '${STATION_REVISION}'; }
+station_express_resume_generation() { printf '${STATION_GENERATION}'; }
 run_station_host_preparation() { return 10; }
 ensure_station_express_host
 `,
@@ -1083,9 +1089,13 @@ ensure_station_express_host
 
     expect(result.status, output).toBe(10);
     expect(fs.readFileSync(stateFile, "utf-8")).toBe(
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n` +
+        "agent=openclaw\nsandbox=my-assistant\npolicy_tier=balanced\n",
     );
     expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
+    expect(() =>
+      assertStationExpressInstallerResumeMatches(STATION_GENERATION, { HOME: home }),
+    ).not.toThrow();
     expect(output).toContain(`NEMOCLAW_INSTALL_TAG=${STATION_REVISION}`);
   });
 
@@ -1139,7 +1149,7 @@ ensure_station_express_host
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(
       path.join(stateDir, "station-express-resume"),
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
       { mode: 0o600 },
     );
     const result = spawnSync(
@@ -1156,8 +1166,8 @@ NON_INTERACTIVE=''
 NEMOCLAW_PROVIDER=''
 NEMOCLAW_NO_EXPRESS=''
 maybe_offer_express_install
-printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s\n' \
-  "$_SELECTED_EXPRESS_PLATFORM" "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_MODEL:-}" "$NEMOCLAW_VLLM_MODEL"
+printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s STATION_EXPRESS=%s RESUME_LOADED=%s GENERATION=%s\n' \
+  "$_SELECTED_EXPRESS_PLATFORM" "$NEMOCLAW_PROVIDER" "\${NEMOCLAW_MODEL:-}" "$NEMOCLAW_VLLM_MODEL" "$NEMOCLAW_STATION_EXPRESS" "$_STATION_EXPRESS_RESUME_LOADED" "$NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION"
 `,
       ],
       {
@@ -1178,8 +1188,109 @@ printf 'RESULT PLATFORM=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s\n' \
     expect(output).toMatch(/Resuming the accepted express install/);
     expect(output).not.toMatch(/Run express install with these settings/);
     expect(output).toMatch(
-      /RESULT PLATFORM=DGX Station PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b/,
+      new RegExp(
+        `RESULT PLATFORM=DGX Station PROVIDER=install-vllm MODEL=nvidia/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b STATION_EXPRESS=1 RESUME_LOADED=1 GENERATION=${STATION_GENERATION}`,
+      ),
     );
+  });
+
+  it("does not restore the Station recipe after an explicit fresh onboard (#7048)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-fresh-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receipt = path.join(stateDir, "station-express-resume");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(
+      receipt,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
+      { mode: 0o600 },
+    );
+    const session = {
+      resumable: true,
+      status: "failed",
+      mode: "non-interactive",
+      provider: null,
+      model: null,
+      stationExpressIntent: {
+        version: 1 as const,
+        model: "nemotron-3-ultra-550b-a55b",
+        sandboxName: "my-assistant",
+      },
+    };
+
+    try {
+      await withStationExpressResumeEnvironment(
+        async () => undefined,
+        {
+          loadSession: () => session,
+          clearInstallerResume: () => clearStationExpressInstallerResume({ HOME: home }),
+          cleanupReceiptRetirementClaims: () => undefined,
+          reconcileReceiptRetirement: () => undefined,
+          error: (message) => {
+            throw new Error(message);
+          },
+          exitProcess: (code): never => {
+            throw new Error(`exit ${String(code)}`);
+          },
+        },
+        {},
+      )({ fresh: true });
+      expect(fs.existsSync(receipt)).toBe(false);
+
+      const { result, output } = runNonInteractiveStationSelector(home);
+
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Skipping express prompt (--non-interactive set)");
+      expect(output).not.toContain("Resuming the accepted express install");
+      expect(output).toContain("RESULT PROVIDER= STATION_EXPRESS=");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("does not restore the Station recipe after onboarding completes (#7048)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-complete-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    const session = await import("../src/lib/state/onboard-session");
+    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+
+    try {
+      session.saveSession(
+        session.createSession({
+          mode: "non-interactive",
+          stationExpressIntent: {
+            version: 1,
+            model: "nemotron-3-ultra-550b-a55b",
+            sandboxName: "my-assistant",
+            receiptGeneration: STATION_GENERATION,
+          },
+        }),
+      );
+      fs.writeFileSync(
+        receipt,
+        `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n`,
+        { mode: 0o600 },
+      );
+
+      session.completeSession();
+
+      expect(fs.existsSync(receipt)).toBe(false);
+      expect(session.loadSession()).toMatchObject({
+        status: "complete",
+        resumable: false,
+        stationExpressIntent: null,
+      });
+      const { result, output } = runNonInteractiveStationSelector(home);
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("Skipping express prompt (--non-interactive set)");
+      expect(output).not.toContain("Resuming the accepted express install");
+      expect(output).toContain("RESULT PROVIDER= STATION_EXPRESS=");
+    } finally {
+      session.clearSession();
+      session.releaseOnboardLock();
+      vi.unstubAllEnvs();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("preserves an explicit provider even when Station resume state exists", () => {
@@ -1212,8 +1323,21 @@ printf 'RESULT PROVIDER=%s\n' "$NEMOCLAW_PROVIDER"
       `
 mkdir -p "$HOME/.nemoclaw"
 chmod 0700 "$HOME/.nemoclaw"
-printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\n' >"$HOME/.nemoclaw/station-express-resume"
+printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$HOME/.nemoclaw/station-express-resume"
 chmod 0600 "$HOME/.nemoclaw/station-express-resume"
+claim="$HOME/.nemoclaw/station-express-resume.retiring-${STATION_GENERATION}-ABC123"
+mkdir -m 0700 "$claim"
+printf 'revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$claim/receipt"
+: >"$claim/retired"
+chmod 0600 "$claim/receipt" "$claim/retired"
+: >"$claim/unexpected"
+(clear_station_express_resume) && exit 91
+[[ -f "$claim/receipt" ]] || exit 92
+rm "$claim/unexpected"
+chmod 0644 "$claim/retired"
+(clear_station_express_resume) && exit 93
+[[ -f "$claim/receipt" ]] || exit 94
+chmod 0600 "$claim/retired"
 detect_express_platform() { printf 'DGX Station'; }
 NON_INTERACTIVE=''
 NEMOCLAW_PROVIDER=''
@@ -1225,6 +1349,44 @@ maybe_offer_express_install
     expect(result.status, output).toBe(0);
     expect(output).toContain("NEMOCLAW_NO_EXPRESS=1");
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(
+          home,
+          ".nemoclaw",
+          `station-express-resume.retiring-${STATION_GENERATION}-ABC123`,
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses claim-only cleanup through a group-accessible gateway ancestor", () => {
+    const { home, result, output } = runSourced(
+      INSTALLER_PAYLOAD,
+      `
+NEMOCLAW_GATEWAY_PORT=28080
+state_dir="$HOME/.nemoclaw/gateways/28080"
+claim="$state_dir/station-express-resume.retiring-${STATION_GENERATION}-ABC123"
+mkdir -p "$claim"
+chmod 0700 "$HOME/.nemoclaw" "$state_dir" "$claim"
+chmod 0770 "$HOME/.nemoclaw/gateways"
+: >"$claim/retired"
+chmod 0600 "$claim/retired"
+clear_station_express_resume
+`,
+    );
+
+    expect(result.status, output).toBe(1);
+    expect(output).toContain("must not be accessible by group or other users");
+    expect(
+      fs.existsSync(
+        path.join(
+          home,
+          ".nemoclaw/gateways/28080",
+          `station-express-resume.retiring-${STATION_GENERATION}-ABC123/retired`,
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("does not load Station resume state on DGX Spark", () => {
@@ -1258,7 +1420,7 @@ printf 'RESULT MODEL=%s\n' "$NEMOCLAW_VLLM_MODEL"
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(
       path.join(stateDir, "station-express-resume"),
-      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\nunexpected\n`,
+      `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\nunexpected\n`,
       { mode: 0o600 },
     );
     const result = spawnSync(
@@ -1295,7 +1457,7 @@ printf 'RESULT MODEL=%s\n' "$NEMOCLAW_VLLM_MODEL"
       `
 mkdir -p "$HOME/.nemoclaw"
 chmod 0700 "$HOME/.nemoclaw"
-printf 'revision=${savedRevision}\nmodel=nemotron-3-ultra-550b-a55b\n' >"$HOME/.nemoclaw/station-express-resume"
+printf 'revision=${savedRevision}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n' >"$HOME/.nemoclaw/station-express-resume"
 chmod 0600 "$HOME/.nemoclaw/station-express-resume"
 station_installer_revision() { printf '${currentRevision}'; }
 load_station_express_resume

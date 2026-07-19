@@ -926,6 +926,129 @@ function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult
   process.exit(spawnExitCode(result));
 }
 
+type WaitForSandboxReadyOptions = {
+  defaultTimeoutSec?: number;
+  retryCommand?: string;
+  successLogs?: readonly string[];
+};
+
+function waitForSandboxReadyOrExit(
+  sandboxName: string,
+  {
+    defaultTimeoutSec = 120,
+    retryCommand = "connect",
+    successLogs = [],
+  }: WaitForSandboxReadyOptions = {},
+): void {
+  const rawTimeout = process.env.NEMOCLAW_CONNECT_TIMEOUT;
+  let timeout = defaultTimeoutSec;
+  if (rawTimeout !== undefined) {
+    const parsed = parseInt(rawTimeout, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      console.warn(
+        `  Warning: invalid NEMOCLAW_CONNECT_TIMEOUT="${rawTimeout}", using default ${defaultTimeoutSec}s`,
+      );
+    } else {
+      timeout = parsed;
+    }
+  }
+  const interval = 3;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeout * 1000;
+  const gatewayName = getSandboxTargetGatewayName(sandboxName);
+  const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
+  const remainingMs = () => Math.max(1, deadline - Date.now());
+  const runSandboxList = (): SandboxListProbe => {
+    // Gateway selection is process-global and another CLI can change it while
+    // this command waits. Pin each poll to the registry-recorded owner so a
+    // same-named sandbox on a sibling gateway cannot satisfy readiness.
+    const result = captureOpenshell(["sandbox", "list", "-g", gatewayName], {
+      ignoreError: true,
+      timeout: remainingMs(),
+    });
+    return { status: result.status, output: result.output };
+  };
+
+  const listProbe = runSandboxList();
+  const listCommandFailed = listProbe.status !== 0;
+  if (listCommandFailed && outputShowsGatewayUnavailable(listProbe.output)) {
+    failConnectReadinessGatewayUnavailable(sandboxName, listProbe.output);
+  }
+  const list = listProbe.output;
+  if (isSandboxReady(list, sandboxName)) return;
+
+  const status = parseSandboxStatus(list, sandboxName);
+  if (!listCommandFailed && status && /^unknown$/i.test(status)) {
+    failIfGatewayBlocksConnectReadiness(sandboxName);
+  }
+  if (status && TERMINAL_SANDBOX_PHASES.has(status)) {
+    console.error("");
+    console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
+    console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
+    console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
+    process.exit(1);
+  }
+  if (isDockerRuntimeDown(sandboxName)) {
+    failConnectReadinessDockerRuntimeDown(sandboxName);
+  }
+
+  console.log(`  Waiting for sandbox '${sandboxName}' to be ready...`);
+  let ready = false;
+  let everSeen = status !== null;
+  while (Date.now() < deadline) {
+    const sleepFor = Math.min(interval, remainingMs() / 1000);
+    if (sleepFor <= 0) break;
+    spawnSync("sleep", [String(sleepFor)]);
+    const pollProbe = runSandboxList();
+    const pollCommandFailed = pollProbe.status !== 0;
+    if (pollCommandFailed && outputShowsGatewayUnavailable(pollProbe.output)) {
+      failConnectReadinessGatewayUnavailable(sandboxName, pollProbe.output);
+    }
+    const poll = pollProbe.output;
+    const elapsed = elapsedSec();
+    if (isSandboxReady(poll, sandboxName)) {
+      ready = true;
+      break;
+    }
+    const parsedCur = parseSandboxStatus(poll, sandboxName);
+    const cur = parsedCur || "unknown";
+    if (!pollCommandFailed && parsedCur && /^unknown$/i.test(parsedCur)) {
+      failIfGatewayBlocksConnectReadiness(sandboxName);
+    }
+    if (cur !== "unknown") everSeen = true;
+    if (TERMINAL_SANDBOX_PHASES.has(cur)) {
+      console.error("");
+      console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
+      console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
+      console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
+      process.exit(1);
+    }
+    if (isDockerRuntimeDown(sandboxName)) {
+      failConnectReadinessDockerRuntimeDown(sandboxName);
+    }
+    if (!everSeen && elapsed >= 30) {
+      console.error("");
+      console.error(`  Sandbox '${sandboxName}' not found after ${elapsed}s.`);
+      console.error("  Check: openshell sandbox list");
+      process.exit(1);
+    }
+    process.stdout.write(`\r    Status: ${cur.padEnd(20)} (${elapsed}s elapsed)`);
+  }
+
+  if (!ready) {
+    const suggestedTimeout = Math.max(300, timeout * 2);
+    console.error("");
+    console.error(`  Timed out after ${timeout}s waiting for sandbox '${sandboxName}'.`);
+    console.error("  Check: openshell sandbox list");
+    console.error(
+      `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=${suggestedTimeout} ${CLI_NAME} ${sandboxName} ${retryCommand}`,
+    );
+    process.exit(1);
+  }
+  console.log(`\r    Status: ${"Ready".padEnd(20)} (${elapsedSec()}s elapsed)`);
+  for (const line of successLogs) console.log(line);
+}
+
 export async function connectSandbox(
   sandboxName: string,
   { probeOnly = false }: SandboxConnectOptions = {},
@@ -950,7 +1073,10 @@ export async function connectSandbox(
   // express-vLLM model preflight for them (it only steers the install path
   // and would otherwise hard-exit a recovery on a stale NEMOCLAW_VLLM_MODEL).
   if (!probeOnly) preflightVllmModelEnvOrExit();
-  const live = await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  const live = await ensureLiveSandboxOrExit(sandboxName, {
+    allowNonReadyPhase: true,
+    gatewayRecovery: probeOnly ? "observe" : "recover",
+  });
 
   // Fast-fail on a Docker daemon outage before the probe-only health check and
   // the session/recovery probes below (each can spawn 15s `openshell sandbox
@@ -971,6 +1097,14 @@ export async function connectSandbox(
   }
 
   if (probeOnly) {
+    waitForSandboxReadyOrExit(sandboxName, {
+      defaultTimeoutSec: 300,
+      retryCommand: "connect --probe-only",
+    });
+    // Re-pin and re-observe the owning gateway after a potentially long wait
+    // before any in-sandbox process or host-forward mutation. The readiness
+    // polls are already owner-scoped; this also catches registry changes.
+    await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
     return await runSandboxConnectProbe(sandboxName);
   }
 
@@ -1016,119 +1150,9 @@ export async function connectSandbox(
 
   let sb: SandboxEntry | null = null;
 
-  const rawTimeout = process.env.NEMOCLAW_CONNECT_TIMEOUT;
-  let timeout = 120;
-  if (rawTimeout !== undefined) {
-    const parsed = parseInt(rawTimeout, 10);
-    if (Number.isNaN(parsed) || parsed <= 0) {
-      console.warn(
-        `  Warning: invalid NEMOCLAW_CONNECT_TIMEOUT="${rawTimeout}", using default 120s`,
-      );
-    } else {
-      timeout = parsed;
-    }
-  }
-  const interval = 3;
-  const startedAt = Date.now();
-  const deadline = startedAt + timeout * 1000;
-  const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
-  const remainingMs = () => Math.max(1, deadline - Date.now());
-  const runSandboxList = (): SandboxListProbe => {
-    const result = captureOpenshell(["sandbox", "list"], {
-      ignoreError: true,
-      timeout: remainingMs(),
-    });
-    return { status: result.status, output: result.output };
-  };
-
-  const listProbe = runSandboxList();
-  const listCommandFailed = listProbe.status !== 0;
-  if (listCommandFailed) {
-    if (outputShowsGatewayUnavailable(listProbe.output)) {
-      failConnectReadinessGatewayUnavailable(sandboxName, listProbe.output);
-    }
-  }
-  const list = listProbe.output;
-  if (!isSandboxReady(list, sandboxName)) {
-    const status = parseSandboxStatus(list, sandboxName);
-    if (!listCommandFailed && status && /^unknown$/i.test(status)) {
-      failIfGatewayBlocksConnectReadiness(sandboxName);
-    }
-    if (status && TERMINAL_SANDBOX_PHASES.has(status)) {
-      console.error("");
-      console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
-      console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
-      console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
-      process.exit(1);
-    }
-
-    // Probe-disagreement safety net: `sandbox get` may have reported Ready/no
-    // phase (so the early guard was skipped) while `sandbox list` shows a
-    // non-terminal status. Status is non-terminal here, so re-check Docker and
-    // fail fast rather than entering the readiness loop (#4428).
-    if (isDockerRuntimeDown(sandboxName)) {
-      failConnectReadinessDockerRuntimeDown(sandboxName);
-    }
-
-    console.log(`  Waiting for sandbox '${sandboxName}' to be ready...`);
-    let ready = false;
-    let everSeen = status !== null;
-    while (Date.now() < deadline) {
-      const sleepFor = Math.min(interval, remainingMs() / 1000);
-      if (sleepFor <= 0) break;
-      spawnSync("sleep", [String(sleepFor)]);
-      const pollProbe = runSandboxList();
-      const pollCommandFailed = pollProbe.status !== 0;
-      if (pollCommandFailed) {
-        if (outputShowsGatewayUnavailable(pollProbe.output)) {
-          failConnectReadinessGatewayUnavailable(sandboxName, pollProbe.output);
-        }
-      }
-      const poll = pollProbe.output;
-      const elapsed = elapsedSec();
-      if (isSandboxReady(poll, sandboxName)) {
-        ready = true;
-        break;
-      }
-      const parsedCur = parseSandboxStatus(poll, sandboxName);
-      const cur = parsedCur || "unknown";
-      if (!pollCommandFailed && parsedCur && /^unknown$/i.test(parsedCur)) {
-        failIfGatewayBlocksConnectReadiness(sandboxName);
-      }
-      if (cur !== "unknown") everSeen = true;
-      if (TERMINAL_SANDBOX_PHASES.has(cur)) {
-        console.error("");
-        console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
-        console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
-        console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
-        process.exit(1);
-      }
-      // Catch a Docker daemon that dies mid-wait so we stop polling instead of
-      // running out the full readiness timeout (#4428).
-      if (isDockerRuntimeDown(sandboxName)) {
-        failConnectReadinessDockerRuntimeDown(sandboxName);
-      }
-      if (!everSeen && elapsed >= 30) {
-        console.error("");
-        console.error(`  Sandbox '${sandboxName}' not found after ${elapsed}s.`);
-        console.error("  Check: openshell sandbox list");
-        process.exit(1);
-      }
-      process.stdout.write(`\r    Status: ${cur.padEnd(20)} (${elapsed}s elapsed)`);
-    }
-
-    if (!ready) {
-      console.error("");
-      console.error(`  Timed out after ${timeout}s waiting for sandbox '${sandboxName}'.`);
-      console.error("  Check: openshell sandbox list");
-      console.error(
-        `  Override timeout: NEMOCLAW_CONNECT_TIMEOUT=300 ${CLI_NAME} ${sandboxName} connect`,
-      );
-      process.exit(1);
-    }
-    console.log(`\r    Status: ${"Ready".padEnd(20)} (${elapsedSec()}s elapsed)`);
-    console.log("  Sandbox is ready. Connecting...");
-  }
+  waitForSandboxReadyOrExit(sandboxName, {
+    successLogs: ["  Sandbox is ready. Connecting..."],
+  });
 
   // ── Inference route swap (#1248, #3390) ───────────────────────────
   // When the user has multiple sandboxes with different providers, the
