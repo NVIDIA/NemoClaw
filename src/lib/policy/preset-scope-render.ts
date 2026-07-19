@@ -30,6 +30,28 @@ export type PresetScope = {
   policies: PolicyScope[];
 };
 
+type RenderPresetScopeOptions = {
+  heading?: string;
+};
+
+const UNICODE_FORMAT_CONTROL = /^\p{Cf}$/u;
+
+/** Render untrusted YAML scalars without allowing terminal-control sequences. */
+export function escapeTerminalText(value: string): string {
+  return [...value]
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      const isC0 = codePoint <= 0x1f;
+      const isDeleteOrC1 = codePoint >= 0x7f && codePoint <= 0x9f;
+      const isLineSeparator = codePoint === 0x2028 || codePoint === 0x2029;
+      if (!isC0 && !isDeleteOrC1 && !isLineSeparator && !UNICODE_FORMAT_CONTROL.test(character)) {
+        return character;
+      }
+      return `\\u{${codePoint.toString(16).padStart(4, "0")}}`;
+    })
+    .join("");
+}
+
 function toStringOrUndefined(value: PolicyValue | undefined): string | undefined {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
@@ -113,29 +135,34 @@ function extractPresetScope(content: string): PresetScope | null {
 }
 
 function formatEndpoint(endpoint: EndpointScope): string[] {
-  const port = endpoint.port ?? "?";
+  const port = escapeTerminalText(String(endpoint.port ?? "?"));
   const modeBits: string[] = [];
-  if (endpoint.access) modeBits.push(`access: ${endpoint.access}`);
-  if (endpoint.protocol) modeBits.push(`protocol: ${endpoint.protocol}`);
-  if (endpoint.tls) modeBits.push(`tls: ${endpoint.tls}`);
-  if (endpoint.enforcement) modeBits.push(`enforcement: ${endpoint.enforcement}`);
+  if (endpoint.access) modeBits.push(`access: ${escapeTerminalText(endpoint.access)}`);
+  if (endpoint.protocol) modeBits.push(`protocol: ${escapeTerminalText(endpoint.protocol)}`);
+  if (endpoint.tls) modeBits.push(`tls: ${escapeTerminalText(endpoint.tls)}`);
+  if (endpoint.enforcement) {
+    modeBits.push(`enforcement: ${escapeTerminalText(endpoint.enforcement)}`);
+  }
   const modeSuffix = modeBits.length > 0 ? ` (${modeBits.join(", ")})` : "";
-  const header = `      - ${endpoint.host}:${port}${modeSuffix}`;
+  const header = `      - ${escapeTerminalText(endpoint.host)}:${port}${modeSuffix}`;
   if (endpoint.rules.length === 0) return [header];
   const ruleLines = endpoint.rules.map((rule) => {
-    const methods = rule.methods.join(", ");
-    const paths = rule.paths.join(", ");
+    const methods = rule.methods.map(escapeTerminalText).join(", ");
+    const paths = rule.paths.map(escapeTerminalText).join(", ");
     return `          ${rule.action}: ${methods}  ${paths}`;
   });
   return [header, ...ruleLines];
 }
 
-export function renderPresetScope(content: string): string[] {
+export function renderPresetScope(
+  content: string,
+  options: RenderPresetScopeOptions = {},
+): string[] {
   const scope = extractPresetScope(content);
   if (!scope || scope.policies.length === 0) return [];
-  const lines: string[] = ["  Effective egress that would be opened:"];
+  const lines: string[] = [options.heading ?? "  Effective egress that would be opened:"];
   for (const policy of scope.policies) {
-    lines.push(`    policy '${policy.name}':`);
+    lines.push(`    policy '${escapeTerminalText(policy.name)}':`);
     if (policy.endpoints.length === 0) {
       lines.push("      (no endpoints declared)");
     } else {
@@ -146,7 +173,7 @@ export function renderPresetScope(content: string): string[] {
     if (policy.binaries.length > 0) {
       lines.push("      binaries:");
       for (const bin of policy.binaries) {
-        lines.push(`        - ${bin}`);
+        lines.push(`        - ${escapeTerminalText(bin)}`);
       }
     }
   }

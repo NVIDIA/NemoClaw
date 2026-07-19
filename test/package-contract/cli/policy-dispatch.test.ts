@@ -209,6 +209,30 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
       expect(result.stdout).toMatch(/--dry-run: 'custom-rule' not applied\./);
     });
 
+    it("renders hostile custom-preset terminal controls visibly before the prompt (#7179)", () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-control-"));
+      const file = path.join(tmp, "custom-control.yaml");
+      fs.writeFileSync(
+        file,
+        String.raw`preset:
+  name: custom-control
+network_policies:
+  hostile:
+    name: "safe\u001b[2JFAKE"
+    endpoints:
+      - host: "api.example\u000aAPPROVED"
+        port: 443
+`,
+      );
+
+      const result = runPolicyAddExternal(["--from-file", file, "--dry-run", "--yes"]);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toMatch(/[\u001b\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u);
+      expect(result.stdout).toContain("safe\\u{001b}[2JFAKE");
+      expect(result.stdout).toContain("api.example\\u{000a}APPROVED:443");
+    });
+
     it("skips the confirmation prompt when NEMOCLAW_NON_INTERACTIVE=1", () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-file-env-"));
       const file = path.join(tmp, "custom-rule.yaml");

@@ -50,6 +50,7 @@ beforeEach(() => {
   vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("openclaw"));
   vi.spyOn(policy, "loadPresetForSandbox").mockReturnValue(WHATSAPP_PRESET);
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["whatsapp"]);
+  vi.spyOn(policy, "getPresetContentGatewayState").mockReturnValue("absent");
 });
 
 afterEach(() => {

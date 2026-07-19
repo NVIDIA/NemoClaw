@@ -904,6 +904,15 @@ function hydrateAddChannelEnvFromStoredState(sandboxName: string): void {
   hydrateMessagingChannelConfig(getStoredMessagingChannelConfig(sandboxName, savedSession));
 }
 
+function discloseChannelPresetScope(
+  sandboxName: string,
+  presetName: string,
+  presetContent: string,
+): void {
+  const gatewayState = policies.getPresetContentGatewayState(sandboxName, presetContent);
+  policies.logPresetScopeForState(presetName, presetContent, gatewayState);
+}
+
 function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession> {
   try {
     return onboardSession.loadSession();
@@ -971,8 +980,11 @@ async function addSandboxChannelUnlocked(
     process.exit(1);
   }
 
+  // Disclose before credential collection, conflict prompts, or any gateway /
+  // registry mutation. The core apply path rechecks immediately before set.
+  discloseChannelPresetScope(sandboxName, canonical, presetContent);
+
   if (dryRun) {
-    policies.logPresetScope(presetContent);
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
     return;
   }
@@ -1435,6 +1447,20 @@ async function sandboxChannelsSetEnabled(
       `  Channel '${normalized}' is already ${disabled ? "disabled" : "enabled"} for '${sandboxName}'. Nothing to do.`,
     );
     return;
+  }
+
+  if (!disabled) {
+    const presetContent = policies.loadPresetForSandbox(sandboxName, normalized);
+    const presetPolicyKeys =
+      presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
+    if (presetContent === null || presetPolicyKeys.length === 0) {
+      console.error(`  Cannot load policy preset for channel '${normalized}'.`);
+      console.error(
+        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels start ${normalized}`,
+      );
+      process.exit(1);
+    }
+    discloseChannelPresetScope(sandboxName, normalized, presetContent);
   }
 
   if (dryRun) {
