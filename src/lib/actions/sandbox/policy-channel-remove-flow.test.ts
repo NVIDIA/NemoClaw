@@ -64,16 +64,17 @@ describe("policy channel remove/enable flows", () => {
     const updateSandboxSpy = vi.spyOn(registry, "updateSandbox");
     const applyPresetSpy = vi.spyOn(policies, "applyPreset");
     const rebuildSpy = vi.spyOn(policyChannelDependencies, "rebuildSandbox");
+    vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies: {}\n");
     await expect(
       startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
     ).resolves.toBeUndefined();
 
     const lines = logSpy.mock.calls.map((call) => call.map(String).join(" "));
     const joined = lines.join("\n");
-    expect(joined).toContain("Effective egress scope to be applied (live delta unavailable):");
+    expect(joined).toContain("Effective egress that would be opened:");
     expect(joined).toContain("- api.telegram.org:443 (protocol: rest, enforcement: enforce)");
     const scopeHeader = lines.findIndex((line) =>
-      line.includes("Effective egress scope to be applied (live delta unavailable):"),
+      line.includes("Effective egress that would be opened:"),
     );
     const wouldStart = lines.findIndex((line) => line.includes("--dry-run: would start channel"));
     expect(scopeHeader).toBeGreaterThan(-1);
