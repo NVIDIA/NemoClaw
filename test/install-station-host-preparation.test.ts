@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
-  assertStationExpressInstallerResumeMatches,
   clearStationExpressInstallerResume,
   withStationExpressResumeEnvironment,
 } from "../src/lib/onboard/station-express-resume";
@@ -957,7 +956,12 @@ if [ "\${1:-}" = "init" ]; then
 set -euo pipefail
 source "\${INSTALLER_UNDER_TEST:?}" >/dev/null
 SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-maybe_offer_express_install() { _SELECTED_EXPRESS_PLATFORM='DGX Station'; }
+maybe_offer_express_install() {
+  _SELECTED_EXPRESS_PLATFORM='DGX Station'
+  NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+}
+station_installer_revision() { printf '${STATION_REVISION}'; }
+station_express_resume_generation() { printf '${STATION_GENERATION}'; }
 ensure_docker() { printf 'ENSURE_DOCKER\\n'; }
 ensure_openshell_build_deps() { printf 'ENSURE_BUILD_DEPS\\n'; }
 prepare_installer_host
@@ -1073,30 +1077,33 @@ prepare_installer_host
     expect(result.stdout.trim().split("\n")).toEqual(["ENSURE_DOCKER", "ENSURE_BUILD_DEPS"]);
   });
 
-  it("persists the selected model when host preparation requires a reboot", () => {
+  it("persists the selected model and ports when host preparation requires a reboot (#7203)", () => {
     const { home, result, output } = runSourced(
       INSTALLER_PAYLOAD,
       `
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
+NEMOCLAW_GATEWAY_PORT='18081'
+NEMOCLAW_DASHBOARD_PORT='18790'
+NEMOCLAW_VLLM_PORT='18000'
 station_installer_revision() { printf '${STATION_REVISION}'; }
 station_express_resume_generation() { printf '${STATION_GENERATION}'; }
 run_station_host_preparation() { return 10; }
 ensure_station_express_host
 `,
     );
-    const stateFile = path.join(home, ".nemoclaw", "station-express-resume");
+    const stateFile = path.join(home, ".nemoclaw", "gateways", "18081", "station-express-resume");
 
     expect(result.status, output).toBe(10);
     expect(fs.readFileSync(stateFile, "utf-8")).toBe(
       `revision=${STATION_REVISION}\nmodel=nemotron-3-ultra-550b-a55b\ngeneration=${STATION_GENERATION}\n` +
-        "agent=openclaw\nsandbox=my-assistant\npolicy_tier=balanced\n",
+        "agent=openclaw\nsandbox=my-assistant\npolicy_tier=balanced\n" +
+        "gateway_port=18081\ndashboard_port=18790\nvllm_port=18000\n",
     );
     expect(fs.statSync(stateFile).mode & 0o777).toBe(0o600);
-    expect(() =>
-      assertStationExpressInstallerResumeMatches(STATION_GENERATION, { HOME: home }),
-    ).not.toThrow();
-    expect(output).toContain(`NEMOCLAW_INSTALL_TAG=${STATION_REVISION}`);
+    expect(output).toContain(
+      `NEMOCLAW_INSTALL_TAG=${STATION_REVISION} NEMOCLAW_AGENT=openclaw NEMOCLAW_SANDBOX_NAME=my-assistant NEMOCLAW_POLICY_TIER=balanced NEMOCLAW_GATEWAY_PORT=18081 NEMOCLAW_DASHBOARD_PORT=18790 NEMOCLAW_VLLM_PORT=18000 bash`,
+    );
   });
 
   it("rejects a resume-state symlink without loading its target", () => {
