@@ -140,7 +140,8 @@ policies.loadPresetFromFile = (p) => {
   if (String(p).includes("bad")) return null;
   const m = String(p).match(/([a-z0-9-]+)\.yaml$/);
   const name = m ? m[1] : "unknown";
-  return { presetName: name, content: "network_policies:\n  " + name + ":\n    host: " + name + ".example.com\n" };
+  const content = require("fs").readFileSync(p, "utf-8");
+  return { presetName: name, content };
 };
 policies.applyPresetContent = (sandboxName, presetName) => {
   calls.push({ type: "apply", sandboxName, presetName });

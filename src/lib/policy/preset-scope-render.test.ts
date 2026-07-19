@@ -36,7 +36,7 @@ network_policies:
       - { path: /usr/bin/node }
 `;
 
-describe("renderPresetScope", () => {
+describe("renderPresetScope (#7179)", () => {
   it("returns an empty list for content with no network_policies", () => {
     expect(renderPresetScope("preset:\n  name: x\n  description: 'y'\n")).toEqual([]);
     expect(renderPresetScope("")).toEqual([]);
@@ -48,10 +48,9 @@ describe("renderPresetScope", () => {
 
   it("renders full L4 tunnel endpoints with access + tls but no rule lines", () => {
     const lines = renderPresetScope(WHATSAPP_LIKE_PRESET);
-    const joined = lines.join("\n");
-    expect(joined).toContain("- web.whatsapp.com:443 (access: full, tls: skip)");
-    const idx = lines.findIndex((line) => line.includes("web.whatsapp.com:443"));
-    expect(idx).toBeGreaterThan(-1);
+    const expectedLine = "      - web.whatsapp.com:443 (access: full, tls: skip)";
+    expect(lines).toContain(expectedLine);
+    const idx = lines.indexOf(expectedLine);
     expect(lines[idx + 1] ?? "").not.toMatch(/^\s+allow:/);
   });
 

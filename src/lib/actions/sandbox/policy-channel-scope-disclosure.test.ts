@@ -39,7 +39,7 @@ function agentFixture(name: string): defs.AgentDefinition {
 }
 
 beforeEach(() => {
-  delete process.env.NEMOCLAW_NON_INTERACTIVE;
+  vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", undefined);
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   exitMock = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -54,6 +54,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 function collectLogOutput(): string {
