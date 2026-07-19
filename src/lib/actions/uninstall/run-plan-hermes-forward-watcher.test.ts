@@ -307,6 +307,39 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
     }
   });
 
+  it("retries from preserved state after a transient watcher stop failure", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-7163-retry-"));
+    try {
+      const watcher = seedWatcher(path.join(tmpHome, ".nemoclaw"), "66642\n");
+      const process: ProcessFixture = {
+        argv: managedArgv(watcher),
+        exitsOnSignal: false,
+        pid: 66642,
+        watcher,
+      };
+      const harness = createHarness(tmpHome, [process]);
+      harness.deps.rmSync = fs.rmSync;
+
+      const firstAttempt = uninstall(tmpHome, harness);
+      expect(firstAttempt.exitCode).toBe(1);
+      expect(fs.existsSync(watcher.pidFile)).toBe(true);
+
+      process.exitsOnSignal = true;
+      const retry = uninstall(tmpHome, harness);
+
+      expect(retry.exitCode).toBe(0);
+      expect(harness.killed).toEqual([66642, 66642, 66642]);
+      expect(forwardStops(harness)).toEqual([
+        ["forward", "stop", PORT, SANDBOX],
+        ["forward", "stop", PORT, SANDBOX],
+      ]);
+      expect(fs.existsSync(watcher.pidFile)).toBe(false);
+      expect(harness.logs).toContain("Claws retracted. Until next time.");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   it("does not send SIGKILL after the watcher PID is recycled", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-7163-recycle-"));
     try {
