@@ -8,7 +8,17 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { TestModule } from "vitest/node";
 import {
+  classifyLiveTestOutcome,
+  configuredLiveTestOutcomeFile,
+  isVitestTimeoutError,
+  LIVE_TEST_OUTCOME_FILE,
+  parseLiveTestOutcome,
+  readLiveTestOutcome,
+  writeLiveTestOutcome,
+} from "../tools/e2e/live-test-outcome.mts";
+import {
   configuredEnvironment,
+  outcomeForRun,
   RISK_SIGNAL_FILE,
   type RiskSignalEnvironment,
   writeRiskSignal,
@@ -23,6 +33,16 @@ function moduleWithStates(states: Array<"passed" | "failed" | "skipped" | "pendi
     children: {
       *allTests() {
         for (const state of states) yield { result: () => ({ state }) };
+      },
+    },
+  } as unknown as TestModule;
+}
+
+function moduleWithFailedError(error: unknown): TestModule {
+  return {
+    children: {
+      *allTests() {
+        yield { result: () => ({ state: "failed", errors: [error] }) };
       },
     },
   } as unknown as TestModule;
@@ -136,6 +156,63 @@ describe("E2E risk signal reporter", () => {
         writeRiskSignal(environment(dir), [moduleWithStates(["passed"])], [], "passed"),
       ).toThrow(/private regular file/u);
       expect(fs.readFileSync(target, "utf8")).toBe("protected\n");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("trusted live-test outcome reporter (#7146)", () => {
+  it("pins the configured outcome file to the E2E artifact directory", () => {
+    const artifactDir = "/tmp/nemoclaw-live-outcome";
+    const expected = path.join(artifactDir, LIVE_TEST_OUTCOME_FILE);
+    expect(
+      configuredLiveTestOutcomeFile({
+        E2E_ARTIFACT_DIR: artifactDir,
+        E2E_TEST_OUTCOME_FILE: expected,
+      }),
+    ).toBe(expected);
+    expect(() =>
+      configuredLiveTestOutcomeFile({
+        E2E_ARTIFACT_DIR: artifactDir,
+        E2E_TEST_OUTCOME_FILE: "/tmp/outside.json",
+      }),
+    ).toThrow(/must name live-test-outcome\.json/u);
+  });
+
+  it("derives assertion and timeout only from the trusted Vitest result objects", () => {
+    const timeout = new Error(
+      'Test timed out in 30000ms.\nIf this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".',
+    );
+    expect(isVitestTimeoutError(timeout)).toBe(true);
+    expect(
+      outcomeForRun([moduleWithFailedError(new Error("expected true to be false"))], [], "failed"),
+    ).toBe("assertion");
+    expect(outcomeForRun([moduleWithFailedError(timeout)], [], "failed")).toBe("timeout");
+    expect(
+      classifyLiveTestOutcome({
+        failedTests: 0,
+        unhandledErrors: [],
+        testErrors: [],
+        runReason: "interrupted",
+        processTimedOut: true,
+      }),
+    ).toBe("timeout");
+  });
+
+  it.each([
+    "assertion",
+    "timeout",
+  ] as const)("writes and strictly reads a private %s artifact", (outcome) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-live-outcome-"));
+    const file = path.join(dir, LIVE_TEST_OUTCOME_FILE);
+    try {
+      writeLiveTestOutcome(file, outcome);
+      expect(readLiveTestOutcome(file)).toBe(outcome);
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+      expect(() => parseLiveTestOutcome('{"v":1,"outcome":"assertion","token":"secret"}')).toThrow(
+        /unsupported shape/u,
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

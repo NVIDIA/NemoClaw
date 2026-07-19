@@ -412,7 +412,7 @@ describe("CLI dispatch", () => {
         'case "$*" in',
         '  "status") printf "Status: Connected\\nGateway: nemoclaw\\n"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        '  "sandbox list") echo "liost Ready"; exit 0 ;;',
+        '  "sandbox list"*) echo "liost Ready"; exit 0 ;;',
         '  "sandbox get liost") printf "Name: liost\\nPhase: Ready\\nPolicy:\\n"; exit 0 ;;',
         '  "policy get --full liost") exit 1 ;;',
         '  "inference get") exit 1 ;;',
@@ -432,6 +432,9 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("CONNECTED_LIOST");
     expect(r.out).not.toContain("Unknown command: liost");
+    const calls = fs.readFileSync(path.join(home, "openshell-calls.log"), "utf8").split("\n");
+    expect(calls).toContain("sandbox list");
+    expect(calls).toContain("sandbox list -g nemoclaw");
   });
 
   it("fails fast on gated NEMOCLAW_VLLM_MODEL without HF token before sandbox side effects", () => {

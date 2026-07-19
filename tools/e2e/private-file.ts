@@ -60,3 +60,30 @@ export function writePrivateRegularFile(file: string, contents: string): void {
     fs.closeSync(descriptor);
   }
 }
+
+/** Append to an existing private regular file without following links. */
+export function appendPrivateRegularFile(
+  file: string,
+  contents: string,
+  options: { maxBytes: number },
+): void {
+  const descriptor = fs.openSync(
+    file,
+    fs.constants.O_WRONLY | fs.constants.O_APPEND | NO_FOLLOW | NON_BLOCK,
+  );
+  try {
+    const stat = fs.fstatSync(descriptor);
+    const appendedBytes = Buffer.byteLength(contents);
+    if (!stat.isFile() || stat.nlink !== 1) {
+      throw new Error(`${file} must be a private regular file`);
+    }
+    if (stat.size + appendedBytes > options.maxBytes) {
+      throw new Error(`${file} exceeds ${options.maxBytes} bytes`);
+    }
+    fs.fchmodSync(descriptor, 0o600);
+    fs.writeFileSync(descriptor, contents, "utf8");
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
