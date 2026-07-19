@@ -28,8 +28,12 @@ export interface HermesForwardWatcherHost {
   warn: (message: string) => void;
 }
 
-function pidExists(pid: number, host: HermesForwardWatcherHost): boolean {
-  return host.run("ps", ["-p", String(pid), "-o", "pid="], { env: host.env }).status === 0;
+type ManagedWatcherProcessStatus = "absent" | "managed" | "other" | "unknown";
+
+function pidExists(pid: number, host: HermesForwardWatcherHost): boolean | null {
+  const result = host.run("ps", ["-p", String(pid), "-o", "pid="], { env: host.env });
+  if (result.status === 0) return result.stdout.trim() ? true : null;
+  return result.status === 1 ? false : null;
 }
 
 function readProcCommandLine(pid: number): HermesForwardWatcherCommandLine | null {
@@ -60,23 +64,36 @@ function currentUser(host: HermesForwardWatcherHost): string {
   return host.env.SUDO_USER || host.env.LOGNAME || os.userInfo().username;
 }
 
-function processUser(pid: number, host: HermesForwardWatcherHost): string {
+function processUser(pid: number, host: HermesForwardWatcherHost): string | null {
   const result = host.run("ps", ["-p", String(pid), "-o", "user="], { env: host.env });
-  return result.status === 0 ? result.stdout.trim() : "";
+  const user = result.status === 0 ? result.stdout.trim() : "";
+  return user || null;
 }
 
-function isManagedWatcherRunning(
+function managedWatcherProcessStatus(
   watcher: HermesForwardWatcherState,
   host: HermesForwardWatcherHost,
-): boolean {
+): ManagedWatcherProcessStatus {
   const pid = watcher.pid;
-  if (pid === null || !pidExists(pid, host)) return false;
+  if (pid === null) return "unknown";
+  const exists = pidExists(pid, host);
+  if (exists === false) return "absent";
+  if (exists === null) return "unknown";
+
+  const commandLine = readProcessCommandLine(pid, host);
+  const observedUser = processUser(pid, host);
+  if (!commandLine || observedUser === null) {
+    const stillExists = pidExists(pid, host);
+    return stillExists === false ? "absent" : "unknown";
+  }
   return isManagedHermesForwardWatcherProcess({
-    commandLine: readProcessCommandLine(pid, host),
+    commandLine,
     expectedUser: currentUser(host),
-    observedUser: processUser(pid, host),
+    observedUser,
     watcher,
-  });
+  })
+    ? "managed"
+    : "other";
 }
 
 function waitForWatcherExit(
@@ -86,10 +103,12 @@ function waitForWatcherExit(
 ): boolean {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (!isManagedWatcherRunning(watcher, host)) return true;
+    const status = managedWatcherProcessStatus(watcher, host);
+    if (status === "absent" || status === "other") return true;
     sleepMs(50);
   }
-  return !isManagedWatcherRunning(watcher, host);
+  const status = managedWatcherProcessStatus(watcher, host);
+  return status === "absent" || status === "other";
 }
 
 export function stopHermesForwardWatcherProcess(
@@ -97,16 +116,32 @@ export function stopHermesForwardWatcherProcess(
   host: HermesForwardWatcherHost,
 ): boolean {
   const pid = watcher.pid;
-  if (pid === null || !isManagedWatcherRunning(watcher, host)) return true;
+  if (pid === null) {
+    host.warn(`Failed to read a valid Hermes forward watcher PID from ${watcher.pidFile}.`);
+    return false;
+  }
+  const initialStatus = managedWatcherProcessStatus(watcher, host);
+  if (initialStatus === "absent" || initialStatus === "other") return true;
+  if (initialStatus === "unknown") {
+    host.warn(`Failed to inspect Hermes forward watcher ${pid}; preserving state for retry.`);
+    return false;
+  }
 
   host.kill(pid);
   if (waitForWatcherExit(watcher, host, 1000)) {
     host.log(`Stopped Hermes forward watcher ${pid}`);
     return true;
   }
-  if (!isManagedWatcherRunning(watcher, host)) {
+  const beforeForceKill = managedWatcherProcessStatus(watcher, host);
+  if (beforeForceKill === "absent" || beforeForceKill === "other") {
     host.log(`Stopped Hermes forward watcher ${pid}`);
     return true;
+  }
+  if (beforeForceKill === "unknown") {
+    host.warn(
+      `Failed to confirm Hermes forward watcher ${pid} identity; preserving state for retry.`,
+    );
+    return false;
   }
   host.kill(pid, "SIGKILL");
   if (waitForWatcherExit(watcher, host, 1000)) {

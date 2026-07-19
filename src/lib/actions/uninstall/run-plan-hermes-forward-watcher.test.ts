@@ -23,6 +23,7 @@ type ProcessFixture = {
   argv?: readonly string[] | null;
   commandLine?: string;
   commandLineAfterSignal?: string;
+  commandLineReadable?: boolean;
   exitsOnSignal?: boolean;
   owner?: string;
   pid: number;
@@ -111,7 +112,9 @@ function createHarness(
       ok(`${process.owner ?? "testuser"}\n`),
     );
     routes.set(commandKey("ps", ["-ww", "-p", pid, "-o", "args="]), () =>
-      ok(processCommandLines.get(process.pid) ?? ""),
+      process.commandLineReadable === false
+        ? result(2, "", "process inspection failed")
+        : ok(processCommandLines.get(process.pid) ?? ""),
     );
   }
   for (const [forward, status] of forwardStatuses) {
@@ -245,22 +248,36 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
     }
   });
 
-  it("handles stale and partially numeric PID files without signaling them", () => {
+  it("handles a stale numeric PID file without signaling it", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-7163-stale-"));
     try {
       const root = path.join(tmpHome, ".nemoclaw");
       const stale = seedWatcher(root, "90642\n", "stale-sandbox");
-      const invalid = seedWatcher(root, "91642junk\n", "invalid-sandbox");
-      const harness = createHarness(tmpHome, [
-        { pid: 90642, running: false, watcher: stale },
-        { pid: 91642, watcher: invalid },
-      ]);
+      const harness = createHarness(tmpHome, [{ pid: 90642, running: false, watcher: stale }]);
       const outcome = uninstall(tmpHome, harness);
 
       expect(outcome.exitCode).toBe(0);
       expect(harness.killed).toHaveLength(0);
       expect(forwardStops(harness)).toContainEqual(["forward", "stop", PORT, "stale-sandbox"]);
-      expect(forwardStops(harness)).toContainEqual(["forward", "stop", PORT, "invalid-sandbox"]);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves retry state when the watcher PID file is invalid", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-7163-invalid-"));
+    try {
+      const watcher = seedWatcher(path.join(tmpHome, ".nemoclaw"), "91642junk\n");
+      const harness = createHarness(tmpHome, []);
+      harness.deps.rmSync = fs.rmSync;
+      const outcome = uninstall(tmpHome, harness);
+
+      expect(outcome.exitCode).toBe(1);
+      expect(harness.killed).toHaveLength(0);
+      expect(fs.existsSync(watcher.pidFile)).toBe(true);
+      expect(harness.warnings).toContain(
+        `Failed to read a valid Hermes forward watcher PID from ${watcher.pidFile}.`,
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -278,11 +295,13 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
       fs.symlinkSync(target, pidFile);
       const watcher = { pidFile, port: PORT, sandbox: SANDBOX, watcherScript: `${pidFile}.js` };
       const harness = createHarness(tmpHome, [{ pid: 92642, watcher }]);
+      harness.deps.rmSync = fs.rmSync;
       const outcome = uninstall(tmpHome, harness);
 
-      expect(outcome.exitCode).toBe(0);
+      expect(outcome.exitCode).toBe(1);
       expect(harness.killed).not.toContain(92642);
       expect(forwardStops(harness)).toContainEqual(["forward", "stop", PORT, SANDBOX]);
+      expect(fs.existsSync(pidFile)).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -302,6 +321,25 @@ describe("uninstall Hermes forward watcher cleanup (#7163)", () => {
       expect(harness.warnings).toContain("Failed to stop Hermes forward watcher 61642");
       expect(fs.existsSync(watcher.pidFile)).toBe(true);
       expect(harness.logs).not.toContain("Claws retracted. Until next time.");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves retry state when a live watcher cannot be inspected", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-7163-inspect-"));
+    try {
+      const watcher = seedWatcher(path.join(tmpHome, ".nemoclaw"), "65642\n");
+      const harness = createHarness(tmpHome, [{ commandLineReadable: false, pid: 65642, watcher }]);
+      harness.deps.rmSync = fs.rmSync;
+      const outcome = uninstall(tmpHome, harness);
+
+      expect(outcome.exitCode).toBe(1);
+      expect(harness.killed).toHaveLength(0);
+      expect(fs.existsSync(watcher.pidFile)).toBe(true);
+      expect(harness.warnings).toContain(
+        "Failed to inspect Hermes forward watcher 65642; preserving state for retry.",
+      );
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
