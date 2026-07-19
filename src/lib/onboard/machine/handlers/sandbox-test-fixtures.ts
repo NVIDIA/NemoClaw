@@ -126,11 +126,12 @@ export function createDeps(
     resolveCreateIntent: vi.fn(
       async (input: {
         sandboxName: string;
+        inferenceProvider?: string | null;
         extraProviders: readonly string[];
         staleExtraProviders: readonly string[];
       }) => ({
         sandboxName: input.sandboxName,
-        inferenceProvider: null,
+        inferenceProvider: input.inferenceProvider ?? null,
         activeMessagingChannels: [],
         messagingProviderRequests: [],
         reusableMessagingProviders: [],

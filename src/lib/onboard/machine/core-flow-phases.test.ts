@@ -215,9 +215,9 @@ function createPhases(
         staleExtraProviders: [],
       })),
       resolveSandboxCreateIntent: vi.fn(
-        async ({ sandboxName, extraProviders, staleExtraProviders }) => ({
+        async ({ sandboxName, inferenceProvider, extraProviders, staleExtraProviders }) => ({
           sandboxName,
-          inferenceProvider: null,
+          inferenceProvider: inferenceProvider ?? null,
           activeMessagingChannels: [],
           messagingProviderRequests: [],
           reusableMessagingProviders: [],
@@ -321,6 +321,7 @@ describe("core onboard flow phases", () => {
     );
     expect(createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
       resolved: {
+        inferenceProvider: "nim",
         extraProviders: ["current-provider"],
         staleExtraProviders: ["stale-provider"],
       },
