@@ -156,4 +156,30 @@ describe("renderPresetScope (#7179)", () => {
     expect(joined).toContain("/safe\\u{202e}exe");
     expect(joined).toContain("/usr/bin/node\\u{0007}");
   });
+
+  it("redacts credentials from every YAML-derived field before disclosure", () => {
+    const credentialBearing = `network_policies:
+  unsafe:
+    name: "Bearer opaque-policy-secret"
+    endpoints:
+      - host: "https://user:password@example.com/v1?api_key=opaque-query-secret#token=fragment-secret"
+        port: "token=opaque-port-secret"
+        protocol: "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
+        access: "authorization=opaque-access-secret"
+        tls: "Bearer opaque-tls-secret"
+        enforcement: "password=opaque-enforcement-secret"
+        rules:
+          - allow:
+              method: "Bearer opaque-method-secret"
+              path: "/v1?api_key=opaque-path-secret"
+    binaries:
+      - path: "/opt/token=opaque-binary-secret"
+`;
+
+    const joined = renderPresetScope(credentialBearing).join("\n");
+    expect(joined).not.toMatch(/opaque-|password@|sk-proj-/);
+    expect(joined).toContain("https://example.com/v1?api_key=<REDACTED>");
+    expect(joined).toContain("/v1?api_key=<REDACTED>");
+    expect(joined).toContain("Bearer <REDACTED>");
+  });
 });

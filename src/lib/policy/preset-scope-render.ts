@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord } from "../core/json-types";
+import { redactFull, redactUrl } from "../security/redact";
+import { URL_TOKEN_PATTERN } from "../security/redact-url";
 import { type PolicyValue, parseNetworkPolicies } from "./preset-parsing";
 
 type RuleScope = {
@@ -50,6 +52,12 @@ export function escapeTerminalText(value: string): string {
       return `\\u{${codePoint.toString(16).padStart(4, "0")}}`;
     })
     .join("");
+}
+
+/** Redact credential-shaped content before rendering untrusted YAML scalars. */
+function renderTerminalText(value: string): string {
+  const redactedUrls = value.replace(URL_TOKEN_PATTERN, (url) => redactUrl(url) ?? "<REDACTED>");
+  return escapeTerminalText(redactFull(redactedUrls));
 }
 
 function toStringOrUndefined(value: PolicyValue | undefined): string | undefined {
@@ -135,20 +143,20 @@ function extractPresetScope(content: string): PresetScope | null {
 }
 
 function formatEndpoint(endpoint: EndpointScope): string[] {
-  const port = escapeTerminalText(String(endpoint.port ?? "?"));
+  const port = renderTerminalText(String(endpoint.port ?? "?"));
   const modeBits: string[] = [];
-  if (endpoint.access) modeBits.push(`access: ${escapeTerminalText(endpoint.access)}`);
-  if (endpoint.protocol) modeBits.push(`protocol: ${escapeTerminalText(endpoint.protocol)}`);
-  if (endpoint.tls) modeBits.push(`tls: ${escapeTerminalText(endpoint.tls)}`);
+  if (endpoint.access) modeBits.push(`access: ${renderTerminalText(endpoint.access)}`);
+  if (endpoint.protocol) modeBits.push(`protocol: ${renderTerminalText(endpoint.protocol)}`);
+  if (endpoint.tls) modeBits.push(`tls: ${renderTerminalText(endpoint.tls)}`);
   if (endpoint.enforcement) {
-    modeBits.push(`enforcement: ${escapeTerminalText(endpoint.enforcement)}`);
+    modeBits.push(`enforcement: ${renderTerminalText(endpoint.enforcement)}`);
   }
   const modeSuffix = modeBits.length > 0 ? ` (${modeBits.join(", ")})` : "";
-  const header = `      - ${escapeTerminalText(endpoint.host)}:${port}${modeSuffix}`;
+  const header = `      - ${renderTerminalText(endpoint.host)}:${port}${modeSuffix}`;
   if (endpoint.rules.length === 0) return [header];
   const ruleLines = endpoint.rules.map((rule) => {
-    const methods = rule.methods.map(escapeTerminalText).join(", ");
-    const paths = rule.paths.map(escapeTerminalText).join(", ");
+    const methods = rule.methods.map(renderTerminalText).join(", ");
+    const paths = rule.paths.map(renderTerminalText).join(", ");
     return `          ${rule.action}: ${methods}  ${paths}`;
   });
   return [header, ...ruleLines];
@@ -162,7 +170,7 @@ export function renderPresetScope(
   if (!scope || scope.policies.length === 0) return [];
   const lines: string[] = [options.heading ?? "  Effective egress that would be opened:"];
   for (const policy of scope.policies) {
-    lines.push(`    policy '${escapeTerminalText(policy.name)}':`);
+    lines.push(`    policy '${renderTerminalText(policy.name)}':`);
     if (policy.endpoints.length === 0) {
       lines.push("      (no endpoints declared)");
     } else {
@@ -173,7 +181,7 @@ export function renderPresetScope(
     if (policy.binaries.length > 0) {
       lines.push("      binaries:");
       for (const bin of policy.binaries) {
-        lines.push(`        - ${escapeTerminalText(bin)}`);
+        lines.push(`        - ${renderTerminalText(bin)}`);
       }
     }
   }
