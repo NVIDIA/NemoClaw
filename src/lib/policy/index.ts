@@ -44,6 +44,7 @@ import {
   type PolicyValue,
   parseNetworkPolicies,
 } from "./preset-parsing";
+import { logPresetScope, renderPresetScope } from "./preset-scope-render";
 import { splitSemanticFindings, validatePolicySemantics } from "./semantic-validation";
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
@@ -935,10 +936,7 @@ function applyPresetContent(
   }
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
-  const endpoints = getPresetEndpoints(presetContent);
-  if (endpoints.length > 0) {
-    console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
-  }
+  logPresetScope(presetContent);
 
   // Run before creating temp resources so a missing-binary exit doesn't
   // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
@@ -1061,7 +1059,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     );
     return false;
   }
-  const endpointLogs: string[][] = [];
+  const presetContents: string[] = [];
 
   for (const presetName of uniquePresetNames) {
     const presetContent = loadPresetForSandbox(sandboxName, presetName);
@@ -1076,15 +1074,12 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
       return false;
     }
 
-    const endpoints = getPresetEndpoints(presetContent);
-    endpointLogs.push(endpoints);
+    presetContents.push(presetContent);
     merged = mergePresetIntoPolicy(merged, presetEntries);
   }
 
-  for (const endpoints of endpointLogs) {
-    if (endpoints.length > 0) {
-      console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
-    }
+  for (const presetContent of presetContents) {
+    logPresetScope(presetContent);
   }
 
   // Run before creating temp resources so a missing-binary exit doesn't
@@ -1538,6 +1533,7 @@ export {
   loadPreset,
   loadPresetForSandbox,
   loadPresetFromFile,
+  logPresetScope,
   mergePresetIntoPolicy,
   mergePresetNamesIntoPolicy,
   networkPoliciesHasAllowedIps,
@@ -1549,6 +1545,7 @@ export {
   removeBuiltinPresetAttribution,
   removePreset,
   removePresetFromPolicy,
+  renderPresetScope,
   resolvePermissivePolicyPath,
   selectForRemoval,
   selectFromList,

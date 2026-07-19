@@ -249,10 +249,19 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
 
     it("applies every preset in --from-dir in sorted order and aborts on the first failure", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-"));
-      fs.writeFileSync(
-        path.join(dir, "a-good.yaml"),
-        "preset:\n  name: a-good\nnetwork_policies: {}\n",
-      );
+      const endpointBlock = [
+        "network_policies:",
+        "  a-good:",
+        "    name: a-good",
+        "    endpoints:",
+        "      - host: a-good.example.com",
+        "        port: 443",
+        "        protocol: rest",
+        "        rules:",
+        '          - allow: { method: GET, path: "/**" }',
+        "",
+      ].join("\n");
+      fs.writeFileSync(path.join(dir, "a-good.yaml"), `preset:\n  name: a-good\n${endpointBlock}`);
       fs.writeFileSync(
         path.join(dir, "b-bad.yaml"),
         "preset:\n  name: b-bad\nnetwork_policies: {}\n",
@@ -263,9 +272,11 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
       );
       const result = runPolicyAddExternal(["--from-dir", dir, "--yes"]);
       expect(result.status).not.toBe(0);
-      // a-good succeeded (visible as the [a-good] endpoints log), b-bad triggered abort,
+      // a-good succeeded (visible as the [a-good] scope log), b-bad triggered abort,
       // c-skipped was never loaded because the loop stopped at b-bad.
-      expect(result.stdout).toMatch(/\[a-good\] Endpoints that would be opened/);
+      expect(result.stdout).toMatch(/\[a-good\]/);
+      expect(result.stdout).toMatch(/Effective egress that would be opened/);
+      expect(result.stdout).toMatch(/- a-good\.example\.com:443/);
       expect(result.stdout).not.toMatch(/\[c-skipped\]/);
       expect(result.stderr).toMatch(/Aborting --from-dir/);
     });

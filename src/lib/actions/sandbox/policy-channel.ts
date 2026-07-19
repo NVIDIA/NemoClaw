@@ -177,10 +177,7 @@ async function addSandboxPolicyUnlocked(
   const presetContent = policies.loadPresetForSandbox(sandboxName, answer);
   if (!presetContent) return;
 
-  const endpoints = policies.getPresetEndpoints(presetContent);
-  if (endpoints.length > 0) {
-    console.log(`  Endpoints that would be opened: ${endpoints.join(", ")}`);
-  }
+  policies.logPresetScope(presetContent);
 
   const presetWarning = policies.getPresetValidationWarning(answer);
   if (presetWarning) {
@@ -229,9 +226,10 @@ async function applyExternalPreset(
   }
   if (!loaded) return false;
 
-  const endpoints = policies.getPresetEndpoints(loaded.content);
-  if (endpoints.length > 0) {
-    console.log(`  [${loaded.presetName}] Endpoints that would be opened: ${endpoints.join(", ")}`);
+  const scopeLines = policies.renderPresetScope(loaded.content);
+  if (scopeLines.length > 0) {
+    console.log(`  [${loaded.presetName}]`);
+    for (const line of scopeLines) console.log(line);
     console.log(
       `  ${YW}Warning: custom preset targets are not vetted. Review hosts before applying.${R}`,
     );
@@ -974,6 +972,7 @@ async function addSandboxChannelUnlocked(
   }
 
   if (dryRun) {
+    policies.logPresetScope(presetContent);
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
     return;
   }
