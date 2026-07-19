@@ -909,16 +909,17 @@ function discloseChannelPresetScope(
   sandboxName: string,
   presetName: string,
   presetContent: string,
-): void {
+): policies.PresetPolicyState | null {
   const gatewayState = policies.getPresetContentGatewayState(sandboxName, presetContent);
   policies.logPresetScopeForState(presetName, presetContent, gatewayState);
+  return gatewayState;
 }
 
 function loadValidateAndDiscloseChannelPreset(
   sandboxName: string,
   channelName: string,
   verb: "add" | "start",
-): void {
+): policies.PresetPolicyState | null {
   const presetContent = policies.loadPresetForSandbox(sandboxName, channelName);
   const presetPolicyKeys =
     presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
@@ -935,7 +936,7 @@ function loadValidateAndDiscloseChannelPreset(
     );
     process.exit(1);
   }
-  discloseChannelPresetScope(sandboxName, channelName, presetContent);
+  return discloseChannelPresetScope(sandboxName, channelName, presetContent);
 }
 
 function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession> {
@@ -992,7 +993,7 @@ async function addSandboxChannelUnlocked(
 
   // Disclose before credential collection, conflict prompts, or any gateway /
   // registry mutation. The core apply path rechecks immediately before set.
-  loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add");
+  const disclosedPresetState = loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "add");
 
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
@@ -1017,7 +1018,7 @@ async function addSandboxChannelUnlocked(
   if (manifest.auth.mode === "in-sandbox-qr") {
     if (
       !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
-        disclosureAlreadyShown: true,
+        disclosedPresetState,
       })
     ) {
       process.exit(1);
@@ -1073,7 +1074,7 @@ async function addSandboxChannelUnlocked(
 
   if (
     !applyChannelPresetIfAvailable(sandboxName, canonical, "add", {
-      disclosureAlreadyShown: true,
+      disclosedPresetState,
     })
   ) {
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {
@@ -1162,11 +1163,13 @@ export function applyChannelPresetIfAvailable(
   sandboxName: string,
   channelName: string,
   retryAction: "add" | "start" = "add",
-  options: { disclosureAlreadyShown?: boolean } = {},
+  options: { disclosedPresetState?: policies.PresetPolicyState | null } = {},
 ): boolean {
   try {
-    const applied = options.disclosureAlreadyShown
-      ? policies.applyPreset(sandboxName, channelName, { suppressDisclosure: true })
+    const applied = Object.prototype.hasOwnProperty.call(options, "disclosedPresetState")
+      ? policies.applyPreset(sandboxName, channelName, {
+          disclosedPresetState: options.disclosedPresetState,
+        })
       : policies.applyPreset(sandboxName, channelName);
     if (!applied) {
       console.error(
@@ -1470,9 +1473,9 @@ async function sandboxChannelsSetEnabled(
     return;
   }
 
-  if (!disabled) {
-    loadValidateAndDiscloseChannelPreset(sandboxName, normalized, "start");
-  }
+  const disclosedPresetState = disabled
+    ? undefined
+    : loadValidateAndDiscloseChannelPreset(sandboxName, normalized, "start");
 
   if (dryRun) {
     console.log(`  --dry-run: would ${verb} channel '${normalized}' for '${sandboxName}'.`);
@@ -1492,7 +1495,7 @@ async function sandboxChannelsSetEnabled(
   if (
     !disabled &&
     !applyChannelPresetIfAvailable(sandboxName, normalized, "start", {
-      disclosureAlreadyShown: true,
+      disclosedPresetState,
     })
   ) {
     const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, normalized, true);

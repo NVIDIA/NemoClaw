@@ -562,7 +562,7 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
   return YAML.stringify(output);
 }
 
-type PresetPolicyState = "absent" | "drift" | "match";
+export type PresetPolicyState = "absent" | "drift" | "match";
 
 function classifyPresetEntries(currentPolicy: string, presetEntries: string): PresetPolicyState {
   try {
@@ -913,6 +913,7 @@ function applyPresetContent(
     nonFatal?: boolean;
     skipRegistryUpdate?: boolean;
     suppressDisclosure?: boolean;
+    disclosedPresetState?: PresetPolicyState | null;
   } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
@@ -999,7 +1000,10 @@ function applyPresetContent(
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
   const presetState = classifyPresetEntries(currentPolicy, presetEntries);
-  if (!options.suppressDisclosure) {
+  const disclosedStateStillCurrent =
+    Object.prototype.hasOwnProperty.call(options, "disclosedPresetState") &&
+    options.disclosedPresetState === presetState;
+  if (!options.suppressDisclosure && !disclosedStateStillCurrent) {
     logPresetScopeForState(presetName, presetContent, presetState);
   }
 

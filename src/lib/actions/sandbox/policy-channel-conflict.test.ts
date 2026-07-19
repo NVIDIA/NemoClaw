@@ -1067,7 +1067,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     await startSandboxChannel("alpha", { channel: "teams" });
 
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
-      suppressDisclosure: true,
+      disclosedPresetState: "absent",
     });
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
     expect(applyPresetMock.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1095,7 +1095,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     await startSandboxChannel("alpha", { channel: "teams" });
 
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
-      suppressDisclosure: true,
+      disclosedPresetState: "absent",
     });
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(loggedText()).toContain("Change queued");
@@ -1141,7 +1141,7 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     );
 
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams", {
-      suppressDisclosure: true,
+      disclosedPresetState: "absent",
     });
     expect(registry.getDisabledChannels("alpha")).toContain("teams");
     expect(rebuildSandboxMock).not.toHaveBeenCalled();

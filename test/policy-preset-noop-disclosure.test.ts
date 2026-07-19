@@ -20,6 +20,7 @@ type Scenario = {
   presetNames: string[];
   batch?: boolean;
   suppressDisclosure?: boolean;
+  disclosedPresetState?: policies.PresetPolicyState | null;
 };
 
 function runScenario({
@@ -27,6 +28,7 @@ function runScenario({
   presetNames,
   batch = false,
   suppressDisclosure = false,
+  disclosedPresetState,
 }: Scenario) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preset-disclosure-"));
   tempRoots.push(root);
@@ -63,7 +65,7 @@ exit 1
 
   const invocation = batch
     ? `policies.applyPresets("alpha", ${JSON.stringify(presetNames)})`
-    : `policies.applyPreset("alpha", ${JSON.stringify(presetNames[0])}, ${JSON.stringify({ suppressDisclosure })})`;
+    : `policies.applyPreset("alpha", ${JSON.stringify(presetNames[0])}, ${JSON.stringify({ suppressDisclosure, disclosedPresetState })})`;
   const script = `
 const fs = require("node:fs");
 const policies = require(${POLICY_MODULE});
@@ -166,5 +168,17 @@ describe("preset no-op egress disclosure (#7179)", () => {
     expect(output).not.toContain("Preset 'npm' is already effective");
     expect(payload.calls).toEqual(["policy set"]);
     expect(payload.registry.policies).toEqual(["npm"]);
+  });
+
+  it("discloses again when the live policy changed after an earlier no-op preview (#7179)", () => {
+    const { output, payload } = runScenario({
+      currentPolicy: "version: 1\nnetwork_policies: {}\n",
+      presetNames: ["npm"],
+      disclosedPresetState: "match",
+    });
+
+    expect(output).toContain("Effective egress that would be opened:");
+    expect(output).not.toContain("Preset 'npm' is already effective");
+    expect(payload.calls).toEqual(["policy set"]);
   });
 });
