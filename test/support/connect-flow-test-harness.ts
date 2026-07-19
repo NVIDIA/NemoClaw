@@ -134,7 +134,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     .mockImplementation((args: unknown) => {
       const argv = Array.isArray(args) ? args : [];
       if (argv[0] === "sandbox" && argv[1] === "list") {
-        return { status: 0, output: options.listOutput ?? "alpha Ready" };
+        return {
+          status: 0,
+          output: options.listOutput ?? `${options.registryEntry?.name ?? "alpha"} Ready`,
+        };
       }
       if (argv[0] === "inference" && argv[1] === "get") {
         return {
