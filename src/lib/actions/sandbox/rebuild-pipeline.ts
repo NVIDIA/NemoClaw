@@ -203,6 +203,7 @@ async function rebuildSandboxUnlocked(
         sandboxEntry,
         staleRecovery,
         backupManifest: backup.backupManifest,
+        force: normalized.force,
         log,
         bail,
         relockShieldsIfNeeded,

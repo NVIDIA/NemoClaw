@@ -30,6 +30,7 @@ export interface RebuildDestroyPhaseInput {
   log: RebuildLog;
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
+  force?: boolean;
   validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
   onDeleted: () => void;
 }
@@ -66,7 +67,8 @@ export async function runRebuildDestroyPhase(
     `Registry entry: agent=${sbMeta?.agent}, agentVersion=${sbMeta?.agentVersion}, nimContainer=${sbMeta?.nimContainer}`,
   );
   const mcpPreparation = await prepareMcpBeforeBestEffortNimStop({
-    prepareMcp: () => prepareMcpForRebuild(sandboxName, staleRecovery, relockShieldsIfNeeded, bail),
+    prepareMcp: () =>
+      prepareMcpForRebuild(sandboxName, staleRecovery, input.force === true, relockShieldsIfNeeded, bail),
     afterPrepare: async (preparation) => {
       // MCP preparation removes only adapter entries whose exact ownership
       // fingerprints match the registry. Probe afterward so a Deep Agents

@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
   prepareMcpForRebuild: vi.fn(),
   reattachMcpAfterDeleteFailure: vi.fn(),
   warnUnpreservedUserManagedFiles: vi.fn(),
+  runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
+  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false })),
+  getSandbox: vi.fn(() => null),
+  listSandboxes: vi.fn(() => ({ sandboxes: [] })),
+  removeSandboxRegistryEntryWithReceipt: vi.fn(() => null),
 }));
 
 vi.mock("./rebuild-flow-helpers", async (importOriginal) => ({
@@ -18,6 +23,24 @@ vi.mock("./rebuild-mcp-phase", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./rebuild-mcp-phase")>()),
   prepareMcpForRebuild: mocks.prepareMcpForRebuild,
   reattachMcpAfterDeleteFailure: mocks.reattachMcpAfterDeleteFailure,
+}));
+
+vi.mock("../../adapters/openshell/runtime", () => ({
+  runOpenshell: mocks.runOpenshell,
+}));
+
+vi.mock("../../domain/sandbox/destroy", () => ({
+  getSandboxDeleteOutcome: mocks.getSandboxDeleteOutcome,
+}));
+
+vi.mock("../../state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/registry")>()),
+  getSandbox: mocks.getSandbox,
+  listSandboxes: mocks.listSandboxes,
+}));
+
+vi.mock("./destroy", () => ({
+  removeSandboxRegistryEntryWithReceipt: mocks.removeSandboxRegistryEntryWithReceipt,
 }));
 
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
@@ -69,5 +92,32 @@ describe("rebuild destroy validation diagnostics", () => {
     expect(diagnostics).not.toContain(secret);
     expect(mocks.reattachMcpAfterDeleteFailure).toHaveBeenCalledOnce();
     expect(relockShieldsIfNeeded).toHaveBeenCalledWith(true);
+  });
+
+  it("passes force=true to prepareMcpForRebuild when input.force is set (#7062)", async () => {
+    const log = vi.fn();
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+
+    await runRebuildDestroyPhase({
+      sandboxName: "alpha",
+      sandboxEntry: { name: "alpha", agent: "openclaw" },
+      staleRecovery: false,
+      backupManifest: null,
+      force: true,
+      log,
+      bail,
+      relockShieldsIfNeeded: vi.fn(() => true),
+      onDeleted: vi.fn(),
+    });
+
+    expect(mocks.prepareMcpForRebuild).toHaveBeenCalledWith(
+      "alpha",
+      false,
+      true,
+      expect.any(Function),
+      expect.any(Function),
+    );
   });
 });

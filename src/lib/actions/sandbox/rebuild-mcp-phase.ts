@@ -21,6 +21,7 @@ export type McpRebuildPreparation = Awaited<ReturnType<typeof prepareMcpBridgesF
 export async function prepareMcpForRebuild(
   sandboxName: string,
   staleRecovery: boolean,
+  force: boolean,
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
   bail: (message: string, code?: number) => never,
 ): Promise<McpRebuildPreparation | null> {
@@ -29,6 +30,20 @@ export async function prepareMcpForRebuild(
       ? prepareMcpBridgesForAbsentSandboxRebuild(sandboxName)
       : prepareMcpBridgesForRebuild(sandboxName));
   } catch (error) {
+    if (force && !staleRecovery) {
+      console.error(
+        `  ${YW}⚠${R} Live MCP bridge preparation failed; --force falling back to host-side recovery`,
+      );
+      try {
+        return await prepareMcpBridgesForAbsentSandboxRebuild(sandboxName);
+      } catch (fallbackError) {
+        relockShieldsIfNeeded(!staleRecovery);
+        bail(
+          `Failed to preserve MCP bridges before rebuild (--force fallback): ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`,
+        );
+        return null;
+      }
+    }
     relockShieldsIfNeeded(!staleRecovery);
     bail(
       `Failed to preserve MCP bridges before rebuild: ${error instanceof Error ? error.message : String(error)}`,
