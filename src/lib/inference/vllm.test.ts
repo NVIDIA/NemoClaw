@@ -53,6 +53,7 @@ vi.mock("./vllm-storage", async (importOriginal) => {
   };
 });
 
+import { currentPhaseActivityLabel } from "../core/phase-activity";
 import {
   assertVllmRegistryDigestRef,
   buildVllmRunArgs,
@@ -604,6 +605,43 @@ describe("installVllm model resolution", () => {
     mkdirSpy.mockRestore();
     stdoutWrite.mockRestore();
     process.env = { ...originalEnv };
+  });
+
+  it("names the vLLM install for the onboarding heartbeat only while it runs (#7156)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    let labelDuringInstall: string | null = null;
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall: () => {
+        labelDuringInstall = currentPhaseActivityLabel();
+      },
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(labelDuringInstall).toBe("vLLM install");
+    expect(currentPhaseActivityLabel()).toBeNull();
+  });
+
+  it("clears the heartbeat activity when vLLM setup rejects (#7156)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const setupFailure = new Error("vLLM setup failed");
+
+    await expect(
+      installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+        beforeInstall: () => {
+          expect(currentPhaseActivityLabel()).toBe("vLLM install");
+          throw setupFailure;
+        },
+      }),
+    ).rejects.toBe(setupFailure);
+
+    expect(currentPhaseActivityLabel()).toBeNull();
   });
 
   it("uses the profile default and skips the picker in non-interactive mode", async () => {
