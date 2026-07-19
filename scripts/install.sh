@@ -423,7 +423,7 @@ resolve_onboarded_agent() {
 }
 
 restore_onboard_forward_after_post_checks() {
-  local sandbox_name agent_name agent_display port openshell_bin attempt selected_state_dir state_dir pid_file watcher_script watcher_pid
+  local sandbox_name agent_name agent_display port openshell_bin openshell_dir attempt selected_state_dir state_dir pid_file watcher_script watcher_pid
   sandbox_name="$(resolve_default_sandbox_name)"
   agent_name="$(resolve_onboarded_agent)"
   agent_display="$(agent_display_name "$agent_name")"
@@ -439,6 +439,12 @@ restore_onboard_forward_after_post_checks() {
     openshell_bin="$(command -v openshell)"
   else
     return 0
+  fi
+  if [[ "$openshell_bin" != /* ]]; then
+    openshell_dir="${openshell_bin%/*}"
+    [[ "$openshell_dir" == "$openshell_bin" ]] && openshell_dir="."
+    openshell_dir="$(cd -- "$openshell_dir" && pwd -P)" || return 1
+    openshell_bin="${openshell_dir}/${openshell_bin##*/}"
   fi
 
   selected_state_dir="$(ensure_nemoclaw_state_dir)" || return 1

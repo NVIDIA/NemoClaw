@@ -163,7 +163,14 @@ export function createSetupNimOllamaHandlers(deps: SetupNimOllamaDeps): {
   ): string | null {
     configureOllamaState(state);
     state.model = requestedModel || recoveredModel;
-    return state.assertRouteCompatible?.().requiredModel ?? null;
+    const requiredModel = state.assertRouteCompatible?.().requiredModel ?? null;
+    if (requiredModel && !deps.isNonInteractive()) {
+      console.log(`  Shared gateway route requires Ollama model '${requiredModel}'.`);
+      console.log(
+        "  To use a different model for this agent, rerun with an unused NEMOCLAW_GATEWAY_PORT.",
+      );
+    }
+    return requiredModel;
   }
 
   function applyOllamaFallbackState(
