@@ -10,7 +10,7 @@ import {
   isMockParityRelevantSourceChange,
   type MockParityManifest,
   validateMockParity,
-} from "../scripts/checks/e2e-mock-parity";
+} from "../scripts/checks/e2e-mock-parity.mts";
 import { type CompositeAction, readYaml } from "./helpers/e2e-workflow-contract";
 
 const live = "test/e2e/live/example.test.ts";

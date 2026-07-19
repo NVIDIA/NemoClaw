@@ -178,6 +178,9 @@ Use literal command names on those single-variant pages rather than `$$nemoclaw`
 Run `npm run docs:sync-agent-variants` after editing shared variant source pages or navigation.
 Run `npm run docs` before opening a PR to verify the generated pages, rewritten relative links, and Fern navigation.
 If content differs by behavior, setup flow, state layout, or agent-specific wording, keep using `<AgentOnly>` blocks for that content.
+Treat `<AgentOnly>` as a build-time directive rather than a React component, and do not import it from `AgentGuide.tsx`.
+Put each opening and closing tag at the first column on its own line, and do not nest the blocks.
+The generated pages must contain only statically resolved content, with no `AgentGuide` imports or runtime agent components.
 
 ## Route-Style Links
 

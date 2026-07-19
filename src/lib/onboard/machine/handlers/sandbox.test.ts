@@ -4,6 +4,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hashCredential } from "../../../security/credential-hash";
+import {
+  decisionDeclined,
+  decisionSelected,
+  decisionUnset,
+} from "../../../state/onboard-checkpoint-decision";
+import { CHECKPOINT_SCHEMA_VERSION } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { handleSandboxState } from "./sandbox";
@@ -102,6 +108,78 @@ describe("handleSandboxState", () => {
       updates: undefined,
       metadata: { state: "sandbox", sandboxName: "my-assistant", agent: "openclaw" },
     });
+    expect(result.session?.checkpoint?.webSearch).toEqual(decisionSelected({ fetchEnabled: true }));
+    expect(result.session?.checkpoint?.messaging).toEqual(decisionDeclined());
+  });
+
+  it("records credential-provider bindings and the resource-profile decision in the checkpoint (#7022)", async () => {
+    const { deps } = createDeps({
+      configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
+      stageSandboxCredentialProviders: vi.fn(async () => [
+        { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+      ]),
+      providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+        name === "my-assistant-brave-search" &&
+        type === "brave" &&
+        credentialEnv === "BRAVE_API_KEY",
+      selectResourceProfileForSandbox: vi.fn(async () => ({ cpu: "2", memory: "4Gi" })),
+    });
+
+    const result = await handleSandboxState(baseOptions(deps));
+
+    expect(result.session?.checkpoint?.bindings.registeredProviders).toEqual([
+      { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+    ]);
+    expect(result.session?.checkpoint?.bindings.credentialEnvs).toEqual(["BRAVE_API_KEY"]);
+    expect(result.session?.checkpoint?.resourceProfile).toEqual(
+      decisionSelected({ cpu: "2", memory: "4Gi" }),
+    );
+  });
+
+  it("skips re-registering a provider whose effect-group receipt and live postcondition both hold (#7022)", async () => {
+    const session = createSession({ sandboxName: "my-assistant" });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionSelected({ name: "my-assistant", agent: "openclaw" }),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {
+        web_search_provider: {
+          completedAt: "2026-01-01T00:00:00.000Z",
+          fingerprint: "my-assistant-brave-search",
+        },
+      },
+      bindings: {
+        credentialEnvs: [],
+        registeredProviders: [
+          { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+        ],
+      },
+    };
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const stageSandboxCredentialProviders = vi.fn(async () => [
+      { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+    ]);
+    const { deps } = createDeps({
+      updateSession,
+      configureWebSearch: vi.fn(async () => ({ fetchEnabled: true as const })),
+      stageSandboxCredentialProviders,
+      providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+        name === "my-assistant-brave-search" &&
+        type === "brave" &&
+        credentialEnv === "BRAVE_API_KEY",
+    });
+
+    await handleSandboxState({ ...baseOptions(deps, session), sandboxName: "my-assistant" });
+
+    expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
   });
 
   it("does not auto-enable web search from ambient credentials during authoritative rebuild", async () => {
@@ -508,6 +586,156 @@ describe("handleSandboxState", () => {
     expect(result.selectedMessagingChannels).toEqual(["slack"]);
     expect(result.webSearchConfigChanged).toBe(false);
     expect(result.session).toBe(skippedSession);
+  });
+
+  it("treats checkpoint machine-state progress past sandbox as step-complete even when the legacy step status is stale (#6228)", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      machine: { version: 1, state: "agent_setup", stateEnteredAt: null, revision: 1 },
+    });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "agent_setup",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionUnset(),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: () => ({
+        name: "saved",
+        provider: "provider",
+        model: "model",
+        endpointUrl: null,
+        preferredInferenceApi: "openai-completions",
+        toolDisclosure: "progressive",
+        fromDockerfile: null,
+        hermesAuthMethod: null,
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(session.steps.sandbox.status).not.toBe("complete");
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.recordSkip).toHaveBeenCalled();
+  });
+
+  it("does not let a stale legacy complete marker override a checkpoint still at sandbox (#7022)", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionUnset(),
+      webSearch: decisionUnset(),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing" });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.createSandbox).toHaveBeenCalled();
+  });
+
+  it("prefers the checkpointed web-search decision over a stale legacy completion flag (#7022)", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: true,
+        messaging: false,
+        resourceProfile: false,
+      },
+    });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+      webSearch: decisionSelected({ fetchEnabled: true, provider: "brave" }),
+      messaging: decisionUnset(),
+      resourceProfile: decisionUnset(),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.configureWebSearch).not.toHaveBeenCalled();
+    expect((calls.createSandbox.mock.calls[0] as unknown[] | undefined)?.[5]).toEqual({
+      fetchEnabled: true,
+      provider: "brave",
+    });
+  });
+
+  it("prefers the checkpointed resource-profile decision over a stale legacy completion flag (#7022)", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: true,
+        messaging: true,
+        resourceProfile: true,
+      },
+    });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+      webSearch: decisionDeclined(),
+      messaging: decisionDeclined(),
+      resourceProfile: decisionSelected({ cpu: "4", memory: "8Gi" }),
+      effectGroups: {},
+      bindings: { credentialEnvs: [], registeredProviders: [] },
+    };
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.selectResourceProfile).not.toHaveBeenCalled();
+    expect((calls.createSandbox.mock.calls[0] as unknown[] | undefined)?.[11]).toEqual({
+      cpu: "4",
+      memory: "8Gi",
+    });
   });
 
   it("recreates a resumed Hermes sandbox when its compatible Anthropic frontend is stale", async () => {

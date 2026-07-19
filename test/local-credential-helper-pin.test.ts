@@ -8,8 +8,9 @@ import {
   extractEmbeddedFormDigest,
   extractProcessControlRules,
   extractStringSet,
+  immutableRawArtifactUrlPattern,
   verifyFieldSafetySourceParity,
-} from "../scripts/checks/local-credential-helper-pin";
+} from "../scripts/checks/local-credential-helper-pin.mts";
 
 const FUNCTION_NAME = "isBlocked";
 const SET_NAME = "BLOCKED_NAMES";
@@ -120,6 +121,17 @@ function fieldSafetySources(
 }
 
 describe("local credential helper pin predicate parity", () => {
+  it("accepts only a complete immutable artifact URL path (#5048)", () => {
+    const commit = "a".repeat(40);
+    const relativePath = "scripts/local-credential-helper.mts";
+    const url = `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${commit}/${relativePath}`;
+
+    expect(`${url}\``.match(immutableRawArtifactUrlPattern(relativePath))?.[1]).toBe(commit);
+    expect(`${url}.bak\``.match(immutableRawArtifactUrlPattern(relativePath))).toBeNull();
+    expect(`${url}?download=1\``.match(immutableRawArtifactUrlPattern(relativePath))).toBeNull();
+    expect(`${url}#fragment\``.match(immutableRawArtifactUrlPattern(relativePath))).toBeNull();
+  });
+
   it("accepts exact canonical helper and form field-safety parity (#5048)", () => {
     expect(verifyFieldSafetySourceParity(fieldSafetySources())).toEqual([]);
   });

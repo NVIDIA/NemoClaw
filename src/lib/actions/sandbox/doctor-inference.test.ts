@@ -164,6 +164,41 @@ describe("doctor inference checks", () => {
     );
   });
 
+  it("keeps serving-process health explicitly unchecked until a probe contract exists (#7003)", async () => {
+    const checks = await collectInferenceChecks(
+      "alpha",
+      { provider: "nvidia-prod", model: "model" },
+      true,
+      {
+        probeProviderHealthImpl: () => upstream(),
+        probeSandboxInferenceGatewayHealthImpl: async () => gateway(true),
+      },
+    );
+
+    expect(checks).toContainEqual(
+      expect.objectContaining({
+        label: "Serving process",
+        status: "info",
+        detail: "not checked — serving-process probing is not implemented",
+      }),
+    );
+  });
+
+  it("omits serving-process health for terminal agents without a gateway process (#7003)", async () => {
+    const checks = await collectInferenceChecks(
+      "alpha",
+      { provider: "nvidia-prod", model: "model" },
+      true,
+      {
+        probeProviderHealthImpl: () => upstream(),
+        probeSandboxInferenceGatewayHealthImpl: async () => gateway(true),
+        includeServingProcessCheck: false,
+      },
+    );
+
+    expect(checks).not.toContainEqual(expect.objectContaining({ label: "Serving process" }));
+  });
+
   it("does not mutate direct provider health while adding route evidence", async () => {
     const providerHealth = upstream();
 

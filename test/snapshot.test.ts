@@ -1323,9 +1323,7 @@ process.exit(0);
       expect(loggedCommands).not.toContain(".env");
       expect(loggedCommands).not.toContain(".mcp.json");
       expect(loggedCommands).not.toContain(".nemoclaw-mcp.json");
-
-      // #5753 is "lost after rebuild" (backup + recreate + restore): restore
-      // must list agent/skills among the dirs it brings back into the sandbox.
+      // #5753: restore must include agent/skills after backup and recreation.
       const restore = sandboxState.restoreSandboxState("deepagents", backup.manifest!.backupPath);
       expect(restore.success).toBe(true);
       expect(restore.restoredDirs).toEqual(
@@ -1398,6 +1396,7 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("nemoclaw-sqlite-backup")) {
+  if (cmd.includes("kanban.db")) process.exit(2);
   process.stdout.write(fs.readFileSync(path.join(hermesDir, "runtime", "state.db")));
   process.exit(0);
 }
@@ -1455,6 +1454,7 @@ process.exit(0);
         { path: "SOUL.md", strategy: "copy" },
         { path: ".hermes_history", strategy: "copy" },
         { path: "runtime/state.db", strategy: "sqlite_backup" },
+        { path: "kanban.db", strategy: "sqlite_backup" },
       ]);
       expect(fs.readFileSync(path.join(backup.manifest!.backupPath, "SOUL.md"), "utf-8")).toBe(
         "original soul\n",

@@ -4,6 +4,7 @@
 import { vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import type { SandboxStateOptions } from "./sandbox";
 
@@ -93,8 +94,9 @@ export function createDeps(
       ResourceProfile
     >["deps"]
   > = {},
+  initialSession: Session = createSession(),
 ) {
-  let session = createSession();
+  let session = initialSession;
   const calls = {
     checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
     note: vi.fn(),
@@ -113,7 +115,7 @@ export function createDeps(
     getRecordedChannels: vi.fn(() => null),
     showMessagingStage: vi.fn(),
     setupMessaging: vi.fn(async () => [] as string[]),
-    stageCredentialProviders: vi.fn(async () => [] as string[]),
+    stageCredentialProviders: vi.fn(async () => [] as CheckpointProviderBinding[]),
     promptName: vi.fn(async () => "my-assistant"),
     selectResourceProfile: vi.fn(async () => null as ResourceProfile | null),
     stopStale: vi.fn(),

@@ -37,6 +37,7 @@ function requireLoadedSession(
 async function realBootstrapDeps(): Promise<OnboardSessionBootstrapDeps> {
   const { applySessionRecovery } = await import("../onboard/session-recovery");
   const { getResumeConfigConflicts } = await import("../onboard/resume-config");
+  const { defaultResolveResumeCheckpoint } = await import("../onboard/session-bootstrap");
   return {
     loadSession: session.loadSession,
     clearSession: session.clearSession,
@@ -47,6 +48,7 @@ async function realBootstrapDeps(): Promise<OnboardSessionBootstrapDeps> {
     setOnboardBrandingAgent: vi.fn(),
     getResumeConfigConflicts,
     recordResumeConflict: vi.fn(async () => undefined),
+    resolveResumeCheckpoint: defaultResolveResumeCheckpoint,
     resolvePath: path.resolve,
     cliName: () => "nemoclaw",
     error: vi.fn(),

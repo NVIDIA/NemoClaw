@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly SCRIPT_VERSION="2026-07-17.4"
+readonly SCRIPT_VERSION="2026-07-18.1"
 readonly REBOOT_REQUIRED_EXIT=10
 readonly LOGIN_REQUIRED_EXIT=11
 readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
@@ -42,6 +42,11 @@ readonly TARGET_DKMS_VERSION="1:3.4.0-1ubuntu1"
 readonly ACCEPTANCE_IMAGE="docker.io/library/ubuntu@sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab"
 readonly STATE_DIR="${HOME}/.local/state/station-bootstrap"
 readonly INSTALL_BOOT_MARKER="${STATE_DIR}/install-boot-id"
+DOCKER_BASELINE_CAPTURED=0
+DOCKER_CONTAINER_BASELINE=""
+DOCKER_CONTAINER_BASELINE_TOTAL=0
+DOCKER_QUERY_OUTPUT=""
+DOCKER_QUERY_USES_SUDO=0
 
 readonly -a PACKAGE_SPECS=(
   "dkms=${TARGET_DKMS_VERSION}"
@@ -249,6 +254,9 @@ LOG_FILE=""
 DOCKER_GROUP_ADDED=0
 CDI_LIFECYCLE_READY=0
 NETWORK_VALIDATED=0
+PACKAGE_TRANSACTION_SPECS=()
+APT_TRANSACTION_GUARD_DIR=""
+APT_TRANSACTION_HOOK=""
 GPU_ROWS_ERROR=""
 
 info() {
@@ -315,19 +323,39 @@ is_station_gb300_product() {
     "$product" =~ (^|[^[:alnum:]])[Gg][Bb]300([^[:alnum:]]|$) ]]
 }
 
+normalize_nvidia_pci_bus_id() {
+  local bus_id domain rest
+  bus_id="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  bus_id="${bus_id//[[:space:]]/}"
+  [[ "$bus_id" =~ ^([0-9a-f]{4}|[0-9a-f]{8}):[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ ]] || return 1
+  domain="${bus_id%%:*}"
+  rest="${bus_id#*:}"
+  if ((${#domain} == 8)); then
+    domain="${domain:4}"
+  fi
+  printf '%s:%s' "$domain" "$rest"
+}
+
+station_pci_device_is_gb300() {
+  local bus_id=$1 pci_root=${2:-/sys/bus/pci/devices} pci_path vendor device class
+  bus_id="$(normalize_nvidia_pci_bus_id "$bus_id")" || return 1
+  pci_path="${pci_root}/${bus_id}"
+  [[ -d "$pci_path" &&
+    -r "$pci_path/vendor" &&
+    -r "$pci_path/device" &&
+    -r "$pci_path/class" ]] || return 1
+  IFS= read -r vendor <"$pci_path/vendor" || return 1
+  IFS= read -r device <"$pci_path/device" || return 1
+  IFS= read -r class <"$pci_path/class" || return 1
+  [[ "$vendor" == "$GB300_PCI_VENDOR" &&
+    "$device" == "$GB300_PCI_DEVICE" &&
+    "$class" == "${GB300_PCI_CLASS_PREFIX}"* ]]
+}
+
 station_has_exact_gb300_pci_gpu() {
-  local pci_root=${1:-/sys/bus/pci/devices} pci_path vendor device class
+  local pci_root=${1:-/sys/bus/pci/devices} pci_path
   for pci_path in "$pci_root"/*; do
-    [[ -d "$pci_path" &&
-      -r "$pci_path/vendor" &&
-      -r "$pci_path/device" &&
-      -r "$pci_path/class" ]] || continue
-    IFS= read -r vendor <"$pci_path/vendor" || continue
-    IFS= read -r device <"$pci_path/device" || continue
-    IFS= read -r class <"$pci_path/class" || continue
-    [[ "$vendor" == "$GB300_PCI_VENDOR" &&
-      "$device" == "$GB300_PCI_DEVICE" &&
-      "$class" == "${GB300_PCI_CLASS_PREFIX}"* ]] && return 0
+    station_pci_device_is_gb300 "${pci_path##*/}" "$pci_root" && return 0
   done
   return 1
 }
@@ -731,6 +759,121 @@ host_docker_sudo() {
   fi
 }
 
+query_host_docker() {
+  local output
+  DOCKER_QUERY_OUTPUT=""
+  command -v docker >/dev/null 2>&1 || return 2
+  if output="$(host_docker "$@" 2>/dev/null)"; then
+    DOCKER_QUERY_OUTPUT="$output"
+    return 0
+  fi
+  if [[ "$MODE" == "--apply" ]] && output="$(host_docker_sudo "$@" 2>/dev/null)"; then
+    DOCKER_QUERY_OUTPUT="$output"
+    if ((DOCKER_QUERY_USES_SUDO == 0)); then
+      info "docker_access=sudo_until_group_membership_is_active"
+      DOCKER_QUERY_USES_SUDO=1
+    fi
+    return 0
+  fi
+  if systemctl is-active --quiet docker.service; then
+    fatal "Docker is active but inaccessible to this login; start a new login session with docker-group membership"
+  fi
+  fatal "Docker is installed but inactive, so existing container state cannot be verified safely; start Docker and rerun preparation"
+}
+
+normalize_container_ids() {
+  LC_ALL=C sort -u | awk 'NF'
+}
+
+container_count() {
+  awk 'NF { count++ } END { print count + 0 }'
+}
+
+capture_docker_container_baseline() {
+  local status running running_count
+  ((DOCKER_BASELINE_CAPTURED == 0)) || return 0
+  if query_host_docker ps -aq --no-trunc; then
+    DOCKER_CONTAINER_BASELINE="$(normalize_container_ids <<<"$DOCKER_QUERY_OUTPUT")"
+  else
+    status=$?
+    ((status == 2)) || return "$status"
+    DOCKER_CONTAINER_BASELINE=""
+  fi
+  DOCKER_CONTAINER_BASELINE_TOTAL="$(container_count <<<"$DOCKER_CONTAINER_BASELINE")"
+  DOCKER_BASELINE_CAPTURED=1
+
+  running=""
+  if command -v docker >/dev/null 2>&1; then
+    query_host_docker ps -q --no-trunc
+    running="$(normalize_container_ids <<<"$DOCKER_QUERY_OUTPUT")"
+  fi
+  running_count="$(container_count <<<"$running")"
+  info "docker_container_baseline_total=${DOCKER_CONTAINER_BASELINE_TOTAL} running=${running_count}"
+  if ((DOCKER_CONTAINER_BASELINE_TOTAL > 0)); then
+    warn "Existing Docker container records will be preserved during Station preparation"
+  fi
+}
+
+verify_docker_container_baseline() {
+  local current current_total status
+  ((DOCKER_BASELINE_CAPTURED == 1)) || capture_docker_container_baseline
+  if query_host_docker ps -aq --no-trunc; then
+    current="$(normalize_container_ids <<<"$DOCKER_QUERY_OUTPUT")"
+  else
+    status=$?
+    ((status == 2)) || return "$status"
+    current=""
+  fi
+  current_total="$(container_count <<<"$current")"
+  if [[ "$current" != "$DOCKER_CONTAINER_BASELINE" ]]; then
+    fatal "Docker container inventory changed during Station preparation (before=${DOCKER_CONTAINER_BASELINE_TOTAL}, after=${current_total}); rerun after container activity stops"
+  fi
+  info "docker_container_baseline=preserved total=${current_total}"
+}
+
+require_no_running_docker_containers() {
+  local action=${1:-this host mutation}
+  command -v docker >/dev/null 2>&1 || return 0
+  query_host_docker ps --format '{{.ID}} {{.Names}}'
+  [[ -z "$DOCKER_QUERY_OUTPUT" ]] \
+    || fatal "Running Docker containers block ${action}: ${DOCKER_QUERY_OUTPUT}"
+  info "running_docker_containers=none action=${action}"
+}
+
+require_no_autorestarting_stopped_containers() {
+  local action=${1:-this Docker restart or reboot} line blockers=""
+  local -a container_ids=()
+  command -v docker >/dev/null 2>&1 || return 0
+  query_host_docker ps -aq --no-trunc
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && container_ids+=("$line")
+  done <<<"$DOCKER_QUERY_OUTPUT"
+  ((${#container_ids[@]} == 0)) && return 0
+  query_host_docker inspect \
+    --format '{{.Id}} {{.Name}} {{.State.Running}} {{.HostConfig.RestartPolicy.Name}}' \
+    "${container_ids[@]}"
+  blockers="$(awk '
+    $3 == "false" && $4 != "" && $4 != "no" {
+      sub(/^\//, "", $2)
+      print substr($1, 1, 12) " " $2 " restart=" $4
+    }
+  ' <<<"$DOCKER_QUERY_OUTPUT")"
+  [[ -z "$blockers" ]] \
+    || fatal "Stopped containers with restart policies block ${action}: ${blockers}"
+  info "autorestarting_stopped_containers=none action=${action}"
+}
+
+warn_openibd_remediation() {
+  warn "openibd.service configures optional Mellanox RDMA networking; NemoClaw does not require RDMA"
+  warn "Check the default route: ip route get 1.1.1.1"
+  warn "Check NFS mount options: findmnt -rn -t nfs,nfs4 -o TARGET,OPTIONS"
+  warn "These checks are not exhaustive; confirm no RDMA-backed networking, storage, or workloads are in use"
+  warn "If this host does not use RDMA, run: sudo systemctl disable openibd.service"
+  warn "After disabling the unused service, reboot and rerun the NemoClaw installer"
+  warn "If this host uses RDMA, repair OpenIB/OFED before rerunning the installer"
+  warn "NemoClaw did not change systemd or networking state"
+}
+
 check_failed_units() {
   local unit failed_output blocking=0 qualified_label
   local -a units=()
@@ -758,14 +901,15 @@ check_failed_units() {
       warn "condition-qualified ${qualified_label} failed unit: ${unit}"
     else
       warn "unqualified failed unit: ${unit}"
+      [[ "$unit" != "openibd.service" ]] || warn_openibd_remediation
       blocking=1
     fi
   done
   ((blocking == 0)) || fatal "Unqualified failed system units block Station preparation"
 }
 
-check_no_workloads() {
-  local processes matches listeners containers=""
+check_agent_and_inference_conflicts() {
+  local processes matches listeners
   processes="$(ps -eo pid=,ppid=,comm=,args=)"
   matches="$(awk -v self="$$" -v parent="$PPID" '
     {
@@ -784,27 +928,44 @@ check_no_workloads() {
   listeners="$(ss -H -ltn 2>/dev/null | awk '$4 ~ /:8000$/ {print}')"
   [[ -z "$listeners" ]] || fatal "Port 8000 is already listening: ${listeners}"
 
-  if command -v docker >/dev/null 2>&1; then
-    if containers="$(host_docker ps -aq 2>/dev/null)"; then
-      :
-    elif [[ "$MODE" == "--apply" ]] && containers="$(host_docker_sudo ps -aq 2>/dev/null)"; then
-      info "docker_access=sudo_until_group_membership_is_active"
-    elif systemctl is-active --quiet docker.service; then
-      fatal "Docker is active but inaccessible to this login; start a new login session with docker-group membership"
-    else
-      fatal "Docker is installed but inactive, so existing container state cannot be verified safely; start Docker and rerun preparation"
-    fi
-  fi
-  [[ -z "$containers" ]] || fatal "Existing Docker containers block host preparation: ${containers}"
-  info "workloads=none port_8000=free"
+  info "agent_inference_workloads=none port_8000=free"
+}
+
+require_docker_mutation_quiescence() {
+  local action=$1
+  check_agent_and_inference_conflicts
+  verify_docker_container_baseline
+  require_no_running_docker_containers "$action"
+}
+
+require_docker_restart_quiescence() {
+  local action=$1
+  require_docker_mutation_quiescence "$action"
+  require_no_autorestarting_stopped_containers "$action"
+  require_docker_mutation_quiescence "$action"
+}
+
+exit_reboot_required() {
+  require_docker_restart_quiescence "rebooting the Station host"
+  info "APPLY_RESULT=REBOOT_REQUIRED"
+  info "Run: sudo reboot"
+  exit "$REBOOT_REQUIRED_EXIT"
 }
 
 loaded_driver_version() {
-  local loaded
+  local rows row bus_id driver pci_root
   command -v nvidia-smi >/dev/null 2>&1 || return 0
-  loaded="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 | tr -d '[:space:]')" \
+  rows="$(nvidia-smi --query-gpu=pci.bus_id,driver_version --format=csv,noheader 2>/dev/null)" \
     || return 0
-  printf '%s' "$loaded"
+  pci_root="$(station_pci_devices_path)"
+  while IFS= read -r row; do
+    [[ -n "${row//[[:space:]]/}" ]] || continue
+    IFS=',' read -r bus_id driver <<<"$row"
+    bus_id="$(normalize_nvidia_pci_bus_id "$bus_id")" || continue
+    station_pci_device_is_gb300 "$bus_id" "$pci_root" || continue
+    printf '%s' "${driver//[[:space:]]/}"
+    return 0
+  done <<<"$rows"
 }
 
 driver_is_loaded() {
@@ -894,6 +1055,7 @@ common_preflight() {
   require_command ps
   require_command sed
   require_command sha256sum
+  require_command sort
   require_command ss
   require_command stat
   require_command systemctl
@@ -912,7 +1074,9 @@ common_preflight() {
   check_network
   check_package_managers_idle
   check_failed_units
-  check_no_workloads
+  check_agent_and_inference_conflicts
+  capture_docker_container_baseline
+  require_no_running_docker_containers "initial Station host preparation"
 }
 
 verify_file_sha256() {
@@ -1016,13 +1180,48 @@ install_exact_file_or_reuse() {
   info "${label}=installed path=${target}"
 }
 
+ensure_docker_repository_source() {
+  local docker_asc=$1 docker_gpg=$2 docker_gpg_list=$3 docker_asc_list=$4
+  local source_target=/etc/apt/sources.list.d/docker.list
+  local gpg_key_target=/etc/apt/keyrings/docker.gpg
+  local asc_key_target=/etc/apt/keyrings/docker.asc
+
+  sudo test ! -L "$source_target" \
+    || fatal "Docker repository source must not be a symbolic link: ${source_target}"
+  if ! sudo test -e "$source_target"; then
+    install_exact_file_or_reuse "$docker_gpg" "$gpg_key_target" 0644 docker_repository_key
+    install_exact_file_or_reuse "$docker_gpg_list" "$source_target" 0644 docker_repository_source
+    return 0
+  fi
+
+  assert_root_regular_file_safe "$source_target" 0644 "Docker repository source"
+  if sudo cmp -s "$docker_gpg_list" "$source_target"; then
+    assert_root_regular_file_safe "$gpg_key_target" 0644 "Docker repository key"
+    sudo cmp -s "$docker_gpg" "$gpg_key_target" \
+      || fatal "Existing Docker repository key differs from the verified dearmored key: ${gpg_key_target}"
+    info "docker_repository_source=exact path=${source_target}"
+    return 0
+  fi
+
+  if sudo cmp -s "$docker_asc_list" "$source_target"; then
+    assert_root_regular_file_safe "$asc_key_target" 0644 "Docker repository ASCII key"
+    sudo cmp -s "$docker_asc" "$asc_key_target" \
+      || fatal "Existing Docker repository ASCII key differs from the verified key: ${asc_key_target}"
+    info "docker_repository_source=verified_compatible path=${source_target}"
+    return 0
+  fi
+
+  fatal "Existing Docker repository source differs from the validated .gpg and .asc forms; refusing to overwrite ${source_target}"
+}
+
 configure_repositories() {
-  local tmp cuda_deb docker_asc docker_gpg docker_list
+  local tmp cuda_deb docker_asc docker_gpg docker_gpg_list docker_asc_list
   tmp="$(mktemp -d)"
   cuda_deb="${tmp}/cuda-keyring.deb"
   docker_asc="${tmp}/docker.asc"
   docker_gpg="${tmp}/docker.gpg"
-  docker_list="${tmp}/docker.list"
+  docker_gpg_list="${tmp}/docker-gpg.list"
+  docker_asc_list="${tmp}/docker-asc.list"
 
   info "Downloading and verifying official repository keys"
   ensure_cuda_keyring "$cuda_deb"
@@ -1033,45 +1232,299 @@ configure_repositories() {
   gpg --batch --yes --dearmor --output "$docker_gpg" "$docker_asc"
   ensure_root_directory_safe /etc/apt/keyrings /etc/apt 0755 "Docker repository key directory"
   assert_root_directory_safe /etc/apt/sources.list.d "Docker repository source directory"
-  install_exact_file_or_reuse "$docker_gpg" /etc/apt/keyrings/docker.gpg 0644 docker_repository_key
   printf '%s\n' \
     'deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable' \
-    >"$docker_list"
-  install_exact_file_or_reuse "$docker_list" /etc/apt/sources.list.d/docker.list 0644 docker_repository_source
+    >"$docker_gpg_list"
+  printf '%s\n' \
+    'deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable' \
+    >"$docker_asc_list"
+  ensure_docker_repository_source "$docker_asc" "$docker_gpg" "$docker_gpg_list" "$docker_asc_list"
 
   rm -rf "$tmp"
   info "repository_keys=verified"
 }
 
+collect_package_transaction_specs() {
+  local spec state
+  PACKAGE_TRANSACTION_SPECS=()
+  for spec in "${PACKAGE_SPECS[@]}"; do
+    state="$(package_state "$spec")"
+    case "$state" in
+      missing | approved-transition) PACKAGE_TRANSACTION_SPECS+=("$spec") ;;
+      exact) ;;
+      *) fatal "Package transaction contains an unapproved prerequisite state: ${spec} (${state})" ;;
+    esac
+  done
+  ((${#PACKAGE_TRANSACTION_SPECS[@]} > 0)) \
+    || fatal "Package transaction has no missing or approved-transition prerequisites"
+}
+
 validate_package_availability() {
   local spec
-  for spec in "${PACKAGE_SPECS[@]}"; do
+  for spec in "$@"; do
     apt-cache show "$spec" >/dev/null 2>&1 || fatal "Exact package version is unavailable: ${spec}"
   done
   info "exact_package_versions=available"
 }
 
+apt_guard_fatal() {
+  printf 'APT transaction guard: %s\n' "$*" >&2
+  return 1
+}
+
+validate_apt_preinstall_plan() {
+  local targets_file=$1 line package old_version old_arch old_multiarch direction
+  local new_version new_arch new_multiarch action extra record_key
+  local target expected allowed_old native_arch target_line target_expected target_allowed_old target_native_arch
+  local manifest_native_arch=""
+  local configured='|' changed='|' seen_targets='|' target_names='|'
+  [[ -r "$targets_file" && -f "$targets_file" && ! -L "$targets_file" ]] \
+    || apt_guard_fatal "target manifest is unavailable or unsafe: ${targets_file}" || return
+
+  while IFS='|' read -r target expected allowed_old native_arch extra; do
+    [[ -n "$target" && -n "$expected" && -n "$native_arch" && -z "$extra" ]] \
+      || apt_guard_fatal "target manifest contains an invalid record" || return
+    [[ "$target" =~ ^[a-z0-9][a-z0-9+.-]+$ ]] \
+      || apt_guard_fatal "target manifest contains an invalid package name: ${target}" || return
+    [[ "$expected" != *[[:space:]]* && "$expected" != *"|"* &&
+      "$allowed_old" != *[[:space:]]* && "$allowed_old" != *"|"* &&
+      "$native_arch" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+      || apt_guard_fatal "target manifest contains an invalid version for ${target}" || return
+    [[ "$target_names" != *"|${target}|"* ]] \
+      || apt_guard_fatal "target manifest repeats package ${target}" || return
+    if [[ -z "$manifest_native_arch" ]]; then
+      manifest_native_arch=$native_arch
+    else
+      [[ "$native_arch" == "$manifest_native_arch" ]] \
+        || apt_guard_fatal "target manifest mixes native architectures" || return
+    fi
+    target_names="${target_names}${target}|"
+  done <"$targets_file"
+  [[ "$target_names" != "|" ]] || apt_guard_fatal "target manifest is empty" || return
+
+  IFS= read -r line || apt_guard_fatal "APT omitted the pre-install protocol header" || return
+  [[ "$line" == "VERSION 3" ]] \
+    || apt_guard_fatal "APT pre-install protocol must be VERSION 3, found: ${line}" || return
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || break
+  done
+  [[ -z "$line" ]] || apt_guard_fatal "APT pre-install protocol omitted its record separator" || return
+
+  while read -r package old_version old_arch old_multiarch direction new_version new_arch new_multiarch action extra; do
+    [[ -n "$package" && -n "$old_version" && -n "$old_arch" && -n "$old_multiarch" &&
+      -n "$direction" && -n "$new_version" && -n "$new_arch" && -n "$new_multiarch" &&
+      -n "$action" && -z "$extra" ]] \
+      || apt_guard_fatal "APT emitted a malformed package action" || return
+    [[ "$package" =~ ^[a-z0-9][a-z0-9+.-]+$ ]] \
+      || apt_guard_fatal "APT emitted an invalid package name: ${package}" || return
+    [[ "$old_arch" == "-" || "$old_arch" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+      || apt_guard_fatal "APT emitted an invalid old architecture for ${package}: ${old_arch}" || return
+    [[ "$new_arch" == "-" || "$new_arch" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+      || apt_guard_fatal "APT emitted an invalid new architecture for ${package}: ${new_arch}" || return
+    [[ "$old_multiarch" =~ ^(same|foreign|allowed|none|no|-)$ &&
+      "$new_multiarch" =~ ^(same|foreign|allowed|none|no|-)$ ]] \
+      || apt_guard_fatal "APT emitted an invalid Multi-Arch field for ${package}" || return
+    record_key="${package}@${new_arch}"
+    case "$action" in
+      "**REMOVE**") apt_guard_fatal "APT proposed removing ${package}" || return ;;
+      "**CONFIGURE**")
+        configured="${configured}${record_key}|"
+        ;;
+      /*)
+        [[ "$changed" != *"|${record_key}|"* ]] \
+          || apt_guard_fatal "APT proposed duplicate archive actions for ${record_key}" || return
+        changed="${changed}${record_key}|"
+        target=""
+        expected=""
+        allowed_old=""
+        native_arch=""
+        while IFS='|' read -r target_line target_expected target_allowed_old target_native_arch; do
+          if [[ "$target_line" == "$package" ]]; then
+            target=$target_line
+            expected=$target_expected
+            allowed_old=$target_allowed_old
+            native_arch=$target_native_arch
+            break
+          fi
+        done <"$targets_file"
+        if [[ -z "$native_arch" ]]; then
+          native_arch=$manifest_native_arch
+        fi
+        [[ "$new_arch" == "$native_arch" || "$new_arch" == "all" ]] \
+          || apt_guard_fatal "APT selected foreign architecture ${new_arch} for ${package}; expected ${native_arch} or all" || return
+        if [[ -n "$target" ]]; then
+          [[ "$new_version" == "$expected" ]] \
+            || apt_guard_fatal "APT selected ${package}=${new_version}; expected ${expected}" || return
+          if [[ -n "$allowed_old" ]]; then
+            [[ "$old_version" == "$allowed_old" && "$direction" == "<" &&
+              ("$old_arch" == "$native_arch" || "$old_arch" == "all") ]] \
+              || apt_guard_fatal "APT changed approved transition ${package} from ${old_version}; expected ${allowed_old}" || return
+          else
+            [[ "$old_version" == "-" && "$old_arch" == "-" && "$direction" == "<" ]] \
+              || apt_guard_fatal "APT proposed changing retained target ${package}=${old_version}" || return
+          fi
+          seen_targets="${seen_targets}${package}|"
+        else
+          [[ "$old_version" == "-" && "$old_arch" == "-" && "$direction" == "<" ]] \
+            || apt_guard_fatal "APT proposed changing retained package ${package}=${old_version}" || return
+        fi
+        ;;
+      *) apt_guard_fatal "APT emitted an unsupported action for ${package}: ${action}" || return ;;
+    esac
+  done
+
+  while IFS='|' read -r target expected allowed_old native_arch; do
+    [[ "$seen_targets" == *"|${target}|"* ]] \
+      || apt_guard_fatal "APT omitted required target ${target}=${expected}" || return
+  done <"$targets_file"
+  while [[ "$configured" != "|" ]]; do
+    configured="${configured#|}"
+    package="${configured%%|*}"
+    configured="|${configured#*|}"
+    [[ "$changed" == *"|${package}|"* ]] \
+      || apt_guard_fatal "APT proposed configuring retained package ${package} without an archive action" || return
+  done
+}
+
+cleanup_apt_transaction_guard() {
+  local guard_dir=${APT_TRANSACTION_GUARD_DIR:-}
+  APT_TRANSACTION_GUARD_DIR=""
+  APT_TRANSACTION_HOOK=""
+  [[ -n "$guard_dir" ]] || return 0
+  if [[ ! "$guard_dir" =~ ^/run/nemoclaw-apt-transaction\.[A-Za-z0-9]+$ ]]; then
+    warn "refusing to clean unexpected APT transaction guard path: ${guard_dir}"
+    return 0
+  fi
+  sudo rm -rf -- "$guard_dir" \
+    || warn "could not remove APT transaction guard directory: ${guard_dir}"
+}
+
+create_apt_transaction_guard() {
+  local spec state name expected allowed_old native_arch targets="" hook_path targets_path
+  native_arch="$(sudo dpkg --print-architecture)"
+  [[ "$native_arch" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+    || fatal "Could not determine the native package architecture"
+  for spec in "${PACKAGE_TRANSACTION_SPECS[@]}"; do
+    state="$(package_state "$spec")"
+    name="$(package_name "$spec")"
+    expected="$(package_expected_version "$spec")"
+    case "$state" in
+      missing) allowed_old="" ;;
+      approved-transition) allowed_old="$(installed_version "$name")" ;;
+      *) fatal "Cannot authorize APT target ${spec} from state ${state}" ;;
+    esac
+    targets="${targets}${name}|${expected}|${allowed_old}|${native_arch}"$'\n'
+  done
+
+  APT_TRANSACTION_GUARD_DIR="$(sudo mktemp -d /run/nemoclaw-apt-transaction.XXXXXXXXXX)" \
+    || fatal "Could not create the root-owned APT transaction guard directory"
+  [[ "$APT_TRANSACTION_GUARD_DIR" =~ ^/run/nemoclaw-apt-transaction\.[A-Za-z0-9]+$ ]] \
+    || fatal "APT transaction guard returned an unexpected path: ${APT_TRANSACTION_GUARD_DIR}"
+  hook_path="${APT_TRANSACTION_GUARD_DIR}/verify-plan"
+  targets_path="${APT_TRANSACTION_GUARD_DIR}/targets"
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
+    declare -f apt_guard_fatal
+    declare -f validate_apt_preinstall_plan
+    # The generated hook expands its own path at execution time.
+    # shellcheck disable=SC2016
+    printf '%s\n' 'validate_apt_preinstall_plan "${0%/*}/targets"'
+  } | sudo tee "$hook_path" >/dev/null
+  printf '%s' "$targets" | sudo tee "$targets_path" >/dev/null
+  sudo chmod 0700 "$hook_path"
+  sudo chmod 0600 "$targets_path"
+  assert_root_directory_safe "$APT_TRANSACTION_GUARD_DIR" "APT transaction guard directory"
+  assert_root_regular_file_safe "$hook_path" 0700 "APT transaction guard"
+  assert_root_regular_file_safe "$targets_path" 0600 "APT transaction target manifest"
+  APT_TRANSACTION_HOOK="/bin/bash ${hook_path}"
+}
+
+validate_apt_simulation() {
+  local simulation=$1
+  shift
+  local spec target_spec name expected actual line action version before_version
+  local simulated_targets='|' simulated_changes='|'
+
+  while IFS= read -r line; do
+    [[ "$line" =~ ^(Inst|Conf|Remv|Purg)[[:space:]] ]] || continue
+    read -r action name _ <<<"$line"
+    case "$action" in
+      Remv | Purg) fatal "APT simulation proposed a package removal: ${line}" ;;
+      Conf)
+        [[ "$simulated_changes" == *"|${name}|"* ]] \
+          || fatal "APT simulation proposed configuration without an approved install: ${line}"
+        ;;
+      Inst)
+        [[ "$simulated_changes" != *"|${name}|"* ]] \
+          || fatal "APT simulation proposed a duplicate package change: ${line}"
+        simulated_changes="${simulated_changes}${name}|"
+        target_spec=""
+        for spec in "$@"; do
+          if [[ "$(package_name "$spec")" == "$name" ]]; then
+            target_spec=$spec
+            break
+          fi
+        done
+        if [[ -n "$target_spec" ]]; then
+          [[ "$line" == *"("* ]] || fatal "APT simulation omitted the target version: ${line}"
+          version="${line#*(}"
+          version="${version%%[[:space:]]*}"
+          version="${version%)}"
+          expected="$(package_expected_version "$target_spec")"
+          [[ "$version" == "$expected" ]] \
+            || fatal "APT simulation selected ${name}=${version}; expected ${expected}"
+          simulated_targets="${simulated_targets}${name}|"
+          continue
+        fi
+
+        # A target package may require a new dependency, but APT must not
+        # upgrade, downgrade, or reinstall any package retained from the host.
+        actual="$(installed_version "$name")"
+        before_version="${line%%(*}"
+        [[ -z "$actual" && "$before_version" != *"["* ]] \
+          || fatal "APT simulation proposed changing retained package ${name}=${actual}: ${line}"
+        ;;
+    esac
+  done <<<"$simulation"
+
+  for spec in "$@"; do
+    name="$(package_name "$spec")"
+    [[ "$simulated_targets" == *"|${name}|"* ]] \
+      || fatal "APT simulation did not include required package ${spec}"
+  done
+}
+
 simulate_install() {
   local simulation
-  simulation="$(apt-get -s install --no-install-recommends "${PACKAGE_SPECS[@]}")" \
+  [[ "$APT_TRANSACTION_GUARD_DIR" =~ ^/run/nemoclaw-apt-transaction\.[A-Za-z0-9]+$ &&
+    "$APT_TRANSACTION_HOOK" == "/bin/bash ${APT_TRANSACTION_GUARD_DIR}/verify-plan" ]] \
+    || fatal "APT transaction guard is not ready"
+  simulation="$(sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
+    apt-get -s install --no-install-recommends --no-remove \
+    -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
+    -o "DPkg::Tools::options::/bin/bash::Version=3" "$@")" \
     || fatal "APT simulation failed"
   printf '%s\n' "$simulation"
-  if grep -Eq '^(Remv |Purg )' <<<"$simulation"; then
-    fatal "APT simulation proposed a package removal"
-  fi
-  info "apt_simulation=no_removals"
+  validate_apt_simulation "$simulation" "$@"
+  info "apt_simulation=missing_only retained_packages=unchanged"
 }
 
 install_packages() {
+  collect_package_transaction_specs
   configure_repositories
   info "Refreshing package metadata"
   sudo apt-get update
-  validate_package_availability
-  simulate_install
-  check_no_workloads
-  info "Installing pinned Station prerequisites"
-  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    "${PACKAGE_SPECS[@]}"
+  validate_package_availability "${PACKAGE_TRANSACTION_SPECS[@]}"
+  create_apt_transaction_guard
+  simulate_install "${PACKAGE_TRANSACTION_SPECS[@]}"
+  require_docker_restart_quiescence "Station prerequisite package installation"
+  info "Installing missing pinned Station prerequisites"
+  sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
+    apt-get install -y --no-install-recommends --no-remove \
+    -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
+    -o "DPkg::Tools::options::/bin/bash::Version=3" \
+    "${PACKAGE_TRANSACTION_SPECS[@]}"
+  cleanup_apt_transaction_guard
 
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
@@ -1094,7 +1547,7 @@ ensure_docker_group() {
 
 ensure_cdi_refresh_lifecycle() {
   ((CDI_LIFECYCLE_READY == 0)) || return 0
-  check_no_workloads
+  require_docker_mutation_quiescence "enabling NVIDIA CDI refresh"
   sudo systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service \
     || fatal "Could not enable the packaged NVIDIA CDI refresh lifecycle"
   sudo systemctl start nvidia-cdi-refresh.path \
@@ -1114,7 +1567,7 @@ verify_cdi_refresh_lifecycle() {
 }
 
 refresh_cdi() {
-  check_no_workloads
+  require_docker_mutation_quiescence "refreshing NVIDIA CDI configuration"
   ensure_cdi_refresh_lifecycle
   if ! sudo systemctl restart nvidia-cdi-refresh.service; then
     warn "Packaged CDI refresh failed; collecting diagnostics"
@@ -1141,7 +1594,7 @@ ensure_acceptance_image() {
 run_cdi_test_sudo() {
   local rows
   rows="$(sudo docker run --rm --device nvidia.com/gpu=all "$ACCEPTANCE_IMAGE" nvidia-smi \
-    --query-gpu=name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+    --query-gpu=pci.bus_id,name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits)" || return 1
   gpu_rows_are_valid "$rows" || {
     warn "CDI container probe did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
@@ -1152,7 +1605,7 @@ run_cdi_test_sudo() {
 run_gpus_test_sudo() {
   local rows
   rows="$(sudo docker run --rm --gpus all "$ACCEPTANCE_IMAGE" nvidia-smi \
-    --query-gpu=name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+    --query-gpu=pci.bus_id,name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits)" || return 1
   gpu_rows_are_valid "$rows" || {
     warn "Docker --gpus container probe did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
@@ -1163,7 +1616,7 @@ run_gpus_test_sudo() {
 run_cdi_test_user() {
   local rows
   rows="$(docker run --rm --device nvidia.com/gpu=all "$ACCEPTANCE_IMAGE" nvidia-smi \
-    --query-gpu=name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+    --query-gpu=pci.bus_id,name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits)" || return 1
   gpu_rows_are_valid "$rows"
 }
@@ -1171,7 +1624,7 @@ run_cdi_test_user() {
 run_gpus_test_user() {
   local rows
   rows="$(docker run --rm --gpus all "$ACCEPTANCE_IMAGE" nvidia-smi \
-    --query-gpu=name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+    --query-gpu=pci.bus_id,name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits)" || return 1
   gpu_rows_are_valid "$rows"
 }
@@ -1186,7 +1639,7 @@ ensure_dgx_os_acceptance_image() {
 run_dgx_os_cdi_test_sudo() {
   local rows
   rows="$(station_sudo_local_default_docker run --rm --device nvidia.com/gpu=all "$ACCEPTANCE_IMAGE" nvidia-smi \
-    --query-gpu=name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+    --query-gpu=pci.bus_id,name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits)" || return 1
   gpu_rows_are_valid "$rows" || {
     warn "Factory-runtime CDI probe did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
@@ -1197,7 +1650,7 @@ run_dgx_os_cdi_test_sudo() {
 run_dgx_os_gpus_test_sudo() {
   local rows
   rows="$(station_sudo_local_default_docker run --rm --gpus all "$ACCEPTANCE_IMAGE" nvidia-smi \
-    --query-gpu=name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+    --query-gpu=pci.bus_id,name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits)" || return 1
   gpu_rows_are_valid "$rows" || {
     warn "Factory-runtime Docker --gpus probe did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
@@ -1208,7 +1661,7 @@ run_dgx_os_gpus_test_sudo() {
 run_dgx_os_cdi_test_user() {
   local rows
   rows="$(station_local_default_docker run --rm --device nvidia.com/gpu=all "$ACCEPTANCE_IMAGE" nvidia-smi \
-    --query-gpu=name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+    --query-gpu=pci.bus_id,name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits)" || return 1
   gpu_rows_are_valid "$rows"
 }
@@ -1216,7 +1669,7 @@ run_dgx_os_cdi_test_user() {
 run_dgx_os_gpus_test_user() {
   local rows
   rows="$(station_local_default_docker run --rm --gpus all "$ACCEPTANCE_IMAGE" nvidia-smi \
-    --query-gpu=name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+    --query-gpu=pci.bus_id,name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits)" || return 1
   gpu_rows_are_valid "$rows"
 }
@@ -1257,7 +1710,7 @@ configure_docker_runtime_if_needed() {
   # missing-runtime state. It remains required until this acceptance probe
   # succeeds through a replacement Docker/NVIDIA runtime integration.
   warn "Docker --gpus all failed and Docker reports no NVIDIA runtime; applying the reviewed NVIDIA runtime registration"
-  check_no_workloads
+  require_docker_mutation_quiescence "configuring the NVIDIA Docker runtime"
   ensure_root_directory_safe /etc/docker /etc 0755 "Docker configuration directory"
   ensure_root_directory_safe /var/backups/station-bootstrap /var/backups 0700 "Station bootstrap backup directory"
   backup_dir="$(sudo mktemp -d /var/backups/station-bootstrap/docker-runtime.XXXXXXXXXX)" \
@@ -1272,14 +1725,14 @@ configure_docker_runtime_if_needed() {
     sudo touch "${backup_dir}/daemon.json.absent"
     sudo chmod 0600 "${backup_dir}/daemon.json.absent"
   fi
-  check_no_workloads
+  require_docker_mutation_quiescence "configuring the NVIDIA Docker runtime"
   if ! sudo nvidia-ctk runtime configure --runtime=docker; then
     fail_after_docker_runtime_rollback "$backup_dir" "$previous_daemon" "NVIDIA runtime registration failed"
   fi
   if ! root_regular_file_is_safe /etc/docker/daemon.json ""; then
     fail_after_docker_runtime_rollback "$backup_dir" "$previous_daemon" "NVIDIA runtime registration produced an unsafe Docker daemon configuration"
   fi
-  if ! (check_no_workloads); then
+  if ! (require_docker_restart_quiescence "restarting Docker after NVIDIA runtime registration"); then
     fail_after_docker_runtime_rollback "$backup_dir" "$previous_daemon" "A workload appeared before Docker restart" 0
   fi
   if ! sudo systemctl restart docker.service; then
@@ -1306,6 +1759,9 @@ rollback_docker_runtime_config() {
     sudo rm -f -- /etc/docker/daemon.json || return 1
   fi
   if [[ "$restart_after_restore" == "1" ]]; then
+    if ! (require_docker_restart_quiescence "restarting Docker during runtime rollback"); then
+      return 1
+    fi
     sudo systemctl restart docker.service
   fi
 }
@@ -1319,13 +1775,18 @@ fail_after_docker_runtime_rollback() {
 }
 
 finish_runtime() {
-  check_no_workloads
-  sudo systemctl enable --now containerd.service docker.service
+  if systemctl is-active --quiet containerd.service && systemctl is-active --quiet docker.service; then
+    require_docker_mutation_quiescence "enabling or configuring the Station container runtime"
+    sudo systemctl enable containerd.service docker.service
+  else
+    require_docker_restart_quiescence "starting or configuring the Station container runtime"
+    sudo systemctl enable --now containerd.service docker.service
+  fi
   ensure_docker_group
   ensure_acceptance_image
   ensure_cdi_runtime
   configure_docker_runtime_if_needed
-  [[ -z "$(sudo docker ps -aq)" ]] || fatal "Acceptance tests left a Docker container behind"
+  verify_docker_container_baseline
   info "runtime_setup=complete"
 }
 
@@ -1346,6 +1807,17 @@ verify_dgx_os_runtime_sudo() {
     || fatal "The local Docker daemon is not reachable with sudo on the Station factory image"
   station_sudo_local_default_docker buildx version >/dev/null 2>&1 \
     || fatal "Docker Buildx is unavailable on the Station factory image"
+  # The June 2026 AI Developer Tools factory image can leave its packaged CDI
+  # refresh units disabled. Image production owns that source state; remove
+  # this repair after clean-host qualification consistently supplies the CDI
+  # device at boot.
+  if [[ "$STATION_HOST_PROFILE" == "ai-developer-tools" ]]; then
+    if sudo nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all'; then
+      info "cdi=nvidia.com/gpu=all source=factory_runtime"
+    else
+      refresh_cdi
+    fi
+  fi
   sudo nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all' \
     || fatal "The Station factory image does not advertise the nvidia.com/gpu=all CDI device"
   ensure_dgx_os_acceptance_image
@@ -1353,8 +1825,7 @@ verify_dgx_os_runtime_sudo() {
     || fatal "The Station factory image failed the CDI Docker GPU visibility test"
   run_dgx_os_gpus_test_sudo \
     || fatal "The Station factory image failed the Docker --gpus all GPU visibility test"
-  [[ -z "$(station_sudo_local_default_docker ps -aq)" ]] \
-    || fatal "Station factory-image acceptance tests left a Docker container behind"
+  verify_docker_container_baseline
   if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
     info "DGX_OS_HOST_READY host_runtime_mutation=container_image_cache_only"
   else
@@ -1378,8 +1849,7 @@ verify_dgx_os_runtime_user() {
     || fatal "The Station factory image failed the CDI Docker GPU visibility test"
   run_dgx_os_gpus_test_user \
     || fatal "The Station factory image failed the Docker --gpus all GPU visibility test"
-  [[ -z "$(station_local_default_docker ps -aq)" ]] \
-    || fatal "Station factory-image verification left a Docker container behind"
+  verify_docker_container_baseline
   if [[ "$STATION_HOST_PROFILE" == "stock-dgx-os" ]]; then
     info "DGX_OS_HOST_READY"
   else
@@ -1399,27 +1869,31 @@ verify_apply_state() {
   verify_cdi_refresh_lifecycle
   nvidia-ctk cdi list | grep -Fxq 'nvidia.com/gpu=all' || fatal "CDI verification failed"
   sudo docker image inspect "$ACCEPTANCE_IMAGE" >/dev/null 2>&1 || fatal "Digest-pinned acceptance image is missing"
-  [[ -z "$(sudo docker ps -aq)" ]] || fatal "Verification found a leftover Docker container"
+  verify_docker_container_baseline
   info "STATION_HOST_READY"
 }
 
 gpu_rows_are_valid() {
-  local rows=$1 row name driver corrected uncorrected row_index=0 gb300_count=0 expected_driver=""
+  local rows=$1 row bus_id name driver corrected uncorrected gb300_count=0 expected_driver="" pci_root
   GPU_ROWS_ERROR=""
   case "$STATION_HOST_PROFILE" in
     generic-ubuntu) expected_driver="$DRIVER_VERSION" ;;
     colossus-baseos) expected_driver="$BASEOS_DRIVER_VERSION" ;;
   esac
+  pci_root="$(station_pci_devices_path)"
   while IFS= read -r row; do
     [[ -n "${row//[[:space:]]/}" ]] || continue
-    IFS=',' read -r name driver corrected uncorrected <<<"$row"
+    IFS=',' read -r bus_id name driver corrected uncorrected <<<"$row"
+    if ! bus_id="$(normalize_nvidia_pci_bus_id "$bus_id")"; then
+      GPU_ROWS_ERROR="nvidia-smi returned an invalid PCI bus ID: ${bus_id}"
+      return 1
+    fi
     name="${name#"${name%%[![:space:]]*}"}"
     driver="${driver//[[:space:]]/}"
     corrected="${corrected//[[:space:]]/}"
     uncorrected="${uncorrected//[[:space:]]/}"
-    if [[ "$name" != *"GB300"* ]]; then
-      info "gpu_index=${row_index} gpu=${name} role=auxiliary validation=skipped"
-      ((row_index += 1))
+    if ! station_pci_device_is_gb300 "$bus_id" "$pci_root"; then
+      info "gpu_bdf=${bus_id} gpu=${name} role=auxiliary validation=skipped"
       continue
     fi
     if [[ -z "$driver" ]]; then
@@ -1435,11 +1909,10 @@ gpu_rows_are_valid() {
       return 1
     fi
     ((gb300_count += 1))
-    info "gpu_index=${row_index} gpu=${name} role=inference driver=${driver} ecc_corrected=${corrected} ecc_uncorrected=${uncorrected}"
-    ((row_index += 1))
+    info "gpu_bdf=${bus_id} gpu=${name} role=inference driver=${driver} ecc_corrected=${corrected} ecc_uncorrected=${uncorrected}"
   done <<<"$rows"
   if ((gb300_count != 1)); then
-    GPU_ROWS_ERROR="Expected exactly one NVIDIA GB300, found ${gb300_count}"
+    GPU_ROWS_ERROR="Expected exactly one NVIDIA GB300 PCI device, found ${gb300_count}"
     return 1
   fi
 }
@@ -1447,7 +1920,7 @@ gpu_rows_are_valid() {
 verify_gpu() {
   local rows
   rows="$(nvidia-smi \
-    --query-gpu=name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
+    --query-gpu=pci.bus_id,name,driver_version,ecc.errors.corrected.volatile.total,ecc.errors.uncorrected.volatile.total \
     --format=csv,noheader,nounits)" || fatal "nvidia-smi failed"
   gpu_rows_are_valid "$rows" || fatal "$GPU_ROWS_ERROR"
 }
@@ -1468,7 +1941,7 @@ verify_host() {
   docker image inspect "$ACCEPTANCE_IMAGE" >/dev/null 2>&1 || fatal "Digest-pinned acceptance image is missing; run --apply"
   run_cdi_test_user || fatal "CDI verification did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
   run_gpus_test_user || fatal "Docker --gpus verification did not expose the qualified GB300: ${GPU_ROWS_ERROR}"
-  [[ -z "$(docker ps -aq)" ]] || fatal "Verification left a Docker container behind"
+  verify_docker_container_baseline
   info "docker=$(docker version --format '{{.Server.Version}}') expected_docker=${DOCKER_VERSION} toolkit=$(nvidia-ctk --version | head -n1) expected_toolkit=${TOOLKIT_VERSION}"
   info "STATION_HOST_READY"
 }
@@ -1534,7 +2007,7 @@ run_apply() {
   if reboot_required; then
     if all_packages_exact && ! driver_loaded_exact; then
       warn "A reboot is required before runtime setup can continue"
-      exit "$REBOOT_REQUIRED_EXIT"
+      exit_reboot_required
     fi
     fatal "An unrelated reboot is already pending"
   fi
@@ -1543,35 +2016,28 @@ run_apply() {
     assert_no_package_mismatches
     install_packages
     ensure_docker_group
-    check_no_workloads
+    require_docker_restart_quiescence "enabling the Station container runtime and rebooting"
     sudo systemctl enable containerd.service docker.service nvidia-cdi-refresh.path nvidia-cdi-refresh.service
+    verify_docker_container_baseline
     write_install_boot_marker
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
 
   if install_boot_marker_matches_current_boot; then
     warn "Package installation completed in the current boot"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
 
   driver_loaded_exact || {
     warn "Pinned packages are installed but driver ${DRIVER_VERSION} is not loaded"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   }
 
   finish_runtime
   verify_apply_state
   if ((DOCKER_GROUP_ADDED == 1)); then
     warn "Docker group membership was added and requires a new login before onboarding"
-    info "APPLY_RESULT=REBOOT_REQUIRED"
-    info "Run: sudo reboot"
-    exit "$REBOOT_REQUIRED_EXIT"
+    exit_reboot_required
   fi
   rm -f "$INSTALL_BOOT_MARKER"
   info "APPLY_RESULT=COMPLETE"
@@ -1609,6 +2075,7 @@ main() {
     info "version=${SCRIPT_VERSION} mode=${MODE} log=disabled_read_only"
   fi
   trap 'on_error "$LINENO"' ERR
+  trap 'cleanup_apt_transaction_guard' EXIT
   case "$MODE" in
     --check) run_check ;;
     --apply) run_apply ;;
