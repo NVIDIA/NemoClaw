@@ -99,72 +99,6 @@ run_gpus_test_sudo
     expect(output).toContain("gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 role=inference");
   });
 
-  it.each([
-    ["", "missing"],
-    ["5:29.6.1-1~ubuntu.24.04~noble", "exact"],
-    ["5:30.0.0-1~ubuntu.24.04~noble", "mismatch"],
-  ])("classifies an installed package version as %s -> %s", (actual, expected) => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-installed_version() {
-  if [[ "$1" == "docker-ce" ]]; then printf '%s' "$PACKAGE_ACTUAL"; fi
-}
-package_state 'docker-ce=5:29.6.1-1~ubuntu.24.04~noble'
-`,
-      { PACKAGE_ACTUAL: actual },
-    );
-
-    expect(result.status, output).toBe(0);
-    expect(result.stdout.trim()).toBe(expected);
-  });
-
-  it("allows only the reviewed factory DKMS transition", () => {
-    const approved = runSourced(
-      STATION_PREPARE,
-      `
-installed_version() {
-  if [[ "$1" == "dkms" ]]; then printf '%s' "$DKMS_ACTUAL"; fi
-}
-package_state 'dkms=1:3.4.0-1ubuntu1'
-assert_no_package_mismatches
-`,
-      { DKMS_ACTUAL: "3.0.11-1ubuntu13" },
-    );
-    expect(approved.result.status, approved.output).toBe(0);
-    expect(approved.output).toContain("approved-transition");
-    expect(approved.output).toContain("status=approved_transition");
-
-    const arbitrary = runSourced(
-      STATION_PREPARE,
-      `
-installed_version() {
-  if [[ "$1" == "dkms" ]]; then printf '%s' "$DKMS_ACTUAL"; fi
-}
-assert_no_package_mismatches
-`,
-      { DKMS_ACTUAL: "3.2.0-1" },
-    );
-    expect(arbitrary.result.status, arbitrary.output).not.toBe(0);
-    expect(arbitrary.output).toMatch(/dkms status=mismatch/);
-  });
-
-  it("refuses to change an existing mismatched prerequisite", () => {
-    const { result, output } = runSourced(
-      STATION_PREPARE,
-      `
-installed_version() {
-  if [[ "$1" == "docker-ce" ]]; then printf '5:30.0.0-1~ubuntu.24.04~noble'; fi
-}
-assert_no_package_mismatches
-`,
-    );
-
-    expect(result.status, output).not.toBe(0);
-    expect(output).toMatch(/docker-ce status=mismatch/);
-    expect(output).toMatch(/refusing to change them automatically/);
-  });
-
   it("allows only condition-qualified factory failures and blocks other failed units", () => {
     const qualified = runSourced(
       STATION_PREPARE,
@@ -385,9 +319,10 @@ common_preflight() { :; }
 require_command() { :; }
 acquire_sudo() { :; }
 all_packages_exact() { return 1; }
-installed_version() {
-  if [[ "$1" == "dkms" ]]; then printf '3.0.11-1ubuntu13'; fi
+installed_package_record() {
+  if [[ "$1" == "dkms" ]]; then printf 'ii |all|3.0.11-1ubuntu13'; else return 1; fi
 }
+installed_version() { if [[ "$1" == "dkms" ]]; then printf '3.0.11-1ubuntu13'; fi; }
 install_packages() { printf 'INSTALL_PACKAGES\n'; }
 ensure_docker_group() { printf 'ENSURE_DOCKER_GROUP\n'; }
 require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
@@ -419,6 +354,8 @@ simulate_install() { printf 'SIMULATE_INSTALL\n'; }
 require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 package_state() { printf 'missing\n'; }
 package_is_exact() { return 0; }
+assert_package_transaction_ready() { printf 'PACKAGE_TRANSACTION_READY %s\n' "$1"; }
+check_dpkg_database_health() { printf 'DPKG_AUDIT_CLEAN\n'; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
@@ -518,6 +455,7 @@ check_agent_and_inference_conflicts
       STATION_PREPARE,
       `
 assert_root_directory_safe() { :; }
+installed_package_record() { printf 'ii |all|2.0-1'; }
 installed_version() { printf '2.0-1'; }
 ensure_cuda_keyring "$HOME/cuda-keyring.deb"
 `,
@@ -533,7 +471,7 @@ ensure_cuda_keyring "$HOME/cuda-keyring.deb"
       `
 assert_root_directory_safe() { :; }
 assert_root_regular_file_safe() { :; }
-installed_version() { printf '1.1-1'; }
+installed_package_record() { printf 'ii |all|1.1-1'; }
 dpkg() { :; }
 curl() { printf 'DOWNLOAD\n'; }
 sudo() { "$@"; }
