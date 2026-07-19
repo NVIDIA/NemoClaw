@@ -89,7 +89,7 @@ apt-get() {
     done
   fi
 }
-require_docker_restart_quiescence() { printf 'RECHECK_DOCKER_RESTART\n'; }
+require_docker_restart_quiescence() { printf 'RECHECK_DOCKER_RESTART %s\n' "$1"; }
 package_state() { printf 'missing\n'; }
 package_is_exact() { return 0; }
 create_apt_transaction_guard() {
@@ -130,7 +130,10 @@ cat "$HOME/apt-cache-calls"
     expect(output).toContain(
       "SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get -s install --no-install-recommends --no-remove",
     );
-    expect(output).toContain("RECHECK_DOCKER_RESTART");
+    const quiescenceMarker = "RECHECK_DOCKER_RESTART Station prerequisite package installation";
+    const installMarker = "SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y";
+    expect(output).toContain(quiescenceMarker);
+    expect(output.indexOf(installMarker)).toBeGreaterThan(output.indexOf(quiescenceMarker));
     expect(output).toContain("CLEANUP_GUARD");
     expect(output).toContain("pinned_packages=installed");
   });
