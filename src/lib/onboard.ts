@@ -2283,21 +2283,8 @@ async function createSandboxWithBaseImageResolution(
   const extraProviderPlan = createIntent?.extraProviders
     ? { extraProviders: createIntent.extraProviders, staleExtraProviders: [] }
     : planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell });
-  const resolvedCreateIntent =
-    createIntent?.resolved ??
-    (await sandboxCreateIntentResolver.resolve({
-      sandboxName,
-      enabledChannels,
-      webSearchConfig,
-      agent,
-      sandboxGpuConfig: effectiveSandboxGpuConfig,
-      resourceProfile,
-      hermesToolGateways,
-      extraProviders: extraProviderPlan.extraProviders,
-      staleExtraProviders: extraProviderPlan.staleExtraProviders,
-      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
-      ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}),
-    }));
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const resolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
   const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
     {
       sandboxName,

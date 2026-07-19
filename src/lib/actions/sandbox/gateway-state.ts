@@ -471,11 +471,14 @@ export function printGatewayLifecycleHint(
   }
 }
 
+export type GatewayRecoveryMode = "observe" | "recover";
+
 export async function getReconciledSandboxGatewayState(
   sandboxName: string,
-  opts: { getState?: SandboxGatewayStateLookup } = {},
+  opts: { getState?: SandboxGatewayStateLookup; gatewayRecovery?: GatewayRecoveryMode } = {},
 ): Promise<SandboxGatewayState> {
   const getState = opts.getState ?? getSandboxGatewayState;
+  const gatewayRecovery: GatewayRecoveryMode = opts.gatewayRecovery ?? "recover";
   let targetGatewayName = getKnownSandboxTargetGatewayName(sandboxName) ?? undefined;
   const endpointOverride = gatewayEndpointOverrideState();
   if (endpointOverride) return endpointOverride;
@@ -509,6 +512,9 @@ export async function getReconciledSandboxGatewayState(
   }
 
   if (lookup.state === "gateway_error") {
+    if (gatewayRecovery === "observe") {
+      return lookup;
+    }
     const recoveryGatewayName = targetGatewayName ?? getSandboxTargetGatewayName();
     const recovery = await recoverNamedGatewayRuntime({ gatewayName: recoveryGatewayName });
     if (recovery.recovered) {
@@ -560,9 +566,12 @@ export async function getReconciledSandboxGatewayState(
 
 export async function ensureLiveSandboxOrExit(
   sandboxName: string,
-  { allowNonReadyPhase = false }: { allowNonReadyPhase?: boolean } = {},
+  {
+    allowNonReadyPhase = false,
+    gatewayRecovery = "recover",
+  }: { allowNonReadyPhase?: boolean; gatewayRecovery?: GatewayRecoveryMode } = {},
 ): Promise<SandboxGatewayState> {
-  const lookup = await getReconciledSandboxGatewayState(sandboxName);
+  const lookup = await getReconciledSandboxGatewayState(sandboxName, { gatewayRecovery });
   if (lookup.state === "present") {
     const phase = parseSandboxPhase(lookup.output || "");
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
@@ -635,7 +644,7 @@ export async function ensureLiveSandboxOrExit(
     } catch {
       /* best-effort cleanup */
     }
-    const retry = await getReconciledSandboxGatewayState(sandboxName);
+    const retry = await getReconciledSandboxGatewayState(sandboxName, { gatewayRecovery });
     if (retry.state === "present") {
       console.error("  ✓ Reconnected after clearing stale SSH host keys.");
       return retry;
@@ -663,6 +672,19 @@ export async function ensureLiveSandboxOrExit(
     );
     console.error(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
+    );
+    process.exit(1);
+  }
+  if (lookup.state === "gateway_error" && gatewayRecovery === "observe") {
+    console.error(
+      `  Sandbox '${sandboxName}' cannot be verified: the OpenShell gateway RPC returned an error.`,
+    );
+    if (lookup.output) {
+      console.error(lookup.output);
+    }
+    printGatewayLifecycleHint(lookup.output, sandboxName);
+    console.error(
+      `  This sandbox-scoped command will not restart the shared host gateway. Run \`openshell status\` and \`openshell gateway start --name ${getSandboxTargetGatewayName(sandboxName)}\` before retrying.`,
     );
     process.exit(1);
   }

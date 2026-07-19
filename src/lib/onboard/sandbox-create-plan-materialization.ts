@@ -159,14 +159,14 @@ export function materializeSandboxCreatePlan({
     providerChannels,
     new Set(intent.disabledChannelNames),
   );
-  for (const provider of messagingProviders) {
-    createArgs.push("--provider", provider);
-  }
+  const createProviders = new Set<string>();
+  if (intent.inferenceProvider) createProviders.add(intent.inferenceProvider);
+  for (const provider of messagingProviders) createProviders.add(provider);
   if (intent.hermesToolGateways.length > 0) {
-    createArgs.push("--provider", getHermesToolGatewayProviderName(intent.sandboxName));
+    createProviders.add(getHermesToolGatewayProviderName(intent.sandboxName));
   }
-  for (const provider of intent.extraProviders) {
-    if (messagingProviders.includes(provider)) continue;
+  for (const provider of intent.extraProviders) createProviders.add(provider);
+  for (const provider of createProviders) {
     createArgs.push("--provider", provider);
   }
 
