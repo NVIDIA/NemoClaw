@@ -84,7 +84,8 @@ If the terminal runtime reports degraded health, rebuild the sandbox instead of 
 ### Host OpenShell Gateway Versus In-Sandbox Agent Recovery
 
 `recover` and `start` repair the in-sandbox agent gateway and the host-side port forwards for one named sandbox.
-They do not restart, replace, or reap the shared host OpenShell gateway process.
+`connect --probe-only` waits for that sandbox to become ready, rechecks it on its recorded gateway, and then verifies or repairs the same sandbox-scoped processes and forwards.
+These commands do not restart, replace, or reap the shared host OpenShell gateway process.
 If the host gateway RPC returns an error while these sandbox-scoped commands run, they surface the error with explicit next-step guidance and exit rather than swapping the shared gateway out from under other sandboxes.
 
 To repair the host gateway itself, use `openshell status`, `openshell gateway start --name <gateway>`, or run `$$nemoclaw onboard` again.
