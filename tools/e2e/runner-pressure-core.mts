@@ -694,15 +694,19 @@ export interface WorkflowAttemptEvidence {
 }
 
 /**
- * A hosted-runner loss requires a positive signature: the attempt produced no
- * terminal classification AND either the job was cancelled from outside or
- * runner-loss markers were observed. An attempt that produced a terminal
- * classification kept its runner long enough to classify — never runner loss.
+ * A hosted-runner loss requires a positive trusted marker and no terminal
+ * classification. Cancellation alone is not evidence because users and
+ * concurrency controls can cancel healthy runners. An attempt that produced a
+ * terminal classification kept its runner long enough to classify — never
+ * runner loss.
  */
 export function detectRunnerLoss(evidence: WorkflowAttemptEvidence): boolean {
+  if (!Number.isSafeInteger(evidence.runnerLostMarkerCount) || evidence.runnerLostMarkerCount < 0) {
+    throw new Error("runner-loss marker count must be a non-negative safe integer");
+  }
   if (evidence.terminalClassificationPresent) return false;
   if (evidence.jobConclusion === "success") return false;
-  return evidence.jobConclusion === "cancelled" || evidence.runnerLostMarkerCount > 0;
+  return evidence.runnerLostMarkerCount > 0;
 }
 
 export interface RetryDecisionInput {

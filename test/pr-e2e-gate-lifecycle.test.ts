@@ -50,7 +50,28 @@ describe("PR E2E runner-loss retry policy (#7146)", () => {
     },
   ];
 
-  it("marks only the first conclusively cancelled child attempt retryable", () => {
+  it("leaves cancellation without a positive runner-loss marker non-retryable", () => {
+    const cancelled = e2eFailureReport({
+      repository: "NVIDIA/NemoClaw",
+      runId: 23,
+      workflowConclusion: "cancelled",
+      jobs: cancelledJobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: true,
+      runnerLossAttempt: 1,
+      runnerLossEvidence: null,
+    });
+
+    expect(cancelled.retryableFailureReason).toBeUndefined();
+    expect(cancelled.summary).toContain("no verified hosted-runner-loss marker");
+  });
+
+  it("marks only the first positively classified runner-loss attempt retryable", () => {
+    const evidence = {
+      terminalClassificationPresent: false,
+      jobConclusion: "cancelled" as const,
+      runnerLostMarkerCount: 1,
+    };
     const first = e2eFailureReport({
       repository: "NVIDIA/NemoClaw",
       runId: 23,
@@ -59,6 +80,7 @@ describe("PR E2E runner-loss retry policy (#7146)", () => {
       jobDetailsAvailable: true,
       jobDetailsComplete: true,
       runnerLossAttempt: 1,
+      runnerLossEvidence: evidence,
     });
     const second = e2eFailureReport({
       repository: "NVIDIA/NemoClaw",
@@ -68,6 +90,7 @@ describe("PR E2E runner-loss retry policy (#7146)", () => {
       jobDetailsAvailable: true,
       jobDetailsComplete: true,
       runnerLossAttempt: 2,
+      runnerLossEvidence: evidence,
     });
 
     expect(first.retryableFailureReason).toBe("child-cancelled");
@@ -644,7 +667,7 @@ describe("PR E2E controller lifecycle", () => {
       expectCancellation: false,
       expectedTitle: "Selected E2E did not pass",
       expectedSummary: "concluded `cancelled`",
-      expectedRetryReason: "child-cancelled",
+      expectedRetryReason: undefined,
     },
     {
       label: "a failed child follows ten cancelled jobs in a complete listing",

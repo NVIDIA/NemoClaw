@@ -25,7 +25,11 @@ import {
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
-import { decideRetry, detectRunnerLoss } from "./runner-pressure-core.mts";
+import {
+  decideRetry,
+  detectRunnerLoss,
+  type WorkflowAttemptEvidence,
+} from "./runner-pressure-core.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
@@ -1679,6 +1683,7 @@ export function e2eFailureReport(options: {
   jobDetailsAvailable: boolean;
   jobDetailsComplete: boolean;
   runnerLossAttempt: number;
+  runnerLossEvidence: WorkflowAttemptEvidence | null;
 }): PrGateVerdict {
   const runUrl = `https://github.com/${options.repository}/actions/runs/${options.runId}`;
   const conclusion = normalizedCiMetadata(
@@ -1706,16 +1711,16 @@ export function e2eFailureReport(options: {
       options.jobDetailsComplete &&
       options.jobs.length > 0 &&
       options.jobs.every((job) => job.conclusion === "cancelled"));
-  const runnerLoss = detectRunnerLoss({
-    terminalClassificationPresent: false,
-    jobConclusion: conclusivelyCancelled ? "cancelled" : "failure",
-    runnerLostMarkerCount: 0,
-  });
-  const retryDecision = decideRetry({
-    runnerLoss,
-    classification: null,
-    attempt: options.runnerLossAttempt,
-  });
+  const retryDecision = options.runnerLossEvidence
+    ? decideRetry({
+        runnerLoss: detectRunnerLoss(options.runnerLossEvidence),
+        classification: null,
+        attempt: options.runnerLossAttempt,
+      })
+    : {
+        retry: false,
+        reason: "no verified hosted-runner-loss marker was available",
+      };
   if (conclusivelyCancelled) {
     summary.push(`Runner-loss policy: ${retryDecision.reason}.`);
   }
@@ -2899,6 +2904,7 @@ export async function finishPrGate(options: {
         jobDetailsAvailable,
         jobDetailsComplete,
         runnerLossAttempt,
+        runnerLossEvidence: null,
       });
     }
     verdict = withRunnerLossLineage(verdict, priorRunnerLossUrls, childRunUrl);

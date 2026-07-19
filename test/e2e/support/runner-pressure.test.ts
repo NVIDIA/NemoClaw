@@ -519,14 +519,17 @@ describe("runner-loss signature and retry policy (#7146)", () => {
     ).toBe(false);
   });
 
-  it("detects loss when the runner disappeared before classification", () => {
+  it("does not treat cancellation alone as runner loss", () => {
     expect(
       detectRunnerLoss({
         terminalClassificationPresent: false,
         jobConclusion: "cancelled",
         runnerLostMarkerCount: 0,
       }),
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it("detects loss from a positive trusted marker before classification", () => {
     expect(
       detectRunnerLoss({
         terminalClassificationPresent: false,
@@ -534,6 +537,16 @@ describe("runner-loss signature and retry policy (#7146)", () => {
         runnerLostMarkerCount: 1,
       }),
     ).toBe(true);
+  });
+
+  it("rejects malformed runner-loss marker counts", () => {
+    expect(() =>
+      detectRunnerLoss({
+        terminalClassificationPresent: false,
+        jobConclusion: "failure",
+        runnerLostMarkerCount: -1,
+      }),
+    ).toThrow(/non-negative safe integer/u);
   });
 
   it("never treats an attempt that produced a terminal classification as loss", () => {
