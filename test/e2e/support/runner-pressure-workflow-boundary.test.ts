@@ -45,6 +45,13 @@ describe("runner-pressure E2E workflow boundary (#7146)", () => {
       error:
         "must fail closed on a missing or malformed terminal classification while preserving the live-test status",
     },
+    {
+      label: "trusted assertion and timeout outcome propagation",
+      mutate: (script: string) =>
+        script.replace("E2E_TEST_OUTCOME_FILE", "OMITTED_TEST_OUTCOME_FILE"),
+      error:
+        "must propagate the trusted live-harness assertion or timeout outcome into terminal classification",
+    },
   ])("rejects missing $label in both representative lanes", ({ mutate, error }) => {
     const workflow = loadWorkflow();
     for (const jobId of JOBS) {
@@ -54,6 +61,24 @@ describe("runner-pressure E2E workflow boundary (#7146)", () => {
 
     expect(validateRunnerPressureWorkflow(workflow)).toEqual(
       JOBS.map((jobId) => `${jobId} ${error}`),
+    );
+  });
+
+  it("rejects the old constant none outcome in both representative lanes", () => {
+    const workflow = loadWorkflow();
+    for (const jobId of JOBS) {
+      const step = runStep(workflow, jobId);
+      step.run = step.run!.replace(
+        "npx tsx tools/e2e/runner-pressure.mts classify",
+        "TEST_OUTCOME=none npx tsx tools/e2e/runner-pressure.mts classify",
+      );
+    }
+
+    expect(validateRunnerPressureWorkflow(workflow)).toEqual(
+      JOBS.map(
+        (jobId) =>
+          `${jobId} must propagate the trusted live-harness assertion or timeout outcome into terminal classification`,
+      ),
     );
   });
 

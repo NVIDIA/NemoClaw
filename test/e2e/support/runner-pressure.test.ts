@@ -10,6 +10,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  LIVE_TEST_OUTCOME_FILE,
+  type LiveTestOutcome,
+  renderLiveTestOutcome,
+} from "../../../tools/e2e/live-test-outcome.mts";
+import {
   assertCanonicalTimestamp,
   assertPhaseLabel,
   BASELINE_LINE_PREFIX,
@@ -53,9 +58,13 @@ function runHelper(args: string[], env: Record<string, string>) {
   });
 }
 
-function withBaselineFile<T>(callback: (baselinePath: string) => T): T {
+function withEvidenceFiles<T>(
+  outcome: LiveTestOutcome,
+  callback: (baselinePath: string, outcomePath: string) => T,
+): T {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runner-pressure-"));
   const baselinePath = path.join(directory, "baseline.jsonl");
+  const outcomePath = path.join(directory, LIVE_TEST_OUTCOME_FILE);
   fs.writeFileSync(
     baselinePath,
     `${renderBaselineLine({
@@ -66,8 +75,9 @@ function withBaselineFile<T>(callback: (baselinePath: string) => T): T {
       containerOomKilled: false,
     })}\n`,
   );
+  fs.writeFileSync(outcomePath, renderLiveTestOutcome(outcome), { mode: 0o600 });
   try {
-    return callback(baselinePath);
+    return callback(baselinePath, outcomePath);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -608,23 +618,26 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
     });
   }, 90_000);
 
-  it("classifies a harness assertion through the real CLI", () => {
-    withBaselineFile((baselinePath) => {
+  it.each([
+    "assertion",
+    "timeout",
+  ] as const)("classifies a trusted harness %s artifact through the real CLI", (outcome) => {
+    withEvidenceFiles(outcome, (baselinePath, outcomePath) => {
       const result = runHelper(["classify"], {
-        TEST_OUTCOME: "assertion",
         E2E_RESOURCE_BASELINE_FILE: baselinePath,
+        E2E_TEST_OUTCOME_FILE: outcomePath,
       });
       expect(result.status).toBe(0);
       const line = result.stdout.split("\n").find((l) => l.startsWith(CLASSIFICATION_LINE_PREFIX));
       expect(line).toBeDefined();
       expect(
         JSON.parse((line as string).slice(CLASSIFICATION_LINE_PREFIX.length)).classification,
-      ).toBe("assertion");
+      ).toBe(outcome);
     });
   }, 90_000);
 
   it("rejects missing or malformed pre-phase evidence before classification", () => {
-    const missing = runHelper(["classify"], { TEST_OUTCOME: "none" });
+    const missing = runHelper(["classify"], {});
     expect(missing.status).not.toBe(0);
     expect(missing.stderr).toContain("E2E_RESOURCE_BASELINE_FILE");
 
@@ -633,7 +646,6 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
     try {
       fs.writeFileSync(baselinePath, `${BASELINE_LINE_PREFIX}{"v":1,"token":"ghp_secret"}\n`);
       const malformed = runHelper(["classify"], {
-        TEST_OUTCOME: "none",
         E2E_RESOURCE_BASELINE_FILE: baselinePath,
       });
       expect(malformed.status).not.toBe(0);

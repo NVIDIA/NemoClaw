@@ -16,9 +16,10 @@
  * - `baseline`     — emit the numeric/boolean pre-phase OOM baseline consumed
  *                    by `classify` after the phase.
  * - `classify`     — emit one `E2E_TERMINAL_CLASSIFICATION` line from
- *                    `TEST_OUTCOME` (`assertion` | `timeout` | `none`) plus
- *                    phase-specific on-host OOM/disk evidence. Requires the
- *                    baseline file named by `E2E_RESOURCE_BASELINE_FILE`.
+ *                    the trusted live-harness artifact named by
+ *                    `E2E_TEST_OUTCOME_FILE` plus phase-specific on-host
+ *                    OOM/disk evidence. Requires the baseline file named by
+ *                    `E2E_RESOURCE_BASELINE_FILE`.
  * - `validate-classification` — fail closed unless the named classification
  *                    artifact contains exactly one canonical terminal line.
  * - `decide-retry` — print a JSON retry decision from `E2E_RUNNER_LOSS`,
@@ -33,13 +34,12 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
-
+import { readLiveTestOutcome } from "./live-test-outcome.mts";
 import {
   assertPhaseLabel,
   classifyFailure,
   countKernelOomKills,
   decideRetry,
-  type FailureEvidence,
   parseBaselineLine,
   parseCgroupMemoryEvents,
   parseCgroupScalar,
@@ -132,11 +132,6 @@ export function collectResourceSnapshot(phase: string): ResourceSnapshot {
 function runSnapshot(): void {
   const phase = assertPhaseLabel(process.env.E2E_PHASE);
   console.log(renderSnapshotLine(collectResourceSnapshot(phase)));
-}
-
-function assertTestOutcome(value: string | undefined): FailureEvidence["testOutcome"] {
-  if (value === "assertion" || value === "timeout" || value === "none") return value;
-  throw new Error("TEST_OUTCOME must be one of: assertion, timeout, none");
 }
 
 function containerOomKilled(name: string | undefined): boolean {
@@ -232,7 +227,9 @@ function runClassify(): void {
   const meminfo = meminfoText === null ? null : parseMeminfo(meminfoText);
   const disk = collectDisk();
   const classified = classifyFailure({
-    testOutcome: assertTestOutcome(process.env.TEST_OUTCOME),
+    testOutcome: readLiveTestOutcome(
+      assertEvidencePath(process.env.E2E_TEST_OUTCOME_FILE, "E2E_TEST_OUTCOME_FILE"),
+    ),
     cgroupOomKillsBefore: baseline.cgroupOomKills,
     cgroupOomKillsAfter: current.cgroupOomKills,
     kernelOomKillCountBefore: baseline.kernelOomKillCount,

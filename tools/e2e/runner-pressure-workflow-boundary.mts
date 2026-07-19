@@ -57,6 +57,17 @@ export function validateRunnerPressureWorkflow(workflowValue: unknown): string[]
     }
 
     if (
+      !script.includes('test_outcome_file="$E2E_ARTIFACT_DIR/live-test-outcome.json"') ||
+      !script.includes('export E2E_TEST_OUTCOME_FILE="$test_outcome_file"') ||
+      script.indexOf('export E2E_TEST_OUTCOME_FILE="$test_outcome_file"') >= liveTest ||
+      script.includes("TEST_OUTCOME=none")
+    ) {
+      errors.push(
+        `${contract.id} must propagate the trusted live-harness assertion or timeout outcome into terminal classification`,
+      );
+    }
+
+    if (
       classify <= liveTest ||
       validateClassification <= classify ||
       !script.includes(
