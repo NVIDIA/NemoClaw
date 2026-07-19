@@ -3073,6 +3073,8 @@ Earlier releases only stopped `openshell forward` processes, so those orphans ac
 
 For Local Ollama setups, uninstall also stops matching Ollama auth proxy processes before deleting `~/.nemoclaw` state so stale proxy listeners do not block a later reinstall.
 
+For Hermes setups, uninstall verifies and stops the selected gateway's managed port-forward watcher and sandbox-scoped forward before deleting their state. If either cleanup cannot be confirmed, uninstall returns nonzero and preserves the watcher state so the cleanup can be retried without touching sibling gateways.
+
 On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-driver gateway SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
 
 | Flag | Effect |
