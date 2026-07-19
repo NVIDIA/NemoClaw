@@ -106,6 +106,7 @@ const {
 const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
+  discloseInitialSandboxPolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
 const {
   getSelectionDrift,
@@ -2706,14 +2707,10 @@ async function createSandboxWithBaseImageResolution(
     upsertMessagingProviders,
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+    discloseInitialSandboxPolicy,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
-  }
-  if (initialSandboxPolicy.appliedPresets.length > 0) {
-    console.log(
-      `  Including policy preset(s) at sandbox boot: ${initialSandboxPolicy.appliedPresets.join(", ")}`,
-    );
   }
   if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);

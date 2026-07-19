@@ -11,8 +11,9 @@ const HERMES_RESTART_TRANSPORT_FAILURE_SUFFIX = [
 ].join("\n");
 const HERMES_RESTART_SUCCESS_PREFIX = new RegExp(
   `^${[
-    String.raw`Widening sandbox egress — adding: (?<host>[a-z0-9-]+\.trycloudflare\.com)`,
-    String.raw`Applied preset: mcp-bridge-concurrent`,
+    String.raw`Effective egress that would be opened:`,
+    String.raw`(?:.*\n)*?\s*- (?<host>[a-z0-9-]+\.trycloudflare\.com):\d+[^\n]*`,
+    String.raw`(?:.*\n)*?Applied preset: mcp-bridge-concurrent`,
     String.raw`Narrowing sandbox egress — removing: \k<host>`,
     String.raw`Removed preset: mcp-bridge-concurrent`,
     String.raw`✓ Policy version (?<cleanupVersion>\d+) submitted \(hash: [0-9a-f]+\)`,

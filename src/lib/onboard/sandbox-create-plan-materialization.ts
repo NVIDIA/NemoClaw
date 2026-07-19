@@ -121,6 +121,7 @@ export function materializeSandboxCreatePlan({
   runProviderPreDeleteCleanup,
   upsertMessagingProviders,
   getHermesToolGatewayProviderName,
+  discloseInitialSandboxPolicy,
   prepareInitialSandboxCreatePolicy = getInitialSandboxCreatePolicy,
 }: MaterializeSandboxCreatePlanInput): SandboxCreatePlan {
   const enabledMessagingTokenDefs = validateSandboxCreateIntentBindings(intent, messagingTokenDefs);
@@ -136,6 +137,12 @@ export function materializeSandboxCreatePlan({
     intent.gpuRoutePlan,
     prepareInitialSandboxCreatePolicy,
   );
+  try {
+    discloseInitialSandboxPolicy?.(initialSandboxPolicy);
+  } catch (error) {
+    initialSandboxPolicy.cleanup?.();
+    throw error;
+  }
   const createArgs = [
     "--from",
     `${buildCtx}/Dockerfile`,

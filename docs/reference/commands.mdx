@@ -411,6 +411,7 @@ Three tiers are available:
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
 For details on tiers and the presets each includes, refer to [Network Policies](network-policies#policy-tiers).
 When you finish the policy step, NemoClaw records the finalized built-in preset selection for that sandbox.
+When onboarding creates or recreates a sandbox with presets, NemoClaw prints the exact finalized create-time policy scope before registering providers or creating the sandbox.
 Later re-onboard runs seed from that finalized selection, so presets you intentionally removed stay removed unless you select them again or override the policy mode.
 
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
@@ -1640,6 +1641,8 @@ Do not pass `--raw` output to `openshell policy set` because the metadata header
 Add a policy preset to a sandbox.
 Presets extend the baseline network policy with additional endpoints.
 Before applying, the command shows which endpoints the preset would open and prompts for confirmation.
+The scope comes from the exact preset YAML and includes each endpoint's host, port, access, protocol, TLS, and enforcement settings, allowed methods and paths, and binary allowlist.
+When a lifecycle operation reapplies a preset, NemoClaw compares it with the live policy and reports whether the preset opens new egress, replaces a drifted entry, or is already effective with no new egress.
 
 ```bash
 $$nemoclaw my-assistant policy-add
@@ -1846,6 +1849,9 @@ The operation is idempotent.
 Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
 NemoClaw requires the matching built-in network policy preset YAML to be present.
 A missing or malformed preset YAML (no `network_policies:` section) aborts `channels add` before any token prompt, registry write, or rebuild prompt.
+After validating that preset, NemoClaw discloses its effect before prompting for credentials or changing gateway or registry state.
+It prints the exact effective egress scope when the preset would open or replace access, or reports that no new egress would be opened when the preset is already effective.
+The `--dry-run` path prints the same disclosure without collecting credentials or applying changes.
 With the preset file in place, NemoClaw applies it to the sandbox before the rebuild so the bridge has egress to its upstream API.
 When the apply step itself fails after the registry write on a fresh add, NemoClaw attempts to roll back the bridge providers, the `messagingChannels` entry, and any staged environment credentials, then exits without prompting for a rebuild; if any gateway-side step (provider detach or delete) fails the rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so the operator can clean up manually.
 When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry, restores staged environment credentials when available, restores registry credential hashes, and attempts to re-upsert the prior bridge providers, but flags `gateway-providers` as residual because the in-flight upsert may have left the gateway with the new token; verify the gateway bridge before relying on the channel.
@@ -1917,6 +1923,7 @@ Use `channels stop` instead of `channels remove` when you want to pause a bridge
 
 Re-enable a channel previously paused with `channels stop`. The channel is removed from the disabled list, the sandbox is rebuilt, and the bridge registers with the gateway again using the stored credentials.
 Before the rebuild, NemoClaw reapplies the matching built-in network policy preset so the restored bridge has egress to its upstream API.
+Before updating the disabled list or applying the policy, NemoClaw prints the exact effective egress scope when the preset would open or replace access, or reports that no new egress would be opened when the preset is already effective.
 If policy restoration fails, NemoClaw rolls the channel back to disabled and exits without rebuilding into a partially active state.
 
 ```bash
@@ -2460,6 +2467,7 @@ Upgrade a sandbox to the current agent version while preserving workspace state.
 The command backs up workspace state, destroys the old sandbox (including its host-side Docker image), recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
 Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
+Before creating the replacement sandbox, NemoClaw prints the finalized create-time policy scope whenever presets are included.
 The replacement uses the recorded compatible-endpoint reasoning mode and web search selection instead of ambient shell values.
 Rebuild preserves the recorded sandbox GPU enablement mode and, for an explicitly enabled sandbox, its recorded device selector.
 It re-resolves the Docker-driver GPU route from the current host and current `NEMOCLAW_DOCKER_GPU_PATCH` value, so native-only, explicitly authorized native-with-fallback, and compatibility-only routing may differ from the original onboarding run.
@@ -3073,6 +3081,9 @@ Uninstall also stops any orphaned `openshell` host processes left behind by prev
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
 
 For Local Ollama setups, uninstall also stops matching Ollama auth proxy processes before deleting `~/.nemoclaw` state so stale proxy listeners do not block a later reinstall.
+
+For Hermes setups, uninstall inspects the selected gateway's managed port-forward watcher state, stops each verified watcher process and its sandbox-scoped forward, and leaves sibling gateway state untouched.
+If any watcher or forward cleanup cannot be confirmed, uninstall exits nonzero and preserves the selected gateway's watcher state so you can retry cleanup.
 
 On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-driver gateway SQLite data, audit logs, VM-driver state, and standalone-fallback gateway PID files.
 

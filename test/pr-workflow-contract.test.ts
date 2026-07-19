@@ -1074,6 +1074,9 @@ describe("pull request and main workflow contracts", () => {
     expect(trustedRatchet.run).toBe(
       'node --experimental-strip-types "$GITHUB_ACTION_PATH/create-require-ratchet.mts"',
     );
+    expect(stepRuns(sharedActions.staticChecks)).not.toContain(
+      'npx tsx "$GITHUB_ACTION_PATH/create-require-ratchet.mts"',
+    );
     expect(
       requiredStepIndex(
         sharedActions.staticChecks,
