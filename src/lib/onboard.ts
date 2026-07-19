@@ -506,8 +506,8 @@ const { tryCleanupOrphanedDashboardForward } =
   require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
 const { destroyGatewayForReuse } =
   require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
-const { applyPreflightGatewayCleanup } =
-  require("./onboard/preflight-gateway-cleanup-decision") as typeof import("./onboard/preflight-gateway-cleanup-decision");
+const { runPreflightGatewaySequence } =
+  require("./onboard/preflight-gateway-sequence") as typeof import("./onboard/preflight-gateway-sequence");
 const { verifyGatewayContainerRunning } =
   require("./onboard/gateway-container-running") as typeof import("./onboard/gateway-container-running");
 const { applyHealthyPortReuse } =
@@ -516,8 +516,6 @@ const { destroyGatewayWithVolumeCleanup } =
   require("./onboard/gateway-destroy") as typeof import("./onboard/gateway-destroy");
 const { gatewayCliSupportsLifecycleCommands } =
   require("./onboard/gateway-lifecycle") as typeof import("./onboard/gateway-lifecycle");
-const { reconcilePreflightGatewayReuseState } =
-  require("./onboard/preflight-gateway-reuse") as typeof import("./onboard/preflight-gateway-reuse");
 const {
   getGatewayReuseHealthWaitConfig,
   isDockerDriverGatewayHttpReady: probeDockerDriverGatewayHttpReady,
@@ -610,7 +608,6 @@ import {
   printMessagingProviderMissing,
   printSwapCreationFailed,
 } from "./onboard/preflight-messages";
-import { cleanupOrphanedGatewayContainer } from "./onboard/preflight-orphan-gateway-cleanup";
 import { shouldSkipPreRecreateBackup } from "./onboard/sandbox-backup-on-recreate";
 import {
   getResumeSandboxGpuOverrides,
@@ -1512,11 +1509,16 @@ async function preflight(
   // metadata can be stale after a manual `docker rm`. See #2020. Newer
   // package-managed OpenShell gateways do not have an openshell-cluster-*
   // Docker container, so the live CLI health check is the source of truth.
-  gatewayReuseState = await reconcilePreflightGatewayReuseState({
+  // The reuse/cleanup/orphan stages run as one composed sequence so external
+  // supervision is enforced across the whole path, not per stage (#6576).
+  gatewayReuseState = await runPreflightGatewaySequence({
     gatewayReuseState,
-    supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
     externallySupervised: gatewayExternallySupervised,
+    supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
     gatewayName: GATEWAY_NAME,
+    cliDisplayName: cliDisplayName(),
+    dashboardPort: getOnboardDashboardPort(),
     verifyGatewayContainerRunning,
     recoverGatewayRuntime,
     waitForGatewayHttpReady,
@@ -1526,30 +1528,11 @@ async function preflight(
         ignoreError: true,
       }),
     stopAllDashboardForwards,
-    destroyGateway,
-    destroyGatewayForReuse,
     getGatewayClusterImageDrift,
     exitProcess: (code) => process.exit(code),
-  });
-
-  gatewayReuseState = applyPreflightGatewayCleanup({
-    gatewayReuseState,
-    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
-    externallySupervised: gatewayExternallySupervised,
-    cliDisplayName: cliDisplayName(),
-    dashboardPort: getOnboardDashboardPort(),
-    log: console.log,
-    warn: console.warn,
-    runOpenshell,
     destroyGateway,
     destroyGatewayForReuse,
-  });
-
-  cleanupOrphanedGatewayContainer({
-    gatewayReuseState,
-    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
-    externallySupervised: gatewayExternallySupervised,
-    gatewayName: GATEWAY_NAME,
+    runOpenshell,
     dockerInspect,
     dockerStop,
     dockerRm,
