@@ -282,6 +282,7 @@ function isCanonicalOpenshellResolverCall(
     symbol?.declarations?.some(
       (declaration) =>
         ts.isFunctionDeclaration(declaration) &&
+        ts.isSourceFile(declaration.parent) &&
         declaration.name?.text === "resolveOpenshellBinary" &&
         path.resolve(declaration.getSourceFile().fileName) === path.resolve(fileName),
     ) === true
