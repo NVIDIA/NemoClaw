@@ -8,7 +8,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
-import { readPrivateRegularFile, writePrivateRegularFile } from "../tools/e2e/private-file.ts";
+import {
+  appendPrivateRegularFile,
+  readPrivateRegularFile,
+  writePrivateRegularFile,
+} from "../tools/e2e/private-file.ts";
 
 describe("private E2E controller files", () => {
   it("writes private regular files without following links or truncating hardlink targets", () => {
@@ -22,7 +26,8 @@ describe("private E2E controller files", () => {
       expect(readPrivateRegularFile(regular, { maxBytes: 64 })).toBe("regular\n");
       expect(fs.statSync(regular).mode & 0o777).toBe(0o600);
       writePrivateRegularFile(regular, "updated\n");
-      expect(readPrivateRegularFile(regular, { maxBytes: 64 })).toBe("updated\n");
+      appendPrivateRegularFile(regular, "appended\n", { maxBytes: 64 });
+      expect(readPrivateRegularFile(regular, { maxBytes: 64 })).toBe("updated\nappended\n");
 
       fs.writeFileSync(target, "protected\n");
       fs.symlinkSync(target, symlink);
@@ -30,6 +35,10 @@ describe("private E2E controller files", () => {
 
       expect(() => writePrivateRegularFile(symlink, "replaced\n")).toThrow();
       expect(() => writePrivateRegularFile(hardlink, "replaced\n")).toThrow(/private regular/u);
+      expect(() => appendPrivateRegularFile(symlink, "replaced\n", { maxBytes: 64 })).toThrow();
+      expect(() => appendPrivateRegularFile(hardlink, "replaced\n", { maxBytes: 64 })).toThrow(
+        /private regular/u,
+      );
       expect(fs.readFileSync(target, "utf8")).toBe("protected\n");
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });

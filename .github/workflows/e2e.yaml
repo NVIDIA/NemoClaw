@@ -2298,7 +2298,28 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
+          mkdir -p "$E2E_ARTIFACT_DIR"
+          baseline_file="$E2E_ARTIFACT_DIR/runner-pressure-baseline.jsonl"
+          phase_baselines_file="$E2E_ARTIFACT_DIR/runner-pressure-phase-baselines.jsonl"
+          classification_file="$E2E_ARTIFACT_DIR/runner-pressure-classification.jsonl"
+          test_outcome_file="$E2E_ARTIFACT_DIR/live-test-outcome.json"
+          export DOCKER_OOM_CONTAINER="$NEMOCLAW_SANDBOX_NAME"
+          export E2E_PHASE="rebuild-hermes.workflow"
+          export E2E_RESOURCE_BASELINE_FILE="$baseline_file"
+          export E2E_RESOURCE_PHASE_BASELINES_FILE="$phase_baselines_file"
+          export E2E_TERMINAL_CLASSIFICATION_FILE="$classification_file"
+          export E2E_TEST_OUTCOME_FILE="$test_outcome_file"
+          npx tsx tools/e2e/runner-pressure.mts snapshot
+          npx tsx tools/e2e/runner-pressure.mts initialize-evidence
+          set +e
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts
+          test_status="$?"
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            npx tsx tools/e2e/runner-pressure.mts classify
+            npx tsx tools/e2e/runner-pressure.mts validate-classification
+          fi
+          exit "$test_status"
 
       - name: Upload Hermes rebuild artifacts
         if: always()
@@ -2351,7 +2372,28 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
+          mkdir -p "$E2E_ARTIFACT_DIR"
+          baseline_file="$E2E_ARTIFACT_DIR/runner-pressure-baseline.jsonl"
+          phase_baselines_file="$E2E_ARTIFACT_DIR/runner-pressure-phase-baselines.jsonl"
+          classification_file="$E2E_ARTIFACT_DIR/runner-pressure-classification.jsonl"
+          test_outcome_file="$E2E_ARTIFACT_DIR/live-test-outcome.json"
+          export DOCKER_OOM_CONTAINER="$NEMOCLAW_SANDBOX_NAME"
+          export E2E_PHASE="rebuild-hermes-stale-base.workflow"
+          export E2E_RESOURCE_BASELINE_FILE="$baseline_file"
+          export E2E_RESOURCE_PHASE_BASELINES_FILE="$phase_baselines_file"
+          export E2E_TERMINAL_CLASSIFICATION_FILE="$classification_file"
+          export E2E_TEST_OUTCOME_FILE="$test_outcome_file"
+          npx tsx tools/e2e/runner-pressure.mts snapshot
+          npx tsx tools/e2e/runner-pressure.mts initialize-evidence
+          set +e
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts
+          test_status="$?"
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            npx tsx tools/e2e/runner-pressure.mts classify
+            npx tsx tools/e2e/runner-pressure.mts validate-classification
+          fi
+          exit "$test_status"
 
       - name: Upload Hermes stale-base rebuild artifacts
         if: always()
