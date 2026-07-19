@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as credentials from "../credentials/store";
 
@@ -13,9 +13,19 @@ import {
   shouldReturnToProviderSelection,
 } from "./credential-navigation";
 
+let navigationKeyBeforeTest: string | undefined;
+
+beforeEach(() => {
+  navigationKeyBeforeTest = process.env.NEMOCLAW_TEST_NAVIGATION_KEY;
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
-  delete process.env.NEMOCLAW_TEST_NAVIGATION_KEY;
+  if (navigationKeyBeforeTest === undefined) {
+    delete process.env.NEMOCLAW_TEST_NAVIGATION_KEY;
+  } else {
+    process.env.NEMOCLAW_TEST_NAVIGATION_KEY = navigationKeyBeforeTest;
+  }
 });
 
 describe("credential prompt navigation helpers (#6005)", () => {
@@ -42,7 +52,7 @@ describe("credential prompt navigation helpers (#6005)", () => {
 
     expect(result).toBe(BACK_TO_SELECTION);
     expect(saveCredential).not.toHaveBeenCalled();
-    expect(process.env.NEMOCLAW_TEST_NAVIGATION_KEY).toBeUndefined();
+    expect(process.env.NEMOCLAW_TEST_NAVIGATION_KEY).toBe(navigationKeyBeforeTest);
   });
 
   it("treats both the shared back sentinel and credential back intents as provider-selection navigation", () => {
