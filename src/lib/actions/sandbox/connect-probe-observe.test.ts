@@ -118,5 +118,6 @@ describe("connectSandbox probe-only observe mode", () => {
     const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(errors).toContain("Timed out after 300s waiting for sandbox 'alpha'");
     expect(errors).toContain("NEMOCLAW_CONNECT_TIMEOUT=600 nemoclaw alpha connect --probe-only");
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
   });
 });
