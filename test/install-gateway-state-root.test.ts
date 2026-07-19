@@ -137,7 +137,25 @@ printf 'agent=%s\n' "$(resolve_onboarded_agent)"`,
     }
   });
 
+  it("normalizes a leading-zero gateway port before selecting its state root", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-normalized-port-"));
+    try {
+      const result = runInstallerFunctions(
+        home,
+        `NEMOCLAW_GATEWAY_PORT=09123
+printf 'state=%s\n' "$(nemoclaw_state_dir)"`,
+      );
+
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).toContain(`state=${home}/.nemoclaw/gateways/9123`);
+      expect(result.output).not.toContain("gateways/09123");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it.each([
+    "08000",
     "11434",
     "18790",
   ])("rejects conflicting gateway port %s before writing selected state", (gatewayPort) => {

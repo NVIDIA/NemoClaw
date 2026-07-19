@@ -200,6 +200,7 @@ resolve_nemoclaw_gateway_port() {
   if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
     error "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535."
   fi
+  port="$((10#$port))"
   if [ "$port" -ge 18789 ] && [ "$port" -le 18799 ]; then
     error "NEMOCLAW_GATEWAY_PORT must not overlap the 18789-18799 dashboard port range."
   fi
@@ -3287,11 +3288,14 @@ station_express_resume_port_value() {
   port="${port%"${port##*[![:space:]]}"}"
   validate_station_express_resume_port "$port" \
     || error "${env_name} must be an integer between 1024 and 65535."
-  printf '%s' "$port"
+  printf '%s' "$((10#$port))"
 }
 
 validate_station_express_resume_ports_distinct() {
   local gateway_port="$1" dashboard_port="$2" vllm_port="$3"
+  gateway_port="$((10#$gateway_port))"
+  dashboard_port="$((10#$dashboard_port))"
+  vllm_port="$((10#$vllm_port))"
   [[ "$gateway_port" != "$dashboard_port" ]] \
     || error "NEMOCLAW_GATEWAY_PORT conflicts with NEMOCLAW_DASHBOARD_PORT (${gateway_port})."
   [[ "$gateway_port" != "$vllm_port" ]] \

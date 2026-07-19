@@ -678,6 +678,7 @@ describe("DGX Station Express resume (#7048)", () => {
     ["dashboard", { dashboardPort: "1023" }],
     ["vLLM", { vllmPort: "65536" }],
     ["duplicate", { dashboardPort: "18081" }],
+    ["numerically duplicate", { dashboardPort: "018081" }],
   ])("rejects a port-bound installer receipt with an invalid %s port", (_field, overrides) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-port-invalid-"));
     const stateDir = path.join(home, ".nemoclaw");

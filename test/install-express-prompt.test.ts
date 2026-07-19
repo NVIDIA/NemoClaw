@@ -561,6 +561,25 @@ ensure_station_express_host
     expect(output).not.toContain("HOST_PREPARATION_INVOKED");
   });
 
+  it("rejects numerically equivalent Station Express ports before host preparation (#7203)", () => {
+    const { result, output } = runInstallerSourced(`
+_SELECTED_EXPRESS_PLATFORM='DGX Station'
+NEMOCLAW_VLLM_MODEL='deepseek-v4-flash'
+NEMOCLAW_GATEWAY_PORT='18081'
+NEMOCLAW_DASHBOARD_PORT='018000'
+NEMOCLAW_VLLM_PORT='18000'
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
+classify_dgx_station_release() { printf 'supported-ai-developer-tools'; }
+run_station_host_preparation() { printf 'HOST_PREPARATION_INVOKED\n'; }
+ensure_station_express_host
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("NEMOCLAW_DASHBOARD_PORT conflicts with NEMOCLAW_VLLM_PORT (18000)");
+    expect(output).not.toContain("HOST_PREPARATION_INVOKED");
+  });
+
   it("restores custom Station Express ports from the accepted receipt without another prompt (#7203)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-port-resume-"));
     const revision = "a".repeat(40);

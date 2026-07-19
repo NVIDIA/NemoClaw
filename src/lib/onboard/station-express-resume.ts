@@ -129,11 +129,12 @@ function validReceiptPort(value: string): boolean {
 }
 
 function validReceiptPorts(gatewayPort: string, dashboardPort: string, vllmPort: string): boolean {
+  const numericPorts = [gatewayPort, dashboardPort, vllmPort].map(Number);
   return (
     validReceiptPort(gatewayPort) &&
     validReceiptPort(dashboardPort) &&
     validReceiptPort(vllmPort) &&
-    new Set([gatewayPort, dashboardPort, vllmPort]).size === 3
+    new Set(numericPorts).size === 3
   );
 }
 
