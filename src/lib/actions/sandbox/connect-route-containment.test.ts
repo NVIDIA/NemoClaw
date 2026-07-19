@@ -102,7 +102,7 @@ describe("connect route containment", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalledTimes(2);
     expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
     expect(harness.captureOpenshellSpy).toHaveBeenCalled();
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(

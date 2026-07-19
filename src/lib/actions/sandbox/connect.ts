@@ -1088,6 +1088,10 @@ export async function connectSandbox(
 
   if (probeOnly) {
     waitForSandboxReadyOrExit(sandboxName, { defaultTimeoutSec: 300 });
+    // `sandbox list` uses OpenShell's process-global gateway selection. Re-pin
+    // and re-observe the owning gateway after a potentially long wait before
+    // any in-sandbox process or host-forward mutation.
+    await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
     return await runSandboxConnectProbe(sandboxName);
   }
 

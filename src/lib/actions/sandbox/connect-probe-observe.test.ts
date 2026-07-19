@@ -50,8 +50,16 @@ describe("connectSandbox probe-only observe mode", () => {
     );
   });
 
-  it("polls sandbox readiness before running in-sandbox process recovery on probeOnly", async () => {
-    const harness = createConnectHarness();
+  it("re-observes the live sandbox after delayed readiness before process or forward recovery (#7173)", async () => {
+    const harness = createConnectHarness({
+      listOutputs: ["alpha Starting", "alpha Ready"],
+      processCheck: {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: true,
+      },
+    });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
@@ -65,10 +73,27 @@ describe("connectSandbox probe-only observe mode", () => {
         );
       },
     );
-    expect(listInvocations.length).toBeGreaterThan(0);
+    expect(listInvocations).toHaveLength(2);
+    const liveLookupOrder = harness.ensureLiveSandboxSpy.mock.invocationCallOrder;
+    expect(liveLookupOrder).toHaveLength(2);
     const recoveryOrder = harness.checkAndRecoverSpy.mock.invocationCallOrder;
-    expect(recoveryOrder.length).toBeGreaterThan(0);
-    expect(listInvocations[0]).toBeLessThan(recoveryOrder[0]);
+    expect(recoveryOrder).toHaveLength(1);
+    expect(listInvocations[1]).toBeLessThan(liveLookupOrder[1]);
+    expect(liveLookupOrder[1]).toBeLessThan(recoveryOrder[0]);
+    expect(harness.logSpy).toHaveBeenCalledWith(
+      expect.stringContaining("restored dashboard port forward"),
+    );
+  });
+
+  it("does not run process or forward recovery for a terminal sandbox phase (#7173)", async () => {
+    const harness = createConnectHarness({ listOutput: "alpha Error" });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.checkAndRecoverSpy).not.toHaveBeenCalled();
   });
 
   it("exits on timeout when sandbox never reports Ready on probeOnly", async () => {

@@ -54,6 +54,7 @@ export type ConnectHarnessOptions = {
   registryEntries?: Array<Partial<SandboxEntry> & Pick<SandboxEntry, "name">>;
   sessionAgent?: unknown;
   listOutput?: string;
+  listOutputs?: string[];
   processCheck?: {
     checked: boolean;
     wasRunning?: boolean;
@@ -129,6 +130,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   });
   vi.spyOn(gatewayFailureClassifier, "isDockerRuntimeDown").mockReturnValue(false);
   const inferenceProbeResponses = [...(options.inferenceProbeResponses ?? [])];
+  const listOutputs = [...(options.listOutputs ?? [])];
   const captureOpenshellSpy = vi
     .spyOn(runtime, "captureOpenshell")
     .mockImplementation((args: unknown) => {
@@ -136,7 +138,10 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
       if (argv[0] === "sandbox" && argv[1] === "list") {
         return {
           status: 0,
-          output: options.listOutput ?? `${options.registryEntry?.name ?? "alpha"} Ready`,
+          output:
+            listOutputs.shift() ??
+            options.listOutput ??
+            `${options.registryEntry?.name ?? "alpha"} Ready`,
         };
       }
       if (argv[0] === "inference" && argv[1] === "get") {
