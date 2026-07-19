@@ -625,6 +625,25 @@ describe("installVllm model resolution", () => {
     expect(currentPhaseActivityLabel()).toBeNull();
   });
 
+  it("clears the heartbeat activity when vLLM setup rejects (#7156)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const setupFailure = new Error("vLLM setup failed");
+
+    await expect(
+      installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+        beforeInstall: () => {
+          expect(currentPhaseActivityLabel()).toBe("vLLM install");
+          throw setupFailure;
+        },
+      }),
+    ).rejects.toBe(setupFailure);
+
+    expect(currentPhaseActivityLabel()).toBeNull();
+  });
+
   it("uses the profile default and skips the picker in non-interactive mode", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const promptFn = vi.fn<(q: string) => Promise<string>>();
