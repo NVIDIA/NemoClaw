@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { currentPhaseActivityLabel } from "../../core/phase-activity";
 import { isAnyPromptActive } from "../../core/prompt-activity";
 import type { OnboardSequencePhase } from "./sequence-runner";
 import type { OnboardNonTerminalMachineState } from "./types";
@@ -43,6 +44,7 @@ export interface PhaseProgressOptions {
   interactive?: boolean;
   heartbeatIntervalMs?: number;
   isPromptActive?: () => boolean;
+  activityLabel?: () => string | null;
   logLine?: (line: string) => void;
   now?: () => number;
   setTimer?: (callback: () => void, intervalMs: number) => PhaseProgressTimer;
@@ -63,6 +65,7 @@ export function createPhaseProgressReporter(
     : new Set([...HEARTBEAT_PHASE_STATES, ...INTERACTIVE_PHASE_STATES]);
   const heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
   const isPromptActive = options.isPromptActive ?? isAnyPromptActive;
+  const activityLabel = options.activityLabel ?? currentPhaseActivityLabel;
   const logLine = options.logLine ?? console.log;
   const now = options.now ?? Date.now;
   const setTimer =
@@ -78,7 +81,7 @@ export function createPhaseProgressReporter(
       return {
         state: phase.state,
         async run(context) {
-          const label = ONBOARD_PHASE_LABELS[phase.state];
+          const phaseLabel = ONBOARD_PHASE_LABELS[phase.state];
           const startedAt = now();
           const timer = setTimer(() => {
             // Interactive prompts inside heartbeat phases (sandbox name
@@ -87,6 +90,11 @@ export function createPhaseProgressReporter(
             // is answering. Hold the beat; the next one reports cumulative
             // elapsed time anyway. (#6651)
             if (isPromptActive()) return;
+            // A phase can spend most of its time in one long sub-stage
+            // (the provider-selection state drives the whole managed vLLM
+            // install), so name the registered sub-stage over the phase to
+            // keep the heartbeat truthful. (#7156)
+            const label = activityLabel() ?? phaseLabel;
             const elapsedSeconds = Math.max(0, Math.round((now() - startedAt) / 1000));
             try {
               logLine(`  ⏳ Still working on ${label}… (${elapsedSeconds}s elapsed)`);
