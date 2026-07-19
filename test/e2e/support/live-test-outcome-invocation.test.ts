@@ -57,6 +57,7 @@ describe("live-test outcome invocation contract (#7146)", () => {
         {
           cwd: ROOT,
           encoding: "utf8",
+          timeout: 20_000,
           env: {
             ...process.env,
             E2E_ARTIFACT_DIR: artifactDir,
@@ -74,6 +75,7 @@ describe("live-test outcome invocation contract (#7146)", () => {
         {
           cwd: ROOT,
           encoding: "utf8",
+          timeout: 20_000,
           env: {
             ...process.env,
             E2E_RESOURCE_BASELINE_FILE: baselineFile,
