@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
+import type { InitialSandboxPolicy } from "./initial-policy";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
@@ -90,5 +91,6 @@ export type MaterializeSandboxCreatePlanInput = {
     options: { replaceExisting: true },
   ): string[];
   getHermesToolGatewayProviderName(sandboxName: string): string;
+  discloseInitialSandboxPolicy?(policy: InitialSandboxPolicy): void;
   prepareInitialSandboxCreatePolicy?: PrepareInitialSandboxCreatePolicy;
 };
