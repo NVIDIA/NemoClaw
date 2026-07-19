@@ -11,6 +11,7 @@ import {
   HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
   type HermesAuthFlowDeps,
 } from "./hermes-auth";
+import { getNavigationChoice as getPromptNavigationChoice } from "./prompt-helpers";
 
 function clearHermesAuthEnvironment(): void {
   vi.stubEnv("NEMOCLAW_HERMES_AUTH_METHOD", undefined);
@@ -47,18 +48,24 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("Hermes auth back-navigation affordance", () => {
+describe("Hermes auth back-navigation affordance (#6005)", () => {
   it("prints the navigation hint before the interactive auth-method prompt", async () => {
     clearHermesAuthEnvironment();
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const events: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((message?: unknown) => {
+      if (message === NAVIGATION_HINT) events.push("hint");
+    });
     const deps = createDeps({
       isNonInteractive: vi.fn(() => false),
-      prompt: vi.fn(async () => "1"),
+      prompt: vi.fn(async () => {
+        events.push("prompt");
+        return "1";
+      }),
     });
 
     await createHermesAuthHelpers(deps).promptHermesAuthMethod();
 
-    expect(logSpy.mock.calls.some((call) => call[0] === NAVIGATION_HINT)).toBe(true);
+    expect(events).toEqual(["hint", "prompt"]);
   });
 
   it("returns to provider selection when the auth-method prompt replies back", async () => {
@@ -67,7 +74,7 @@ describe("Hermes auth back-navigation affordance", () => {
     const deps = createDeps({
       isNonInteractive: vi.fn(() => false),
       prompt: vi.fn(async () => "b"),
-      getNavigationChoice: vi.fn((): "back" => "back"),
+      getNavigationChoice: getPromptNavigationChoice,
     });
 
     const result = await createHermesAuthHelpers(deps).promptHermesAuthMethod();

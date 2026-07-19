@@ -10,7 +10,7 @@ import {
   shouldReturnToProviderSelection,
 } from "./credential-navigation";
 
-describe("credential prompt navigation helpers", () => {
+describe("credential prompt navigation helpers (#6005)", () => {
   it("accepts the short b token as back so the advertised key works", () => {
     expect(getNavigationChoice("b")).toBe("back");
     expect(getNavigationChoice(" B ")).toBe("back");

@@ -17,7 +17,7 @@ function makeDeps(promptReply: string) {
   };
 }
 
-describe("getNavigationChoice back token", () => {
+describe("getNavigationChoice back token (#6005)", () => {
   it("treats the short b token as back so the advertised key works", () => {
     expect(getNavigationChoice("b")).toBe("back");
     expect(getNavigationChoice(" B ")).toBe("back");
