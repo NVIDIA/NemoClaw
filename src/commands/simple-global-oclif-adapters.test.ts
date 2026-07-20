@@ -36,7 +36,7 @@ const mocks = vi.hoisted(() => {
     captureOpenshellCommand: vi.fn(() => ({ status: 0, output: "alpha\n" })),
     listSandboxes: vi.fn(() => ({ sandboxes: [] })),
     resolveOpenshell: vi.fn(() => "/usr/bin/openshell"),
-    runDebugCommandWithOptions: vi.fn(),
+    runDebugCommandWithOptions: vi.fn().mockResolvedValue(undefined),
     runDeployAction: vi.fn().mockResolvedValue(undefined),
     runDashboardUrlCommand: vi.fn(() => undefined),
     runGatewayTokenCommand: vi.fn(() => undefined),
@@ -143,6 +143,13 @@ describe("simple global oclif adapters", () => {
     );
     expect(configure).toHaveBeenCalledWith({ debug: false, quiet: false });
     expect(configure).not.toHaveBeenCalledWith({ debug: false, quiet: true });
+  });
+
+  it("propagates a rejected debug action through the CLI boundary", async () => {
+    const failure = new Error("diagnostic collection failed");
+    mocks.runDebugCommandWithOptions.mockRejectedValueOnce(failure);
+
+    await expect(DebugCliCommand.run(["--quick"], rootDir)).rejects.toBe(failure);
   });
 
   it("builds debug defaults from the sandbox registry and OpenShell liveness", async () => {

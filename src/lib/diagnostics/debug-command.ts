@@ -6,7 +6,7 @@ import type { DebugOptions } from "./debug";
 export interface RunDebugCommandDeps {
   getDefaultSandbox: () => string | undefined;
   isSandboxKnown: (name: string) => boolean;
-  runDebug: (options: DebugOptions) => void;
+  runDebug: (options: DebugOptions) => Promise<void>;
   env?: NodeJS.ProcessEnv;
   errorLine?: (message: string) => void;
   exit?: (code: number) => never;
@@ -31,7 +31,10 @@ function resolveExplicitName(
   return null;
 }
 
-export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebugCommandDeps): void {
+export function runDebugCommandWithOptions(
+  options: DebugOptions,
+  deps: RunDebugCommandDeps,
+): Promise<void> {
   const opts = { ...options };
   const env = deps.env ?? process.env;
   const errorLine = deps.errorLine ?? ((msg: string) => console.error(msg));
@@ -49,12 +52,12 @@ export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebug
       errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
       errorLine("  Run `nemoclaw list` to see available sandboxes.");
       exit(1);
-      return;
+      return Promise.resolve();
     }
     opts.sandboxName = explicit.name;
   } else {
     opts.sandboxName = deps.getDefaultSandbox();
   }
 
-  deps.runDebug(opts);
+  return deps.runDebug(opts);
 }

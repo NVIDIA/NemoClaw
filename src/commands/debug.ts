@@ -2,19 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
-import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
-
-import { CLI_NAME } from "../lib/cli/branding";
-import { runDebug } from "../lib/diagnostics/debug";
-import type { DebugOptions } from "../lib/diagnostics/debug";
-import type { RunDebugCommandDeps } from "../lib/diagnostics/debug-command";
-import { runDebugCommandWithOptions } from "../lib/diagnostics/debug-command";
 import type { CaptureOpenshellResult } from "../lib/adapters/openshell/client";
 import { captureOpenshellCommand } from "../lib/adapters/openshell/client";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../lib/adapters/openshell/timeouts";
-import * as registry from "../lib/state/registry";
 import { resolveOpenshell } from "../lib/adapters/openshell/resolve";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../lib/adapters/openshell/timeouts";
+import { CLI_NAME } from "../lib/cli/branding";
+import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
+import type { DebugOptions } from "../lib/diagnostics/debug";
+import { runDebug } from "../lib/diagnostics/debug";
+import type { RunDebugCommandDeps } from "../lib/diagnostics/debug-command";
+import { runDebugCommandWithOptions } from "../lib/diagnostics/debug-command";
 import { parseLiveSandboxNames } from "../lib/runtime-recovery";
+import * as registry from "../lib/state/registry";
 
 const useColor = !process.env.NO_COLOR && !!process.stderr.isTTY;
 const B = useColor ? "\x1b[1m" : "";
@@ -99,6 +98,6 @@ export default class DebugCliCommand extends NemoClawCommand {
     if (flags.quick) options.quick = true;
     if (flags.output) options.output = flags.output;
     if (flags.sandbox) options.sandboxName = flags.sandbox;
-    runDebugCommandWithOptions(options, buildDebugCommandDeps(this.config.root));
+    await runDebugCommandWithOptions(options, buildDebugCommandDeps(this.config.root));
   }
 }

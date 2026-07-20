@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  REVIEWED_LEGACY_SANDBOX_TRANSPORT_SITES,
   auditLegacySandboxTransports,
   discoverLegacySandboxTransportSites,
 } from "../scripts/checks/legacy-sandbox-transports";
@@ -159,6 +160,30 @@ describe("legacy sandbox transport inventory", () => {
     });
 
     expect(discoverLegacySandboxTransportSites(root)).toEqual([]);
+  });
+
+  it("keeps every reviewed read-only fallback importer explicit", () => {
+    expect(
+      REVIEWED_LEGACY_SANDBOX_TRANSPORT_SITES.filter(
+        (site) => site.kind === "grpc-cli-read-only-fallback",
+      ),
+    ).toEqual([
+      {
+        relativePath: "src/lib/actions/sandbox/sessions/passthrough.ts",
+        kind: "grpc-cli-read-only-fallback",
+        calls: 1,
+      },
+      {
+        relativePath: "src/lib/diagnostics/debug.ts",
+        kind: "grpc-cli-read-only-fallback",
+        calls: 1,
+      },
+      {
+        relativePath: "src/lib/state/user-managed-files-probe.ts",
+        kind: "grpc-cli-read-only-fallback",
+        calls: 1,
+      },
+    ]);
   });
 
   it("fails closed when a new production file imports the read-only fallback", () => {

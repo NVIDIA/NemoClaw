@@ -6,9 +6,9 @@ import { describe, expect, it, vi } from "vitest";
 import { runDebugCommandWithOptions } from "./debug-command";
 
 describe("debug command", () => {
-  it("runs parsed debug options and falls back to the default sandbox", () => {
-    const runDebug = vi.fn();
-    runDebugCommandWithOptions(
+  it("runs parsed debug options and falls back to the default sandbox", async () => {
+    const runDebug = vi.fn().mockResolvedValue(undefined);
+    await runDebugCommandWithOptions(
       { quick: true, output: "/tmp/out.tgz" },
       {
         getDefaultSandbox: () => "alpha",
@@ -23,10 +23,10 @@ describe("debug command", () => {
     });
   });
 
-  it("accepts an explicit --sandbox name that is registered", () => {
-    const runDebug = vi.fn();
+  it("accepts an explicit --sandbox name that is registered", async () => {
+    const runDebug = vi.fn().mockResolvedValue(undefined);
     const isSandboxKnown = vi.fn().mockReturnValue(true);
-    runDebugCommandWithOptions(
+    await runDebugCommandWithOptions(
       { sandboxName: "alpha" },
       {
         getDefaultSandbox: () => undefined,
@@ -36,6 +36,43 @@ describe("debug command", () => {
     );
     expect(isSandboxKnown).toHaveBeenCalledWith("alpha");
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
+  });
+
+  it("returns the debug operation completion promise", async () => {
+    let resolveDebug!: () => void;
+    const debugCompletion = new Promise<void>((resolve) => {
+      resolveDebug = resolve;
+    });
+    const runDebug = vi.fn(() => debugCompletion);
+
+    const completion = runDebugCommandWithOptions(
+      { quick: true },
+      {
+        getDefaultSandbox: () => "alpha",
+        isSandboxKnown: () => true,
+        runDebug,
+      },
+    );
+
+    expect(completion).toBe(debugCompletion);
+    resolveDebug();
+    await expect(completion).resolves.toBeUndefined();
+  });
+
+  it("propagates a rejected debug operation", async () => {
+    const failure = new Error("diagnostic collection failed");
+    const runDebug = vi.fn().mockRejectedValue(failure);
+
+    await expect(
+      runDebugCommandWithOptions(
+        { quick: true },
+        {
+          getDefaultSandbox: () => "alpha",
+          isSandboxKnown: () => true,
+          runDebug,
+        },
+      ),
+    ).rejects.toBe(failure);
   });
 
   it("rejects an explicit --sandbox name that is not registered, exits non-zero, skips runDebug", () => {
@@ -88,10 +125,10 @@ describe("debug command", () => {
     expect(errorLines[0]).toContain("NEMOCLAW_SANDBOX_NAME");
   });
 
-  it("prefers NEMOCLAW_SANDBOX_NAME over NEMOCLAW_SANDBOX and SANDBOX_NAME", () => {
-    const runDebug = vi.fn();
+  it("prefers NEMOCLAW_SANDBOX_NAME over NEMOCLAW_SANDBOX and SANDBOX_NAME", async () => {
+    const runDebug = vi.fn().mockResolvedValue(undefined);
     const isSandboxKnown = vi.fn().mockReturnValue(true);
-    runDebugCommandWithOptions(
+    await runDebugCommandWithOptions(
       {},
       {
         env: {
@@ -108,10 +145,10 @@ describe("debug command", () => {
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "primary" });
   });
 
-  it("flag overrides env vars when both are present", () => {
-    const runDebug = vi.fn();
+  it("flag overrides env vars when both are present", async () => {
+    const runDebug = vi.fn().mockResolvedValue(undefined);
     const isSandboxKnown = vi.fn().mockReturnValue(true);
-    runDebugCommandWithOptions(
+    await runDebugCommandWithOptions(
       { sandboxName: "alpha" },
       {
         env: { NEMOCLAW_SANDBOX: "beta" } as NodeJS.ProcessEnv,
@@ -125,10 +162,10 @@ describe("debug command", () => {
     expect(runDebug).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 
-  it("falls back to getDefaultSandbox when neither flag nor env is set", () => {
-    const runDebug = vi.fn();
+  it("falls back to getDefaultSandbox when neither flag nor env is set", async () => {
+    const runDebug = vi.fn().mockResolvedValue(undefined);
     const isSandboxKnown = vi.fn();
-    runDebugCommandWithOptions(
+    await runDebugCommandWithOptions(
       {},
       {
         env: {} as NodeJS.ProcessEnv,
