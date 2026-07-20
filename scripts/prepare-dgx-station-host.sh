@@ -2460,7 +2460,6 @@ run_check() {
 }
 
 run_apply() {
-  require_command cmp
   require_command sudo
   acquire_sudo
   common_preflight
