@@ -187,7 +187,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const recordedPolicyPresetsForSupport = policyResumeSelection.policyPresets;
   const resumePolicies =
     resume &&
-    recordedPolicyPresetsForSupport.length > 0 &&
+    recordedPolicyPresets !== null &&
+    recordedPolicyPresets.length > 0 &&
     !policyResumeSelection.recordedPolicyPresetsNeedReconcile &&
     !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
     !policyResumeSelection.suppressedAgentRequiredPresetsLive &&
