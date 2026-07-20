@@ -113,8 +113,10 @@ for (const target of listTargets()) {
       // LifecyclePhaseFixture before state validation.
       let lifecycleResult: Awaited<ReturnType<typeof lifecycle.simulate>> | undefined;
       const profile = target.environment.lifecycle;
+      // Every registry target shares this phase plan, including targets whose
+      // lifecycle policy is to perform no additional transition.
+      progress.phase("exercise the declared lifecycle profile");
       if (profile) {
-        progress.phase("exercise the declared lifecycle profile");
         if (!isLifecycleProfile(profile)) {
           throw new Error(
             `target '${target.id}' declares lifecycle '${profile}' which is not ` +
