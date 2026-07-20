@@ -120,10 +120,13 @@ describe("rebuild post-restore phase", () => {
 
     await runRebuildPostRestorePhase(input());
 
-    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    const outputLines = vi.mocked(console.log).mock.calls.flat().map(String);
+    const output = outputLines.join("\n");
     expect(output).toContain("Hermes API bearer token changed during rebuild");
-    expect(output).toContain("After rebuild recovery completes successfully");
     expect(output).toContain("nemoclaw alpha gateway-token --quiet");
+    expect(
+      outputLines.findIndex((line) => line.includes("API bearer token changed")),
+    ).toBeGreaterThan(outputLines.findIndex((line) => line.includes("rebuilt successfully")));
   });
 
   it("does not print the Hermes API token notice for OpenClaw rebuilds (#7175)", async () => {
@@ -134,7 +137,7 @@ describe("rebuild post-restore phase", () => {
     expect(output).not.toContain("gateway-token --quiet");
   });
 
-  it("prints the Hermes API token notice when post-restore verification is incomplete (#7175)", async () => {
+  it("does not print the Hermes API token notice when post-restore verification is incomplete (#7175)", async () => {
     agentName = "hermes";
     vi.mocked(rebuildHermesPostRestore.ensureHermesGatewayAfterStateRestore).mockReturnValue(
       "unverified",
@@ -144,13 +147,41 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(args);
 
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).toContain("Hermes API bearer token changed during rebuild");
-    expect(output).toContain("After rebuild recovery completes successfully");
-    expect(output).toContain("nemoclaw alpha gateway-token --quiet");
+    expect(output).not.toContain("Hermes API bearer token changed during rebuild");
+    expect(output).not.toContain("gateway-token --quiet");
     expect(args.bail).toHaveBeenCalledWith("Hermes post-restore verification failed for 'alpha'.");
   });
 
-  it("prints the Hermes API token notice before a shields relock failure (#7175)", async () => {
+  it("still prints the Hermes API token notice when a non-fatal post-restore step is unverified (#7175)", async () => {
+    agentName = "hermes";
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(args.bail).not.toHaveBeenCalled();
+    expect(output).toContain("rebuilt but some post-restore steps were incomplete");
+    expect(output).toContain("Hermes API bearer token changed during rebuild");
+    expect(output).toContain("nemoclaw alpha gateway-token --quiet");
+  });
+
+  it("prints the Hermes API token notice after gateway recovery (#7175)", async () => {
+    agentName = "hermes";
+    vi.mocked(rebuildHermesPostRestore.ensureHermesGatewayAfterStateRestore).mockReturnValue(
+      "recovered",
+    );
+    const args = input();
+
+    await runRebuildPostRestorePhase(args);
+
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(args.bail).not.toHaveBeenCalled();
+    expect(output).toContain("Hermes gateway recovered after state restore");
+    expect(output).toContain("Hermes API bearer token changed during rebuild");
+  });
+
+  it("does not print the Hermes API token notice after a shields relock failure (#7175)", async () => {
     agentName = "hermes";
     const args = input();
     args.relockShieldsIfNeeded = vi.fn(() => false);
@@ -158,9 +189,8 @@ describe("rebuild post-restore phase", () => {
     await runRebuildPostRestorePhase(args);
 
     const output = vi.mocked(console.log).mock.calls.flat().join("\n");
-    expect(output).toContain("Hermes API bearer token changed during rebuild");
-    expect(output).toContain("After rebuild recovery completes successfully");
-    expect(output).toContain("nemoclaw alpha gateway-token --quiet");
+    expect(output).not.toContain("Hermes API bearer token changed during rebuild");
+    expect(output).not.toContain("gateway-token --quiet");
     expect(args.bail).toHaveBeenCalledWith("Failed to re-apply shields lockdown.");
   });
 });

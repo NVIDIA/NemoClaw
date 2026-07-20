@@ -1559,8 +1559,11 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
   http://127.0.0.1:8642/v1/models
 ```
 
+<Warning>
 Treat the token like a password.
 Do not log it, share it, or commit it to version control.
+</Warning>
+
 The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` to retrieve the token.
 Use this supported command instead of reading or editing `.hermes/.env` directly.
 For browser access to the dashboard, use `nemohermes my-assistant dashboard-url`.

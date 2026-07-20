@@ -159,6 +159,34 @@ function expectEqual(actual: string | undefined, expected: string, message: stri
   }
 }
 
+async function hermesApiTokenDigest(
+  host: HostCliClient,
+  apiKey: string | undefined,
+  artifactName: string,
+): Promise<string> {
+  const result = await host.command(
+    "bash",
+    [
+      "-lc",
+      [
+        'token="$(nemoclaw "$SANDBOX_NAME" gateway-token --quiet)"',
+        'case "$token" in ""|*[!0-9a-f]*) exit 2 ;; esac',
+        '[ "${#token}" -eq 64 ] || exit 2',
+        "printf '%s' \"$token\" | sha256sum | cut -d' ' -f1",
+      ].join(" && "),
+    ],
+    {
+      artifactName,
+      env: testEnv(apiKey, { SANDBOX_NAME }),
+      redactionValues: apiKey ? [apiKey] : [],
+      timeoutMs: OPENSHELL_TIMEOUT_MS,
+    },
+  );
+  expectExitZero(result, "retrieve and hash Hermes API bearer token");
+  expect(result.stdout.trim()).toMatch(/^[0-9a-f]{64}$/);
+  return result.stdout.trim();
+}
+
 async function bestEffortPrecleanHermesResources(
   host: HostCliClient,
   apiKey: string | undefined,
@@ -812,6 +840,11 @@ test(STALE_BASE_REBUILD
     },
     session: sessionSummary,
   });
+  const preRebuildApiTokenDigest = await hermesApiTokenDigest(
+    host,
+    apiKey,
+    "phase-4-api-token-before-rebuild",
+  );
 
   switch (STALE_BASE_REBUILD) {
     case false:
@@ -846,6 +879,9 @@ test(STALE_BASE_REBUILD
     onOutput: progress.onOutput,
   });
   expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
+  const rebuildOutput = resultText(rebuild);
+  expect(rebuildOutput).toContain("Hermes API bearer token changed during rebuild");
+  expect(rebuildOutput).toContain(`nemoclaw ${SANDBOX_NAME} gateway-token --quiet`);
 
   const oldImageInspect = await host.command(
     "docker",
@@ -934,6 +970,19 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(restoredEnv, "read Hermes .env after rebuild");
   expect(restoredEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
+
+  const postRebuildApiTokenDigest = await hermesApiTokenDigest(
+    host,
+    apiKey,
+    "phase-7-api-token-after-rebuild",
+  );
+  const stablePostRebuildApiTokenDigest = await hermesApiTokenDigest(
+    host,
+    apiKey,
+    "phase-7-api-token-stability-check",
+  );
+  expect(postRebuildApiTokenDigest).not.toBe(preRebuildApiTokenDigest);
+  expect(stablePostRebuildApiTokenDigest).toBe(postRebuildApiTokenDigest);
 
   const restoredConfig = await host.command(
     "openshell",

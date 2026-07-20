@@ -1451,8 +1451,9 @@ process.exit(0);
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
       const backup = sandboxState.backupSandboxState("hermes", { name: "hermes-state" });
-      const backupPath = backup.manifest!.backupPath;
       expect(backup.success).toBe(true);
+      expect(backup.manifest).toBeDefined();
+      const backupPath = backup.manifest!.backupPath;
       expect(backup.backedUpFiles).toEqual(["SOUL.md", ".hermes_history", "runtime/state.db"]);
       expect(backup.failedFiles).toEqual([]);
       expect(backup.manifest?.stateFiles).toEqual([

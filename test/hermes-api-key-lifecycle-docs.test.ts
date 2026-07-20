@@ -17,9 +17,8 @@ function readDoc(relativePath: string): string {
 function readHermesGatewayTokenSection(): string {
   const commands = readDoc(COMMANDS_PATH);
   const heading = "### `$$nemoclaw <name> gateway-token`";
-  const nextHeading = "### `$$nemoclaw <name> destroy`";
   const sectionStart = commands.indexOf(heading);
-  const sectionEnd = commands.indexOf(nextHeading, sectionStart + heading.length);
+  const sectionEnd = commands.indexOf("\n### `", sectionStart + heading.length);
 
   expect(sectionStart).toBeGreaterThanOrEqual(0);
   expect(sectionEnd).toBeGreaterThan(sectionStart);
