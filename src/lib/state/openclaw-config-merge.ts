@@ -465,9 +465,11 @@ function updateMainAgentListModel(agents: Record<string, unknown>, primaryModelR
       if (typeof entry.model === "string") entry.model = primaryModelRef;
       return;
     }
-    if (!defaultAgent && entry.default === true) defaultAgent = entry;
+    if (!defaultAgent && entry.default === true && typeof entry.model === "string") {
+      defaultAgent = entry;
+    }
   }
-  if (defaultAgent && typeof defaultAgent.model === "string") defaultAgent.model = primaryModelRef;
+  if (defaultAgent) defaultAgent.model = primaryModelRef;
 }
 
 /**
@@ -483,10 +485,6 @@ function updateMainAgentListModel(agents: Record<string, unknown>, primaryModelR
  * MCP-present sandbox is switched via rebuild instead of a full recreate);
  * #7011 is the related hard-failure form. Only override when the fresh config
  * carries a primary, so backups with no rebuild-owned routing are untouched.
- *
- * removalCondition: drop this once the fresh-config generator owns the agent
- * primary during restore (i.e. `agents` model routing is no longer inherited
- * wholesale from the backup snapshot).
  */
 function reconcileAgentPrimaryModel(
   merged: Record<string, unknown>,

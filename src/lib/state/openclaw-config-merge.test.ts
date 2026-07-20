@@ -99,6 +99,26 @@ describe("mergeOpenClawRestoredConfig", () => {
     expect(merged.agents.list[0].model).toBe("inference/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
   });
 
+  it("updates the first default agent with a string model when no main agent exists (#7210)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: { model: { primary: "inference/stale" } },
+          list: [
+            { id: "invalid-default", default: true, model: { primary: "inference/stale" } },
+            { id: "valid-default", default: true, model: "inference/stale" },
+          ],
+        },
+      },
+      { agents: { defaults: { model: { primary: "inference/fresh" } } } },
+    ) as { agents: { list: { id: string; model: unknown }[] } };
+
+    expect(merged.agents.list).toEqual([
+      { id: "invalid-default", default: true, model: { primary: "inference/stale" } },
+      { id: "valid-default", default: true, model: "inference/fresh" },
+    ]);
+  });
+
   it("keeps rebuilt runtime-owned config while restoring durable backup-only settings", () => {
     const merged = mergeOpenClawRestoredConfig(
       {
