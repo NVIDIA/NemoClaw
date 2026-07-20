@@ -71,6 +71,8 @@ export interface GatewayHostRuntime {
   /** HTTPS endpoint of the gateway this process operates. */
   getGatewayLocalEndpoint(): string;
   getGatewayOwner(): GatewayOwner;
+  /** Clear attempt-local authority before a genuinely new onboarding run. */
+  resetGatewayOwnerBinding(): void;
   /** Whether an external supervisor owns the gateway lifecycle this run (#6576). */
   isGatewayExternallySupervised(): boolean;
   getGatewayStartEnv(): Record<string, string>;
@@ -263,5 +265,8 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     isGatewayExternallySupervised: () => isExternallySupervised(getGatewayOwner()),
     machineGatewayOwnerDeps: { probeGatewayAttachment, resolveGatewayOwner: getGatewayOwner },
     probeGatewayAttachment,
+    resetGatewayOwnerBinding: () => {
+      boundOwner = null;
+    },
   };
 }

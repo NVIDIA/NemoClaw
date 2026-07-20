@@ -139,6 +139,14 @@ describe("gateway management declaration", () => {
     }
   });
 
+  it("rejects HTTPS because contract v1 has no external-supervisor TLS trust contract (#6576)", () => {
+    const result = parseGatewayManagementDeclaration(
+      externalDeclaration({ endpoint: "https://127.0.0.1:8080" }),
+    );
+
+    expect(result.ok === false && result.reason).toMatch(/must use http.*TLS trust material/);
+  });
+
   it("rejects a capability this build does not provide (#6576)", () => {
     const result = parseGatewayManagementDeclaration(
       externalDeclaration({ requiredCapabilities: ["gateway.teleport"] }),

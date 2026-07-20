@@ -22,6 +22,12 @@ export type InitialSandboxPolicy = {
   cleanup?: () => boolean;
 };
 
+export function discloseInitialSandboxPolicy(policy: InitialSandboxPolicy): void {
+  if (policy.appliedPresets.length === 0) return;
+  console.log("  Including policy preset(s) at sandbox boot:", policy.appliedPresets.join(", "));
+  policies.logPresetScope(fs.readFileSync(policy.policyPath, "utf8"));
+}
+
 const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "hermes" });
 
 const PROC_PATH = "/proc";

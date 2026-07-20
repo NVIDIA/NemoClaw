@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { verifyDependencyPins } from "../scripts/checks/dependency-pins";
+import { verifyDependencyPins } from "../scripts/checks/dependency-pins.mts";
 
 const OPENSHELL_MIN = "1.2.3";
 const OPENSHELL_MAX = "1.2.4";
@@ -265,6 +265,11 @@ describe("dependency pin drift check", () => {
   });
 
   it.each([
+    {
+      name: "an unsafe OpenShell minimum",
+      overrides: { openshellMin: "../1.2.3" },
+      failure: "nemoclaw-blueprint/blueprint.yaml min_openshell_version must match X.Y.Z",
+    },
     {
       name: "an unsafe OpenShell maximum",
       overrides: { openshellMax: "../1.2.4" },

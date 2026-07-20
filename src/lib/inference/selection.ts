@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+export type InferenceEndpointSource = "onboard" | "inference-set";
+
 export interface InferenceSelection {
   provider: string | null;
   model: string | null;
   endpointUrl: string | null;
+  endpointSource?: InferenceEndpointSource | null;
   credentialEnv: string | null;
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: "true" | "false" | null;
@@ -35,6 +38,10 @@ function nullableInferenceApi(value: unknown): string | null {
   return normalized && SUPPORTED_INFERENCE_APIS.has(normalized) ? normalized : null;
 }
 
+export function normalizeInferenceEndpointSource(value: unknown): InferenceEndpointSource | null {
+  return value === "onboard" || value === "inference-set" ? value : null;
+}
+
 function nullableCompatibleEndpointReasoning(
   provider: string | null,
   value: unknown,
@@ -46,10 +53,12 @@ function nullableCompatibleEndpointReasoning(
 
 export function normalizeInferenceSelection(input: InferenceSelectionInput): InferenceSelection {
   const provider = nullableString(input?.provider);
+  const endpointUrl = nullableString(input?.endpointUrl);
   return {
     provider,
     model: nullableString(input?.model),
-    endpointUrl: nullableString(input?.endpointUrl),
+    endpointUrl,
+    endpointSource: endpointUrl ? normalizeInferenceEndpointSource(input?.endpointSource) : null,
     credentialEnv: nullableString(input?.credentialEnv),
     preferredInferenceApi: nullableInferenceApi(input?.preferredInferenceApi),
     compatibleEndpointReasoning: nullableCompatibleEndpointReasoning(

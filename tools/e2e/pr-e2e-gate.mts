@@ -23,8 +23,13 @@ import {
   riskPlanRequiredTargetIds,
 } from "../advisors/risk-plan.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
-import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
+import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
+import {
+  decideRetry,
+  detectRunnerLoss,
+  type WorkflowAttemptEvidence,
+} from "./runner-pressure-core.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
@@ -215,8 +220,12 @@ type WorkflowRunsResponse = { workflow_runs: WorkflowRun[] };
 type WorkflowJob = {
   id: number;
   name: string;
+  status?: string;
   conclusion: string | null;
-  steps: Array<{ name: string; conclusion: string | null }>;
+  runnerId?: number | null;
+  runnerName?: string | null;
+  labels?: string[];
+  steps: Array<{ name: string; status?: string; conclusion: string | null }>;
 };
 type WorkflowJobsPage = { totalCount: number; jobs: WorkflowJob[] };
 type CheckRun = {
@@ -226,6 +235,7 @@ type CheckRun = {
   external_id?: string | null;
   status?: string;
   conclusion?: string | null;
+  details_url?: string | null;
   output?: { title?: string; summary?: string };
   app?: { id?: number } | null;
 };
@@ -924,6 +934,46 @@ function retryableFailureReason(check: CheckRun): RetryableFailureReason | undef
   return reason as RetryableFailureReason;
 }
 
+function priorRunnerLossRunUrls(
+  repository: string,
+  history: readonly CheckRun[],
+  currentCheckId: number,
+): string[] {
+  const prefix = `https://github.com/${repository}/actions/runs/`;
+  const priorRunnerLossChecks = history.filter(
+    (check) => check.id !== currentCheckId && retryableFailureReason(check) === "child-cancelled",
+  );
+  if (priorRunnerLossChecks.length > 1) {
+    throw new Error("Runner-loss retry history exceeds the single permitted retry");
+  }
+  return priorRunnerLossChecks.map((check) => {
+    const url = check.details_url;
+    if (
+      typeof url !== "string" ||
+      !url.startsWith(prefix) ||
+      !/^[1-9][0-9]*$/u.test(url.slice(prefix.length))
+    ) {
+      throw new Error("Runner-loss retry history has an invalid child-run URL");
+    }
+    return url;
+  });
+}
+
+function withRunnerLossLineage(
+  verdict: PrGateVerdict,
+  priorRunUrls: readonly string[],
+  currentRunUrl: string,
+): PrGateVerdict {
+  if (priorRunUrls.length === 0) return verdict;
+  const links = [...priorRunUrls, currentRunUrl].map(
+    (url, index) => `[attempt ${index + 1}](${url})`,
+  );
+  return {
+    ...verdict,
+    summary: `${verdict.summary}\nRunner-loss retry lineage: ${links.join(" → ")}.`,
+  };
+}
+
 function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
   if (checks.length === 0) return undefined;
   const ordered = [...checks].sort((left, right) => left.id - right.id);
@@ -943,7 +993,7 @@ function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
   return current;
 }
 
-async function matchingPrGateChecks(options: {
+async function matchingPrGateHistory(options: {
   repository: string;
   token: string;
   headSha: string;
@@ -957,9 +1007,22 @@ async function matchingPrGateChecks(options: {
   if (sameIdentity.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
     throw new Error("PR gate check identity was claimed by an unexpected GitHub App");
   }
-  const current = currentExactDiffCheck(
-    sameIdentity.filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID),
-  );
+  const history = sameIdentity
+    .filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID)
+    .sort((left, right) => left.id - right.id);
+  currentExactDiffCheck(history);
+  return history;
+}
+
+async function matchingPrGateChecks(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+  baseSha: string;
+  prNumber: number;
+}): Promise<CheckRun[]> {
+  const history = await matchingPrGateHistory(options);
+  const current = history.at(-1);
   return current ? [current] : [];
 }
 
@@ -1417,7 +1480,16 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
     (value.id as number) < 1 ||
     typeof value.name !== "string" ||
     value.name.length === 0 ||
+    (value.status !== undefined && typeof value.status !== "string") ||
     (value.conclusion !== null && typeof value.conclusion !== "string") ||
+    (value.runner_id !== undefined &&
+      value.runner_id !== null &&
+      (!Number.isSafeInteger(value.runner_id) || (value.runner_id as number) < 1)) ||
+    (value.runner_name !== undefined &&
+      value.runner_name !== null &&
+      typeof value.runner_name !== "string") ||
+    (value.labels !== undefined &&
+      (!Array.isArray(value.labels) || value.labels.some((label) => typeof label !== "string"))) ||
     (value.steps !== undefined && !Array.isArray(value.steps))
   ) {
     throw new Error("GitHub returned an invalid workflow job");
@@ -1427,16 +1499,25 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
       !isObjectRecord(step) ||
       typeof step.name !== "string" ||
       step.name.length === 0 ||
+      (step.status !== undefined && typeof step.status !== "string") ||
       (step.conclusion !== null && typeof step.conclusion !== "string")
     ) {
       throw new Error("GitHub returned an invalid workflow job step");
     }
-    return { name: step.name, conclusion: step.conclusion };
+    return {
+      name: step.name,
+      ...(step.status === undefined ? {} : { status: step.status }),
+      conclusion: step.conclusion,
+    };
   });
   return {
     id: value.id as number,
     name: value.name,
+    ...(value.status === undefined ? {} : { status: value.status }),
     conclusion: value.conclusion,
+    ...(value.runner_id === undefined ? {} : { runnerId: value.runner_id as number | null }),
+    ...(value.runner_name === undefined ? {} : { runnerName: value.runner_name }),
+    ...(value.labels === undefined ? {} : { labels: value.labels as string[] }),
     steps,
   };
 }
@@ -1616,13 +1697,75 @@ function ciFailureReport(options: {
   };
 }
 
-function e2eFailureReport(options: {
+const GITHUB_HOSTED_RUNNER_NAME_PATTERN = /^GitHub Actions [1-9][0-9]*$/u;
+
+/**
+ * GitHub records a lost hosted runner as a completed failed job whose active
+ * step never received a terminal conclusion. This is stronger than a
+ * cancellation: user and concurrency cancellations finish the active step and
+ * run cleanup, while the release-run failures tracked by #7146 retained one
+ * `in_progress` step after the job itself became terminal.
+ */
+function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
+  if (
+    job.status !== "completed" ||
+    job.conclusion !== "failure" ||
+    !Number.isSafeInteger(job.runnerId) ||
+    (job.runnerId ?? 0) < 1 ||
+    typeof job.runnerName !== "string" ||
+    !GITHUB_HOSTED_RUNNER_NAME_PATTERN.test(job.runnerName) ||
+    !Array.isArray(job.labels) ||
+    job.labels.includes("self-hosted")
+  ) {
+    return false;
+  }
+  const strandedSteps = job.steps.filter(
+    (step) => step.status === "in_progress" && step.conclusion === null,
+  );
+  return (
+    strandedSteps.length === 1 &&
+    job.steps.every(
+      (step) =>
+        step.conclusion === "success" ||
+        (step.conclusion === null && ["in_progress", "pending"].includes(step.status ?? "")),
+    )
+  );
+}
+
+function verifiedRunnerLossEvidence(options: {
+  workflowConclusion: string | null;
+  jobs: readonly WorkflowJob[];
+  jobDetailsAvailable: boolean;
+  jobDetailsComplete: boolean;
+}): WorkflowAttemptEvidence | null {
+  if (
+    !options.jobDetailsAvailable ||
+    !options.jobDetailsComplete ||
+    options.jobs.length === 0 ||
+    !["failure", "cancelled"].includes(options.workflowConclusion ?? "")
+  ) {
+    return null;
+  }
+  const runnerLostMarkerCount = options.jobs.filter(hasTrustedHostedRunnerLossMarker).length;
+  const ordinaryFailureEvidencePresent = options.jobs.some(
+    (job) => job.conclusion === "failure" && !hasTrustedHostedRunnerLossMarker(job),
+  );
+  return {
+    terminalClassificationPresent: ordinaryFailureEvidencePresent,
+    jobConclusion: options.workflowConclusion as "failure" | "cancelled",
+    runnerLostMarkerCount,
+  };
+}
+
+export function e2eFailureReport(options: {
   repository: string;
   runId: number;
   workflowConclusion: string | null;
   jobs: readonly WorkflowJob[];
   jobDetailsAvailable: boolean;
   jobDetailsComplete: boolean;
+  runnerLossAttempt: number;
+  runnerLossEvidence: WorkflowAttemptEvidence | null;
 }): PrGateVerdict {
   const runUrl = `https://github.com/${options.repository}/actions/runs/${options.runId}`;
   const conclusion = normalizedCiMetadata(
@@ -1650,11 +1793,24 @@ function e2eFailureReport(options: {
       options.jobDetailsComplete &&
       options.jobs.length > 0 &&
       options.jobs.every((job) => job.conclusion === "cancelled"));
+  const retryDecision = options.runnerLossEvidence
+    ? decideRetry({
+        runnerLoss: detectRunnerLoss(options.runnerLossEvidence),
+        classification: null,
+        attempt: options.runnerLossAttempt,
+      })
+    : {
+        retry: false,
+        reason: "no verified hosted-runner-loss marker was available",
+      };
+  if (conclusivelyCancelled || (options.runnerLossEvidence?.runnerLostMarkerCount ?? 0) > 0) {
+    summary.push(`Runner-loss policy: ${retryDecision.reason}.`);
+  }
   return {
     conclusion: "failure",
     title,
     summary: summary.join("\n"),
-    ...(conclusivelyCancelled ? { retryableFailureReason: "child-cancelled" as const } : {}),
+    ...(retryDecision.retry ? { retryableFailureReason: "child-cancelled" as const } : {}),
   };
 }
 
@@ -2728,16 +2884,22 @@ export async function finishPrGate(options: {
     }
     const workflowConclusion =
       child.status === "completed" ? child.conclusion : `unfinished (${child.status})`;
-    const matchingChecks = await matchingPrGateChecks({
+    const matchingHistory = await matchingPrGateHistory({
       repository,
       token,
       headSha: state.commitSha,
       baseSha: state.baseSha,
       prNumber: state.prNumber,
     });
-    if (matchingChecks.length !== 1 || matchingChecks[0]!.id !== options.checkRunId) {
+    if (matchingHistory.at(-1)?.id !== options.checkRunId) {
       throw new Error("controller state does not match the exact PR gate check");
     }
+    const priorRunnerLossUrls = priorRunnerLossRunUrls(
+      repository,
+      matchingHistory,
+      options.checkRunId,
+    );
+    const runnerLossAttempt = priorRunnerLossUrls.length + 1;
     const finalizeObsoleteExactDiff = async (): Promise<boolean> => {
       try {
         await requireLiveExactDiff({
@@ -2823,8 +2985,16 @@ export async function finishPrGate(options: {
         jobs,
         jobDetailsAvailable,
         jobDetailsComplete,
+        runnerLossAttempt,
+        runnerLossEvidence: verifiedRunnerLossEvidence({
+          workflowConclusion,
+          jobs,
+          jobDetailsAvailable,
+          jobDetailsComplete,
+        }),
       });
     }
+    verdict = withRunnerLossLineage(verdict, priorRunnerLossUrls, childRunUrl);
     if (await finalizeObsoleteExactDiff()) return;
     await completeCheck(context, token, verdict, childRunUrl);
     appendOutput("finalized", "true");

@@ -240,6 +240,122 @@ EOF
   return 1
 }
 
+NEMOCLAW_MANAGED_EXPECTED_EXIT_DIR="/run/nemoclaw"
+NEMOCLAW_MANAGED_EXPECTED_EXIT_MARKER="managed-gateway-expected-exit"
+NEMOCLAW_MANAGED_CONTROLLER_PATH="/usr/local/lib/nemoclaw/managed-gateway-control.py"
+
+gateway_control_managed_controller_argv_is_expected() {
+  [ "$#" -eq 5 ] || return 1
+  case "${1##*/}" in
+    python3) ;;
+    *) return 1 ;;
+  esac
+  [ "$2" = "-I" ] && [ "$3" = "$NEMOCLAW_MANAGED_CONTROLLER_PATH" ] || return 1
+  case "$4" in
+    restart | recover) ;;
+    *) return 1 ;;
+  esac
+  case "$5" in
+    '' | *[!0-9a-f]*) return 1 ;;
+  esac
+  [ "${#5}" -eq 64 ]
+}
+
+# A numeric PID in the marker is never authority on its own. Prove the named
+# controller is still the live root helper that published the lease, so an
+# orphaned marker cannot authorize a later unrelated exit.
+gateway_control_managed_controller_is_live() {
+  local pid="$1"
+  local expected_start_identity="$2"
+  local proc_root
+  local first_start second_start first_state second_state first_uids second_uids
+  local -a first_argv=()
+  local -a second_argv=()
+
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  case "$expected_start_identity" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  proc_root="$(gateway_control_proc_root)" || return 1
+  [ -r "${proc_root}/${pid}/status" ] \
+    && [ -r "${proc_root}/${pid}/cmdline" ] || return 1
+
+  first_start="$(gateway_control_pid_start_identity "$pid")" || return 1
+  first_state="$(gateway_control_pid_state "$pid")" || return 1
+  first_uids="$(awk '/^Uid:/ { print $2 ":" $3 ":" $4 ":" $5; exit }' "${proc_root}/${pid}/status")" || return 1
+  while IFS= read -r -d "" elem; do first_argv+=("$elem"); done <"${proc_root}/${pid}/cmdline" || return 1
+  gateway_control_managed_controller_argv_is_expected "${first_argv[@]}" || return 1
+
+  second_start="$(gateway_control_pid_start_identity "$pid")" || return 1
+  second_state="$(gateway_control_pid_state "$pid")" || return 1
+  second_uids="$(awk '/^Uid:/ { print $2 ":" $3 ":" $4 ":" $5; exit }' "${proc_root}/${pid}/status")" || return 1
+  while IFS= read -r -d "" elem; do second_argv+=("$elem"); done <"${proc_root}/${pid}/cmdline" || return 1
+  gateway_control_managed_controller_argv_is_expected "${second_argv[@]}" || return 1
+
+  [ "$first_start" = "$expected_start_identity" ] \
+    && [ "$second_start" = "$expected_start_identity" ] \
+    && [ "$first_uids" = "0:0:0:0" ] \
+    && [ "$second_uids" = "0:0:0:0" ] \
+    && [ "$first_state" != "Z" ] \
+    && [ "$second_state" != "Z" ] \
+    && [ "${first_argv[*]}" = "${second_argv[*]}" ]
+}
+
+# True when the root control helper published a lease authorizing this exact
+# gateway exit. The managed restart path terminates the gateway with SIGTERM
+# and then only waits for a replacement, so the entrypoint must relaunch a
+# leased exit instead of reading its clean status as an intentional shutdown.
+gateway_control_exit_was_host_authorized() {
+  local pid="$1"
+  local start_identity="$2"
+  local marker dir_metadata marker_metadata
+  local version marker_pid marker_start_identity controller_pid controller_start_identity extra
+  local trailing=""
+
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  case "$start_identity" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+
+  [ -d "$NEMOCLAW_MANAGED_EXPECTED_EXIT_DIR" ] \
+    && [ ! -L "$NEMOCLAW_MANAGED_EXPECTED_EXIT_DIR" ] || return 1
+  dir_metadata="$(stat -c '%u:%g %a' "$NEMOCLAW_MANAGED_EXPECTED_EXIT_DIR" 2>/dev/null || true)"
+  [ "$dir_metadata" = "0:0 711" ] || return 1
+
+  marker="${NEMOCLAW_MANAGED_EXPECTED_EXIT_DIR}/${NEMOCLAW_MANAGED_EXPECTED_EXIT_MARKER}"
+  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  marker_metadata="$(stat -c '%u:%g %a %h' "$marker" 2>/dev/null || true)"
+  [ "$marker_metadata" = "0:0 444 1" ] || return 1
+
+  # bash 4.1+ named FDs ({var}<file) are not available on bash 3.2 (macOS).
+  # Use a grouped redirect instead — variables assigned inside {} remain in scope.
+  {
+    if ! IFS=' ' read -r \
+      version marker_pid marker_start_identity controller_pid controller_start_identity extra; then
+      return 1
+    fi
+    if IFS= read -r trailing || [ -n "$trailing" ]; then
+      return 1
+    fi
+  } <"$marker" || return 1
+
+  [ "$version" = "v1" ] \
+    && [ "$marker_pid" = "$pid" ] \
+    && [ "$marker_start_identity" = "$start_identity" ] \
+    && [ -z "${extra:-}" ] || return 1
+  case "$controller_pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  case "$controller_start_identity" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  gateway_control_managed_controller_is_live "$controller_pid" "$controller_start_identity"
+}
+
 gateway_control_stop_tracked_pid() {
   local pid="$1"
   local expected_start_identity="${2:-}"

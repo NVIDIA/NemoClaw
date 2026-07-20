@@ -8,8 +8,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { GatewayReuseState } from "../../../state/gateway";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { flushTrace, resetTraceForTests, TRACE_FILE_ENV, type TraceArtifact } from "../../../trace";
+import { recordCheckpointGatewayOwner } from "../../checkpoint-record";
 import type { GatewayContainerState } from "../../gateway-container-running";
 import {
+  checkpointGatewayOwner,
   type GatewayAttachmentProbe,
   type GatewayOwner,
   GatewayOwnershipError,
@@ -76,12 +78,20 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
         listenerSupervisorMatch: true,
       }),
     ),
+    recordOwner: vi.fn((owner: ReturnType<typeof checkpointGatewayOwner>) => {
+      const session = createSession();
+      recordCheckpointGatewayOwner(session, owner);
+      return session;
+    }),
+    bindAttachment: vi.fn(),
   };
   return {
     calls,
     deps: {
       resolveGatewayOwner: calls.resolveOwner,
       probeGatewayAttachment: calls.probeAttachment,
+      recordGatewayOwner: calls.recordOwner,
+      bindGatewayAttachment: calls.bindAttachment,
       refreshDockerDriverGatewayReuseState: calls.refresh,
       gatewayCliSupportsLifecycleCommands: calls.lifecycle,
       verifyGatewayContainerRunning: calls.verifyContainer,
@@ -161,6 +171,9 @@ describe("handleGatewayState", () => {
     const result = await handleGatewayState(baseOptions(deps, "missing"));
 
     expect(calls.startStep).toHaveBeenCalledWith("gateway");
+    expect(calls.recordOwner).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "nemoclaw-managed", source: "standalone" }),
+    );
     expect(calls.startGateway).toHaveBeenCalledWith({ type: "nvidia" }, { gpuPassthrough: true });
     expect(calls.complete).toHaveBeenCalledWith("gateway");
     expect(result.gatewayReuseState).toBe("missing");
@@ -236,6 +249,10 @@ describe("handleGatewayState", () => {
     const session = createSession();
     session.steps.gateway.status = "complete";
     const { deps, calls } = createDeps();
+    recordCheckpointGatewayOwner(
+      session,
+      checkpointGatewayOwner(resolveGatewayOwner({ declaration: null, hasPackagedService: false })),
+    );
 
     await handleGatewayState({ ...baseOptions(deps, "healthy", session), resume: true });
 
@@ -477,6 +494,7 @@ describe("externally supervised gateway lifecycle authority", () => {
     expect(calls.destroy).not.toHaveBeenCalled();
     expect(calls.destroyForReuse).not.toHaveBeenCalled();
     expect(calls.retireLegacy).not.toHaveBeenCalled();
+    expect(calls.bindAttachment).toHaveBeenCalledWith(EXTERNAL_OWNER);
     expect(calls.complete).toHaveBeenCalledWith("gateway");
     expect(result.stateResult).toMatchObject({
       metadata: { gatewayOwner: { mode: "externally-supervised", source: "declared" } },
@@ -519,6 +537,7 @@ describe("externally supervised gateway lifecycle authority", () => {
       httpReady: false,
     });
     const session = createSession();
+    recordCheckpointGatewayOwner(session, checkpointGatewayOwner(EXTERNAL_OWNER));
     session.steps = {
       gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
     };
@@ -527,6 +546,29 @@ describe("externally supervised gateway lifecycle authority", () => {
       handleGatewayState({ ...baseOptions(deps, "healthy", session), resume: true }),
     ).rejects.toMatchObject({ code: "gateway_unreachable" });
     expect(calls.probeAttachment).toHaveBeenCalledOnce();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an older resumed session has no durable owner binding (#6576)", async () => {
+    const { calls, deps } = externalDeps();
+    const session = createSession();
+
+    await expect(
+      handleGatewayState({ ...baseOptions(deps, "healthy", session), resume: true }),
+    ).rejects.toMatchObject({ code: "owner_binding_missing" });
+    expect(calls.probeAttachment).not.toHaveBeenCalled();
+    expect(calls.bindAttachment).not.toHaveBeenCalled();
+  });
+
+  it("rejects external-to-managed owner drift across process resume (#6576)", async () => {
+    const { calls, deps } = createDeps();
+    const session = createSession();
+    recordCheckpointGatewayOwner(session, checkpointGatewayOwner(EXTERNAL_OWNER));
+
+    await expect(
+      handleGatewayState({ ...baseOptions(deps, "healthy", session), resume: true }),
+    ).rejects.toMatchObject({ code: "owner_binding_drift" });
+    expect(calls.refresh).not.toHaveBeenCalled();
     expect(calls.startGateway).not.toHaveBeenCalled();
   });
 });

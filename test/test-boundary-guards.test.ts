@@ -8,11 +8,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  collectFastProjectEntries,
   findCompiledInternalViolations,
   findFastProjectTransitiveViolations,
   isFastProjectTestPath,
   isScannedTestPath,
-} from "../scripts/checks/no-test-dist-imports";
+} from "../scripts/checks/no-test-dist-imports.mts";
 import {
   discoverVitestCandidates,
   EXPECTED_VITEST_PROJECTS,
@@ -22,7 +23,7 @@ import {
   parseProjectListing,
   parseProjectRoster,
   resolveVitestInvocation,
-} from "../scripts/checks/vitest-project-overlap";
+} from "../scripts/checks/vitest-project-overlap.mts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const SOURCE_RUNTIME = path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs");
@@ -469,7 +470,63 @@ describe("fast-project transitive import boundary", () => {
         "test/e2e/live/example.test.ts",
         "test/package-contract/example.test.ts",
       ].map(isFastProjectTestPath),
-    ).toEqual([true, true, true, false, false, true, true, true, false, false, false]);
+    ).toEqual([true, true, true, false, false, true, false, true, true, false, false]);
+  });
+
+  it("discovers canonical root integration entries without following symlink loops (#6692)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fast-project-roots-"));
+    try {
+      const testRoot = path.join(root, "test");
+      fs.mkdirSync(testRoot, { recursive: true });
+      fs.writeFileSync(path.join(testRoot, "entry.test.ts"), "export {};\n");
+      fs.writeFileSync(path.join(testRoot, "helper.ts"), "export {};\n");
+      fs.symlinkSync(".", path.join(testRoot, "loop"), "dir");
+
+      expect(
+        collectFastProjectEntries(root).map((file) =>
+          path.relative(root, file).split(path.sep).join("/"),
+        ),
+      ).toEqual(["test/entry.test.ts"]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it("skips a symbolic link used as a canonical scan root (#6692)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fast-project-root-link-"));
+    const external = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fast-project-external-"));
+    try {
+      fs.writeFileSync(path.join(external, "entry.test.ts"), "export {};\n");
+      fs.symlinkSync(external, path.join(root, "test"), "dir");
+
+      expect(collectFastProjectEntries(root)).toEqual([]);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+      fs.rmSync(external, { force: true, recursive: true });
+    }
+  });
+
+  it("canonicalizes transitive imports through a symbolic-link loop (#6692)", () => {
+    withImportGraphFixture(
+      {
+        "entry.test.ts": 'import "./loop/helper.js";\n',
+        "helper.ts": ['import "./loop/helper.js";', 'import "../../dist/lib/compiled.js";'].join(
+          "\n",
+        ),
+      },
+      (root) => {
+        fs.symlinkSync(".", path.join(root, "loop"), "dir");
+
+        expect(findFastProjectTransitiveViolations([path.join(root, "entry.test.ts")])).toEqual([
+          {
+            chain: [fixtureRepoPath(root, "entry.test.ts"), fixtureRepoPath(root, "helper.ts")],
+            detail: 'imports compiled CLI internals from "../../dist/lib/compiled.js"',
+            file: fixtureRepoPath(root, "helper.ts"),
+            line: 2,
+          },
+        ]);
+      },
+    );
   });
 
   it("reports a shortest chain through static import, export, dynamic import, and require edges (#6692)", () => {
@@ -697,7 +754,10 @@ describe("Vitest project membership boundary", () => {
       ["test/install-preflight-docker-bootstrap.test.ts", "installer-integration"],
       ["test/install-preflight.test.ts", "installer-integration"],
       ["test/install-station-dgx-os.test.ts", "installer-integration"],
+      ["test/install-station-docker-repository.test.ts", "installer-integration"],
       ["test/install-station-host-preparation.test.ts", "installer-integration"],
+      ["test/install-station-package-state.test.ts", "installer-integration"],
+      ["test/install-station-package-transaction.test.ts", "installer-integration"],
       ["test/package-contract/example.test.js", "package-contract"],
       ["test/e2e/support/example.test.js", "e2e-support"],
       ["test/e2e/live/example.spec.ts", "e2e-live"],

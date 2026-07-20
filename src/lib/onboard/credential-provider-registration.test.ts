@@ -98,7 +98,10 @@ describe("credential provider registration", () => {
       async () => ({ messagingTokenDefs: tokenDefs }),
     );
 
-    expect(registered).toEqual(["alpha-brave-search", "alpha-discord-bridge"]);
+    expect(registered).toEqual([
+      { name: "alpha-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+      { name: "alpha-discord-bridge", type: "generic", credentialEnv: "DISCORD_BOT_TOKEN" },
+    ]);
     expect(session.stagedCredentialProviders).toEqual([
       "alpha-brave-search",
       "alpha-discord-bridge",
@@ -162,7 +165,9 @@ describe("credential provider registration", () => {
       }),
     );
 
-    expect(registered).toEqual(["alpha-discord-bridge"]);
+    expect(registered).toEqual([
+      { name: "alpha-discord-bridge", type: "generic", credentialEnv: "DISCORD_BOT_TOKEN" },
+    ]);
     expect(session.stagedCredentialProviders).toEqual(["alpha-discord-bridge"]);
     expect(runOpenshell).toHaveBeenCalledWith(
       [

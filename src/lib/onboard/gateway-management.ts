@@ -139,8 +139,12 @@ function parseEndpoint(value: unknown): string | { error: string } {
   } catch {
     return { error: `endpoint is not a valid URL: ${raw}` };
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return { error: `endpoint must use http or https, got ${url.protocol.replace(":", "")}` };
+  if (url.protocol !== "http:") {
+    return {
+      error:
+        `endpoint must use http in gateway-management contract v1, got ${url.protocol.replace(":", "")}; ` +
+        "this contract does not define TLS trust material for an externally supervised gateway",
+    };
   }
   if (url.username || url.password) {
     return { error: "endpoint must not embed credentials" };

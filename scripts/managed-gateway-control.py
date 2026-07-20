@@ -1533,12 +1533,17 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
 
         expected_exit_lease = None
         try:
-            if old_identity is not None and spec.name == "hermes":
-                # The nonroot entrypoint owns the child and its crash budget.
-                # Publish an exact root-owned authorization before the pidfd
-                # signal. The marker names this live root controller so a
-                # delayed reap remains authorized without trusting wall time,
-                # while an orphaned marker fails closed as an ordinary crash.
+            if old_identity is not None:
+                # The nonroot entrypoint owns the child and its crash budget,
+                # and SIGTERM is indistinguishable from a self-requested
+                # shutdown once the child has exited: openclaw exits 0 on
+                # SIGTERM, which nemoclaw-start reads as an intentional stop
+                # and therefore does not respawn. Publish an exact root-owned
+                # authorization before the pidfd signal so the entrypoint
+                # relaunches the gateway this controller is about to wait for.
+                # The marker names this live root controller so a delayed reap
+                # remains authorized without trusting wall time, while an
+                # orphaned marker fails closed as an ordinary crash.
                 with _control_stage("publish-expected-exit"):
                     controller_identity = _controller_process_identity(reader)
                     expected_exit_lease = _publish_expected_exit_lease(

@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../state/onboard-session";
 import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
-import { resolveGatewayOwner } from "../gateway-ownership";
+import { recordCheckpointGatewayOwner } from "../checkpoint-record";
+import { checkpointGatewayOwner, resolveGatewayOwner } from "../gateway-ownership";
 import {
   createInitialOnboardFlowPhases,
   type InitialOnboardFlowContext,
@@ -24,6 +25,13 @@ type SandboxGpuConfig = {
   errors?: string[];
 };
 type Context = InitialOnboardFlowContext<null, Gpu, SandboxGpuConfig>;
+
+const MANAGED_OWNER = resolveGatewayOwner({ declaration: null, hasPackagedService: false });
+
+function recordManagedOwner(session: Session): Session {
+  recordCheckpointGatewayOwner(session, checkpointGatewayOwner(MANAGED_OWNER));
+  return session;
+}
 
 function context(overrides: Partial<Context> = {}): Context {
   return {
@@ -119,8 +127,7 @@ describe("initial onboard flow phases", () => {
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
-        resolveGatewayOwner: () =>
-          resolveGatewayOwner({ declaration: null, hasPackagedService: false }),
+        resolveGatewayOwner: () => MANAGED_OWNER,
         probeGatewayAttachment: async () => ({
           gatewayPort: 31818,
           httpReady: true,
@@ -131,6 +138,8 @@ describe("initial onboard flow phases", () => {
           listenerExecPath: null,
           listenerSupervisorMatch: null,
         }),
+        recordGatewayOwner: () => recordManagedOwner(createSession()),
+        bindGatewayAttachment: vi.fn(),
         refreshDockerDriverGatewayReuseState: async (state) => state,
         gatewayCliSupportsLifecycleCommands: () => false,
         verifyGatewayContainerRunning: () => "running",
@@ -285,6 +294,7 @@ describe("initial onboard flow phases", () => {
         gateway: completeStep(),
       },
     });
+    recordManagedOwner(session);
     const ensureResumePreflightDashboardPortAvailable = vi.fn(() => {
       calls.push("ensure-resume-preflight-port");
     });
@@ -353,8 +363,7 @@ describe("initial onboard flow phases", () => {
       gatewayName: "nemoclaw",
       recreateSandbox: () => false,
       gatewayDeps: {
-        resolveGatewayOwner: () =>
-          resolveGatewayOwner({ declaration: null, hasPackagedService: false }),
+        resolveGatewayOwner: () => MANAGED_OWNER,
         probeGatewayAttachment: async () => ({
           gatewayPort: 31818,
           httpReady: true,
@@ -365,6 +374,8 @@ describe("initial onboard flow phases", () => {
           listenerExecPath: null,
           listenerSupervisorMatch: null,
         }),
+        recordGatewayOwner: () => session,
+        bindGatewayAttachment: vi.fn(),
         refreshDockerDriverGatewayReuseState: vi.fn(async (state) => {
           calls.push("refresh-gateway-reuse");
           return state;

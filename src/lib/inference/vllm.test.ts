@@ -53,6 +53,7 @@ vi.mock("./vllm-storage", async (importOriginal) => {
   };
 });
 
+import { currentPhaseActivityLabel } from "../core/phase-activity";
 import {
   assertVllmRegistryDigestRef,
   buildVllmRunArgs,
@@ -284,6 +285,7 @@ describe("vLLM profile detection", () => {
     const args = buildVllmRunArgs(runtime, ultra!, flags, {} as NodeJS.ProcessEnv);
     expect(args).toEqual([
       "--pull=never",
+      "--init",
       "--restart",
       "unless-stopped",
       "--gpus",
@@ -445,11 +447,18 @@ describe("vLLM image pull", () => {
 });
 
 describe("vLLM run command", () => {
+  it("adds Docker init so restarts can reap the server process (#7219)", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    const args = buildVllmRunArgs(profile!, profile!.defaultModel, profile!.dockerRunFlags);
+    expect(args.slice(0, 4)).toEqual(["--pull=never", "--init", "--restart", "unless-stopped"]);
+  });
+
   it("adds --restart unless-stopped so the container survives a host reboot (#4886)", () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
     expect(profile).not.toBeNull();
     const args = buildVllmRunArgs(profile!, profile!.defaultModel, profile!.dockerRunFlags);
-    expect(args.slice(0, 3)).toEqual(["--pull=never", "--restart", "unless-stopped"]);
+    expect(args).toEqual(expect.arrayContaining(["--restart", "unless-stopped"]));
     expect(args).toContain("--name");
     expect(args[args.indexOf("--name") + 1]).toBe(profile!.containerName);
     expect(args).toEqual(
@@ -604,6 +613,43 @@ describe("installVllm model resolution", () => {
     mkdirSpy.mockRestore();
     stdoutWrite.mockRestore();
     process.env = { ...originalEnv };
+  });
+
+  it("names the vLLM install for the onboarding heartbeat only while it runs (#7156)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    let labelDuringInstall: string | null = null;
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+      beforeInstall: () => {
+        labelDuringInstall = currentPhaseActivityLabel();
+      },
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(labelDuringInstall).toBe("vLLM install");
+    expect(currentPhaseActivityLabel()).toBeNull();
+  });
+
+  it("clears the heartbeat activity when vLLM setup rejects (#7156)", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const setupFailure = new Error("vLLM setup failed");
+
+    await expect(
+      installVllm(profile, {
+        hasImage: true,
+        nonInteractive: true,
+        promptFn: vi.fn(),
+        beforeInstall: () => {
+          expect(currentPhaseActivityLabel()).toBe("vLLM install");
+          throw setupFailure;
+        },
+      }),
+    ).rejects.toBe(setupFailure);
+
+    expect(currentPhaseActivityLabel()).toBeNull();
   });
 
   it("uses the profile default and skips the picker in non-interactive mode", async () => {
@@ -959,7 +1005,13 @@ describe("installVllm model resolution", () => {
       { env?: Record<string, string> },
     ];
     expect(args).toEqual(
-      expect.arrayContaining(["--pull=never", "--restart", "unless-stopped", profile.image]),
+      expect.arrayContaining([
+        "--pull=never",
+        "--init",
+        "--restart",
+        "unless-stopped",
+        profile.image,
+      ]),
     );
     expect(args).not.toContain("HF_TOKEN");
     expect(args.join(" ")).not.toContain("hf_test");

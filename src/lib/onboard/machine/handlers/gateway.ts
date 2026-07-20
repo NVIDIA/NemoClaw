@@ -6,6 +6,8 @@ import type { GatewayReuseState } from "../../../state/gateway";
 import type { Session } from "../../../state/onboard-session";
 import type { GatewayContainerState } from "../../gateway-container-running";
 import {
+  assertGatewayOwnerMatchesCheckpoint,
+  checkpointGatewayOwner,
   describeGatewayOwner,
   evaluateGatewayAttachment,
   type GatewayAttachmentProbe,
@@ -34,6 +36,10 @@ export interface GatewayStateOptions<Gpu> {
      */
     resolveGatewayOwner(): GatewayOwner;
     probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
+    /** Persist the selected secret-free owner before this phase mutates anything. */
+    recordGatewayOwner(owner: ReturnType<typeof checkpointGatewayOwner>): Session;
+    /** Register, select, and verify the exact declared external endpoint. */
+    bindGatewayAttachment(owner: GatewayOwner): void;
     refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
     gatewayCliSupportsLifecycleCommands(): boolean;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
@@ -111,6 +117,13 @@ async function handleGatewayStatePhase<Gpu>({
   // "complete" gateway step is not evidence that the declared owner still holds
   // the port.
   const owner = deps.resolveGatewayOwner();
+  if (resume) {
+    assertGatewayOwnerMatchesCheckpoint(owner, session?.checkpoint?.gatewayOwner);
+  } else if (session?.checkpoint?.gatewayOwner) {
+    assertGatewayOwnerMatchesCheckpoint(owner, session.checkpoint.gatewayOwner);
+  } else {
+    session = deps.recordGatewayOwner(checkpointGatewayOwner(owner));
+  }
   if (isExternallySupervised(owner)) {
     return attachToExternallySupervisedGateway(owner, deps);
   }
@@ -284,6 +297,7 @@ async function attachToExternallySupervisedGateway<Gpu>(
   if (!attachment.ok) {
     throw new GatewayOwnershipError(attachment.code, attachment.message, owner);
   }
+  deps.bindGatewayAttachment(owner);
 
   deps.skippedStepMessage("gateway", `supervised by ${supervisor}`, "reuse");
   deps.note(`  Attached to externally supervised OpenShell gateway (${supervisor}).`);

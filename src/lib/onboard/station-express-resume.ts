@@ -82,6 +82,7 @@ const STATION_EXPRESS_RETIREMENT_CLAIM_ATTEMPTS = 3;
 const STATION_EXPRESS_RECEIPT_GENERATION_PATTERN = /^[0-9a-f]{32}$/;
 const STATION_EXPRESS_RECEIPT_REVISION_PATTERN = /^[0-9a-f]{40}$/;
 const STATION_EXPRESS_RETIREMENT_CLAIM_SUFFIX_PATTERN = /^[A-Za-z0-9]+$/;
+const STATION_EXPRESS_RECEIPT_PORT_PATTERN = /^\d+$/;
 const STATION_EXPRESS_RECEIPT_AGENTS = new Set(["openclaw", "hermes", "langchain-deepagents-code"]);
 const STATION_EXPRESS_RECEIPT_POLICY_TIERS = new Set(["restricted", "balanced", "open"]);
 
@@ -118,6 +119,22 @@ function identifiesCheckpoint(model: VllmModelDef, value: string): boolean {
 function validSandboxName(value: unknown): value is string {
   return (
     typeof value === "string" && value.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(value)
+  );
+}
+
+function validReceiptPort(value: string): boolean {
+  if (!STATION_EXPRESS_RECEIPT_PORT_PATTERN.test(value)) return false;
+  const port = Number(value);
+  return port >= 1024 && port <= 65535;
+}
+
+function validReceiptPorts(gatewayPort: string, dashboardPort: string, vllmPort: string): boolean {
+  const numericPorts = [gatewayPort, dashboardPort, vllmPort].map(Number);
+  return (
+    validReceiptPort(gatewayPort) &&
+    validReceiptPort(dashboardPort) &&
+    validReceiptPort(vllmPort) &&
+    new Set(numericPorts).size === 3
   );
 }
 
@@ -255,7 +272,24 @@ function readStationExpressInstallerResumeGeneration(stateFile: string): string 
     validSandboxName(lines[4].slice("sandbox=".length)) &&
     lines[5]?.startsWith("policy_tier=") &&
     STATION_EXPRESS_RECEIPT_POLICY_TIERS.has(lines[5].slice("policy_tier=".length));
-  if (!legacyFormat && !currentFormat) {
+  const portFormat =
+    lines.length === 10 &&
+    lines[9] === "" &&
+    lines[3]?.startsWith("agent=") &&
+    STATION_EXPRESS_RECEIPT_AGENTS.has(lines[3].slice("agent=".length)) &&
+    lines[4]?.startsWith("sandbox=") &&
+    validSandboxName(lines[4].slice("sandbox=".length)) &&
+    lines[5]?.startsWith("policy_tier=") &&
+    STATION_EXPRESS_RECEIPT_POLICY_TIERS.has(lines[5].slice("policy_tier=".length)) &&
+    lines[6]?.startsWith("gateway_port=") &&
+    lines[7]?.startsWith("dashboard_port=") &&
+    lines[8]?.startsWith("vllm_port=") &&
+    validReceiptPorts(
+      lines[6].slice("gateway_port=".length),
+      lines[7].slice("dashboard_port=".length),
+      lines[8].slice("vllm_port=".length),
+    );
+  if (!legacyFormat && !currentFormat && !portFormat) {
     throw new Error("DGX Station Express installer resume state is malformed.");
   }
   const revision = lines[0]?.startsWith("revision=") ? lines[0].slice("revision=".length) : "";

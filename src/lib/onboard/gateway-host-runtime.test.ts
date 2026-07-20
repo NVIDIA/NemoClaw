@@ -144,6 +144,20 @@ describe("gateway host runtime ownership", () => {
 
     expect(() => runtime.getGatewayOwner()).toThrow(/authority changed during this run/);
   });
+
+  it("clears the process-local owner binding for a genuinely new run (#6576)", () => {
+    declareExternalSupervision();
+    const runtime = createGatewayHostRuntime(createDeps());
+    expect(runtime.getGatewayOwner()).toMatchObject({ mode: "externally-supervised" });
+
+    delete process.env[GATEWAY_MANAGEMENT_ENV_VAR];
+    runtime.resetGatewayOwnerBinding();
+
+    expect(runtime.getGatewayOwner()).toMatchObject({
+      mode: "nemoclaw-managed",
+      source: "standalone",
+    });
+  });
 });
 
 describe("gateway host runtime attachment probe", () => {

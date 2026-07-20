@@ -106,6 +106,7 @@ const {
 const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
+  discloseInitialSandboxPolicy,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
 const {
   getSelectionDrift,
@@ -575,9 +576,15 @@ import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
 } from "./messaging-channel-config";
+import { recordCheckpointGatewayOwner } from "./onboard/checkpoint-record";
 import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
+import { bindExternallySupervisedGateway } from "./onboard/gateway-attachment-registration";
 import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
+import {
+  assertGatewayOwnerMatchesCheckpoint,
+  checkpointGatewayOwner,
+} from "./onboard/gateway-ownership";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
@@ -2125,10 +2132,12 @@ const applyOverlayfsAutoFix = overlayfsAutoFix.createOverlayfsAutoFix({
 
 const {
   assertGatewayStartAllowed,
+  getGatewayOwner,
   getGatewayLocalEndpoint,
   getGatewayStartEnv,
   isGatewayExternallySupervised,
   machineGatewayOwnerDeps,
+  resetGatewayOwnerBinding,
 } = createGatewayHostRuntime({
   applyOverlayfsAutoFix,
   checkGatewayPortAvailable,
@@ -2250,21 +2259,8 @@ async function createSandboxWithBaseImageResolution(
   const extraProviderPlan = createIntent?.extraProviders
     ? { extraProviders: createIntent.extraProviders, staleExtraProviders: [] }
     : planRegisteredExtraProviders(GATEWAY_NAME, { runOpenshell });
-  const resolvedCreateIntent =
-    createIntent?.resolved ??
-    (await sandboxCreateIntentResolver.resolve({
-      sandboxName,
-      enabledChannels,
-      webSearchConfig,
-      agent,
-      sandboxGpuConfig: effectiveSandboxGpuConfig,
-      resourceProfile,
-      hermesToolGateways,
-      extraProviders: extraProviderPlan.extraProviders,
-      staleExtraProviders: extraProviderPlan.staleExtraProviders,
-      ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}),
-      ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}),
-    }));
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const resolvedCreateIntent = createIntent?.resolved ?? (await sandboxCreateIntentResolver.resolve({ sandboxName, inferenceProvider: provider, enabledChannels, webSearchConfig, agent, sandboxGpuConfig: effectiveSandboxGpuConfig, resourceProfile, hermesToolGateways, extraProviders: extraProviderPlan.extraProviders, staleExtraProviders: extraProviderPlan.staleExtraProviders, ...(createIntent?.reuseRegisteredCredentials ? { reuseRegisteredCredentials: true } : {}), ...(createIntent?.policyTier !== undefined ? { policyTier: createIntent.policyTier } : {}) }));
   const messagingCapabilities = await sandboxCreateIntentResolver.rebind(
     {
       sandboxName,
@@ -2686,14 +2682,10 @@ async function createSandboxWithBaseImageResolution(
     upsertMessagingProviders,
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+    discloseInitialSandboxPolicy,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
-  }
-  if (initialSandboxPolicy.appliedPresets.length > 0) {
-    console.log(
-      `  Including policy preset(s) at sandbox boot: ${initialSandboxPolicy.appliedPresets.join(", ")}`,
-    );
   }
   if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
@@ -2867,12 +2859,8 @@ async function createSandboxWithBaseImageResolution(
       register: (openclawImagePluginInstalls) =>
         sandboxRegistration.registerCreatedSandbox({
           sandboxName,
-          inferenceSelection: sandboxRegistration.selection(
-            sandboxName,
-            provider,
-            model,
-            preferredInferenceApi,
-          ),
+          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+          inferenceSelection: sandboxRegistration.selection(sandboxName, provider, model, preferredInferenceApi, createIntent?.endpointSource ?? null),
           runtimeFields: sandboxRuntimeFields,
           agent,
           agentVersionKnown: !fromDockerfile,
@@ -4007,6 +3995,21 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
+  if (!resume) {
+    resetGatewayOwnerBinding();
+  } else {
+    // Resume owner proof is checked before consent, preflight, provider, or
+    // gateway effects. The gateway phase repeats the assertion at its mutation
+    // boundary to close a declaration check/use gap.
+    const owner = getGatewayOwner();
+    const recordedOwner = onboardSession.loadSession()?.checkpoint?.gatewayOwner;
+    // Sessions from before this field existed can only be adopted when the
+    // current owner is still NemoClaw-managed. External ownership without a
+    // durable proof is ambiguous and must fail closed.
+    if (recordedOwner || owner.mode === "externally-supervised") {
+      assertGatewayOwnerMatchesCheckpoint(owner, recordedOwner);
+    }
+  }
   const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
     fresh,
     initialHint: opts.baseImageResolutionHint,
@@ -4104,7 +4107,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
     let selectedMessagingChannels: string[] = [];
-    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSession(
+    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSessionValidated(
       {
         resume,
         fresh,
@@ -4133,6 +4136,15 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
+    const owner = getGatewayOwner();
+    if (session?.checkpoint?.gatewayOwner) {
+      assertGatewayOwnerMatchesCheckpoint(owner, session.checkpoint.gatewayOwner);
+    } else {
+      session = onboardSession.updateSession((current) => {
+        recordCheckpointGatewayOwner(current, checkpointGatewayOwner(owner));
+        return current;
+      });
+    }
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     await recordInitialPreflightTransition(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
@@ -4263,6 +4275,16 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       recreateSandbox: isRecreateSandbox,
       gatewayDeps: {
         ...machineGatewayOwnerDeps,
+        recordGatewayOwner: (owner) =>
+          onboardSession.updateSession((current) => {
+            recordCheckpointGatewayOwner(current, owner);
+            return current;
+          }),
+        bindGatewayAttachment: (owner) =>
+          bindExternallySupervisedGateway(owner, GATEWAY_NAME, {
+            runOpenshell,
+            runCaptureOpenshell,
+          }),
         refreshDockerDriverGatewayReuseState,
         gatewayCliSupportsLifecycleCommands: () =>
           gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
@@ -4411,6 +4433,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
         authoritativePolicyTier:
           opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+        endpointSource: opts.endpointSource,
+        endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null,
+        endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null,
         recreateSandbox: isRecreateSandbox,
         controlUiPort: _preflightDashboardPort,
         rootDir: ROOT,

@@ -249,7 +249,7 @@ describe("gateway owner diagnostics", () => {
   });
 });
 
-describe("cgroupBelongsToUnit", () => {
+describe("gateway supervisor cgroup membership", () => {
   const UNIT = "openshell-gateway.service";
 
   it("matches a cgroup v2 process in the unit's system slice (#6576)", () => {

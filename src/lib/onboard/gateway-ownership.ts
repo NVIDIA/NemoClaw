@@ -28,6 +28,7 @@
 
 import type { JsonObject } from "../core/json-types";
 import { redactUrl } from "../security/redact";
+import type { CheckpointGatewayOwner } from "../state/onboard-checkpoint-types";
 import {
   type GatewayCapability,
   type GatewayManagementDeclaration,
@@ -83,7 +84,10 @@ export type GatewayOwnershipFailureCode =
   | "unknown_listener"
   | "multiple_owners"
   | "endpoint_port_mismatch"
-  | "capability_unsupported";
+  | "capability_unsupported"
+  | "owner_binding_missing"
+  | "owner_binding_drift"
+  | "gateway_registration_mismatch";
 
 export class GatewayOwnershipError extends Error {
   readonly code: GatewayOwnershipFailureCode;
@@ -140,10 +144,7 @@ export function isExternallySupervised(owner: GatewayOwner): boolean {
   return owner.mode === "externally-supervised";
 }
 
-function sameRequiredCapabilities(
-  a: readonly GatewayCapability[],
-  b: readonly GatewayCapability[],
-): boolean {
+function sameRequiredCapabilities(a: readonly string[], b: readonly string[]): boolean {
   const aSet = new Set(a);
   const bSet = new Set(b);
   return aSet.size === bSet.size && Array.from(aSet).every((capability) => bSet.has(capability));
@@ -165,6 +166,58 @@ export function sameGatewayOwner(a: GatewayOwner, b: GatewayOwner): boolean {
     a.supervisor?.execPath === b.supervisor?.execPath &&
     sameRequiredCapabilities(a.requiredCapabilities, b.requiredCapabilities)
   );
+}
+
+/** Convert a runtime owner into the secret-free durable checkpoint shape. */
+export function checkpointGatewayOwner(owner: GatewayOwner): CheckpointGatewayOwner {
+  return {
+    mode: owner.mode,
+    source: owner.source,
+    endpoint: owner.endpoint,
+    stateDir: owner.stateDir,
+    supervisor: owner.supervisor ? { ...owner.supervisor } : null,
+    requiredCapabilities: [...owner.requiredCapabilities],
+  };
+}
+
+/** Compare the current runtime authority with a previously persisted identity. */
+export function gatewayOwnerMatchesCheckpoint(
+  owner: GatewayOwner,
+  checkpoint: CheckpointGatewayOwner,
+): boolean {
+  return (
+    owner.mode === checkpoint.mode &&
+    owner.source === checkpoint.source &&
+    owner.endpoint === checkpoint.endpoint &&
+    owner.stateDir === checkpoint.stateDir &&
+    owner.supervisor?.kind === checkpoint.supervisor?.kind &&
+    owner.supervisor?.serviceName === checkpoint.supervisor?.serviceName &&
+    owner.supervisor?.execPath === checkpoint.supervisor?.execPath &&
+    sameRequiredCapabilities(owner.requiredCapabilities, checkpoint.requiredCapabilities)
+  );
+}
+
+/** Fail a resume before any effect when its durable owner proof is absent or stale. */
+export function assertGatewayOwnerMatchesCheckpoint(
+  owner: GatewayOwner,
+  checkpoint: CheckpointGatewayOwner | null | undefined,
+): void {
+  if (!checkpoint) {
+    throw new GatewayOwnershipError(
+      "owner_binding_missing",
+      "The resumed onboarding session does not record a gateway lifecycle authority. " +
+        "Start a fresh onboarding attempt so NemoClaw can bind the owner before any gateway effect.",
+      owner,
+    );
+  }
+  if (!gatewayOwnerMatchesCheckpoint(owner, checkpoint)) {
+    throw new GatewayOwnershipError(
+      "owner_binding_drift",
+      "The gateway lifecycle authority differs from the owner recorded by this onboarding attempt. " +
+        "NemoClaw will not resume across an ownership change; restore the original declaration or start fresh.",
+      owner,
+    );
+  }
 }
 
 /** Short owner description for error messages; carries no credential material. */
@@ -309,11 +362,12 @@ export function evaluateGatewayAttachment(
     (capability) => !SUPPORTED_GATEWAY_CAPABILITIES.includes(capability),
   );
   if (unsupported.length > 0) {
+    const capabilityLabel = unsupported.length === 1 ? "capability" : "capabilities";
     return {
       ok: false,
       code: "capability_unsupported",
       message:
-        `The declaration requires gateway capability ${unsupported.join(", ")}, which this NemoClaw ` +
+        `The declaration requires gateway ${capabilityLabel} ${unsupported.join(", ")}, which this NemoClaw ` +
         `build does not provide. Onboarding stops before any effect rather than attaching to a gateway ` +
         `it cannot drive as declared.`,
     };
