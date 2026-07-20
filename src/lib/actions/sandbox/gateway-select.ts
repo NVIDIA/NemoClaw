@@ -3,9 +3,11 @@
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import { writeStderr } from "../../adapters/stdio";
 import { getKnownSandboxTargetGatewayName } from "./gateway-target";
 
 export type GatewaySelectRunner = typeof runOpenshell;
+export type GatewaySelectOutputWriter = typeof writeStderr;
 
 export type GatewaySelectResult =
   | { outcome: "selected"; gatewayName: string }
@@ -15,6 +17,7 @@ export type GatewaySelectResult =
 export function selectSandboxOwningGateway(
   sandboxName: string,
   run: GatewaySelectRunner = runOpenshell,
+  writeOutput: GatewaySelectOutputWriter = writeStderr,
 ): GatewaySelectResult {
   const targetGatewayName = getKnownSandboxTargetGatewayName(sandboxName);
   if (!targetGatewayName) return { outcome: "unregistered", gatewayName: null };
@@ -23,7 +26,7 @@ export function selectSandboxOwningGateway(
     stdio: ["inherit", "pipe", "inherit"],
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
-  if (result.stdout) process.stderr.write(result.stdout);
+  if (result.stdout) writeOutput(result.stdout);
   if (result.error || result.status !== 0) {
     return { outcome: "failed", gatewayName: targetGatewayName };
   }
