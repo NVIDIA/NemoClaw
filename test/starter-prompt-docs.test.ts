@@ -758,7 +758,7 @@ describe("starter prompt docs CTA", () => {
     expect(stationSource).toContain("`nvidia/nemotron-3-ultra-550b-a55b`");
     expect(stationSource).toContain("`deepseek-v4-flash`");
     expect(stationSource).toContain("`deepseek-ai/DeepSeek-V4-Flash`");
-    expect(stationSource).toContain("Nemotron 3 Ultra 550B, the ordinary installer default");
+    expect(stationSource).toContain("Automatic pair selection");
     expect(stationSource).toContain(
       "DeepSeek V4 Flash, the explicit `--station-deepseek` override",
     );
@@ -768,8 +768,12 @@ describe("starter prompt docs CTA", () => {
     expect(stationSource).toContain(
       "Do not run `scripts/prepare-dgx-station-host.sh --check`, `--verify`, or `--apply` separately",
     );
-    expect(stationSource).toContain("For Nemotron Ultra, run the ordinary installer without");
+    expect(stationSource).toContain(
+      "For automatic pair selection, run the ordinary installer without",
+    );
     expect(stationSource).toContain("For DeepSeek, pass `--station-deepseek`");
+    expect(stationSource).toContain("TCP port `29501`");
+    expect(stationSource).toContain("shared `/24`");
     for (const environmentName of [
       "NEMOCLAW_PROVIDER",
       "NEMOCLAW_VLLM_MODEL",
