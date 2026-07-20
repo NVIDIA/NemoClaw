@@ -149,8 +149,10 @@ Use this JSON-compatible shape:
 }
 ```
 
-Create or delete labels only when the workflow authorizes that operation.
-Without that authority, limit these fields to `agt: *` labels.
+Without authorization for label writes, keep `labels_to_add` and `labels_to_remove` as dry-run output and do not change labels.
+An authorized agent-owned workflow may add or remove only `agt: *` labels.
+Create or delete labels only when the workflow authorizes that operation, with the same `agt: *` limit for agent-owned workflows.
+An accepted maintainer write set can authorize canonical non-agent label changes.
 
 ## Comment Guidance
 

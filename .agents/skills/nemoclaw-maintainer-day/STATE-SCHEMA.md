@@ -59,5 +59,5 @@ Git excludes this file through `.git/info/exclude`.
   Use `{ "reason": "...", "excludedAt": "ISO" }` as each value.
   Triage skips these items until the user removes them.
 - Use this format for `history` entries: `{ "at": "ISO", "item": "PR#1234", "action": "approved|salvaged|blocked|sequenced", "note": "one line" }`.
-  Keep fewer than 50 entries. Remove the oldest entries first.
+  Keep at most 50 entries. Remove the oldest entries first.
 - `queue.items` and `queue.nearMisses` store the latest triage output for comparison across runs.

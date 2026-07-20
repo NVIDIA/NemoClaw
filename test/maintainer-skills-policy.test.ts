@@ -255,4 +255,58 @@ describe("maintainer skills follow canonical workflow policy", () => {
       "PR-body DCO declaration or GitHub Verified commit history is missing",
     );
   });
+
+  it("keeps PR workflow writes behind their safety checks", () => {
+    const createPr = read(".agents/skills/nemoclaw-contributor-create-pr/SKILL.md");
+    const judgment = read(
+      ".agents/skills/nemoclaw-maintainer-cross-issue-sweep/checks/relationship-judgment.md",
+    );
+    const mergeGate = read(".agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md");
+    const salvage = read(".agents/skills/nemoclaw-maintainer-day/SALVAGE-PR.md");
+
+    expect(createPr).toContain("For work that is not ready for review, complete Step 4");
+    expect(createPr).toContain("--body-file /tmp/nemoclaw-pr-body.md");
+    expect(createPr).not.toContain('--body "..."');
+    expect(judgment).toContain("{candidate_comments}");
+    expect(
+      mergeGate.match(
+        /the PR is open and that the PR SHA, base SHA, and coordination identity still match/gu,
+      ),
+    ).toHaveLength(2);
+    expect(salvage).toContain("`headRepository.nameWithOwner` is `NVIDIA/NemoClaw`");
+    expect(salvage).toContain("git push origin <local-branch>:<headRefName>");
+    expect(salvage).toContain("If `maintainerCanModify` is false, do not push");
+  });
+
+  it("keeps maintainer ordering, state, and write authorization explicit", () => {
+    const sequence = read(".agents/skills/nemoclaw-maintainer-day/SEQUENCE-WORK.md");
+    const state = read(".agents/skills/nemoclaw-maintainer-day/STATE-SCHEMA.md");
+    const instructions = read(
+      ".agents/skills/nemoclaw-maintainer-policies/references/triage-instructions.md",
+    );
+    const triage = read(".agents/skills/nemoclaw-maintainer-triage/SKILL.md");
+
+    expect(sequence).toContain("An identified security concern overrides this default order");
+    expect(state).toContain("Keep at most 50 entries");
+    expect(instructions).toContain(
+      "keep `labels_to_add` and `labels_to_remove` as dry-run output and do not change labels",
+    );
+    expect(instructions).toContain(
+      "An authorized agent-owned workflow may add or remove only `agt: *` labels",
+    );
+    expect(triage).toContain("Before each write, re-read Issue Type, Project fields, and labels");
+    expect(triage).toContain("present an updated proposal for acceptance");
+  });
+
+  it("resolves security-review issue inputs to one verified PR", () => {
+    const securityReview = read(".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md");
+
+    expect(securityReview).toContain("--json closedByPullRequestsReferences");
+    expect(securityReview).toContain("Continue only when this returns one PR number");
+    expect(securityReview).toContain("Use the verified PR number in each later command");
+    expect(securityReview).toContain("If no changed or reviewable security surface exists");
+    expect(securityReview).toContain(
+      "Dockerfiles, workflows, network policies, blueprints, dependencies, and security configuration",
+    );
+  });
 });

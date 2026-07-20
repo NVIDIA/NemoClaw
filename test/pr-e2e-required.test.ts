@@ -422,6 +422,6 @@ describe("native PR E2E required job", () => {
 
     await expect(
       waitForRequiredGate(identity, { timeoutMs: 100, pollIntervalMs: 10 }),
-    ).rejects.toThrow("no longer matches the PR SHA and base SHA");
+    ).rejects.toThrow("not the expected open PR with the observed PR SHA and base SHA");
   });
 });

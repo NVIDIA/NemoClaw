@@ -32,6 +32,7 @@ Use this sequence when possible:
 ## Step 4: Rank
 
 Use repo priorities: (1) backlog reduction, (2) security, (3) test coverage, (4) hotspot cooling.
+An identified security concern overrides this default order.
 
 Give more priority to a change that unblocks several PRs.
 Give less priority to style-only work.

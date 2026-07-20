@@ -74,19 +74,26 @@ Never force-push.
 If Git or GitHub access prevents the push, follow [Stop for Git and GitHub Access Errors](../_shared/git-github-hard-stop.md).
 Resolve merge conflicts and dirty-worktree problems in this workflow.
 
-**Fork PRs:** Check where to push:
+Check the PR's head repository before you push:
 
 ```bash
 gh pr view <number> --repo NVIDIA/NemoClaw --json headRepositoryOwner,headRepository,headRefName,maintainerCanModify
 ```
 
-If `maintainerCanModify` is true, push to the fork:
+If `headRepository.nameWithOwner` is `NVIDIA/NemoClaw`, push to the PR branch on `origin`:
+
+```bash
+git push origin <local-branch>:<headRefName>
+```
+
+For a fork PR, push only when `maintainerCanModify` is true:
 
 ```bash
 git push git@github.com:<owner>/<repo>.git <local-branch>:<headRefName>
 ```
 
-Do not push to `origin`. That creates a branch on NVIDIA/NemoClaw that is not part of the PR.
+For a fork PR, do not push to `origin`.
+If `maintainerCanModify` is false, do not push.
 
 ## Step 9: Monitor After Push
 

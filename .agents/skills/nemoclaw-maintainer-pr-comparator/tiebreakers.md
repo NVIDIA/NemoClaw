@@ -19,7 +19,9 @@ Eliminate any PR failing Tier 0. Among survivors:
 
 1. Compute weighted score across Tiers 1-2.
 2. Build the **behavior-coverage matrix**. Use it as evidence for the weighted score and tiebreakers.
-3. Apply tiebreakers in order. First tiebreaker that distinguishes the PRs picks the winner.
+3. Apply tiebreakers in order.
+   Set the winner when the evidence distinguishes a PR.
+   Otherwise, leave `winner` null.
 
 ### Tiebreakers (in order)
 
@@ -42,13 +44,14 @@ When no PR passes Tier 0, rank eligible PRs by the work needed before merge.
    - Among eligible PRs, fewer substantive failures wins
    - Tie → fewer trivial failures wins
    - If still tied, use the higher Tier 1 and Tier 2 weighted score.
+   - If the available evidence cannot support this ordering, leave `closest_to_ready` null.
 3. Output:
    - Leave `winner` null. Use it only for an eligible merge recommendation.
    - Set `closest_to_ready` only to an open PR that passes contributor compliance. Leave it null for a rejection-only verdict.
    - Per-PR Tier 0 failure list
    - Tier 1 and Tier 2 scorecard for each PR
    - Verdict: "Neither mergeable yet. PR A is closer — fix [substantive list]. PR B has [issues]."
-   - Salvage steps for each eligible PR, including rebase commands and review-thread links.
+   - Put salvage steps for each eligible PR in that PR's evidence map so the renderer includes them in the reasoning evidence.
 
 ## Behavior-coverage matrix
 

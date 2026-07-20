@@ -251,10 +251,15 @@ Add labels that apply:
 
 ### Draft PRs
 
-For work that is not ready for review:
+For work that is not ready for review, complete Step 4 and use the completed body file.
+Draft PRs require the same DCO declaration and commit-verification evidence as other PRs.
 
 ```bash
-gh pr create --draft --title "..." --assignee "@me" --body "..."
+gh pr create \
+  --draft \
+  --title "<type>(<scope>): <description>" \
+  --assignee "@me" \
+  --body-file /tmp/nemoclaw-pr-body.md
 ```
 
 ## Step 8: Monitor CI and Review Feedback

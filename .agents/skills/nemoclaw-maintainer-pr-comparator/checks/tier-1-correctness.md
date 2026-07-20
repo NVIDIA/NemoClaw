@@ -14,7 +14,7 @@ Include file and line evidence for each judgment.
 - 1.3 Negative test coverage
 - 1.4 Coverage shape
 - 1.5 Refactor-vs-behavior scan
-- 1.6 Mocking purity
+- 1.6 Mock boundaries
 
 ## 1.1 Test exercises bug path
 

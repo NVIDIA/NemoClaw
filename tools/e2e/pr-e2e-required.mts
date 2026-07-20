@@ -146,7 +146,7 @@ function validatePullRequest(value: unknown, identity: RequiredGateIdentity): Pu
     !isObjectRecord(value.base) ||
     value.base.sha !== identity.baseSha
   ) {
-    throw new Error("PR no longer matches the PR SHA and base SHA observed by this job");
+    throw new Error("PR is not the expected open PR with the observed PR SHA and base SHA");
   }
   return value as PullRequest;
 }
@@ -224,7 +224,9 @@ async function matchingChecks(
       check.external_id === externalId,
   );
   if (claimed.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
-    throw new Error("The PR/base SHA coordination identity was claimed by an unexpected GitHub App");
+    throw new Error(
+      "The PR/base SHA coordination identity was claimed by an unexpected GitHub App",
+    );
   }
   const current = currentCoordinationCheck(
     claimed.filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID),

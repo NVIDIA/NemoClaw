@@ -58,6 +58,15 @@ describe("PR comparator verdict renderer", () => {
     expect(result.stdout).toContain("### Verdict: MERGE PR #123");
   });
 
+  it("allows a no-winner result when happy-mode evidence is insufficient", () => {
+    const result = render(specFor(passingGates, { mode: "happy" }));
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("### Verdict: No clear winner");
+    expect(result.stdout).not.toContain("MERGE PR");
+  });
+
   it("rejects a supplied winner if contributor compliance failed", () => {
     const result = render(
       specFor({ ...passingGates, contributor_compliance: false }, { mode: "happy", winner: 123 }),
@@ -126,12 +135,16 @@ describe("PR comparator verdict renderer", () => {
     for (const gate of Object.keys(passingGates)) {
       expect(skill).toContain(`\`${gate}\``);
     }
-    expect(skill).toContain("set `winner` to an eligible PR");
+    expect(skill).toContain("set `winner` only to an eligible PR");
+    expect(skill).toContain("Leave `winner` null when the evidence does not support");
     expect(skill).toContain(
       "Set `closest_to_ready` only to an open PR that passes contributor requirements",
     );
     expect(skill).toContain(
       "Stop if the renderer exits with a nonzero status. Do not recommend a merge",
+    );
+    expect(skill).toContain(
+      "The reviewer remains responsible for the score, ranking, and evidence",
     );
   });
 });

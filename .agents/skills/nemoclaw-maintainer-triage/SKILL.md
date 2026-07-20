@@ -70,7 +70,10 @@ In batch mode, present each dry run and wait for an explicit `apply`, `skip`, or
 ## Step 4: Apply Only the Accepted Write Set
 
 Acceptance authorizes only the fields, labels, and comment in the proposal.
-Resolve all live IDs before each write. Do not store mutable IDs in this skill.
+Before each write, re-read Issue Type, Project fields, and labels, then resolve all live IDs.
+Do not store mutable IDs in this skill.
+If the state differs from the accepted proposal's base state, stop and present an updated proposal for acceptance.
+Resume writes only after the user accepts the updated proposal.
 
 Apply writes in this order:
 

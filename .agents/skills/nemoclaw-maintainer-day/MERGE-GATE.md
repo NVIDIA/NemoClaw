@@ -178,7 +178,8 @@ The controller rejects these states:
 A permitted `main` advance must keep the controller commit as its merge base.
 It must contain fewer than 300 listed changed files and no `e2e-control-plane` changes.
 Other advances fail closed.
-The controller reads the PR SHA and base SHA before it writes success.
+Immediately before it writes success, the controller confirms that the PR is open and that the PR SHA, base SHA, and coordination identity still match.
+It fails closed if any value changed or does not match.
 Its result records the reviewer, optional comment, approval-run URL, plan, and work that did not run.
 
 To use the fallback, select **Run workflow** on `main` and then select `approve-fork-e2e-skip`.
@@ -224,6 +225,8 @@ The first attempt requires the actor to have `maintain` or `admin` access.
 The workflow rejects forks, stale or closed PRs, plans that need no authorization, and empty selections.
 It also rejects a missing coordination check, an identity mismatch, or an incompatible controller commit.
 It reads the PR SHA and base SHA before dispatch.
+Before any result reaches success, it confirms that the PR is open and that the PR SHA, base SHA, and coordination identity still match.
+It fails closed if any value changed or does not match.
 
 Authorization returns `E2E / PR Gate Coordination` to `in_progress`.
 It runs selected jobs through the wait, evidence-download, and finish process.

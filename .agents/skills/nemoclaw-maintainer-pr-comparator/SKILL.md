@@ -100,7 +100,8 @@ Apply the four model checks in `checks/tier-2-quality.md`.
 ### Step 8: Tier 3 ranking
 
 Compute the mode from the Tier 0 results. Do not accept a mode from the caller.
-In happy mode, set `winner` to an eligible PR and set `closest_to_ready` to null.
+In happy mode, set `winner` only to an eligible PR and set `closest_to_ready` to null.
+Leave `winner` null when the evidence does not support a merge recommendation.
 In degraded mode, set `winner` to null.
 Set `closest_to_ready` only to an open PR that passes contributor requirements.
 See `tiebreakers.md`.
@@ -109,6 +110,8 @@ See `tiebreakers.md`.
 
 Use `templates/verdict.md` and render the result with `scripts/render-verdict.py`.
 Stop if the renderer exits with a nonzero status. Do not recommend a merge.
+The renderer validates the gate schema, mode, winner eligibility, and salvage-candidate eligibility.
+The reviewer remains responsible for the score, ranking, and evidence.
 For each judgment, include evidence, the inference, and the score.
 
 ## Reference files

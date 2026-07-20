@@ -32,6 +32,8 @@ PR diff (relevant slice): {diff}
 
 Candidate issue #{issue_number}: {issue_title}
 Issue body: {issue_body}
+First five issue comments:
+{candidate_comments}
 
 PR's primary linked issue: #{primary_issue}
 
