@@ -62,6 +62,26 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     expect(text).not.toContain("beta start");
   });
 
+  it.each([
+    { phase: "Failed", containerName: "openshell-beta-abc" },
+    { phase: "Error", containerName: null },
+  ])("keeps rebuild guidance for $phase when start cannot recover the container", ({
+    phase,
+    containerName,
+  }) => {
+    const cap = captureConsoleLog();
+    printNonReadySandboxPhaseGuidance({
+      sandboxName: "beta",
+      phase,
+      dockerRuntime: { health: "none", paused: false, containerName },
+    });
+    const text = cap.lines();
+    cap.restore();
+
+    expect(text).toContain("nemoclaw beta rebuild --yes");
+    expect(text).not.toContain("nemoclaw beta start");
+  });
+
   it("prints no guidance for a Ready sandbox", () => {
     const cap = captureConsoleLog();
     printNonReadySandboxPhaseGuidance({ sandboxName: "beta", phase: "Ready", dockerRuntime: null });

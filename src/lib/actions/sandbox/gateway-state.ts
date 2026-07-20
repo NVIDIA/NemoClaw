@@ -604,12 +604,18 @@ export async function ensureLiveSandboxOrExit(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",
       );
       console.error("");
-      console.error(
-        `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the crashed container and recover the sandbox with workspace state preserved.`,
-      );
-      console.error(
-        `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead, but its pre-rebuild backup cannot snapshot a stopped container, so start it first.)`,
-      );
+      if (phase === "Error" && dockerRuntime?.containerName) {
+        console.error(
+          `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the crashed container and recover the sandbox with workspace state preserved.`,
+        );
+        console.error(
+          `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead, but its pre-rebuild backup cannot snapshot a stopped container, so start it first.)`,
+        );
+      } else {
+        console.error(
+          `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
+        );
+      }
       process.exit(1);
     }
     return lookup;

@@ -169,6 +169,58 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it("keeps rebuild guidance when an Error sandbox has no recoverable container", async () => {
+    captureOpenshellSpy.mockReturnValue({
+      status: 0,
+      output: "Sandbox:\n  Name: instance-a\n  Phase: Error",
+    });
+    getSandboxDockerRuntimeSpy.mockReturnValue({
+      health: "none",
+      paused: false,
+      containerName: null,
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = lines.join("\n");
+    expect(output).toContain("nemoclaw instance-a rebuild --yes");
+    expect(output).not.toContain("nemoclaw instance-a start");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps rebuild guidance for terminal phases other than Error", async () => {
+    captureOpenshellSpy.mockReturnValue({
+      status: 0,
+      output: "Sandbox:\n  Name: instance-a\n  Phase: Failed",
+    });
+    const lines: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("instance-a")).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const output = lines.join("\n");
+    expect(output).toContain("nemoclaw instance-a rebuild --yes");
+    expect(output).not.toContain("nemoclaw instance-a start");
+    expect(getSandboxDockerRuntimeSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("preserves docker-unpause recovery for a paused Error sandbox (#4495)", async () => {
     captureOpenshellSpy.mockReturnValue({
       status: 0,
