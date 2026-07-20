@@ -395,16 +395,10 @@ function isBlueprint(value: unknown): value is Blueprint {
 
   const identity = components.identity;
   if (identity !== undefined) {
-    if (!isPlainObject(identity) || !hasOnlyKeys(identity, ["okta", "entra"])) {
+    if (!isPlainObject(identity) || !hasOnlyKeys(identity, ["okta"])) {
       return false;
     }
-    const configuredIdentities = [identity.okta, identity.entra].filter(
-      (entry) => entry !== undefined,
-    );
-    if (
-      configuredIdentities.length > 1 ||
-      !configuredIdentities.every((entry) => isRuntimeIdentityConfig(entry))
-    ) {
+    if (identity.okta !== undefined && !isRuntimeIdentityConfig(identity.okta)) {
       return false;
     }
   }
@@ -481,7 +475,6 @@ interface Blueprint {
     };
     identity?: {
       okta?: RuntimeIdentityConfig;
-      entra?: RuntimeIdentityConfig;
     };
   };
 }
@@ -771,7 +764,6 @@ interface RuntimeIdentity {
 function selectedRuntimeIdentity(blueprint: Blueprint): RuntimeIdentity | undefined {
   const identity = blueprint.components?.identity;
   if (identity?.okta) return { label: "Okta", config: identity.okta };
-  if (identity?.entra) return { label: "Microsoft Entra", config: identity.entra };
   return undefined;
 }
 

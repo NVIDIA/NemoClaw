@@ -138,16 +138,12 @@
         },
         "identity": {
           "type": "object",
-          "description": "Optional experimental runtime identity reference. Configure one identity per blueprint run.",
+          "description": "Optional experimental Okta runtime identity reference.",
           "additionalProperties": false,
+          "required": ["okta"],
           "properties": {
-            "okta": { "$ref": "#/$defs/runtimeIdentity" },
-            "entra": { "$ref": "#/$defs/runtimeIdentity" }
-          },
-          "oneOf": [
-            { "required": ["okta"] },
-            { "required": ["entra"] }
-          ]
+            "okta": { "$ref": "#/$defs/runtimeIdentity" }
+          }
         }
       }
     }
