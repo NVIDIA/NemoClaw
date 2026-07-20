@@ -45,6 +45,8 @@ export interface ServiceOptions {
   cloudflareTunnelToken?: string;
   /** Also release the managed host gateway port (legacy full-stop only). */
   releaseGatewayPort?: boolean;
+  /** Skip the in-sandbox stop when the sandbox was already deleted. */
+  skipSandboxStop?: boolean;
 }
 
 export interface ServiceStatus {
@@ -445,7 +447,7 @@ export function showStatus(opts: ServiceOptions = {}): void {
   }
 }
 
-export function stopAll(opts: ServiceOptions = {}): void {
+export async function stopAll(opts: ServiceOptions = {}): Promise<void> {
   // Resolve the target sandbox once and reuse it for in-sandbox and host-side cleanup.
   const rawSandboxName =
     opts.sandboxName ??
@@ -467,13 +469,15 @@ export function stopAll(opts: ServiceOptions = {}): void {
       : resolvePidDir({ ...opts, sandboxName: sandboxName ?? "default" }));
   if (pidDir) ensurePidDir(pidDir);
 
-  if (sandboxName) {
-    sandboxGatewayStop.stopSandboxChannels(sandboxName, { info, warn });
-  } else if (rawSandboxName) {
-    warn(`Invalid sandbox name: ${JSON.stringify(rawSandboxName)} — skipping in-sandbox stop.`);
-  } else {
-    warn("No sandbox name available — cannot stop in-sandbox messaging channels.");
-    warn("Hint: run 'nemoclaw stop' with a registered sandbox or set NEMOCLAW_SANDBOX_NAME.");
+  if (!opts.skipSandboxStop) {
+    if (sandboxName) {
+      await sandboxGatewayStop.stopSandboxChannels(sandboxName, { info, warn });
+    } else if (rawSandboxName) {
+      warn(`Invalid sandbox name: ${JSON.stringify(rawSandboxName)} — skipping in-sandbox stop.`);
+    } else {
+      warn("No sandbox name available — cannot stop in-sandbox messaging channels.");
+      warn("Hint: run 'nemoclaw stop' with a registered sandbox or set NEMOCLAW_SANDBOX_NAME.");
+    }
   }
 
   try {

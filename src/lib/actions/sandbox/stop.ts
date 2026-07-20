@@ -106,10 +106,10 @@ export function gateDockerRuntimeUp(
  * The shared host gateway, tunnel, and any NIM inference container are
  * gateway-scoped and serve other sandboxes — deliberately untouched.
  */
-export function stopSandbox(
+export async function stopSandbox(
   sandboxName: string,
   deps: SandboxStopDeps = {},
-): SandboxLifecycleResult {
+): Promise<SandboxLifecycleResult> {
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
 
@@ -148,7 +148,7 @@ export function stopSandbox(
   // Agent-managed gateways (e.g. Hermes) are supervised inside the sandbox
   // and shut down with the container's stop signal instead.
   try {
-    (deps.stopSandboxChannels ?? stopSandboxChannels)(sandboxName, {
+    await (deps.stopSandboxChannels ?? stopSandboxChannels)(sandboxName, {
       info: (message) => log(`  ${message}`),
       warn: (message) => warn(`  ${message}`),
     });

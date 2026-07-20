@@ -235,7 +235,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const unloadOllamaModelsSpy = vi
     .spyOn(ollamaProxy, "unloadOllamaModels")
     .mockImplementation(() => undefined);
-  const stopAllSpy = vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
+  const stopAllSpy = vi.spyOn(tunnelServices, "stopAll").mockImplementation(async () => undefined);
   vi.spyOn(timerControl, "readTimerMarker").mockReturnValue(
     options.activeTimer
       ? {

@@ -29,8 +29,8 @@ import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
 import { executeSandboxDestroy } from "./destroy-execution";
-import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
+import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { prepareSandboxDestroy } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
@@ -57,7 +57,7 @@ type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status
 
 export type CleanupSandboxServicesDeps = {
   getSandbox?: typeof registry.getSandbox;
-  stopAll?: (opts: { sandboxName: string }) => void;
+  stopAll?: (opts: { sandboxName: string; skipSandboxStop: true }) => Promise<void>;
   unloadOllamaModels?: () => void;
   runOpenshell?: RunOpenshell;
   rmSync?: typeof fs.rmSync;
@@ -99,11 +99,11 @@ async function resolveCleanupGatewayDecision(options: DestroySandboxOptions): Pr
   return trimmed === "y" || trimmed === "yes";
 }
 
-export function cleanupSandboxServices(
+export async function cleanupSandboxServices(
   sandboxName: string,
   { stopHostServices = false }: { stopHostServices?: boolean } = {},
   deps: CleanupSandboxServicesDeps = {},
-): void {
+): Promise<void> {
   // Source boundary: this exported helper can be called independently of CLI
   // dispatch, including from forced local recovery. Validate once before every
   // host and provider cleanup side effect, then derive the PID path from that
@@ -114,11 +114,11 @@ export function cleanupSandboxServices(
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
   const stopAll =
     deps.stopAll ??
-    ((opts: { sandboxName: string }) => {
+    ((opts: { sandboxName: string; skipSandboxStop: true }) => {
       const services = require("../../tunnel/services") as {
-        stopAll: (opts: { sandboxName: string }) => void;
+        stopAll: (opts: { sandboxName: string; skipSandboxStop: true }) => Promise<void>;
       };
-      services.stopAll(opts);
+      return services.stopAll(opts);
     });
   const unloadOllamaModels =
     deps.unloadOllamaModels ??
@@ -141,7 +141,7 @@ export function cleanupSandboxServices(
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
     // see src/lib/tunnel/services.ts. Don't double-call here.
-    stopAll({ sandboxName: validatedSandboxName });
+    await stopAll({ sandboxName: validatedSandboxName, skipSandboxStop: true });
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this
@@ -380,7 +380,7 @@ async function destroySandboxUnlocked(
     sandboxStillRegistered: !!registry.getSandbox(sandboxName),
   });
 
-  cleanupSandboxServices(sandboxName, {
+  await cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
   });
   // The sandbox's gateway was captured before the registry entry is removed —

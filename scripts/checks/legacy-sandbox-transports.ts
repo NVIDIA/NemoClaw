@@ -53,7 +53,6 @@ const REVIEWED_SITE_TUPLES = [
   ["src/lib/state/openclaw-plugin-restore.ts", "grpc-cli-read-only-fallback", 1],
   ["src/lib/state/sandbox.ts", "grpc-cli-read-only-fallback", 1],
   ["src/lib/state/user-managed-files-probe.ts", "grpc-cli-read-only-fallback", 1],
-  ["src/lib/tunnel/sandbox-gateway-stop.ts", "docker-exec-command", 2],
 ] as const satisfies readonly ReviewedSiteTuple[];
 
 export const REVIEWED_LEGACY_SANDBOX_TRANSPORT_SITES: readonly LegacySandboxTransportSite[] =

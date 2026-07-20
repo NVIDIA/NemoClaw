@@ -13,8 +13,8 @@ const rootDir = process.cwd();
 
 describe("SandboxStopCommand", () => {
   beforeEach(() => {
-    stopSandbox.mockClear();
-    stopSandbox.mockReturnValue({ exitCode: 0 });
+    stopSandbox.mockReset();
+    stopSandbox.mockResolvedValue({ exitCode: 0 });
   });
 
   afterEach(() => {
@@ -30,7 +30,7 @@ describe("SandboxStopCommand", () => {
 
   it("propagates the action's failure exit code (#6026)", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    stopSandbox.mockReturnValue({ exitCode: 1, message: "  boom" });
+    stopSandbox.mockResolvedValue({ exitCode: 1, message: "  boom" });
 
     await SandboxStopCommand.run(["alpha"], rootDir);
 

@@ -19,7 +19,7 @@ import { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
 // Linux-only: execute the production shell script against real processes while
 // scoping its ps snapshot to PIDs created by this test. This guards all gateway
 // argv forms without risking unrelated developer or CI processes.
-describe("GATEWAY_STOP_SCRIPT (executed)", () => {
+describe("GATEWAY_STOP_SCRIPT (executed via production sh -s stdin)", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const cp = require("node:child_process");
   const children: Array<{ pid?: number }> = [];
@@ -81,8 +81,9 @@ ps() {
   fi
 }
 ${script}`;
-    const result = cp.spawnSync("sh", ["-lc", scopedScript], {
+    const result = cp.spawnSync("sh", ["-s"], {
       encoding: "utf-8",
+      input: scopedScript,
       timeout: 20000,
     });
     assert(result.status !== null, `stop script did not exit: ${result.signal} ${result.stderr}`);

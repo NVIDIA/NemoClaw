@@ -479,34 +479,34 @@ describe("stopAll", () => {
     rmSync(pidDir, { recursive: true, force: true });
   });
 
-  it("removes stale PID files", () => {
+  it("removes stale PID files", async () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({ pidDir });
+    await stopAll({ pidDir });
     logSpy.mockRestore();
 
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
   });
 
-  it("is idempotent — calling twice does not throw", () => {
+  it("is idempotent — calling twice does not throw", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({ pidDir });
-    stopAll({ pidDir });
+    await stopAll({ pidDir });
+    await stopAll({ pidDir });
     logSpy.mockRestore();
   });
 
-  it("logs stop messages", () => {
+  it("logs stop messages", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({ pidDir });
+    await stopAll({ pidDir });
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("All services stopped");
     logSpy.mockRestore();
   });
 
-  it("unloads Ollama models before reporting services stopped", () => {
+  it("unloads Ollama models before reporting services stopped", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({ pidDir });
+    await stopAll({ pidDir });
     logSpy.mockRestore();
 
     const psCall = spawnSyncCalls.find(

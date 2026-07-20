@@ -24,7 +24,9 @@ function harness(overrides: Partial<SandboxStopDeps> = {}) {
   const findLabeledSandboxContainers = vi.fn<
     NonNullable<SandboxStopDeps["findLabeledSandboxContainers"]>
   >(() => [container("openshell-my-sandbox", true)]);
-  const stopSandboxChannels = vi.fn<NonNullable<SandboxStopDeps["stopSandboxChannels"]>>();
+  const stopSandboxChannels = vi.fn<NonNullable<SandboxStopDeps["stopSandboxChannels"]>>(
+    async () => {},
+  );
   const dockerStop = vi.fn<NonNullable<SandboxStopDeps["dockerStop"]>>(() => ({ status: 0 }));
   const log = vi.fn<(message: string) => void>();
   const warn = vi.fn<(message: string) => void>();
@@ -53,16 +55,28 @@ function harness(overrides: Partial<SandboxStopDeps> = {}) {
 }
 
 describe("stopSandbox", () => {
-  it("gracefully stops in-sandbox channels before stopping the container (#6026)", () => {
+  it("waits for in-sandbox channels before stopping the container (#6026)", async () => {
     const h = harness();
+    let resolveChannelStop!: () => void;
+    h.stopSandboxChannels.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveChannelStop = resolve;
+        }),
+    );
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const pending = stopSandbox("my-sandbox", h.deps);
 
-    expect(result.exitCode).toBe(0);
     expect(h.stopSandboxChannels).toHaveBeenCalledWith(
       "my-sandbox",
       expect.objectContaining({ info: expect.any(Function), warn: expect.any(Function) }),
     );
+    expect(h.dockerStop).not.toHaveBeenCalled();
+
+    resolveChannelStop();
+    const result = await pending;
+
+    expect(result.exitCode).toBe(0);
     expect(h.dockerStop).toHaveBeenCalledWith("openshell-my-sandbox", {
       ignoreError: true,
       timeout: 30_000,
@@ -72,23 +86,23 @@ describe("stopSandbox", () => {
     );
   });
 
-  it("routes channel-stop reporter lines through the action's log and warn (#6026)", () => {
+  it("routes channel-stop reporter lines through the action's log and warn (#6026)", async () => {
     const h = harness();
-    h.stopSandboxChannels.mockImplementation((_name, channelDeps) => {
+    h.stopSandboxChannels.mockImplementation(async (_name, channelDeps) => {
       channelDeps?.info?.("gateway stopped inside sandbox.");
       channelDeps?.warn?.("could not reach gateway.");
     });
 
-    stopSandbox("my-sandbox", h.deps);
+    await stopSandbox("my-sandbox", h.deps);
 
     expect(h.log).toHaveBeenCalledWith("  gateway stopped inside sandbox.");
     expect(h.warn).toHaveBeenCalledWith("  could not reach gateway.");
   });
 
-  it("preserves the registry entry and tells the user how to start again (#6026)", () => {
+  it("preserves the registry entry and tells the user how to start again (#6026)", async () => {
     const h = harness();
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
     const output = h.log.mock.calls.map(([line]) => line).join("\n");
@@ -96,11 +110,11 @@ describe("stopSandbox", () => {
     expect(output).toContain("nemoclaw my-sandbox start");
   });
 
-  it("succeeds idempotently when the container is already stopped (#6026)", () => {
+  it("succeeds idempotently when the container is already stopped (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([container("openshell-my-sandbox", false)]);
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
     expect(h.dockerStop).not.toHaveBeenCalled();
@@ -108,13 +122,13 @@ describe("stopSandbox", () => {
     expect(output).toContain("already stopped");
   });
 
-  it("stops a crash-looping container instead of calling it stopped (#6026)", () => {
+  it("stops a crash-looping container instead of calling it stopped (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       { name: "openshell-my-sandbox", status: "Restarting (137) 2 seconds ago", running: false },
     ]);
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
     expect(h.dockerStop).toHaveBeenCalledWith("openshell-my-sandbox", {
@@ -123,38 +137,36 @@ describe("stopSandbox", () => {
     });
   });
 
-  it("stops a paused container (#6026)", () => {
+  it("stops a paused container (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       { name: "openshell-my-sandbox", status: "Up 5 minutes (Paused)", running: true },
     ]);
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
     expect(h.dockerStop).toHaveBeenCalledTimes(1);
   });
 
-  it("stops every running labeled container, including backup siblings (#6026)", () => {
+  it("stops every running labeled container, including backup siblings (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       container("openshell-my-sandbox", true),
       container("openshell-my-sandbox-nemoclaw-gpu-backup-1700000000000", true),
     ]);
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
     expect(h.dockerStop).toHaveBeenCalledTimes(2);
   });
 
-  it("continues to docker stop when the graceful channel stop throws (#6026)", () => {
+  it("continues to docker stop when the graceful channel stop rejects (#6026)", async () => {
     const h = harness();
-    h.stopSandboxChannels.mockImplementation(() => {
-      throw new Error("gateway unreachable");
-    });
+    h.stopSandboxChannels.mockRejectedValue(new Error("gateway unreachable"));
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
     expect(h.dockerStop).toHaveBeenCalledTimes(1);
@@ -162,11 +174,11 @@ describe("stopSandbox", () => {
     expect(warned).toContain("gateway unreachable");
   });
 
-  it("names the Docker daemon outage instead of claiming the container was removed (#6026)", () => {
+  it("names the Docker daemon outage instead of claiming the container was removed (#6026)", async () => {
     const h = harness();
     h.isDockerRuntimeDown.mockReturnValue(true);
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(1);
     expect(result.message).toBeUndefined();
@@ -177,11 +189,11 @@ describe("stopSandbox", () => {
     expect(h.dockerStop).not.toHaveBeenCalled();
   });
 
-  it("fails with a rebuild hint when no labeled container exists (#6026)", () => {
+  it("fails with a rebuild hint when no labeled container exists (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([]);
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("No Docker container");
@@ -189,22 +201,22 @@ describe("stopSandbox", () => {
     expect(h.dockerStop).not.toHaveBeenCalled();
   });
 
-  it("refuses an unregistered sandbox (#6026)", () => {
+  it("refuses an unregistered sandbox (#6026)", async () => {
     const h = harness();
     h.getSandbox.mockReturnValue(null);
 
-    const result = stopSandbox("ghost", h.deps);
+    const result = await stopSandbox("ghost", h.deps);
 
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("not registered");
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
   });
 
-  it("refuses non-direct drivers instead of guessing at container control (#6026)", () => {
+  it("refuses non-direct drivers instead of guessing at container control (#6026)", async () => {
     const h = harness();
     h.getSandbox.mockReturnValue(sandbox({ openshellDriver: "kubernetes" }));
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("kubernetes");
@@ -215,27 +227,27 @@ describe("stopSandbox", () => {
     ["null driver", sandbox({ openshellDriver: null })],
     ["docker driver", sandbox({ openshellDriver: "docker" })],
     ["vm driver", sandbox({ openshellDriver: "vm" })],
-  ])("allows the %s like privileged exec does (#6026)", (_label, entry) => {
+  ])("allows the %s like privileged exec does (#6026)", async (_label, entry) => {
     const h = harness();
     h.getSandbox.mockReturnValue(entry);
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
   });
 
-  it("surfaces a docker stop failure with the container name (#6026)", () => {
+  it("surfaces a docker stop failure with the container name (#6026)", async () => {
     const h = harness();
     h.dockerStop.mockReturnValue({ status: 125 });
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("openshell-my-sandbox");
     expect(result.message).toContain("125");
   });
 
-  it("attempts every container and aggregates failures when one stop fails (#6026)", () => {
+  it("attempts every container and aggregates failures when one stop fails (#6026)", async () => {
     const h = harness();
     h.findLabeledSandboxContainers.mockReturnValue([
       container("openshell-my-sandbox", true),
@@ -244,7 +256,7 @@ describe("stopSandbox", () => {
     // First container fails to stop; the sibling still must be attempted.
     h.dockerStop.mockReturnValueOnce({ status: 137 }).mockReturnValueOnce({ status: 0 });
 
-    const result = stopSandbox("my-sandbox", h.deps);
+    const result = await stopSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(1);
     expect(h.dockerStop).toHaveBeenCalledTimes(2);
@@ -261,10 +273,10 @@ describe("stopSandbox", () => {
     expect(result.message).not.toContain("gpu-backup");
   });
 
-  it("never removes containers or touches the registry entry (#6026)", () => {
+  it("never removes containers or touches the registry entry (#6026)", async () => {
     const h = harness();
 
-    stopSandbox("my-sandbox", h.deps);
+    await stopSandbox("my-sandbox", h.deps);
 
     // The deps surface has no removal lever at all; assert the only docker
     // mutation issued is the stop of the labeled container.

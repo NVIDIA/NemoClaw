@@ -66,8 +66,21 @@ export function expectSuccessfulLiveDestroy(harness: DestroyHarness, exitSpy: Mo
     ["sandbox", "delete", "alpha"],
     expect.objectContaining({ ignoreError: true }),
   );
-  expect(harness.unloadOllamaModelsSpy).toHaveBeenCalledTimes(1);
+  expect(harness.stopAllSpy).toHaveBeenCalledWith({
+    sandboxName: "alpha",
+    skipSandboxStop: true,
+  });
+  expect(harness.unloadOllamaModelsSpy).not.toHaveBeenCalled();
   expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+  const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
+    (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete alpha",
+  );
+  expect(harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall]).toBeLessThan(
+    harness.stopAllSpy.mock.invocationCallOrder[0],
+  );
+  expect(harness.stopAllSpy.mock.invocationCallOrder[0]).toBeLessThan(
+    harness.removeSandboxSpy.mock.invocationCallOrder[0],
+  );
   expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith("nemoclaw-19080", harness.runOpenshellSpy);
   expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
     "Sandbox 'alpha' destroyed",

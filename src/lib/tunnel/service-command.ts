@@ -12,7 +12,7 @@ export interface StartCommandDeps {
 
 export interface StopCommandDeps {
   listSandboxes: () => SandboxSummary;
-  stopAll: (options: { sandboxName?: string; releaseGatewayPort?: boolean }) => void;
+  stopAll: (options: { sandboxName?: string; releaseGatewayPort?: boolean }) => Promise<void>;
   /** Legacy `nemoclaw stop` tears down the managed host gateway too. */
   releaseGatewayPort?: boolean;
 }
@@ -34,10 +34,10 @@ export async function runStartCommand(deps: StartCommandDeps): Promise<void> {
   await deps.startAll({ sandboxName: resolveDefaultSandboxName(deps.listSandboxes) });
 }
 
-export function runStopCommand(deps: StopCommandDeps): void {
+export async function runStopCommand(deps: StopCommandDeps): Promise<void> {
   const options: { sandboxName?: string; releaseGatewayPort?: boolean } = {
     sandboxName: resolveDefaultSandboxName(deps.listSandboxes),
   };
   if (deps.releaseGatewayPort) options.releaseGatewayPort = true;
-  deps.stopAll(options);
+  await deps.stopAll(options);
 }

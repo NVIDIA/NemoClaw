@@ -46,7 +46,7 @@ describe("destroySandbox flow", () => {
   });
 
   it("selects the sandbox gateway, deletes live resources, cleans host state, and removes registry state", async () => {
-    const harness = createDestroyHarness();
+    const harness = createDestroyHarness({ registeredSandboxCount: 1 });
 
     await expect(
       harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),

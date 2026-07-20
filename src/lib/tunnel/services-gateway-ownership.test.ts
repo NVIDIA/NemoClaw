@@ -185,13 +185,13 @@ describe("stopAll gateway-stop wiring", () => {
     vi.restoreAllMocks();
   });
 
-  it("orders supervised-agent full stop as sandbox guard, forwards, then gateway release", () => {
+  it("orders supervised-agent full stop as sandbox guard, forwards, then gateway release", async () => {
     const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-gateway-stop-wiring-"));
     vi.stubEnv("PATH", "");
     const order: string[] = [];
     const stopSandboxGateway = vi
       .spyOn(sandboxGatewayStop, "stopSandboxChannels")
-      .mockImplementation((_sandboxName, deps) => {
+      .mockImplementation(async (_sandboxName, deps) => {
         order.push("sandbox-guard");
         deps?.info?.(
           "Hermes Agent gateway is managed by the sandbox; leaving it running while host forwards stop.",
@@ -210,7 +210,7 @@ describe("stopAll gateway-stop wiring", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, sandboxName: "alpha", releaseGatewayPort: true });
+      await stopAll({ pidDir, sandboxName: "alpha", releaseGatewayPort: true });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
@@ -233,7 +233,7 @@ describe("stopAll gateway-stop wiring", () => {
     expect(output).toContain("All services stopped");
   });
 
-  it("preserves the shared gateway for canonical tunnel-only stop", () => {
+  it("preserves the shared gateway for canonical tunnel-only stop", async () => {
     const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-tunnel-stop-wiring-"));
     vi.stubEnv("PATH", "");
     const releaseForStop = vi
@@ -242,10 +242,10 @@ describe("stopAll gateway-stop wiring", () => {
     const stopAgentForwards = vi
       .spyOn(agentForwardStop, "stopAgentForwardPortsForStop")
       .mockImplementation(() => {});
-    vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(() => {});
+    vi.spyOn(sandboxGatewayStop, "stopSandboxChannels").mockImplementation(async () => {});
 
     try {
-      stopAll({ pidDir, sandboxName: "alpha" });
+      await stopAll({ pidDir, sandboxName: "alpha" });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }

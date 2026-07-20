@@ -23,6 +23,6 @@ export default class DeprecatedStopCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     await this.parse(DeprecatedStopCommand);
-    runStopCommand({ ...serviceDeps(), stopAll, releaseGatewayPort: true });
+    await runStopCommand({ ...serviceDeps(), stopAll, releaseGatewayPort: true });
   }
 }

@@ -2,40 +2,33 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  type SpawnSyncOptionsWithStringEncoding,
-  type SpawnSyncReturns,
-  spawnSync,
-} from "node:child_process";
-
-import { dockerSpawnSync } from "../adapters/docker";
-import { getGatewayClusterContainerName } from "../adapters/openshell/gateway-drift";
-import { resolveOpenshell } from "../adapters/openshell/resolve";
+  type SandboxExecRequest,
+  type SandboxExecResult,
+  validateOpenShellExecRequest,
+} from "../adapters/openshell/sandbox-control";
+import { selectOpenShellSandboxControlForMutation } from "../adapters/openshell/sandbox-control-routing";
 import * as agentRuntime from "../agent/runtime";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import * as registry from "../state/registry";
 import { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
 
 type Reporter = (message: string) => void;
-type StopAttemptResult = ReturnType<typeof spawnSync>;
-type ProcessRunner = (
-  command: string,
-  args: readonly string[],
-  options: SpawnSyncOptionsWithStringEncoding,
-) => SpawnSyncReturns<string>;
 
 export type SandboxGatewayStopDeps = {
   getSandbox?: typeof registry.getSandbox;
   getRegisteredAgent?: typeof agentRuntime.getRegisteredAgent;
   getAgentDisplayName?: typeof agentRuntime.getAgentDisplayName;
   hasGatewayRuntime?: typeof agentRuntime.hasGatewayRuntime;
-  resolveOpenshell?: typeof resolveOpenshell;
-  runDocker?: typeof dockerSpawnSync;
-  runProcess?: ProcessRunner;
+  assertNoGatewayEndpointOverride?: typeof assertNoOpenShellGatewayEndpointOverride;
+  selectControl?: typeof selectOpenShellSandboxControlForMutation;
   info?: Reporter;
   warn?: Reporter;
 };
 
 const SAFE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+const GATEWAY_STOP_TIMEOUT_MS = 20_000;
+const GATEWAY_STOP_MAX_OUTPUT_BYTES = 64 * 1024;
 
 function defaultInfo(message: string): void {
   console.log(`[services] ${message}`);
@@ -53,7 +46,10 @@ function validateSandboxName(name: string): string {
 }
 
 /** Stop only a proven OpenClaw gateway; supervised agents remain owned by their sandbox. */
-export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewayStopDeps = {}): void {
+export async function stopSandboxChannels(
+  sandboxName: string,
+  deps: SandboxGatewayStopDeps = {},
+): Promise<void> {
   const info = deps.info ?? defaultInfo;
   const warn = deps.warn ?? defaultWarn;
   const validatedSandboxName = validateSandboxName(sandboxName);
@@ -65,6 +61,10 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
       `Could not read the sandbox registry for '${validatedSandboxName}': ` +
         `${(error as Error).message ?? String(error)}. Skipping in-sandbox gateway stop.`,
     );
+    return;
+  }
+  if (!sandbox) {
+    warn(`Sandbox '${validatedSandboxName}' is not registered; skipping in-sandbox gateway stop.`);
     return;
   }
   const agent = (deps.getRegisteredAgent ?? agentRuntime.getRegisteredAgent)(sandbox);
@@ -103,106 +103,57 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
   }
 
   const gatewayLabel = `${agentDisplayName} gateway`;
+  const request: SandboxExecRequest = {
+    sandboxName: validatedSandboxName,
+    command: ["sh", "-s"],
+    stdin: GATEWAY_STOP_SCRIPT,
+    timeoutMs: GATEWAY_STOP_TIMEOUT_MS,
+    maxOutputBytes: GATEWAY_STOP_MAX_OUTPUT_BYTES,
+  };
+  const validationError = validateOpenShellExecRequest(request);
   info(`Stopping in-sandbox ${gatewayLabel} (sandbox: ${validatedSandboxName})...`);
-
-  const privilegedResult = stopSandboxChannelsViaKubectl(
-    validatedSandboxName,
-    gatewayName,
-    GATEWAY_STOP_SCRIPT,
-    deps.runDocker ?? dockerSpawnSync,
-  );
-  if (reportStopResult(privilegedResult, gatewayLabel, info, warn)) return;
-
-  const openshell = (deps.resolveOpenshell ?? resolveOpenshell)();
-  if (!openshell) {
-    warn(`openshell not found — cannot stop ${gatewayLabel} inside sandbox.`);
-    return;
+  try {
+    if (validationError) throw validationError;
+    (deps.assertNoGatewayEndpointOverride ?? assertNoOpenShellGatewayEndpointOverride)();
+    // Select once and never replay: a shutdown may commit before a transport
+    // failure is observable, so retrying through another path is unsafe.
+    const selected = (deps.selectControl ?? selectOpenShellSandboxControlForMutation)(gatewayName);
+    try {
+      const result = await selected.control.exec(request);
+      reportStopResult(result, gatewayLabel, info, warn);
+    } finally {
+      selected.close();
+    }
+  } catch (error) {
+    warn(
+      `Could not stop ${gatewayLabel} inside sandbox: ${error instanceof Error ? error.message : String(error)}. ` +
+        "The sandbox may be unreachable or the gateway may still be running.",
+    );
   }
-
-  const fallbackResult = (deps.runProcess ?? spawnSync)(
-    openshell,
-    ["sandbox", "exec", "--name", validatedSandboxName, "--gateway", gatewayName, "--", "sh", "-s"],
-    {
-      encoding: "utf-8",
-      input: GATEWAY_STOP_SCRIPT,
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: 20000,
-    },
-  );
-  reportStopResult(fallbackResult, gatewayLabel, info, warn);
-}
-
-function isSandboxPodName(line: string, sandboxName: string): boolean {
-  if (!line.startsWith("pod/")) return false;
-  const podName = line.slice("pod/".length);
-  if (podName === sandboxName) return true;
-  const prefix = `${sandboxName}-`;
-  if (!podName.startsWith(prefix)) return false;
-  const generatedSuffix = podName.slice(prefix.length);
-  return /^[a-z0-9]+$/.test(generatedSuffix);
-}
-
-function stopSandboxChannelsViaKubectl(
-  sandboxName: string,
-  gatewayName: string,
-  gatewayStopScript: string,
-  runDocker: typeof dockerSpawnSync,
-): StopAttemptResult | null {
-  const gatewayContainer = getGatewayClusterContainerName(gatewayName);
-  const podsResult = runDocker(
-    ["exec", gatewayContainer, "kubectl", "get", "pods", "-n", "openshell", "-o", "name"],
-    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 },
-  );
-  if (podsResult.status !== 0 || !podsResult.stdout) return null;
-
-  const podOutput =
-    typeof podsResult.stdout === "string" ? podsResult.stdout : podsResult.stdout.toString();
-  const pod = podOutput
-    .split(/\r?\n/)
-    .map((line: string) => line.trim())
-    .find((line: string) => isSandboxPodName(line, sandboxName));
-  if (!pod) return null;
-
-  return runDocker(
-    [
-      "exec",
-      gatewayContainer,
-      "kubectl",
-      "exec",
-      "-n",
-      "openshell",
-      "-c",
-      "agent",
-      pod,
-      "--",
-      "sh",
-      "-lc",
-      gatewayStopScript,
-    ],
-    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 },
-  );
 }
 
 function reportStopResult(
-  result: StopAttemptResult | null,
+  result: SandboxExecResult,
   gatewayLabel: string,
   info: Reporter,
   warn: Reporter,
-): boolean {
-  if (!result) return false;
-
-  if (result.status === 0) {
+): void {
+  if (!result.error && !result.signal && result.status === 0) {
     info(`${gatewayLabel} stopped inside sandbox.`);
-    return true;
+    return;
   }
-  if (result.status === 1) {
+  if (!result.error && !result.signal && result.status === 1) {
     info(`${gatewayLabel} was not running inside sandbox.`);
-    return true;
+    return;
   }
 
-  const details = [result.stderr, result.stdout]
-    .map((text) => (typeof text === "string" ? text : text?.toString()))
-    .filter((text): text is string => Boolean(text?.trim()))
+  const details = [
+    result.error?.message,
+    result.signal ? `signal ${result.signal}` : undefined,
+    result.stderr,
+    result.stdout,
+  ]
+    .filter((text): text is string => typeof text === "string" && Boolean(text.trim()))
     .map((text) => text.trim())
     .join(" ");
   warn(
@@ -210,5 +161,4 @@ function reportStopResult(
       " The sandbox may be unreachable or the gateway may still be running." +
       (details ? ` Details: ${details}` : ""),
   );
-  return true;
 }

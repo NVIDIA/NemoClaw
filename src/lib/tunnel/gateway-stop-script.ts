@@ -26,7 +26,7 @@
 // IMPORTANT: keep example argv strings (e.g. "openclaw gateway") out of the awk
 // program text. awk's own argv is captured by the concurrent `ps` snapshot, so
 // any such literal inside the program makes awk match itself and the scan never
-// drains. The shell `sh -lc` process is exempt (excluded as $self), comments in
+// drains. The shell `sh -s` process is exempt (excluded as $self), comments in
 // the shell portion below are fine, but the awk body must stay token-clean.
 export const GATEWAY_STOP_SCRIPT = String.raw`
 set -eu
