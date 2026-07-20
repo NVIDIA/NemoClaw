@@ -43,7 +43,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/tunnel-lifecycle-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
   "test/e2e/support/workflow-plan.test.ts",
-  "test/e2e/support/exact-image-qualification-workflow.test.ts",
+  "test/e2e/support/brev-launchable-e2e-workflow.test.ts",
 ] as const;
 
 const OPAQUE_INPUTS = [
@@ -59,7 +59,6 @@ const OPAQUE_INPUTS = [
   ".github/workflows/e2e.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/pr-e2e-gate.yaml",
-  ".github/workflows/brev-launchable-qualification.yaml",
   ".github/workflows/platform-vitest-main.yaml",
   "ci/platform-vitest-macos-requirements.lock",
 ] as const;
@@ -113,12 +112,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/pr-e2e-gate-workflow.test.ts",
       "test/pr-e2e-required.test.ts",
     ]);
-    expect(triggeredBy(".github/workflows/brev-launchable-qualification.yaml")).toEqual([
-      "test/e2e/support/exact-image-qualification-workflow.test.ts",
-    ]);
     expect(triggeredBy("tools/e2e/brev-launchable-runtime.sh")).toEqual([
       "test/brev-launchable-runtime.test.ts",
-      "test/e2e/support/exact-image-qualification-workflow.test.ts",
+      "test/e2e/support/brev-launchable-e2e-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/platform-vitest-main.yaml")).toEqual([
       "test/platform-vitest-main-workflow.test.ts",

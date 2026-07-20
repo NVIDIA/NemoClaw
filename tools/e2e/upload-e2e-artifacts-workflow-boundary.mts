@@ -167,11 +167,35 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
       path: "e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/",
     },
   ],
+  [
+    "staging-brev-launchable",
+    {
+      name: "brev-launchable-e2e-${{ steps.request.outputs.candidate_sha }}-${{ github.run_id }}",
+      path: [
+        "${{ steps.request.outputs.work_dir }}/producer-run.json",
+        "${{ steps.request.outputs.work_dir }}/image-handoff.json",
+        "${{ steps.request.outputs.work_dir }}/brev-deploy-request.json",
+        "${{ steps.request.outputs.work_dir }}/brev-workspace-ready.json",
+        "${{ steps.request.outputs.work_dir }}/brev-provision.json",
+        "${{ steps.request.outputs.work_dir }}/brev-boot-image.json",
+        "${{ steps.request.outputs.work_dir }}/brev-identity-evidence.json",
+        "${{ steps.request.outputs.work_dir }}/brev-launchable-e2e.log",
+        "${{ steps.request.outputs.work_dir }}/brev-launchable-e2e-evidence.json",
+        "${{ steps.request.outputs.work_dir }}/brev-launchable-cloud-openclaw/",
+        "${{ steps.request.outputs.work_dir }}/brev-cleanup-evidence.json",
+        "",
+      ].join("\n"),
+    },
+  ],
 ]);
 
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
+  [
+    "staging-brev-launchable",
+    "${{ always() && steps.request.outputs.work_dir != '' && steps.redact-launchable-evidence.outcome == 'success' }}",
+  ],
 ]);
 
 const EXPECTED_ACTION_INPUTS = {
@@ -276,6 +300,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         const jobSteps = steps(job.steps);
         const env = record(job.env);
         return (
+          EXPLICIT_UPLOAD_CONTRACTS.has(jobName) ||
           jobName === "live" ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||

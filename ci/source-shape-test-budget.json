@@ -132,8 +132,8 @@
       "category": "security"
     },
     {
-      "file": "test/e2e/support/exact-image-qualification-workflow.test.ts",
-      "test": "keeps exact-image Launchable qualification protected, reusable, and fail-closed",
+      "file": "test/e2e/support/brev-launchable-e2e-workflow.test.ts",
+      "test": "keeps exact-image Launchable coverage inside the existing E2E workflow",
       "category": "security"
     },
     {

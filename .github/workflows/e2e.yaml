@@ -186,15 +186,346 @@ jobs:
           fi
 
   staging-brev-launchable:
-    name: Exact staging Brev Launchable
+    name: Exact-image Brev Launchable E2E
     needs: generate-matrix
-    # Repository owners enable this only after the protected environment,
-    # producer, standing Launchable, and Brev contract are ready.
-    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_QUALIFICATION_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
-    uses: ./.github/workflows/brev-launchable-qualification.yaml
-    with:
-      candidate_sha: ${{ github.sha }}
-      reason: E2E run ${{ github.run_id }} qualifying the exact checked-out NemoClaw candidate
+    if: >-
+      ${{
+        vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' &&
+        github.repository == 'NVIDIA/NemoClaw' &&
+        github.ref == 'refs/heads/main' &&
+        (
+          github.event_name == 'schedule' ||
+          (
+            github.event_name == 'workflow_dispatch' &&
+            (
+              contains(format(',{0},', inputs.targets), ',brev-launchable-cloud-openclaw,') ||
+              (inputs.checkout_sha == '' && inputs.targets == '' && inputs.jobs == '')
+            )
+          )
+        )
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    concurrency:
+      group: brev-launchable-staging-cpu
+      cancel-in-progress: false
+    environment:
+      name: approve-brev-launchable-e2e
+      deployment: false
+    permissions:
+      contents: read
+    steps:
+      # The workflow and helper come from trusted main. Candidate code is used
+      # only after the producer bakes it into the staging image.
+      - name: Check out trusted E2E control code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - id: request
+        name: Bind exact image request
+        env:
+          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::Candidate must be a lowercase 40-character SHA."; exit 1; }
+          [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::Workflow SHA must be a lowercase 40-character SHA."; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$WORKFLOW_SHA" ] \
+            || { echo "::error::Trusted E2E checkout does not match the workflow SHA."; exit 1; }
+
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-launchable-e2e.XXXXXX")"
+          chmod 700 "$work_dir"
+          correlation_id="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          instance_name="nclaw-e2e-${CANDIDATE_SHA:0:8}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "correlation_id=$correlation_id"
+            echo "instance_name=$instance_name"
+            echo "work_dir=$work_dir"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: producer
+        name: Build or reuse the exact staging image
+        env:
+          CANDIDATE_SHA: ${{ steps.request.outputs.candidate_sha }}
+          CORRELATION_ID: ${{ steps.request.outputs.correlation_id }}
+          PRODUCER_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+          WORK_DIR: ${{ steps.request.outputs.work_dir }}
+        run: |
+          set -euo pipefail
+          [ -n "$PRODUCER_TOKEN" ] \
+            || { echo "::error::NEMOCLAW_IMAGE_DISPATCH_TOKEN is required."; exit 1; }
+
+          payload="$(jq -cn \
+            --arg sha "$CANDIDATE_SHA" \
+            --arg correlation "$CORRELATION_ID" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            '{ref:"main",inputs:{nemoclaw_sha:$sha,correlation_id:$correlation,requester_workflow_run_id:$run_id,requester_workflow_run_attempt:$run_attempt},return_run_details:true}')"
+          response="$WORK_DIR/producer-dispatch.json"
+          status="$(curl --silent --show-error --proto '=https' \
+            --request POST \
+            --header "Authorization: Bearer $PRODUCER_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            --data "$payload" \
+            --output "$response" \
+            --write-out '%{http_code}' \
+            https://api.github.com/repos/brevdev/nemoclaw-image/actions/workflows/build-qualification-image.yml/dispatches)"
+          [ "$status" = "200" ] \
+            || { echo "::error::Image producer dispatch returned HTTP $status."; exit 1; }
+
+          run_id="$(jq -er '.workflow_run_id | tostring | select(test("^[1-9][0-9]*$"))' "$response")"
+          run_url="$(jq -er '.run_url' "$response")"
+          html_url="$(jq -er '.html_url' "$response")"
+          [ "$run_url" = "https://api.github.com/repos/brevdev/nemoclaw-image/actions/runs/$run_id" ]
+          [ "$html_url" = "https://github.com/brevdev/nemoclaw-image/actions/runs/$run_id" ]
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+          deadline=$((SECONDS + 45 * 60))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            curl --fail --silent --show-error --proto '=https' \
+              --header "Authorization: Bearer $PRODUCER_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2026-03-10" \
+              "$run_url" > "$WORK_DIR/producer-run.json"
+            jq -e \
+              --arg sha "$CANDIDATE_SHA" \
+              --arg title "Qualify NemoClaw $CANDIDATE_SHA ($CORRELATION_ID)" \
+              --argjson run_id "$run_id" '
+                .id == $run_id and
+                .event == "workflow_dispatch" and
+                .head_branch == "main" and
+                .path == ".github/workflows/build-qualification-image.yml" and
+                .display_title == $title and
+                .run_attempt == 1 and
+                .repository.full_name == "brevdev/nemoclaw-image" and
+                .head_repository.full_name == "brevdev/nemoclaw-image" and
+                (.head_sha | test("^[0-9a-f]{40}$"))
+              ' "$WORK_DIR/producer-run.json" >/dev/null
+
+            run_status="$(jq -r '.status' "$WORK_DIR/producer-run.json")"
+            if [ "$run_status" = "completed" ]; then
+              conclusion="$(jq -r '.conclusion // ""' "$WORK_DIR/producer-run.json")"
+              [ "$conclusion" = "success" ] \
+                || { echo "::error::Image producer completed with $conclusion."; exit 1; }
+              jq -r '.head_sha' "$WORK_DIR/producer-run.json" \
+                | sed 's/^/producer_sha=/' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Image producer did not complete within 45 minutes."
+          exit 1
+
+      - name: Read immutable image handoff
+        env:
+          CANDIDATE_SHA: ${{ steps.request.outputs.candidate_sha }}
+          CORRELATION_ID: ${{ steps.request.outputs.correlation_id }}
+          PRODUCER_RUN_ID: ${{ steps.producer.outputs.run_id }}
+          PRODUCER_SHA: ${{ steps.producer.outputs.producer_sha }}
+          PRODUCER_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+          WORK_DIR: ${{ steps.request.outputs.work_dir }}
+        run: |
+          set -euo pipefail
+          artifact_name="nemoclaw-image-handoff-v1-${PRODUCER_RUN_ID}-1"
+          deadline=$((SECONDS + 2 * 60))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            curl --fail --silent --show-error --proto '=https' \
+              --header "Authorization: Bearer $PRODUCER_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2026-03-10" \
+              "https://api.github.com/repos/brevdev/nemoclaw-image/actions/runs/${PRODUCER_RUN_ID}/artifacts" \
+              > "$WORK_DIR/producer-artifacts.json"
+            count="$(jq --arg name "$artifact_name" '[.artifacts[] | select(.name == $name)] | length' "$WORK_DIR/producer-artifacts.json")"
+            [ "$count" = "0" ] || break
+            sleep 5
+          done
+          [ "$count" = "1" ] \
+            || { echo "::error::Expected one immutable image handoff; found $count."; exit 1; }
+
+          artifact_url="$(jq -er \
+            --arg name "$artifact_name" \
+            --arg sha "$PRODUCER_SHA" \
+            --argjson run_id "$PRODUCER_RUN_ID" '
+              .artifacts[] |
+              select(.name == $name) |
+              select(.expired == false) |
+              select(.size_in_bytes > 0 and .size_in_bytes <= 1048576) |
+              select(.workflow_run.id == $run_id and .workflow_run.head_sha == $sha) |
+              .archive_download_url
+            ' "$WORK_DIR/producer-artifacts.json")"
+          curl --fail --location --silent --show-error --proto '=https' \
+            --max-filesize 1048576 \
+            --header "Authorization: Bearer $PRODUCER_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            "$artifact_url" > "$WORK_DIR/image-handoff.zip"
+          [ "$(unzip -Z1 "$WORK_DIR/image-handoff.zip")" = "nemoclaw-image-manifest.v1.json" ] \
+            || { echo "::error::Image handoff archive has an unexpected layout."; exit 1; }
+          unzip -p "$WORK_DIR/image-handoff.zip" nemoclaw-image-manifest.v1.json \
+            > "$WORK_DIR/image-handoff.json"
+
+          jq -e \
+            --arg candidate "$CANDIDATE_SHA" \
+            --arg correlation "$CORRELATION_ID" \
+            --arg producer_sha "$PRODUCER_SHA" \
+            --arg requester_run "$GITHUB_RUN_ID" \
+            --argjson requester_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg producer_run "$PRODUCER_RUN_ID" '
+              type == "object" and
+              .schemaVersion == 1 and
+              .kind == "nemoclaw-exact-image-manifest" and
+              .correlationId == $correlation and
+              .requesterRepository == "NVIDIA/NemoClaw" and
+              .requesterWorkflowRunId == $requester_run and
+              .requesterWorkflowRunAttempt == $requester_attempt and
+              .nemoclawSha == $candidate and
+              .imageRepository == "brevdev/nemoclaw-image" and
+              .imageRepositorySha == $producer_sha and
+              .producerWorkflow == ".github/workflows/build-qualification-image.yml" and
+              .workflowRunId == $producer_run and
+              .workflowRunAttempt == 1 and
+              .imageKind == "compute#image" and
+              .status == "READY" and
+              .channel == "staging" and
+              .variant == "cpu" and
+              .observedFamily == "nemoclaw-brev-staging-cpu" and
+              (.result == "built" or .result == "reused") and
+              (.project | test("^[a-z][a-z0-9-]{4,28}[a-z0-9]$")) and
+              (.imageName | test("^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$")) and
+              (.imageId | test("^[1-9][0-9]*$")) and
+              .imageSelfLink == ("https://www.googleapis.com/compute/v1/projects/" + .project + "/global/images/" + .imageName)
+            ' "$WORK_DIR/image-handoff.json" >/dev/null
+
+      - name: Install pinned Brev CLI
+        env:
+          BREV_CLI_SHA256: 5a6e70374db9be33f85f299161733b4a8409840d47638c781429b96e8d53704f
+          BREV_CLI_VERSION: 0.6.330
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/brev-cli.tar.gz"
+          curl -fsSL --proto '=https' -o "$archive" \
+            "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$BREV_CLI_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" brev
+          mkdir -p "$RUNNER_TEMP/bin"
+          install -m 0755 "$RUNNER_TEMP/brev" "$RUNNER_TEMP/bin/brev"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Authenticate Brev CLI
+        env:
+          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+        run: |
+          set -euo pipefail
+          brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
+          brev ls --json | jq -e '.workspaces | type == "array"' >/dev/null
+
+      - id: deploy
+        name: Deploy standing staging Launchable
+        env:
+          BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
+          INSTANCE_NAME: ${{ steps.request.outputs.instance_name }}
+          WORK_DIR: ${{ steps.request.outputs.work_dir }}
+        run: tools/e2e/brev-launchable-runtime.sh deploy
+
+      - name: Verify exact image and run existing full E2E
+        env:
+          CANDIDATE_SHA: ${{ steps.request.outputs.candidate_sha }}
+          INSTANCE_NAME: ${{ steps.request.outputs.instance_name }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          VALIDATED_MANIFEST: ${{ steps.request.outputs.work_dir }}/image-handoff.json
+          WORK_DIR: ${{ steps.request.outputs.work_dir }}
+        run: tools/e2e/brev-launchable-runtime.sh qualify
+
+      - id: redact-launchable-evidence
+        name: Redact Launchable evidence
+        if: ${{ always() && steps.request.outputs.work_dir != '' }}
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          WORK_DIR: ${{ steps.request.outputs.work_dir }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["WORK_DIR"])
+          secret = os.environ.get("NVIDIA_INFERENCE_API_KEY", "").encode()
+          if root.is_symlink() or not root.is_dir():
+              raise SystemExit("evidence root must be a real directory")
+          paths = []
+          total = 0
+          for path in root.rglob("*"):
+              if path.is_symlink():
+                  raise SystemExit(f"evidence must not contain symlinks: {path}")
+              if path.is_dir():
+                  continue
+              if not path.is_file():
+                  raise SystemExit(f"evidence contains a special file: {path}")
+              paths.append(path)
+              total += path.stat().st_size
+              if len(paths) > 1250 or total > 128 * 1024 * 1024:
+                  raise SystemExit("evidence exceeds upload bounds")
+          if secret:
+              for path in paths:
+                  contents = path.read_bytes()
+                  if secret in contents:
+                      path.write_bytes(contents.replace(secret, b"[REDACTED]"))
+          PY
+
+      - name: Delete staging workspace and verify absence
+        if: ${{ always() && steps.deploy.outcome != 'skipped' && steps.request.outputs.work_dir != '' && steps.request.outputs.instance_name != '' }}
+        env:
+          INSTANCE_NAME: ${{ steps.request.outputs.instance_name }}
+          WORK_DIR: ${{ steps.request.outputs.work_dir }}
+        run: tools/e2e/brev-launchable-runtime.sh cleanup
+
+      - name: Cancel an incomplete image build
+        if: ${{ always() && steps.producer.outputs.run_id != '' }}
+        continue-on-error: true
+        env:
+          PRODUCER_RUN_ID: ${{ steps.producer.outputs.run_id }}
+          PRODUCER_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          run_url="https://api.github.com/repos/brevdev/nemoclaw-image/actions/runs/${PRODUCER_RUN_ID}"
+          status="$(curl --fail --silent --show-error --proto '=https' \
+            --header "Authorization: Bearer $PRODUCER_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            "$run_url" | jq -r '.status')"
+          if [ "$status" != "completed" ]; then
+            curl --fail --silent --show-error --proto '=https' \
+              --request POST \
+              --header "Authorization: Bearer $PRODUCER_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2026-03-10" \
+              "$run_url/cancel" >/dev/null
+          fi
+
+      - name: Upload exact-image Launchable evidence
+        if: ${{ always() && steps.request.outputs.work_dir != '' && steps.redact-launchable-evidence.outcome == 'success' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: brev-launchable-e2e-${{ steps.request.outputs.candidate_sha }}-${{ github.run_id }}
+          path: |
+            ${{ steps.request.outputs.work_dir }}/producer-run.json
+            ${{ steps.request.outputs.work_dir }}/image-handoff.json
+            ${{ steps.request.outputs.work_dir }}/brev-deploy-request.json
+            ${{ steps.request.outputs.work_dir }}/brev-workspace-ready.json
+            ${{ steps.request.outputs.work_dir }}/brev-provision.json
+            ${{ steps.request.outputs.work_dir }}/brev-boot-image.json
+            ${{ steps.request.outputs.work_dir }}/brev-identity-evidence.json
+            ${{ steps.request.outputs.work_dir }}/brev-launchable-e2e.log
+            ${{ steps.request.outputs.work_dir }}/brev-launchable-e2e-evidence.json
+            ${{ steps.request.outputs.work_dir }}/brev-launchable-cloud-openclaw/
+            ${{ steps.request.outputs.work_dir }}/brev-cleanup-evidence.json
 
   live:
     needs: generate-matrix

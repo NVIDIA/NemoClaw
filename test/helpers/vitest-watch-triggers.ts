@@ -37,7 +37,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/tunnel-lifecycle-workflow-boundary.test.ts",
   "test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts",
   "test/e2e/support/workflow-plan.test.ts",
-  "test/e2e/support/exact-image-qualification-workflow.test.ts",
+  "test/e2e/support/brev-launchable-e2e-workflow.test.ts",
 ] as const;
 
 function runTests(...tests: string[]): () => string[] {
@@ -98,14 +98,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts", "test/pr-e2e-required.test.ts"),
   },
   {
-    pattern: /(?:^|\/)\.github\/workflows\/brev-launchable-qualification\.yaml$/,
-    testsToRun: runTests("test/e2e/support/exact-image-qualification-workflow.test.ts"),
-  },
-  {
     pattern: /(?:^|\/)tools\/e2e\/brev-launchable-runtime\.sh$/,
     testsToRun: runTests(
       "test/brev-launchable-runtime.test.ts",
-      "test/e2e/support/exact-image-qualification-workflow.test.ts",
+      "test/e2e/support/brev-launchable-e2e-workflow.test.ts",
     ),
   },
   {
