@@ -37,7 +37,15 @@ function assertStatusNotOffline(output: string, context: string): void {
 
 test("device auth health probes treat 401 as live instead of offline (#2342)", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "start authenticated inference fixture",
+      "onboard device-auth OpenClaw sandbox",
+      "verify sandbox and forwarded dashboard health",
+      "recover stopped OpenClaw gateway",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   const installLog = artifacts.pathFor("phase-1-install-device-auth-health.log");
   // The sandbox cannot reach runner loopback, so expose the fixture through
   // OpenShell's host bridge while keeping readiness checks local to the runner.
@@ -95,6 +103,7 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
   });
   await cleanupDeviceAuthSandbox(host, sandbox);
 
+  progress.phase("onboard device-auth OpenClaw sandbox");
   const install = await installDeviceAuthSandbox(host, inferenceConfig, installLog);
   expect(install.exitCode, resultText(install)).toBe(0);
   expect(inference.requests()).toContainEqual(
@@ -111,6 +120,7 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
     timeoutMs: 60_000,
   });
 
+  progress.phase("verify sandbox and forwarded dashboard health");
   const health = await httpCodeFromSandbox(sandbox, "/health", "phase-2-sandbox-health-code");
   expect(health.exitCode, resultText(health)).toBe(0);
   expect(health.stdout.trim()).toBe("200");
@@ -151,6 +161,7 @@ test("device auth health probes treat 401 as live instead of offline (#2342)", {
     expect(codes, message).toContain(actual),
   );
 
+  progress.phase("recover stopped OpenClaw gateway");
   await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript("pkill -f 'openclaw.*gateway' 2>/dev/null || true"),

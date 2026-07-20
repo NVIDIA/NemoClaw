@@ -4,7 +4,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { startTestProgress, type TestProgressOptions } from "../fixtures/progress.ts";
+import {
+  startTestProgress,
+  type TestProgressOptions,
+  validateE2EPhasePlan,
+} from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { installSandbox } from "../live/agent-turn-latency-helpers.ts";
 
@@ -13,13 +17,16 @@ function progressHarness() {
     clearCalls: 0,
     clockMs: 1_000,
     lines: [] as string[],
+    scheduledDelays: [] as number[],
     timerCallback: null as (() => void) | null,
   };
   const options: TestProgressOptions = {
-    heartbeatIntervalMs: 60_000,
+    stallThresholdMs: 5 * 60_000,
+    stallReminderIntervalMs: 10 * 60_000,
     now: () => state.clockMs,
-    setTimer: (callback) => {
+    setTimer: (callback, delayMs) => {
       state.timerCallback = callback;
+      state.scheduledDelays.push(delayMs);
       return { unref() {} };
     },
     clearTimer: () => {
@@ -63,64 +70,53 @@ describe("live test progress", () => {
     vi.useRealTimers();
   });
 
-  it("reports the active phase and timestamp-only child-output age", () => {
+  it("reports semantic transitions and adds command-safe evidence only after a stall", () => {
     const { options, state } = progressHarness();
-    const progress = startTestProgress("agent-turn-latency", "OpenClaw install attempt 1", options);
+    const progress = startTestProgress(
+      "agent-turn-latency",
+      ["install OpenClaw sandbox", "install Hermes sandbox"],
+      options,
+    );
 
-    progress.onOutput({ stream: "stderr", atMs: 21_000 });
-    state.clockMs = 61_000;
-    state.timerCallback?.();
+    progress.onOutput({ stream: "stderr", atMs: 61_000 });
+    state.clockMs = 250_000;
     const finishCommand = progress.activity("command: install-openclaw");
-    state.clockMs = 71_000;
+    state.clockMs = 301_000;
     state.timerCallback?.();
     finishCommand();
-    progress.phase("Hermes install attempt 1");
+    state.clockMs = 361_000;
+    progress.phase("install Hermes sandbox");
     progress.stop();
 
-    expect(state.clearCalls).toBe(1);
+    expect(state.clearCalls).toBe(2);
+    expect(state.scheduledDelays).toEqual([300_000, 600_000, 300_000]);
     expect(state.lines).toEqual([
-      "[agent-turn-latency] OpenClaw install attempt 1 started (0s elapsed; no child output observed; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
-      "[agent-turn-latency] OpenClaw install attempt 1 running (60s elapsed; last child output 40s ago; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
-      "[agent-turn-latency] command: install-openclaw running (10s elapsed; no child output observed; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
-      "[agent-turn-latency] OpenClaw install attempt 1 finished (0s elapsed; no child output observed; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
-      "[agent-turn-latency] Hermes install attempt 1 started (0s elapsed; no child output observed; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
-      "[agent-turn-latency] Hermes install attempt 1 finished (0s elapsed; no child output observed; memory free 8.0 GiB/16.0 GiB; test RSS 0.5 GiB; workspace free 6.0 GiB; load 1m 2.50)",
+      "[e2e phase 1/2] install OpenClaw sandbox",
+      "[e2e phase 1/2] still running: install OpenClaw sandbox (phase 5m; child output 4m ago; activity command: install-openclaw; rss 0.5 GiB; memory free 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)",
+      "[e2e phase 1/2] install OpenClaw sandbox — passed in 6m; next 2/2: install Hermes sandbox",
+      "[e2e phase 2/2] install Hermes sandbox — passed in 0s",
     ]);
     expect(progress.summary()).toEqual({
       version: 1,
       scenario: "agent-turn-latency",
       startedAtMs: 1_000,
-      finishedAtMs: 71_000,
-      durationMs: 70_000,
+      finishedAtMs: 361_000,
+      durationMs: 360_000,
       phases: [
         {
-          label: "OpenClaw install attempt 1",
+          label: "install OpenClaw sandbox",
+          outcome: "passed",
           startedAtMs: 1_000,
-          finishedAtMs: 61_000,
-          durationMs: 60_000,
+          finishedAtMs: 361_000,
+          durationMs: 360_000,
           outputEvents: 1,
-          lastOutputAtMs: 21_000,
+          lastOutputAtMs: 61_000,
         },
         {
-          label: "command: install-openclaw",
-          startedAtMs: 61_000,
-          finishedAtMs: 71_000,
-          durationMs: 10_000,
-          outputEvents: 0,
-          lastOutputAtMs: null,
-        },
-        {
-          label: "OpenClaw install attempt 1",
-          startedAtMs: 71_000,
-          finishedAtMs: 71_000,
-          durationMs: 0,
-          outputEvents: 0,
-          lastOutputAtMs: null,
-        },
-        {
-          label: "Hermes install attempt 1",
-          startedAtMs: 71_000,
-          finishedAtMs: 71_000,
+          label: "install Hermes sandbox",
+          outcome: "passed",
+          startedAtMs: 361_000,
+          finishedAtMs: 361_000,
           durationMs: 0,
           outputEvents: 0,
           lastOutputAtMs: null,
@@ -129,10 +125,62 @@ describe("live test progress", () => {
     });
   });
 
-  it("connects each install attempt to the phase and timestamp-only observer", async () => {
+  it("records the final phase duration and failure outcome without repeating test identity", () => {
+    const { options, state } = progressHarness();
+    const progress = startTestProgress(
+      "identity-that-must-stay-out-of-live-lines",
+      ["prepare hosted inference", "send OpenClaw agent turn"],
+      options,
+    );
+
+    state.clockMs = 61_000;
+    progress.stop("failed");
+
+    expect(state.lines).toEqual([
+      "[e2e phase 1/2] prepare hosted inference",
+      "[e2e phase 1/2] prepare hosted inference — failed in 1m",
+    ]);
+    expect(state.lines.join("\n")).not.toContain("identity-that-must-stay-out-of-live-lines");
+    expect(progress.summary().phases).toEqual([
+      expect.objectContaining({
+        label: "prepare hosted inference",
+        outcome: "failed",
+        durationMs: 60_000,
+      }),
+    ]);
+  });
+
+  it("rejects generic plans and undeclared or backward transitions", () => {
+    expect(() => validateE2EPhasePlan(["setup", "validate inference response"])).toThrow(
+      "phase label must describe test behavior",
+    );
+    expect(() =>
+      validateE2EPhasePlan(["prepare inference endpoint", "prepare inference endpoint"]),
+    ).toThrow("duplicate live E2E phase label");
+
+    const { options } = progressHarness();
+    const progress = startTestProgress(
+      "phase-contract",
+      ["prepare inference endpoint", "onboard OpenClaw sandbox", "validate agent turn"],
+      options,
+    );
+    progress.phase("validate agent turn");
+
+    expect(() => progress.phase("undeclared phase")).toThrow("undeclared live E2E phase");
+    expect(() => progress.phase("prepare inference endpoint")).toThrow(
+      "live E2E phase moved backwards",
+    );
+    expect(progress.summary().phases).toEqual([
+      expect.objectContaining({ label: "prepare inference endpoint", outcome: "passed" }),
+      expect.objectContaining({ label: "onboard OpenClaw sandbox", outcome: "skipped" }),
+    ]);
+    progress.stop();
+  });
+
+  it("connects install output to the timestamp-only observer", async () => {
     const command = vi.fn<HostCliClient["command"]>(async () => successfulProbe());
     const host = { command } as unknown as HostCliClient;
-    const progress = { onOutput: vi.fn(), phase: vi.fn() };
+    const progress = { onOutput: vi.fn() };
 
     await installSandbox(
       host,
@@ -143,7 +191,6 @@ describe("live test progress", () => {
       progress,
     );
 
-    expect(progress.phase).toHaveBeenCalledWith("OpenClaw install attempt 1");
     expect(command).toHaveBeenCalledOnce();
     expect(command.mock.calls[0]?.[2]).toMatchObject({
       artifactName: "openclaw-install-attempt-1",
@@ -152,7 +199,7 @@ describe("live test progress", () => {
     });
   });
 
-  it("reports transient install retry cleanup, backoff, and both attempts", async () => {
+  it("retries transient install failures with cleanup and backoff", async () => {
     vi.useFakeTimers();
     const command = vi
       .fn<HostCliClient["command"]>()
@@ -161,7 +208,7 @@ describe("live test progress", () => {
       )
       .mockResolvedValueOnce(successfulProbe());
     const cleanupBeforeRetry = vi.fn(async () => undefined);
-    const progress = { onOutput: vi.fn(), phase: vi.fn() };
+    const progress = { onOutput: vi.fn() };
     const host = { command } as unknown as HostCliClient;
 
     const resultPromise = installSandbox(
@@ -176,12 +223,6 @@ describe("live test progress", () => {
 
     await expect(resultPromise).resolves.toMatchObject({ exitCode: 0 });
     expect(cleanupBeforeRetry).toHaveBeenCalledOnce();
-    expect(progress.phase.mock.calls.map(([phase]) => phase)).toEqual([
-      "OpenClaw install attempt 1",
-      "OpenClaw install retry cleanup",
-      "OpenClaw install retry backoff",
-      "OpenClaw install attempt 2",
-    ]);
     expect(command).toHaveBeenCalledTimes(2);
     expect(command.mock.calls.map((call) => call[2])).toEqual([
       expect.objectContaining({
@@ -200,7 +241,7 @@ describe("live test progress", () => {
       failedProbe("endpoint validation failed: invalid NVIDIA_INFERENCE_API_KEY credential"),
     );
     const cleanupBeforeRetry = vi.fn(async () => undefined);
-    const progress = { onOutput: vi.fn(), phase: vi.fn() };
+    const progress = { onOutput: vi.fn() };
     const host = { command } as unknown as HostCliClient;
 
     await expect(
@@ -216,8 +257,5 @@ describe("live test progress", () => {
 
     expect(command).toHaveBeenCalledOnce();
     expect(cleanupBeforeRetry).not.toHaveBeenCalled();
-    expect(progress.phase.mock.calls.map(([phase]) => phase)).toEqual([
-      "OpenClaw install attempt 1",
-    ]);
   });
 });

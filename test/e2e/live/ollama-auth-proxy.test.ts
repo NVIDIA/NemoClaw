@@ -155,7 +155,19 @@ function readTokenFileChecked(tokenFile: string): { mode: string; token: string 
 
 test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and recovers", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host }) => {
+  meta: {
+    e2ePhases: [
+      "confirm proxy script Node and curl prerequisites",
+      "install and start Ollama with the test model",
+      "start the tokenized Ollama auth proxy",
+      "enforce proxy authentication",
+      "proxy OpenAI and native Ollama inference",
+      "restart the proxy with its persisted token",
+      "prove the container network boundary",
+      "repair divergent token state",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress }) => {
   await artifacts.target.declare({
     id: "ollama-auth-proxy",
     boundary: "real host Ollama + real Node auth proxy + curl + optional Docker reachability",
@@ -198,6 +210,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   });
   await expectCommandZero(curlVersion, "curl --version");
 
+  progress.phase("install and start Ollama with the test model");
   const ollamaExists = await host.command("bash", ["-lc", "command -v ollama"], {
     artifactName: "phase-2-command-v-ollama",
     env: commandEnv(),
@@ -251,6 +264,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   });
   await expectCommandZero(pull, `ollama pull ${MODEL}`);
 
+  progress.phase("start the tokenized Ollama auth proxy");
   const proxyToken = token();
   fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
   await writeFile(tokenFile, `${proxyToken}\n`, { mode: 0o600 });
@@ -267,6 +281,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   });
   expect(aliveStatus).toMatch(/^[1-9][0-9]{2}$/u);
 
+  progress.phase("enforce proxy authentication");
   expect(
     await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/api/generate`, {
       artifactName: "phase-4-unauthenticated-generate-status",
@@ -294,6 +309,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
     }),
   ).toBe("401");
 
+  progress.phase("proxy OpenAI and native Ollama inference");
   const chatPayload = JSON.stringify({
     model: MODEL,
     messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
@@ -327,6 +343,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   expect(persistedTokenFile.mode).toBe("600");
   expect(persistedTokenFile.token).toBe(proxyToken);
 
+  progress.phase("restart the proxy with its persisted token");
   await terminate(proxy);
   proxy = undefined;
   const deadStatus = await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/api/tags`, {
@@ -364,6 +381,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
   await expectCommandZero(recover, "chat completions after proxy restart");
   expect(JSON.parse(recover.stdout).choices).toBeTruthy();
 
+  progress.phase("prove the container network boundary");
   const dockerInfo = await host.command("docker", ["info"], {
     artifactName: "phase-8-docker-info",
     env: commandEnv(),
@@ -420,6 +438,7 @@ test("Ollama auth proxy enforces tokens, proxies inference, persists tokens, and
     expect(directBackendReachability.exitCode, resultText(directBackendReachability)).not.toBe(0);
   }
 
+  progress.phase("repair divergent token state");
   const divergentToken = `divergent-${token()}`;
   await writeFile(tokenFile, `${divergentToken}\n`, { mode: 0o600 });
   const oldTokenModels = await curlStatus(host, `http://127.0.0.1:${PROXY_PORT}/v1/models`, {

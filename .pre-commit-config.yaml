@@ -282,6 +282,14 @@ repos:
   # ── Priority 20: project-level checks (full coverage is manual) ────────────
   - repo: local
     hooks:
+      - id: e2e-semantic-phase-plans
+        name: Live E2E semantic phase plans
+        entry: npm run test:e2e-phases:check
+        language: system
+        pass_filenames: false
+        files: ^(test/e2e/live/.*\.ts|test/e2e/fixtures/(e2e-test|paths|progress)\.ts|tools/e2e/check-semantic-phases\.mts|vitest\.config\.ts|package\.json)$
+        priority: 20
+
       - id: test-cli
         name: Test (CLI)
         entry: npm run test:coverage:cli

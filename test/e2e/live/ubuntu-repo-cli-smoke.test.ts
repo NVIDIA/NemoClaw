@@ -8,7 +8,15 @@ import path from "node:path";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { CLI_DIST_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 
-test("ubuntu repo cli smoke", async ({ artifacts, host }) => {
+test("ubuntu repo cli smoke", {
+  meta: {
+    e2ePhases: [
+      "confirm the compiled NemoClaw CLI is available",
+      "invoke the repository CLI version command",
+      "validate the version output contract",
+    ],
+  },
+}, async ({ artifacts, host, progress }) => {
   await artifacts.target.declare({
     id: "ubuntu-repo-cli-smoke",
     boundary: "repo-local-cli",
@@ -19,12 +27,14 @@ test("ubuntu repo cli smoke", async ({ artifacts, host }) => {
     "run `npm run build:cli` before live repo CLI targets",
   ).toBe(true);
 
+  progress.phase("invoke the repository CLI version command");
   const result = await host.command(process.execPath, ["bin/nemoclaw.js", "--version"], {
     artifactName: "repo-cli-version",
     cwd: REPO_ROOT,
     timeoutMs: 30_000,
   });
 
+  progress.phase("validate the version output contract");
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toMatch(/^nemoclaw v/);
 });

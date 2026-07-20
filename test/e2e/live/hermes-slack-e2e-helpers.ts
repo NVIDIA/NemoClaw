@@ -241,6 +241,7 @@ export async function runHermesSlackE2E({
   artifacts,
   cleanup,
   host,
+  progress,
   sandbox,
   secrets,
   skip,
@@ -315,6 +316,7 @@ export async function runHermesSlackE2E({
   await precleanHermesSlack({ host, apiKey, artifactPrefix: "preclean-hermes-slack" });
   await precleanSandbox(host, SANDBOX_NAME, env, redactionValues, "preclean-hermes-slack-cli");
 
+  progress.phase("install Hermes Slack sandbox");
   const install = await installSandboxOrSkipOnRateLimit(
     host,
     env,
@@ -344,6 +346,7 @@ export async function runHermesSlackE2E({
   expect(resultText(cliProbe)).toContain("nemoclaw");
   expect(resultText(cliProbe)).toContain("openshell");
 
+  progress.phase("validate Slack providers and Hermes health");
   const list = await host.command("node", [CLI, "list"], {
     artifactName: "phase-2-nemoclaw-list-hermes-slack",
     env,
@@ -368,6 +371,7 @@ export async function runHermesSlackE2E({
 
   await waitForHermesHealth({ sandbox, apiKey });
 
+  progress.phase("inspect Slack config and secret isolation");
   const configProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
@@ -576,6 +580,7 @@ else:
   expectExitZero(processScan, "raw Slack token process scan");
   if (processScan.stdout.trim() !== "EMPTY") expect(processScan.stdout.trim()).toBe("OK");
 
+  progress.phase("validate Hermes-scoped Slack policy");
   const policy = await host.command(
     host.openshellCommandPath,
     ["policy", "get", "--full", SANDBOX_NAME],
@@ -626,6 +631,7 @@ done`,
   expectExitZero(bridgeResidue, "Hermes Slack bridge residue probe");
   expect(resultText(bridgeResidue).trim()).toBe("");
 
+  progress.phase("exercise Slack API through credential aliases");
   const slackProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
@@ -719,6 +725,7 @@ PY`,
   expect(slackProbeText).not.toMatch(/^(FAIL|ERROR)/m);
 
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
+    progress.phase("remove Hermes Slack sandbox");
     const destroy = await host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "phase-7-nemoclaw-destroy",
       env,
@@ -763,6 +770,7 @@ PY`,
     }
   }
 
+  progress.phase("record Hermes Slack results");
   await artifacts.target.complete({
     id: "hermes-slack-e2e",
     assertions: {

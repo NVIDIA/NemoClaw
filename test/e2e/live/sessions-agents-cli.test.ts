@@ -300,7 +300,17 @@ async function expectJsonCommand(
 
 test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm CLI Docker and OpenShell prerequisites",
+      "onboard the sessions and agents sandbox",
+      "exercise main-agent session JSON and reset",
+      "add and list the secondary agent",
+      "seed and delete the secondary-agent session",
+      "delete the secondary agent and confirm absence",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   expect(fs.existsSync(CLI_ENTRYPOINT), "bin/nemoclaw.js missing").toBe(true);
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
@@ -351,6 +361,7 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
   await precleanSandbox(host, hosted);
   fs.rmSync(path.join(process.env.HOME ?? "", ".nemoclaw", "onboard.lock"), { force: true });
 
+  progress.phase("onboard the sessions and agents sandbox");
   const onboard = await runNemoclaw(
     host,
     ["onboard", "--non-interactive", "--yes-i-accept-third-party-software"],
@@ -376,6 +387,7 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
 
   await approvePendingPairingRequests(host, hosted, "post-onboard-scope");
 
+  progress.phase("exercise main-agent session JSON and reset");
   const mainSeed = await runNemoclaw(
     host,
     [SANDBOX_NAME, "exec", "--", "openclaw", "agent", "--agent", "main", "-m", "ping"],
@@ -427,6 +439,7 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
     });
   }
 
+  progress.phase("add and list the secondary agent");
   const addAgent = await runNemoclaw(
     host,
     [
@@ -464,6 +477,7 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
     `agents list --json must include '${TEST_AGENT_ID}'`,
   ).toBe(true);
 
+  progress.phase("seed and delete the secondary-agent session");
   const workSeed = await runNemoclaw(
     host,
     [SANDBOX_NAME, "exec", "--", "openclaw", "agent", "--agent", TEST_AGENT_ID, "-m", "ping"],
@@ -511,6 +525,7 @@ test("sessions/agents host CLI routes to OpenClaw and preserves JSON envelopes",
     `session key '${sessionKey}' must be absent after delete`,
   ).toBe(false);
 
+  progress.phase("delete the secondary agent and confirm absence");
   const deleteAgent = await runNemoclaw(
     host,
     [SANDBOX_NAME, "agents", "delete", TEST_AGENT_ID, "--force", "--json"],

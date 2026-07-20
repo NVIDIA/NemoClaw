@@ -68,12 +68,16 @@ async function cleanupInvalidKeyState(host: HostCliClient, sandboxName: string):
   fs.rmSync(SESSION_FILE, { force: true });
 }
 
-test("onboard invalid NVIDIA key exits cleanly without a stack trace", async ({
-  artifacts,
-  cleanup,
-  host,
-  skip,
-}) => {
+test("onboard invalid NVIDIA key exits cleanly without a stack trace", {
+  meta: {
+    e2ePhases: [
+      "confirm Docker and built CLI prerequisites",
+      "clear invalid-key onboarding state",
+      "submit the invalid NVIDIA credential",
+      "confirm a classified failure without a stack trace",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, skip }) => {
   const docker = await host.command("docker", ["info"], {
     artifactName: "prereq-docker-info-onboard-invalid-key",
     env: buildAvailabilityProbeEnv(),
@@ -97,6 +101,7 @@ test("onboard invalid NVIDIA key exits cleanly without a stack trace", async ({
   cleanup.add(`remove invalid-key onboard residue for ${sandboxName}`, async () => {
     await cleanupInvalidKeyState(host, sandboxName);
   });
+  progress.phase("clear invalid-key onboarding state");
   await cleanupInvalidKeyState(host, sandboxName);
 
   await artifacts.target.declare({
@@ -109,6 +114,7 @@ test("onboard invalid NVIDIA key exits cleanly without a stack trace", async ({
     ],
   });
 
+  progress.phase("submit the invalid NVIDIA credential");
   const result = await host.nemoclaw(
     ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
     {
@@ -126,6 +132,7 @@ test("onboard invalid NVIDIA key exits cleanly without a stack trace", async ({
   );
   const text = resultText(result);
 
+  progress.phase("confirm a classified failure without a stack trace");
   expect(result.exitCode, text).not.toBe(0);
   expect(text).toContain("Invalid NVIDIA API key");
   expect(text).toContain("Must start with nvapi-");

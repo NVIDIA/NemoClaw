@@ -81,7 +81,17 @@ async function expectCompatibleAnthropicOpenAiProvider(
 
 test("Hermes inference set updates route/config and preserves live runtime", {
   timeout: TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets }) => {
+  meta: {
+    e2ePhases: [
+      "prepare clean Hermes inference sandbox",
+      "install baseline Hermes runtime",
+      "switch Hermes inference provider",
+      "validate switched route and locked config",
+      "exercise inference.local and Hermes API",
+      "run Hermes CLI against switched provider",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
   await artifacts.target.declare({
     id: "hermes-inference-switch",
     boundary:
@@ -163,6 +173,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
       : {}),
   };
 
+  progress.phase("install baseline Hermes runtime");
   const install = await installHermes(host, apiKey, installEnv);
   expect(install.exitCode, resultText(install)).toBe(0);
   expectAuthenticatedBaselineInventoryRequest(mockBaseline);
@@ -186,6 +197,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
   const envHashBefore = await envHash(sandbox, "env-hash-before");
 
+  progress.phase("switch Hermes inference provider");
   const compatibleMetadataArgs = compatibleAnthropicMetadataArgs(switchEndpointUrl);
   const switched = await runHermesInferenceSetWithRetry(
     host,
@@ -196,6 +208,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
   expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);
 
+  progress.phase("validate switched route and locked config");
   const pidAfter = await hermesGatewayPid(sandbox, "pid-after");
   maybeAssertPidStable(pidBefore, pidAfter, (actual, expected) => expect(actual).toBe(expected));
 
@@ -316,6 +329,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(state.session.preferredInferenceApi).toBe(RUNTIME_SWITCH_API);
   expect(state.session.nimContainer).toBeNull();
 
+  progress.phase("exercise inference.local and Hermes API");
   const inferenceLocalPayload = JSON.stringify({
     model: SWITCH_MODEL,
     messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
@@ -362,6 +376,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(chatContent(chat.stdout)).toMatch(/PONG/i);
   expect(inferenceResponseModel(chat.stdout)).toBe(SWITCH_MODEL);
 
+  progress.phase("run Hermes CLI against switched provider");
   const hermesCli = await runHermesCliPongWithRetry({
     run: (attempt) =>
       sandbox.exec(SANDBOX_NAME, ["hermes", "-z", "Reply with exactly one word: PONG"], {

@@ -18,6 +18,7 @@ import {
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
 validateSandboxName(SANDBOX_NAME);
@@ -249,7 +250,8 @@ async function retryHostedInference<T>(
 // source-shape-contract: security -- Live execution proves the shipped Hermes manifest remains healthy and credential-safe
 test("hermes-e2e: install.sh onboards Hermes and proves health plus live inference", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, inference, sandbox }) => {
+  meta: { e2ePhases: HERMES_E2E_PHASES },
+}, async ({ artifacts, cleanup, host, inference, progress, sandbox }) => {
   await artifacts.target.declare({
     id: "hermes-e2e",
     boundary: `install.sh --non-interactive --fresh + Hermes sandbox runtime + ${inference.mode} inference adapter`,
@@ -323,6 +325,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     data: expect.arrayContaining([expect.objectContaining({ id: inference.model })]),
   });
 
+  progress.phase("install and onboard Hermes sandbox");
   // Phase 2: real installer + non-interactive Hermes onboard.
   const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
     artifactName: "phase-2-install-hermes",
@@ -386,6 +389,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(resultText(install)).toContain(`http://127.0.0.1:${HERMES_DASHBOARD_PORT}/`);
   }
 
+  progress.phase("validate sandbox layout and health");
   // Phase 3: sandbox verification.
   const list = await host.command("nemoclaw", ["list"], {
     artifactName: "phase-3-nemoclaw-list",
@@ -640,6 +644,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(httpStatusOk(dashboardInternal.stdout)).toBe(true);
   }
 
+  progress.phase("restart Hermes gateway and validate supervision");
   // Phase 5: host-mediated Hermes gateway restart. This validates the
   // runtime contract behind #2426 against a real OpenShell/Hermes sandbox:
   // The installed supervision tree controls the gateway process, direct
@@ -1267,6 +1272,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     }
   }
 
+  progress.phase("exercise hosted and inference.local routes");
   // Phase 6: live inference through both the external provider and the
   // sandbox's inference.local route.
   const directChat = await retryHostedInference(
@@ -1329,6 +1335,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
   );
   expectPong("Hermes sandbox inference.local chat", sandboxChatJson);
 
+  progress.phase("validate CLI manifest and locked-config behavior");
   // Phase 7: CLI operations and agent manifest regression.
   const logs = await host.command("nemoclaw", [SANDBOX_NAME, "logs"], {
     artifactName: "phase-7-nemoclaw-logs",
@@ -1457,6 +1464,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     : null;
 
   // Phase 9: explicit cleanup and post-destroy registry proof.
+  progress.phase("finalize Hermes sandbox resources");
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
     const destroy = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: "phase-9-nemoclaw-destroy",

@@ -253,12 +253,10 @@ export async function installSandbox(
   agent: "openclaw" | "hermes",
   apiKey: string,
   cleanupBeforeRetry?: () => Promise<void>,
-  progress?: Pick<TestProgress, "onOutput" | "phase">,
+  progress?: Pick<TestProgress, "onOutput">,
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
-  const agentLabel = agent === "openclaw" ? "OpenClaw" : "Hermes";
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
-    progress?.phase(`${agentLabel} install attempt ${attempt}`);
     install = await host.command(
       "bash",
       ["install.sh", "--non-interactive", "--fresh", "--yes-i-accept-third-party-software"],
@@ -277,11 +275,9 @@ export async function installSandbox(
       attempt < INSTALL_ATTEMPTS;
     install.exitCode === 0 && (attempt = INSTALL_ATTEMPTS + 1);
     if (retry && cleanupBeforeRetry) {
-      progress?.phase(`${agentLabel} install retry cleanup`);
       await cleanupBeforeRetry();
     }
     if (retry) {
-      progress?.phase(`${agentLabel} install retry backoff`);
       await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt));
     }
     !retry && install.exitCode !== 0 && (attempt = INSTALL_ATTEMPTS + 1);
@@ -293,17 +289,15 @@ export async function installSandbox(
 export async function cleanupTurnSandboxes(
   host: HostCliClient,
   sandbox: SandboxClient,
-  progress?: Pick<TestProgress, "onOutput" | "phase">,
+  progress?: Pick<TestProgress, "onOutput">,
 ): Promise<void> {
   for (const [name, agent] of [
     [OPENCLAW_SANDBOX, "openclaw"],
     [HERMES_SANDBOX, "hermes"],
   ] as const) {
-    progress?.phase(`preclean destroy ${agent} sandbox`);
     await bestEffortPreclean(`destroy ${agent} sandbox`, () =>
       cleanupTurnSandbox(host, name, agent, progress),
     );
-    progress?.phase(`preclean delete ${agent} sandbox`);
     await bestEffortPreclean(`delete ${agent} sandbox`, () =>
       sandbox.openshell(["sandbox", "delete", name], {
         artifactName: `cleanup-${agent}-delete`,
@@ -313,7 +307,6 @@ export async function cleanupTurnSandboxes(
       }),
     );
   }
-  progress?.phase("preclean stop Hermes API forward");
   await bestEffortPreclean("stop Hermes API forward", () =>
     sandbox.openshell(["forward", "stop", "8642"], {
       artifactName: "cleanup-forward-stop-hermes-api",
@@ -322,7 +315,6 @@ export async function cleanupTurnSandboxes(
       timeoutMs: 30_000,
     }),
   );
-  progress?.phase("preclean destroy OpenShell gateway");
   await bestEffortPreclean("destroy OpenShell gateway", () =>
     sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
       artifactName: "cleanup-gateway-destroy-turn-latency",

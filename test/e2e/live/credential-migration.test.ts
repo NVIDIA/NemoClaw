@@ -138,7 +138,16 @@ async function cleanupCredentialMigrationState(host: HostCliClient, home: string
 
 test("credential migration stages legacy file into gateway and removes plaintext safely", {
   timeout: ONBOARD_TIMEOUT_MS + INSTALL_TIMEOUT_MS + 5 * 60_000,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "validate legacy credential migration prerequisites",
+      "stage legacy plaintext credential",
+      "onboard from legacy credential file",
+      "verify gateway-backed credential registry",
+      "prove symlink-safe legacy file removal",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   // Use the existing nightly secret as the legacy provider credential. The
   // onboard child env below deliberately does not receive that credential, so
   // the only source is ~/.nemoclaw/credentials.json — matching the retired
@@ -218,6 +227,7 @@ test("credential migration stages legacy file into gateway and removes plaintext
   await ensureOpenshellAvailable(host, home);
   await cleanupCredentialMigrationState(host, home);
 
+  progress.phase("stage legacy plaintext credential");
   fs.rmSync(nemoclawDir, { recursive: true, force: true });
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(
@@ -234,6 +244,7 @@ test("credential migration stages legacy file into gateway and removes plaintext
     { mode: 0o600 },
   );
 
+  progress.phase("onboard from legacy credential file");
   const onboard = await host.command("node", [CLI_ENTRYPOINT, "onboard", "--non-interactive"], {
     artifactName: "onboard-from-legacy-credentials",
     env: testEnv(home, {
@@ -253,6 +264,7 @@ test("credential migration stages legacy file into gateway and removes plaintext
     false,
   );
 
+  progress.phase("verify gateway-backed credential registry");
   const providers = await host.command(
     "openshell",
     ["-g", "nemoclaw", "provider", "list", "--names"],
@@ -289,6 +301,7 @@ test("credential migration stages legacy file into gateway and removes plaintext
     "credentials list must not recreate plaintext credentials.json",
   ).toBe(false);
 
+  progress.phase("prove symlink-safe legacy file removal");
   const victimFile = path.join(home, "victim.txt");
   const victimPayload = "important data the attacker should not touch";
   fs.writeFileSync(victimFile, victimPayload, { mode: 0o600 });

@@ -36,6 +36,18 @@ const TIMEOUT_MS = 90 * 60_000;
 
 test("OpenClaw and Hermes complete real hosted inference turns within the latency cap", {
   timeout: TIMEOUT_MS,
+  meta: {
+    e2ePhases: [
+      "prepare clean inference hosts",
+      "install OpenClaw sandbox",
+      "validate OpenClaw inference route",
+      "run OpenClaw hosted inference turn",
+      "replace OpenClaw with Hermes sandbox",
+      "validate Hermes inference route",
+      "run Hermes hosted inference turn",
+      "remove provisioned sandboxes",
+    ],
+  },
 }, async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const results: Record<string, unknown> = { model: MODEL, maxTurnSeconds: MAX_TURN_SECONDS };
@@ -45,10 +57,7 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
     openclawSandbox: OPENCLAW_SANDBOX,
     hermesSandbox: HERMES_SANDBOX,
   });
-  progress.phase("register cleanup");
-
   cleanup.trackDisposable("remove gateway nemoclaw", async () => {
-    progress.phase("cleanup remove OpenShell gateway");
     await host.cleanupGatewayRegistration("nemoclaw", {
       artifactName: "cleanup-gateway-destroy-turn-latency",
       env: buildAvailabilityProbeEnv(),
@@ -57,7 +66,6 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
     });
   });
   cleanup.trackDisposable("stop forward 8642", async () => {
-    progress.phase("cleanup stop Hermes API forward");
     await host.cleanupForward(8642, {
       artifactName: "cleanup-forward-stop-hermes-api",
       env: buildAvailabilityProbeEnv(),
@@ -66,7 +74,6 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
     });
   });
   cleanup.trackDisposable("delete Hermes OpenShell sandbox", async () => {
-    progress.phase("cleanup delete Hermes OpenShell sandbox");
     await sandbox.cleanupSandbox(HERMES_SANDBOX, {
       artifactName: "cleanup-hermes-delete",
       env: env(HERMES_SANDBOX, "hermes"),
@@ -75,11 +82,9 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
     });
   });
   cleanup.trackDisposable("destroy Hermes sandbox", async () => {
-    progress.phase("cleanup destroy Hermes sandbox");
     await cleanupTurnSandbox(host, HERMES_SANDBOX, "hermes", progress);
   });
   cleanup.trackDisposable("delete OpenClaw OpenShell sandbox", async () => {
-    progress.phase("cleanup delete OpenClaw OpenShell sandbox");
     await sandbox.cleanupSandbox(OPENCLAW_SANDBOX, {
       artifactName: "cleanup-openclaw-delete",
       env: env(OPENCLAW_SANDBOX, "openclaw"),
@@ -88,11 +93,9 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
     });
   });
   cleanup.trackDisposable("destroy OpenClaw sandbox", async () => {
-    progress.phase("cleanup destroy OpenClaw sandbox");
     await cleanupTurnSandbox(host, OPENCLAW_SANDBOX, "openclaw", progress);
   });
 
-  progress.phase("docker prerequisite");
   const docker = await host.command("docker", ["info"], {
     artifactName: "docker-info",
     env: buildAvailabilityProbeEnv(),
@@ -103,6 +106,7 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
 
   const cleanBeforeRetry = () => cleanupTurnSandboxes(host, sandbox, progress);
   await cleanupTurnSandboxes(host, sandbox, progress);
+  progress.phase("install OpenClaw sandbox");
   const openclawInstall = await installSandbox(
     host,
     OPENCLAW_SANDBOX,
@@ -112,7 +116,7 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
     progress,
   );
   expect(openclawInstall.exitCode, resultText(openclawInstall)).toBe(0);
-  progress.phase("OpenClaw route validation");
+  progress.phase("validate OpenClaw inference route");
   const openclawRoute = await route(
     sandbox,
     OPENCLAW_SANDBOX,
@@ -123,7 +127,6 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
   expect(openclawRoute.exitCode, resultText(openclawRoute)).toBe(0);
   expect(resultText(openclawRoute)).toContain(EXPECTED_ROUTE_PROVIDER);
   expect(resultText(openclawRoute)).toContain(MODEL);
-  progress.phase("OpenClaw config validation");
   const openclawConfig = await sandbox.execShell(
     OPENCLAW_SANDBOX,
     trustedSandboxShellScript(openclawConfigCommand()),
@@ -138,7 +141,7 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
   expect(openclawConfig.exitCode, resultText(openclawConfig)).toBe(0);
   assertOpenClawConfig(openclawConfig.stdout, MODEL);
 
-  progress.phase("OpenClaw agent turn");
+  progress.phase("run OpenClaw hosted inference turn");
   const openclaw = await openclawTurn(sandbox, apiKey, progress);
   expect(openclaw.result.exitCode, resultText(openclaw.result)).toBe(0);
   assertNoOpenClawTransportErrors(resultText(openclaw.result));
@@ -149,7 +152,7 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
   expect(openclaw.elapsedMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
   results.openclaw = { elapsedMs: openclaw.elapsedMs };
 
-  progress.phase("destroy OpenClaw before Hermes");
+  progress.phase("replace OpenClaw with Hermes sandbox");
   await host.command("node", [CLI, OPENCLAW_SANDBOX, "destroy", "--yes"], {
     artifactName: "destroy-openclaw-before-hermes",
     env: env(OPENCLAW_SANDBOX, "openclaw"),
@@ -166,15 +169,13 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
     progress,
   );
   expect(hermesInstall.exitCode, resultText(hermesInstall)).toBe(0);
-  progress.phase("Hermes route validation");
+  progress.phase("validate Hermes inference route");
   const hermesRoute = await route(sandbox, HERMES_SANDBOX, "hermes", "hermes-route", progress);
   expect(hermesRoute.exitCode, resultText(hermesRoute)).toBe(0);
   expect(resultText(hermesRoute)).toContain(EXPECTED_ROUTE_PROVIDER);
   expect(resultText(hermesRoute)).toContain(MODEL);
-  progress.phase("Hermes health validation");
   const hermesHealth = await waitHermesHealth(sandbox, progress);
   expect(hermesHealth.exitCode, resultText(hermesHealth)).toBe(0);
-  progress.phase("Hermes config validation");
   const hermesConfig = await sandbox.exec(HERMES_SANDBOX, ["cat", "/sandbox/.hermes/config.yaml"], {
     artifactName: "hermes-config",
     env: env(HERMES_SANDBOX, "hermes"),
@@ -195,7 +196,7 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
     ],
     max_tokens: 64,
   });
-  progress.phase("Hermes API turn");
+  progress.phase("run Hermes hosted inference turn");
   const hermesStarted = process.hrtime.bigint();
   const hermesTurn = await sandbox.execShell(
     HERMES_SANDBOX,
@@ -218,6 +219,7 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
   expect(hermesMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
   results.hermes = { elapsedMs: hermesMs };
   await artifacts.writeJson("turn-latency-results.json", results);
+  progress.phase("remove provisioned sandboxes");
   fs.writeFileSync(
     artifacts.pathFor("agent-turn-latency-results-legacy-path.json"),
     `${JSON.stringify(results, null, 2)}\n`,

@@ -102,9 +102,22 @@ async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   }
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "skill-agent: injected sandbox skill is read by a real OpenClaw agent turn",
-  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  {
+    timeout: 30 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm Docker and skill tooling",
+        "onboard the OpenClaw skill sandbox",
+        "inject and confirm the skill fixture",
+        "ask the agent to consume the skill",
+        "record the verified skill behavior",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
@@ -249,6 +262,7 @@ test(
       nemoclawCleanupOptions,
     );
 
+    progress.phase("onboard the OpenClaw skill sandbox");
     const onboard = await host.command(
       "node",
       [
@@ -290,6 +304,7 @@ test(
     expect(onboard.exitCode, onboardText).toBe(0);
     sandboxProvisioned = true;
 
+    progress.phase("inject and confirm the skill fixture");
     const addSkill = await host.command("bash", [ADD_SKILL_SCRIPT], {
       artifactName: "add-sandbox-skill-fixture",
       cwd: REPO_ROOT,
@@ -311,6 +326,7 @@ test(
     let lastExitCode: number | null = null;
     const attempts = Math.max(1, Number.isFinite(MAX_ATTEMPTS) ? MAX_ATTEMPTS : 3);
 
+    progress.phase("ask the agent to consume the skill");
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       const verify = await host.command("bash", [VERIFY_SKILL_SCRIPT], {
         artifactName: `verify-sandbox-skill-via-agent-${attempt}`,
@@ -362,6 +378,7 @@ test(
       `Agent did not return ${VERIFY_PHRASE}; last exit ${lastExitCode}\n${lastAgentOutput.slice(-12_000)}`,
     ).toBe(true);
 
+    progress.phase("record the verified skill behavior");
     await artifacts.target.complete({
       id: "skill-agent",
       status: "passed",
@@ -373,5 +390,4 @@ test(
       },
     });
   },
-  30 * 60_000,
 );

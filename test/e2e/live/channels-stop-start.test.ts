@@ -8,4 +8,19 @@ import {
   runChannelsStopStartTarget,
 } from "./channels-stop-start-helpers.ts";
 
-test(CHANNELS_STOP_START_TEST_NAME, { timeout: LIVE_TIMEOUT_MS }, runChannelsStopStartTarget);
+test(
+  CHANNELS_STOP_START_TEST_NAME,
+  {
+    timeout: LIVE_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "prepare channel lifecycle sandbox",
+        "onboard sandbox with all messaging channels",
+        "validate active channel integrations",
+        "disable channels and rebuild sandbox",
+        "re-enable channels and rebuild sandbox",
+      ],
+    },
+  },
+  runChannelsStopStartTarget,
+);

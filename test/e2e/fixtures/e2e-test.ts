@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+
 import { test as base, expect } from "vitest";
 
 import {
@@ -27,9 +30,15 @@ import {
   RuntimePhaseFixture,
   StateValidationPhaseFixture,
 } from "./phases/index.ts";
-import { startTestProgress, type TestProgress } from "./progress.ts";
+import { type ProgressPhaseOutcome, startTestProgress, type TestProgress } from "./progress.ts";
 import { SecretStore } from "./secrets.ts";
 import { ShellProbe } from "./shell-probe.ts";
+
+declare module "@vitest/runner" {
+  interface TaskMeta {
+    e2ePhases?: readonly string[];
+  }
+}
 
 export interface E2ETargetFixtures {
   artifacts: ArtifactSink;
@@ -51,12 +60,37 @@ export interface E2ETargetFixtures {
   progress: TestProgress;
 }
 
-function resourcePhaseLabel(targetId: string, phase: string): string {
-  const suffix = phase
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/gu, "-")
-    .replace(/^-|-$/gu, "");
-  return `${targetId}.${suffix}`;
+const SUPPORT_PHASES = [
+  "exercise E2E fixture support",
+  "record E2E fixture support outcome",
+] as const;
+export const E2E_TEARDOWN_PHASE = "release registered E2E resources";
+
+export function resourcePhaseLabel(targetId: string, phase: string): string {
+  const slug = (value: string, fallback: string) =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gu, "-")
+      .replace(/^-|-$/gu, "") || fallback;
+  const fullLabel = `${slug(targetId, "target")}.${slug(phase, "phase")}`;
+  if (fullLabel.length <= 64) return fullLabel;
+
+  const digest = createHash("sha256")
+    .update(targetId)
+    .update("\0")
+    .update(phase)
+    .digest("hex")
+    .slice(0, 12);
+  const prefix = fullLabel.slice(0, 64 - digest.length - 1).replace(/[._-]+$/gu, "");
+  return `${prefix}.${digest}`;
+}
+
+function taskOutcomeForState(state: string | undefined): ProgressPhaseOutcome | undefined {
+  return state === "fail" ? "failed" : state === "skip" ? "skipped" : undefined;
+}
+
+function outcomeForTaskState(state: string | undefined): ProgressPhaseOutcome {
+  return taskOutcomeForState(state) ?? "passed";
 }
 
 export const test = base.extend<E2ETargetFixtures>({
@@ -76,15 +110,30 @@ export const test = base.extend<E2ETargetFixtures>({
     }
   },
   progress: [
-    async ({ artifacts, secrets, task }, use) => {
+    async ({ artifacts, onTestFinished, secrets, task }, use) => {
       const targetId = process.env.E2E_TARGET_ID;
       const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
-      const progress = startTestProgress(task.name, "test body", {
+      const phasePlan = task.meta.e2ePhases;
+      assert.ok(
+        task.file.projectName !== "e2e-live" || phasePlan,
+        `live E2E test is missing semantic phase metadata: ${task.name}`,
+      );
+      const declaredPhasePlan = phasePlan ?? SUPPORT_PHASES;
+      const declaredFinalPhase = declaredPhasePlan.at(-1) as string;
+      let reachedDeclaredFinal = !phasePlan;
+      const baseProgress = startTestProgress(task.name, declaredPhasePlan, {
+        terminalPhase: E2E_TEARDOWN_PHASE,
+        taskStatus: () => ({
+          errorCount: task.result?.errors?.length ?? 0,
+          ...(taskOutcomeForState(task.result?.state)
+            ? { outcome: taskOutcomeForState(task.result?.state) }
+            : {}),
+        }),
         logLine:
           process.env.NEMOCLAW_RUN_LIVE_E2E === "1"
             ? (line) => process.stdout.write(`${secrets.redact(line)}\n`)
             : () => {
-                // Keep fixture and support tests quiet; live runs need the heartbeat.
+                // Keep fixture and support tests quiet; live runs need phase progress.
               },
         ...(targetId && baselinePath
           ? {
@@ -95,16 +144,39 @@ export const test = base.extend<E2ETargetFixtures>({
             }
           : {}),
       });
-      try {
-        await use(progress);
-      } finally {
-        progress.stop();
+      const progress: TestProgress = {
+        ...baseProgress,
+        phase(label) {
+          baseProgress.phase(label);
+          if (label === declaredFinalPhase) reachedDeclaredFinal = true;
+        },
+      };
+      const completeSupportPlan = phasePlan
+        ? () => undefined
+        : () => {
+            if (!progress.isComplete()) progress.phase(SUPPORT_PHASES[1]);
+          };
+      let finalized = false;
+      onTestFinished(async () => {
+        if (finalized) return;
+        finalized = true;
+        const outcome = outcomeForTaskState(task.result?.state);
+        completeSupportPlan();
+        const completedPhasePlan = reachedDeclaredFinal;
+        if (!progress.isComplete()) progress.phase(E2E_TEARDOWN_PHASE);
+        const phaseOutcome = outcome === "passed" && !completedPhasePlan ? "failed" : outcome;
+        progress.stop(phaseOutcome);
         await artifacts.writeJson("test-progress.json", {
           ...progress.summary(),
           ...(process.env.E2E_TARGET_ID ? { targetId: process.env.E2E_TARGET_ID } : {}),
           ...(process.env.NEMOCLAW_E2E_SHARD ? { shardId: process.env.NEMOCLAW_E2E_SHARD } : {}),
         });
-      }
+        assert.ok(
+          outcome !== "passed" || completedPhasePlan,
+          `live E2E test did not reach its final semantic phase: ${task.name}`,
+        );
+      });
+      await use(progress);
     },
     { auto: true },
   ],
@@ -112,11 +184,12 @@ export const test = base.extend<E2ETargetFixtures>({
     const probe = new DockerProbe(artifacts, (text, extra) => secrets.redact(text, extra));
     await use(new DockerPrerequisite(probe, skip));
   },
-  cleanup: async ({ artifacts, secrets }, use) => {
+  cleanup: async ({ artifacts, progress, secrets }, use) => {
     const cleanup = new CleanupRegistry((text) => secrets.redact(text));
     try {
       await use(cleanup);
     } finally {
+      progress.phase(E2E_TEARDOWN_PHASE);
       const result = await cleanup.runAll();
       await artifacts.writeJson("cleanup.json", result);
       assertCleanupPassed(result);

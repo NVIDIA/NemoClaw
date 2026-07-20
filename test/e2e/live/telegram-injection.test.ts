@@ -194,7 +194,16 @@ async function assertSandboxProcessTableDoesNotExposeSecret(
 
 test("Telegram bridge-style message handling treats shell metacharacters as data", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm Docker and onboard the injection sandbox",
+      "exercise command-substitution payloads",
+      "check parameter and process-table secret boundaries",
+      "reject malicious sandbox names",
+      "confirm benign message passthrough",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = phase6Env({
     sandboxName: SANDBOX_NAME,
@@ -242,6 +251,7 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
   expectExitZero(install, "install.sh --non-interactive");
   await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-telegram-injection");
 
+  progress.phase("exercise command-substitution payloads");
   for (const [label, marker, payload] of [
     [
       "command-substitution",
@@ -305,11 +315,13 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
     expect(sshMarkerCheck.stdout.trim(), resultText(sshMarkerCheck)).toBe("SAFE");
   }
 
+  progress.phase("check parameter and process-table secret boundaries");
   await assertParameterPayloadStaysLiteral(host, env, redactions);
   await assertSshParameterPayloadStaysLiteral(host, env, redactions);
   await assertHostProcessTableDoesNotExposeSecret(host, env, redactions);
   await assertSandboxProcessTableDoesNotExposeSecret(host, env, redactions);
 
+  progress.phase("reject malicious sandbox names");
   const invalidNames = [
     "foo;rm -rf /",
     "--help",
@@ -339,6 +351,7 @@ test("Telegram bridge-style message handling treats shell metacharacters as data
     expect(validation.stdout, invalidName).toContain("REJECTED");
   }
 
+  progress.phase("confirm benign message passthrough");
   const normal = await sendPayloadViaSandboxStdin(
     host,
     "Hello, what is two plus two?",

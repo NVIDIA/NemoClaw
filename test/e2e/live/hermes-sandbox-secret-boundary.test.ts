@@ -722,12 +722,18 @@ async function expectRuntimeApiServerKeyPerSandbox(
   ).not.toBe(second.key_hash);
 }
 
-test("hermes sandbox secret boundary keeps raw secrets out of images and startup", async ({
-  artifacts,
-  cleanup,
-  secrets,
-  skip,
-}) => {
+test("hermes sandbox secret boundary keeps raw secrets out of images and startup", {
+  meta: {
+    e2ePhases: [
+      "check Docker and Hermes image inputs",
+      "build base and managed Hermes images",
+      "inspect image secret and runtime boundaries",
+      "verify unique per-sandbox API keys",
+      "reject raw secrets from Hermes env files",
+      "reject raw secrets from Hermes process env",
+    ],
+  },
+}, async ({ artifacts, cleanup, progress, secrets, skip }) => {
   const probe = new DockerProbe(artifacts, (text, extraValues) =>
     secrets.redact(text, extraValues),
   );
@@ -786,6 +792,7 @@ test("hermes sandbox secret boundary keeps raw secrets out of images and startup
 
   await requireDocker(probe, skip);
 
+  progress.phase("build base and managed Hermes images");
   removeImage = await buildHermesImageIfNeeded(probe, image, baseImage, baseImageFromEnv);
   await probe.expect(["image", "inspect", image], {
     artifactName: "inspect-hermes-image-after-build",
@@ -803,10 +810,13 @@ test("hermes sandbox secret boundary keeps raw secrets out of images and startup
     timeoutMs: 30_000,
   });
 
+  progress.phase("inspect image secret and runtime boundaries");
   await inspectImageBoundary(probe, image);
   await inspectGatewayControlBoundary(probe, image);
   await inspectManagedToolBoundary(probe, managedImage);
+  progress.phase("verify unique per-sandbox API keys");
   await expectRuntimeApiServerKeyPerSandbox(probe, image);
+  progress.phase("reject raw secrets from Hermes env files");
   await expectStartupRejectsEnvFileEntry(
     probe,
     image,
@@ -828,6 +838,7 @@ test("hermes sandbox secret boundary keeps raw secrets out of images and startup
     "OPENAI_API_KEY",
     "sk-OPENSHELL-PROXY-REWRITE",
   );
+  progress.phase("reject raw secrets from Hermes process env");
   await expectStartupRejectsRuntimeEnvEntry(
     probe,
     image,

@@ -414,6 +414,7 @@ export async function runChannelsStopStartTarget({
   artifacts,
   cleanup,
   host,
+  progress,
   sandbox,
   secrets,
   skip,
@@ -471,6 +472,7 @@ export async function runChannelsStopStartTarget({
 
   const docker = await dockerInfo(host, env);
   expect(docker.exitCode, resultText(docker)).toBe(0);
+  progress.phase("onboard sandbox with all messaging channels");
   const install = await installSandboxOrSkipOnRateLimit(
     host,
     env,
@@ -488,6 +490,7 @@ export async function runChannelsStopStartTarget({
     `sandbox-list-channels-stop-start-${AGENT}`,
   );
 
+  progress.phase("validate active channel integrations");
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   await expectAgentConfig(sandbox, "present", redactions);
@@ -499,6 +502,7 @@ export async function runChannelsStopStartTarget({
     ).toBe("active");
   }
 
+  progress.phase("disable channels and rebuild sandbox");
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "stop", channel);
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "disabled");
@@ -520,6 +524,7 @@ export async function runChannelsStopStartTarget({
     ).toBe("inactive");
   }
 
+  progress.phase("re-enable channels and rebuild sandbox");
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "start", channel);
   expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");

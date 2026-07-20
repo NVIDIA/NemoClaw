@@ -238,56 +238,58 @@ export class ShellProbe {
         // Test instrumentation must not change command execution.
       }
     };
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      detached: true,
-      env: { ...(options.env ?? {}) },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const supervised = await superviseChild(child, {
-      timeoutMs,
-      killGraceMs,
-      signal: this.signal,
-      onStdout: (chunk) => {
-        stdout.append(chunk);
-        observeOutput({ stream: "stdout", atMs: Date.now() });
-      },
-      onStderr: (chunk) => {
-        stderr.append(chunk);
-        observeOutput({ stream: "stderr", atMs: Date.now() });
-      },
-    });
+    try {
+      const child = spawn(command, args, {
+        cwd: options.cwd,
+        detached: true,
+        env: { ...(options.env ?? {}) },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const supervised = await superviseChild(child, {
+        timeoutMs,
+        killGraceMs,
+        signal: this.signal,
+        onStdout: (chunk) => {
+          stdout.append(chunk);
+          observeOutput({ stream: "stdout", atMs: Date.now() });
+        },
+        onStderr: (chunk) => {
+          stderr.append(chunk);
+          observeOutput({ stream: "stderr", atMs: Date.now() });
+        },
+      });
 
-    const redactedStdout = renderCapturedText(stdout);
-    const redactedStderr = renderCapturedText(stderr);
-    const durationMs = Date.now() - startedAtMs;
-    if (supervised.spawnError) {
-      const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
-      const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
-      await writeArtifacts({
+      const redactedStdout = renderCapturedText(stdout);
+      const redactedStderr = renderCapturedText(stderr);
+      const durationMs = Date.now() - startedAtMs;
+      if (supervised.spawnError) {
+        const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
+        const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
+        await writeArtifacts({
+          command: redactedCommand,
+          durationMs,
+          exitCode: null,
+          signal: null,
+          timedOut: supervised.timedOut,
+          stdout: redactedStdout,
+          stderr: stderrWithError,
+        });
+        throw redactedError(supervised.spawnError, redactedMessage);
+      }
+
+      const result: Omit<ShellProbeResult, "artifacts"> = {
         command: redactedCommand,
         durationMs,
-        exitCode: null,
-        signal: null,
+        exitCode: supervised.exitCode,
+        signal: supervised.signal,
         timedOut: supervised.timedOut,
         stdout: redactedStdout,
-        stderr: stderrWithError,
-      });
+        stderr: redactedStderr,
+      };
+      const artifacts = await writeArtifacts(result);
+      return { ...result, artifacts };
+    } finally {
       finishActivityBestEffort();
-      throw redactedError(supervised.spawnError, redactedMessage);
     }
-
-    const result: Omit<ShellProbeResult, "artifacts"> = {
-      command: redactedCommand,
-      durationMs,
-      exitCode: supervised.exitCode,
-      signal: supervised.signal,
-      timedOut: supervised.timedOut,
-      stdout: redactedStdout,
-      stderr: redactedStderr,
-    };
-    const artifacts = await writeArtifacts(result);
-    finishActivityBestEffort();
-    return { ...result, artifacts };
   }
 }

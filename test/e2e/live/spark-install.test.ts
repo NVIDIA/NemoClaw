@@ -69,8 +69,17 @@ async function bestEffortPreclean(host: HostCliClient): Promise<void> {
 
 liveTest(
   "spark install path: standard non-interactive install leaves NemoClaw and OpenShell usable",
-  { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, secrets }) => {
+  {
+    timeout: LIVE_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm Linux Docker and installer requirements",
+        "install NemoClaw through the selected distribution path",
+        "confirm the installed CLI commands are usable",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
     await artifacts.target.declare({
       id: "spark-install",
       sandboxName: SANDBOX_NAME,
@@ -144,6 +153,7 @@ liveTest(
         : installer.script.includes("curl -fsSL") && installer.installUrl === DEFAULT_INSTALL_URL,
     ).toBe(true);
 
+    progress.phase("install NemoClaw through the selected distribution path");
     const install = await host.command("bash", ["-lc", installer.script], {
       artifactName: `phase-1-${installer.mode}-install`,
       cwd: REPO_ROOT,
@@ -155,6 +165,7 @@ liveTest(
     expect(install.exitCode, exitDetail(install, installLog, redactionValues)).toBe(0);
     expect(fs.existsSync(installLog), `${installLog} should be written`).toBe(true);
 
+    progress.phase("confirm the installed CLI commands are usable");
     const installedCommands = await host.command("bash", ["-lc", sourceInstalledPathProbe()], {
       artifactName: "phase-2-installed-cli-path-probe",
       env: env(),

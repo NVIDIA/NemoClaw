@@ -10,6 +10,7 @@ import path from "node:path";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 
 // #3474). The former bash script is a self-contained installer-script behavioral
 // test: it runs scripts/install-openshell.sh under a stubbed PATH where the
@@ -23,7 +24,15 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 
-test("openshell-version-pin: selects shipping 0.0.85 between older and too-new releases", () => {
+test("openshell-version-pin: selects shipping 0.0.85 between older and too-new releases", {
+  meta: {
+    e2ePhases: [
+      "prepare a mixed OpenShell release catalog",
+      "resolve the pin and replacement environment",
+      "confirm the shipping version wins range selection",
+    ],
+  },
+}, ({ progress }) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-resolver-"));
   const binDir = path.join(tmpDir, "bin");
   fs.mkdirSync(binDir);
@@ -38,6 +47,7 @@ printf '%s\\n' '${JSON.stringify([
   );
 
   try {
+    progress.phase("resolve the pin and replacement environment");
     const result = spawnSync(
       process.execPath,
       [
@@ -69,6 +79,7 @@ process.stdout.write(JSON.stringify({
         env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
       },
     );
+    progress.phase("confirm the shipping version wins range selection");
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       installed: "0.0.81",
@@ -329,6 +340,7 @@ exec /usr/bin/sha256sum "$@"`,
 
 async function runVersionPinTarget(
   artifacts: ArtifactSink,
+  progress: TestProgress,
   options: { ghDownloadMode: GhDownloadMode },
 ): Promise<void> {
   await artifacts.target.declare({
@@ -369,6 +381,7 @@ async function runVersionPinTarget(
     await artifacts.writeText("install-openshell.stderr", result.stderr ?? "");
     await artifacts.writeText("downloads.log", fs.readFileSync(downloadLog, "utf-8"));
 
+    progress.phase("inspect release selection and the replacement binary");
     // Assertion 1: installer-exits-zero — the happy path completes (no
     // "above the maximum" hard-fail before download).
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -406,14 +419,32 @@ async function runVersionPinTarget(
   }
 }
 
-test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.85 via gh download", async ({
-  artifacts,
-}) => {
-  await runVersionPinTarget(artifacts, { ghDownloadMode: "success" });
+test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.85 via gh download", {
+  meta: {
+    e2ePhases: [
+      "stage a too-new OpenShell installation",
+      "run the pinned installer through GitHub releases",
+      "inspect release selection and the replacement binary",
+    ],
+  },
+}, async ({ artifacts, progress }) => {
+  progress.phase("run the pinned installer through GitHub releases");
+  await runVersionPinTarget(artifacts, progress, {
+    ghDownloadMode: "success",
+  });
 });
 
-test("openshell-version-pin: falls back to curl when gh cannot fetch the pinned release", async ({
-  artifacts,
-}) => {
-  await runVersionPinTarget(artifacts, { ghDownloadMode: "fail" });
+test("openshell-version-pin: falls back to curl when gh cannot fetch the pinned release", {
+  meta: {
+    e2ePhases: [
+      "stage a too-new OpenShell installation",
+      "run the pinned installer through curl fallback",
+      "inspect release selection and the replacement binary",
+    ],
+  },
+}, async ({ artifacts, progress }) => {
+  progress.phase("run the pinned installer through curl fallback");
+  await runVersionPinTarget(artifacts, progress, {
+    ghDownloadMode: "fail",
+  });
 });

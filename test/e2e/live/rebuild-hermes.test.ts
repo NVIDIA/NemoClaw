@@ -435,11 +435,22 @@ test(STALE_BASE_REBUILD
   ? "rebuild-hermes: stale base cache is refreshed while Hermes state survives rebuild"
   : "rebuild-hermes: old Hermes sandbox rebuild preserves messaging state and upgrades runtime", {
   timeout: LIVE_TIMEOUT_MS,
+  meta: {
+    e2ePhases: [
+      "confirm Docker and prepare Hermes rebuild resources",
+      "install the current Hermes sandbox",
+      "build the old Hermes base image",
+      "create the old Hermes sandbox",
+      "seed persistent Hermes state and registry metadata",
+      "prepare the current-base rebuild condition",
+      "rebuild the Hermes sandbox",
+      "validate upgraded state inference and backup hygiene",
+    ],
+  },
 }, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const redactionValues = [apiKey, DISCORD_FAKE_TOKEN];
   const expectedVersion = expectedHermesVersion();
-  progress.phase("setup");
 
   const registrySnapshot = snapshotFile(REGISTRY_FILE);
   const sessionSnapshot = snapshotFile(SESSION_FILE);
@@ -539,9 +550,8 @@ test(STALE_BASE_REBUILD
   cleanup.trackDisposable(`destroy Hermes rebuild sandbox ${SANDBOX_NAME}`, () =>
     cleanupHermesNemoClawSandbox(host, apiKey),
   );
-  cleanup.trackDisposable("mark Hermes rebuild cleanup progress", () => progress.phase("cleanup"));
 
-  progress.phase("phase 1 install");
+  progress.phase("install the current Hermes sandbox");
   const install = await host.command("bash", ["install.sh", "--non-interactive"], {
     artifactName: "phase-1-install-hermes",
     cwd: REPO_ROOT,
@@ -601,7 +611,7 @@ test(STALE_BASE_REBUILD
     timeoutMs: OPENSHELL_TIMEOUT_MS,
   });
 
-  progress.phase("phase 2 old base build");
+  progress.phase("build the old Hermes base image");
   const buildOldBase = await host.command(
     "docker",
     [
@@ -676,7 +686,7 @@ test(STALE_BASE_REBUILD
     );
     expectExitZero(provider, "OpenShell Discord provider create/update");
 
-    progress.phase("phase 3 old sandbox create");
+    progress.phase("create the old Hermes sandbox");
     const createOldSandbox = await host.command(
       "openshell",
       [
@@ -716,7 +726,7 @@ test(STALE_BASE_REBUILD
     label: `release old Hermes base tag ${OLD_BASE_TAG}`,
   });
 
-  progress.phase("phase 4 seed rebuild state");
+  progress.phase("seed persistent Hermes state and registry metadata");
   const writeMarker = await host.command(
     "openshell",
     [
@@ -812,6 +822,7 @@ test(STALE_BASE_REBUILD
     session: sessionSummary,
   });
 
+  progress.phase("prepare the current-base rebuild condition");
   switch (STALE_BASE_REBUILD) {
     case false:
       // The authoritative `nemoclaw <sandbox> rebuild` below constructs the
@@ -821,21 +832,19 @@ test(STALE_BASE_REBUILD
       // during setup prepared the identical expensive apt/uv/npm layers twice in
       // one job without adding coverage, so the redundant setup build is gone
       // while phase 6 keeps exercising the real forced-build path (#7144).
-      progress.phase("phase 5 current base built by authoritative rebuild");
       await artifacts.writeText(
         "phase-5-current-base-note.txt",
         "Current Hermes base is constructed once by the authoritative rebuild in phase 6; the redundant setup build was removed. (#7144)\n",
       );
       break;
     case true:
-      progress.phase("phase 5 stale base setup");
       await artifacts.writeText(
         "phase-5-stale-base-note.txt",
         `Left ${CURRENT_BASE_TAG} pointing at ${OLD_HERMES_VERSION}; rebuild must refresh the base cache.\n`,
       );
   }
 
-  progress.phase("phase 6 nemoclaw rebuild");
+  progress.phase("rebuild the Hermes sandbox");
   const rebuild = await host.command("nemoclaw", [SANDBOX_NAME, "rebuild", "--yes", "--verbose"], {
     artifactName: "phase-6-nemoclaw-rebuild-hermes",
     env: testEnv(apiKey, { NEMOCLAW_REBUILD_VERBOSE: "1" }),
@@ -862,7 +871,7 @@ test(STALE_BASE_REBUILD
   ).toBe(true);
   expect(resultText(oldImageInspect)).toMatch(/No such (?:image|object)(?::|\s)/iu);
 
-  progress.phase("phase 7 verification");
+  progress.phase("validate upgraded state inference and backup hygiene");
   const restoredMarker = await host.command(
     "openshell",
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", MARKER_FILE],

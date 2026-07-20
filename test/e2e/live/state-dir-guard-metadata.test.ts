@@ -625,10 +625,21 @@ async function runAgentProbe(
   });
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "installed state-dir guard preserves xattrs and clamps effective ACLs for OpenClaw and Hermes (#6059)",
-  testTimeoutOptions(TEST_TIMEOUT_MS),
-  async ({ artifacts, cleanup, host, skip }) => {
+  {
+    ...testTimeoutOptions(TEST_TIMEOUT_MS),
+    meta: {
+      e2ePhases: [
+        "confirm the Linux host and metadata tools",
+        "exercise the OpenClaw metadata lock lifecycle",
+        "exercise the Hermes metadata lock lifecycle",
+        "record cross-agent metadata evidence",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, skip }) => {
     await artifacts.target.declare({
       id: "state-dir-guard-metadata",
       boundary: "prebuilt-production-images-exact-bind-mount",
@@ -670,7 +681,7 @@ test(
       skip,
     );
 
-    for (const agent of AGENTS) {
+    const runAgent = async (agent: AgentCase): Promise<void> => {
       const image = await command(
         host,
         "docker",
@@ -695,8 +706,14 @@ test(
         );
       });
       await runAgentProbe(host, artifacts, agent, fixtureRoot, skip);
-    }
+    };
 
+    progress.phase("exercise the OpenClaw metadata lock lifecycle");
+    await runAgent(AGENTS[0]);
+    progress.phase("exercise the Hermes metadata lock lifecycle");
+    await runAgent(AGENTS[1]);
+
+    progress.phase("record cross-agent metadata evidence");
     await artifacts.target.complete({
       id: "state-dir-guard-metadata",
       agents: AGENTS.map((agent) => agent.id),

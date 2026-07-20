@@ -30,7 +30,17 @@ import {
 
 test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and filesystem", {
   timeout: 15 * 60_000,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm NVIDIA credential prerequisites",
+      "recreate the credential-isolation sandbox",
+      "onboard with the real NVIDIA credential",
+      "inspect sandbox environment and processes",
+      "scan the sandbox filesystem for the credential",
+      "confirm placeholder credential injection",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const apiKey =
     secrets.optional("NVIDIA_INFERENCE_API_KEY") ??
     skipLive(skip, "NVIDIA_INFERENCE_API_KEY not set — cannot test credential isolation");
@@ -39,6 +49,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
   cleanup.add(`best-effort inference-routing credential-isolation cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
+  progress.phase("recreate the credential-isolation sandbox");
   await cleanupSandbox(host, sandbox, sandboxName);
 
   await artifacts.target.declare({
@@ -51,6 +62,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
     ],
   });
 
+  progress.phase("onboard with the real NVIDIA credential");
   const onboard = await onboardSandbox(
     artifacts,
     sandboxName,
@@ -63,6 +75,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
 
+  progress.phase("inspect sandbox environment and processes");
   const sandboxEnv = await runOpenShell(["sandbox", "exec", "-n", sandboxName, "--", "env"], {
     artifactName: "tc-inf-05-sandbox-env",
     artifacts,
@@ -94,6 +107,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
   );
   await verifyProcessListCredentialIsolation(artifacts, processList, apiKey);
 
+  progress.phase("scan the sandbox filesystem for the credential");
   const scanScript = [
     "const crypto=require('crypto')",
     "const fs=require('fs')",
@@ -174,6 +188,7 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
   expect(filesystemScan.stdout).not.toContain("FOUND:");
   expect(filesystemScan.stdout, redactedResultText(filesystemScan)).toContain("SCAN_DONE");
 
+  progress.phase("confirm placeholder credential injection");
   const placeholder = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript("printenv NVIDIA_INFERENCE_API_KEY 2>/dev/null || true"),
@@ -190,7 +205,15 @@ test("TC-INF-05 real NVIDIA key is isolated from sandbox env, process list, and 
 
 test("TC-INF-02 OpenAI provider responds through inference.local", {
   timeout: 15 * 60_000,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm OpenAI provider prerequisites",
+      "recreate the OpenAI sandbox",
+      "onboard the OpenAI provider",
+      "request OpenAI chat through inference.local",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   requireProviderSmokeSelected("openai", skip);
   const apiKey = secrets.optional("OPENAI_API_KEY") ?? skipLive(skip, "OPENAI_API_KEY not set");
   await requireLivePrerequisites(host, skip);
@@ -199,6 +222,7 @@ test("TC-INF-02 OpenAI provider responds through inference.local", {
   cleanup.add(`best-effort inference-routing OpenAI cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
+  progress.phase("recreate the OpenAI sandbox");
   await cleanupSandbox(host, sandbox, sandboxName);
 
   await artifacts.target.declare({
@@ -207,6 +231,7 @@ test("TC-INF-02 OpenAI provider responds through inference.local", {
     model,
   });
 
+  progress.phase("onboard the OpenAI provider");
   const onboard = await onboardSandbox(
     artifacts,
     sandboxName,
@@ -218,6 +243,7 @@ test("TC-INF-02 OpenAI provider responds through inference.local", {
   cleanup.add(`strict inference-routing OpenAI cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
+  progress.phase("request OpenAI chat through inference.local");
   await expectOpenAiChatThroughSandbox(
     sandbox,
     sandboxName,
@@ -229,7 +255,15 @@ test("TC-INF-02 OpenAI provider responds through inference.local", {
 
 test("TC-INF-03 Anthropic provider responds through inference.local", {
   timeout: 15 * 60_000,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm Anthropic provider prerequisites",
+      "recreate the Anthropic sandbox",
+      "onboard the Anthropic provider",
+      "request Anthropic messages through inference.local",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   requireProviderSmokeSelected("anthropic", skip);
   const apiKey =
     secrets.optional("ANTHROPIC_API_KEY") ?? skipLive(skip, "ANTHROPIC_API_KEY not set");
@@ -239,6 +273,7 @@ test("TC-INF-03 Anthropic provider responds through inference.local", {
   cleanup.add(`best-effort inference-routing Anthropic cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
+  progress.phase("recreate the Anthropic sandbox");
   await cleanupSandbox(host, sandbox, sandboxName);
 
   await artifacts.target.declare({
@@ -250,6 +285,7 @@ test("TC-INF-03 Anthropic provider responds through inference.local", {
     model,
   });
 
+  progress.phase("onboard the Anthropic provider");
   const onboard = await onboardSandbox(
     artifacts,
     sandboxName,
@@ -261,5 +297,6 @@ test("TC-INF-03 Anthropic provider responds through inference.local", {
   cleanup.add(`strict inference-routing Anthropic cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
+  progress.phase("request Anthropic messages through inference.local");
   await expectAnthropicMessageThroughSandbox(sandbox, sandboxName, model, [apiKey]);
 });

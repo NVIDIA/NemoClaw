@@ -6,9 +6,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { expect, test } from "vitest";
-
 import { testTimeoutOptions } from "../../helpers/timeouts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
 // reporter-workflow coverage guard for #4522 installs the exact OpenClaw /
@@ -247,10 +246,22 @@ async function compileProductionPreload(workdir: string): Promise<string> {
   return preload;
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "WhatsApp pairing QR renders compact with the NemoClaw preload",
-  testTimeoutOptions(INSTALL_TIMEOUT_MS + TSC_TIMEOUT_MS + PROBE_TIMEOUT_MS * 2),
-  async () => {
+  {
+    ...testTimeoutOptions(INSTALL_TIMEOUT_MS + TSC_TIMEOUT_MS + PROBE_TIMEOUT_MS * 2),
+    meta: {
+      e2ePhases: [
+        "read the bundled OpenClaw WhatsApp version",
+        "compile the production compact-QR preload",
+        "install matching WhatsApp runtime packages",
+        "measure unmodified QR rendering",
+        "measure compact-preload QR rendering",
+      ],
+    },
+  },
+  async ({ progress }) => {
     expect(
       await pathExists(PRELOAD_SOURCE),
       `compact-QR preload source missing: ${PRELOAD_SOURCE}`,
@@ -259,6 +270,7 @@ test(
 
     const workdir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-wa-qr-e2e-"));
     try {
+      progress.phase("compile the production compact-QR preload");
       const preload = await compileProductionPreload(workdir);
 
       await fs.writeFile(
@@ -266,6 +278,7 @@ test(
         `${JSON.stringify({ name: "wa-qr-e2e", version: "1.0.0", private: true })}\n`,
       );
 
+      progress.phase("install matching WhatsApp runtime packages");
       const install = await runCommand(
         "npm",
         [
@@ -287,6 +300,7 @@ test(
 
       await fs.writeFile(path.join(workdir, "probe.mjs"), PROBE_SOURCE);
 
+      progress.phase("measure unmodified QR rendering");
       const baseline = await runCommand("node", ["probe.mjs"], {
         cwd: workdir,
         timeoutMs: PROBE_TIMEOUT_MS,
@@ -300,6 +314,7 @@ test(
       expect(baselineProbe.explicitSmall.leftModules).toBeLessThan(4);
       expect(baselineProbe.explicitSmall.topModules).toBeLessThan(4);
 
+      progress.phase("measure compact-preload QR rendering");
       const patched = await runCommand("node", ["probe.mjs"], {
         cwd: workdir,
         env: { NODE_OPTIONS: `--require ${preload}` },

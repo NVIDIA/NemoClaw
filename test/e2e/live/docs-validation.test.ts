@@ -68,7 +68,15 @@ async function expectNoStaleDistCommandOutputs(): Promise<void> {
 
 test("docs validation matches CLI help and local documentation links", {
   timeout: BUILD_TIMEOUT_MS + DOCS_CHECK_TIMEOUT_MS * 2,
-}, async ({ artifacts, host }) => {
+  meta: {
+    e2ePhases: [
+      "build CLI for documentation checks",
+      "prepare documentation CLI shim",
+      "verify CLI documentation parity",
+      "validate local documentation links",
+    ],
+  },
+}, async ({ artifacts, host, progress }) => {
   await artifacts.target.declare({
     id: "docs-validation",
     boundary: "checkout-local-docs-checks",
@@ -84,6 +92,7 @@ test("docs validation matches CLI help and local documentation links", {
   expect(build.exitCode, `CLI build failed\n${build.stdout}${build.stderr}`).toBe(0);
   await expectNoStaleDistCommandOutputs();
 
+  progress.phase("prepare documentation CLI shim");
   const shimBin = artifacts.pathFor("bin");
   const homeDir = artifacts.pathFor("home");
   await fsp.mkdir(homeDir, { recursive: true });
@@ -115,6 +124,7 @@ test("docs validation matches CLI help and local documentation links", {
     ?.trim();
   expect(resolvedNemoclaw).toBe(shim);
 
+  progress.phase("verify CLI documentation parity");
   const cliParity = await host.command("bash", [CHECK_DOCS, "--only-cli"], {
     artifactName: "docs-validation-cli-parity",
     cwd: REPO_ROOT,
@@ -128,6 +138,7 @@ test("docs validation matches CLI help and local documentation links", {
   expect(cliParity.stdout).toContain("check-docs: running: [cli]");
   expect(cliParity.stdout).toContain("command-level parity OK");
 
+  progress.phase("validate local documentation links");
   const links = await host.command("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
     artifactName: "docs-validation-local-links",
     cwd: REPO_ROOT,

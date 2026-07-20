@@ -33,11 +33,16 @@ function writeExecutable(file: string, content: string): void {
   fs.chmodSync(file, 0o755);
 }
 
-test("onboard surfaces crashed Docker-driver gateway instead of reporting healthy (#3111)", async ({
-  artifacts,
-  cleanup,
-  host,
-}) => {
+test("onboard surfaces crashed Docker-driver gateway instead of reporting healthy (#3111)", {
+  meta: {
+    e2ePhases: [
+      "stage crashed Docker gateway fixture",
+      "invoke real Docker gateway startup",
+      "validate honest gateway failure reporting",
+      "verify crashed gateway process is gone",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress }) => {
   const stateDir = gatewayStateDir();
   const sabotageBin = artifacts.pathFor("bin/openshell-gateway-sabotage");
   const gatewayLog = path.join(stateDir, "openshell-gateway.log");
@@ -102,6 +107,7 @@ test("onboard surfaces crashed Docker-driver gateway instead of reporting health
     fs.rmSync(sabotageBin, { force: true });
   });
 
+  progress.phase("invoke real Docker gateway startup");
   const result = await host.command(
     "node",
     [
@@ -133,6 +139,7 @@ test("onboard surfaces crashed Docker-driver gateway instead of reporting health
   const gatewayLogText = fs.existsSync(gatewayLog) ? fs.readFileSync(gatewayLog, "utf8") : "";
   await artifacts.writeText("gateway-log-tail.txt", gatewayLogText);
 
+  progress.phase("validate honest gateway failure reporting");
   expect(
     [output, gatewayLogText].filter(Boolean).join("\n"),
     "sabotage binary must have been executed before health assertions are trusted",
@@ -145,6 +152,7 @@ test("onboard surfaces crashed Docker-driver gateway instead of reporting health
     /Docker-driver gateway failed to start|Gateway process exited with code 127|__onboard_startGateway_threw__/i,
   );
 
+  progress.phase("verify crashed gateway process is gone");
   const lingeringGateway = await host.command(
     "bash",
     [

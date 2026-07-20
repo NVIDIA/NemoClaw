@@ -73,7 +73,16 @@ function publicInstallRef(): string {
 
 test("cloud onboard: public installer creates healthy sandbox with security checks", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "check cloud onboarding prerequisites",
+      "install and onboard cloud sandbox",
+      "validate installed CLI and corporate CA trust",
+      "run cloud inference and security checks",
+      "remove cloud sandbox",
+    ],
+  },
+}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets);
   const ref = publicInstallRef();
   const installUrl =
@@ -120,6 +129,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   );
   await cleanup(host, sandbox, { label: "pre-cleanup", verify: false });
 
+  progress.phase("install and onboard cloud sandbox");
   const install = await host.command(
     "bash",
     ["-lc", `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash`],
@@ -142,6 +152,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   expect(resultText(install)).toContain("Cloning NemoClaw source");
   if (ref !== "main") expect(resultText(install)).toContain(`Resolved install ref: ${ref}`);
 
+  progress.phase("validate installed CLI and corporate CA trust");
   const cliProbe = await host.command(
     "bash",
     [
@@ -167,6 +178,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   });
   expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
 
+  progress.phase("run cloud inference and security checks");
   const checkScripts = fs
     .readdirSync(CHECKS_DIR)
     .filter((name) => name.endsWith(".sh"))
@@ -190,6 +202,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     expect(result.exitCode, `${scriptName}: ${resultText(result)}`).toBe(0);
   }
 
+  progress.phase("remove cloud sandbox");
   await cleanup(host, sandbox, { label: "final-cleanup", verify: true });
   await artifacts.target.complete({ id: "cloud-onboard", status: "passed" });
 });

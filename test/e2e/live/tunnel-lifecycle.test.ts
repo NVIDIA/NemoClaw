@@ -17,6 +17,18 @@ import {
 
 test(
   "tunnel-lifecycle: cloudflared quick tunnel starts, serves OpenClaw, and stops cleanly",
-  { timeout: TUNNEL_LIFECYCLE_TEST_TIMEOUT_MS },
+  {
+    timeout: TUNNEL_LIFECYCLE_TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm Docker and cloudflared prerequisites",
+        "onboard the OpenClaw tunnel sandbox",
+        "wait for the local dashboard origin",
+        "start the quick tunnel and discover its URL",
+        "probe public tunnel reachability",
+        "stop the tunnel and confirm status removal",
+      ],
+    },
+  },
   runTunnelLifecycleContract,
 );

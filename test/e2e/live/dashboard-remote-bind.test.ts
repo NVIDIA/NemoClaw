@@ -67,7 +67,17 @@ function connectStartedDashboardForward(
 
 runDashboardRemoteBindTest(
   "clean-host remote bind keeps audit risks active and binds all interfaces",
-  async ({ artifacts, host, sandbox }) => {
+  {
+    meta: {
+      e2ePhases: [
+        "validate provisioned dashboard prerequisites",
+        "restart dashboard with remote binding",
+        "verify all-interface dashboard forward",
+        "audit exposed dashboard controls",
+      ],
+    },
+  },
+  async ({ artifacts, host, progress, sandbox }) => {
     const sandboxName = process.env.NEMOCLAW_SANDBOX_NAME || "e2e-test";
     const dashboardPort = process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
     const remoteHost = remoteHostCandidate();
@@ -94,6 +104,7 @@ runDashboardRemoteBindTest(
     expect(cliProbe.stdout).toContain("nemoclaw");
     expect(cliProbe.stdout).toContain("openshell");
 
+    progress.phase("restart dashboard with remote binding");
     await sandbox.openshell(["forward", "stop", dashboardPort], {
       artifactName: "dashboard-remote-bind-forward-stop",
       env: sandboxAccessEnv(),
@@ -113,6 +124,7 @@ runDashboardRemoteBindTest(
       `nemoclaw connect did not complete or print background-forward proof\nstdout:\n${connect.stdout}\nstderr:\n${connect.stderr}`,
     ).toBe(true);
 
+    progress.phase("verify all-interface dashboard forward");
     const forwardList = await sandbox.openshell(["forward", "list"], {
       artifactName: "dashboard-remote-bind-forward-list",
       env: sandboxAccessEnv(),
@@ -135,6 +147,7 @@ runDashboardRemoteBindTest(
       `Could not prove dashboard forward uses 0.0.0.0:${dashboardPort}: ${forwardLine}`,
     ).toBe(true);
 
+    progress.phase("audit exposed dashboard controls");
     const audit = await sandbox.execShell(
       sandboxName,
       trustedSandboxShellScript("openclaw security audit --json"),

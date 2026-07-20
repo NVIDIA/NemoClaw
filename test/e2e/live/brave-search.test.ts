@@ -24,7 +24,16 @@ const LIVE_TIMEOUT_MS = 35 * 60_000;
 
 test("Brave search preset wires policy/config, hides the real key, and performs real searches (#2687)", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "check Brave search prerequisites",
+      "onboard Brave-enabled OpenClaw sandbox",
+      "validate Brave policy and secret isolation",
+      "run Brave-backed OpenClaw search",
+      "query Brave API through credential resolver",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const braveKey = secrets.required("BRAVE_API_KEY");
   const inferenceKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const redactionValues = [braveKey, inferenceKey];
@@ -62,9 +71,11 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
   );
   await cleanupBraveState(host, sandbox);
 
+  progress.phase("onboard Brave-enabled OpenClaw sandbox");
   const onboard = await onboardBrave(host, braveKey, inferenceKey);
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
+  progress.phase("validate Brave policy and secret isolation");
   const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
     artifactName: "phase-2-brave-policy",
     env: commandEnv(),
@@ -103,6 +114,7 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
   expect(envCheck.exitCode, resultText(envCheck)).toBe(0);
   assertOptionalBraveEnv(envCheck.stdout, braveKey);
 
+  progress.phase("run Brave-backed OpenClaw search");
   const agent = await sandboxShell(
     sandbox,
     `openclaw agent --agent main --json --session-id e2e-brave-agent-$$ -m 'Use the web search tool to find one result for the query: NVIDIA. Reply with only the title of the top result.'`,
@@ -116,6 +128,7 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
     /nvidia|geforce|cuda|gpu/i,
   );
 
+  progress.phase("query Brave API through credential resolver");
   const curl = await sandboxShell(
     sandbox,
     `curl -sS --max-time 20 -G 'https://api.search.brave.com/res/v1/web/search' --data-urlencode 'q=NVIDIA' --data-urlencode 'count=1' -H 'X-Subscription-Token: ${placeholder}' -w '\nHTTP_STATUS:%{http_code}\n'`,

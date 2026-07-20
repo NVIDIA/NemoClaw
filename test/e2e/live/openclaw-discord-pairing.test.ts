@@ -35,7 +35,17 @@ const LIVE_TIMEOUT_MS = 55 * 60_000;
 
 test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "load Discord credentials and clear pairing state",
+      "install the Discord-enabled OpenClaw sandbox",
+      "inspect Discord bridge and OpenClaw configuration",
+      "route Discord Gateway traffic through the managed policy",
+      "issue a Discord pairing request",
+      "approve the Discord code through connect-shell",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const env = pairingEnv({
     sandboxName: SANDBOX_NAME,
@@ -74,6 +84,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   const docker = await dockerInfo(host, env);
   expect(docker.exitCode, resultText(docker)).toBe(0);
 
+  progress.phase("install the Discord-enabled OpenClaw sandbox");
   const install = await installSandboxOrSkipOnRateLimit(
     host,
     env,
@@ -85,6 +96,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   expectExitZero(install, "install.sh --non-interactive with Discord");
   await expectSandboxReady(host, SANDBOX_NAME, env, redactions, "sandbox-list-discord-pairing");
 
+  progress.phase("inspect Discord bridge and OpenClaw configuration");
   const provider = await host.command(
     "openshell",
     ["provider", "get", `${SANDBOX_NAME}-discord-bridge`],
@@ -119,6 +131,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
 
   await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "discord", redactions);
 
+  progress.phase("route Discord Gateway traffic through the managed policy");
   const fakeGateway = await startFakeDiscordGateway(host, cleanup, env, DISCORD_TOKEN, redactions);
   await applyFakePolicy({
     host,
@@ -144,6 +157,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   expect(resultText(gatewayProof)).toContain("HEARTBEAT_ACK");
   assertDiscordGatewayCapture(fakeGateway.captureFile, DISCORD_TOKEN);
 
+  progress.phase("issue a Discord pairing request");
   const issue = await issuePairingRequest({
     sandbox,
     sandboxName: SANDBOX_NAME,
@@ -162,6 +176,7 @@ test("OpenClaw Discord pairing request is shared with connect-shell approval", {
   );
   await writePairingArtifacts(artifacts, "discord", { ...pairing, user: PAIRING_USER.discord });
 
+  progress.phase("approve the Discord code through connect-shell");
   await approveAndAssertPairing({
     sandbox,
     sandboxName: SANDBOX_NAME,

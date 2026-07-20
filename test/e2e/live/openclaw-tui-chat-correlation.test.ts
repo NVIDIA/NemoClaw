@@ -549,9 +549,26 @@ async function runLiveIssue2603ReproWithEventCaptureRetry(
 
 // ─── The live regression guard ─────────────────────────────────────
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "openclaw-tui-chat-correlation keeps rapid sends correlated and accepts terminal input after connected idle (#2603, #3145, #6194)",
-  async ({ artifacts, environment, host, onboard, sandbox, secrets }) => {
+  {
+    // 75-minute budget covers cloud onboarding, sandbox provisioning, gateway
+    // warmup, the 120-second wait-for-replies window, and retry.
+    timeout: 75 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm checkout fidelity and hosted credential",
+        "onboard the current OpenClaw sandbox",
+        "verify the pinned OpenClaw runtime",
+        "drive the post-idle TUI chat and status flow",
+        "approve a blocked request in the OpenShell terminal",
+        "replay rapid websocket chat sends",
+        "analyze reply correlation and ordering",
+      ],
+    },
+  },
+  async ({ artifacts, environment, host, onboard, progress, sandbox, secrets }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
 
     await artifacts.target.declare({
@@ -586,6 +603,7 @@ test(
     );
 
     // Setup ────────────────────────────────────────────────────────
+    progress.phase("onboard the current OpenClaw sandbox");
     const ready = await environment.assertReady(ENVIRONMENT);
     const instance: NemoClawInstance = await onboard.from(ready, {
       sandboxName: SANDBOX_NAME,
@@ -605,6 +623,7 @@ test(
     // and openshell needs PATH (~/.local/bin on Ubuntu runners) to
     // resolve. Phase fixtures (state-validation, runtime, lifecycle)
     // all follow this same convention.
+    progress.phase("verify the pinned OpenClaw runtime");
     const versionResult = await sandbox.exec(instance.sandboxName, ["openclaw", "--version"], {
       artifactName: "openclaw-version-pinned",
       env: buildAvailabilityProbeEnv(),
@@ -623,6 +642,7 @@ test(
     // state created by the #2603/#3145 websocket replay below. Keeping both
     // flows in this target reuses the same provisioned sandbox and avoids a
     // second long cloud setup for a tests-only PR.
+    progress.phase("drive the post-idle TUI chat and status flow");
     const captureDir = mkdtempSync(join(tmpdir(), "nemoclaw-issue6194-tui-"));
     const captureFile = join(captureDir, "openclaw-tui-capture.log");
     const expectScript = artifacts.pathFor("issue6194-openclaw-tui.expect");
@@ -710,6 +730,7 @@ test(
       // OpenShell's terminal UI owns network-rule approval. Exercise that
       // boundary separately with a direct sandbox curl so hosted models that
       // expose no network tools cannot make this assertion nondeterministic.
+      progress.phase("approve a blocked request in the OpenShell terminal");
       const approvalCaptureFile = join(captureDir, "openshell-approval-capture.log");
       const triggerCaptureFile = join(captureDir, "openshell-network-trigger.log");
       const ruleCaptureFile = join(captureDir, "openshell-pending-rule.log");
@@ -860,10 +881,12 @@ test(
     }
 
     // Drive the websocket repro and capture the trace ──────────────
+    progress.phase("replay rapid websocket chat sends");
     const { repro, attempts } = await runLiveIssue2603ReproWithEventCaptureRetry(
       sandbox,
       instance.sandboxName,
     );
+    progress.phase("analyze reply correlation and ordering");
     const attemptDetails = attempts.map(issue2603AttemptOutcome);
     const classification = classifyIssue2603Run(attemptDetails);
     const analysis = analyzeIssue2603Trace(repro);
@@ -935,7 +958,4 @@ test(
     expect(analysis.missingUserTurns, failureSummary).toEqual([]);
     expect(analysis.duplicateUserTurns, failureSummary).toEqual([]);
   },
-  // 75-minute budget covers cloud onboarding, sandbox provisioning, gateway
-  // warmup, the 120-second wait-for-replies window, and retry.
-  75 * 60_000,
 );

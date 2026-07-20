@@ -294,7 +294,16 @@ done`;
 
 test(`hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches stable Ready state`, {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox }) => {
+  meta: {
+    e2ePhases: [
+      "prepare clean Hermes GPU runner",
+      "install Hermes sandbox on selected GPU route",
+      "validate GPU startup and supervisor proof",
+      "exercise authenticated GPU inference route",
+      "remove Hermes GPU resources",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox }) => {
   await artifacts.target.declare({
     id: "hermes-gpu-startup",
     boundary: "install.sh --non-interactive --fresh + Hermes GPU-supervised startup",
@@ -421,6 +430,7 @@ test(`hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches st
     [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[0]]: EXTRA_PLACEHOLDER_TOKEN_A,
     [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[1]]: EXTRA_PLACEHOLDER_TOKEN_B,
   });
+  progress.phase("install Hermes sandbox on selected GPU route");
   const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
     artifactName: "phase-2-install-hermes-gpu-startup",
     cwd: REPO_ROOT,
@@ -450,6 +460,7 @@ test(`hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches st
   };
   await (fallbackWrapper ? verifyFallback(fallbackWrapper) : Promise.resolve());
 
+  progress.phase("validate GPU startup and supervisor proof");
   const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
     artifactName: "phase-3-nemoclaw-status",
     env: commandEnv(),
@@ -467,6 +478,7 @@ test(`hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches st
     status,
   });
 
+  progress.phase("exercise authenticated GPU inference route");
   const inference = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
@@ -504,6 +516,7 @@ test(`hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches st
   expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_A);
   expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_B);
 
+  progress.phase("remove Hermes GPU resources");
   await cleanupHermes(host, sandbox, "phase-5-clean-teardown");
   cleanTeardownVerified = true;
 
