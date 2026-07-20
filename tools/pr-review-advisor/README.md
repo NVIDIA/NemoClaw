@@ -115,9 +115,9 @@ instead of failing closed without artifacts.
 - `turns/01-scope-risk-map-analysis.txt` through `turns/14-validate-synthesis-json.txt` — assistant output and completed/failed/timed-out status written as each turn settles.
 - `context/drift-context.json` — deterministic drift and overlap context.
 - `context/security-context.json` — deterministic security-risk context and the risk plan for the
-  PR head commit.
+  PR SHA.
 - `context/validation-context.json` — deterministic acceptance, source-of-truth, static
-  test-inventory, simplification-signal, and risk plan for the PR head commit, including the
+  test-inventory, simplification-signal, and risk plan for the PR SHA, including the
   regression invariants reviewed for the PR.
 - `context/pr.diff` — truncated PR diff used by the advisor.
 - `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.

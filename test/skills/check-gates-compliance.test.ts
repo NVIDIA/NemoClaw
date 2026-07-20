@@ -600,7 +600,7 @@ describe("maintainer PR comparator contributor compliance", () => {
     });
 
     const output = JSON.parse(result.stdout);
-    expect(output.gates.ci_green_latest_sha).toBe(true);
+    expect(output.gates.ci_green_sha).toBe(true);
     expect(output.gates.contributor_compliance).toBe(true);
     expect(output.details).toMatchObject({
       dco_declaration_present: true,
@@ -745,7 +745,7 @@ describe("maintainer PR comparator contributor compliance", () => {
     });
 
     const output = JSON.parse(result.stdout);
-    expect(output.gates.ci_green_latest_sha).toBe(false);
+    expect(output.gates.ci_green_sha).toBe(false);
     expect(output.details.ci_missing_required_checks).toEqual(REQUIRED_CHECK_NAMES);
     expect(output.failures).toContain(
       "substantive:ci_failures=0,pending=0,missing=checks,check-hash,changes,commit-lint,dco-check,E2E / PR Gate",
@@ -786,7 +786,7 @@ describe("maintainer PR comparator contributor compliance", () => {
       missingChecks: ["E2E / PR Gate"],
     });
     expect(mergeOutput.allPass).toBe(false);
-    expect(comparatorOutput.gates.ci_green_latest_sha).toBe(false);
+    expect(comparatorOutput.gates.ci_green_sha).toBe(false);
     expect(comparatorOutput.details.ci_missing_required_checks).toEqual(["E2E / PR Gate"]);
     expect(comparatorOutput.failures).toContain(
       "substantive:ci_failures=0,pending=0,missing=E2E / PR Gate",
@@ -814,7 +814,7 @@ describe("maintainer PR comparator contributor compliance", () => {
       failingChecks: [`E2E / PR Gate: ${conclusion}`],
     });
     expect(mergeOutput.allPass).toBe(false);
-    expect(comparatorOutput.gates.ci_green_latest_sha).toBe(false);
+    expect(comparatorOutput.gates.ci_green_sha).toBe(false);
     expect(comparatorOutput.details.ci_failing_checks).toEqual([`E2E / PR Gate: ${conclusion}`]);
   });
 
@@ -830,7 +830,7 @@ describe("maintainer PR comparator contributor compliance", () => {
     });
 
     const output = JSON.parse(result.stdout);
-    expect(output.gates.ci_green_latest_sha).toBe(false);
+    expect(output.gates.ci_green_sha).toBe(false);
     expect(output.details.ci_failing_checks).toEqual([`checks: ${conclusion}`]);
     expect(output.failures).toContain("substantive:ci_failures=1,pending=0,missing=");
   });

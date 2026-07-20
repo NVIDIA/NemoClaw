@@ -1,12 +1,16 @@
 ---
 name: nemoclaw-maintainer-find-review-pr
-description: Finds open security-labeled GitHub PRs with Urgent or High Project Priority, links each to its issue, detects duplicates, and presents a table of review candidates. Use when looking for the next PR to review. Trigger keywords - find pr, find review, next pr, pr to review, duplicate pr, security pr.
+description: Find open PRs with the security label and Urgent or High Project Priority. Link each PR to its issue. Identify competing or superseded PRs and report review candidates. Use when looking for the next PR to review. Trigger keywords - find pr, find review, next pr, pr to review, duplicate pr, security pr.
 user_invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Find PR to Review
 
-Search for open PRs labeled `security` whose Project Priority is `Urgent` or `High`, associate each with its linked issue, detect duplicates (multiple PRs targeting the same issue), and present a clean summary so you can decide what to review or close.
+Find open PRs with the `security` label and Project Priority `Urgent` or `High`.
+Link each PR to its issue. Identify competing or superseded PRs. Report the results for the maintainer.
 
 ## Prerequisites
 
@@ -29,16 +33,18 @@ gh project item-list 199 --owner NVIDIA --limit 1000 --format json \
        priority: .priority, status: .status}]'
 ```
 
-Discard entries whose PR is no longer open. Fetch PR body, author, branch, labels, and creation time for the remaining numbers with `gh pr view`. If the result is empty, report that there are no matching PRs and stop.
+Remove entries for closed PRs.
+For each remaining PR, fetch the body, author, branch, labels, and creation time with `gh pr view`.
+If no PRs remain, report that result and stop.
 
 ## Step 2: Extract linked issues
 
-For each PR, parse the body for linked issue references. Look for these patterns (case-insensitive):
+For each PR, search its body for issue references. Match these patterns without case sensitivity:
 
 - `Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`
 - `Related Issue` / `Linked Issue` section containing `#NNN`
-- Issue number in the PR title, e.g. `(#NNN)` suffix
-- Branch name containing an issue number, e.g. `fix/something-NNN`
+- Issue number in the PR title, such as a `(#NNN)` suffix
+- Branch name containing an issue number, such as `fix/something-NNN`
 
 Build a mapping: `PR# → [issue numbers]`.
 
@@ -46,9 +52,10 @@ If a PR has no detectable linked issue, mark it as `(no linked issue)`.
 
 ## Step 3: Detect duplicates
 
-Group PRs by linked issue number. Any issue with **two or more** open PRs is a duplicate group.
+Group PRs by linked issue number.
+If two or more open PRs link to one issue, put them in one competing-PR group.
 
-For each duplicate group, fetch a brief summary of each competing PR to help the user decide which to keep:
+Fetch these fields for each competing PR:
 
 ```bash
 gh pr view <number> --json number,title,author,createdAt,additions,deletions,reviewDecision,statusCheckRollup --jq '{number,title,author: .author.login,created: .createdAt,additions,deletions,review: .reviewDecision,checks: [.statusCheckRollup[]?.conclusion] | unique}'
@@ -56,11 +63,11 @@ gh pr view <number> --json number,title,author,createdAt,additions,deletions,rev
 
 ## Step 4: Check for superseded PRs
 
-Also flag PRs whose body contains phrases like:
+Flag a PR when its body contains one of these phrases:
 
 - `follow-up to #NNN` / `supersedes #NNN` / `replaces #NNN` / `folds in #NNN`
 
-where `#NNN` is another **open** PR number in the candidate list. These indicate one PR has absorbed another.
+The phrase must name another open candidate PR. It indicates that one PR can include the other.
 
 ## Step 5: Present results
 
@@ -85,12 +92,12 @@ For superseded PRs:
 ### Superseded PRs
 
 - #1416 supersedes/folds in #1392 (shell-quote sandboxName)
-  → Consider closing #1392 if #1416 covers its scope.
+  Consider closing #1392 if #1416 contains its full scope.
 ```
 
 ### Clean candidates
 
-Present non-duplicate PRs in a table:
+Present PRs without competing PRs in a table:
 
 ```markdown
 ### Review candidates (no duplicates)
@@ -103,15 +110,15 @@ Present non-duplicate PRs in a table:
 
 ### Summary line
 
-End with a one-line recommendation of which PR to review first, preferring:
+Recommend one PR to review first. Apply these priorities in order:
 
 1. Project Priority (`Urgent` before `High`)
-2. Older PRs (waiting longest)
+2. Oldest PR
 3. PRs with passing checks
 4. PRs with smaller diff size (easier to review)
 
 ## Notes
 
-- Do NOT automatically close any PRs. Only present findings and recommendations.
-- If the user specifies additional filters (e.g., a specific scope label like `OpenShell`), apply them.
+- Never close a PR. Report findings and recommendations only.
+- Apply filters that the user gives, such as a scope label.
 - If the user asks for a different priority, filter the Project Priority field. Never use or create a priority label.

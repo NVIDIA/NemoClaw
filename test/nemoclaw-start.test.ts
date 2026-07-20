@@ -3858,10 +3858,10 @@ describe("write_auth_profile (#1332)", () => {
     };
   }
 
-  it("writes profile under the provider key from NEMOCLAW_PROVIDER_KEY", () => {
+  it("writes profile under the route identifier from NEMOCLAW_INFERENCE_PROVIDER_ID", () => {
     const { home, authPath, status, stderr } = runWriteAuthProfile({
       NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_PROVIDER_KEY: "openai",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
     });
     try {
       expect(status, stderr).toBe(0);
@@ -3879,7 +3879,7 @@ describe("write_auth_profile (#1332)", () => {
     }
   });
 
-  it("falls back to 'inference' when NEMOCLAW_PROVIDER_KEY is unset", () => {
+  it("falls back to 'inference' when neither route identifier is set", () => {
     const { home, authPath, status, stderr } = runWriteAuthProfile({
       NVIDIA_INFERENCE_API_KEY: "secret",
     });
@@ -3914,7 +3914,7 @@ describe("write_auth_profile (#1332)", () => {
     // passed as argv, $(...) inside the value would execute and replace it.
     const { home, authPath, status, stderr } = runWriteAuthProfile({
       NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_PROVIDER_KEY: "$(echo pwned)",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "$(echo pwned)",
     });
     try {
       expect(status, stderr).toBe(0);
@@ -3940,7 +3940,7 @@ describe("write_auth_profile (#1332)", () => {
   it("writes the auth profile with 0600 permissions", () => {
     const { home, authPath, status } = runWriteAuthProfile({
       NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_PROVIDER_KEY: "openai",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
     });
     try {
       expect(status).toBe(0);

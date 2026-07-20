@@ -1,6 +1,9 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Fingerprint Extraction
 
-What to pull from the PR diff and how. Run `scripts/extract-fingerprint.sh <pr>` to do this mechanically.
+Run `scripts/extract-fingerprint.sh <pr>` to collect the PR fingerprint.
 
 ## Contents
 
@@ -11,22 +14,23 @@ What to pull from the PR diff and how. Run `scripts/extract-fingerprint.sh <pr>`
 
 ## Touched files
 
-From `gh pr view <pr> --json files`. Filter to source paths (drop test fixtures, generated files, lockfiles).
+Read the paths from `gh pr view <pr> --json files`.
+Keep source paths. Remove test fixtures, generated files, and lockfiles.
 
-**Why baseline:** Some issues mention a file path but no symbol. Without file matching, those go uncaught.
+File matching finds issues that name a file but do not name a symbol.
 
 ## Touched symbols
 
-Per-language regex against added/modified lines in the diff. Defaults live in `repo-policy.md`.
+Apply each language pattern to added and modified diff lines. `repo-policy.md` contains the defaults.
 
-**Why this is the killer angle:** Most matchers stop at file paths. A user issue saying "validateInput rejects empty strings" pinpoints a function — file-path matching alone misses it if the function is in a different module than expected.
+Symbol matching finds issues that name a function but not its file.
 
-**Filtering rules:**
+Apply these filters:
 
-- Only extract symbols from added/modified lines, not deleted lines (those are going away)
-- Drop common short names (`do`, `if`, `as`) — too noisy
-- Drop language keywords
-- Drop test-helper names (`describe`, `it`, `test`) — they match too many issues
+- Extract symbols from added and modified lines. Do not extract them from deleted lines.
+- Remove common short names such as `do`, `if`, and `as`.
+- Remove language keywords.
+- Remove test-helper names such as `describe`, `it`, and `test`.
 
 ## Error-string tokens
 
@@ -37,13 +41,13 @@ Strings inside:
 - `print(f"...")` / Python f-strings flagged with error-shape (`Error:`, `Failed`)
 - Distinctive flag/option names (`--no-color`, `--verbose`)
 
-**Why this catches symptoms:** When a user files an issue, they often paste the error message they saw. That string is high-info and rarely false-matches.
+Error-string matching finds issues that contain output from the changed code.
 
-**Filtering rules:**
+Apply these filters:
 
-- Skip strings <8 chars (too generic)
-- Skip strings with no alpha chars
-- Strip placeholders (`%s`, `${var}`, `{0}`) before searching
+- Remove strings with fewer than eight characters.
+- Remove strings that have no letters.
+- Remove placeholders such as `%s`, `${var}`, and `{0}` before the search.
 
 ## Primary linked issue
 
@@ -52,7 +56,7 @@ From the PR body, parse:
 - `closes #N` / `fixes #N` / `resolves #N`
 - `Linked Issue: #N` block
 
-Captured for **exclusion** during search. Without this, every PR self-matches its own issue.
+Exclude this issue from the search results.
 
 ## Output
 
@@ -68,4 +72,4 @@ Fingerprint JSON shape:
 }
 ```
 
-Consumed by `scripts/search-candidate-issues.sh`.
+Pass this output to `scripts/search-candidate-issues.sh`.

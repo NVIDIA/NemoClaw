@@ -260,7 +260,7 @@ expect {
   }
 }
 # The approval RPC assigns a policy revision before the sandbox loads it.
-# Poll that exact revision through the read-only policy API until both its
+# Poll that policy revision through the read-only policy API until both its
 # status and the active version prove convergence. Preserve every bounded
 # attempt so timeout and failed-revision diagnostics remain reviewable.
 set policyStatusOutput "ISSUE6194_APPROVED_POLICY_VERSION=$approvedPolicyVersion\\n"

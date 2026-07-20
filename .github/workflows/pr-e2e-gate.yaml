@@ -78,7 +78,7 @@ jobs:
       - name: Install controller dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Reserve exact-diff gate
+      - name: Reserve PR/base SHA gate
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -115,7 +115,7 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Wait for trusted exact-diff verdict
+      - name: Wait for trusted PR/base SHA verdict
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GITHUB_TOKEN: ${{ github.token }}

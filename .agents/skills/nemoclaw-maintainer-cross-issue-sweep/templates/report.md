@@ -1,20 +1,23 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Report Template
 
-The skill emits this structure. `scripts/render-report.py` produces it from a list of classified candidates.
+`scripts/render-report.py` uses classified candidates to produce this structure.
 
 ```markdown
 ## Cross-issue scan — PR #<pr> (<pr-title>)
 
 ### Adjacent fixes (PR may also close)
 
-- **#4521** (high) — empty-array check in `validateInput()` matches symptom at issue body line 12
-  → suggest: add `closes #4521` to PR body
-- **#4889** (medium) — same validation path; matches issue's repro at line 7
+- **#4521** (high) — empty-array check in `validateInput()` matches the symptom at issue body line 12.
+  Suggested action: Add `closes #4521` to the PR body.
+- **#4889** (medium) — same validation path. It matches the issue reproduction at line 7.
 
 ### Contradicting (coordinate before merge)
 
-- **#4187** (medium) — PR strictly rejects empty input; #4187 requests opt-in allowance at body line 8
-  → suggest: discuss approach with #4187's author or close #4187 as "fixed by alternative direction"
+- **#4187** (medium) — PR rejects empty input. Issue #4187 requests opt-in allowance at body line 8.
+  Suggested action: Discuss the approach with the author of #4187. Close #4187 only if the maintainer selects the PR behavior.
 
 ### Suppressed
 
@@ -23,18 +26,15 @@ The skill emits this structure. `scripts/render-report.py` produces it from a li
 
 ### Reasoning trace (top 3 by impact)
 
-- #4521 (high): PR diff `src/lib/validate.ts:42` adds `if (input.length === 0) return null` — issue
-  body line 12: "validateInput throws when array is empty, expected null". Both cite the same
-  function and the same desired behavior. Reverse-link applied: issue mentions PR #2851 in
-  comment 4, boosted from medium to high.
-- #4889 (medium): PR diff `src/lib/validate.ts:50` enforces non-empty in shared helper — issue
-  repro at line 7 shows empty-array path. Match is structural but issue may be a duplicate of
-  #4521 (commenters note same).
-- #4187 (medium): PR's strict rejection at line 42 directly opposes #4187's "opt-in allow" ask
-  at body line 8.
+- #4521 (high): `src/lib/validate.ts:42` adds `if (input.length === 0) return null`.
+  Issue body line 12 reports that `validateInput` throws for an empty array.
+  Issue comment 4 mentions PR #2851, so confidence increased from medium to high.
+- #4889 (medium): `src/lib/validate.ts:50` rejects an empty value in a shared helper.
+  The issue reproduction reaches that path. Comments indicate that #4889 can duplicate #4521.
+- #4187 (medium): The rejection at line 42 conflicts with the opt-in request at issue body line 8.
 ```
 
-If no adjacent or contradicting candidates pass the confidence floor, the report just says:
+If no results meet the confidence threshold, use this report:
 
 ```markdown
 ## Cross-issue scan — PR #<pr>

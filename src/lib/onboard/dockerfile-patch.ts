@@ -190,6 +190,10 @@ export function patchStagedDockerfile(
     `ARG NEMOCLAW_MODEL=${sanitizedModel}`,
   );
   dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_INFERENCE_PROVIDER_ID=.*$/m,
+    `ARG NEMOCLAW_INFERENCE_PROVIDER_ID=${sanitizeDockerArg(providerKey)}`,
+  );
+  dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_PROVIDER_KEY=.*$/m,
     `ARG NEMOCLAW_PROVIDER_KEY=${sanitizeDockerArg(providerKey)}`,
   );
