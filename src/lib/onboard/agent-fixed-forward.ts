@@ -6,7 +6,7 @@ import { bestEffortForwardStopForSandbox } from "./forward-cleanup";
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
-  runDetachedForwardStartWithPortReleaseRetries,
+  runDetachedForwardStartWithRetries,
 } from "./forward-start";
 
 type CommandResult = { status: number | null };
@@ -35,7 +35,7 @@ export function ensureAgentFixedForward(
     );
 
   stopForwardForSandbox(port);
-  const { ok, diagnostic } = runDetachedForwardStartWithPortReleaseRetries(
+  const { ok, diagnostic } = runDetachedForwardStartWithRetries(
     buildDetachedForwardStartSpawn(
       deps.openshellArgv(["forward", "start", "--background", forwardTarget, sandboxName]),
     ),
