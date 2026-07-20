@@ -239,11 +239,6 @@ jobs:
           [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] \
             || { echo "::error::candidate SHA must be a lowercase full SHA"; exit 1; }
           api=https://api.github.com/repos/brevdev/nemoclaw-image
-          producer_sha="$(curl --fail-with-body --silent --show-error --proto '=https' \
-            -H "Authorization: Bearer $IMAGE_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "$api/git/ref/heads/main" | jq -er .object.sha)"
           response="$({
             jq -n \
               --arg ref main \
@@ -261,18 +256,15 @@ jobs:
           run_url="$(jq -er .html_url <<< "$response")"
           jq -n \
             --arg candidateSha "$CANDIDATE_SHA" \
-            --arg producerSha "$producer_sha" \
             --arg runId "$run_id" \
             --arg runUrl "$run_url" \
-            '{candidateSha:$candidateSha,producerSha:$producerSha,runId:$runId,runUrl:$runUrl,status:"dispatched"}' \
+            '{candidateSha:$candidateSha,runId:$runId,runUrl:$runUrl,status:"dispatched"}' \
             > "$WORK_DIR/image-build.json"
-          printf 'producer_sha=%s\nrun_id=%s\nrun_url=%s\n' \
-            "$producer_sha" "$run_id" "$run_url" >> "$GITHUB_OUTPUT"
+          printf 'run_id=%s\nrun_url=%s\n' "$run_id" "$run_url" >> "$GITHUB_OUTPUT"
 
       - name: Wait for the exact image build
         env:
           IMAGE_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
-          PRODUCER_SHA: ${{ steps.image-build.outputs.producer_sha }}
           RUN_ID: ${{ steps.image-build.outputs.run_id }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: |
@@ -286,10 +278,9 @@ jobs:
               -H 'X-GitHub-Api-Version: 2026-03-10' \
               "$api/actions/runs/$RUN_ID")"
             jq -e \
-              --arg id "$RUN_ID" \
-              --arg sha "$PRODUCER_SHA" '
+              --arg id "$RUN_ID" '
                 (.id | tostring) == $id
-                and .head_sha == $sha
+                and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
                 and .event == "workflow_dispatch"
                 and .path == ".github/workflows/build-on-push.yml"
                 and .run_attempt == 1
@@ -298,8 +289,9 @@ jobs:
             status="$(jq -r .status <<< "$run")"
             if [ "$status" = completed ]; then
               conclusion="$(jq -r .conclusion <<< "$run")"
-              jq --arg status "$status" --arg conclusion "$conclusion" \
-                '.status=$status | .conclusion=$conclusion' \
+              producer_sha="$(jq -er .head_sha <<< "$run")"
+              jq --arg status "$status" --arg conclusion "$conclusion" --arg producerSha "$producer_sha" \
+                '.status=$status | .conclusion=$conclusion | .producerSha=$producerSha' \
                 "$WORK_DIR/image-build.json" > "$WORK_DIR/image-build.tmp"
               mv "$WORK_DIR/image-build.tmp" "$WORK_DIR/image-build.json"
               [ "$conclusion" = success ] \

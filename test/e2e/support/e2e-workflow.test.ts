@@ -130,6 +130,22 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  it("binds the Launchable image build to the returned run without repository-content access (#6943)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps?: Array<{ id?: string; name?: string; run?: string }> }>;
+    };
+    const steps = workflow.jobs["staging-brev-launchable"]?.steps ?? [];
+    const dispatch = steps.find((step) => step.id === "image-build")?.run ?? "";
+    const wait = steps.find((step) => step.name === "Wait for the exact image build")?.run ?? "";
+
+    expect(dispatch).toContain("return_run_details:true");
+    expect(dispatch).toContain(".workflow_run_id");
+    expect(dispatch).not.toContain("/git/ref/");
+    expect(wait).toContain('"$api/actions/runs/$RUN_ID"');
+    expect(wait).toContain('.path == ".github/workflows/build-on-push.yml"');
+    expect(wait).toContain('.event == "workflow_dispatch"');
+  });
+
   it("keeps controller runner selection in a trusted pre-checkout matrix (#7031)", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
