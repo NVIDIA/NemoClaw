@@ -19,6 +19,7 @@ const PLATFORM_SUPPORT = path.join(REPO_ROOT, "docs", "reference", "platform-sup
 const VLLM_SETUP = path.join(REPO_ROOT, "docs", "inference", "set-up-vllm.mdx");
 const WINDOWS_PREPARATION = path.join(REPO_ROOT, "docs", "get-started", "windows-preparation.mdx");
 const DOCS_INDEX = path.join(REPO_ROOT, "docs", "index.yml");
+const FERN_DOCS = path.join(REPO_ROOT, "fern", "docs.yml");
 
 describe("DGX Station documentation ownership", () => {
   it("keeps Station preparation canonical and links to it from prerequisite entry points", () => {
@@ -56,20 +57,24 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain("Remove the override after");
     expect(quickstart).toContain("--force-station-install");
     expect(platformSupport).toContain("explicit temporary metadata override");
+    expect(platformSupport).toContain("exact read-only BDF directory");
+    expect(platformSupport).toContain("they do not expose `/sys`, the PCI parent subtree");
+    expect(platformSupport).toContain("`/sys/fs/cgroup/cgroup.controllers`");
+    expect(platformSupport).toContain("`/sys/class/net/lo/address`");
     expect(vllmSetup).toContain("explicit temporary metadata override");
     expect(stationPreparation).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
     expect(stationPreparation).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
     expect(stationPreparation).toContain("[Platform Support](../../reference/platform-support)");
     expect(prerequisites).toContain("### DGX Station Express Preparation");
     expect(prerequisites).toMatch(/\| DGX OS \(Station\) \| Docker \| Deferred \|/);
-    expect(prerequisites).toContain("prerequisites/dgx-station-preparation");
+    expect(prerequisites).toContain("additional-setup/dgx-station-preparation");
     expect(prerequisites).toContain(
-      "[Additional Setup for DGX Station](prerequisites/dgx-station-preparation)",
+      "[Additional Setup for DGX Station](additional-setup/dgx-station-preparation)",
     );
     expect(prerequisites).toContain(
-      "[Additional Setup for Windows Machines](prerequisites/windows-preparation)",
+      "[Additional Setup for Windows Machines](additional-setup/windows-preparation)",
     );
-    expect(quickstart).toContain("prerequisites/dgx-station-preparation");
+    expect(quickstart).toContain("additional-setup/dgx-station-preparation");
     expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
     expect(quickstart).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
     expect(quickstart).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
@@ -84,7 +89,45 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain('sidebar-title: "Additional Setup for DGX Station"');
     expect(windowsPreparation).toContain('title: "Prepare a Windows Machine to Install NemoClaw"');
     expect(windowsPreparation).toContain('sidebar-title: "Additional Setup for Windows Machines"');
+    expect(docsIndex.match(/page: "Prerequisites"/g)).toHaveLength(3);
+    expect(docsIndex).not.toContain('section: "Prerequisites"');
+    expect(
+      docsIndex.match(/section: "Additional Setup"\n\s+slug: additional-setup\n\s+contents:/g),
+    ).toHaveLength(3);
     expect(docsIndex.match(/page: "Additional Setup for DGX Station"/g)).toHaveLength(3);
     expect(docsIndex.match(/page: "Additional Setup for Windows Machines"/g)).toHaveLength(3);
+  });
+
+  it("redirects every retired Prerequisites child route directly to Additional Setup", () => {
+    const redirects = fs.readFileSync(FERN_DOCS, "utf-8");
+    const pages = ["dgx-station-preparation", "windows-preparation"];
+    const variantPrefixes = [
+      "/nemoclaw/latest/user-guide/:variant",
+      "/nemoclaw/user-guide/:variant",
+    ];
+
+    for (const prefix of variantPrefixes) {
+      for (const page of pages) {
+        for (const suffix of ["", ".html", "/index.html", ".md", ".mdx"]) {
+          const destinationSuffix = suffix === ".md" || suffix === ".mdx" ? suffix : "";
+          expect(redirects).toContain(
+            `- source: "${prefix}/get-started/prerequisites/${page}${suffix}"\n    destination: "${prefix}/get-started/additional-setup/${page}${destinationSuffix}"`,
+          );
+        }
+      }
+    }
+
+    for (const [legacyPrefix, destinationPrefix] of [
+      ["/nemoclaw/latest", "/nemoclaw/latest/user-guide/openclaw"],
+      ["/nemoclaw", "/nemoclaw/user-guide/openclaw"],
+    ]) {
+      for (const page of pages) {
+        for (const suffix of ["", ".html", "/index.html"]) {
+          expect(redirects).toContain(
+            `- source: "${legacyPrefix}/get-started/prerequisites/${page}${suffix}"\n    destination: "${destinationPrefix}/get-started/additional-setup/${page}"`,
+          );
+        }
+      }
+    }
   });
 });

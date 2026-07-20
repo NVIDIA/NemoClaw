@@ -12,7 +12,7 @@ NemoClaw v0.0.70 completes the E2E migration and improves day-two operation, inf
   For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Onboarding and inference validation handle more common setup drift.
   Docker Desktop gateway bridge checks retry through the short first-start race, OpenAI-compatible endpoints can opt into reasoning-mode validation with `NEMOCLAW_REASONING`, and Windows bootstrap failures preserve WSL recovery guidance.
-  For more information, refer to [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider), [Prepare Windows for NemoClaw](/user-guide/openclaw/get-started/prerequisites/windows-preparation), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+  For more information, refer to [Choose an Inference Provider](/user-guide/openclaw/inference/learn-and-choose/choose-inference-provider), [Prepare Windows for NemoClaw](/user-guide/openclaw/get-started/additional-setup/windows-preparation), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Messaging and Hermes repair paths carry less stale state forward.
   Rebuilds write the effective policy preset set back to the sandbox registry, `channels start` reapplies the matching network policy preset before rebuilding, and Hermes image repair removes inherited OpenClaw state from older base layers.
   For more information, refer to [Choose Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/choose-messaging-channels), [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
