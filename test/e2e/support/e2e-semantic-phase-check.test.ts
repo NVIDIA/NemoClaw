@@ -64,17 +64,20 @@ describe("semantic E2E phase checker", () => {
         },
       }),
     ).toEqual([]);
-    expect(
-      validateCollectedSemanticPhaseModule({
-        ...forwardingModule,
-        source: {
-          ...forwardingModule.source,
-          forwardedTestModules: ["test/e2e/live/other.test.ts"],
-        },
-      }),
-    ).toEqual([
-      "test/e2e/live/bootstrap-install-smoke.test.ts: forwarding module must import exactly test/e2e/live/launchable-smoke.test.ts",
-    ]);
+    const expectedFailure =
+      "test/e2e/live/bootstrap-install-smoke.test.ts: forwarding module must import exactly test/e2e/live/launchable-smoke.test.ts";
+    for (const forwardedTestModules of [
+      [],
+      ["test/e2e/live/other.test.ts"],
+      ["test/e2e/live/launchable-smoke.test.ts", "test/e2e/live/other.test.ts"],
+    ]) {
+      expect(
+        validateCollectedSemanticPhaseModule({
+          ...forwardingModule,
+          source: { ...forwardingModule.source, forwardedTestModules },
+        }),
+      ).toEqual([expectedFailure]);
+    }
   });
 
   test("rejects phase transitions that belong to sibling tests", () => {

@@ -50,6 +50,9 @@
       "fast": [
         "test/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
         "test/installer-hash-check.test.ts",
         "test/runner.test.ts"
