@@ -72,7 +72,17 @@ describe("Brev provisioning state", () => {
         inspect,
       }),
     ).toBe(2);
-    expect(inspect).toHaveBeenCalledTimes(1);
+    expect(
+      observeBrevProvisioningProgress({
+        attempt: 3,
+        instanceName: "pr-42",
+        consecutiveMissing: 2,
+        lastSshError: "connection refused",
+        cause: new Error("ssh failed"),
+        inspect,
+      }),
+    ).toBe(0);
+    expect(inspect).toHaveBeenCalledTimes(2);
   });
 
   it("fails immediately when a scheduled inspection finds a terminal state", () => {
