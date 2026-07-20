@@ -357,12 +357,12 @@ describe("preflightRebuildImage", () => {
       });
 
       expect(result.ok).toBe(false);
-      if (result.ok) throw new Error("expected failed rebuild preflight");
-      expect(result.detail).toContain("Legacy-builder retry failed");
-      expect(result.detail).toContain("legacy build could not read ~/private-context");
-      expect(result.detail).toContain("Authorization: Bearer <REDACTED>");
-      expect(result.detail).not.toContain(credential);
-      expect(result.detail.length).toBeLessThan(8_100);
+      const failure = result as Extract<RebuildImagePreflightResult, { ok: false }>;
+      expect(failure.detail).toContain("Legacy-builder retry failed");
+      expect(failure.detail).toContain("legacy build could not read ~/private-context");
+      expect(failure.detail).toContain("Authorization: Bearer <REDACTED>");
+      expect(failure.detail).not.toContain(credential);
+      expect(failure.detail.length).toBeLessThan(8_100);
       expect(buildImage).toHaveBeenCalledTimes(2);
       expect(cleanupBuildCtx).toHaveBeenCalledOnce();
     } finally {
