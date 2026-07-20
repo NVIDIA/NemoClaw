@@ -28,7 +28,10 @@ export function createIdempotentBuildContextCleanup(cleanup: () => boolean): () 
 /** Confirm that a retained private context still matches the prebuilt bytes. */
 export function verifyPreparedBuildContext(prepared: FingerprintedPreparedBuildContext): boolean {
   try {
-    return fingerprintBuildContext(prepared.buildCtx) === prepared.contextFingerprint;
+    return (
+      prepared.verifyBuildCtx() &&
+      fingerprintBuildContext(prepared.buildCtx) === prepared.contextFingerprint
+    );
   } catch {
     return false;
   }

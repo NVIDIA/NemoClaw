@@ -355,7 +355,7 @@ describe("prepareSandboxCreateLaunch", () => {
 });
 
 describe("prepareSandboxCreateLaunchWithPrebuild", () => {
-  it("hands the build-qualified image to the canonical launch renderer", async () => {
+  it("hands the legacy-builder image to the canonical launch renderer", async () => {
     const buildCtx = createTrustedBuildContext();
     const dockerfile = path.join(buildCtx, "Dockerfile");
     const buildImage = vi.fn(async () => 0);
@@ -374,6 +374,8 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       prebuild: {
         buildCtx,
         buildId: "build-123",
+        builder: "legacy",
+        dockerEnv: Object.freeze({ DOCKER_CONTEXT: "verified-builder" }),
         dockerDriverGateway: true,
         env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
         buildImage,
@@ -391,7 +393,13 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
     expect(result.createCommand).toContain(
       "sandbox create --from nemoclaw-sandbox-local:demo-build-123 --name demo",
     );
-    expect(buildImage).toHaveBeenCalledOnce();
+    expect(buildImage).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({
+        cwd: expect.any(String),
+        env: expect.objectContaining({ DOCKER_BUILDKIT: "0" }),
+      }),
+    );
   });
 
   it("renders the original Dockerfile after a local build failure", async () => {

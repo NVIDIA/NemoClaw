@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ROOT } from "../runner";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
   dockerBuildSubprocessEnv,
@@ -17,6 +18,10 @@ import {
 
 const BUILD_ID = "1234567890";
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
+const VERIFIED_DOCKER_ENV = Object.freeze({
+  DOCKER_CONFIG: "/home/test/.docker",
+  DOCKER_CONTEXT: "verified-builder",
+});
 const temporaryDirectories: string[] = [];
 
 function createBuildContext(
@@ -345,6 +350,7 @@ describe("sandbox BuildKit prebuild", () => {
         resolvedBuildCtx,
       ],
       expect.objectContaining({
+        cwd: ROOT,
         env: expect.objectContaining({ DOCKER_BUILDKIT: "1" }),
         stdio: "inherit",
       }),
@@ -354,6 +360,118 @@ describe("sandbox BuildKit prebuild", () => {
       imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
       imageId: IMAGE_ID,
     });
+  });
+
+  it("reuses the legacy builder proven by rebuild preflight", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    const inspectImageId = vi.fn(() => IMAGE_ID);
+    const log = vi.fn();
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      builder: "legacy",
+      dockerEnv: VERIFIED_DOCKER_ENV,
+      createArgs,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      env: {},
+      buildImage,
+      inspectImageId,
+      log,
+    });
+
+    expect(buildImage).toHaveBeenCalledWith(
+      expect.arrayContaining(["build", "nemoclaw-sandbox-local:alpha-1234567890"]),
+      expect.objectContaining({
+        cwd: ROOT,
+        env: { ...VERIFIED_DOCKER_ENV, DOCKER_BUILDKIT: "0" },
+        stdio: "inherit",
+      }),
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("matches rebuild preflight"));
+    expect(inspectImageId).toHaveBeenCalledWith("nemoclaw-sandbox-local:alpha-1234567890", {
+      cwd: ROOT,
+      env: VERIFIED_DOCKER_ENV,
+    });
+    expect(result.imageRef).toBe("nemoclaw-sandbox-local:alpha-1234567890");
+  });
+
+  it.each([
+    ["local prebuild is disabled", true, { NEMOCLAW_SANDBOX_PREBUILD: "0" }],
+    ["the gateway cannot consume a local image", false, { NEMOCLAW_SANDBOX_PREBUILD: "1" }],
+  ])("fails a prepared builder closed when %s", async (_label, dockerDriverGateway, env) => {
+    const { buildCtx, createArgs } = createBuildContext();
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        builder: "legacy",
+        dockerEnv: VERIFIED_DOCKER_ENV,
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway,
+        env,
+      }),
+    ).rejects.toThrow(/verified local Docker builder is not enabled/);
+  });
+
+  it("fails a prepared builder closed when create arguments drift", async () => {
+    const { buildCtx } = createBuildContext();
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        builder: "legacy",
+        dockerEnv: VERIFIED_DOCKER_ENV,
+        createArgs: ["--from", "/other/Dockerfile"],
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+      }),
+    ).rejects.toThrow(/arguments no longer select the retained Dockerfile/);
+  });
+
+  it("fails a prepared builder closed when context trust validation drifts", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    fs.chmodSync(buildCtx, 0o770);
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        builder: "legacy",
+        dockerEnv: VERIFIED_DOCKER_ENV,
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+      }),
+    ).rejects.toThrow(/context failed trust validation/);
+  });
+
+  it.each([
+    ["exits nonzero", async () => 1],
+    ["cannot start", async () => Promise.reject(new Error("daemon unavailable"))],
+  ])("fails a prepared builder closed when its repeated build %s", async (_label, buildImage) => {
+    const { buildCtx, createArgs } = createBuildContext();
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        origin: "generated",
+        builder: "legacy",
+        dockerEnv: VERIFIED_DOCKER_ENV,
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        buildImage,
+      }),
+    ).rejects.toThrow(/verified legacy builder/);
   });
 
   it.each([

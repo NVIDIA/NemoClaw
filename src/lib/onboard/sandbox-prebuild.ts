@@ -5,9 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { dockerImageInspectFormat } from "../adapters/docker";
-import { dockerSpawn } from "../adapters/docker/exec";
+import { dockerSpawn, dockerSpawnSync } from "../adapters/docker/exec";
 import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
+import { ROOT } from "../runner";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
@@ -33,12 +33,16 @@ export interface SandboxPrebuildInput {
   sandboxName: string;
   dockerDriverGateway: boolean;
   origin: SandboxBuildContextOrigin;
+  /** Builder already proven against this retained rebuild context. */
+  builder?: "legacy";
+  /** Sanitized Docker endpoint/config environment used by that builder proof. */
+  dockerEnv?: Readonly<Record<string, string>>;
   env?: NodeJS.ProcessEnv;
   buildImage?: (
     args: readonly string[],
-    options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
+    options: { cwd: string; env: NodeJS.ProcessEnv; stdio: "inherit" },
   ) => Promise<number | null>;
-  inspectImageId?: (imageRef: string) => string;
+  inspectImageId?: (imageRef: string, options: { cwd: string; env: NodeJS.ProcessEnv }) => string;
   log?: (message: string) => void;
 }
 
@@ -144,7 +148,8 @@ export function sandboxLocalImageRef(sandboxName: string, buildId: string): stri
 /**
  * Build a NemoClaw-generated staged context with BuildKit on the shared local
  * Docker daemon. User-supplied Dockerfiles stay on the OpenShell gateway
- * builder trust boundary, and any failure preserves that original build path.
+ * builder trust boundary. Ordinary onboarding preserves that path on local
+ * build failure; a builder proven by rebuild preflight instead fails closed.
  * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
  * extraction and observable retirement criteria are tracked by #6258.
  */
@@ -154,10 +159,29 @@ export async function prebuildSandboxImageIfEligible(
   const createArgs = [...input.createArgs];
   const env = input.env ?? process.env;
   const log = input.log ?? console.log;
+  const requiredBuilder = input.builder ?? null;
+  const failPreparedBuild = (detail: string): never => {
+    throw new Error(`Prepared rebuild image cannot be recreated safely: ${detail}`);
+  };
+  if (
+    (requiredBuilder &&
+      (!input.dockerEnv ||
+        !Object.isFrozen(input.dockerEnv) ||
+        Object.values(input.dockerEnv).some((value) => typeof value !== "string"))) ||
+    (!requiredBuilder && input.dockerEnv)
+  ) {
+    failPreparedBuild("the verified Docker environment is missing or invalid");
+  }
   if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
+    if (requiredBuilder) {
+      failPreparedBuild("the verified local Docker builder is not enabled");
+    }
     return { createArgs, imageRef: null, imageId: null };
   }
   if (input.origin !== "generated") {
+    if (requiredBuilder) {
+      failPreparedBuild("the retained build context is not NemoClaw-generated");
+    }
     log(
       "  Local BuildKit build skipped for a custom Dockerfile; using the gateway builder instead.",
     );
@@ -170,6 +194,9 @@ export async function prebuildSandboxImageIfEligible(
     !fromDockerfile ||
     path.resolve(fromDockerfile) !== path.resolve(input.buildCtx, "Dockerfile")
   ) {
+    if (requiredBuilder) {
+      failPreparedBuild("sandbox create arguments no longer select the retained Dockerfile");
+    }
     return { createArgs, imageRef: null, imageId: null };
   }
   let trustedContext: TrustedStagedBuildContext | null;
@@ -177,12 +204,18 @@ export async function prebuildSandboxImageIfEligible(
     trustedContext = resolveTrustedStagedBuildContext(input.buildCtx);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    if (requiredBuilder) {
+      failPreparedBuild(`the retained build context could not be inspected (${detail})`);
+    }
     log(
       `  Local BuildKit build skipped: staged build context could not be inspected (${detail}); using the gateway builder instead.`,
     );
     return { createArgs, imageRef: null, imageId: null };
   }
   if (!trustedContext) {
+    if (requiredBuilder) {
+      failPreparedBuild("the retained build context failed trust validation");
+    }
     log(
       "  Local BuildKit build skipped: staged build context failed trust validation; using the gateway builder instead.",
     );
@@ -190,6 +223,9 @@ export async function prebuildSandboxImageIfEligible(
   }
 
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId);
+  const dockerEnv = requiredBuilder
+    ? (input.dockerEnv as Readonly<Record<string, string>>)
+    : dockerBuildSubprocessEnv();
   const buildImage =
     input.buildImage ??
     ((args, options) =>
@@ -198,25 +234,40 @@ export async function prebuildSandboxImageIfEligible(
         child.once("error", reject);
         child.once("close", resolve);
       }));
-  log("  Building sandbox image with BuildKit (skips the slower in-gateway builder)...");
+  const builder = requiredBuilder ?? "buildkit";
+  log(
+    builder === "legacy"
+      ? "  Building sandbox image with Docker's legacy builder (matches rebuild preflight)..."
+      : "  Building sandbox image with BuildKit (skips the slower in-gateway builder)...",
+  );
 
   let status: number | null;
   try {
     status = await buildImage(
       ["build", "-t", imageRef, "-f", trustedContext.dockerfile, trustedContext.buildCtx],
       {
-        env: { ...dockerBuildSubprocessEnv(), DOCKER_BUILDKIT: "1" },
+        cwd: ROOT,
+        env: {
+          ...dockerEnv,
+          DOCKER_BUILDKIT: builder === "legacy" ? "0" : "1",
+        },
         stdio: "inherit",
       },
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    if (requiredBuilder) {
+      failPreparedBuild(`the verified ${builder} builder could not start (${detail})`);
+    }
     log(`  Local BuildKit build could not start (${detail}); using the gateway builder instead.`);
     return { createArgs, imageRef: null, imageId: null };
   }
 
   if (status !== 0) {
     const detail = status === null ? " without an exit status" : ` (exit ${status})`;
+    if (requiredBuilder) {
+      failPreparedBuild(`the verified ${builder} builder failed${detail}`);
+    }
     log(`  Local BuildKit build failed${detail}; using the gateway builder instead.`);
     return { createArgs, imageRef: null, imageId: null };
   }
@@ -224,13 +275,20 @@ export async function prebuildSandboxImageIfEligible(
   createArgs[fromIndex + 1] = imageRef;
   const inspectImageId =
     input.inspectImageId ??
-    ((ref: string) =>
-      dockerImageInspectFormat("{{.Id}}", ref, {
-        ignoreError: true,
-      }).trim());
+    ((ref: string, options: { cwd: string; env: NodeJS.ProcessEnv }) => {
+      const inspected = dockerSpawnSync(["image", "inspect", "--format", "{{.Id}}", ref], {
+        ...options,
+        encoding: "utf8",
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      return inspected.status === 0 && !inspected.error
+        ? String(inspected.stdout ?? "").trim()
+        : "";
+    });
   let imageId: string | null = null;
   try {
-    const inspected = inspectImageId(imageRef).trim();
+    const inspected = inspectImageId(imageRef, { cwd: ROOT, env: dockerEnv }).trim();
     if (isImmutableDockerImageId(inspected)) imageId = inspected.toLowerCase();
   } catch {
     // Native creation can still use the local tag. Automatic compatibility

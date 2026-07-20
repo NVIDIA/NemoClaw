@@ -239,6 +239,25 @@ describe("prepared DCode rebuild adapter", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("rejects a legacy builder handoff outside generated OpenClaw rebuilds", () => {
+    expect(() =>
+      createPreparedDcodeRebuildRuntime(
+        {
+          ...preparedImageOptions,
+          preparedImageRebuild: {
+            ...preparedImageOptions.preparedImageRebuild!,
+            buildContext: {
+              ...preparedImageBuildContext,
+              prebuildBuilder: "legacy",
+              prebuildDockerEnv: Object.freeze({ DOCKER_CONTEXT: "verified-builder" }),
+            },
+          },
+        },
+        "nemoclaw",
+      ),
+    ).toThrow(/only be reused for a generated OpenClaw rebuild image/);
+  });
+
   it.runIf(process.platform !== "win32").each(oneShotContextMutations)(
     "rejects $label at the post-delete one-shot boundary",
     async ({ arrange, mutate, label }) => {

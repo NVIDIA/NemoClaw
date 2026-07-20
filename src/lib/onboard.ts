@@ -2758,7 +2758,8 @@ async function createSandboxWithBaseImageResolution(
       manageDashboard,
       openshellShellCommand,
       openshellArgv,
-      prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
+      // biome-ignore format: keep src/lib/onboard.ts growth bounded.
+      prebuild: { buildCtx, buildId, dockerDriverGateway, origin, builder: preparedBuildContext?.prebuildBuilder, dockerEnv: preparedBuildContext?.prebuildDockerEnv },
     });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;

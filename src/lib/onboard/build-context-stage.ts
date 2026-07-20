@@ -41,6 +41,10 @@ export interface CreateSandboxBuildContextResult extends StagedBuildContext {
 export interface PreparedSandboxBuildContext extends CreateSandboxBuildContextResult {
   buildId: string;
   dashboardRemoteBindPrepared?: boolean;
+  /** Host builder that successfully validated this exact retained context. */
+  readonly prebuildBuilder?: "legacy";
+  /** Sanitized Docker endpoint/config environment bound to that builder proof. */
+  readonly prebuildDockerEnv?: Readonly<Record<string, string>>;
   /** Recheck retained bytes at the final one-shot consumption boundary. */
   verifyBuildCtx?(): boolean;
   /** Exact recorded target authorized to consume a generic rebuild handoff. */

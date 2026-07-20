@@ -88,11 +88,39 @@ function normalizedAgentIdentity(agentName: string | null | undefined): string {
   return agentName?.trim() || "openclaw";
 }
 
+function assertPreparedBuilderSelection(preparedBuildContext: PreparedSandboxBuildContext): void {
+  const builder = preparedBuildContext.prebuildBuilder;
+  const dockerEnv = preparedBuildContext.prebuildDockerEnv;
+  if (builder !== undefined && builder !== "legacy") {
+    throw new Error("Prepared rebuild image builder is missing or invalid.");
+  }
+  if (
+    (builder === "legacy" &&
+      (!dockerEnv ||
+        !Object.isFrozen(dockerEnv) ||
+        Object.values(dockerEnv).some((value) => typeof value !== "string"))) ||
+    (builder !== "legacy" && dockerEnv !== undefined)
+  ) {
+    throw new Error("Prepared rebuild image Docker environment is missing or invalid.");
+  }
+  if (
+    builder === "legacy" &&
+    (preparedBuildContext.origin !== "generated" ||
+      normalizedAgentIdentity(preparedBuildContext.rebuildTarget?.agentName) !== "openclaw" ||
+      preparedBuildContext.rebuildTarget?.fromDockerfile !== null)
+  ) {
+    throw new Error(
+      "Docker's legacy builder can only be reused for a generated OpenClaw rebuild image.",
+    );
+  }
+}
+
 function assertPreparedTargetIdentity(
   preparedBuildContext: PreparedSandboxBuildContext,
   agentName: string | null,
   fromDockerfile: string | null,
 ): void {
+  assertPreparedBuilderSelection(preparedBuildContext);
   const target = preparedBuildContext.rebuildTarget;
   if (target) {
     if (
