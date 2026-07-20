@@ -619,6 +619,11 @@ shutil.disk_usage = lambda _path: _NemoClawDiskUsage()
     const { runCommand, state } = createPeerIntegrityRunner({
       localManifest: manifest(),
       peerHome,
+      peerInputPrefix: `import shutil
+class _NemoClawDiskUsage:
+    free = 1024 * 1024 * 1024 * 1024
+shutil.disk_usage = lambda _path: _NemoClawDiskUsage()
+`,
     });
     const statfs = sufficientStatfs();
 

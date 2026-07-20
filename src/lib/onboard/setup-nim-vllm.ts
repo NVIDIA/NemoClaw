@@ -130,6 +130,25 @@ function reportedModelMatchesRequest(
   return root.toLowerCase() === (registeredModel?.id ?? requestedModel).toLowerCase();
 }
 
+/** Preserve the checkpoint identity proven by the vLLM model response. */
+function validatedVllmModelIdentity(
+  models: VllmModels,
+  detectedModel: string,
+  requestedModel: string | null,
+): string | null {
+  const root = reportedModelRoot(findVllmModelEntry(models, detectedModel));
+  if (root) return root;
+  if (!requestedModel || detectedModel !== requestedModel) return null;
+  const normalizedRequest = requestedModel.toLowerCase();
+  const registeredModel = VLLM_MODELS.find(
+    (model) =>
+      model.envValue.toLowerCase() === normalizedRequest ||
+      model.id.toLowerCase() === normalizedRequest ||
+      model.servedModelId?.toLowerCase() === normalizedRequest,
+  );
+  return registeredModel?.id ?? requestedModel;
+}
+
 /** Read a string property from optional nested vLLM model metadata. */
 function readObjectString(value: unknown, key: string): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -283,6 +302,7 @@ export function createSetupNimVllmHandler(
       console.error("  Then select Local vLLM when prompted.");
       deps.exitProcess(1);
     }
+    const modelIdentity = validatedVllmModelIdentity(models, detectedModel, requiredModel);
     state.model = detectedModel;
     state.assertRouteCompatible?.();
     console.log(`  Detected model: ${state.model}`);
@@ -333,6 +353,7 @@ export function createSetupNimVllmHandler(
       return "retry-selection";
     }
 
+    if (modelIdentity) state.vllmModelIdentity = modelIdentity;
     deps.applyVllmRuntimeContextWindow(models, state.model);
     if (validation.api !== "openai-completions") {
       console.log(

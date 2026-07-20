@@ -26,6 +26,14 @@
 - [ ] Sensitive-path review completed or maintainer-approved waiver recorded — reviewer/approval link/justification:
 - [ ] Non-success, skipped, or missing CI check accepted by maintainer — check name, approval link, and follow-up issue:
 
+## DGX Station Hardware Evidence
+<!-- Required only when scripts/prepare-dgx-station-host.sh changes. Maintainers must review the linked evidence before approving or merging. This is human-reviewed evidence, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must be documented on the PR. -->
+- [ ] Tested on DGX Station
+- Tested commit:
+- Station profile/scenario:
+- Result:
+- Supporting evidence:
+
 ## Verification
 <!-- Check each applicable item only when supported by the requested evidence. Run targeted tests once per relevant change set and rerun after later edits or hook autofixes that can affect the tested behavior. Do not rerun hook-covered checks. -->
 - [ ] PR description includes a `Signed-off-by:` line and every commit appears as `Verified` in GitHub

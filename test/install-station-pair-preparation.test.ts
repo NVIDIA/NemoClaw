@@ -1287,6 +1287,7 @@ node() {
   command node "$@"
 }
 station_installer_revision() { printf '%s' "$PAIR_REVISION"; }
+station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL NEMOCLAW_DGX_STATION_PEER
@@ -1405,6 +1406,7 @@ station_installer_revision() { printf '%s' "$PAIR_REVISION"; }
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 _STATION_INSTALL_MODE='express'
+station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
 unset NEMOCLAW_VLLM_MODEL NEMOCLAW_MODEL NEMOCLAW_DGX_STATION_PEER
 ensure_station_express_pair
 `,
@@ -1417,7 +1419,9 @@ ensure_station_express_pair
         true,
       );
       expect(fs.readFileSync(path.join(home, ".nemoclaw", "station-express-resume"), "utf8")).toBe(
-        `revision=${REVISION}\nmodel=auto\nmode=express\n`,
+        `revision=${REVISION}\nmodel=auto\ngeneration=0123456789abcdef0123456789abcdef\n` +
+          "agent=openclaw\nsandbox=my-assistant\npolicy_tier=balanced\n" +
+          "gateway_port=8080\ndashboard_port=18789\nvllm_port=8000\nmode=express\n",
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

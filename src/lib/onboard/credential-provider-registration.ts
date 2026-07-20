@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../inference/web-search";
+import type { CheckpointProviderBinding } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
 import * as braveProviderProfile from "./brave-provider-profile";
 import * as gatewayProviderMetadata from "./gateway-provider-metadata";
@@ -134,7 +135,7 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
   async function stageSandboxCredentialProviders<Agent>(
     input: StageSandboxCredentialProvidersInput<Agent>,
     prepareCredentialProviders: PrepareCredentialProviders<Agent>,
-  ): Promise<readonly string[]> {
+  ): Promise<readonly CheckpointProviderBinding[]> {
     const messaging = await prepareCredentialProviders(input);
     const tokenDefs = messaging.messagingTokenDefs.filter((tokenDef) =>
       deps.normalizeCredentialValue(tokenDef.token),
@@ -151,7 +152,12 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
       runOpenshell,
     );
     setStagedCredentialProviderReceipts(registered, true, deps);
-    return registered;
+    const registeredTokenDefs = new Map(tokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]));
+    return registered.map((name) => ({
+      name,
+      type: registeredTokenDefs.get(name)?.providerType || "generic",
+      credentialEnv: registeredTokenDefs.get(name)?.envKey ?? "",
+    }));
   }
 
   return {

@@ -36,6 +36,10 @@ Set `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` to a comma-separated list of exac
 NemoClaw still resolves DNS, pins the validation connection, and rejects wildcard or suffix matches, link-local metadata, reserved destinations, and resolver failures.
 This allowlist does not relax direct blueprint, `config set`, or unrelated persisted-URL validation.
 
+After onboarding records an admitted custom endpoint, `inference set` accepts that same canonical URL for a model change without resolving it again.
+The registry must record onboarding as the endpoint source, and the supplied URL must match exactly after normalization.
+Legacy entries without a source, endpoints recorded by `inference set`, and different URLs still pass through the full server-side request forgery validation path.
+
 ## Use a Public Endpoint
 
 For a public HTTP URL, NemoClaw stores the validated IP address so the downstream runtime cannot resolve the hostname again and reach another address.

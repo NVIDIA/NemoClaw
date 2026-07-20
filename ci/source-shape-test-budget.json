@@ -82,6 +82,11 @@
       "category": "security"
     },
     {
+      "file": "test/code-scanning-workflow.test.ts",
+      "test": "runs only the trusted converter and keeps scanner status separate from conversion failures (#6959)",
+      "category": "security"
+    },
+    {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
       "test": "declares exactly one corporate CA build arg so onboard patching stays unambiguous",
       "category": "security"
@@ -129,6 +134,16 @@
     {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+      "test": "binds the composite action and helper to their immutable reviewed revision (#6961)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
+      "test": "binds the host-dependency action and helper to their immutable reviewed revision (#6961)",
       "category": "security"
     },
     {
@@ -464,6 +479,11 @@
     {
       "file": "test/regression-e2e-workflow.test.ts",
       "test": "stages the public NVIDIA key for the Model Router's NVIDIA credential",
+      "category": "security"
+    },
+    {
+      "file": "test/release-latest-tag-workflow.test.ts",
+      "test": "binds latest promotion to the exact GitHub-verified tag object",
       "category": "security"
     },
     {

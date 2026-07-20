@@ -86,6 +86,7 @@ const registryRoute = {
   provider: "compatible-endpoint",
   model: "nvidia/nemotron-3-ultra",
   endpointUrl: "https://inference-api.nvidia.com/v1",
+  endpointSource: "onboard",
   preferredInferenceApi: "openai-completions",
   source: "registry",
 };
@@ -126,6 +127,9 @@ const { setupNim, setupInference } = require(${onboardPath});
         process.env.NEMOCLAW_TEST_OMIT_REUSE_AUTHORIZATION === "1"
           ? undefined
           : selected.reuseGatewayCredentialWithoutLocalKey,
+      endpointSource: selected.endpointSource,
+      onboardEndpointUrl:
+        selected.endpointSource === "onboard" ? selected.endpointUrl : undefined,
     },
   );
   console.log(JSON.stringify(selected));

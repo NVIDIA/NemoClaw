@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   dockerSpawn: vi.fn(),
   dockerStop: vi.fn(),
   ensureApiKey: vi.fn(),
-  findUnwritableTreePath: vi.fn(),
+  findUnwritableModelCachePath: vi.fn(),
   getManagedBaseUrl: vi.fn(),
   getGpuIndicesByName: vi.fn(),
   loadApiKey: vi.fn(),
@@ -63,7 +63,7 @@ vi.mock("./nim", () => ({
 
 vi.mock("./vllm-storage", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./vllm-storage")>()),
-  findUnwritableTreePath: mocks.findUnwritableTreePath,
+  findUnwritableModelCachePath: mocks.findUnwritableModelCachePath,
   measureDirectorySizeBytes: mocks.measureDirectorySizeBytes,
   probeDockerStorage: mocks.probeDockerStorage,
   probeHostStorage: mocks.probeHostStorage,
@@ -217,6 +217,7 @@ beforeEach(() => {
     peerModelSnapshot: "ready",
   });
   mocks.stageModelSnapshot.mockResolvedValue({ ok: true, transferred: true });
+  mocks.findUnwritableModelCachePath.mockReturnValue(null);
   mocks.preflightOwnership.mockReturnValue({ ok: true });
   mocks.preflightGpuRuntime.mockReturnValue({ ok: true });
   mocks.getManagedBaseUrl.mockReturnValue(null);
@@ -234,7 +235,6 @@ beforeEach(() => {
   mocks.cleanup.mockReturnValue({ ok: true, removedContainerIds: [] });
   mocks.commitLegacyMigration.mockResolvedValue({ ok: true, cleanupWarnings: [] });
   mocks.rollbackLegacyMigration.mockResolvedValue({ ok: true });
-  mocks.findUnwritableTreePath.mockReturnValue(null);
   mocks.measureDirectorySizeBytes.mockReturnValue(0n);
   mocks.probeDockerStorage.mockReturnValue({
     ok: true,

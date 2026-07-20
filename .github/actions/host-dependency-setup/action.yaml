@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: host-dependency-setup
+description: Install reviewed apt host dependencies with bounded retries from a trusted pinned action.
+
+inputs:
+  packages:
+    description: Space-separated apt packages from the reviewed allowlist (expect, iptables).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install host dependencies
+      shell: bash
+      env:
+        HOST_DEPENDENCY_PACKAGES: ${{ inputs.packages }}
+      run: bash "${{ github.action_path }}/../../scripts/host-dependency-setup.sh"

@@ -15,12 +15,58 @@ import {
   runStarterPromptGenerator,
   STARTER_PROMPT_GENERATED_PATH,
 } from "../scripts/generate-starter-prompt.mts";
+import {
+  createGitRunner,
+  type GitRunner,
+  readPinnedPromptAssetBlob,
+  requireExpectedPromptAssetRoutes,
+  resolvePromptAssetRevision,
+} from "./helpers/starter-prompt-asset-contract";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
+// CI resolves this exact Git commit and byte-compares its prompt-asset blobs with
+// the local files. The digests independently assert those same immutable bytes.
+const promptAssetRevision = "f814db4f7708ecf9ab054fcee449f11c95076dfd";
+
+type PromptAsset = {
+  path: string;
+  pinnedSha256: string;
+  url: string;
+};
+
+function definePromptAsset(assetPath: string, pinnedSha256: string): PromptAsset {
+  return {
+    path: assetPath,
+    pinnedSha256,
+    url: `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${promptAssetRevision}/${assetPath}`,
+  };
+}
+
+const promptAssets = {
+  dgxSpark: definePromptAsset(
+    "docs/resources/prompt-assets/dgx-spark.md",
+    "806e87f2ae7e4a4be731c7ce3b1ecde9ff8be170563d4338a5f79f76ce25e034", // gitleaks:allow -- pinned prompt-asset SHA-256
+  ),
+  dgxStation: definePromptAsset(
+    "docs/resources/prompt-assets/dgx-station.md",
+    "783a3f5973e1471178c78ead1952b904f3888dc603f5e079ad31d82cd2037f9a", // gitleaks:allow -- pinned prompt-asset SHA-256
+  ),
+  windowsWsl: definePromptAsset(
+    "docs/resources/prompt-assets/windows-wsl.md",
+    "7719b81e9304ac7cd924a9fe487a154846660557e50a0f1524f2b0dc87e729ab", // gitleaks:allow -- pinned prompt-asset SHA-256
+  ),
+} as const;
+const platformPromptAssetRoutes = [
+  { asset: promptAssets.dgxSpark, label: "Confirmed DGX Spark" },
+  { asset: promptAssets.dgxStation, label: "Confirmed DGX Station" },
+  { asset: promptAssets.windowsWsl, label: "Officially detected Windows WSL" },
+] as const;
+const runGit = createGitRunner(repoRoot);
+
 const localCredentialFormSource = path.join(
   repoRoot,
   "docs",
@@ -146,6 +192,10 @@ function readStarterPrompt(): string {
     fs.readFileSync(starterPromptMarkdownSource, "utf8"),
     "docs/resources/starter-prompt.md",
   );
+}
+
+function readPromptAsset(asset: (typeof promptAssets)[keyof typeof promptAssets]): string {
+  return read(asset.path);
 }
 
 function urlsIn(content: string): URL[] {
@@ -605,46 +655,246 @@ describe("starter prompt docs CTA", () => {
     );
     expect(promptSource).toContain("OpenRouter: `NEMOCLAW_PROVIDER=openrouter`");
     expect(promptSource).toContain("Existing vLLM: `NEMOCLAW_PROVIDER=vllm`");
-    expect(promptSource).toContain(
-      "Windows WSL Express: `NEMOCLAW_PROVIDER=install-windows-ollama`",
-    );
-    expect(promptSource).toContain(
-      "leave `NEMOCLAW_VLLM_MODEL` unset for DGX Spark Express and for automatic DGX Station trusted-pair selection",
-    );
-    expect(promptSource).toContain(
-      "At least one derived address must already be trusted; if both are trusted, their host keys must identify one coherent SSH host.",
-    );
-    expect(promptSource).toContain(
-      "Leave `NEMOCLAW_VLLM_MODEL` unset so the installed maintained release selects its current Spark Express model.",
-    );
-    expect(promptSource).toContain(
-      "Set `NEMOCLAW_YES=1` only after both the separate download approval and final install approval.",
-    );
   });
 
-  it("aligns messaging and policy questions with agent support and Express mode (#6990)", () => {
+  it("keeps local prompt assets byte-aligned with their exact immutable revision blobs (#6990)", () => {
+    resolvePromptAssetRevision(promptAssetRevision, runGit);
+    for (const asset of Object.values(promptAssets)) {
+      const localBytes = fs.readFileSync(path.join(repoRoot, asset.path));
+      const pinnedBytes = readPinnedPromptAssetBlob(promptAssetRevision, asset, runGit);
+      const pinnedSha256 = createHash("sha256").update(pinnedBytes).digest("hex");
+
+      expect(asset.pinnedSha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(
+        localBytes.equals(pinnedBytes),
+        `${asset.path} does not byte-match its Git blob at ${promptAssetRevision}; commit the asset content, then repin every platform URL, promptAssetRevision, and digest to that content commit`,
+      ).toBe(true);
+      expect(pinnedSha256, `${asset.path} has a stale pinned SHA-256`).toBe(asset.pinnedSha256);
+    }
+  });
+
+  it("fails closed when the immutable prompt asset revision or blobs cannot be resolved (#6990)", () => {
+    expect(() => resolvePromptAssetRevision("main", () => fail("git must not run"))).toThrow(
+      "promptAssetRevision must be a full lowercase commit SHA",
+    );
+
+    const fetchedRevisionResults = [
+      { status: 1, stdout: Buffer.alloc(0) },
+      { status: 0, stdout: Buffer.alloc(0) },
+      { status: 0, stdout: Buffer.from("commit\n") },
+    ];
+    const fetchedRevision: GitRunner = () =>
+      fetchedRevisionResults.shift() ?? fail("unexpected immutable-revision Git command");
+    expect(() => resolvePromptAssetRevision(promptAssetRevision, fetchedRevision)).not.toThrow();
+    expect(fetchedRevisionResults).toEqual([]);
+
+    const unavailableRevision: GitRunner = (args) => ({
+      status: args[0] === "fetch" ? 128 : 1,
+      stdout: Buffer.alloc(0),
+    });
+    expect(() => resolvePromptAssetRevision(promptAssetRevision, unavailableRevision)).toThrow(
+      `could not fetch immutable prompt asset revision ${promptAssetRevision}`,
+    );
+
+    expect(() =>
+      resolvePromptAssetRevision(promptAssetRevision, () => ({
+        status: 0,
+        stdout: Buffer.from("tree\n"),
+      })),
+    ).toThrow("promptAssetRevision must resolve to a commit object");
+
+    expect(() =>
+      readPinnedPromptAssetBlob(promptAssetRevision, promptAssets.dgxSpark, () => ({
+        status: 0,
+        stdout: Buffer.alloc(0),
+      })),
+    ).toThrow("must contain exactly one regular prompt asset blob");
+
+    const malformedBlobOid = "a".repeat(40);
+    const malformedBlob: GitRunner = (args) => ({
+      status: 0,
+      stdout:
+        args[0] === "ls-tree"
+          ? Buffer.from(`100644 blob ${malformedBlobOid}\t${promptAssets.dgxSpark.path}\0`)
+          : Buffer.from("tree\n"),
+    });
+    expect(() =>
+      readPinnedPromptAssetBlob(promptAssetRevision, promptAssets.dgxSpark, malformedBlob),
+    ).toThrow("does not resolve to a readable Git blob");
+  });
+
+  it("routes platform-only installation instructions to raw prompt assets (#6990)", () => {
     const promptSource = readStarterPrompt();
+    const sparkSource = readPromptAsset(promptAssets.dgxSpark);
+    const stationSource = readPromptAsset(promptAssets.dgxStation);
+    const windowsSource = readPromptAsset(promptAssets.windowsWsl);
+
+    expect(promptAssetRevision).toMatch(/^[0-9a-f]{40}$/);
+    expect(requireExpectedPromptAssetRoutes(promptSource, platformPromptAssetRoutes)).toEqual(
+      new Map(platformPromptAssetRoutes.map(({ asset, label }) => [label, asset.url])),
+    );
+    for (const asset of Object.values(promptAssets)) {
+      expect(promptSource).toContain(asset.url);
+      const assetUrl = new URL(asset.url);
+      expect(assetUrl.origin).toBe("https://raw.githubusercontent.com");
+      expect(assetUrl.pathname).toMatch(
+        /^\/NVIDIA\/NemoClaw\/[0-9a-f]{40}\/docs\/resources\/prompt-assets\/[^/]+\.md$/,
+      );
+      expect(assetUrl.pathname).toContain(`/${promptAssetRevision}/`);
+    }
+
+    expect(promptSource).toContain("load exactly one matching instruction asset");
+    expect(promptSource).toContain("Read the matching raw Markdown file completely");
+    expect(promptSource).toContain("Do not load a platform asset for any other computer.");
+    expect(promptSource).not.toContain("approximately 352 GB");
+    expect(promptSource).not.toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
+    expect(promptSource).not.toContain(
+      "NEMOCLAW_VLLM_MODEL=nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+    );
+
+    expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
+    expect(sparkSource).toContain("Leave `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_MODEL` unset");
+    expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
+    expect(stationSource).toContain("`nvidia/nemotron-3-ultra-550b-a55b`");
+    expect(stationSource).toContain("`deepseek-v4-flash`");
+    expect(stationSource).toContain("`deepseek-ai/DeepSeek-V4-Flash`");
+    expect(stationSource).toContain("Nemotron 3 Ultra 550B, the ordinary installer default");
+    expect(stationSource).toContain(
+      "DeepSeek V4 Flash, the explicit `--station-deepseek` override",
+    );
+    expect(stationSource).not.toContain("provider-preseeded DeepSeek path");
+    expect(stationSource).not.toContain("only supported next step");
+    expect(stationSource).toContain("model-cache filesystem and Docker storage");
+    expect(stationSource).toContain(
+      "Do not run `scripts/prepare-dgx-station-host.sh --check`, `--verify`, or `--apply` separately",
+    );
+    expect(stationSource).toContain("For Nemotron Ultra, run the ordinary installer without");
+    expect(stationSource).toContain("For DeepSeek, pass `--station-deepseek`");
+    for (const environmentName of [
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_VLLM_MODEL",
+      "NEMOCLAW_MODEL",
+      "NEMOCLAW_NON_INTERACTIVE",
+      "NEMOCLAW_YES",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      "NEMOCLAW_NO_EXPRESS",
+    ]) {
+      expect(stationSource).toContain(`\`${environmentName}\``);
+    }
+    expect(stationSource).toContain(
+      "Let the installer present its third-party-software notice and complete Express summary.",
+    );
+    expect(stationSource).toContain("Run the installer only in a secure interactive terminal");
+    expect(stationSource).toContain("Keep each official confirmation visible");
+    expect(stationSource).toContain("evaluation path with deferred end-to-end validation");
+    expect(stationSource).toContain("startup may still fail after readiness checks");
+    expect(stationSource).toContain("third-party-software notice");
+    expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
+    expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
+  });
+
+  it("rejects platform labels whose pinned prompt asset URLs are swapped (#6990)", () => {
+    const promptSource = readStarterPrompt();
+    const sparkUrlMarker = "__DGX_SPARK_PROMPT_ASSET_URL__";
+    const swappedRoutes = promptSource
+      .replace(promptAssets.dgxSpark.url, sparkUrlMarker)
+      .replace(promptAssets.dgxStation.url, promptAssets.dgxSpark.url)
+      .replace(sparkUrlMarker, promptAssets.dgxStation.url);
+
+    expect(() =>
+      requireExpectedPromptAssetRoutes(swappedRoutes, platformPromptAssetRoutes),
+    ).toThrow(`Confirmed DGX Spark must map to ${promptAssets.dgxSpark.url}`);
+  });
+
+  it("uses approved platform defaults without collecting optional onboarding choices (#6990)", () => {
+    const promptSource = readStarterPrompt();
+    const platformAssets = [
+      readPromptAsset(promptAssets.dgxSpark),
+      readPromptAsset(promptAssets.windowsWsl),
+    ];
+    const expressAssets = [
+      readPromptAsset(promptAssets.dgxSpark),
+      readPromptAsset(promptAssets.windowsWsl),
+    ];
+    const stationSource = readPromptAsset(promptAssets.dgxStation);
 
     expect(promptSource).toContain(
-      "include messaging in the first sandbox build when the selected agent supports it",
-    );
-    expect(promptSource).toContain(
-      "Ask separately for sandbox name, web search, messaging when the selected agent supports it, download approval, and final install approval.",
+      "Next ask which agent I want: OpenClaw, Hermes, or LangChain Deep Agents Code.",
     );
     expect(promptSource).toContain("Skip messaging for Deep Agents.");
     expect(promptSource).toContain(
-      "Balanced policy is required for Express; set `NEMOCLAW_POLICY_TIER=balanced`",
+      "If a loaded platform asset selects its approved install path, follow its policy requirement and skip the policy-tier question.",
     );
     expect(promptSource).toContain(
-      "For Express, state that Balanced policy is required, keep `NEMOCLAW_POLICY_TIER=balanced`, and skip the policy-tier question.",
+      "For installation outside an accepted platform-asset path, ask for Balanced, Restricted, or Open policy.",
     );
     expect(promptSource).toContain(
-      "For non-Express installation, ask for Balanced, Restricted, or Open policy.",
+      "When a platform asset delegates consent to the official installer, let the installer present its notice and final Express confirmation instead of pre-accepting them.",
+    );
+    expect(promptSource).toContain(
+      "Ask for final permission before installation outside an accepted platform-asset path.",
     );
     expect(promptSource).not.toContain("\n- Ask for Balanced, Restricted, or Open policy.\n");
-    expect(promptSource).toContain(
-      "Managed vLLM: `NEMOCLAW_PROVIDER=install-vllm`; leave `NEMOCLAW_VLLM_MODEL` unset for DGX Spark Express and for automatic DGX Station trusted-pair selection, or preserve an approved explicit model override.",
+
+    for (const assetSource of platformAssets) {
+      expect(assetSource).toContain(
+        "`NEMOCLAW_NON_INTERACTIVE=1`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt`, `NEMOCLAW_YES=1`, and `NEMOCLAW_POLICY_MODE=suggested`",
+      );
+      expect(assetSource).toContain(
+        "Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.",
+      );
+      expect(assetSource).toContain(
+        "Leave `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_POLICY_TIER`, web-search settings, and messaging settings unset",
+      );
+      expect(assetSource).toContain(
+        "Do not ask again for the agent or ask separate questions for model, sandbox name, web search, messaging, policy, download approval, or final installation approval.",
+      );
+      expect(assetSource).not.toContain("NEMOCLAW_POLICY_TIER=balanced");
+    }
+
+    for (const assetSource of expressAssets) {
+      expect(assetSource).toContain(
+        "Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` when Express is accepted.",
+      );
+      expect(assetSource).toContain("Treat the Express confirmation as approval");
+      const noticeIndex = assetSource.indexOf("Include the third-party-software notice");
+      const confirmationIndex = assetSource.indexOf("Choices:");
+      const acceptanceIndex = assetSource.indexOf("Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`");
+      expect(noticeIndex).toBeGreaterThan(-1);
+      expect(confirmationIndex).toBeGreaterThan(noticeIndex);
+      expect(acceptanceIndex).toBeGreaterThan(confirmationIndex);
+    }
+
+    expect(stationSource).toContain(
+      "Use the selected maintained release's official installer as the authority",
     );
+    expect(stationSource).toContain(
+      "Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.",
+    );
+    expect(stationSource).not.toContain("`NEMOCLAW_NON_INTERACTIVE=1`");
+    expect(stationSource).not.toContain("Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`");
+    expect(stationSource).not.toContain("Set `NEMOCLAW_PROVIDER=install-vllm`");
+
+    const stationDisclosureIndex = stationSource.indexOf("On generic Ubuntu, Station Express");
+    const stationDockerGroupIndex = stationSource.indexOf(
+      "`docker` group, which grants root-equivalent control",
+    );
+    const stationRebootIndex = stationSource.indexOf("operator-controlled reboot");
+    const stationNoticeIndex = stationSource.indexOf(
+      "Let the installer present its third-party-software notice",
+    );
+    const stationConfirmationIndex = stationSource.indexOf("Choices:");
+    const stationDefaultIndex = stationSource.indexOf(
+      "For Nemotron Ultra, run the ordinary installer without",
+    );
+    const stationOverrideIndex = stationSource.indexOf("For DeepSeek, pass `--station-deepseek`");
+    expect(stationDisclosureIndex).toBeGreaterThan(-1);
+    expect(stationDockerGroupIndex).toBeGreaterThan(stationDisclosureIndex);
+    expect(stationRebootIndex).toBeGreaterThan(stationDockerGroupIndex);
+    expect(stationConfirmationIndex).toBeGreaterThan(stationRebootIndex);
+    expect(stationDefaultIndex).toBeGreaterThan(stationConfirmationIndex);
+    expect(stationOverrideIndex).toBeGreaterThan(stationDefaultIndex);
+    expect(stationNoticeIndex).toBeGreaterThan(stationOverrideIndex);
   });
 
   it("rejects missing, ambiguous, and unsafe credential schemas (#5048)", async () => {

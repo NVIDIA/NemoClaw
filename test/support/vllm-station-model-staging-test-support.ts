@@ -133,7 +133,11 @@ export function createManifestPeerPythonRunner(options: {
   });
 }
 
-export function createPeerIntegrityRunner(options: { localManifest: string; peerHome: string }) {
+export function createPeerIntegrityRunner(options: {
+  localManifest: string;
+  peerHome: string;
+  peerInputPrefix?: string;
+}) {
   const state = { stagingPath: "" };
   const runCommand = vi.fn<ModelStagingFixtureCommand>(async (file, args, commandOptions) => {
     if (file === "python3") return result(options.localManifest);
@@ -141,6 +145,7 @@ export function createPeerIntegrityRunner(options: { localManifest: string; peer
       return runPython(["-"], {
         ...commandOptions,
         env: { ...commandOptions.env, HOME: options.peerHome },
+        input: `${options.peerInputPrefix ?? ""}${commandOptions.input ?? ""}`,
       });
     }
     if (file === "rsync") {

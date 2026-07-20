@@ -22,18 +22,105 @@ export type InitialSandboxPolicy = {
   cleanup?: () => boolean;
 };
 
+export function discloseInitialSandboxPolicy(policy: InitialSandboxPolicy): void {
+  if (policy.appliedPresets.length === 0) return;
+  console.log("  Including policy preset(s) at sandbox boot:", policy.appliedPresets.join(", "));
+  policies.logPresetScope(fs.readFileSync(policy.policyPath, "utf8"));
+}
+
 const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "hermes" });
 
 const PROC_PATH = "/proc";
 const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
+const SYSFS_PATH = "/sys";
+const DMI_PRODUCT_NAME_PATH = "/sys/class/dmi/id/product_name";
+const PCI_BDF_PATTERN = /^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$/iu;
+const NVIDIA_PCI_VENDOR = "0x10de";
+const DISPLAY_PCI_CLASS_PATTERN = /^0x03[0-9a-f]{4}$/iu;
+const STATION_GB300_SHARED_SYSFS_RELATIVE_PATHS = [
+  "devices/system/cpu",
+  "devices/system/memory",
+  "devices/system/node",
+  "module/nvidia/initstate",
+  "module/nvidia_uvm/initstate",
+] as const;
 
 function isProcEntryOwnedByOpenShell(entry: string): boolean {
   return entry === PROC_PATH || PROC_COMM_READ_WRITE_PATHS.includes(entry);
 }
 
+function deduplicateDirectGpuSysfsEntries(
+  entries: string[],
+  candidates: ReadonlySet<string>,
+): string[] {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    if (!candidates.has(entry)) return true;
+    if (seen.has(entry)) return false;
+    seen.add(entry);
+    return true;
+  });
+}
+
 type DirectGpuPolicyOptions = {
   procReadWrite?: boolean;
+  sysfsReadOnlyPaths?: readonly string[];
 };
+
+export function isStationGb300ProductName(productName: string): boolean {
+  return /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu.test(productName.trim());
+}
+
+function readTrimmedFile(filePath: string): string | null {
+  try {
+    return fs.readFileSync(filePath, "utf-8").trim();
+  } catch {
+    return null;
+  }
+}
+
+export function discoverStationGb300SysfsReadOnlyPaths(
+  productName: string,
+  sysfsRoot = SYSFS_PATH,
+): string[] {
+  if (!isStationGb300ProductName(productName)) return [];
+
+  const readOnlyPaths: string[] = [];
+  const pciDevicesRoot = path.join(sysfsRoot, "bus", "pci", "devices");
+  let pciDeviceNames: string[] = [];
+  try {
+    pciDeviceNames = fs.readdirSync(pciDevicesRoot).sort();
+  } catch {
+    // A Station image without PCI sysfs cannot use the scoped GPU exception.
+  }
+  for (const pciDeviceName of pciDeviceNames) {
+    if (!PCI_BDF_PATTERN.test(pciDeviceName)) continue;
+    const pciDeviceRoot = path.join(pciDevicesRoot, pciDeviceName);
+    const vendor = readTrimmedFile(path.join(pciDeviceRoot, "vendor"))?.toLowerCase();
+    const pciClass = readTrimmedFile(path.join(pciDeviceRoot, "class"));
+    if (vendor === NVIDIA_PCI_VENDOR && pciClass && DISPLAY_PCI_CLASS_PATTERN.test(pciClass)) {
+      readOnlyPaths.push(`${SYSFS_PATH}/bus/pci/devices/${pciDeviceName}`);
+    }
+  }
+  if (readOnlyPaths.length === 0) {
+    throw new Error(
+      `Cannot prepare Station GB300 direct GPU sandbox policy; no NVIDIA display-class PCI device was found under ${pciDevicesRoot}.`,
+    );
+  }
+
+  for (const relativePath of STATION_GB300_SHARED_SYSFS_RELATIVE_PATHS) {
+    if (fs.existsSync(path.join(sysfsRoot, relativePath))) {
+      readOnlyPaths.push(`${SYSFS_PATH}/${relativePath}`);
+    }
+  }
+  return readOnlyPaths;
+}
+
+function discoverHostStationGb300SysfsReadOnlyPaths(): string[] {
+  if (process.platform !== "linux") return [];
+  const productName = readTrimmedFile(DMI_PRODUCT_NAME_PATH);
+  return productName ? discoverStationGb300SysfsReadOnlyPaths(productName) : [];
+}
 
 export function buildDirectGpuPolicyYaml(
   basePolicy: string,
@@ -45,22 +132,50 @@ export function buildDirectGpuPolicyYaml(
   }
   parsed.filesystem_policy = parsed.filesystem_policy || {};
   const fsPolicy = parsed.filesystem_policy;
+  const sysfsReadOnlyPaths = [...(options.sysfsReadOnlyPaths ?? [])];
+  const sysfsReadOnlyPathSet = new Set(sysfsReadOnlyPaths);
   // OpenShell adds /proc as read-write only after GPU devices are present.
   // Remove entries that would block that enrichment or be treated as literal paths.
   const readOnly = Array.isArray(fsPolicy.read_only)
     ? fsPolicy.read_only.map((entry: unknown) => String(entry))
     : [];
-  fsPolicy.read_only = readOnly.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
-  const readWrite = Array.isArray(fsPolicy.read_write)
-    ? fsPolicy.read_write.map((entry: unknown) => String(entry))
-    : [];
-  fsPolicy.read_write = readWrite.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
+  const readWrite = deduplicateDirectGpuSysfsEntries(
+    Array.isArray(fsPolicy.read_write)
+      ? fsPolicy.read_write
+          .map((entry: unknown) => String(entry))
+          .filter((entry: string) => !isProcEntryOwnedByOpenShell(entry))
+      : [],
+    sysfsReadOnlyPathSet,
+  );
+  const readWriteSet = new Set(readWrite);
+  fsPolicy.read_only = deduplicateDirectGpuSysfsEntries(
+    readOnly.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry)),
+    sysfsReadOnlyPathSet,
+  ).filter((entry: string) => !sysfsReadOnlyPathSet.has(entry) || !readWriteSet.has(entry));
+  fsPolicy.read_write = readWrite;
+  if (
+    sysfsReadOnlyPaths.length > 0 &&
+    !fsPolicy.read_only.includes(SYSFS_PATH) &&
+    !fsPolicy.read_write.includes(SYSFS_PATH)
+  ) {
+    // CUDA reads PCI and host topology plus NVIDIA module initialization state
+    // during cuInit(). Grant only those measured sysfs paths through Landlock;
+    // no GPU path needs sysfs write access.
+    const readOnlySet = new Set(fsPolicy.read_only);
+    for (const candidate of sysfsReadOnlyPaths) {
+      if (!readOnlySet.has(candidate) && !readWriteSet.has(candidate)) {
+        fsPolicy.read_only.push(candidate);
+        readOnlySet.add(candidate);
+      }
+    }
+  }
   if (options.procReadWrite && !fsPolicy.read_write.includes(PROC_PATH)) {
-    // Linux Docker-driver GPU patching recreates the container with GPU flags
-    // after `openshell sandbox create`, so OpenShell never sees `--gpu` and
-    // cannot add its native /proc GPU enrichment. Mirror that enrichment here
-    // for the patched path; without it Landlock denies the NVIDIA runtime's
-    // /proc/<pid>/task/<tid>/comm write even though Docker GPU access works.
+    // This exists only for the legacy post-create Docker GPU compatibility
+    // path, which recreates the container after `openshell sandbox create` and
+    // prevents OpenShell from seeing `--gpu`. Mirror native /proc enrichment
+    // until NemoClaw #4316 removes the recreation in
+    // src/lib/onboard/docker-gpu-patch-finalize.ts; remove this grant when
+    // native OpenShell GPU creation replaces that compatibility path.
     fsPolicy.read_write.push(PROC_PATH);
   }
   return YAML.stringify(parsed);
@@ -212,6 +327,7 @@ export function prepareInitialSandboxCreatePolicy(
   options: {
     directGpu?: boolean;
     dockerGpuPatch?: boolean;
+    stationGb300SysfsReadOnlyPaths?: readonly string[];
     additionalPresets?: string[];
     agentName?: string | null;
     policyTier?: string | null;
@@ -220,6 +336,8 @@ export function prepareInitialSandboxCreatePolicy(
   const directGpuPolicy = options.directGpu
     ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
         procReadWrite: options.dockerGpuPatch === true,
+        sysfsReadOnlyPaths:
+          options.stationGb300SysfsReadOnlyPaths ?? discoverHostStationGb300SysfsReadOnlyPaths(),
       })
     : null;
   let effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;

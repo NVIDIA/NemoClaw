@@ -327,7 +327,7 @@ describe("Brev nightly workflow contract", () => {
     expect(script.indexOf("tar -xzf")).toBeGreaterThan(script.indexOf("sha256sum -c -"));
   });
 
-  // source-shape-contract: security -- Removed launchable inputs must not restore remote setup-script execution
+  // source-shape-contract: security -- Source validation must not imply a published-image path
   it("does not expose stale published-launchable controls", () => {
     const dispatchInputs = Object.keys(nightly.on?.workflow_dispatch?.inputs ?? {});
     const reusableInputs = Object.keys(branchValidation.on?.workflow_call?.inputs ?? {});
@@ -338,8 +338,11 @@ describe("Brev nightly workflow contract", () => {
     const run = validation?.steps?.find((step) => step.name === "Run ephemeral Brev E2E");
 
     expect(dispatchInputs).not.toContain("launchable_id");
+    expect(dispatchInputs).not.toContain("use_launchable");
     expect(reusableInputs).not.toContain("setup_script_url");
+    expect(reusableInputs).not.toContain("use_launchable");
     expect(callerInputs).not.toContain("launchable_id");
+    expect(callerInputs).not.toContain("use_launchable");
     expect(callerInputs).not.toContain("use_published_launchable");
     expect(run?.env).not.toHaveProperty("LAUNCHABLE_SETUP_SCRIPT");
   });

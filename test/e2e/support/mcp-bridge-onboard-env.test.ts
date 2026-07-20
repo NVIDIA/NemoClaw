@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildMcpBridgeOnboardEnv } from "../live/mcp-bridge-onboard-env.ts";
+import {
+  buildMcpBridgeExactMainEnv,
+  buildMcpBridgeOnboardEnv,
+} from "../live/mcp-bridge-onboard-env.ts";
 
 const ONBOARD_OPTIONS = {
   agent: "langchain-deepagents-code" as const,
@@ -15,6 +18,29 @@ const ONBOARD_OPTIONS = {
 };
 
 describe("MCP bridge onboarding environment", () => {
+  it("restores exact-main OpenShell overrides after child environment sanitization", () => {
+    const env = buildMcpBridgeExactMainEnv({
+      baseEnv: {
+        HOME: "/tmp/home",
+        PATH: "/usr/bin",
+        NEMOCLAW_OPENSHELL_BIN: "/dropped/openshell",
+      },
+      envOverlay: {
+        PATH: "/tmp/exact-main:/usr/bin",
+        NEMOCLAW_OPENSHELL_BIN: "/tmp/exact-main/openshell",
+        NEMOCLAW_OPENSHELL_GATEWAY_BIN: "/usr/local/bin/openshell-gateway",
+        NEMOCLAW_OPENSHELL_SANDBOX_BIN: "/usr/local/bin/openshell-sandbox",
+      },
+    });
+
+    expect(env).toMatchObject({
+      PATH: "/tmp/exact-main:/usr/bin",
+      NEMOCLAW_OPENSHELL_BIN: "/tmp/exact-main/openshell",
+      NEMOCLAW_OPENSHELL_GATEWAY_BIN: "/usr/local/bin/openshell-gateway",
+      NEMOCLAW_OPENSHELL_SANDBOX_BIN: "/usr/local/bin/openshell-sandbox",
+    });
+  });
+
   it("passes only exact-main OpenShell overrides after fixed onboarding values", () => {
     const env = buildMcpBridgeOnboardEnv({
       ...ONBOARD_OPTIONS,

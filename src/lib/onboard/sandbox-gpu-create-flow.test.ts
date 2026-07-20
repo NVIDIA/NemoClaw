@@ -265,7 +265,7 @@ describe("runSandboxGpuCreateFlow proof authorization", () => {
 });
 
 describe("runSandboxGpuCreateFlow native failure and readiness", () => {
-  it("persists the Hermes startup command on the no-GPU Docker route", async () => {
+  it("threads restart-safe startup resource limits on the no-GPU Docker route", async () => {
     const input = createInput();
     input.sandboxGpuConfig = {
       ...input.sandboxGpuConfig,
@@ -276,13 +276,21 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
     input.initialGpuRoute = "none";
     input.createArgv = ["openshell", "sandbox", "create"];
     input.persistStartupCommand = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
 
     await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
       route: "none",
     });
 
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
-      expect.objectContaining({ route: "none", persistStartupCommand: true }),
+      expect.objectContaining({
+        route: "none",
+        persistStartupCommand: true,
+        requiredUlimits: input.requiredUlimits,
+      }),
     );
   });
 
@@ -296,6 +304,27 @@ describe("runSandboxGpuCreateFlow native failure and readiness", () => {
 
     expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ route: "native", persistStartupCommand: false }),
+    );
+  });
+
+  it("applies exact required limits while preserving the native GPU route", async () => {
+    const input = createInput();
+    input.persistStartupCommand = true;
+    input.requiredUlimits = [
+      { name: "nproc", soft: 512, hard: 512 },
+      { name: "nofile", soft: 65_536, hard: 65_536 },
+    ];
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(mocks.createDockerGpuSandboxCreatePatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: "native",
+        persistStartupCommand: true,
+        requiredUlimits: input.requiredUlimits,
+      }),
     );
   });
 

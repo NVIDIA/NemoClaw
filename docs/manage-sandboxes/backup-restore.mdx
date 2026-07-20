@@ -11,8 +11,6 @@ content:
 skill:
   priority: 20
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 NemoClaw snapshots preserve manifest-defined sandbox state before destructive or state-changing operations.
 They are the preferred backup and restore path.
 
@@ -41,11 +39,14 @@ Agent manifests can also declare durable top-level state files.
 Treat snapshot directories as private local data.
 
 <AgentOnly variant="hermes">
-Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, and the SQLite database behind `.hermes/state.db`.
-NemoClaw uses SQLite's online backup API and restores the database through SQLite instead of copying a live raw database file.
+Hermes snapshots include `SOUL.md`, the Web Dashboard profile under `.hermes/dashboard-home/`, the SQLite database behind `.hermes/state.db`, and the default kanban board in `.hermes/kanban.db`.
+NemoClaw uses SQLite's online backup API and restores those databases through SQLite instead of copying live raw database files.
+
+Kanban backup is limited to the backward-compatible default board in `kanban.db`.
+Named boards, attachments, worker logs, scratch workspaces under `.hermes/kanban/`, and external directory or worktree targets are not included; back up that state separately.
 
 The dashboard profile includes `MEMORY.md` and `USER.md`.
-The Hermes database can contain session metadata and message history needed for a faithful restore.
+The Hermes state database can contain session metadata and message history needed for a faithful restore.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 Deep Agents snapshots include manifest-declared state under `/sandbox/.deepagents`, including skills and runtime state, while omitting credential-bearing user files.

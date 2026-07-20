@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import { createSession } from "../../../state/onboard-session";
 import { handleSandboxState } from "./sandbox";
 import {
@@ -239,14 +240,16 @@ describe("sandbox create intent machine boundary", () => {
           credentialEnvName === "TELEGRAM_BOT_TOKEN"),
     );
     const stageSandboxCredentialProviders = vi
-      .fn<() => Promise<string[]>>()
+      .fn<() => Promise<CheckpointProviderBinding[]>>()
       .mockImplementationOnce(async () => {
         durableSession.stagedCredentialProviders = ["tm-brave-search"];
-        return ["tm-brave-search"];
+        return [{ name: "tm-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" }];
       })
       .mockImplementationOnce(async () => {
         durableSession.stagedCredentialProviders.push("tm-telegram-bridge");
-        return ["tm-telegram-bridge"];
+        return [
+          { name: "tm-telegram-bridge", type: "generic", credentialEnv: "TELEGRAM_BOT_TOKEN" },
+        ];
       })
       .mockResolvedValue([]);
     const readMessagingPlanFromEnv = vi
