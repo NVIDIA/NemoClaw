@@ -29,13 +29,12 @@ describe("externally supervised gateway registration", () => {
     let registered = false;
     const runOpenshell = vi.fn((args: string[]) => {
       commands.push(args);
-      if (args[1] === "add") registered = true;
+      registered ||= args[1] === "add";
       return { status: 0 };
     });
-    const runCaptureOpenshell = vi.fn((args: string[]) => {
-      if (!registered) return "No gateway metadata found";
-      return info("nemoclaw", OWNER.endpoint!);
-    });
+    const runCaptureOpenshell = vi.fn(() =>
+      registered ? info("nemoclaw", OWNER.endpoint!) : "No gateway metadata found",
+    );
 
     bindExternallySupervisedGateway(OWNER, "nemoclaw", {
       runOpenshell,
@@ -51,7 +50,7 @@ describe("externally supervised gateway registration", () => {
   it("reselects the declared registration instead of leaving an ambient sibling active", () => {
     let selected = "sibling";
     const runOpenshell = vi.fn((args: string[]) => {
-      if (args[1] === "select") selected = args[2];
+      selected = args[1] === "select" ? args[2] : selected;
       return { status: 0 };
     });
     const runCaptureOpenshell = vi.fn((args: string[]) =>
