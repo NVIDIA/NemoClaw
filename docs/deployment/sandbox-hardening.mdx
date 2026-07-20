@@ -1,8 +1,8 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Sandbox Image Hardening"
-sidebar-title: "Sandbox Hardening"
+title: "Review Sandbox Hardening"
+sidebar-title: "Review Sandbox Hardening"
 description: "Security hardening measures applied to the NemoClaw sandbox container image."
 description-agent: "Includes the sandbox container image hardening reference, covering Docker capabilities and process limits. Use when reviewing sandbox image security controls, auditing capability drops, or looking up the runtime resource limits."
 keywords: ["nemoclaw sandbox hardening", "container security", "docker capabilities", "process limits"]
@@ -51,8 +51,10 @@ When `setpriv` is available, the entrypoint also removes the remaining privilege
 
 The bounding-set drop is best effort: if `capsh` or `CAP_SETPCAP` is unavailable the entrypoint logs a warning and continues with the runtime-provided capability set.
 If `setpriv` is unavailable, the entrypoint falls back to `gosu`.
+
 To make the drop fail-closed instead, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment: the agent then refuses to start unless the agent process tree's bounding set is verified free of the dangerous capabilities.
 This is opt-in because many hosts cannot drop capabilities, including cloud VMs, Docker Desktop, and WSL environments without `CAP_SETPCAP`.
+
 The check covers the agent process tree only.
 
 For defense-in-depth, also drop all Linux capabilities at the container runtime when you launch the image directly.

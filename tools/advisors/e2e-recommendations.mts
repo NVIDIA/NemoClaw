@@ -15,6 +15,7 @@ import { buildRiskPlan, type RiskPlan } from "./risk-plan.mts";
 
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
+export const E2E_RENDER_LIMIT = 20;
 const TRUSTED_REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const E2E_ALL_ID = "e2e-all";
 const CREDENTIAL_FREE_TEST_TAG = "e2e/credential-free";
@@ -76,7 +77,7 @@ export type E2eTargetRecommendation = {
   reason: string;
 };
 
-export type E2eExactHeadCredentialFreeTest = {
+export type E2eChangedCredentialFreeTest = {
   id: string;
   file: string;
 };
@@ -92,7 +93,7 @@ export type E2eTargetAdvisorResult = {
   headRef: string;
   changedFiles: string[];
   relevantChangedFiles: string[];
-  exactHeadCredentialFreeTests: E2eExactHeadCredentialFreeTest[];
+  changedCredentialFreeTests: E2eChangedCredentialFreeTest[];
   required: E2eTargetRecommendation[];
   optional: E2eTargetRecommendation[];
   noTargetE2eReason: string | null;
@@ -118,7 +119,7 @@ type E2eTargetNormalizationContext = {
   freeStandingJobs: E2eWorkflowJob[];
   allowedJobIds: Set<string>;
   liveTestToJobs: Map<string, string[]>;
-  exactHeadCredentialFreeTests: E2eExactHeadCredentialFreeTest[];
+  changedCredentialFreeTests: E2eChangedCredentialFreeTest[];
 };
 
 export function trustedE2eRecommendationInventory(): TrustedE2eRecommendationInventory {
@@ -190,10 +191,12 @@ export function normalizeE2eCoverageResult(
 }
 
 function deterministicCoverageTests(changedFiles: string[], riskPlan: RiskPlan): E2eCoverageTest[] {
-  const tests: E2eCoverageTest[] = riskPlan.requiredJobs.map((job) => ({
-    id: job.id,
-    reason: job.reasons.join(" "),
-  }));
+  const tests: E2eCoverageTest[] = [...riskPlan.requiredJobs, ...riskPlan.requiredTargets].map(
+    (selection) => ({
+      id: selection.id,
+      reason: selection.reasons.join(" "),
+    }),
+  );
   if (requiresCloudOnboardE2e(changedFiles) && !tests.some((test) => test.id === "cloud-onboard")) {
     tests.push({
       id: "cloud-onboard",
@@ -271,7 +274,7 @@ export function normalizeE2eTargetAdvisorResult(
     options.riskPlan ??
     buildRiskPlan({ headSha: "target-normalize", changedFiles: metadata.changedFiles });
   const deterministicRequired = mergeRecommendations(
-    deterministicRiskJobRecommendations(riskPlan, context),
+    deterministicRiskRecommendations(riskPlan, context),
     focusedJobs,
   );
   const required = suppressFanout
@@ -302,7 +305,7 @@ export function normalizeE2eTargetAdvisorResult(
       ...stringArrayWithinChanged(result.relevantChangedFiles, metadata.changedFiles),
       ...riskPlan.families.flatMap((family) => family.matchedFiles),
     ]),
-    exactHeadCredentialFreeTests: context.exactHeadCredentialFreeTests,
+    changedCredentialFreeTests: context.changedCredentialFreeTests,
     required,
     optional: optional.filter(
       (candidate) =>
@@ -357,7 +360,7 @@ function buildE2eTargetNormalizationContext(
     allowedJobIds.has(job.id),
   );
   const liveTestToJobs = new Map<string, string[]>();
-  const exactHeadCredentialFreeTests: E2eExactHeadCredentialFreeTest[] = [];
+  const changedCredentialFreeTests: E2eChangedCredentialFreeTest[] = [];
   const changedCredentialFreeProjects = new Map(
     changedFiles.flatMap((file) => {
       const project = credentialFreeTestProjectForFile(file);
@@ -380,14 +383,14 @@ function buildE2eTargetNormalizationContext(
     if (!row || !project) continue;
     addMapValue(liveTestToJobs, row.file, row.id);
     allowedJobIds.add(row.id);
-    exactHeadCredentialFreeTests.push(row);
+    changedCredentialFreeTests.push(row);
   }
   return {
     e2eWorkflowText,
     freeStandingJobs,
     allowedJobIds,
     liveTestToJobs,
-    exactHeadCredentialFreeTests: exactHeadCredentialFreeTests.sort(
+    changedCredentialFreeTests: changedCredentialFreeTests.sort(
       (left, right) => left.id.localeCompare(right.id) || left.file.localeCompare(right.file),
     ),
   };
@@ -412,7 +415,7 @@ export function credentialFreeTestIdForFile(file: string): string | undefined {
 function credentialFreeTestRow(
   file: string,
   source: string,
-): E2eExactHeadCredentialFreeTest | undefined {
+): E2eChangedCredentialFreeTest | undefined {
   const id = credentialFreeTestIdForFile(file);
   if (!id) return undefined;
   const declarations = moduleTagDeclarations(source);
@@ -425,8 +428,8 @@ function credentialFreeTestRow(
   return { id, file };
 }
 
-function discoverTrustedCredentialFreeTests(): E2eExactHeadCredentialFreeTest[] {
-  const rows: E2eExactHeadCredentialFreeTest[] = [];
+function discoverTrustedCredentialFreeTests(): E2eChangedCredentialFreeTest[] {
+  const rows: E2eChangedCredentialFreeTest[] = [];
   const testRoot = path.join(TRUSTED_REPO_ROOT, "test");
   const pending = [testRoot];
   while (pending.length > 0) {
@@ -456,7 +459,7 @@ function trustedAllowedJobIds(): string[] {
 
 function extractAllowedE2eJobIds(
   workflowText: string,
-  credentialFreeTests: readonly E2eExactHeadCredentialFreeTest[],
+  credentialFreeTests: readonly E2eChangedCredentialFreeTest[],
 ): string[] {
   const jobs = e2eWorkflowJobs(workflowText);
   const allowed = jobs
@@ -572,11 +575,11 @@ function deterministicFreeStandingJobRecommendations(
   return output.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-function deterministicRiskJobRecommendations(
+function deterministicRiskRecommendations(
   riskPlan: RiskPlan,
   context: E2eTargetNormalizationContext,
 ): E2eTargetRecommendation[] {
-  return riskPlan.requiredJobs
+  const jobs = riskPlan.requiredJobs
     .filter((job) => context.allowedJobIds.has(job.id))
     .map((job) => ({
       id: job.id,
@@ -585,6 +588,19 @@ function deterministicRiskJobRecommendations(
       required: true,
       reason: job.reasons.join(" "),
     }));
+  const targets = riskPlan.requiredTargets
+    .filter((target) => {
+      const definition = getTarget(target.id);
+      return definition !== undefined && liveTargetSupport(definition).supported;
+    })
+    .map((target) => ({
+      id: target.id,
+      workflow: E2E_WORKFLOW,
+      selectorType: "target" as const,
+      required: true,
+      reason: target.reasons.join(" "),
+    }));
+  return [...jobs, ...targets];
 }
 
 function suppressFanoutForFocusedJobs(

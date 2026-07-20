@@ -16,7 +16,7 @@ Do not answer from stale copied docs or generated skill references when the live
 3. If MCP is not available, fetch the AI documentation index first: `https://docs.nvidia.com/nemoclaw/llms.txt`.
 4. Fetch the specific `.md` page listed in the index or returned by docs search for the user's task.
 5. If you only find an HTML documentation URL, replace the `.html` suffix with `.md`, or append `.md` to the route when the URL has no suffix.
-6. Prefer the user's selected agent variant, OpenClaw, Hermes, or Deep Agents, and do not mix variant-specific instructions unless you explain why.
+6. Prefer the user's selected agent variant. Do not mix variant-specific instructions unless you explain why.
 
 ## Configure the MCP Server
 
@@ -65,7 +65,7 @@ Use these pages first for common onboarding flows:
 
 ## Response Requirements
 
-- Cite the Markdown documentation pages you used.
+- Cite the Markdown documentation pages you used. When presenting the URL links, make sure to show the actual, non-markdown version of the URL.
 - Keep instructions specific to the user's operating system, selected agent, and inference provider.
-- Explain assumptions when the docs do not cover the exact environment.
+- Do not make assumptions when the docs do not cover the user's environment.
 - Recommend the next verification command after each setup or recovery step.

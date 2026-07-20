@@ -64,6 +64,18 @@ describe("sandbox base-image resolution key", () => {
     expect(createSandboxBaseImageResolutionKey(options(root))).not.toBe(before);
   });
 
+  it("changes when a Dockerfile-copied runtime helper changes", () => {
+    const root = fixture();
+    const helper = path.join(root, "scripts", "lib", "sandbox-rlimits.sh");
+    fs.mkdirSync(path.dirname(helper), { recursive: true });
+    fs.writeFileSync(helper, "ulimit -n 1024\n");
+    const before = createSandboxBaseImageResolutionKey(options(root));
+
+    fs.writeFileSync(helper, "ulimit -n 2048\n");
+
+    expect(createSandboxBaseImageResolutionKey(options(root))).not.toBe(before);
+  });
+
   it("changes when an agent-specific dependency lock changes (#6456)", () => {
     const root = fixture();
     const lockfile = path.join(root, "agents", "langchain-deepagents-code", "requirements.lock");

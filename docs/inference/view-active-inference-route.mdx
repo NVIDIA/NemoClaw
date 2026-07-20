@@ -65,11 +65,14 @@ Run the sandbox status command when you also need service, messaging, and infere
 $$nemoclaw <name> status
 ```
 
-The status output includes the configured provider, model, and endpoint with the rest of the sandbox state.
+The status output shows the provider and model recorded for that sandbox.
+When the gateway's live shared route differs, status prints both routes and reports whether `connect` can safely restore the recorded route.
+Refer to [Use Shared Gateway Routes](use-shared-gateway-routes) for the text and JSON drift fields and their compatibility rules.
 Use the route verification workflow when you need to prove that an inference request succeeds through the sandbox path.
 
 ## Related Topics
 
 - [Verify the Sandbox Inference Route](../validate-inference/verify-inference-route) for an end-to-end route check.
+- [Use Shared Gateway Routes](use-shared-gateway-routes) when multiple sandboxes use one gateway.
 - [Switch Models](switch-models) to select another model.
 - [Switch Providers](switch-providers) to move to another provider family.

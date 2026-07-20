@@ -139,6 +139,17 @@ export class OnboardRuntimeBoundary {
       return;
     }
 
+    if (result.type === "pause") {
+      const sourceState =
+        result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
+      if (sourceState && current.machine.state !== sourceState) {
+        throw new Error(
+          `Paused onboarding state result source mismatch: ${sourceState} != ${current.machine.state}`,
+        );
+      }
+      return;
+    }
+
     const sourceState =
       result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
     if (current.machine.state === result.next) {

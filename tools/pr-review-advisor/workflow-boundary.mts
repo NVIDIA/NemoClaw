@@ -11,6 +11,11 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "pr-review
 const DEFAULT_PACKAGE_LOCK_PATH = join(REPO_ROOT, "package-lock.json");
 const TRUSTED_WORKFLOW_REF = "${{ github.workflow_sha }}";
 const CANONICAL_ADVISOR_NPM_CI = "npm ci --ignore-scripts --no-audit --no-fund";
+const PINNED_SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
+const CANONICAL_PREPARE_TARGET_PR = `node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"`;
+const CANONICAL_RUN_ANALYSIS = `cd "$ADVISOR_WORKDIR"
+node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"`;
+const CANONICAL_VALIDATE_ARTIFACTS = `node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/validate-artifacts.mts"`;
 const FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS = [
   "run-id",
   "github-token",
@@ -106,6 +111,26 @@ function requireRunLine(
   if (!lines.includes(expected)) errors.push(message);
 }
 
+function normalizedRunScript(value: unknown): string {
+  return stringValue(value)
+    .trim()
+    .replace(/\\\r?\n[ \t]*/gu, " ")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .map((line) => line.replace(/[ \t]+/gu, " "))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function requireCanonicalRun(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  expected: string,
+  message: string,
+): void {
+  if (step && normalizedRunScript(step.run) !== expected) errors.push(message);
+}
+
 function requireRunOrder(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -121,6 +146,23 @@ function requireRunOrder(
   }
 }
 
+function rejectUntrustedAdvisorHelperExecution(
+  errors: string[],
+  steps: readonly WorkflowStep[],
+): void {
+  const untrustedHelperPatterns = [
+    /\$\{?ADVISOR_WORKDIR\}?\/tools\/pr-review-advisor\//u,
+    /(^|[\s"'`])(?:\.\/)?tools\/pr-review-advisor\/[^\s"'`]+\.mts/u,
+  ] as const;
+  for (const step of steps) {
+    if (untrustedHelperPatterns.some((pattern) => pattern.test(stringValue(step.run)))) {
+      errors.push(
+        `review step '${step.name ?? "<unnamed>"}' must not execute pr-review-advisor helpers from ADVISOR_WORKDIR`,
+      );
+    }
+  }
+}
+
 function requireEnv(
   errors: string[],
   owner: string,
@@ -133,7 +175,7 @@ function requireEnv(
   }
 }
 
-function requireExactPermissions(
+function requirePermissions(
   errors: string[],
   jobName: string,
   job: WorkflowRecord,
@@ -235,14 +277,14 @@ function checkPrivilegeDomains(
       "workflow-level permissions must be empty so each job declares its privilege domain",
     );
   }
-  requireExactPermissions(errors, "review", reviewJob, {
+  requirePermissions(errors, "review", reviewJob, {
     actions: "read",
     checks: "read",
     contents: "read",
     issues: "read",
     "pull-requests": "read",
   });
-  requireExactPermissions(errors, "publish", publishJob, {
+  requirePermissions(errors, "publish", publishJob, {
     contents: "read",
     "pull-requests": "write",
   });
@@ -277,7 +319,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
     }
   }
   if (entries.filter((entry) => booleanValue(entry.publish_comment) === true).length !== 1) {
-    errors.push("advisor matrix must identify exactly one primary artifact lane");
+    errors.push("advisor matrix must identify one primary artifact lane");
   }
   for (const field of ["model", "artifact_dir", "artifact_name"]) {
     requireUniqueMatrixField(errors, entries, field);
@@ -314,6 +356,7 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   const steps = asSteps(reviewJob.steps);
   if (steps.length === 0) errors.push("review job must declare steps");
   requireActionPins(errors, "review", steps);
+  rejectUntrustedAdvisorHelperExecution(errors, steps);
 
   if (steps.some((step) => step.name === "Checkout PR workspace (read-only data)")) {
     errors.push("pull_request_target data must be fetched manually, not with actions/checkout");
@@ -342,36 +385,38 @@ function checkAnalysisJob(errors: string[], reviewJob: WorkflowRecord): void {
   requireWith(errors, dispatchCheckout, "submodules", false);
 
   const prepare = requireStep(errors, steps, "Prepare isolated analysis workspace");
-  if (asRecord(prepare?.env).GIT_LFS_SKIP_SMUDGE !== "1") {
+  const prepareEnv = asRecord(prepare?.env);
+  if (prepareEnv.GIT_LFS_SKIP_SMUDGE !== "1") {
     errors.push("Prepare isolated analysis workspace must disable LFS smudging");
   }
-  const requiredPrepareFragments = [
-    '[[ ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/',
-    '[[ ! "$TARGET_PR" =~ ^[0-9]+$ ]]',
-    '[[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]',
-    '[[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]',
-    "config core.hooksPath /dev/null",
-    "config submodule.recurse false",
-    "fetch --no-tags --no-recurse-submodules",
-    '"${BASE_FETCH}:refs/remotes/target/base"',
-    '"refs/pull/${TARGET_PR}/head:refs/remotes/target/pr-${TARGET_PR}"',
-    'rev-parse refs/remotes/target/base)" != "$PR_BASE_SHA"',
-    'ACTUAL_HEAD_SHA="$(git -C "$TARGET_DIR" rev-parse HEAD)"',
-    '"$ACTUAL_HEAD_SHA" != "$EXPECTED_HEAD_SHA"',
-  ];
-  for (const fragment of requiredPrepareFragments) requireRunContains(errors, prepare, fragment);
-  requireRunOrder(
+  // The fetch/validate/checkout logic lives in the trusted, unit-tested helper
+  // (prepare-target-pr.mts); the workflow must invoke it from the pinned advisor
+  // checkout ($ADVISOR_DIR), never from PR-controlled content.
+  requireCanonicalRun(
     errors,
     prepare,
-    '[[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]',
-    "fetch --no-tags --no-recurse-submodules target",
+    CANONICAL_PREPARE_TARGET_PR,
+    "step 'Prepare isolated analysis workspace' must use the canonical trusted prepare helper command",
   );
-  requireRunOrder(
-    errors,
-    prepare,
-    'ACTUAL_HEAD_SHA="$(git -C "$TARGET_DIR" rev-parse HEAD)"',
-    'echo "ADVISOR_WORKDIR=$TARGET_DIR"',
-  );
+  // The base and head must be bound to the immutable SHAs in the triggering
+  // event so the helper's fail-closed SHA verification cannot be silently
+  // disabled by dropping the environment binding.
+  if (
+    prepare &&
+    !stringValue(prepareEnv.EXPECTED_HEAD_SHA).includes("github.event.pull_request.head.sha")
+  ) {
+    errors.push(
+      "Prepare isolated analysis workspace must bind EXPECTED_HEAD_SHA to the triggering PR head",
+    );
+  }
+  if (
+    prepare &&
+    !stringValue(prepareEnv.PR_BASE_SHA).includes("github.event.pull_request.base.sha")
+  ) {
+    errors.push(
+      "Prepare isolated analysis workspace must bind PR_BASE_SHA to the triggering PR base",
+    );
+  }
 
   const removeSymlinks = requireStep(errors, steps, "Remove symlinks from analysis workspace");
   if (removeSymlinks && stringValue(removeSymlinks.shell) !== "bash") {
@@ -423,9 +468,12 @@ done < <(find "$ADVISOR_WORKDIR" -type l -print0)`;
   requireRunOrder(errors, install, 'cd "$ADVISOR_DIR"', CANONICAL_ADVISOR_NPM_CI);
 
   const analyze = requireStep(errors, steps, "Run PR review advisor");
-  requireRunContains(errors, analyze, 'cd "$ADVISOR_WORKDIR"');
-  requireRunContains(errors, analyze, '"$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts"');
-  requireRunContains(errors, analyze, '"$ADVISOR_DIR/tools/pr-review-advisor/schema.json"');
+  requireCanonicalRun(
+    errors,
+    analyze,
+    CANONICAL_RUN_ANALYSIS,
+    "step 'Run PR review advisor' must use the canonical trusted analysis command",
+  );
   if (analyze && booleanValue(analyze["continue-on-error"]) !== true) {
     errors.push("Run PR review advisor must continue-on-error until artifacts are uploaded");
   }
@@ -529,6 +577,23 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   requireWith(errors, checkout, "lfs", false);
   requireWith(errors, checkout, "submodules", false);
 
+  const setupNode = requireStep(errors, steps, "Setup Node for trusted publisher");
+  if (setupNode && stringValue(setupNode.uses) !== PINNED_SETUP_NODE_ACTION) {
+    errors.push("Setup Node for trusted publisher must use the pinned actions/setup-node action");
+  }
+  requireWith(errors, setupNode, "node-version", "22");
+
+  const install = requireStep(errors, steps, "Install trusted publisher dependencies");
+  if (install && stringValue(install["working-directory"]) !== "advisor") {
+    errors.push("Install trusted publisher dependencies must run in the trusted advisor checkout");
+  }
+  requireCanonicalRun(
+    errors,
+    install,
+    CANONICAL_ADVISOR_NPM_CI,
+    "step 'Install trusted publisher dependencies' must use the canonical lockfile-only npm ci command",
+  );
+
   const download = requireStep(errors, steps, "Download primary advisor artifact");
   requireWith(errors, download, "name", "pr-review-advisor");
   requireWith(errors, download, "path", "publish-artifacts/pr-review-advisor");
@@ -573,43 +638,12 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   ) {
     errors.push("Validate advisor artifacts must use the trusted secondary download step outcome");
   }
-  for (const fragment of [
-    "lstatSync",
-    "isSymbolicLink",
-    "realpathSync",
-    "isDeepStrictEqual",
-    "PR_REVIEW_ADVISOR_MAX_RESULT_BYTES",
-    "PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES",
-    "JSON.parse",
-    'ANALYSIS_RESULT_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"',
-    'RESULT_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"',
-    'SUMMARY_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md"',
-    'SECONDARY_ANALYSIS_RESULT_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"',
-    'SECONDARY_RESULT_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"',
-    'SECONDARY_SUMMARY_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md"',
-    '"$SECONDARY_ARTIFACT_OUTCOME" != "success"',
-    '"$SECONDARY_ARTIFACT_OUTCOME" != "failure"',
-    "result.version !== 1",
-    "result.headSha !== process.env.EXPECTED_HEAD_SHA",
-    "Array.isArray(result.findings)",
-    "result.e2e.coverage",
-    "result.e2e.targets",
-    "statusCount !== 1",
-    "validateAnalysisResult(analysisResult, finalResult, label)",
-    "let secondaryArtifactValidated = false",
-    'process.env.SECONDARY_ARTIFACT_OUTCOME === "success"',
-    "process.env.SECONDARY_PUBLISH_ARTIFACT_DIR",
-    "secondaryArtifactValidated = true",
-    "catch {",
-    "process.env.GITHUB_OUTPUT",
-    "secondary_artifact_validated=${secondaryArtifactValidated}",
-    'gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER"',
-    '"$LIVE_HEAD_SHA" != "$EXPECTED_HEAD_SHA"',
-    '"$LIVE_BASE_SHA" != "$PR_BASE_SHA"',
-  ]) {
-    requireRunContains(errors, validate, fragment);
-  }
-  requireRunOrder(errors, validate, '"primary advisor",', "let secondaryArtifactValidated = false");
+  requireCanonicalRun(
+    errors,
+    validate,
+    CANONICAL_VALIDATE_ARTIFACTS,
+    "step 'Validate advisor artifacts' must use the canonical trusted validation command",
+  );
 
   const comment = requireStep(errors, steps, "Post PR review advisor comment");
   if (
@@ -648,6 +682,15 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
     '--second-opinion-result "$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"',
   );
   requireRunContains(errors, comment, '"${SECONDARY_ARGS[@]}"');
+  const checkoutIndex = steps.findIndex(
+    (step) => step.name === "Checkout trusted comment publisher (workflow revision)",
+  );
+  const setupNodeIndex = steps.findIndex(
+    (step) => step.name === "Setup Node for trusted publisher",
+  );
+  const installIndex = steps.findIndex(
+    (step) => step.name === "Install trusted publisher dependencies",
+  );
   const primaryDownloadIndex = steps.findIndex(
     (step) => step.name === "Download primary advisor artifact",
   );
@@ -656,6 +699,19 @@ function checkPublishJob(errors: string[], publishJob: WorkflowRecord): void {
   );
   const validateIndex = steps.findIndex((step) => step.name === "Validate advisor artifacts");
   const commentIndex = steps.findIndex((step) => step.name === "Post PR review advisor comment");
+  if (
+    checkoutIndex < 0 ||
+    setupNodeIndex < 0 ||
+    installIndex < 0 ||
+    validateIndex < 0 ||
+    checkoutIndex > setupNodeIndex ||
+    setupNodeIndex > installIndex ||
+    installIndex > validateIndex
+  ) {
+    errors.push(
+      "trusted publisher Node and dependencies must be installed from the trusted checkout before artifact validation",
+    );
+  }
   if (
     primaryDownloadIndex < 0 ||
     secondaryDownloadIndex < 0 ||

@@ -32,10 +32,14 @@ export interface WeightedShard<T> {
   entries: WeightedShardEntry<T>[];
 }
 
-const cliCoverageProjects = new Set(["cli", "integration"]);
-// Changing this salt remaps every coverage test. The fixed value was selected
-// against the checked-in timing hints so stable ownership stays balanced.
-const stableShardSalt = "1612";
+// E2E-support is hermetic and shares the same installed dependencies and CLI
+// build as the CLI coverage projects, so the coverage matrix owns it too.
+const cliCoverageProjects = new Set(["cli", "integration", "e2e-support"]);
+// Changing either salt intentionally remaps that lane's tests. These values
+// are calibrated against the timing-hint source profile, then kept fixed so
+// ordinary roster changes preserve ownership between profile refreshes.
+const stableShardSalt = "6096";
+const e2eSupportShardSalt = "2045";
 // Only measured outliers are stored; new and ordinary files share the
 // conservative fallback used to estimate each stable shard's load.
 const timingHintsUrl = new URL("../../ci/cli-test-timing-hints.json", import.meta.url);
@@ -134,7 +138,8 @@ export function assignStableShards<T>(
   // removing, or renaming another test cannot move existing files between the
   // long-lived coverage shards and change which source maps are merged together.
   for (const entry of ranked) {
-    const digest = createHash("sha256").update(`${stableShardSalt}:${entry.key}`).digest();
+    const salt = entry.key.startsWith("e2e-support:") ? e2eSupportShardSalt : stableShardSalt;
+    const digest = createHash("sha256").update(`${salt}:${entry.key}`).digest();
     const target = shards[digest.readUInt32BE(0) % shardCount];
     if (!target) throw new Error("Stable shard allocation requires at least one shard");
     target.entries.push(entry);

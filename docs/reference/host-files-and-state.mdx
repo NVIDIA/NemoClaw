@@ -9,8 +9,6 @@ keywords: ["nemoclaw host files", "nemoclaw state directory", "nemoclaw sandboxe
 content:
   type: "reference"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 NemoClaw stores host-side configuration, registry metadata, operational state, transient install state, and local backups under `~/.nemoclaw/`.
 Use this page when you need to identify what a file does before deleting, backing up, or sharing diagnostics.
 
@@ -80,17 +78,17 @@ For operational uninstall steps, refer to:
 
 <AgentOnly variant="openclaw">
 
-- [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle#uninstall).
+- [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-- [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle#uninstall).
+- [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
 
-- [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle#uninstall) for the generic uninstall flow.
-- [Backup and Restore](../manage-sandboxes/backup-restore) before removing state you may need later.
+- [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for the generic uninstall flow.
+- [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) before removing state you may need later.
 
 </AgentOnly>

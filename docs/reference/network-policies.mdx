@@ -9,8 +9,6 @@ keywords: ["nemoclaw network policy", "sandbox egress control operator approval"
 content:
   type: "reference"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 NemoClaw runs with a deny-by-default network policy.
 The sandbox can only reach endpoints that are explicitly allowed.
 OpenShell intercepts any request to an unlisted destination and prompts the operator to approve or deny it in real time through the TUI.
@@ -111,7 +109,7 @@ Refer to [Customize the Network Policy](../network-policy/customize-network-poli
 The baseline policy does not include messaging endpoints for Telegram, Discord, Slack, WeChat, or WhatsApp.
 Enable the channel during onboarding or apply the matching messaging preset so the sandbox can reach that platform.
 WeChat and WhatsApp are experimental.
-Review [Messaging Channels](../manage-sandboxes/messaging-channels) before enabling them.
+Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 </Note>
 
 </AgentOnly>

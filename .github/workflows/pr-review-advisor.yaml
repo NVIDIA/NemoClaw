@@ -114,7 +114,7 @@ jobs:
           submodules: false
 
       # A dispatch without target_repo is maintainer-triggered and analyzes the
-      # exact commit that supplied the trusted workflow. It is still treated as
+      # commit that supplied the trusted workflow. It is still treated as
       # read-only data and never supplies executable advisor code.
       - name: Checkout dispatch workspace (read-only data)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}
@@ -131,9 +131,19 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}
         run: echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"
 
+      # Provision Node before the isolated workspace is fetched so the trusted
+      # prepare helper (type-stripped .mts) runs from the pinned advisor
+      # checkout, never from PR-controlled content.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.0.0
+        with:
+          node-version: "22"
+
       # pull_request_target content is fetched manually so no PR-controlled
       # action, hook, submodule, LFS filter, or package setup can run. The base
-      # and head are bound to the immutable SHAs in the triggering event.
+      # and head are bound to the immutable SHAs in the triggering event. The
+      # fetch/validation logic lives in the trusted, unit-tested helper and is
+      # executed only from $ADVISOR_DIR (github.workflow_sha checkout).
       - name: Prepare isolated analysis workspace
         if: ${{ github.event_name == 'pull_request_target' || (github.event_name == 'workflow_dispatch' && (inputs.target_repo != '' || inputs.target_pr != '')) }}
         env:
@@ -144,60 +154,8 @@ jobs:
           EXPECTED_HEAD_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || '' }}
           GIT_LFS_SKIP_SMUDGE: "1"
         run: |
-          set -euo pipefail
-          if [[ ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-            echo "::error::target_repo must match owner/repo with GitHub-safe characters"
-            exit 1
-          fi
-          if [[ ! "$TARGET_PR" =~ ^[0-9]+$ ]]; then
-            echo "::error::target_pr must be decimal digits"
-            exit 1
-          fi
-          if [[ -z "$TARGET_BASE" || "$TARGET_BASE" == -* || "$TARGET_BASE" == /* || "$TARGET_BASE" == *..* || "$TARGET_BASE" == *:* || "$TARGET_BASE" =~ [[:space:]] || ! "$TARGET_BASE" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-            echo "::error::target_base must be a safe branch/ref token"
-            exit 1
-          fi
-          if [ -n "$PR_BASE_SHA" ] && [[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::event base SHA must be exactly 40 lowercase hexadecimal characters"
-            exit 1
-          fi
-          if [ -n "$EXPECTED_HEAD_SHA" ] && [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::event head SHA must be exactly 40 lowercase hexadecimal characters"
-            exit 1
-          fi
-
-          TARGET_DIR=/tmp/pr-review-advisor-target
-          rm -rf "$TARGET_DIR"
-          mkdir -p "$TARGET_DIR"
-          git -C "$TARGET_DIR" init
-          git -C "$TARGET_DIR" config core.hooksPath /dev/null
-          git -C "$TARGET_DIR" config submodule.recurse false
-          git -C "$TARGET_DIR" remote add target "https://github.com/${TARGET_REPO}.git"
-
-          if [ -n "$PR_BASE_SHA" ]; then
-            BASE_FETCH="$PR_BASE_SHA"
-          else
-            BASE_FETCH="refs/heads/${TARGET_BASE}"
-          fi
-          git -C "$TARGET_DIR" fetch --no-tags --no-recurse-submodules target \
-            "${BASE_FETCH}:refs/remotes/target/base"
-          git -C "$TARGET_DIR" fetch --no-tags --no-recurse-submodules target \
-            "refs/pull/${TARGET_PR}/head:refs/remotes/target/pr-${TARGET_PR}"
-
-          if [ -n "$PR_BASE_SHA" ] && [ "$(git -C "$TARGET_DIR" rev-parse refs/remotes/target/base)" != "$PR_BASE_SHA" ]; then
-            echo "::error::Fetched base does not match the triggering PR base SHA"
-            exit 1
-          fi
-          git -C "$TARGET_DIR" -c submodule.recurse=false checkout --detach \
-            "refs/remotes/target/pr-${TARGET_PR}"
-          ACTUAL_HEAD_SHA="$(git -C "$TARGET_DIR" rev-parse HEAD)"
-          if [ -n "$EXPECTED_HEAD_SHA" ] && [ "$ACTUAL_HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]; then
-            echo "::error::Fetched pull ref does not match the triggering PR head SHA"
-            exit 1
-          fi
-
-          echo "ADVISOR_WORKDIR=$TARGET_DIR" >> "$GITHUB_ENV"
-          echo "PR_NUMBER=$TARGET_PR" >> "$GITHUB_ENV"
+          node --experimental-strip-types \
+            "$ADVISOR_DIR/tools/pr-review-advisor/prepare-target-pr.mts"
 
       # The advisor reads repository files while holding its model key. Remove
       # worktree symlinks first so an untrusted link cannot redirect a read to
@@ -208,11 +166,6 @@ jobs:
           while IFS= read -r -d '' link; do
             rm -- "$link"
           done < <(find "$ADVISOR_WORKDIR" -type l -print0)
-
-      - name: Setup Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: "22"
 
       - name: Install Pi SDK
         run: |
@@ -268,79 +221,8 @@ jobs:
           PR_REVIEW_ADVISOR_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
         run: |
           cd "$ADVISOR_WORKDIR"
-          OUT_DIR="$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR"
-          export OUT_DIR
-          if [ ! -f "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" ]; then
-            echo "Skipping PR review advisor: trusted base checkout does not contain analyze.mts"
-            mkdir -p "$OUT_DIR"
-            HEAD_SHA="$(git rev-parse "$HEAD_REF" 2>/dev/null || git rev-parse HEAD)"
-            export BASE_REF HEAD_REF HEAD_SHA
-            node <<'NODE'
-          const fs = require("node:fs");
-          const path = require("node:path");
-          const outDir = process.env.OUT_DIR;
-          const title = process.env.PR_REVIEW_ADVISOR_COMMENT_TITLE || "PR Review Advisor";
-          const reason = "Trusted base checkout does not contain tools/pr-review-advisor/analyze.mts; advisor will run after the implementation lands on the base branch.";
-          const result = {
-            version: 1,
-            baseRef: process.env.BASE_REF || "target/base",
-            headRef: process.env.HEAD_REF || "HEAD",
-            headSha: process.env.HEAD_SHA || "unknown",
-            changedFiles: [],
-            summary: { recommendation: "info_only", confidence: "low", oneLine: `PR review advisor skipped: ${reason}` },
-            findings: [],
-            acceptanceCoverage: [],
-            securityCategories: [{ category: "Holistic Security Posture", verdict: "warning", justification: "Advisor bootstrap skip; human review required." }],
-            sourceOfTruthReview: [],
-            testDepth: { verdict: "unknown", rationale: reason, suggestedTests: [] },
-            e2e: {
-              coverage: {
-                classifiedDomains: [],
-                requiredTests: [],
-                optionalTests: [],
-                newE2eRecommendations: [],
-                noE2eReason: reason,
-                confidence: "low",
-              },
-              targets: {
-                relevantChangedFiles: [],
-                exactHeadCredentialFreeTests: [],
-                required: [],
-                optional: [],
-                noTargetE2eReason: reason,
-                confidence: "low",
-              },
-            },
-            positives: [],
-            reviewCompleteness: { limitations: [reason], requiresHumanReview: true },
-          };
-          fs.writeFileSync(path.join(outDir, "pr-review-advisor-result.json"), `${JSON.stringify({ skipped: true, reason }, null, 2)}\n`);
-          fs.writeFileSync(path.join(outDir, "pr-review-advisor-final-result.json"), `${JSON.stringify(result, null, 2)}\n`);
-          fs.writeFileSync(path.join(outDir, "pr-review-advisor-summary.md"), `# ${title}\n\nAdvisor analysis skipped.\n\nReason: ${reason}\n`);
-          NODE
-            exit 0
-          fi
-          if [ "$PR_REVIEW_ADVISOR_MODEL" != "openai/openai/gpt-5.5" ] && {
-            ! grep -Fq "$PR_REVIEW_ADVISOR_MODEL" "$ADVISOR_DIR/tools/advisors/session.mts" ||
-              ! grep -Fq "PR_REVIEW_ADVISOR_MODEL" "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" ||
-              ! grep -Fq "PR_REVIEW_ADVISOR_COMMENT_MARKER" "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts"
-          }; then
-            echo "PR_REVIEW_ADVISOR_SUPPORTED=0" >> "$GITHUB_ENV"
-            echo "Skipping PR review advisor: trusted base checkout does not yet support $PR_REVIEW_ADVISOR_MODEL"
-            export PR_REVIEW_ADVISOR_UNAVAILABLE_REASON="Trusted base checkout does not yet support advisor model $PR_REVIEW_ADVISOR_MODEL; this parallel advisor will run after the implementation lands on the base branch."
-            PR_REVIEW_ADVISOR_RUN_ANALYSIS=0 node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" \
-              --base "$BASE_REF" \
-              --head "$HEAD_REF" \
-              --schema "$ADVISOR_DIR/tools/pr-review-advisor/schema.json" \
-              --out-dir "$OUT_DIR"
-            exit 0
-          fi
-          echo "PR_REVIEW_ADVISOR_SUPPORTED=1" >> "$GITHUB_ENV"
-          node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" \
-            --base "$BASE_REF" \
-            --head "$HEAD_REF" \
-            --schema "$ADVISOR_DIR/tools/pr-review-advisor/schema.json" \
-            --out-dir "$OUT_DIR"
+          node --experimental-strip-types \
+            "$ADVISOR_DIR/tools/pr-review-advisor/run-analysis.mts"
 
       - name: Publish job summary
         if: always()
@@ -411,6 +293,15 @@ jobs:
           lfs: false
           submodules: false
 
+      - name: Setup Node for trusted publisher
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install trusted publisher dependencies
+        working-directory: advisor
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       # With no run-id or repository override, download-artifact can only read
       # the named artifact produced by this same workflow run.
       - name: Download primary advisor artifact
@@ -436,176 +327,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SECONDARY_ARTIFACT_OUTCOME: ${{ steps.download-secondary-advisor-artifact.outcome }}
         run: |
-          set -euo pipefail
-          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]] || [[ ! "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$TRUSTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ ! "$PR_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::Invalid target-event publication identity"
-            exit 1
-          fi
-          if [ "$SECONDARY_ARTIFACT_OUTCOME" != "success" ] && [ "$SECONDARY_ARTIFACT_OUTCOME" != "failure" ]; then
-            echo "::error::Invalid secondary advisor artifact outcome"
-            exit 1
-          fi
-
-          export ANALYSIS_RESULT_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"
-          export RESULT_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"
-          export SUMMARY_PATH="$PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md"
-          export SECONDARY_ANALYSIS_RESULT_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-result.json"
-          export SECONDARY_RESULT_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-final-result.json"
-          export SECONDARY_SUMMARY_PATH="$SECONDARY_PUBLISH_ARTIFACT_DIR/pr-review-advisor-summary.md"
-          node <<'NODE'
-          const fs = require("node:fs");
-          const path = require("node:path");
-          const { isDeepStrictEqual } = require("node:util");
-
-          function requireBoundedRegularFile(rootDir, file, maxBytes, label) {
-            const rootStat = fs.lstatSync(rootDir);
-            if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
-              throw new Error(`${label} artifact root must be a regular non-symlink directory`);
-            }
-            const stat = fs.lstatSync(file);
-            if (!stat.isFile() || stat.isSymbolicLink()) {
-              throw new Error(`${label} must be a regular non-symlink file`);
-            }
-            if (stat.size <= 0 || stat.size > maxBytes) {
-              throw new Error(`${label} size ${stat.size} is outside 1..${maxBytes} bytes`);
-            }
-            const root = `${fs.realpathSync(rootDir)}${path.sep}`;
-            const real = fs.realpathSync(file);
-            if (!real.startsWith(root)) throw new Error(`${label} escapes the artifact directory`);
-          }
-
-          function readJson(file, label) {
-            const value = JSON.parse(fs.readFileSync(file, "utf8"));
-            if (!value || typeof value !== "object" || Array.isArray(value)) {
-              throw new Error(`${label} must be a JSON object`);
-            }
-            return value;
-          }
-
-          function validateFinalResult(result, label) {
-            if (!result || typeof result !== "object" || Array.isArray(result)) {
-              throw new Error(`${label} must be a JSON object`);
-            }
-            if (result.version !== 1) throw new Error(`${label} version must be 1`);
-            if (result.headSha !== process.env.EXPECTED_HEAD_SHA) {
-              throw new Error(`${label} head SHA does not match the triggering PR head`);
-            }
-            if (!result.summary || typeof result.summary !== "object" || Array.isArray(result.summary)) {
-              throw new Error(`${label} summary must be an object`);
-            }
-            if (!["low", "medium", "high"].includes(result.summary.confidence)) {
-              throw new Error(`${label} summary confidence must be low, medium, or high`);
-          }
-            if (!Array.isArray(result.findings)) {
-              throw new Error(`${label} findings must be an array`);
-            }
-            for (const finding of result.findings) {
-              if (!finding || typeof finding !== "object" || Array.isArray(finding)) {
-                throw new Error(`${label} findings must contain JSON objects`);
-              }
-              if (!["blocker", "warning", "suggestion"].includes(finding.severity)) {
-                throw new Error(`${label} finding severity must be blocker, warning, or suggestion`);
-              }
-            }
-            if (!result.e2e || typeof result.e2e !== "object" || Array.isArray(result.e2e)) {
-              throw new Error(`${label} e2e must be an object`);
-            }
-            if (!result.e2e.coverage || typeof result.e2e.coverage !== "object" || Array.isArray(result.e2e.coverage)) {
-              throw new Error(`${label} e2e.coverage must be an object`);
-            }
-            if (!result.e2e.targets || typeof result.e2e.targets !== "object" || Array.isArray(result.e2e.targets)) {
-              throw new Error(`${label} e2e.targets must be an object`);
-            }
-          }
-
-          function validateAnalysisResult(analysisResult, finalResult, label) {
-            const statusCount = [
-              analysisResult.version === 1,
-              analysisResult.failed === true,
-              analysisResult.skipped === true,
-            ].filter(Boolean).length;
-            if (statusCount !== 1) {
-              throw new Error(`${label} must report exactly one analysis status`);
-            }
-            if (analysisResult.version === 1) {
-              if (!isDeepStrictEqual(analysisResult, finalResult)) {
-                throw new Error(`${label} completed analysis result must match its final result`);
-              }
-              return;
-            }
-            if (analysisResult.failed === true) {
-              if (typeof analysisResult.reason !== "string" || !analysisResult.reason.trim()) {
-                throw new Error(`${label} failed analysis must include a reason`);
-              }
-              if (analysisResult.partial === true) {
-                if (!Number.isInteger(analysisResult.findingCount) || analysisResult.findingCount !== finalResult.findings.length) {
-                  throw new Error(`${label} partial finding count must match its final result`);
-                }
-              } else if (finalResult.findings.length !== 0) {
-                throw new Error(`${label} failed analysis without a partial marker must not publish findings`);
-              }
-              return;
-            }
-            if (analysisResult.skipped === true) {
-              if (typeof analysisResult.reason !== "string" || !analysisResult.reason.trim()) {
-                throw new Error(`${label} skipped analysis must include a reason`);
-              }
-              if (finalResult.findings.length !== 0) {
-                throw new Error(`${label} skipped analysis must not publish findings`);
-              }
-              return;
-            }
-            throw new Error(`${label} must report completed, failed, or skipped analysis status`);
-          }
-
-          function validateLane(rootDir, analysisResultPath, resultPath, summaryPath, label) {
-            requireBoundedRegularFile(rootDir, analysisResultPath, Number(process.env.PR_REVIEW_ADVISOR_MAX_RESULT_BYTES), `${label} analysis result`);
-            requireBoundedRegularFile(rootDir, resultPath, Number(process.env.PR_REVIEW_ADVISOR_MAX_RESULT_BYTES), `${label} final result`);
-            requireBoundedRegularFile(rootDir, summaryPath, Number(process.env.PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES), `${label} summary`);
-            const analysisResult = readJson(analysisResultPath, `${label} analysis result`);
-            const finalResult = readJson(resultPath, `${label} final result`);
-            validateFinalResult(finalResult, `${label} final result`);
-            validateAnalysisResult(analysisResult, finalResult, label);
-          }
-
-          validateLane(
-            process.env.PUBLISH_ARTIFACT_DIR,
-            process.env.ANALYSIS_RESULT_PATH,
-            process.env.RESULT_PATH,
-            process.env.SUMMARY_PATH,
-            "primary advisor",
-          );
-          let secondaryArtifactValidated = false;
-          if (process.env.SECONDARY_ARTIFACT_OUTCOME === "success") {
-            try {
-              validateLane(
-                process.env.SECONDARY_PUBLISH_ARTIFACT_DIR,
-                process.env.SECONDARY_ANALYSIS_RESULT_PATH,
-                process.env.SECONDARY_RESULT_PATH,
-                process.env.SECONDARY_SUMMARY_PATH,
-                "secondary advisor",
-              );
-              secondaryArtifactValidated = true;
-            } catch {
-              console.error("::warning::Secondary advisor artifact failed validation; publishing the primary review without it");
-            }
-          }
-          fs.appendFileSync(
-            process.env.GITHUB_OUTPUT,
-            `secondary_artifact_validated=${secondaryArtifactValidated}\n`,
-          );
-          NODE
-
-          LIVE_HEAD_SHA="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.head.sha')"
-          if [ "$LIVE_HEAD_SHA" != "$EXPECTED_HEAD_SHA" ]; then
-            echo "::error::PR head changed after analysis; refusing to publish a stale review"
-            exit 1
-          fi
-          LIVE_BASE_SHA="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.base.sha')"
-          if [ "$LIVE_BASE_SHA" != "$PR_BASE_SHA" ]; then
-            echo "::error::PR base changed after analysis; refusing to publish a stale review"
-            exit 1
-          fi
+          node --experimental-strip-types \
+            "$ADVISOR_DIR/tools/pr-review-advisor/validate-artifacts.mts"
 
       - name: Post PR review advisor comment
         env:

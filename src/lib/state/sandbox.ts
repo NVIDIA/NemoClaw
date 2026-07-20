@@ -12,13 +12,17 @@
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -31,6 +35,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types.js";
+import { GATEWAY_PORT } from "../core/ports.js";
 import {
   BACKUP_FAILURE_ABSENT_AFTER_EXTRACTION,
   classifyFailedDirsFromTarStderr,
@@ -54,10 +59,11 @@ import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
 import { restoreStateFile } from "./state-file-restore.js";
-import { runTarListing } from "./tar-listing.js";
+import { nemoclawStateRoot } from "./state-root.js";
+import { runTarListing, type TarArchiveSource } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
-const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
+const REBUILD_BACKUPS_DIR = path.join(nemoclawStateRoot(HOME_DIR, GATEWAY_PORT), "rebuild-backups");
 
 const MANIFEST_VERSION = 1;
 export const OPENCLAW_IMAGE_PLUGIN_PROVENANCE_RESTORE_ERROR =
@@ -347,9 +353,12 @@ function rejectSymlinksOnPath(targetPath: string): void {
  * List tar entries and validate every path is within targetDir.
  * Rejects absolute paths, path traversal (..), and null bytes.
  */
-export function validateTarEntries(tarBuffer: Buffer, targetDir: string): TarValidationResult {
+export function validateTarEntries(
+  tarArchive: TarArchiveSource,
+  targetDir: string,
+): TarValidationResult {
   const entries: string[] = [];
-  const listingFailure = runTarListing(tarBuffer, ["-tf", "-"], "tar listing", (line) => {
+  const listingFailure = runTarListing(tarArchive, ["-tf", "-"], "tar listing", (line) => {
     entries.push(line);
   });
   if (listingFailure) {
@@ -470,9 +479,9 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
  * legitimate reason to contain them, and they can be used to reference
  * files outside the extraction root.
  */
-export function rejectHardLinks(tarBuffer: Buffer): string[] {
+export function rejectHardLinks(tarArchive: TarArchiveSource): string[] {
   const violations: string[] = [];
-  const listingFailure = runTarListing(tarBuffer, ["-tvf", "-"], "tar verbose listing", (line) => {
+  const listingFailure = runTarListing(tarArchive, ["-tvf", "-"], "tar verbose listing", (line) => {
     // Both GNU tar and bsdtar prefix hard-link entries with 'h' in verbose mode
     // and include " link to " in the line.
     if (line.startsWith("h") || / link to /.test(line)) {
@@ -488,9 +497,9 @@ export function rejectHardLinks(tarBuffer: Buffer): string[] {
  * SECURITY: Validate tar contents, extract with safety flags, then
  * audit for symlink escapes. Nukes the extraction on any violation.
  */
-export function safeTarExtract(tarBuffer: Buffer, targetDir: string): SafeExtractResult {
+export function safeTarExtract(tarArchive: TarArchiveSource, targetDir: string): SafeExtractResult {
   // Phase 1a: Validate entry paths before extraction
-  const validation = validateTarEntries(tarBuffer, targetDir);
+  const validation = validateTarEntries(tarArchive, targetDir);
   if (!validation.safe) {
     return {
       success: false,
@@ -499,7 +508,7 @@ export function safeTarExtract(tarBuffer: Buffer, targetDir: string): SafeExtrac
   }
 
   // Phase 1b: Reject hard links (not detectable via tar -tf, require verbose listing)
-  const hardLinkViolations = rejectHardLinks(tarBuffer);
+  const hardLinkViolations = rejectHardLinks(tarArchive);
   if (hardLinkViolations.length > 0) {
     return {
       success: false,
@@ -508,11 +517,25 @@ export function safeTarExtract(tarBuffer: Buffer, targetDir: string): SafeExtrac
   }
 
   // Phase 2: Extract with --no-same-owner to prevent ownership manipulation
-  const extractResult = spawnSync("tar", ["-xf", "-", "--no-same-owner", "-C", targetDir], {
-    input: tarBuffer,
-    stdio: ["pipe", "pipe", "pipe"],
-    timeout: 60000,
-  });
+  let archiveFd: number | null = null;
+  let extractResult: ReturnType<typeof spawnSync>;
+  try {
+    extractResult = Buffer.isBuffer(tarArchive)
+      ? spawnSync("tar", ["-xf", "-", "--no-same-owner", "-C", targetDir], {
+          input: tarArchive,
+          stdio: ["pipe", "pipe", "pipe"],
+          timeout: 60000,
+        })
+      : (() => {
+          archiveFd = openSync(tarArchive.filePath, "r");
+          return spawnSync("tar", ["-xf", "-", "--no-same-owner", "-C", targetDir], {
+            stdio: [archiveFd, "pipe", "pipe"],
+            timeout: 60000,
+          });
+        })();
+  } finally {
+    if (archiveFd !== null) closeSync(archiveFd);
+  }
 
   if (extractResult.status !== 0) {
     return {
@@ -577,7 +600,12 @@ export function sshArgs(configFile: string, sandboxName: string): string[] {
 function computeBlueprintDigest(): string | null {
   // Look for blueprint.yaml relative to the agent-defs ROOT
   const candidates = [
-    path.join(process.env.HOME || "/tmp", ".nemoclaw", "blueprints", "0.1.0", "blueprint.yaml"),
+    path.join(
+      nemoclawStateRoot(process.env.HOME || "/tmp", GATEWAY_PORT),
+      "blueprints",
+      "0.1.0",
+      "blueprint.yaml",
+    ),
     path.join(__dirname, "..", "..", "nemoclaw-blueprint", "blueprint.yaml"),
   ];
   for (const p of candidates) {
@@ -851,7 +879,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const agentName = sb?.agent || "openclaw";
   const agent = loadAgent(agentName);
   const dir = agent.configPaths.dir;
-  const stateDirs = agent.stateDirs;
+  // Runtime auth state (device identity keypairs, paired-device tokens) is
+  // never captured: sanitizeBackupDirectory scrubs its key/token fields, so a
+  // backup copy could only ever restore as corrupt auth state (#6852).
+  const runtimeAuthStateDirs = new Set(agent.runtimeAuthStateDirs);
+  const stateDirs = agent.stateDirs.filter((d) => !runtimeAuthStateDirs.has(d));
   const stateFiles = normalizeStateFileSpecs(agent.stateFiles);
   _log(
     `backupSandboxState: agent=${agentName}, dir=${dir}, stateDirs=[${stateDirs.join(",")}], stateFiles=[${stateFiles.map((f) => f.path).join(",")}]`,
@@ -1135,13 +1167,42 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // could create symlinks to exfiltrate config contents via backup.
         const tarCmd = `tar -cf - -C ${shellQuote(dir)} -- ${existingDirs.map(shellQuote).join(" ")}`;
         _log(`Downloading via SSH+tar: ${tarCmd}`);
-        const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), tarCmd], {
-          stdio: ["ignore", "pipe", "pipe"],
-          timeout: 120000,
-          maxBuffer: 256 * 1024 * 1024,
-        });
+        let downloadedTarDir: string | undefined;
+        let downloadedTarPath: string;
+        let downloadedTarFd: number;
+        try {
+          downloadedTarDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-download-"));
+          downloadedTarPath = path.join(downloadedTarDir, "archive.tar");
+          downloadedTarFd = openSync(downloadedTarPath, "wx", 0o600);
+        } catch (error) {
+          if (downloadedTarDir) {
+            rmSync(downloadedTarDir, { recursive: true, force: true });
+          }
+          const detail = error instanceof Error ? error.message : String(error);
+          _log(`FAILED: Could not create local backup archive staging file — ${detail}`);
+          return {
+            success: false,
+            manifest,
+            backedUpDirs,
+            failedDirs: [...existingDirs],
+            backedUpFiles,
+            failedFiles: stateFiles.map((f) => f.path),
+            error: `Failed to create backup archive file: ${detail}`,
+          };
+        }
+        let result: ReturnType<typeof spawnSync>;
+        try {
+          result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), tarCmd], {
+            stdio: ["ignore", downloadedTarFd, "pipe"],
+            timeout: 120000,
+            maxBuffer: 256 * 1024 * 1024,
+          });
+        } finally {
+          closeSync(downloadedTarFd);
+        }
+        const downloadedBytes = statSync(downloadedTarPath).size;
         _log(
-          `SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`,
+          `SSH+tar download: exit=${result.status}, stdout=${downloadedBytes} bytes, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`,
         );
         if (isSshTransportFailure(result)) unreachable = true;
 
@@ -1150,20 +1211,27 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // Accept exit 0, 1, or 2 when stdout has data — extract what tar produced
         // and determine per-dir success from tar's reported read errors.
         const tarExitedWithData =
-          result.stdout &&
-          result.stdout.length > 0 &&
+          downloadedBytes > 0 &&
           (result.status === 0 || result.status === 1 || result.status === 2);
 
-        if (result.status !== 0 && result.stdout && result.stdout.length > 0) {
+        if (result.status !== 0 && downloadedBytes > 0) {
           _log(
-            `tar exited ${result.status} but produced ${result.stdout.length} bytes — attempting partial extraction`,
+            `tar exited ${result.status} but produced ${downloadedBytes} bytes — attempting partial extraction`,
           );
         }
 
+        let extractResult: SafeExtractResult | null = null;
+        try {
+          if (tarExitedWithData) {
+            // SECURITY: Validate tar entries, extract safely, audit symlinks.
+            extractResult = safeTarExtract({ filePath: downloadedTarPath }, backupPath);
+          }
+        } finally {
+          rmSync(downloadedTarDir, { recursive: true, force: true });
+        }
+
         if (tarExitedWithData) {
-          // SECURITY: Validate tar entries, extract safely, audit symlinks
-          const extractResult = safeTarExtract(result.stdout, backupPath);
-          if (extractResult.success) {
+          if (extractResult?.success) {
             const extractedDirs = new Set(existingBackupDirs(backupPath, existingDirs));
             if (result.status === 0) {
               for (const d of existingDirs) {
@@ -1202,7 +1270,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
                 }
               }
             }
-          } else {
+          } else if (extractResult) {
             _log(`SECURITY: tar extraction blocked: ${extractResult.error}`);
             failedDirs.push(...existingDirs);
           }
@@ -1389,6 +1457,19 @@ function restoreSandboxStateInternal(
     return failRestoreContract(
       `Backup state directory '${normalizedBackupDir}' does not match target directory '${normalizedTargetDir}'`,
     );
+  }
+  // Runtime auth state is never restored: its backup copies are
+  // credential-scrubbed and would replace the sandbox's working device
+  // identity and pairing tokens with corrupt files (#6852). The current
+  // target manifest is authoritative here so legacy backups whose embedded
+  // manifests still list these dirs are also skipped.
+  const targetRuntimeAuthDirs = new Set(targetAgent.runtimeAuthStateDirs);
+  const skippedRuntimeAuthDirs = localDirs.filter((d) => targetRuntimeAuthDirs.has(d));
+  if (skippedRuntimeAuthDirs.length > 0) {
+    _log(`Skipping runtime auth state dirs from restore: [${skippedRuntimeAuthDirs.join(",")}]`);
+    for (const d of skippedRuntimeAuthDirs) {
+      localDirs.splice(localDirs.indexOf(d), 1);
+    }
   }
   const targetStateFiles = new Map<string, AgentStateFile>();
   for (const targetFile of targetAgent.stateFiles) {

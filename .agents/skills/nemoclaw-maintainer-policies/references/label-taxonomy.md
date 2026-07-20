@@ -41,7 +41,7 @@ Use labels for:
 
 ### PR Type
 
-Apply exactly one PR type label to a non-draft PR when there is enough evidence.
+Apply one PR type label to a non-draft PR when there is enough evidence.
 
 | Label | Applies To | Description | Positive Signals | Negative Signals |
 |---|---|---|---|---|
@@ -191,7 +191,7 @@ Do not combine:
 
 ### Release Train
 
-Daily `v0.0.x` labels activate open PRs for daily release work. After a PR merges to `main`, authorized post-merge automation adds its earliest containing release label, or the next patch label after the highest strict-ancestor release when no tag contains it yet. This gives every landed PR release attribution, is additive, and does not remove earlier version labels. Issues may use a daily label as a tracking or attention signal, but issue labels do not determine release inclusion. See `release-train.md`.
+Daily `v0.0.x` labels activate open PRs for daily release work. After a PR merges to `main`, authorized post-merge automation adds the next patch label only while the merge is ahead of the latest release tag. After that tag and workflow-managed `latest` are verified, release housekeeping moves open stragglers and deletes the released label. Tags and commit ancestry own durable release membership. Issues may use a daily label as a tracking or attention signal, but issue labels do not determine release inclusion. Released labels must never be renamed or reused. See `release-train.md`.
 
 ### Agent-Owned
 

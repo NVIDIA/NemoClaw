@@ -414,7 +414,7 @@ describe("PR review ledger tools", () => {
     expect(ledger.snapshot()).toMatchObject({ revision: 0, findings: [], history: [] });
   });
 
-  it("accepts only the flat exact commit contract and strips internal fields (#6446)", () => {
+  it("accepts only the flat commit contract and strips internal fields (#6446)", () => {
     const ledger = createReviewFindingLedger();
     const controller = createReviewLedgerToolController(ledger);
     const update = tool(controller.tools, REVIEW_LEDGER_UPDATE_TOOL);

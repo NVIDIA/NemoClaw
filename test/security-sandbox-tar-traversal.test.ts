@@ -259,6 +259,40 @@ describe("Fix: validateTarEntries rejects malicious tar entries", () => {
 });
 
 describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones", () => {
+  it.each([
+    ["path traversal", [{ path: "../escape.txt", content: "attacker-payload" }], "path traversal"],
+    [
+      "a hard link",
+      [{ path: "inside/link.json", type: "1", linkTarget: "../outside.json" }],
+      "hard link",
+    ],
+    [
+      "an escaping symlink",
+      [{ path: "escape-link", type: "2", linkTarget: "../outside.txt" }],
+      "symlink",
+    ],
+  ])("rejects a file-backed archive containing %s", async (_case, entries, expectedError) => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-file-backed-hostile-"));
+    try {
+      const archivePath = path.join(workDir, "archive.tar");
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir);
+      fs.writeFileSync(archivePath, buildTar(entries), { mode: 0o600 });
+
+      const result = safeTarExtract({ filePath: archivePath }, targetDir);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(expectedError);
+      expect(fs.readdirSync(targetDir)).toEqual([]);
+      expect(fs.existsSync(path.join(workDir, "escape.txt"))).toBe(false);
+      expect(fs.existsSync(path.join(workDir, "outside.json"))).toBe(false);
+      expect(fs.existsSync(path.join(workDir, "outside.txt"))).toBe(false);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("blocks archive with path traversal — no files written", async () => {
     const { safeTarExtract } = await loadSandboxState();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-safe-"));

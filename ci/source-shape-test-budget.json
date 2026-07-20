@@ -62,6 +62,11 @@
       "category": "security"
     },
     {
+      "file": "test/candidate-compat.test.ts",
+      "test": "keeps the manual controller read-only and runs digest-bound deterministic and live lanes (#6691)",
+      "category": "security"
+    },
+    {
       "file": "test/cloudflared-update-check-workflow.test.ts",
       "test": "keeps automatic and on-demand update checks reachable and credential-free",
       "category": "security"
@@ -74,6 +79,21 @@
     {
       "file": "test/code-scanning-workflow.test.ts",
       "test": "keeps every CodeQL action on one immutable revision",
+      "category": "security"
+    },
+    {
+      "file": "test/code-scanning-workflow.test.ts",
+      "test": "runs only the trusted converter and keeps scanner status separate from conversion failures (#6959)",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "declares exactly one corporate CA build arg so onboard patching stays unambiguous",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
       "category": "security"
     },
     {
@@ -114,6 +134,16 @@
     {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
+      "test": "binds the composite action and helper to their immutable reviewed revision (#6961)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-host-dependency-workflow-boundary.test.ts",
+      "test": "binds the host-dependency action and helper to their immutable reviewed revision (#6961)",
       "category": "security"
     },
     {
@@ -232,6 +262,16 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-final-image-layout.test.ts",
+      "test": "keeps security entrypoint hashes synchronized with the copied files",
+      "category": "security"
+    },
+    {
+      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
+      "category": "security"
+    },
+    {
       "file": "test/inference-options-docs.test.ts",
       "test": "keeps a per-model task-fit comparison table for curated onboarding models",
       "category": "compatibility"
@@ -268,12 +308,17 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "keeps configured budgets derived from the checked-in samples",
+      "test": "keeps baseline budgets derived from the checked-in samples",
       "category": "compatibility"
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
-      "test": "records five independent successful exact-head samples",
+      "test": "keeps interim cap adjustments tied to functional post-change evidence",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "records five independent successful samples for current main",
       "category": "compatibility"
     },
     {
@@ -285,6 +330,16 @@
       "file": "test/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
       "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "keeps the WSL suite unprivileged with explicit root-only contracts",
+      "category": "security"
+    },
+    {
+      "file": "test/platform-vitest-main-workflow.test.ts",
+      "test": "provisions the pinned macOS test runtime before running the full suite",
+      "category": "compatibility"
     },
     {
       "file": "test/plugin-vitest-project.test.ts",
@@ -304,6 +359,16 @@
     {
       "file": "test/pr-e2e-gate-workflow.test.ts",
       "test": "pins both controller checkouts and installs without lifecycle scripts or caches",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-e2e-gate-workflow.test.ts",
+      "test": "orders the coordinate steps and always finalizes through the controller",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-e2e-gate-shards.test.ts",
+      "test": "rejects malformed configured matrix shard selectors",
       "category": "security"
     },
     {
@@ -328,6 +393,11 @@
     },
     {
       "file": "test/pr-workflow-contract.test.ts",
+      "test": "folds hermetic E2E support and Ollama proxy coverage into existing Vitest lanes",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
       "test": "keeps the installer verifier inside the trusted composite action",
       "category": "security"
     },
@@ -344,6 +414,16 @@
     {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "publishes coverage only from same-repository code (#6692)",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "records the Dependabot DCO bypass as a successful required job",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-workflow-contract.test.ts",
+      "test": "reruns installer hash verification after a pull request base retarget",
       "category": "security"
     },
     {
@@ -402,6 +482,11 @@
       "category": "security"
     },
     {
+      "file": "test/release-latest-tag-workflow.test.ts",
+      "test": "binds latest promotion to the exact GitHub-verified tag object",
+      "category": "security"
+    },
+    {
       "file": "test/release-lkg-brev-image.test.ts",
       "test": "keeps LKG dispatch inside the trusted secret boundary (#6772)",
       "category": "security"
@@ -430,6 +515,11 @@
       "file": "test/runner.test.ts",
       "test": "walkthrough.sh does not embed NVIDIA_INFERENCE_API_KEY in tmux or sandbox commands",
       "category": "security"
+    },
+    {
+      "file": "test/starter-prompt-docs.test.ts",
+      "test": "prepares the Starter Prompt in every docs build entry point (#5048)",
+      "category": "compatibility"
     },
     {
       "file": "test/validate-blueprint.test.ts",
@@ -470,6 +560,11 @@
       "file": "test/vitest-watch-triggers.test.ts",
       "test": "registers the focused mappings at the root configuration boundary (#6692)",
       "category": "compatibility"
+    },
+    {
+      "file": "test/growth-guardrails-workflow-boundary.test.ts",
+      "test": "flags %s",
+      "category": "security"
     },
     {
       "file": "test/wechat-runtime-audit-workflow.test.ts",

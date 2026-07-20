@@ -82,27 +82,6 @@ export type AutoPairApprovalResult = {
   approved: number;
 };
 
-/**
- * Wrap a multi-line shell payload so it survives `openshell sandbox exec`.
- *
- * OpenShell's exec RPC rejects any argument containing a newline or carriage
- * return ("command argument N contains newline or carriage return characters"),
- * so a multi-line `sh -c <script>` is refused outright. We base64-encode the
- * payload onto a single line, decode it to a temp file inside the sandbox, and
- * run that file — preserving heredocs and the original exit status. `base64`
- * from Node is unwrapped (no embedded newlines) and uses only shell-safe
- * characters, so it is safe inside single quotes. This mirrors the
- * base64-then-decode pattern the E2E harness uses for the same reason.
- */
-export function wrapSandboxShellScript(script: string): string {
-  const encoded = Buffer.from(script, "utf-8").toString("base64");
-  return (
-    `__nemoclaw_s="$(mktemp)" && ` +
-    `printf %s '${encoded}' | base64 -d > "$__nemoclaw_s" && ` +
-    `sh "$__nemoclaw_s"; __nemoclaw_rc=$?; rm -f "$__nemoclaw_s"; exit "$__nemoclaw_rc"`
-  );
-}
-
 export function readAutoPairApprovalPolicyModule(): string | null {
   try {
     return readFileSync(AUTO_PAIR_POLICY_PATH, "utf-8");
@@ -239,7 +218,7 @@ export function runSandboxAutoPairApprovalPass(
   try {
     const result = spawnSync(
       getOpenshellBinary(),
-      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", wrapSandboxShellScript(script)],
+      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
       {
         cwd: ROOT,
         env: process.env,

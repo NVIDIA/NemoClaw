@@ -19,8 +19,12 @@ import {
   dockerContainerName,
   parseDockerInspectJson,
   sameContainerId,
+  validateRequiredDockerUlimits,
 } from "./docker-gpu-patch-clone";
-import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+import {
+  DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
+  DOCKER_GPU_PATCH_TIMEOUT_MS,
+} from "./docker-gpu-patch-constants";
 import { reconcileSupervisorReconnect } from "./docker-gpu-patch-finalize";
 import { selectDockerGpuPatchMode } from "./docker-gpu-patch-mode";
 import { restoreDockerGpuPatchBackupAfterRecreateFailure } from "./docker-gpu-patch-rollback";
@@ -148,6 +152,7 @@ export function recreateOpenShellDockerSandboxContainer(
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
     openshellSandboxCommand?: readonly string[] | null;
+    requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
     expectedOldContainerId?: string | null;
     backend?: "generic" | "jetson";
     dockerDesktopWsl?: boolean;
@@ -161,6 +166,7 @@ export function recreateOpenShellDockerSandboxContainer(
     modeAttempts: [],
   };
   try {
+    validateRequiredDockerUlimits(options.requiredUlimits);
     const containerIds = findOpenShellDockerSandboxContainerIds(options.sandboxName, deps);
     const oldContainerId = containerIds[0];
     if (!oldContainerId) {
@@ -225,6 +231,7 @@ export function recreateOpenShellDockerSandboxContainer(
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
     cloneOptions.image = image;
     cloneOptions.openshellSandboxCommand = options.openshellSandboxCommand ?? null;
+    cloneOptions.requiredUlimits = options.requiredUlimits ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
     if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
     if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
@@ -249,7 +256,10 @@ export function recreateOpenShellDockerSandboxContainer(
       suppressOutput: true,
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     };
-    const stopResult = d.dockerStop(oldContainerId, containerMutationOptions);
+    const stopResult = d.dockerStop(oldContainerId, {
+      ...containerMutationOptions,
+      timeout: DOCKER_GPU_PATCH_STOP_TIMEOUT_MS,
+    });
     if (!hasZeroDockerExitStatus(stopResult)) {
       context.rolledBack = hasZeroDockerExitStatus(
         d.dockerStart(oldContainerId, containerMutationOptions),

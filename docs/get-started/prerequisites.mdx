@@ -9,8 +9,6 @@ keywords: ["nemoclaw prerequisites", "nemoclaw supported platforms", "nemoclaw h
 content:
   type: "reference"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 Before you start, verify that your machine has the software and hardware needed to run NemoClaw.
 
 ## Hardware
@@ -84,21 +82,37 @@ Refer to the [troubleshooting guide](../reference/troubleshooting) for the overr
 
 ## Platforms
 
-The following table lists tested platform and runtime combinations.
-Availability is not limited to these entries, but untested configurations can have issues.
+The following table lists tested platforms and deferred platforms with a documented preparation path.
+A Deferred row is available for evaluation only and is not a support claim.
 The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json), the single source of truth kept in sync by CI and QA.
 
 {/* platform-matrix:begin */}
 | OS | Container runtime | Status | Notes |
 |----|-------------------|--------|-------|
+| DGX OS (Spark) | Docker | Tested | Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
+| DGX OS (Station) | Docker | Deferred | Deferred. For evaluation on a qualifying DGX Station GB300, see [Additional Setup for DGX Station](prerequisites/dgx-station-preparation) before the Quickstart. |
 | Linux | Docker | Tested | Primary tested path. Ubuntu 24.04 has host-level onboarding validation. A digest-pinned Ubuntu 26.04 userspace lane builds the CLI and runs preflight, installer, and platform contracts on eligible main pushes; Docker-host, AppArmor, Landlock, and live onboarding validation on 26.04 remain pending. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Start the container runtime (Colima or Docker Desktop) before running the installer. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight. |
-| DGX Spark | Docker | Tested | Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
-| Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
+| Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](prerequisites/windows-preparation) before the Quickstart. |
+
+For the complete platform support matrix, including all deferred platforms and CI coverage, refer to [Platform Support](../reference/platform-support).
 {/* platform-matrix:end */}
+
+## Additional Setup
+
+Most supported platforms require no additional setup beyond the hardware and software requirements above.
+Use only the page that matches your host.
+
+### DGX Station Express Preparation
+
+DGX Station remains Deferred.
+If you are evaluating a qualifying DGX Station GB300, follow [Prepare DGX Station to Install NemoClaw](prerequisites/dgx-station-preparation) before the Quickstart.
+
+### Windows Preparation
+
+If you are using Windows, follow [Prepare a Windows Machine to Install NemoClaw](prerequisites/windows-preparation) before the Quickstart.
 
 ## Next Steps
 
-- Use [Prepare Windows for NemoClaw](prerequisites/windows-preparation) if you are using Windows.
 - [Quickstart](quickstart) installs NemoClaw and launches your first sandboxed agent.
-- [AI Agent Docs](../resources/agent-skills) lets your AI coding assistant fetch NemoClaw Markdown docs before setup.
+- [Use NemoClaw Docs with Your Coding Agents](../resources/agent-skills) lets your AI coding assistant fetch NemoClaw Markdown docs before setup.

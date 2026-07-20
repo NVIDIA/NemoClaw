@@ -13,6 +13,8 @@ on:
       - "README.md"
       - "package.json"
       - "package-lock.json"
+      - "scripts/generate-starter-prompt.mts"
+      - "scripts/sync-agent-variant-docs.mts"
       - ".github/workflows/docs-preview-pr.yaml"
 
 concurrency:
@@ -56,8 +58,10 @@ jobs:
       - name: Install docs dependencies
         run: npm ci --ignore-scripts
 
-      - name: Validate docs
-        run: npm run docs
+      - name: Prepare and validate docs
+        run: |
+          npm run docs:prepare
+          npm run docs:validate
 
       - name: Generate preview URL
         if: ${{ steps.fern-preview.outputs.enabled == 'true' }}
@@ -66,7 +70,6 @@ jobs:
           FERN_TOKEN: ${{ secrets.FERN_TOKEN }}
           PREVIEW_ID: pr-${{ github.event.pull_request.number }}
         run: |
-          npm run docs:check-agent-variants
           FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
           set +e
           OUTPUT=$(cd fern && npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE" --preview --id "$PREVIEW_ID" 2>&1)

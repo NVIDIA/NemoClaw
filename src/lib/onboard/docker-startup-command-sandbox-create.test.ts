@@ -67,7 +67,7 @@ describe("Docker startup-command sandbox creation", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses the default startup-command recreation path for non-GPU Hermes containers", () => {
+  it("uses the startup-command recreation path with DCode's exact resource limits", () => {
     const dockerCaptureOutput: Record<string, string> = {
       ps: "old-container-id\n",
       inspect: JSON.stringify([inspectFixture()]),
@@ -90,6 +90,10 @@ describe("Docker startup-command sandbox creation", () => {
       persistStartupCommand: true,
       sandboxName: "alpha",
       openshellSandboxCommand: ["env", "nemoclaw-start"],
+      requiredUlimits: [
+        { name: "nproc", soft: 512, hard: 512 },
+        { name: "nofile", soft: 65_536, hard: 65_536 },
+      ],
       timeoutSecs: 60,
       deps,
       overrides: {
@@ -101,7 +105,14 @@ describe("Docker startup-command sandbox creation", () => {
 
     expect(recreatePatch).not.toHaveBeenCalled();
     expect(dockerRunDetached.mock.calls[0]?.[0]).toEqual(
-      expect.arrayContaining(["--env", "OPENSHELL_SANDBOX_COMMAND=env nemoclaw-start"]),
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_COMMAND=env nemoclaw-start",
+        "--ulimit",
+        "nproc=512:512",
+        "--ulimit",
+        "nofile=65536:65536",
+      ]),
     );
     expect(patch.selectedMode()?.kind).toBe("startup-command");
   });

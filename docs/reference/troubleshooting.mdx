@@ -9,8 +9,6 @@ keywords: ["nemoclaw troubleshooting", "nemoclaw debug sandbox issues", "opencla
 content:
   type: "reference"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 {/* markdownlint-disable MD014 */}
 
 This page covers common installation, onboarding, and runtime issues, along with resolution steps.
@@ -304,7 +302,7 @@ NEMOCLAW_DASHBOARD_BIND=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
 Use `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` again on later `$$nemoclaw <sandbox> connect` calls.
 If the sandbox was originally created without remote bind, recreate it with the same onboard command plus `--recreate-sandbox` before connecting remotely.
 
-Docker-driver gateways on OpenShell 0.0.72 reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` while gateway JWT auth is active.
+Docker-driver gateways on OpenShell 0.0.85 reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` while gateway JWT auth is active.
 
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and only when other hosts on the network should be able to reach the gateway.
 
@@ -312,14 +310,14 @@ Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and 
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.72 directly supports Linux hosts with glibc 2.28 or newer.
+OpenShell 0.0.85 directly supports Linux hosts with glibc 2.28 or newer.
 On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container.
 Leave it unset on supported hosts.
 
 The compatibility container uses host networking and mounts the host Docker socket read-only.
 A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host.
 The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon.
-See the [OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the accepted boundary and removal conditions.
+See the [OpenShell gateway compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the unchanged container boundary and removal conditions.
 
 Refer to [Environment Variables](commands#environment-variables) for the full list of port overrides.
 
@@ -354,21 +352,16 @@ $$nemoclaw list
 ```
 
 `$$nemoclaw list` prints the recorded dashboard URL for each sandbox.
+These dashboard ports are separate from the gateway-wide inference route.
 
-OpenShell currently exposes one inference route per gateway.
-Sandboxes that share a gateway must record the same provider and model.
-Custom compatible routes must also record the same normalized endpoint and API family.
-An OpenClaw sandbox using the native Anthropic Messages frontend and a Hermes sandbox using the managed OpenAI frontend need separate gateway ports, even when they use the same custom endpoint and model.
-NemoClaw includes stopped sandboxes in this check because they use the gateway route when restarted.
+</AgentOnly>
 
-If onboarding, `inference set`, or connect-time route repair reports a shared-gateway conflict, choose one of these recovery paths:
+### A shared inference route conflicts with another sandbox
 
-- Align every named sandbox to the same route.
-- Remove a conflicting sandbox with `$$nemoclaw <name> destroy` when you no longer need it.
-- Onboard the sandbox against another gateway port when it needs a different route.
+Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for route time-sharing, provider-global compatibility, and status drift fields.
 
-An aligned group cannot move to a wholly new route one sandbox at a time because the first change would conflict with the remaining registry rows.
-Back up each workspace, remove or migrate the peer sandboxes, switch the last sandbox on the original gateway, then re-onboard the peers with that same route or with separate gateway ports.
+If `inference set` reports a valid shared-route conflict, align the named sandbox records or remove a sandbox you no longer need.
+If onboarding or `connect` reports a provider-global identity conflict, align the same-name provider's custom endpoint, API family, and credential environment-variable name across the named sandboxes, or remove a conflicting sandbox you no longer need.
 
 If the error names incomplete legacy custom-route metadata, back up and remove the affected sandbox, then re-onboard it with an explicit custom endpoint and API family.
 For an OpenAI-compatible route, replace the example endpoint, model, and sandbox name in this recovery sequence:
@@ -384,18 +377,6 @@ NEMOCLAW_PROVIDER=custom \
 
 If the error names an invalid gateway binding, restore the affected row's known-good `gatewayName` and `gatewayPort` metadata from a trusted backup; otherwise back up and remove the sandbox, then re-onboard it.
 Do not guess or copy a binding from another sandbox because lifecycle commands use it to select the gateway.
-
-For example, keep the first sandbox on the default gateway and assign a separate gateway to the second sandbox:
-
-```bash
-$$nemoclaw onboard --name first-sandbox
-NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard --name second-sandbox
-```
-
-NemoClaw derives a separate gateway name and state directory from the second port.
-Using a different dashboard port alone does not create a separate inference route.
-
-</AgentOnly>
 
 ## Onboarding
 
@@ -767,25 +748,74 @@ Silent retry would loop on the same failure if your original choice, such as an 
 - In non-interactive mode (piped `curl | bash` with `NEMOCLAW_NON_INTERACTIVE=1`, CI, scripts), the installer refuses and exits with a non-zero status so a scripted re-run cannot loop.
   You must opt in to one of two paths explicitly:
 
-  Start over with new choices (discards the recorded session and provider/model selection):
+Start over with new choices to discard the recorded session and provider/model selection.
 
-  ```bash
-  curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh
-  ```
+<AgentOnly variant="openclaw">
 
-  Or equivalently, via env var.
-  The variable must be set on the `bash` side of the pipe, not on `curl`, since only the right-hand process inherits it:
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh
+```
 
-  ```bash
-  curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_FRESH=1 bash
-  ```
+</AgentOnly>
 
-  Retry the same session without re-prompting.
-  This is only useful if the original failure was transient, for example a network blip or a stopped Docker daemon, and not a wrong provider choice:
+<AgentOnly variant="hermes">
 
-  ```bash
-  $$nemoclaw onboard --resume
-  ```
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash -s -- --fresh
+```
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash -s -- --fresh
+```
+
+</AgentOnly>
+
+Or use environment variables instead.
+Set them on the `bash` side of the pipe because only the right-hand process inherits them.
+
+<AgentOnly variant="openclaw">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_FRESH=1 bash
+```
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes NEMOCLAW_FRESH=1 bash
+```
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code NEMOCLAW_FRESH=1 bash
+```
+
+</AgentOnly>
+
+Retry the same session.
+
+This is only useful if the original failure was transient, for example a network blip or a stopped Docker daemon, and not a wrong provider choice:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
+<AgentOnly variant="openclaw">
+
+OpenClaw resume does not repeat completed non-secret sandbox, web search, messaging, or resource choices.
+Resume also reuses registered web search and messaging credentials when the same onboarding session recorded their successful OpenShell registration and OpenShell still reports the exact expected name, type, and credential keys.
+If the session lacks that registration receipt, the provider is missing, or its binding does not match, interactive resume requests the credential again; non-interactive resume preserves the completed choice, reports the required environment variable, and exits so you can export it before retrying `$$nemoclaw onboard --resume`.
+
+</AgentOnly>
 
 As a last resort, you can also delete the session file directly and re-run the installer:
 
@@ -905,7 +935,8 @@ Follow these steps to reconnect.
 If the sandbox remains missing after restarting the gateway, run `$$nemoclaw <name> rebuild --yes` while the local registry entry still exists.
 The rebuild path uses the recorded sandbox metadata and the snapshot flow to preserve supported workspace and agent state.
 If the sandbox was intentionally deleted and you want a clean setup instead, run `$$nemoclaw <name> destroy` to remove the stale local entry, then run `$$nemoclaw onboard`.
-Create a snapshot first when the sandbox is reachable enough to back up state. For details, refer to [Back Up and Restore](../manage-sandboxes/backup-restore).
+Create a snapshot first when the sandbox is reachable enough to back up state.
+For details, refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
 </Warning>
 
 <AgentOnly variant="openclaw,hermes">
@@ -929,15 +960,19 @@ On a direct-container deployment, first confirm that the sandbox is running:
 $$nemoclaw <name> status
 ```
 
-When `recover` repairs a stopped built-in gateway, NemoClaw automatically retries only when stdout is empty and stderr is exactly one `SUPERVISOR_BUSY` or `SUPERVISOR_UNAVAILABLE` line, with at most three controller attempts.
+When `recover` repairs a stopped built-in gateway, NemoClaw repeats the recovery action only for an exit status of `1` with blank stdout and a sole nonblank stderr line equal to `SUPERVISOR_BUSY`, with at most three controller attempts.
+The same result is inconclusive during managed settle confirmation and can be probed again only within the configured settle window.
+NemoClaw treats `SUPERVISOR_UNAVAILABLE` as terminal because it can report unreadable or untrusted supervisor state, ambiguous discovery, or a process-identity change.
 It does not retry other status or output combinations.
 `SUPERVISOR_NOT_RUNNING` is a separate result that requires two zero-supervisor scans with a stable PID 1 and does not enter that retry loop.
 On a supported local Docker-driver sandbox with the legacy keepalive startup, it can authorize a container-identity-pinned recreation that commits only after managed health and settle checks pass.
 To bypass that trusted recreation while troubleshooting, run `NEMOCLAW_DISABLE_SUPERVISOR_RELAUNCH=1 $$nemoclaw <name> recover`; NemoClaw leaves the container unchanged and returns rebuild or re-onboard guidance.
 If that bounded retry is exhausted, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
-If the error mentions `SUPERVISOR_NOT_RUNNING` and trusted recreation could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, `SUPERVISOR_UNAVAILABLE`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
-The managed controller also refuses an ambiguous or changing process tree instead of guessing which same-UID process is the gateway.
-Rebuild the image before retrying:
+If the error mentions `SUPERVISOR_NOT_RUNNING` and trusted recreation could not proceed, `SUPERVISOR_REBUILD_REQUIRED`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
+An exact `SUPERVISOR_UNAVAILABLE` result instead means the managed controller refused the current supervisor state rather than guessing which same-UID process is the gateway.
+The current recovery action and any managed settle confirmation stop immediately.
+If `recover` reports this result, follow its host-side `gateway restart` guidance.
+If restart also reports `SUPERVISOR_UNAVAILABLE`, or the image is incompatible, rebuild the image:
 
 ```bash
 $$nemoclaw <name> rebuild --yes
@@ -1155,16 +1190,7 @@ Register credentials with NemoClaw or OpenShell on the host so the gateway can i
 
 ### Managed MCP commands report an older Deep Agents runtime
 
-Deep Agents sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`.
-The rebuild installs the current managed MCP projection path and reconstructs `/sandbox/.deepagents/.nemoclaw-mcp.json` from the host registry.
-
-```bash
-nemo-deepagents <name> rebuild
-nemo-deepagents <name> mcp add <server-name> <url>
-```
-
-NemoClaw does not auto-load user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into the managed configuration.
-Use `nemo-deepagents <name> mcp ...` commands for managed MCP servers that need OpenShell credential replacement and egress policy.
+For the current rebuild and retry workflow, refer to [Agent MCP Capability Is Missing](troubleshoot-mcp-servers#agent-mcp-capability-is-missing).
 
 ### Tavily remains blocked after opt-in
 
@@ -1233,32 +1259,24 @@ If they are missing on an older sandbox, upgrade NemoClaw and run:
 $$nemoclaw <name> rebuild
 ```
 
+<AgentOnly variant="openclaw,hermes">
+
 ### External channel TLS fails behind a corporate MITM proxy (`NET:FAIL`)
 
-On networks where a corporate proxy in front of the host re-signs external TLS with its own root CA, external endpoints such as `api.telegram.org` fail certificate verification even when the network policy allows the connection. Logs show the request opening (`NET:OPEN ... api.telegram.org:443`) followed by `NET:FAIL`. OpenShell injects only its own L7-proxy CA into the sandbox, so the separate corporate root is missing from the trust path.
+On networks where a corporate proxy re-signs external TLS, endpoints such as `api.telegram.org` can fail certificate verification even when network policy allows the connection.
+Logs show the request opening as `NET:OPEN ... api.telegram.org:443` followed by `NET:FAIL` because the corporate root is not in the OpenShell trust path.
 
-To fix this, point NemoClaw at your corporate CA bundle on the host **before** onboarding, then onboard (or rebuild). The recommended, explicit way is `NEMOCLAW_CORPORATE_CA_BUNDLE`. NemoClaw validates the bundle, bakes it into the sandbox image, and at startup appends it to the OpenShell trust bundle — it never replaces the OpenShell CA — repointing `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, and `NODE_EXTRA_CA_CERTS` at the merged bundle so curl, Python, Git, and Node all trust both roots:
+Provide the corporate CA before onboarding, then onboard or rebuild the sandbox.
 
 ```bash
 export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/corporate-ca.pem
 $$nemoclaw onboard
 ```
 
-If your corporate CA is already installed in the host system trust store, NemoClaw detects it automatically. It scans the administrator anchor directories (recursively, matching `update-ca-certificates`) — `/usr/local/share/ca-certificates/` on Debian/Ubuntu and `/etc/pki/ca-trust/source/anchors/` on RHEL/Fedora — which is where an administrator drops a root CA before running `update-ca-certificates` / `update-ca-trust`. NemoClaw deliberately does **not** read the merged `/etc/ssl/certs/ca-certificates.crt`, which also contains the distro's public roots; it imports only these bounded anchor sources so it never bakes broad, unrelated OS trust into the image. This host-store detection is a last-resort fallback, tried only after the environment variables above. To scan a non-standard anchor location, set `NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS` to a path-list of directories; set it to an empty value to disable host-store scanning.
+Refer to [Configure Corporate CA Trust](../security/configure-corporate-ca-trust) for source precedence, host anchor discovery, image and runtime trust, custom Dockerfile requirements, import validation, and `NEMOCLAW_CORPORATE_CA_IMPORT=0`.
+If the import does not occur, check onboarding output for `baking corporate proxy CA from ...` or a warning that the selected source was skipped.
 
-Resolution order:
-
-1. Explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` (fails onboarding loudly when set but invalid, or when it points at a merged OS trust store such as `/etc/ssl/certs/ca-certificates.crt` — export only your corporate root instead).
-2. Conventional CA variables `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, then `SSL_CERT_FILE` (each **skipped with a `WARNING` log** when it is set but points at a missing or invalid file — the import is non-fatal, but the warning tells you it was skipped). A conventional variable that points at a merged OS trust store (for example the common `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`) is also skipped with a `WARNING`, so a default system bundle is never baked in wholesale — the host-anchor scan below still finds a locally-installed corporate root.
-3. Host administrator anchor directories (an empty or absent directory is skipped silently; a directory that holds candidate files but no valid CA, or that exceeds the size/count caps, is skipped with a `WARNING` log).
-
-When a fallback or host-store source is baked, onboarding logs which source and path it used (`baking corporate proxy CA from …`). If you set a conventional CA variable but the import does not happen, check the onboard build logs: a variable that points at a missing or invalid file is skipped with a `WARNING: … was skipped for corporate CA import` line, and an anchor directory that holds only invalid certificates logs a similar warning. Absence of the `baking …` line means no source validated. Use `NEMOCLAW_CORPORATE_CA_BUNDLE` for explicit, fail-loud behavior. To import a corporate root that is not installed in an anchor directory, export just your corporate root (and any intermediates) into a small PEM file and point `NEMOCLAW_CORPORATE_CA_BUNDLE` at it.
-
-`/etc/ssl/certs/` contract: NemoClaw satisfies the #6210 host trust-store acceptance path by reading the administrator anchor **source** directories above, not the merged `/etc/ssl/certs/ca-certificates.crt` view. This is intentional — the merged file interleaves your corporate root with the distro's public root bundle, and importing it wholesale would widen sandbox trust far beyond the one corporate proxy CA. A corporate root installed via `update-ca-certificates` / `update-ca-trust` already lives in an anchor source directory, so it is detected. If no anchor source validates but NemoClaw sees direct regular CA certificate files in the literal `/etc/ssl/certs/` output directory, it imports only those validated standalone CA files while still excluding the merged `ca-certificates.crt` bundle and symlink fan-out. Normal leaf certificates in that directory, such as Ubuntu's `ssl-cert-snakeoil.pem`, are ignored. A root present *only* as a hand-edited entry in the merged file is not imported, and must be pointed at explicitly via `NEMOCLAW_CORPORATE_CA_BUNDLE`.
-
-Custom Dockerfile contract: the managed NemoClaw sandbox Dockerfiles handle the corporate CA automatically — onboarding bakes the validated bundle into `ARG NEMOCLAW_CORPORATE_CA_B64`, and the image decodes it into the root-owned, read-only file `/usr/local/share/nemoclaw/corporate-ca.pem`. If you build the sandbox from a **custom Dockerfile**, the fallback and host-store sources are a silent no-op unless that Dockerfile declares `ARG NEMOCLAW_CORPORATE_CA_B64` and decodes it into `/usr/local/share/nemoclaw/corporate-ca.pem` the same way. The explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` is the exception — it fails onboarding loudly (rather than no-op) when the managed ARG is absent, so you find out immediately. Either add the ARG and decode step to your Dockerfile, or keep using a managed Dockerfile, to import a corporate CA through automatic detection.
-
-Every imported source must be a regular (non-symlink), readable PEM file that is **not group- or world-writable** (a trust anchor any other user could rewrite is rejected), non-empty and within the size cap, and in which **every** certificate block parses as an X.509 CA certificate (`basicConstraints CA:TRUE`). The imported trust is capped at a small corporate chain (not a full OS trust store) — a source that would exceed the cap is rejected or skipped rather than truncated. To disable the import entirely, set `NEMOCLAW_CORPORATE_CA_IMPORT=0`.
+</AgentOnly>
 
 ### A request inside the sandbox fails with `CONNECT tunnel failed, response 403`
 
@@ -1636,7 +1654,7 @@ $$nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 Both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `$$nemoclaw <sandbox> rebuild`.
 WeChat and WhatsApp are experimental.
-Review [Messaging Channels](../manage-sandboxes/messaging-channels) before enabling them.
+Review [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 
 WeChat captures its bot token through a host-side QR scan during `$$nemoclaw onboard` or `channels add wechat`.
 You scan the iLink QR from WeChat on your phone and NemoClaw registers the captured token with the OpenShell gateway.
@@ -2186,6 +2204,42 @@ Use `--follow` to stream logs in real time while debugging.
 
 For an end-to-end walkthrough with local inference on DGX Spark, refer to the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw).
 
+### Host freezes or logs `NVRM NV_ERR_NO_MEMORY` under local vLLM load
+
+Treat a full host freeze separately from an agent tool-call hang.
+If the Spark stops responding to SSH and ping, and the journal contains `NVRM NV_ERR_NO_MEMORY` or no software-side crash record, first isolate the local inference server before changing MCP or network policy configuration.
+For onboarding-time context, refer to [Use an Existing Server](../inference/local-inference/set-up-vllm#use-an-existing-server).
+
+Check whether vLLM is a bring-your-own server or the NemoClaw managed Spark profile:
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+curl -sf http://127.0.0.1:8000/v1/models
+free -h
+journalctl -k --since "24 hours ago" --no-pager | grep -Ei 'NVRM|OOM|out of memory|lockup|watchdog'
+```
+
+For an existing vLLM server, inspect its launch arguments:
+
+```bash
+docker inspect <vllm-container> --format '{{json .Config.Cmd}}'
+```
+
+Large checkpoints without explicit quantization, very long `--max-model-len` values, high `--gpu-memory-utilization`, and multiple concurrent sequences all consume the Spark's shared CPU/GPU memory pool.
+Before reintroducing agent tools, restart vLLM with a smaller envelope, for example:
+
+```bash
+vllm serve <model> \
+  --max-model-len 32768 \
+  --gpu-memory-utilization 0.75 \
+  --max-num-seqs 1 \
+  --max-num-batched-tokens 4096
+```
+
+If the host still logs `NVRM NV_ERR_NO_MEMORY` while loading the model, switch to a smaller or quantized checkpoint.
+For managed setup, prefer `NEMOCLAW_PROVIDER=install-vllm`, which selects the Spark profile and its registered model-specific serve arguments.
+After standalone vLLM is stable, re-run onboarding and add MCP servers back one group at a time.
+
 ### CoreDNS CrashLoop after onboarding
 
 If CoreDNS in the embedded k3s cluster crashes shortly after setup, it is usually because it resolves against `127.0.0.11`, which does not route inside the gateway container.
@@ -2215,7 +2269,10 @@ When shared gateway cleanup would be unsafe, follow the targeted destroy or gate
 
 Recent NVIDIA Container Toolkit installs configure the Docker daemon for Container Device Interface (CDI) device injection, which OpenShell's `gateway start --gpu` then auto-selects.
 If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
-The standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and falls back to generating the spec directly with `nvidia-ctk`.
+Outside Station Express, the standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and can fall back to generating the spec directly with `nvidia-ctk`.
+Station Express never falls back to direct CDI generation.
+The generic Ubuntu, Colossus BaseOS, and exact AI Developer Tools paths require the packaged refresh lifecycle to work; if it fails or omits `nvidia.com/gpu=all`, inspect `nvidia-cdi-refresh.service`, repair it, and rerun the printed exact-commit install command.
+Other factory-runtime profiles stop when the CDI device is missing without enabling or restarting the refresh units.
 If you run `$$nemoclaw onboard` directly, preflight prints the manual remediation instead.
 The native Linux fix is the same on Docker hosts whose `docker info` advertises a non-empty `CDISpecDirs`.
 On WSL with Docker Desktop, Docker may advertise CDI directories even though `--device nvidia.com/gpu=all` is not usable from the WSL distro.
@@ -2230,7 +2287,7 @@ nvidia-ctk cdi list
 $$nemoclaw onboard
 ```
 
-If the refresh units are unavailable or do not generate CDI devices, generate the spec directly:
+For other native Linux installations, if the refresh units are unavailable or do not generate CDI devices, generate the spec directly:
 
 ```bash
 sudo mkdir -p /etc/cdi
@@ -2413,6 +2470,9 @@ If the process exists but the endpoint is unreachable, use the restart action wh
 ### Ollama inference fails or hangs in WSL
 
 Ollama configures context length based on your hardware.
+
+<AgentOnly variant="openclaw">
+
 On some GPUs (for example RTX 3500), the default context length is not sufficient for OpenClaw.
 During onboarding, NemoClaw raises loaded-model context lengths below `16384` to `16384` when `NEMOCLAW_CONTEXT_WINDOW` is unset.
 Set the variable manually when you need a different value or when you run Ollama outside the managed onboarding path.
@@ -2422,6 +2482,26 @@ Force a larger context length:
 pkill -f 'ollama serve'
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+Hermes requires at least `64000` tokens.
+During onboarding, NemoClaw verifies the loaded model's actual `context_length` through Ollama's `/api/ps` endpoint.
+Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this check before reusing its route.
+Resume stops when that recorded model is missing, Ollama is unreachable, model warm-up fails, or the runtime context cannot be verified.
+If you set `NEMOCLAW_CONTEXT_WINDOW` above `64000`, the loaded model must provide at least that larger value.
+If the runtime value is too small, missing, or malformed, onboarding stops before sandbox creation and asks you to restart the host daemon with the required context length.
+`NEMOCLAW_CONTEXT_WINDOW` controls Hermes prompt budgeting; it does not change the Ollama daemon or bypass this runtime check.
+Force a larger context length:
+
+```bash
+pkill -f 'ollama serve'
+OLLAMA_CONTEXT_LENGTH=64000 ollama serve
+```
+
+</AgentOnly>
 
 Verify that Ollama inference works:
 
@@ -2439,10 +2519,23 @@ sudo systemctl status ollama
 
 If it is active, stop it first, then start with the custom context length:
 
+<AgentOnly variant="openclaw">
+
 ```bash
 sudo systemctl stop ollama
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+```bash
+sudo systemctl stop ollama
+OLLAMA_CONTEXT_LENGTH=64000 ollama serve
+```
+
+</AgentOnly>
 
 For additional troubleshooting, refer to the [Windows Setup](../get-started/prerequisites/windows-preparation) page.
 <AgentOnly variant="openclaw">
@@ -2551,6 +2644,22 @@ After the rebuild completes, return to the Skills page to confirm the skill is r
 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`.
 For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
+
+### Hermes dashboard config did not converge
+
+`nemohermes inference set` updates the OpenShell route, registry, and `/sandbox/.hermes/config.yaml` before it refreshes the separate dashboard profile.
+If the dashboard profile exists but NemoClaw cannot confirm that `/sandbox/.hermes/dashboard-home/config.yaml` was updated, the command exits nonzero without printing `Inference route synced`.
+The committed route and main Hermes config are not rolled back.
+
+Restart the sandbox so startup mirrors the committed model route into the dashboard profile:
+
+```bash
+nemohermes <name> stop
+nemohermes <name> start
+```
+
+Then run `nemohermes inference get` and verify Dashboard Chat uses the selected model.
+If the command succeeds because the dashboard profile is missing, the dashboard is disabled and no dashboard recovery is required.
 
 ### Hermes restart reports `config hash mismatch`
 

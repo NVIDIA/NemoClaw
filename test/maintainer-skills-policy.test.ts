@@ -66,27 +66,33 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(morning).toContain("review, CI, file, and risky-area data");
   });
 
-  it("moves post-tag stragglers to the next patch version", () => {
+  it("moves post-tag stragglers and retires the released label", () => {
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
     const morning = read(".agents/skills/nemoclaw-maintainer-morning/SKILL.md");
     const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
 
-    expect(evening).toContain("automatically bump stragglers to the next patch");
-    expect(release).toContain("scripts/bump-stragglers.ts");
-    expect(release).toContain("Do not run it before Step 4");
+    expect(evening).toContain("automatically carry stragglers to the next patch");
+    expect(evening).toContain("retire the released label");
+    expect(release).toContain("release-latest-tag");
+    expect(release).toContain("signed annotated semver tag");
+    expect(release).toContain("GitHub-Verified");
+    expect(release).toContain("same tag object");
+    expect(release).toContain("Do not run the retirement script directly");
+    expect(release).toContain('--event push --commit "$RELEASE_SHA"');
+    expect(release).toContain("Expected exactly one release-latest-tag push run");
     expect(morning).toContain("post-tag housekeeping was interrupted");
-    expect(priorities).toContain("automatically bump stragglers to the next patch");
+    expect(priorities).toContain("automatically carry stragglers to the next patch");
+    expect(priorities).toContain("delete the released label");
     expect(policy).toContain("automatically move every open straggler to the next patch label");
-    expect(
-      fs.existsSync(
-        path.join(root, ".agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts"),
-      ),
-    ).toBe(true);
+    expect(policy).toContain("delete the released version label");
+    expect(policy).toContain("never renamed or reused");
+    expect(policy).toContain("shared release-label coordination queue");
+    expect(fs.existsSync(path.join(root, "scripts/retire-release-label.mts"))).toBe(true);
   });
 
-  it("records every merged main PR against its ancestry-derived release target", () => {
+  it("keeps release labels temporary and limits post-merge assignment to untagged work", () => {
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
     const projectWorkflow = read(
       ".agents/skills/nemoclaw-maintainer-policies/references/project-workflow.md",
@@ -97,23 +103,25 @@ describe("maintainer skills follow canonical workflow policy", () => {
       label_families: {
         release: { application_policy: string; positive_signals: string[] };
       };
-      quality_rules: { post_merge_release_labeling_allowed: boolean };
+      quality_rules: { post_merge_untagged_release_labeling_allowed: boolean };
     };
 
     expect(policy).toContain("After a PR merges to `main`");
-    expect(policy).toContain("earliest containing release");
-    expect(policy).toContain("completed releases tagged within the seven-day retention window");
-    expect(policy).toContain("never removes an existing version label");
+    expect(policy).toContain("ahead of the latest release tag");
+    expect(policy).toContain("only across the untagged interval");
+    expect(policy).toContain("Tags and commit ancestry are the only durable");
+    expect(policy).not.toContain("earliest containing release");
+    expect(policy).not.toContain("seven-day retention window");
     expect(projectWorkflow).toContain("On open PRs");
     expect(projectWorkflow).toContain("After a PR merges to `main`");
-    expect(projectWorkflow).toContain("historical release attribution");
+    expect(projectWorkflow).toContain("tag comparison range owns durable release membership");
     expect(taxonomy.label_families.release.positive_signals).toContain(
-      "authorized post-merge assignment to a containing release or the next patch release",
+      "authorized post-merge assignment to the next untagged patch release",
     );
     expect(taxonomy.label_families.release.application_policy).toContain(
-      "preserve existing version labels",
+      "carry open items forward and delete the released label",
     );
-    expect(taxonomy.quality_rules.post_merge_release_labeling_allowed).toBe(true);
+    expect(taxonomy.quality_rules.post_merge_untagged_release_labeling_allowed).toBe(true);
   });
 
   it("requires E2E evidence for the release candidate commit or itemized maintainer exceptions", () => {
@@ -123,7 +131,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
 
-    expect(policy).toContain("exact full `origin/main` commit SHA");
+    expect(policy).toContain("full `origin/main` commit SHA");
     expect(policy).toContain("`.github/workflows/e2e.yaml` is the sole source of truth");
     expect(policy).toContain("Do not maintain a separate release-gating test list");
     expect(policy).toContain("at least one completed, successful execution");
@@ -142,7 +150,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(release).toContain("successful run or job URL and attempt");
     const evidenceSummary = release.indexOf("Before showing the confirmation prompt");
     const confirmationPrompt = release.indexOf(
-      "Ask the maintainer to paste the exact phrase",
+      "Ask the maintainer to paste this phrase",
       evidenceSummary,
     );
     expect(evidenceSummary).toBeGreaterThanOrEqual(0);
@@ -151,24 +159,48 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain("explicit itemized maintainer exception");
     expect(evening).toContain("tag the confirmed release commit with `vX.Y.Z`");
     expect(evening).not.toContain("tag `main`");
-    expect(dailyFlow).toContain("freeze the exact candidate SHA and review every E2E test");
+    expect(dailyFlow).toContain("freeze the candidate SHA and review every E2E test");
     expect(priorities).toContain("collect the E2E evidence or itemized maintainer exceptions");
   });
 
   it("runs release-prep docs before generating the final release plan", () => {
     const updateDocs = read(".agents/skills/nemoclaw-contributor-update-docs/SKILL.md");
+    const createPr = read(".agents/skills/nemoclaw-contributor-create-pr/SKILL.md");
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
+    const releaseNotes = read(".agents/skills/nemoclaw-maintainer-release-notes/SKILL.md");
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
+    const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");
+    const skillsGuide = read(".agents/skills/nemoclaw-skills-guide/SKILL.md");
+    const agents = read("AGENTS.md");
+    const docsAgents = read("docs/AGENTS.md");
+    const docsContributing = read("docs/CONTRIBUTING.md");
 
     expect(updateDocs).toContain("/nemoclaw-contributor-update-docs for vX.Y.Z");
+    expect(updateDocs).toContain("Every pre-tag release-note docs PR must add");
+    expect(updateDocs).toContain("docs/changelog/YYYY-MM-DD.mdx");
+    expect(updateDocs).toContain("parser-safe MDX SPDX comment");
+    expect(updateDocs).toContain("scan `<previous-tag>..origin/main`");
+    expect(updateDocs).toContain("planned release date");
+    expect(updateDocs).toContain("stop before PR creation");
+    expect(createPr).toContain('--label "area: docs"');
+    expect(createPr).not.toContain('--label "documentation"');
     expect(evening.indexOf("/nemoclaw-contributor-update-docs for <version>")).toBeLessThan(
       evening.indexOf("Load `cut-release-tag`"),
     );
-    expect(release).toContain(
-      "Do not generate the release plan until release-prep docs are merged or explicitly waived.",
-    );
+    expect(evening).toContain("contains the exact `## <version>` heading");
+    expect(release).toContain("git grep -n '^## vX\\.Y\\.Z$'");
+    expect(release).toContain("Unless Step 1 records an explicit waiver");
+    expect(release).toContain("show the recorded waiver reason");
+    expect(release).toContain("A conventional Release Notes page or post-tag Announcement draft");
+    expect(releaseNotes).toContain("does not replace or create that canonical entry");
     expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");
+    expect(policy).toContain("The pre-tag release-note docs PR must create or update");
+    expect(priorities).toContain("pre-tag release-note docs PR containing");
+    expect(skillsGuide).toContain("create the canonical `docs/changelog/YYYY-MM-DD.mdx` entry");
+    expect(agents).toContain("a PR that updates ordinary pages without the dated changelog entry");
+    expect(docsAgents).toContain("Every pre-tag release-note docs PR must create or update");
+    expect(docsContributing).toContain("Create the planned release entry in the pre-tag");
     expect(policy).toContain("If any merge lands after `release:plan`, generate a fresh plan");
   });
 

@@ -434,6 +434,15 @@ test("shields-config: live shields up/down locks config and detects drift", {
   });
   expect(shieldsUp.exitCode, resultText(shieldsUp)).toBe(0);
   expect(resultText(shieldsUp)).toContain("Lockdown active");
+  // Keep fixture teardown out of an artificial mutable window if a later
+  // assertion aborts before the explicit final restore below.
+  cleanup.trackDisposable(`restore shields for ${SANDBOX_NAME} before destroy`, async () => {
+    const restore = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+      artifactName: "cleanup-shields-up-before-destroy",
+    });
+    expect(restore.exitCode, resultText(restore)).toBe(0);
+    expect(resultText(restore)).toMatch(/Lockdown (?:is already )?active/);
+  });
 
   const configUp = await statPath(sandbox, CONFIG_PATH, "phase-3-config-perms-up");
   expect(configUp.mode).toMatch(/^4[0-4][0-4]$/);
@@ -683,6 +692,14 @@ test("shields-config: live shields up/down locks config and detects drift", {
   );
   expect(doubleDown.exitCode, resultText(doubleDown)).not.toBe(0);
   expect(resultText(doubleDown)).toContain("already unlocked");
+
+  // The duplicate-down assertion deliberately leaves its first timer active;
+  // restore the target's normal locked posture before generic destruction.
+  const finalUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+    artifactName: "phase-11-restore-shields-up",
+  });
+  expect(finalUp.exitCode, resultText(finalUp)).toBe(0);
+  expect(resultText(finalUp)).toContain("Lockdown active");
 
   await artifacts.target.complete({
     id: "shields-config",

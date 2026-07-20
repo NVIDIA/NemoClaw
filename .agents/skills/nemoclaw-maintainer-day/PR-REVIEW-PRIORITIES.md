@@ -38,10 +38,10 @@ The team follows a daily ship cycle. All maintainer skills operate within this r
 
 1. **Morning** (`/nemoclaw-maintainer-morning`) — triage the backlog, pick items for the day, label them with the target version (e.g., `v0.0.8`).
 2. **During the day** (`/nemoclaw-maintainer-day`) — land PRs using the maintainer loop. Version labels make progress visible on dashboards.
-3. **Evening** (`/nemoclaw-maintainer-evening`) — check what shipped, identify open stragglers, generate a QA-focused summary, freeze the exact candidate SHA, collect the E2E evidence or itemized maintainer exceptions required before confirmation, cut the tag, automatically bump stragglers to the next patch, and prepare release notes for posting.
+3. **Evening** (`/nemoclaw-maintainer-evening`) — check what shipped, merge or explicitly waive the pre-tag release-note docs PR containing `docs/changelog/YYYY-MM-DD.mdx` for the target version, identify open stragglers, generate a QA-focused summary, freeze the candidate SHA, collect the E2E evidence or itemized maintainer exceptions required before confirmation, cut the tag, automatically carry stragglers to the next patch, delete the released label, and prepare the Announcement for posting.
 4. **Overnight** — QA team (different timezone) performs additional validation of the tag. Any issues they file enter the next morning's triage like any other issue.
 
-Version labels activate release work; they are not readiness claims. If an open item misses the tag, its label moves to the next patch during post-tag housekeeping.
+Version labels activate release work; they are not readiness claims. If an open item misses the tag, its label moves to the next patch during post-tag housekeeping. After no open item remains, housekeeping deletes the released label; it never renames or reuses it.
 
 ## Explicitly not priorities
 

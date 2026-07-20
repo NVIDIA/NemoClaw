@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { buildRiskPlan, RISK_RULES, riskPlanRequiredJobIds } from "../tools/advisors/risk-plan.mts";
+import {
+  buildRiskPlan,
+  PR_E2E_TYPED_TARGET_IDS,
+  RISK_RULES,
+  requiresCredentialedE2eAuthorization,
+  riskPlanRequiredJobIds,
+  riskPlanRequiredTargetIds,
+} from "../tools/advisors/risk-plan.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
@@ -21,7 +28,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(3);
+    expect(first.version).toBe(4);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -33,6 +40,7 @@ describe("deterministic PR risk plan", () => {
     expect(result.tier).toBe(0);
     expect(result.families).toEqual([]);
     expect(result.requiredJobs).toEqual([]);
+    expect(result.requiredTargets).toEqual([]);
   });
 
   it("keeps every live test behind the control-plane exception and preserves the cloud floor (#6446)", () => {
@@ -77,6 +85,34 @@ describe("deterministic PR risk plan", () => {
       }),
     );
     expect(result.planHash).not.toBe(withoutFocusedSelection.planHash);
+  });
+
+  it("hashes the Deep Agents headless check into its exact typed target", () => {
+    const changedFile =
+      "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
+    const result = plan(changedFile);
+    const adjacentCheck = plan(
+      "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
+    );
+
+    expect(PR_E2E_TYPED_TARGET_IDS).toEqual(["ubuntu-repo-cloud-langchain-deepagents-code"]);
+    expect(riskPlanRequiredTargetIds(result)).toEqual(PR_E2E_TYPED_TARGET_IDS);
+    expect(result.requiredTargets).toEqual([
+      expect.objectContaining({
+        id: PR_E2E_TYPED_TARGET_IDS[0],
+        families: ["focused-e2e"],
+        matchedFiles: [changedFile],
+      }),
+    ]);
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        requiredTargets: [...PR_E2E_TYPED_TARGET_IDS],
+      }),
+    );
+    expect(riskPlanRequiredTargetIds(adjacentCheck)).toEqual([]);
+    expect(result.planHash).not.toBe(adjacentCheck.planHash);
+    expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
   });
 
   it("does not infer security or inference risk from unrelated path substrings", () => {
@@ -191,12 +227,14 @@ describe("deterministic PR risk plan", () => {
     "package-lock.json",
     "package.json",
     "vitest.config.ts",
+    "scripts/scorecard/coordinate-scorecard.mts",
     "tools/advisors/github.mts",
     "tools/advisors/io.mts",
     "tools/advisors/risk-plan.mts",
     "tools/e2e/pr-e2e-gate.mts",
+    "tools/e2e/pr-e2e-required.mts",
     "tools/e2e/risk-signal.ts",
-    "tools/e2e/private-file.ts",
+    "tools/e2e/private-file.mts",
     "tools/e2e/workflow-plan.mts",
     "tools/e2e/workflow-boundary.mts",
     "tools/e2e/job-map.txt",
@@ -224,6 +262,32 @@ describe("deterministic PR risk plan", () => {
 
     expect(result.families).toEqual([]);
     expect(result.requiredJobs).toEqual([]);
+    expect(result.requiredTargets).toEqual([]);
+  });
+
+  it("runs controller-only changes without credentialed E2E authorization", () => {
+    const result = plan(
+      ".github/workflows/pr-e2e-gate.yaml",
+      "tools/e2e/pr-e2e-gate.mts",
+      "tools/e2e/pr-e2e-required.mts",
+    );
+
+    expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
+    expect(requiresCredentialedE2eAuthorization(result)).toBe(false);
+  });
+
+  it.each([
+    ".github/workflows/e2e.yaml",
+    "test/e2e/risk-signal-reporter.ts",
+    "tools/e2e/workflow-plan.mts",
+  ])("requires authorization before credentialed E2E can execute %s", (file) => {
+    expect(requiresCredentialedE2eAuthorization(plan(file))).toBe(true);
+  });
+
+  it("keeps mixed controller and credentialed execution changes behind authorization", () => {
+    const result = plan(".github/workflows/pr-e2e-gate.yaml", "test/e2e/risk-signal-reporter.ts");
+
+    expect(requiresCredentialedE2eAuthorization(result)).toBe(true);
   });
 
   it.each([

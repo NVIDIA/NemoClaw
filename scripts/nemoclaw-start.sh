@@ -5495,7 +5495,9 @@ if [ "$(id -u)" -ne 0 ]; then
     wait "$EXITED_GATEWAY_PID" || RC=$?
     mark_openclaw_gateway_stopped
     if [ "$RC" -eq 0 ] \
-      && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
+      && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}" \
+      && ! gateway_control_exit_was_host_authorized \
+        "$EXITED_GATEWAY_PID" "$EXITED_GATEWAY_START_IDENTITY"; then
       exit 0
     fi
     NOW=$(date +%s)
@@ -5782,7 +5784,9 @@ while :; do
     continue
   fi
   if [ "$RC" -eq 0 ] \
-    && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
+    && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}" \
+    && ! gateway_control_exit_was_host_authorized \
+      "$EXITED_GATEWAY_PID" "$EXITED_GATEWAY_START_IDENTITY"; then
     exit 0
   fi
   NOW=$(date +%s)

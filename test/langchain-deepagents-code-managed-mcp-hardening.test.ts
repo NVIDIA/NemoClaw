@@ -30,8 +30,57 @@ function runManagedHelper(source: string) {
 }
 
 describe("Deep Agents managed MCP runtime hardening", () => {
-  it("treats only the exact empty managed projection as an absent snapshot", () => {
-    const result = runManagedHelper(String.raw`
+  it.runIf(process.platform === "linux")(
+    "rejects OpenShell supervisor TLS identity from the managed child runtime",
+    () => {
+      const result = runManagedHelper(String.raw`
+import importlib.util
+import fcntl
+import os
+import sys
+
+for name, value in {
+    "F_SEAL_WRITE": 1,
+    "F_SEAL_GROW": 2,
+    "F_SEAL_SHRINK": 4,
+    "F_SEAL_SEAL": 8,
+}.items():
+    setattr(fcntl, name, getattr(fcntl, name, value))
+spec = importlib.util.spec_from_file_location("_nemoclaw_managed", sys.argv[1])
+managed = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(managed)
+
+original = os.environ.copy()
+try:
+    for name, value in {
+        "OPENSHELL_TLS_CA": "/etc/openshell/tls/client/ca.crt",
+        "OPENSHELL_TLS_CERT": "/etc/openshell/tls/client/tls.crt",
+        "OPENSHELL_TLS_KEY": "/etc/openshell/tls/client/tls.key",
+    }.items():
+        os.environ.clear()
+        os.environ[name] = value
+        try:
+            managed._assert_safe_environment()
+        except RuntimeError as exc:
+            assert name in str(exc)
+            assert value not in str(exc)
+        else:
+            raise AssertionError(f"accepted supervisor-only identity variable {name}")
+finally:
+    os.environ.clear()
+    os.environ.update(original)
+print("supervisor-identity-boundary-ok")
+`);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("supervisor-identity-boundary-ok");
+    },
+  );
+
+  it.runIf(process.platform === "linux")(
+    "treats only the exact empty managed projection as an absent snapshot",
+    () => {
+      const result = runManagedHelper(String.raw`
 import importlib.util
 import sys
 
@@ -66,12 +115,15 @@ for raw in invalid:
 print("strict-tombstone-ok")
 `);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("strict-tombstone-ok");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("strict-tombstone-ok");
+    },
+  );
 
-  it("rejects a same-sized fully sealed descriptor not created by this process state", () => {
-    const result = runManagedHelper(String.raw`
+  it.runIf(process.platform === "linux")(
+    "rejects a same-sized fully sealed descriptor not created by this process state",
+    () => {
+      const result = runManagedHelper(String.raw`
 import fcntl
 import importlib.util
 import os
@@ -110,12 +162,15 @@ finally:
 print("descriptor-provenance-ok")
 `);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("descriptor-provenance-ok");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("descriptor-provenance-ok");
+    },
+  );
 
-  it("falls back on blocked memfd with repeatable digest-bound child reads", () => {
-    const result = runManagedHelper(String.raw`
+  it.runIf(process.platform === "linux")(
+    "falls back on blocked memfd with repeatable digest-bound child reads",
+    () => {
+      const result = runManagedHelper(String.raw`
 import errno
 import fcntl
 import importlib.util
@@ -223,12 +278,15 @@ print(child.managed_mcp_config_bytes(sys.argv[2]).decode(), end="")
 print("anonymous-fallback-ok")
 `);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("anonymous-fallback-ok");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("anonymous-fallback-ok");
+    },
+  );
 
-  it("fails closed without O_TMPFILE and does not mask unrelated memfd errors", () => {
-    const result = runManagedHelper(String.raw`
+  it.runIf(process.platform === "linux")(
+    "fails closed without O_TMPFILE and does not mask unrelated memfd errors",
+    () => {
+      const result = runManagedHelper(String.raw`
 import errno
 import importlib.util
 import os
@@ -329,7 +387,8 @@ with tempfile.TemporaryDirectory() as tempdir:
 print("fallback-fail-closed-ok")
 `);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim()).toBe("fallback-fail-closed-ok");
-  });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("fallback-fail-closed-ok");
+    },
+  );
 });

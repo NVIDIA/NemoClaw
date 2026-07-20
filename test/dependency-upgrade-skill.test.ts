@@ -414,7 +414,7 @@ describe("dependency upgrade skill policy", () => {
 });
 
 describe("dependency release ledger collector", () => {
-  it("emits every adjacent stable range with exact Git evidence", () => {
+  it("emits every adjacent stable range with Git evidence", () => {
     const { repo, targetSha } = createTaggedRepository();
     const result = runCollector(repo, "v1.0.0", targetSha);
 
@@ -1239,7 +1239,7 @@ describe("dependency release ledger collector", () => {
     expect(ledger.ranges[0]?.to.ref).toBe("v1.0.1-rc.1");
   });
 
-  it("preserves SemVer build metadata as part of the exact release identity", () => {
+  it("preserves SemVer build metadata as part of the release identity", () => {
     const { repo, targetSha } = createTaggedRepository();
     git(repo, "tag", "v1.0.3+build.7", targetSha);
     const result = runCollector(repo, "v1.0.0", "refs/tags/v1.0.3+build.7");
@@ -1260,7 +1260,7 @@ describe("dependency release ledger collector", () => {
     });
   });
 
-  it("preserves exact build-metadata tag identities from the remote inventory", () => {
+  it("preserves build-metadata tag identities from the remote inventory", () => {
     const { repo, targetSha } = createTaggedRepository();
     git(repo, "tag", "v1.0.3+build.7", targetSha);
     const evidence = readGitEvidence(repo, targetSha);

@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { compileConfigSchema } from "../scripts/validate-configs";
+import { compileConfigSchema } from "../scripts/validate-configs.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PHASE_NAMES = [
@@ -57,6 +58,31 @@ interface Calibration {
     roundUpMs: number;
   };
   samples: CalibrationSample[];
+  validationAdjustment?: {
+    validatedAt: string;
+    imageChangeSha: string;
+    imageInputsVerifiedThroughSha: string;
+    imageInputPaths: string[];
+    adjustedMetrics: string[];
+    derivation: {
+      statistic: string;
+      minimumHeadroomMs: number;
+      relativeHeadroomPercent: number;
+      roundUpMs: number;
+    };
+    retirement: {
+      trigger: string;
+      minimumSampleCount: number;
+      allSamplesSameHead: boolean;
+      imageChangeMustBeAncestor: boolean;
+      action: string;
+    };
+    runs: CalibrationSample[];
+    derivedCapsMs: {
+      rootStartToFirstTurnCompletionBudgetMs: number;
+      sandboxPhaseBudgetMs: number;
+    };
+  };
   derivedBudgetsMs: ColdPathBudget;
 }
 
@@ -175,9 +201,108 @@ function deriveBudgets(input: Calibration): ColdPathBudget {
   };
 }
 
+function validationThreshold(
+  values: number[],
+  derivation: NonNullable<Calibration["validationAdjustment"]>["derivation"],
+): number {
+  const maximum = Math.max(...values);
+  const headroom = Math.max(
+    derivation.minimumHeadroomMs,
+    maximum * (derivation.relativeHeadroomPercent / 100),
+  );
+  return Math.ceil((maximum + headroom) / derivation.roundUpMs) * derivation.roundUpMs;
+}
+
+function effectiveBudgets(input: Calibration): ColdPathBudget {
+  const baseline = input.derivedBudgetsMs;
+  const adjustment = input.validationAdjustment?.derivedCapsMs;
+  return {
+    ...baseline,
+    rootStartToFirstTurnCompletionBudgetMs: Math.max(
+      baseline.rootStartToFirstTurnCompletionBudgetMs,
+      adjustment?.rootStartToFirstTurnCompletionBudgetMs ??
+        baseline.rootStartToFirstTurnCompletionBudgetMs,
+    ),
+    phaseBudgetsMs: {
+      ...baseline.phaseBudgetsMs,
+      "nemoclaw.onboard.phase.sandbox": Math.max(
+        baseline.phaseBudgetsMs["nemoclaw.onboard.phase.sandbox"],
+        adjustment?.sandboxPhaseBudgetMs ??
+          baseline.phaseBudgetsMs["nemoclaw.onboard.phase.sandbox"],
+      ),
+    },
+  };
+}
+
+function gitIsAncestor(ancestor: string, descendant: string): boolean {
+  const result = spawnSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  });
+  switch (result.status) {
+    case 0:
+      return true;
+    case 1:
+      return false;
+    default:
+      throw new Error(
+        `git merge-base could not verify calibration ancestry; ensure the checkout has full history (status ${String(result.status)}): ${result.error?.message ?? result.stderr.trim()}`,
+      );
+  }
+}
+
+function gitRevision(revision: string): string {
+  return execFileSync("git", ["rev-parse", "--verify", revision], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  }).trim();
+}
+
+function changedImageInputs(
+  fromSha: string,
+  throughSha: string,
+  imageInputPaths: string[],
+): string[] {
+  const output = execFileSync(
+    "git",
+    ["diff", "--name-only", fromSha, throughSha, "--", ...imageInputPaths],
+    { cwd: REPO_ROOT, encoding: "utf8" },
+  ).trim();
+  return output === "" ? [] : output.split(/\r?\n/u);
+}
+
+function validationProvenanceViolations(
+  validation: NonNullable<Calibration["validationAdjustment"]>,
+) {
+  const runHeadsWithChangedImageInputs = validation.runs
+    .map((run) => ({
+      headSha: run.headSha,
+      changedPaths: changedImageInputs(
+        validation.imageChangeSha,
+        run.headSha,
+        validation.imageInputPaths,
+      ),
+    }))
+    .filter((run) => run.changedPaths.length > 0);
+  return {
+    nonDescendantRunHeads: validation.runs
+      .map((run) => run.headSha)
+      .filter((headSha) => !gitIsAncestor(validation.imageChangeSha, headSha)),
+    runHeadsBeyondVerifiedInputs: validation.runs
+      .map((run) => run.headSha)
+      .filter((headSha) => !gitIsAncestor(headSha, validation.imageInputsVerifiedThroughSha)),
+    runHeadsWithChangedImageInputs,
+    changedImageInputsThroughBoundary: changedImageInputs(
+      validation.imageChangeSha,
+      validation.imageInputsVerifiedThroughSha,
+      validation.imageInputPaths,
+    ),
+  };
+}
+
 describe("full-E2E cold-path calibration", () => {
   // source-shape-contract: compatibility -- Exact-head provenance is durable evidence for the hosted-run budget calibration
-  it("records five independent successful exact-head samples", () => {
+  it("records five independent successful samples for current main", () => {
     expect(calibration.schemaVersion).toBe(1);
     expect(calibration.baselineMainSha).toMatch(/^[0-9a-f]{40}$/u);
     expect(calibration.measurementHeadSha).toMatch(/^[0-9a-f]{40}$/u);
@@ -213,9 +338,120 @@ describe("full-E2E cold-path calibration", () => {
   });
 
   // source-shape-contract: compatibility -- Recomputed thresholds keep enforced budgets tied to the reviewed calibration evidence
-  it("keeps configured budgets derived from the checked-in samples", () => {
+  it("keeps baseline budgets derived from the checked-in samples", () => {
     const derived = deriveBudgets(calibration);
     expect(calibration.derivedBudgetsMs).toEqual(derived);
-    expect(checkedInConfig.fullE2eColdPath).toEqual(derived);
+  });
+
+  // source-shape-contract: compatibility -- Post-image-growth validation may adjust only observed stale cold-path caps without pretending to replace the five-run calibration
+  it("keeps interim cap adjustments tied to functional post-change evidence", () => {
+    const validation = calibration.validationAdjustment!;
+    expect(validation.validatedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/u);
+    expect(validation.imageChangeSha).toMatch(/^[0-9a-f]{40}$/u);
+    expect(validation.imageInputsVerifiedThroughSha).toMatch(/^[0-9a-f]{40}$/u);
+    expect(validation.imageInputPaths.length).toBeGreaterThan(0);
+    expect(validation.imageInputPaths).toEqual(
+      expect.arrayContaining([
+        "scripts/patch-openclaw-tool-catalog.mts",
+        "scripts/patch-openclaw-chat-send.mts",
+        "scripts/patch-openclaw-mcp-npx.mts",
+        "scripts/patch-openclaw-issue-4434-diagnostics.mts",
+        "scripts/patch-openclaw-device-self-approval.mts",
+      ]),
+    );
+    expect(validation.imageInputPaths).not.toEqual(
+      expect.arrayContaining([
+        "scripts/patch-openclaw-tool-catalog.js",
+        "scripts/patch-openclaw-chat-send.js",
+        "scripts/patch-openclaw-issue-4434-diagnostics.ts",
+        "scripts/patch-openclaw-device-self-approval.ts",
+      ]),
+    );
+    expect(validationProvenanceViolations(validation)).toEqual({
+      nonDescendantRunHeads: [],
+      runHeadsBeyondVerifiedInputs: [],
+      runHeadsWithChangedImageInputs: [],
+      changedImageInputsThroughBoundary: [],
+    });
+    expect(
+      validationProvenanceViolations({
+        ...validation,
+        runs: [{ ...validation.runs[0], headSha: calibration.baselineMainSha }],
+      }).nonDescendantRunHeads,
+    ).toEqual([calibration.baselineMainSha]);
+    const currentHeadSha = gitRevision("HEAD");
+    expect(
+      validationProvenanceViolations({
+        ...validation,
+        runs: [{ ...validation.runs[0], headSha: currentHeadSha }],
+      }).runHeadsBeyondVerifiedInputs,
+    ).toEqual([currentHeadSha]);
+    const staleImageReference = validationProvenanceViolations({
+      ...validation,
+      imageChangeSha: calibration.baselineMainSha,
+    });
+    expect(staleImageReference.runHeadsWithChangedImageInputs.map((run) => run.headSha)).toEqual(
+      validation.runs.map((run) => run.headSha),
+    );
+    expect(
+      staleImageReference.runHeadsWithChangedImageInputs.flatMap((run) => run.changedPaths),
+    ).toContain("agents/openclaw/wechat-runtime/package.json");
+    expect(staleImageReference.changedImageInputsThroughBoundary).toContain(
+      "agents/openclaw/wechat-runtime/package.json",
+    );
+    expect(validation.adjustedMetrics).toEqual([
+      "rootStartToFirstTurnCompletion",
+      "nemoclaw.onboard.phase.sandbox",
+    ]);
+    expect(validation.derivation.statistic).toBe("maximum");
+    expect(validation.retirement).toEqual({
+      trigger: "successful-exact-head-calibration",
+      minimumSampleCount: 5,
+      allSamplesSameHead: true,
+      imageChangeMustBeAncestor: true,
+      action: "replace-baseline-and-remove-adjustment",
+    });
+    expect(validation.runs).toHaveLength(4);
+    expect(new Set(validation.runs.map((run) => run.runId)).size).toBe(4);
+    expect(validation.runs.map((run) => run.conclusion).sort()).toEqual([
+      "failure",
+      "failure",
+      "success",
+      "success",
+    ]);
+    expect(validation.runs.map((run) => run.performancePassed).sort()).toEqual([
+      false,
+      false,
+      true,
+      true,
+    ]);
+
+    for (const run of validation.runs) {
+      expect(run.runUrl).toBe(`https://github.com/NVIDIA/NemoClaw/actions/runs/${run.runId}`);
+      expect(run.headSha).toMatch(/^[0-9a-f]{40}$/u);
+      expect(run).toMatchObject({
+        installExitCode: 0,
+        firstTurnExitCode: 0,
+        usedBuildKitPrebuild: true,
+        buildKitFallback: false,
+      });
+      expect(run.maxSilenceSecs).toBeLessThanOrEqual(60);
+      expect(run.responseChars).toBeGreaterThan(0);
+    }
+
+    expect(validation.derivedCapsMs).toEqual({
+      rootStartToFirstTurnCompletionBudgetMs: validationThreshold(
+        validation.runs.map((run) => run.measurementsMs.rootStartToFirstTurnCompletion),
+        validation.derivation,
+      ),
+      sandboxPhaseBudgetMs: validationThreshold(
+        validation.runs.map((run) => run.measurementsMs.phases["nemoclaw.onboard.phase.sandbox"]),
+        validation.derivation,
+      ),
+    });
+    expect(checkedInConfig.fullE2eColdPath).toEqual(effectiveBudgets(calibration));
+    expect(effectiveBudgets({ ...calibration, validationAdjustment: undefined })).toEqual(
+      calibration.derivedBudgetsMs,
+    );
   });
 });

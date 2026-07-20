@@ -267,6 +267,43 @@ describe("runSandboxDoctor flow", () => {
     },
   );
 
+  it.each([
+    "openclaw",
+    "hermes",
+  ] as const)("keeps serving-process health explicitly unchecked for the %s gateway (#7003)", async (agent) => {
+    const harness = createDoctorHarness();
+    harness.loadAgentSpy.mockReturnValue({
+      name: agent,
+      runtime: { kind: "gateway" },
+      configPaths: {
+        dir: "/sandbox/.agent",
+        configFile: "config.json",
+        format: "json",
+      },
+    });
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent,
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(harness.loadAgentSpy).toHaveBeenCalledWith(agent);
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        group: "Inference",
+        label: "Serving process",
+        status: "info",
+        detail: "not checked — serving-process probing is not implemented",
+      }),
+    );
+  });
+
   it("rejects mutating --fix when JSON output was requested", async () => {
     const harness = createDoctorHarness();
 
@@ -412,21 +449,33 @@ describe("runSandboxDoctor flow", () => {
     ]);
   });
 
-  it("skips OpenClaw tool-scope checks for other agents", async () => {
+  it("skips gateway-specific and OpenClaw checks for terminal agents", async () => {
     const harness = createDoctorHarness();
     harness.getSandboxSpy.mockReturnValue({
       name: "alpha",
-      agent: "hermes",
+      agent: "langchain-deepagents-code",
       model: "registry-model",
       provider: "ollama-local",
       openshellDriver: "docker",
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
     });
+    harness.loadAgentSpy.mockReturnValue({
+      name: "langchain-deepagents-code",
+      runtime: { kind: "terminal", interactive_command: "deepagents" },
+      configPaths: {
+        dir: "/sandbox/.deepagents",
+        configFile: "config.json",
+        format: "json",
+      },
+    });
 
-    await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
     expect(harness.buildToolScopeChecksSpy).not.toHaveBeenCalled();
+    expect(report?.checks).not.toContainEqual(
+      expect.objectContaining({ group: "Inference", label: "Serving process" }),
+    );
   });
 
   it("appends the local gateway result without mutating provider health", async () => {

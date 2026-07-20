@@ -27,7 +27,10 @@ import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { redact } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
-import { buildGatewayInferenceGetArgs } from "./connect-inference-gateway";
+import {
+  buildGatewayInferenceGetArgs,
+  canSandboxGatewayRouteRealign,
+} from "./connect-inference-gateway";
 import { classifyInferenceRouteFailureLabel } from "./connect-inference-route-probe";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
@@ -48,6 +51,13 @@ type ProbeProviderHealth = (
   options?: ProviderHealthProbeOptions,
 ) => ProviderHealthStatus | null;
 type ProbeSandboxInferenceGatewayHealth = typeof probeSandboxInferenceGatewayHealth;
+
+/**
+ * Honest serving-process state while the self-report response and probe
+ * contracts remain undefined. Do not add a checked result until both contracts
+ * and their failure mapping are implemented together.
+ */
+export type ServingProcessHealth = { checked: false };
 
 export function getSandboxStatusInferenceHealth(
   gatewayPresent: boolean,
@@ -112,7 +122,7 @@ function buildSandboxInferenceRouteHealth(
         endpoint,
         detail: gateway.detail,
         ...(gateway.ok
-          ? {}
+          ? { okLabel: "reachable" }
           : {
               failureLabel: classifyInferenceRouteFailureLabel(gateway.httpStatus),
             }),
@@ -138,6 +148,9 @@ export interface SandboxStatusReport {
   agentLoadError?: string;
   model: string;
   provider: string;
+  recordedRoute: RecordedInferenceRoute | null;
+  liveRoute: GatewayInference | null;
+  routeDrift: SandboxStatusRouteDrift | null;
   phase: string | null;
   gatewayState: string;
   inferenceHealth: ProviderHealthStatus | null;
@@ -155,6 +168,12 @@ export interface SandboxStatusReport {
   failureLayer: SandboxStatusFailureLayer | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   /**
+   * Whether serving-process health was checked. Null when the sandbox is not
+   * reachable or the agent runtime is not gateway-based. This remains
+   * `checked: false` until a self-report probe contract is implemented.
+   */
+  servingProcessHealth: ServingProcessHealth | null;
+  /**
    * Whether the resolved docker-driver sandbox container is paused
    * (`docker pause`). `false` for non-docker-driver sandboxes or when no
    * container is found. A paused container can report `Phase: Error`
@@ -166,6 +185,7 @@ export interface SandboxStatusReport {
 export interface SandboxStatusRouteDrift {
   live: GatewayInference;
   recorded: RecordedInferenceRoute;
+  canConnect: boolean;
 }
 
 export interface SandboxStatusSnapshot {
@@ -174,9 +194,12 @@ export interface SandboxStatusSnapshot {
   rpcIssue: OpenShellStateRpcIssue | null;
   currentModel: string;
   currentProvider: string;
+  recordedRoute: RecordedInferenceRoute | null;
+  liveRoute: GatewayInference | null;
   routeDrift: SandboxStatusRouteDrift | null;
   inferenceHealth: ProviderHealthStatus | null;
   terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
+  servingProcessHealth: ServingProcessHealth | null;
 }
 
 export interface SandboxStatusAgentInfo {
@@ -224,6 +247,7 @@ type ProbeTerminalRuntimeHealth = (sandboxName: string) => TerminalRuntimeOomPro
 
 interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
+  listSandboxes?: typeof registry.listSandboxes;
   captureOpenshellForStatusImpl?: typeof captureOpenshellForStatus;
   probeProviderHealthImpl?: ProbeProviderHealth;
   probeSandboxInferenceGatewayHealthImpl?: ProbeSandboxInferenceGatewayHealth;
@@ -269,9 +293,10 @@ export async function collectSandboxStatusSnapshot(
     };
   }
   let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
+  let gatewayName: string | null = null;
   if (lookup.state === "present") {
     try {
-      const gatewayName = resolveSandboxGatewayName(sb);
+      gatewayName = resolveSandboxGatewayName(sb);
       liveResult = await (opts.deps?.captureOpenshellForStatusImpl ?? captureOpenshellForStatus)(
         buildGatewayInferenceGetArgs(gatewayName),
       );
@@ -287,28 +312,46 @@ export async function collectSandboxStatusSnapshot(
       sb,
       lookup,
       rpcIssue,
-      currentModel: "unknown",
-      currentProvider: "unknown",
+      currentModel: (sb && sb.model) || "unknown",
+      currentProvider: (sb && sb.provider) || "unknown",
+      recordedRoute: sb?.provider && sb.model ? { provider: sb.provider, model: sb.model } : null,
+      liveRoute: null,
       routeDrift: null,
       inferenceHealth: null,
       terminalRuntimeHealth: null,
+      servingProcessHealth: null,
     };
   }
   const live =
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
-  const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
-  const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  // Status shows the live gateway route when one is readable, which silently
-  // masks a route another sandbox (or a direct `openshell inference set`)
-  // moved from under this one — the shared-route trap of #6315. Surface the
-  // divergence instead of letting the live value pass as this sandbox's own.
+  const recordedRoute =
+    sb?.provider && sb.model ? { provider: sb.provider, model: sb.model } : null;
+  const liveRoute = live ? { provider: live.provider, model: live.model } : null;
+  // Model/provider are sandbox-scoped status fields, so prefer the durable
+  // route recorded for this sandbox. The live shared route is shown separately
+  // as drift instead of being mislabeled as this sandbox's configuration.
+  const currentModel = sb ? sb.model || "unknown" : (live && live.model) || "unknown";
+  const currentProvider = sb ? sb.provider || "unknown" : (live && live.provider) || "unknown";
   const routeDriftPlan =
     sb && sb.provider && sb.model
       ? planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model })
       : null;
   const routeDrift =
     routeDriftPlan && routeDriftPlan.kind === "diverged"
-      ? { live: routeDriftPlan.live, recorded: routeDriftPlan.recorded }
+      ? {
+          live: routeDriftPlan.live,
+          recorded: routeDriftPlan.recorded,
+          canConnect: Boolean(
+            sb &&
+              gatewayName &&
+              canSandboxGatewayRouteRealign(
+                sandboxName,
+                sb,
+                gatewayName,
+                (opts.deps?.listSandboxes ?? registry.listSandboxes)().sandboxes,
+              ),
+          ),
+        }
       : null;
   // When the caller has already determined that the local stack is failed
   // (docker daemon down, sandbox container stopped, dashboard port held),
@@ -321,8 +364,8 @@ export async function collectSandboxStatusSnapshot(
     providerHealth = maybeGetSandboxStatusInferenceHealth(
       opts.suppressInferenceProbe === true,
       lookup.state === "present",
-      currentProvider,
-      currentModel,
+      (live && live.provider) || currentProvider,
+      (live && live.model) || currentModel,
       opts.deps?.probeProviderHealthImpl,
     );
   } catch {
@@ -358,15 +401,25 @@ export async function collectSandboxStatusSnapshot(
     lookup.state === "present" && statusAgent.agentRuntime === "terminal"
       ? (opts.deps?.probeTerminalRuntimeHealth ?? probeTerminalRuntimeCgroupOom)(sandboxName)
       : null;
+  // The serving-process leg is only meaningful when the gateway is up. A
+  // manifest declaration alone is not evidence: no self-report response/probe
+  // contract exists yet, so status must stay explicitly unchecked (#7003).
+  const servingProcessHealth: ServingProcessHealth | null =
+    lookup.state === "present" && statusAgent.agentRuntime === "gateway"
+      ? { checked: false }
+      : null;
   return {
     sb,
     lookup,
     rpcIssue,
     currentModel,
     currentProvider,
+    recordedRoute,
+    liveRoute,
     routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
+    servingProcessHealth,
   };
 }
 
@@ -398,6 +451,9 @@ async function buildSandboxStatusReport(
     rpcIssue,
     currentModel,
     currentProvider,
+    recordedRoute,
+    liveRoute,
+    routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
   } = snapshot;
@@ -419,11 +475,18 @@ async function buildSandboxStatusReport(
     agentRuntime: agent.agentRuntime,
     dcodeAutoApprovalMode: resolveSandboxStatusDcodeAutoApprovalMode(sb),
     ...(agent.agentLoadError ? { agentLoadError: agent.agentLoadError } : {}),
-    model: currentModel,
-    provider: currentProvider,
+    // Keep schema v1's established live-first fields for existing consumers.
+    // The explicit route fields separate durable sandbox intent from the one
+    // gateway-global route without changing those legacy meanings.
+    model: liveRoute?.model ?? currentModel,
+    provider: liveRoute?.provider ?? currentProvider,
+    recordedRoute,
+    liveRoute,
+    routeDrift,
     phase,
     gatewayState: lookup.state,
     inferenceHealth,
+    servingProcessHealth: snapshot.servingProcessHealth,
     rpcIssue: rpcIssue ? { kind: rpcIssue.kind } : null,
     hostGpuDetected: !!(sb && sb.hostGpuDetected),
     sandboxGpuEnabled,

@@ -40,7 +40,7 @@ reviews:
           `.mdx` path or a source-directory-relative replacement merely because no
           matching source file exists at that relative path.
         - Before reporting a broken internal route or redirect, resolve it the same
-          way as `scripts/check-docs-published-routes.ts` and check the redirects in
+          way as `scripts/check-docs-published-routes.mts` and check the redirects in
           `fern/docs.yml`. Flag a missing published route, missing generated-page
           source, invalid relevant-variant route, or invalid anchor, but do not
           report a route as broken solely because its filesystem path is absent.

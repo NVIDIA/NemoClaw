@@ -75,8 +75,18 @@ export type RebuildFlowSession = Record<string, unknown> & {
 
 export type RebuildFlowOverrides = {
   agentName?: string;
+  sessionAgentName?: string | null;
   applyPreset?: (presetName: string) => boolean;
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
+  checkAndRecoverSandboxProcesses?: () => {
+    checked: boolean;
+    wasRunning: boolean | null;
+    recovered: boolean;
+    forwardRecovered: boolean;
+    forwardRecoveryFailed?: boolean;
+    secretBoundaryRefused?: boolean;
+    mcpReconciliationRefused?: boolean;
+  };
   onboard?: (session: RebuildFlowSession) => Promise<void> | void;
   repairMutableConfigPerms?: () =>
     | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
@@ -132,6 +142,7 @@ export type RebuildFlowHarness = {
   errorSpy: MockInstance;
   ensureAgentBaseImageSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
+  checkAndRecoverSandboxProcessesSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
   finalizeIncompleteOnboardStepSpy: MockInstance;
@@ -295,9 +306,19 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     imageTag: `nemoclaw-${agentName}-base:test`,
     built: true,
   });
-  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: agentName });
+  const sessionAgentName =
+    overrides.sessionAgentName === undefined ? agentName : overrides.sessionAgentName;
+  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
+    sessionAgentName === null || sessionAgentName === "openclaw"
+      ? null
+      : ({ name: sessionAgentName } as never),
+  );
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(
-    agentName === "langchain-deepagents-code" ? "Deep Agents Code" : "OpenClaw",
+    agentName === "langchain-deepagents-code"
+      ? "Deep Agents Code"
+      : agentName === "hermes"
+        ? "Hermes Agent"
+        : "OpenClaw",
   );
   vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockImplementation(
     async (...args: unknown[]) => {
@@ -579,6 +600,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(
       overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
     );
+  const checkAndRecoverSandboxProcessesSpy = vi
+    .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
+    .mockImplementation(
+      overrides.checkAndRecoverSandboxProcesses ??
+        (() => ({
+          checked: true,
+          wasRunning: true,
+          recovered: false,
+          forwardRecovered: false,
+        })),
+    );
   vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
@@ -629,6 +661,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     errorSpy,
     ensureAgentBaseImageSpy,
     executeSandboxCommandSpy,
+    checkAndRecoverSandboxProcessesSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
     finalizeIncompleteOnboardStepSpy,

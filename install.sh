@@ -91,6 +91,10 @@ exec_installer_from_ref() {
   legacy_script="${source_root}/install.sh"
 
   if has_payload_marker "$payload_script"; then
+    # The public curl|bash boundary deliberately executes from the complete
+    # selected-ref checkout, not from a standalone payload file. Installer
+    # helpers beside scripts/install.sh (including DGX Station preparation)
+    # are therefore staged from the same ref before payload execution.
     verify_downloaded_script "$payload_script" "versioned installer"
     NEMOCLAW_INSTALL_REF="$ref" NEMOCLAW_INSTALL_TAG="$ref" NEMOCLAW_BOOTSTRAP_PAYLOAD=1 \
       bash "$payload_script" "$@"
@@ -113,6 +117,7 @@ bootstrap_usage() {
   printf "    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- [options]\n\n"
   printf "  Options:\n"
   printf "    --non-interactive    Skip prompts (uses env vars / defaults)\n"
+  printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install\n"
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --version, -v        Print installer version and exit\n"

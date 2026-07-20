@@ -97,8 +97,12 @@ export function printMcpRebuildRetryCommand(
     return;
   }
   const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
+  // The recreate fault can land after the sandbox was deleted but before create
+  // recorded its name, leaving the resumable onboard session with no name to
+  // resume. Carry --name so this printed command works as written instead of
+  // failing with "no sandbox name was recorded. Re-run with --name".
   console.error(
-    `    2. Run: ${CLI_NAME} onboard --resume${disclosureArg}${observabilityArg}${dcodeAutoApprovalArg}`,
+    `    2. Run: ${CLI_NAME} onboard --resume --name ${sandboxName}${disclosureArg}${observabilityArg}${dcodeAutoApprovalArg}`,
   );
   console.error(`       This will recreate sandbox '${sandboxName}'.`);
 }
@@ -122,6 +126,7 @@ export async function restoreMcpAfterRebuild(
 }
 
 export function postRestoreCompleted(status: {
+  hermesGatewayRestoreUnverified: boolean;
   messagingHostForwardUnverified: boolean;
   mcpBridgeRestoreUnverified: boolean;
   mutableConfigHashRefreshUnverified: boolean;
@@ -131,6 +136,7 @@ export function postRestoreCompleted(status: {
 }): boolean {
   return (
     status.restoreSucceeded &&
+    !status.hermesGatewayRestoreUnverified &&
     !status.mutablePermsRepairUnverified &&
     !status.mutableConfigHashRefreshUnverified &&
     !status.messagingHostForwardUnverified &&

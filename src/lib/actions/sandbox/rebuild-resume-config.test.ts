@@ -282,6 +282,7 @@ describe("prepareRebuildResumeConfig", () => {
       provider: "compatible-endpoint",
       model: "m",
       endpointUrl: "https://registry.example.test/v1",
+      endpointSource: null,
       preferredInferenceApi: "openai-completions",
       source: "registry",
     });

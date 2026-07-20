@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { findLiveUnitBlocks, formatViolations } from "../scripts/checks/no-unit-blocks-in-live-e2e";
+import {
+  findLiveUnitBlocks,
+  formatViolations,
+} from "../scripts/checks/no-unit-blocks-in-live-e2e.mts";
 
 const FILE = "test/e2e/live/example.test.ts";
 
@@ -30,6 +33,17 @@ describe("live E2E unit-block guard", () => {
       'it.skip("skipped unit", () => {});',
     ].join("\n");
     expect(linesFlagged(source)).toEqual([1, 2, 3]);
+  });
+
+  it("flags conditional and nested it modifier chains", () => {
+    const source = [
+      'it.skipIf(false)("conditional skip", () => {});',
+      'it.runIf(true)("conditional run", () => {});',
+      'it.for([1, 2])("parameterized", () => {});',
+      'it.concurrent.skip("nested modifier", () => {});',
+    ].join("\n");
+
+    expect(linesFlagged(source)).toEqual([1, 2, 3, 4]);
   });
 
   it("does not flag test(...) — the live-case primitive", () => {
@@ -60,6 +74,26 @@ describe("live E2E unit-block guard", () => {
       ' * it("a jsdoc example", () => {});',
     ].join("\n");
     expect(linesFlagged(source)).toEqual([]);
+  });
+
+  it("ignores plain multiline block comments and resumes scanning after the terminator", () => {
+    const source = [
+      "/*",
+      'it("a commented unit case", () => {});',
+      "*/",
+      'it("an executable unit case", () => {});',
+    ].join("\n");
+
+    expect(linesFlagged(source)).toEqual([4]);
+  });
+
+  it("handles same-line block comments without hiding following code", () => {
+    const source = [
+      '/* it("commented", () => {}); */ it("executable", () => {});',
+      'const marker = "/* it(\\"string data\\", () => {}); */";',
+    ].join("\n");
+
+    expect(linesFlagged(source)).toEqual([1]);
   });
 
   it("does not match it inside a longer identifier", () => {

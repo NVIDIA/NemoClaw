@@ -58,6 +58,15 @@
       ]
     },
     {
+      "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
+      "fast": [
+        "test/openshell-credential-generation-window.test.ts",
+        "test/mcp-artifact-secret-scan.test.ts",
+        "test/mcp-agent-matrix-artifact-proof.test.ts",
+        "test/e2e/support/mcp-workflow-boundary.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/openclaw-tui-chat-correlation.test.ts",
       "fast": [
         "test/e2e/support/openclaw-tui-ref-fidelity.test.ts",
@@ -248,7 +257,8 @@
       "live": "test/e2e/live/hermes-e2e.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/inference-adapter.test.ts"
       ]
     },
     {
@@ -371,6 +381,16 @@
       ]
     },
     {
+      "live": "test/e2e/live/openshell-version-pin.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-workflow.test.ts",
+        "test/install-openshell-version-check.test.ts",
+        "test/installer-hash-check.test.ts",
+        "test/onboard-openshell-version.test.ts",
+        "test/runner.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/overlayfs-autofix.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
@@ -382,7 +402,9 @@
       "live": "test/e2e/live/rebuild-hermes.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/rebuild-hermes-image-state.test.ts",
+        "test/e2e/support/rebuild-hermes-progress.test.ts"
       ]
     },
     {
