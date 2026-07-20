@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { StdioOptions } from "node:child_process";
-
 import { stripAnsi } from "./adapters/openshell/client";
 import * as openshellRuntime from "./adapters/openshell/runtime";
 import {
@@ -135,7 +133,6 @@ type NamedGatewayLifecycleStateName = ReturnType<typeof getNamedGatewayLifecycle
 export type RecoverNamedGatewayRuntimeOptions = {
   recoverableStates?: readonly NamedGatewayLifecycleStateName[];
   gatewayName?: string;
-  gatewaySelectionStdio?: StdioOptions;
 };
 
 /** Attempt to recover the named NemoClaw gateway after a restart or connectivity loss. */
@@ -159,7 +156,6 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
 
   gatewayRuntimeDependencies.runOpenshell(["gateway", "select", gatewayName], {
     ignoreError: true,
-    stdio: options.gatewaySelectionStdio,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   let after = getNamedGatewayLifecycleState(gatewayName);
@@ -186,7 +182,6 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     }
     gatewayRuntimeDependencies.runOpenshell(["gateway", "select", gatewayName], {
       ignoreError: true,
-      stdio: options.gatewaySelectionStdio,
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     after = getNamedGatewayLifecycleState(gatewayName);

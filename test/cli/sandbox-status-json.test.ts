@@ -149,10 +149,6 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
         "  echo 'Gateway: nemoclaw'",
         "  exit 0",
         "fi",
-        'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
-        "  echo \"✓ Active gateway set to '$3'\"",
-        "  exit 0",
-        "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
         "  echo 'OK 200'",
         "  exit 0",
@@ -172,7 +168,6 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(r.out.trim().endsWith("}")).toBe(true);
     expect(r.out).not.toContain("Sandbox: ");
     expect(r.out).not.toContain("Nonexistent flag: --json");
-    expect(r.out).not.toContain("Active gateway set");
 
     const parsed = JSON.parse(r.out);
     expect(parsed).toMatchObject({

@@ -20,19 +20,7 @@ describe("selectSandboxOwningGateway", () => {
     expect(selected).toEqual({ outcome: "selected", gatewayName: "nemoclaw-8091" });
     expect(run).toHaveBeenCalledWith(
       ["gateway", "select", "nemoclaw-8091"],
-      expect.objectContaining({ ignoreError: true, stdio: undefined }),
-    );
-  });
-
-  it("uses caller-provided stdio for machine-readable commands", () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8091 } as never);
-    const run = vi.fn(() => ({ status: 0 }) as never);
-
-    selectSandboxOwningGateway("beta", run, ["ignore", "pipe", "pipe"]);
-
-    expect(run).toHaveBeenCalledWith(
-      ["gateway", "select", "nemoclaw-8091"],
-      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+      expect.objectContaining({ ignoreError: true }),
     );
   });
 
