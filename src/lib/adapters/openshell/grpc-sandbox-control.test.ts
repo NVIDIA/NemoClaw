@@ -356,6 +356,35 @@ describe("gRPC OpenShell sandbox control", () => {
     }
   });
 
+  it("preserves binary stdout without UTF-8 replacement", async () => {
+    const bytes = Buffer.from([0, 255, 128, 10]);
+    const fake = fakeApi({
+      emit(stream) {
+        stream.emit("data", { stdout: { data: bytes.subarray(0, 2) } });
+        stream.emit("data", { stdout: { data: bytes.subarray(2) } });
+        stream.emit("data", { exit: { exitCode: 0 } });
+        stream.emit("end");
+      },
+    });
+    const control = createGrpcOpenShellSandboxControl(
+      { endpoint: "http://127.0.0.1:8080" },
+      fake.api,
+    );
+
+    await expect(
+      control.exec({
+        sandboxName: "alpha",
+        command: ["tar", "-cf", "-", "workspace"],
+        stdoutEncoding: "buffer",
+      }),
+    ).resolves.toEqual({
+      status: 0,
+      stdout: "",
+      stdoutBytes: bytes,
+      stderr: "",
+    });
+  });
+
   it("returns lookup failures without starting exec", async () => {
     const error = serviceError("gateway unavailable");
     const fake = fakeApi({ getError: error });

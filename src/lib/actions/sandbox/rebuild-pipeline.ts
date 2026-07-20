@@ -150,7 +150,7 @@ async function rebuildSandboxUnlocked(
       recoveryManifest = preDeleteRecovery.manifest;
       recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
 
-      const backup = runRebuildBackupPhase({
+      const backup = await runRebuildBackupPhase({
         sandboxName,
         // The requested observability bit is replacement intent, not a
         // preflight mutation of the old registry row. Use a copy only for

@@ -17,11 +17,15 @@ export interface SandboxExecRequest {
   maxOutputBytes?: number;
   /** End-to-end lookup and execution deadline. Zero means no deadline. */
   timeoutMs?: number;
+  /** Preserve stdout bytes instead of decoding them as UTF-8. */
+  stdoutEncoding?: "utf8" | "buffer";
 }
 
 export interface SandboxExecResult {
   status: number | null;
   stdout: string;
+  /** Present when stdoutEncoding is `buffer`; stdout remains an empty string. */
+  stdoutBytes?: Buffer;
   stderr: string;
   error?: Error;
   signal?: NodeJS.Signals | null;
@@ -312,14 +316,17 @@ function retainCombinedOutput(
 function normalizeExecResult(
   result: CaptureOpenshellBinaryResult,
   maxOutputBytes: number,
+  stdoutEncoding: SandboxExecRequest["stdoutEncoding"],
 ): SandboxExecResult {
   const retained = retainCombinedOutput(result.stdout, result.stderr, maxOutputBytes);
-  const stdout = retained.stdout.toString("utf8");
+  const stdout = stdoutEncoding === "buffer" ? "" : retained.stdout.toString("utf8");
   const stderr = retained.stderr.toString("utf8");
+  const stdoutBytes = stdoutEncoding === "buffer" ? { stdoutBytes: retained.stdout } : {};
   if (retained.truncated || isOutputLimitError(result.error)) {
     return {
       status: null,
       stdout,
+      ...stdoutBytes,
       stderr,
       error: new OpenShellExecOutputLimitError(maxOutputBytes),
       ...(result.signal !== undefined ? { signal: result.signal } : {}),
@@ -328,6 +335,7 @@ function normalizeExecResult(
   const normalized: SandboxExecResult = {
     status: result.status,
     stdout,
+    ...stdoutBytes,
     stderr,
   };
   if (result.error) normalized.error = result.error;
@@ -366,7 +374,7 @@ function createCliSandboxControl(
           timeout: request.timeoutMs,
         },
       );
-      return normalizeExecResult(result, maxOutputBytes);
+      return normalizeExecResult(result, maxOutputBytes, request.stdoutEncoding);
     },
   };
 }

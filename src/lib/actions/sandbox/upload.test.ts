@@ -8,6 +8,10 @@ vi.mock("./gateway-state", () => ({
   ensureLiveSandboxOrExit: vi.fn(async () => undefined),
 }));
 
+vi.mock("./gateway-target", () => ({
+  getSandboxTargetGatewayName: vi.fn(() => "nemoclaw-9090"),
+}));
+
 vi.mock("../../adapters/openshell/runtime", () => ({
   runOpenshell: vi.fn(),
 }));
@@ -25,6 +29,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -39,7 +44,16 @@ describe("uploadToSandbox", () => {
     const expectedHostPath = path.resolve(process.cwd(), "SOUL.md");
     expect(ensureMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
     expect(runMock).toHaveBeenCalledWith(
-      ["sandbox", "upload", "alpha", expectedHostPath, "/sandbox/.openclaw/workspace/SOUL.md"],
+      [
+        "sandbox",
+        "upload",
+        "-g",
+        "nemoclaw-9090",
+        "--",
+        "alpha",
+        expectedHostPath,
+        "/sandbox/.openclaw/workspace/SOUL.md",
+      ],
       expect.objectContaining({ stdio: "inherit" }),
     );
     expect(result).toEqual({
@@ -61,7 +75,7 @@ describe("uploadToSandbox", () => {
       sandboxDest: "/sandbox/etc/",
     });
     const args = runMock.mock.calls[0]?.[0];
-    expect(args?.[3]).toBe("/etc/hosts");
+    expect(args?.[6]).toBe("/etc/hosts");
   });
 
   it("preserves a trailing separator on a relative host directory source", async () => {
@@ -71,15 +85,48 @@ describe("uploadToSandbox", () => {
       sandboxDest: "/sandbox/work/",
     });
     const args = runMock.mock.calls[0]?.[0];
-    const hostPath = args?.[3] as string;
+    const hostPath = args?.[6] as string;
     expect(hostPath.endsWith(path.sep) || hostPath.endsWith("/")).toBe(true);
     expect(hostPath.slice(0, -1)).toBe(path.resolve(process.cwd(), "src"));
+  });
+
+  it("keeps a flag-shaped sandbox destination after the option terminator", async () => {
+    await uploadToSandbox({
+      sandboxName: "alpha",
+      hostPath: "./SOUL.md",
+      sandboxDest: "--gateway-endpoint=https://other-gateway.example.test",
+    });
+
+    expect(runMock).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "upload",
+        "-g",
+        "nemoclaw-9090",
+        "--",
+        "alpha",
+        path.resolve(process.cwd(), "SOUL.md"),
+        "--gateway-endpoint=https://other-gateway.example.test",
+      ],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
   });
 
   it("throws (does not exit) when no host path is given", async () => {
     await expect(uploadToSandbox({ sandboxName: "alpha", hostPath: "" })).rejects.toThrow(
       /No host path provided/,
     );
+    expect(ensureMock).not.toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed before liveness or upload when an endpoint override is set", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other-gateway.example.test");
+
+    await expect(uploadToSandbox({ sandboxName: "alpha", hostPath: "./SOUL.md" })).rejects.toThrow(
+      /Unset OPENSHELL_GATEWAY_ENDPOINT/,
+    );
+
     expect(ensureMock).not.toHaveBeenCalled();
     expect(runMock).not.toHaveBeenCalled();
   });

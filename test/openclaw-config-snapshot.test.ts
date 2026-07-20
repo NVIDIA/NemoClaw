@@ -4,8 +4,38 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+
+vi.mock("../src/lib/adapters/openshell/sandbox-control-routing.js", () => ({
+  execSandboxReadOnlyWithGrpcFallback: async (
+    _gatewayName: string,
+    request: {
+      command: readonly string[];
+      stdin?: string | Buffer;
+      maxOutputBytes?: number;
+      timeoutMs?: number;
+      stdoutEncoding?: "utf8" | "buffer";
+    },
+  ) => {
+    const result = spawnSync("ssh", [String(request.command.at(-1) ?? "")], {
+      input: request.stdin,
+      maxBuffer: request.maxOutputBytes,
+      timeout: request.timeoutMs,
+      encoding: request.stdoutEncoding === "buffer" ? undefined : "utf8",
+    });
+    const binary = request.stdoutEncoding === "buffer";
+    return {
+      status: result.status,
+      stdout: binary ? "" : String(result.stdout ?? ""),
+      ...(binary ? { stdoutBytes: Buffer.from(result.stdout ?? "") } : {}),
+      stderr: String(result.stderr ?? ""),
+      ...(result.error ? { error: result.error } : {}),
+      ...(result.signal ? { signal: result.signal } : {}),
+    };
+  },
+}));
 
 // sandbox-state computes its backup root from HOME at module load time.
 const ORIGINAL_HOME = process.env.HOME;
@@ -167,7 +197,7 @@ describe("OpenClaw durable config file (#5027)", () => {
       process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(true);
       expect(backup.backedUpFiles).toEqual(["openclaw.json"]);
       expect(backup.manifest?.stateFiles).toEqual([{ path: "openclaw.json", strategy: "copy" }]);
@@ -298,7 +328,7 @@ describe("OpenClaw durable config file (#5027)", () => {
       process.env.NEMOCLAW_OPENSHELL_BIN = path.join(binDir, "openshell");
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(true);
 
       // Local backup keeps non-secret tuning + mcp.servers; secrets are stripped.

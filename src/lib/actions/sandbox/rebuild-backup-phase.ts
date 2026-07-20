@@ -20,7 +20,7 @@ import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 export type RebuildBackupManifest = Exclude<
-  ReturnType<typeof backupSandboxStateForRebuild>,
+  Awaited<ReturnType<typeof backupSandboxStateForRebuild>>,
   undefined
 >;
 
@@ -144,10 +144,10 @@ export function normalizeRebuildTargetPolicyPresets(
   );
 }
 
-export function runRebuildBackupPhase(
+export async function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
   backupStateForRebuild: typeof backupSandboxStateForRebuild = backupSandboxStateForRebuild,
-): RebuildBackupPhaseResult | null {
+): Promise<RebuildBackupPhaseResult | null> {
   const customOpenClaw =
     Boolean(input.sandboxEntry.fromDockerfile) &&
     (!input.sandboxEntry.agent || input.sandboxEntry.agent === "openclaw");
@@ -174,7 +174,7 @@ export function runRebuildBackupPhase(
   }
   const backupManifest =
     preparedRecoveryManifest ??
-    backupStateForRebuild(
+    (await backupStateForRebuild(
       input.sandboxName,
       input.sandboxEntry,
       input.staleRecovery,
@@ -182,7 +182,7 @@ export function runRebuildBackupPhase(
       input.relockShieldsIfNeeded,
       input.bail,
       { force: input.force },
-    );
+    ));
   if (backupManifest === undefined) return null;
   if (
     backupManifest &&

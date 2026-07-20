@@ -2574,7 +2574,7 @@ async function createSandboxWithBaseImageResolution(
       console.log(`  Messaging credential(s) rotated: ${rotatedNames}`);
       console.log("  Rebuilding sandbox to propagate new credentials to the L7 proxy...");
       if (!shouldSkipPreRecreateBackup(process.env)) {
-        const result = recreateProtection.backup();
+        const result = await recreateProtection.backup();
         if (!result.ok) {
           console.error(
             "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",
@@ -2642,7 +2642,7 @@ async function createSandboxWithBaseImageResolution(
       !shouldSkipPreRecreateBackup(process.env)
     ) {
       note("  Backing up workspace state before recreating sandbox...");
-      const result = recreateProtection.backup();
+      const result = await recreateProtection.backup();
       if (!result.ok) {
         console.error(
           "  Set NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 to recreate without preserving state.",

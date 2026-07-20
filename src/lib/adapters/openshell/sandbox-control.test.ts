@@ -259,6 +259,38 @@ describe("CLI OpenShell sandbox control", () => {
     });
   });
 
+  it("projects raw stdout from the single bounded CLI capture", async () => {
+    const bytes = Buffer.from([0, 255, 128, 10]);
+    const capture = vi.fn(
+      (): CaptureOpenshellBinaryResult => ({
+        status: 0,
+        stdout: bytes,
+        stderr: Buffer.from("warning"),
+      }),
+    );
+    const control = createCliOpenShellSandboxControl(capture);
+
+    await expect(
+      control.exec({
+        sandboxName: "alpha",
+        command: ["tar", "-cf", "-", "workspace"],
+        stdin: "archive request",
+        maxOutputBytes: 1024,
+        stdoutEncoding: "buffer",
+        timeoutMs: 120_000,
+      }),
+    ).resolves.toEqual({
+      status: 0,
+      stdout: "",
+      stdoutBytes: bytes,
+      stderr: "warning",
+    });
+    expect(capture).toHaveBeenCalledWith(
+      ["sandbox", "exec", "--name", "alpha", "--", "tar", "-cf", "-", "workspace"],
+      { input: "archive request", maxBuffer: 1024, timeout: 120_000 },
+    );
+  });
+
   it("preserves transport failures without throwing", async () => {
     const error = Object.assign(new Error("spawnSync openshell EIO"), {
       code: "EIO",

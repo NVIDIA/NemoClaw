@@ -84,7 +84,7 @@ export async function backupAll(): Promise<void> {
     try {
       result = startedForBackup
         ? await backupStartedSandboxState(sb.name)
-        : sandboxState.backupSandboxState(sb.name);
+        : await sandboxState.backupSandboxState(sb.name);
     } catch (err: unknown) {
       // Source-of-truth review (#5734 / #5819):
       //

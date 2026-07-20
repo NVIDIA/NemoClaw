@@ -5,7 +5,7 @@ import type { SandboxEntry } from "../state/registry";
 import type { BackupResult } from "../state/sandbox";
 import * as sandboxState from "../state/sandbox";
 
-export type SandboxBackupImpl = (sandboxName: string) => BackupResult;
+export type SandboxBackupImpl = (sandboxName: string) => Promise<BackupResult>;
 
 export interface PreRecreateBackupOptions {
   sandboxName: string;
@@ -30,9 +30,9 @@ export interface PreRecreateBackupResult {
   errorMessage?: string;
 }
 
-export function backupSandboxBeforeRecreate(
+export async function backupSandboxBeforeRecreate(
   opts: PreRecreateBackupOptions,
-): PreRecreateBackupResult {
+): Promise<PreRecreateBackupResult> {
   const log = opts.log ?? ((m: string) => console.log(m));
   const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
   const backupImpl = opts.backupImpl ?? sandboxState.backupSandboxState;
@@ -42,7 +42,7 @@ export function backupSandboxBeforeRecreate(
     (Boolean(sandboxEntry?.fromDockerfile) &&
       (!sandboxEntry?.agent || sandboxEntry.agent === "openclaw"));
   try {
-    const backup = backupImpl(opts.sandboxName);
+    const backup = await backupImpl(opts.sandboxName);
     if (backup.success && backup.manifest?.backupPath) {
       if (
         (customOpenClaw || backup.manifest.reconcileOpenClawImagePluginProvenance === true) &&

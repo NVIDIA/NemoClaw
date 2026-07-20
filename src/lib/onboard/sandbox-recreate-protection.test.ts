@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createSandboxRecreateProtection } from "./sandbox-recreate-protection";
 
 describe("createSandboxRecreateProtection", () => {
-  it("forwards one custom-image protection context to every recreation path (#6108)", () => {
+  it("forwards one custom-image protection context to every recreation path (#6108)", async () => {
     const note = vi.fn();
     const sandboxEntry = {
       name: "my-assistant",
@@ -22,7 +22,7 @@ describe("createSandboxRecreateProtection", () => {
       backup: null,
       failureKind: "none" as const,
     };
-    const backupSandboxBeforeRecreate = vi.fn(() => backupResult);
+    const backupSandboxBeforeRecreate = vi.fn(async () => backupResult);
     const protection = createSandboxRecreateProtection(
       {
         sandboxName: "my-assistant",
@@ -53,7 +53,7 @@ describe("createSandboxRecreateProtection", () => {
     });
     expect(resolveNotReadyOutcome).toHaveBeenCalledWith("my-assistant", note, sandboxEntry, true);
 
-    expect(protection.backup()).toBe(backupResult);
+    await expect(protection.backup()).resolves.toBe(backupResult);
     expect(backupSandboxBeforeRecreate).toHaveBeenCalledWith({
       sandboxName: "my-assistant",
       sandboxEntry,

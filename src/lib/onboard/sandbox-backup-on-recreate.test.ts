@@ -24,11 +24,11 @@ function makeBackup(overrides: Partial<BackupResult> = {}): BackupResult {
 }
 
 describe("backupSandboxBeforeRecreate", () => {
-  it("returns ok with backup result on success", () => {
+  it("returns ok with backup result on success", async () => {
     const backup = makeBackup();
-    const backupImpl = vi.fn().mockReturnValue(backup);
+    const backupImpl = vi.fn().mockResolvedValue(backup);
     const log = vi.fn();
-    const result = backupSandboxBeforeRecreate({
+    const result = await backupSandboxBeforeRecreate({
       sandboxName: "my-assistant",
       backupImpl,
       log,
@@ -41,16 +41,16 @@ describe("backupSandboxBeforeRecreate", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("State backed up"));
   });
 
-  it("rejects an unmarked custom OpenClaw backup before recreate deletion (#6108)", () => {
+  it("rejects an unmarked custom OpenClaw backup before recreate deletion (#6108)", async () => {
     const errorLog = vi.fn();
-    const result = backupSandboxBeforeRecreate({
+    const result = await backupSandboxBeforeRecreate({
       sandboxName: "my-assistant",
       sandboxEntry: {
         name: "my-assistant",
         agent: "openclaw",
         fromDockerfile: "/tmp/Dockerfile.custom",
       },
-      backupImpl: () => makeBackup(),
+      backupImpl: async () => makeBackup(),
       log: vi.fn(),
       errorLog,
     });
@@ -62,13 +62,13 @@ describe("backupSandboxBeforeRecreate", () => {
     );
   });
 
-  it("rejects an unmarked backup for an orphan custom OpenClaw target (#6108)", () => {
+  it("rejects an unmarked backup for an orphan custom OpenClaw target (#6108)", async () => {
     const errorLog = vi.fn();
-    const result = backupSandboxBeforeRecreate({
+    const result = await backupSandboxBeforeRecreate({
       sandboxName: "orphan",
       sandboxEntry: null,
       requireOpenClawImagePluginProvenance: true,
-      backupImpl: () => makeBackup(),
+      backupImpl: async () => makeBackup(),
       log: vi.fn(),
       errorLog,
     });
@@ -81,7 +81,7 @@ describe("backupSandboxBeforeRecreate", () => {
     );
   });
 
-  it("returns ok:false with failureKind=partial when some entries failed", () => {
+  it("returns ok:false with failureKind=partial when some entries failed", async () => {
     const backup = makeBackup({
       success: false,
       backedUpDirs: ["workspace"],
@@ -90,9 +90,9 @@ describe("backupSandboxBeforeRecreate", () => {
       failedFiles: ["bad.bin"],
     });
     const errorLog = vi.fn();
-    const result = backupSandboxBeforeRecreate({
+    const result = await backupSandboxBeforeRecreate({
       sandboxName: "my-assistant",
-      backupImpl: () => backup,
+      backupImpl: async () => backup,
       log: vi.fn(),
       errorLog,
     });
@@ -103,19 +103,19 @@ describe("backupSandboxBeforeRecreate", () => {
     expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("Aborting recreate"));
   });
 
-  it("rejects backup result missing manifest backupPath", () => {
+  it("rejects backup result missing manifest backupPath", async () => {
     const backup = makeBackup({ manifest: undefined });
     const errorLog = vi.fn();
-    const result = backupSandboxBeforeRecreate({
+    const result = await backupSandboxBeforeRecreate({
       sandboxName: "my-assistant",
-      backupImpl: () => backup,
+      backupImpl: async () => backup,
       log: vi.fn(),
       errorLog,
     });
     expect(result.ok).toBe(false);
   });
 
-  it("returns ok:false with failureKind=empty when nothing was backed up", () => {
+  it("returns ok:false with failureKind=empty when nothing was backed up", async () => {
     const backup = makeBackup({
       success: false,
       backedUpDirs: [],
@@ -125,9 +125,9 @@ describe("backupSandboxBeforeRecreate", () => {
       error: "Pre-backup audit rejected an unsafe symlink",
     });
     const errorLog = vi.fn();
-    const result = backupSandboxBeforeRecreate({
+    const result = await backupSandboxBeforeRecreate({
       sandboxName: "my-assistant",
-      backupImpl: () => backup,
+      backupImpl: async () => backup,
       errorLog,
       log: vi.fn(),
     });
@@ -138,11 +138,11 @@ describe("backupSandboxBeforeRecreate", () => {
     expect(errorLog).toHaveBeenCalledWith("  Reason: Pre-backup audit rejected an unsafe symlink");
   });
 
-  it("returns ok:false with failureKind=threw when backup throws", () => {
+  it("returns ok:false with failureKind=threw when backup throws", async () => {
     const errorLog = vi.fn();
-    const result = backupSandboxBeforeRecreate({
+    const result = await backupSandboxBeforeRecreate({
       sandboxName: "my-assistant",
-      backupImpl: () => {
+      backupImpl: async () => {
         throw new Error("disk full");
       },
       errorLog,

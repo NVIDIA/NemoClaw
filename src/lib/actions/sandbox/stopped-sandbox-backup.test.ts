@@ -2,6 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import type { BackupResult } from "../../state/sandbox";
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 vi.mock("../../state/registry", () => ({
   getSandbox: vi.fn(),
@@ -136,58 +145,108 @@ describe("returnSandboxContainerToStopped", () => {
 });
 
 describe("backupStartedSandboxState", () => {
-  const ok = {
+  const ok: BackupResult = {
     success: true,
     backedUpDirs: [],
     failedDirs: [],
     backedUpFiles: [],
     failedFiles: [],
   };
-  const unreachable = { ...ok, success: false, unreachable: true };
-  const denied = { ...ok, success: false };
+  const unreachable: BackupResult = { ...ok, success: false, unreachable: true };
+  const denied: BackupResult = { ...ok, success: false };
 
   it("retries while the just-started container's SSH endpoint is unreachable (#6500)", async () => {
+    const first = deferred<BackupResult>();
+    const second = deferred<BackupResult>();
+    const third = deferred<BackupResult>();
     const backup = vi
       .fn()
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(unreachable)
-      .mockReturnValueOnce(ok);
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockReturnValueOnce(third.promise);
     const sleep = vi.fn().mockResolvedValue(undefined);
-    const result = await backupStartedSandboxState("my-sb", {
+    const resultPromise = backupStartedSandboxState("my-sb", {
       backup,
       sleep,
       attempts: 5,
       delayMs: 1,
     });
+
+    expect(backup).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    first.resolve(unreachable);
+    await vi.waitFor(() => expect(backup).toHaveBeenCalledTimes(2));
+    expect(sleep).toHaveBeenCalledTimes(1);
+    second.resolve(unreachable);
+    await vi.waitFor(() => expect(backup).toHaveBeenCalledTimes(3));
+    expect(sleep).toHaveBeenCalledTimes(2);
+    const settled = vi.fn();
+    void resultPromise.then(settled);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    third.resolve(ok);
+
+    const result = await resultPromise;
     expect(result.success).toBe(true);
     expect(backup).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
   it("returns a non-transport failure without retrying", async () => {
-    const backup = vi.fn().mockReturnValue(denied);
+    const pending = deferred<BackupResult>();
+    const backup = vi.fn().mockReturnValue(pending.promise);
     const sleep = vi.fn().mockResolvedValue(undefined);
-    const result = await backupStartedSandboxState("my-sb", {
+    const resultPromise = backupStartedSandboxState("my-sb", {
       backup,
       sleep,
       attempts: 5,
       delayMs: 1,
     });
+
+    const settled = vi.fn();
+    void resultPromise.then(settled);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+    pending.resolve(denied);
+
+    const result = await resultPromise;
     expect(result.success).toBe(false);
     expect(backup).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
   });
 
   it("gives up after the attempt budget while still unreachable", async () => {
-    const backup = vi.fn().mockReturnValue(unreachable);
+    const first = deferred<BackupResult>();
+    const second = deferred<BackupResult>();
+    const third = deferred<BackupResult>();
+    const backup = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockReturnValueOnce(third.promise);
     const sleep = vi.fn().mockResolvedValue(undefined);
-    const result = await backupStartedSandboxState("my-sb", {
+    const resultPromise = backupStartedSandboxState("my-sb", {
       backup,
       sleep,
       attempts: 3,
       delayMs: 1,
     });
+
+    expect(backup).toHaveBeenCalledTimes(1);
+    first.resolve(unreachable);
+    await vi.waitFor(() => expect(backup).toHaveBeenCalledTimes(2));
+    second.resolve(unreachable);
+    await vi.waitFor(() => expect(backup).toHaveBeenCalledTimes(3));
+    const settled = vi.fn();
+    void resultPromise.then(settled);
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    third.resolve(unreachable);
+
+    const result = await resultPromise;
     expect(result.unreachable).toBe(true);
     expect(backup).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
   });
 });

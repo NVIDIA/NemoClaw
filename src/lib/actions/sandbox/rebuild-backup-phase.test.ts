@@ -65,8 +65,8 @@ describe("rebuild web-search policy normalization", () => {
     ).toEqual(["npm"]);
   });
 
-  it("keeps a finalized custom-only built-in selection empty instead of resetting it", () => {
-    const result = runRebuildBackupPhase({
+  it("keeps a finalized custom-only built-in selection empty instead of resetting it", async () => {
+    const result = await runRebuildBackupPhase({
       sandboxName: "alpha",
       sandboxEntry: {
         name: "alpha",
@@ -94,10 +94,10 @@ describe("rebuild web-search policy normalization", () => {
     expect(result?.backupWasForceSkipped).toBe(false);
   });
 
-  it("records when --force skips a total backup failure", () => {
+  it("records when --force skips a total backup failure", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue({
+    vi.spyOn(sandboxState, "backupSandboxState").mockResolvedValue({
       success: false,
       backedUpDirs: [],
       backedUpFiles: [],
@@ -105,7 +105,7 @@ describe("rebuild web-search policy normalization", () => {
       failedFiles: ["openclaw.json"],
     });
 
-    const result = runRebuildBackupPhase({
+    const result = await runRebuildBackupPhase({
       sandboxName: "alpha",
       sandboxEntry: { name: "alpha", agent: "openclaw", policies: [] },
       staleRecovery: false,
@@ -227,12 +227,12 @@ describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {
     } as RebuildBackupPhaseInput;
   }
 
-  it("blocks a live custom image with missing registry provenance before backup", () => {
+  it("blocks a live custom image with missing registry provenance before backup", async () => {
     const backupStateForRebuild = vi.fn();
     const input = customOpenClawInput();
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    expect(() => runRebuildBackupPhase(input, backupStateForRebuild)).toThrow(
+    await expect(runRebuildBackupPhase(input, backupStateForRebuild)).rejects.toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
 
@@ -245,17 +245,17 @@ describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {
     errorLog.mockRestore();
   });
 
-  it("uses a marked prepared manifest when registry provenance is missing", () => {
+  it("uses a marked prepared manifest when registry provenance is missing", async () => {
     const backupStateForRebuild = vi.fn();
     const input = customOpenClawInput({ preparedRecoveryManifest: completeMarkedManifest });
 
-    const result = runRebuildBackupPhase(input, backupStateForRebuild);
+    const result = await runRebuildBackupPhase(input, backupStateForRebuild);
 
     expect(result?.backupManifest).toBe(completeMarkedManifest);
     expect(backupStateForRebuild).not.toHaveBeenCalled();
   });
 
-  it("blocks an unmarked legacy prepared manifest before deletion", () => {
+  it("blocks an unmarked legacy prepared manifest before deletion", async () => {
     const backupStateForRebuild = vi.fn();
     const input = customOpenClawInput({
       preparedRecoveryManifest: {
@@ -266,15 +266,15 @@ describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {
       },
     });
 
-    expect(() => runRebuildBackupPhase(input, backupStateForRebuild)).toThrow(
+    await expect(runRebuildBackupPhase(input, backupStateForRebuild)).rejects.toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
 
     expect(backupStateForRebuild).not.toHaveBeenCalled();
   });
 
-  it("revalidates a newly generated backup manifest before deletion", () => {
-    const backupStateForRebuild = vi.fn(() => ({
+  it("revalidates a newly generated backup manifest before deletion", async () => {
+    const backupStateForRebuild = vi.fn(async () => ({
       agentType: "openclaw",
       dir: "/sandbox/.openclaw",
       backupPath: "/tmp/incomplete-custom-openclaw-backup",
@@ -289,7 +289,7 @@ describe("custom OpenClaw plugin provenance rebuild guard (#6108)", () => {
       },
     });
 
-    expect(() => runRebuildBackupPhase(input, backupStateForRebuild as never)).toThrow(
+    await expect(runRebuildBackupPhase(input, backupStateForRebuild as never)).rejects.toThrow(
       "Custom-image OpenClaw plugin provenance is unavailable.",
     );
 

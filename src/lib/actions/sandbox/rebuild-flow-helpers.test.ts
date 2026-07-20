@@ -16,7 +16,7 @@ import {
   warnUnpreservedUserManagedFiles,
 } from "./rebuild-flow-helpers";
 
-function makeBackupResult(): ReturnType<typeof sandboxState.backupSandboxState> {
+function makeBackupResult(): Awaited<ReturnType<typeof sandboxState.backupSandboxState>> {
   return {
     success: true,
     backedUpDirs: [".state"],
@@ -38,7 +38,7 @@ function makeBackupResult(): ReturnType<typeof sandboxState.backupSandboxState> 
       blueprintDigest: null,
       policyPresets: [],
       customPolicies: [],
-    } as ReturnType<typeof sandboxState.backupSandboxState>["manifest"],
+    } as Awaited<ReturnType<typeof sandboxState.backupSandboxState>>["manifest"],
   };
 }
 
@@ -227,8 +227,8 @@ describe("backupSandboxStateForRebuild with --force", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns null (skip) when backup fails completely and force is set", () => {
-    backupSpy.mockReturnValue({
+  it("returns null (skip) when backup fails completely and force is set", async () => {
+    backupSpy.mockResolvedValue({
       success: false,
       backedUpDirs: [],
       backedUpFiles: [],
@@ -236,7 +236,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
       failedFiles: ["config.toml"],
       manifest: null,
     });
-    const result = backupSandboxStateForRebuild(
+    const result = await backupSandboxStateForRebuild(
       "alpha",
       makeSandboxEntry(),
       false,
@@ -251,8 +251,8 @@ describe("backupSandboxStateForRebuild with --force", () => {
     expect(warnLines.some((line: string) => line.includes("--force was specified"))).toBe(true);
   });
 
-  it("aborts with hint when backup fails completely without force", () => {
-    backupSpy.mockReturnValue({
+  it("aborts with hint when backup fails completely without force", async () => {
+    backupSpy.mockResolvedValue({
       success: false,
       backedUpDirs: [],
       backedUpFiles: [],
@@ -260,7 +260,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
       failedFiles: [],
       manifest: null,
     });
-    expect(() =>
+    await expect(
       backupSandboxStateForRebuild(
         "alpha",
         makeSandboxEntry(),
@@ -269,14 +269,14 @@ describe("backupSandboxStateForRebuild with --force", () => {
         () => true,
         makeBail(),
       ),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(errorLines.some((line: string) => line.includes("rebuild --force"))).toBe(true);
   });
 
-  it("aborts without force even when force option is explicitly false", () => {
-    backupSpy.mockReturnValue({
+  it("aborts without force even when force option is explicitly false", async () => {
+    backupSpy.mockResolvedValue({
       success: false,
       backedUpDirs: [],
       backedUpFiles: [],
@@ -284,7 +284,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
       failedFiles: [],
       manifest: null,
     });
-    expect(() =>
+    await expect(
       backupSandboxStateForRebuild(
         "alpha",
         makeSandboxEntry(),
@@ -294,7 +294,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
         makeBail(),
         { force: false },
       ),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
   });
 });
 
@@ -310,7 +310,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    backupSpy = vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue(makeBackupResult());
+    backupSpy = vi.spyOn(sandboxState, "backupSandboxState").mockResolvedValue(makeBackupResult());
     probeSpy = vi.spyOn(userManagedFilesProbe, "probeUserManagedFiles").mockResolvedValue({
       declared: [],
       existing: [],
@@ -365,8 +365,8 @@ describe("warnUnpreservedUserManagedFiles", () => {
     expect(warnLines.some((line: string) => line.includes("will not be preserved"))).toBe(false);
   });
 
-  it("skips probe when staleRecovery short-circuits the backup", () => {
-    const result = backupSandboxStateForRebuild(
+  it("skips probe when staleRecovery short-circuits the backup", async () => {
+    const result = await backupSandboxStateForRebuild(
       "alpha",
       makeSandboxEntry(),
       true,
@@ -380,8 +380,8 @@ describe("warnUnpreservedUserManagedFiles", () => {
     expect(probeSpy).not.toHaveBeenCalled();
   });
 
-  it("does not probe during backup before managed MCP adapter entries are scrubbed", () => {
-    const result = backupSandboxStateForRebuild(
+  it("does not probe during backup before managed MCP adapter entries are scrubbed", async () => {
+    const result = await backupSandboxStateForRebuild(
       "alpha",
       makeSandboxEntry(),
       false,
@@ -414,8 +414,8 @@ describe("warnUnpreservedUserManagedFiles", () => {
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it("surfaces the backup failure reason before aborting", () => {
-    backupSpy.mockReturnValue({
+  it("surfaces the backup failure reason before aborting", async () => {
+    backupSpy.mockResolvedValue({
       ...makeBackupResult(),
       success: false,
       backedUpDirs: [],
@@ -425,7 +425,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
       error: "Pre-backup audit rejected an unsafe symlink",
     });
 
-    expect(() =>
+    await expect(
       backupSandboxStateForRebuild(
         "alpha",
         makeSandboxEntry(),
@@ -434,7 +434,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
         () => true,
         makeBail(),
       ),
-    ).toThrow("bail: Failed to back up sandbox state.");
+    ).rejects.toThrow("bail: Failed to back up sandbox state.");
 
     const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(errorLines).toContain("  Reason: Pre-backup audit rejected an unsafe symlink");

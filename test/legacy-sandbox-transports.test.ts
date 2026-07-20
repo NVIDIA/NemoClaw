@@ -162,6 +162,11 @@ describe("legacy sandbox transport inventory", () => {
         calls: 1,
       },
       {
+        relativePath: "src/lib/state/sandbox.ts",
+        kind: "grpc-cli-read-only-fallback",
+        calls: 1,
+      },
+      {
         relativePath: "src/lib/state/user-managed-files-probe.ts",
         kind: "grpc-cli-read-only-fallback",
         calls: 1,

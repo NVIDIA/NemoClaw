@@ -8,8 +8,38 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../src/lib/adapters/openshell/sandbox-control-routing.js", () => ({
+  execSandboxReadOnlyWithGrpcFallback: async (
+    _gatewayName: string,
+    request: {
+      command: readonly string[];
+      stdin?: string | Buffer;
+      maxOutputBytes?: number;
+      timeoutMs?: number;
+      stdoutEncoding?: "utf8" | "buffer";
+    },
+  ) => {
+    const result = spawnSync("ssh", [String(request.command.at(-1) ?? "")], {
+      input: request.stdin,
+      maxBuffer: request.maxOutputBytes,
+      timeout: request.timeoutMs,
+      encoding: request.stdoutEncoding === "buffer" ? undefined : "utf8",
+    });
+    const binary = request.stdoutEncoding === "buffer";
+    return {
+      status: result.status,
+      stdout: binary ? "" : String(result.stdout ?? ""),
+      ...(binary ? { stdoutBytes: Buffer.from(result.stdout ?? "") } : {}),
+      stderr: String(result.stderr ?? ""),
+      ...(result.error ? { error: result.error } : {}),
+      ...(result.signal ? { signal: result.signal } : {}),
+    };
+  },
+}));
 
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
 // at module-load time to compute REBUILD_BACKUPS_DIR. Captured original is
@@ -441,12 +471,12 @@ describe("parseRestoreArgs", () => {
 });
 
 describe("sandbox directory backup semantics", () => {
-  it("rejects a custom OpenClaw backup with missing image-plugin provenance (#6108)", () => {
+  it("rejects a custom OpenClaw backup with missing image-plugin provenance (#6108)", async () => {
     writeOpenClawRegistry("custom-openclaw", {
       fromDockerfile: "/tmp/Dockerfile.custom",
     });
 
-    const backup = sandboxState.backupSandboxState("custom-openclaw");
+    const backup = await sandboxState.backupSandboxState("custom-openclaw");
 
     expect(backup.success).toBe(false);
     expect(backup.manifest).toBeUndefined();
@@ -454,7 +484,7 @@ describe("sandbox directory backup semantics", () => {
     expect(fs.existsSync(path.join(BACKUPS_ROOT, "custom-openclaw"))).toBe(false);
   });
 
-  it("treats empty state directories as backed up when tar exits cleanly", () => {
+  it("treats empty state directories as backed up when tar exits cleanly", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-empty-dirs-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -505,7 +535,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(true);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.backedUpDirs).toEqual(existingDirs);
@@ -523,7 +553,7 @@ process.exit(0);
     }
   });
 
-  it("classifies tar-failed directories and excludes them from the restorable manifest", () => {
+  it("classifies tar-failed directories and excludes them from the restorable manifest", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-partial-tar-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -590,7 +620,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
       expect(backup.failedDirs).toEqual(["agents", "workspace"]);
       expect(backup.failedDirReasons).toEqual({
@@ -628,7 +658,7 @@ process.exit(0);
     }
   });
 
-  it("accepts built-in and custom OpenClaw peer links during the pre-backup audit", () => {
+  it("accepts built-in and custom OpenClaw peer links during the pre-backup audit", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -677,7 +707,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(true);
       expect(backup.backedUpDirs).toEqual(existingDirs);
       expect(backup.error).toBeUndefined();
@@ -692,7 +722,7 @@ process.exit(0);
     }
   });
 
-  it("accepts extension npm .bin symlinks that resolve inside node_modules", () => {
+  it("accepts extension npm .bin symlinks that resolve inside node_modules", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-npm-bin-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -741,7 +771,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(true);
       expect(backup.error).toBeUndefined();
     } finally {
@@ -755,7 +785,7 @@ process.exit(0);
     }
   });
 
-  it("rejects extension npm .bin symlinks that escape node_modules", () => {
+  it("rejects extension npm .bin symlinks that escape node_modules", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-npm-bin-escape-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -792,7 +822,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
       expect(backup.error).toMatch(/node_modules\/\.bin\/leak/);
       expect(backup.error).toMatch(/openclaw\.json/);
@@ -807,7 +837,7 @@ process.exit(0);
     }
   });
 
-  it("still rejects non-whitelisted symlinks alongside whitelisted ones", () => {
+  it("still rejects non-whitelisted symlinks alongside whitelisted ones", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-mixed-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -845,7 +875,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
       expect(backup.error).toMatch(/workspace\/leak/);
       expect(backup.error).not.toMatch(/openclaw-weixin/);
@@ -863,7 +893,7 @@ process.exit(0);
   it.each([
     "weather",
     "slack",
-  ])("rejects a generic %s OpenClaw peer link with a tampered target", (extensionName) => {
+  ])("rejects a generic %s OpenClaw peer link with a tampered target", async (extensionName) => {
     // The generic peer path is valid, but its target must remain the exact
     // global OpenClaw install rather than an arbitrary absolute path.
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
@@ -902,7 +932,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
       expect(backup.error).toContain(`extensions/${extensionName}`);
       expect(backup.error).toMatch(/\/etc\/passwd/);
@@ -917,7 +947,7 @@ process.exit(0);
     }
   });
 
-  it("marks non-attributed directories failed when they are missing from partial extraction", () => {
+  it("marks non-attributed directories failed when they are missing from partial extraction", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-missing-partial-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -962,7 +992,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
       expect(backup.backedUpDirs).toEqual(["extensions"]);
       expect(backup.failedDirs).toEqual(["agents", "workspace"]);
@@ -983,7 +1013,7 @@ process.exit(0);
     }
   });
 
-  it("treats audit-find exit 1 with empty stdout as a successful audit", () => {
+  it("treats audit-find exit 1 with empty stdout as a successful audit", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-perm-denied-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -1040,7 +1070,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(true);
       expect(backup.error).toBeUndefined();
       expect(backup.backedUpDirs).toEqual(existingDirs);
@@ -1055,7 +1085,7 @@ process.exit(0);
     }
   });
 
-  it("still rejects violations from readable dirs even if a sibling find exits non-zero", () => {
+  it("still rejects violations from readable dirs even if a sibling find exits non-zero", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-mixed-perm-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -1102,7 +1132,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("alpha");
+      const backup = await sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
       expect(backup.error).toMatch(/workspace\/leak/);
     } finally {
@@ -1118,7 +1148,7 @@ process.exit(0);
 });
 
 describe("Deep Agents Code durable state files", () => {
-  it("backs up manifest-declared state while excluding credential-bearing files", () => {
+  it("backs up manifest-declared state while excluding credential-bearing files", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-snapshot-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -1218,7 +1248,9 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("deepagents", { name: "deepagents-state" });
+      const backup = await sandboxState.backupSandboxState("deepagents", {
+        name: "deepagents-state",
+      });
       expect(backup.success).toBe(true);
       expect(backup.backedUpDirs).toEqual([".state", "skills", "agent/skills"]);
       expect(backup.backedUpFiles).toEqual(["config.toml"]);
@@ -1270,7 +1302,7 @@ process.exit(0);
 });
 
 describe("Hermes durable state files", () => {
-  it("backs up and restores SOUL.md plus the SQLite state database without credential files", () => {
+  it("backs up and restores SOUL.md plus the SQLite state database without credential files", async () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-snapshot-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -1280,11 +1312,12 @@ describe("Hermes durable state files", () => {
       const hermesDir = path.join(fakeRoot, ".hermes");
       const runtimeDir = path.join(hermesDir, "runtime");
       const sshLog = path.join(fixture, "ssh-log.jsonl");
+      const stateDbBytes = Buffer.from([0x53, 0x51, 0x4c, 0x00, 0xff, 0xfe, 0x80, 0x0a]);
       fs.mkdirSync(binDir, { recursive: true });
       fs.mkdirSync(runtimeDir, { recursive: true });
       fs.writeFileSync(path.join(hermesDir, "SOUL.md"), "original soul\n");
       fs.writeFileSync(path.join(hermesDir, ".hermes_history"), "original history\n");
-      fs.writeFileSync(path.join(runtimeDir, "state.db"), "original sqlite backup\n");
+      fs.writeFileSync(path.join(runtimeDir, "state.db"), stateDbBytes);
       fs.writeFileSync(path.join(hermesDir, "config.yaml"), "token: should-not-copy\n");
       fs.writeFileSync(path.join(hermesDir, ".env"), "API_TOKEN=should-not-copy\n");
       fs.writeFileSync(path.join(hermesDir, "auth.json"), '{"token":"should-not-copy"}\n');
@@ -1326,6 +1359,10 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("nemoclaw-sqlite-backup")) {
+  if (readStdin().toString("utf8") !== ${JSON.stringify(sandboxState.SQLITE_BACKUP_PY)}) {
+    process.stderr.write("unexpected sqlite backup script on stdin\\n");
+    process.exit(97);
+  }
   process.stdout.write(fs.readFileSync(path.join(hermesDir, "runtime", "state.db")));
   process.exit(0);
 }
@@ -1375,7 +1412,7 @@ process.exit(0);
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
       process.env.PATH = `${binDir}:${oldPath || ""}`;
 
-      const backup = sandboxState.backupSandboxState("hermes", { name: "hermes-state" });
+      const backup = await sandboxState.backupSandboxState("hermes", { name: "hermes-state" });
       expect(backup.success).toBe(true);
       expect(backup.backedUpFiles).toEqual(["SOUL.md", ".hermes_history", "runtime/state.db"]);
       expect(backup.failedFiles).toEqual([]);
@@ -1391,8 +1428,8 @@ process.exit(0);
         fs.readFileSync(path.join(backup.manifest!.backupPath, ".hermes_history"), "utf-8"),
       ).toBe("original history\n");
       expect(
-        fs.readFileSync(path.join(backup.manifest!.backupPath, "runtime", "state.db"), "utf-8"),
-      ).toBe("original sqlite backup\n");
+        fs.readFileSync(path.join(backup.manifest!.backupPath, "runtime", "state.db")),
+      ).toEqual(stateDbBytes);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "config.yaml"))).toBe(false);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "auth.json"))).toBe(false);
@@ -1407,14 +1444,10 @@ process.exit(0);
       expect(fs.readFileSync(path.join(hermesDir, ".hermes_history"), "utf-8")).toBe(
         "original history\n",
       );
-      expect(fs.readFileSync(path.join(runtimeDir, "state.db"), "utf-8")).toBe(
-        "original sqlite backup\n",
-      );
+      expect(fs.readFileSync(path.join(runtimeDir, "state.db"))).toEqual(stateDbBytes);
 
       const loggedCommands = fs.readFileSync(sshLog, "utf-8");
-      expect(loggedCommands).toContain("sqlite3.connect");
-      expect(loggedCommands).toContain("src_conn.backup(dst_conn)");
-      expect(loggedCommands).toContain("PRAGMA quick_check");
+      expect(loggedCommands).toContain('python3 - \\"$src\\" \\"$tmp\\"');
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;

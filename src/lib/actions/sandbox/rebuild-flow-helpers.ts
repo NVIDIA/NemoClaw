@@ -258,7 +258,7 @@ export function pinRebuildAgentBaseImageForRecreate(
   };
 }
 
-export function backupSandboxStateForRebuild(
+export async function backupSandboxStateForRebuild(
   sandboxName: string,
   sb: RebuildSandboxEntry,
   staleRecovery: boolean,
@@ -266,12 +266,12 @@ export function backupSandboxStateForRebuild(
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean,
   bail: (msg: string, code?: number) => never,
   options?: { force?: boolean },
-): sandboxState.RebuildManifest | null | undefined {
+): Promise<sandboxState.RebuildManifest | null | undefined> {
   if (staleRecovery) return null;
 
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
-  const backup = sandboxState.backupSandboxState(sandboxName);
+  const backup = await sandboxState.backupSandboxState(sandboxName);
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );

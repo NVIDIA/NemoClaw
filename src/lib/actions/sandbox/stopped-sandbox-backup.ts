@@ -104,7 +104,7 @@ export function returnSandboxContainerToStopped(
 }
 
 interface BackupRetryDeps {
-  backup: (name: string) => sandboxState.BackupResult;
+  backup: (name: string) => Promise<sandboxState.BackupResult>;
   sleep: (ms: number) => Promise<void>;
   attempts: number;
   delayMs: number;
@@ -129,14 +129,14 @@ export async function backupStartedSandboxState(
   depsOverride: Partial<BackupRetryDeps> = {},
 ): Promise<sandboxState.BackupResult> {
   const deps: BackupRetryDeps = { ...defaultBackupRetryDeps, ...depsOverride };
-  let result = deps.backup(sandboxName);
+  let result = await deps.backup(sandboxName);
   for (
     let attempt = 1;
     attempt < deps.attempts && !result.success && result.unreachable;
     attempt++
   ) {
     await deps.sleep(deps.delayMs);
-    result = deps.backup(sandboxName);
+    result = await deps.backup(sandboxName);
   }
   return result;
 }

@@ -46,7 +46,10 @@ import { ROOT, run, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { streamSandboxCreate } from "../../sandbox/create-stream";
 import * as shields from "../../shields";
-import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
+import {
+  withTimerBoundShieldsMutationLock,
+  withTimerBoundShieldsMutationLockAsync,
+} from "../../shields/timer-bound-lock";
 import { readTimerMarker } from "../../shields/timer-control";
 import { isSandboxReady } from "../../state/gateway";
 import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
@@ -553,10 +556,10 @@ function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean 
   return false;
 }
 
-function runSnapshotCreate(
+async function runSnapshotCreate(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "create" }>,
-): void {
+): Promise<void> {
   const liveNames = requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",
@@ -565,50 +568,54 @@ function runSnapshotCreate(
     console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
     snapshotExit(1);
   }
-  return withTimerBoundShieldsMutationLock(sandboxName, "create sandbox snapshot", () => {
-    // Keep the shields check and backup in one timer-bound interval. Normal
-    // auto-restore waits; at the absolute deadline it may preempt this process
-    // and reclaim the token rather than changing policy/config mid-copy.
-    if (!isSnapshotCreationAllowedByShields(sandboxName)) {
-      console.error("  Cannot create snapshot while shields are up.");
-      console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
-      snapshotExit(1);
-    }
-    if (
-      shouldCheckDcodeActivity(sandboxName) &&
-      !isSnapshotCreationAllowedByDcodeActivity(sandboxName)
-    ) {
-      snapshotExit(1);
-    }
-    const label = request.name ? ` (--name ${request.name})` : "";
-    console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
-    const result = sandboxState.backupSandboxState(sandboxName, {
-      name: request.name ?? null,
-    });
-    if (result.success) {
-      const manifest = result.manifest!;
-      const entry = sandboxState.findBackup(sandboxName, manifest.timestamp).match ?? manifest;
-      const v = formatSnapshotVersion(entry);
-      const nameSuffix = entry.name ? ` name=${entry.name}` : "";
-      const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
-      console.log(`  ${G}✓${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
-      console.log(`    ${manifest.backupPath}`);
-      return;
-    }
-    if (result.error) {
-      console.error(`  ${result.error}`);
-    } else {
-      console.error("  Snapshot failed.");
-      if (result.failedDirs.length > 0) {
-        const failedDirs = formatFailedBackupItems(result.failedDirs, result.failedDirReasons);
-        console.error(`  Failed directories: ${failedDirs}`);
+  return withTimerBoundShieldsMutationLockAsync(
+    sandboxName,
+    "create sandbox snapshot",
+    async () => {
+      // Keep the shields check and backup in one timer-bound interval. Normal
+      // auto-restore waits; at the absolute deadline it may preempt this process
+      // and reclaim the token rather than changing policy/config mid-copy.
+      if (!isSnapshotCreationAllowedByShields(sandboxName)) {
+        console.error("  Cannot create snapshot while shields are up.");
+        console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
+        snapshotExit(1);
       }
-      if (result.failedFiles.length > 0) {
-        console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
+      if (
+        shouldCheckDcodeActivity(sandboxName) &&
+        !isSnapshotCreationAllowedByDcodeActivity(sandboxName)
+      ) {
+        snapshotExit(1);
       }
-    }
-    snapshotExit(1);
-  });
+      const label = request.name ? ` (--name ${request.name})` : "";
+      console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
+      const result = await sandboxState.backupSandboxState(sandboxName, {
+        name: request.name ?? null,
+      });
+      if (result.success) {
+        const manifest = result.manifest!;
+        const entry = sandboxState.findBackup(sandboxName, manifest.timestamp).match ?? manifest;
+        const v = formatSnapshotVersion(entry);
+        const nameSuffix = entry.name ? ` name=${entry.name}` : "";
+        const itemSummary = `${result.backedUpDirs.length} directories, ${result.backedUpFiles.length} files`;
+        console.log(`  ${G}✓${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`);
+        console.log(`    ${manifest.backupPath}`);
+        return;
+      }
+      if (result.error) {
+        console.error(`  ${result.error}`);
+      } else {
+        console.error("  Snapshot failed.");
+        if (result.failedDirs.length > 0) {
+          const failedDirs = formatFailedBackupItems(result.failedDirs, result.failedDirReasons);
+          console.error(`  Failed directories: ${failedDirs}`);
+        }
+        if (result.failedFiles.length > 0) {
+          console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
+        }
+      }
+      snapshotExit(1);
+    },
+  );
 }
 
 function repairRestoredOpenClawConfigPerms(
@@ -1107,7 +1114,7 @@ export async function runSandboxSnapshot(
 ) {
   switch (request.kind) {
     case "create": {
-      runSnapshotCreate(sandboxName, request);
+      await runSnapshotCreate(sandboxName, request);
       break;
     }
     case "list": {

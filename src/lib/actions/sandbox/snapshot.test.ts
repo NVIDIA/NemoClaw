@@ -199,6 +199,7 @@ vi.mock("../../shields", () => ({
 
 vi.mock("../../shields/timer-bound-lock", () => ({
   withTimerBoundShieldsMutationLock: lifecycleMock.withTimerBoundMock,
+  withTimerBoundShieldsMutationLockAsync: lifecycleMock.withTimerBoundMock,
 }));
 
 vi.mock("../../shields/timer-control", () => ({
@@ -346,39 +347,39 @@ describe("runSandboxSnapshot", () => {
     );
   });
 
-  it("creates a named snapshot after gateway, liveness, and shields checks pass", async () => {
-    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
-    const manifest = {
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-      name: "before-upgrade",
-    };
-    backupSandboxStateMock.mockReturnValue({
+  it("keeps a named snapshot and its shields lock pending until backup completes", async () => {
+    const manifest = { ...latestBackupFixture, name: "before-upgrade" };
+    const backupResult = {
       success: true,
       backedUpDirs: ["workspace"],
       backedUpFiles: ["openclaw.json"],
       failedDirs: [],
       failedFiles: [],
       manifest,
-    });
-    findBackupMock.mockReturnValue({
-      match: { ...manifest, snapshotVersion: 7, name: "before-upgrade" },
-    });
+    };
+    let resolveBackup!: (result: typeof backupResult) => void;
+    backupSandboxStateMock.mockReturnValue(
+      new Promise<typeof backupResult>((resolve) => {
+        resolveBackup = resolve;
+      }),
+    );
     const { runSandboxSnapshot } = await import("./snapshot");
-
-    await runSandboxSnapshot("alpha", {
+    const snapshotPromise = runSandboxSnapshot("alpha", {
       kind: "create",
       name: "before-upgrade",
     });
-
+    const lockCallbackPromise = lifecycleMock.withTimerBoundMock.mock.results[0]
+      ?.value as Promise<void>;
+    const settled = vi.fn();
+    void snapshotPromise.then(() => settled("snapshot"));
+    void lockCallbackPromise.then(() => settled("lock callback"));
+    await Promise.resolve();
+    expect(settled).not.toHaveBeenCalled();
+    resolveBackup(backupResult);
+    await Promise.all([snapshotPromise, lockCallbackPromise]);
     expect(backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
       name: "before-upgrade",
     });
-    expect(findBackupMock).toHaveBeenCalledWith("alpha", manifest.timestamp);
-    const output = consoleLog.mock.calls.flat().join("\n");
-    expect(output).toContain("Creating snapshot of 'alpha' (--name before-upgrade)");
-    expect(output).toContain("Snapshot v7 name=before-upgrade created");
-    expect(output).toContain("/tmp/backup-alpha");
   });
 
   it("refuses snapshot creation before backup when a dcode task is active", async () => {

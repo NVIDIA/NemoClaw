@@ -189,6 +189,52 @@ describe("read-only OpenShell sandbox control routing", () => {
     expect(test.close).toHaveBeenCalledOnce();
   });
 
+  it("preserves binary stdout across the direct route", async () => {
+    const bytes = Buffer.from([0, 255, 128, 10]);
+    const result = { status: 0, stdout: "", stdoutBytes: bytes, stderr: "" };
+    const test = dependencies(result);
+    const stdin = "import sqlite3, sys\nsrc, dst = sys.argv[1], sys.argv[2]";
+    const binaryRequest = { ...request, stdin, stdoutEncoding: "buffer" as const };
+
+    await expect(
+      execSandboxReadOnlyWithGrpcFallback("nemoclaw", binaryRequest, test.deps),
+    ).resolves.toEqual(result);
+    expect(test.grpcExec).toHaveBeenCalledWith({
+      ...binaryRequest,
+      timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
+  });
+
+  it("preserves stdin and binary stdout across the pre-dispatch CLI fallback", async () => {
+    const stdin = "import sqlite3, sys\nsrc, dst = sys.argv[1], sys.argv[2]";
+    const bytes = Buffer.from([0, 255, 128, 10]);
+    const grpcError = new Error("UNAVAILABLE");
+    const cliResult = { status: 0, stdout: "", stdoutBytes: bytes, stderr: "" };
+    const test = dependencies(
+      {
+        status: null,
+        stdout: "",
+        stderr: "",
+        error: new OpenShellGrpcPreDispatchError(grpcError),
+      },
+      cliResult,
+    );
+    const binaryRequest = { ...request, stdin, stdoutEncoding: "buffer" as const };
+
+    await expect(
+      execSandboxReadOnlyWithGrpcFallback("nemoclaw", binaryRequest, test.deps),
+    ).resolves.toEqual(cliResult);
+
+    expect(test.grpcExec).toHaveBeenCalledWith({
+      ...binaryRequest,
+      timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
+    expect(test.cliExec).toHaveBeenCalledWith({
+      ...binaryRequest,
+      timeoutMs: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
+  });
+
   it("does not replay a completed non-zero command through the CLI", async () => {
     const result = { status: 2, stdout: "", stderr: "unknown flag" };
     const test = dependencies(result);

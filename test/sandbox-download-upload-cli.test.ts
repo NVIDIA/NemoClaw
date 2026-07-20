@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "./cli/helpers";
 
@@ -91,7 +91,7 @@ describe("sandbox download/upload CLI wrappers", () => {
       const calls = fs.readFileSync(openshellLog, "utf8");
       const expectedHostPath = path.resolve(process.cwd(), "SOUL.md");
       expect(calls).toContain(
-        `sandbox upload alpha ${expectedHostPath} /sandbox/.openclaw/workspace/SOUL.md`,
+        `sandbox upload -g nemoclaw -- alpha ${expectedHostPath} /sandbox/.openclaw/workspace/SOUL.md`,
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -113,7 +113,7 @@ describe("sandbox download/upload CLI wrappers", () => {
 
       const calls = fs.readFileSync(openshellLog, "utf8");
       const expectedHostPath = path.resolve(process.cwd(), "x");
-      expect(calls).toContain(`sandbox upload alpha ${expectedHostPath} /sandbox/`);
+      expect(calls).toContain(`sandbox upload -g nemoclaw -- alpha ${expectedHostPath} /sandbox/`);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

@@ -48,7 +48,7 @@ export function createSandboxRecreateProtection(
     resolveNotReadyOutcome(): notReadyRecreate.NonInteractiveNotReadyOutcome {
       return deps.resolveNotReadyOutcome(sandboxName, note, sandboxEntry, customOpenClawImage);
     },
-    backup(): PreRecreateBackupResult {
+    backup(): Promise<PreRecreateBackupResult> {
       return deps.backupSandboxBeforeRecreate({
         sandboxName,
         sandboxEntry,

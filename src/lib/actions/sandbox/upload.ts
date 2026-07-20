@@ -3,7 +3,9 @@
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
+import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { resolveHostPathFromCwd } from "./host-path";
 
 export interface SandboxUploadOptions {
@@ -25,6 +27,11 @@ export async function uploadToSandbox(opts: SandboxUploadOptions): Promise<Sandb
       `No host path provided; usage: ${CLI_NAME} ${opts.sandboxName} upload <host-path> [sandbox-dest]`,
     );
   }
+  // The upload is a host-to-sandbox mutation. An ambient endpoint override can
+  // redirect both the liveness check and the upload away from the gateway the
+  // registry binds this sandbox to, so reject it before either command runs.
+  assertNoOpenShellGatewayEndpointOverride();
+  const gatewayName = getSandboxTargetGatewayName(opts.sandboxName);
   const hostPath = resolveHostPathFromCwd(trimmedHostPath);
   const sandboxDest = (opts.sandboxDest ?? "").trim() || "/sandbox/";
 
@@ -32,9 +39,12 @@ export async function uploadToSandbox(opts: SandboxUploadOptions): Promise<Sandb
     allowNonReadyPhase: opts.allowNonReadyPhase ?? true,
   });
 
-  runOpenshell(["sandbox", "upload", opts.sandboxName, hostPath, sandboxDest], {
-    stdio: "inherit",
-  });
+  runOpenshell(
+    ["sandbox", "upload", "-g", gatewayName, "--", opts.sandboxName, hostPath, sandboxDest],
+    {
+      stdio: "inherit",
+    },
+  );
 
   return { hostPath, sandboxDest };
 }
