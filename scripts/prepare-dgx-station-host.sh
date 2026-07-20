@@ -35,6 +35,7 @@ readonly DOCKER_VERSION="29.6.1"
 readonly TOOLKIT_VERSION="1.19.1"
 readonly FACTORY_DKMS_VERSION="3.0.11-1ubuntu13"
 readonly TARGET_DKMS_VERSION="1:3.4.0-1ubuntu1"
+readonly RETAINED_DKMS_VERSION="1:3.4.1-1ubuntu1"
 # Keep this as a plain Ubuntu image: NVIDIA Container Toolkit injects the host
 # driver utility when CDI or --gpus is requested. This intentionally exercises
 # the documented runtime contract instead of relying on a CUDA image payload:
@@ -566,11 +567,30 @@ package_state() {
     printf 'missing\n'
   elif [[ "$actual" == "$expected" ]]; then
     printf 'exact\n'
+  elif [[ "$name" == "dkms" && "$actual" == "$RETAINED_DKMS_VERSION" && "$expected" == "$TARGET_DKMS_VERSION" ]]; then
+    printf 'retained-compatible\n'
   elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" && "$expected" == "$TARGET_DKMS_VERSION" ]]; then
     printf 'approved-transition\n'
   else
     printf 'mismatch\n'
   fi
+}
+
+warn_retained_package_version() {
+  local spec=$1 state name expected actual
+  state="$(package_state "$spec")"
+  [[ "$state" == "retained-compatible" ]] || return 0
+  name="$(package_name "$spec")"
+  expected="$(package_expected_version "$spec")"
+  actual="$(installed_version "$name")"
+  warn "package=${name} status=retained_compatible actual=${actual} validated=${expected} decision=retain"
+}
+
+warn_retained_package_versions() {
+  local spec
+  for spec in "${PACKAGE_SPECS[@]}"; do
+    warn_retained_package_version "$spec"
+  done
 }
 
 assert_no_package_mismatches() {
@@ -591,13 +611,19 @@ assert_no_package_mismatches() {
     warn "package=${name} status=mismatch actual=${actual} expected=${expected}"
     mismatch=1
   done
-  ((mismatch == 0)) || fatal "Existing Station prerequisite versions differ from the validated pins or approved factory transition; refusing to change them automatically"
+  ((mismatch == 0)) || fatal "Existing Station prerequisite versions differ from the validated pins, retained-compatible versions, or approved factory transition; refusing to change them automatically"
 }
 
-all_packages_exact() {
+package_is_ready() {
+  local state
+  state="$(package_state "$1")"
+  [[ "$state" == "exact" || "$state" == "retained-compatible" ]]
+}
+
+all_packages_ready() {
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || return 1
+    package_is_ready "$spec" || return 1
   done
   return 0
 }
@@ -887,7 +913,7 @@ check_failed_units() {
     return 0
   fi
   for unit in "${units[@]}"; do
-    if is_driver_transitional_unit "$unit" && all_packages_exact && ! driver_loaded_exact; then
+    if is_driver_transitional_unit "$unit" && all_packages_ready && ! driver_loaded_exact; then
       warn "driver unit failure allowed only until post-reboot verification: ${unit}"
     elif is_preparation_critical_unit "$unit"; then
       warn "failed preparation-critical unit: ${unit}"
@@ -1040,6 +1066,8 @@ print_package_status() {
       info "package=${name} status=missing expected=${expected}"
     elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" ]]; then
       info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
+    elif [[ "$name" == "dkms" && "$actual" == "$RETAINED_DKMS_VERSION" ]]; then
+      warn_retained_package_version "$spec"
     else
       warn "package=${name} status=mismatch actual=${actual} expected=${expected}"
     fi
@@ -1251,7 +1279,7 @@ collect_package_transaction_specs() {
     state="$(package_state "$spec")"
     case "$state" in
       missing | approved-transition) PACKAGE_TRANSACTION_SPECS+=("$spec") ;;
-      exact) ;;
+      exact | retained-compatible) ;;
       *) fatal "Package transaction contains an unapproved prerequisite state: ${spec} (${state})" ;;
     esac
   done
@@ -1528,9 +1556,9 @@ install_packages() {
 
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || fatal "Installed package does not match ${spec}"
+    package_is_ready "$spec" || fatal "Installed package is outside the accepted state for ${spec}"
   done
-  info "pinned_packages=installed"
+  info "prerequisite_packages=ready"
 }
 
 ensure_docker_group() {
@@ -1860,7 +1888,7 @@ verify_dgx_os_runtime_user() {
 verify_apply_state() {
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || fatal "Package verification failed: ${spec}"
+    package_is_ready "$spec" || fatal "Package verification failed: ${spec}"
   done
   verify_gpu
   systemctl is-active --quiet nvidia-persistenced.service || fatal "nvidia-persistenced.service is not active"
@@ -1928,7 +1956,7 @@ verify_gpu() {
 verify_host() {
   local spec user_name=${SUDO_USER:-$USER}
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || fatal "Package verification failed: ${spec}"
+    package_is_ready "$spec" || fatal "Package verification failed: ${spec}"
   done
   verify_gpu
   systemctl is-active --quiet nvidia-persistenced.service || fatal "nvidia-persistenced.service is not active"
@@ -1954,14 +1982,14 @@ run_check() {
     return 0
   fi
   print_package_status
-  if all_packages_exact; then
+  if all_packages_ready; then
     if install_boot_marker_matches_current_boot; then
       warn "Package installation completed in the current boot; reboot is required"
       info "CHECK_RESULT=REBOOT_REQUIRED"
     elif driver_loaded_exact; then
       info "CHECK_RESULT=PACKAGES_AND_DRIVER_PRESENT"
     else
-      warn "Exact packages are installed but driver ${DRIVER_VERSION} is not loaded; reboot is required"
+      warn "Accepted prerequisite packages are installed but driver ${DRIVER_VERSION} is not loaded; reboot is required"
       info "CHECK_RESULT=REBOOT_REQUIRED"
     fi
   else
@@ -2003,16 +2031,17 @@ run_apply() {
   require_command grep
   require_command readlink
   require_command sha256sum
+  warn_retained_package_versions
 
   if reboot_required; then
-    if all_packages_exact && ! driver_loaded_exact; then
+    if all_packages_ready && ! driver_loaded_exact; then
       warn "A reboot is required before runtime setup can continue"
       exit_reboot_required
     fi
     fatal "An unrelated reboot is already pending"
   fi
 
-  if ! all_packages_exact; then
+  if ! all_packages_ready; then
     assert_no_package_mismatches
     install_packages
     ensure_docker_group
@@ -2029,7 +2058,7 @@ run_apply() {
   fi
 
   driver_loaded_exact || {
-    warn "Pinned packages are installed but driver ${DRIVER_VERSION} is not loaded"
+    warn "Accepted prerequisite packages are installed but driver ${DRIVER_VERSION} is not loaded"
     exit_reboot_required
   }
 
@@ -2055,7 +2084,8 @@ run_verify() {
     verify_dgx_os_runtime_user
     return 0
   fi
-  all_packages_exact || fatal "Pinned prerequisite packages are incomplete; run --apply"
+  warn_retained_package_versions
+  all_packages_ready || fatal "Accepted prerequisite packages are incomplete; run --apply"
   driver_loaded_exact || fatal "Pinned driver is not loaded; reboot, then run --apply"
   verify_host
 }

@@ -360,7 +360,7 @@ check_failed_units
 common_preflight() { :; }
 require_command() { :; }
 acquire_sudo() { :; }
-all_packages_exact() { return 0; }
+all_packages_ready() { return 0; }
 install_boot_marker_matches_current_boot() { return 1; }
 driver_loaded_exact() { return 0; }
 install_packages() { printf 'INSTALL_PACKAGES\n'; }
@@ -384,7 +384,7 @@ run_apply
 common_preflight() { :; }
 require_command() { :; }
 acquire_sudo() { :; }
-all_packages_exact() { return 1; }
+all_packages_ready() { return 1; }
 installed_version() {
   if [[ "$1" == "dkms" ]]; then printf '3.0.11-1ubuntu13'; fi
 }
@@ -418,7 +418,7 @@ validate_package_availability() { printf 'VALIDATE_PACKAGES\n'; }
 simulate_install() { printf 'SIMULATE_INSTALL\n'; }
 require_docker_restart_quiescence() { printf 'RECHECK_RESTART_QUIESCENCE\n'; }
 package_state() { printf 'missing\n'; }
-package_is_exact() { return 0; }
+package_is_ready() { return 0; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
@@ -441,7 +441,7 @@ install_packages
     ]) {
       expect(output).toContain(spec);
     }
-    expect(output).toContain("pinned_packages=installed");
+    expect(output).toContain("prerequisite_packages=ready");
   });
   it("does not refresh CDI when the GPU launch probe already passes", () => {
     const { result, output } = runSourced(
@@ -622,7 +622,7 @@ assert_root_directory_safe /etc/apt/keyrings test_directory
 common_preflight() { :; }
 require_command() { :; }
 acquire_sudo() { :; }
-all_packages_exact() { return 0; }
+all_packages_ready() { return 0; }
 install_boot_marker_matches_current_boot() { return 1; }
 driver_loaded_exact() { return 0; }
 finish_runtime() { DOCKER_GROUP_ADDED=1; printf 'FINISH_RUNTIME\n'; }
@@ -894,7 +894,7 @@ main "$READ_MODE"
       `
 common_preflight() { :; }
 require_command() { :; }
-all_packages_exact() { return 0; }
+all_packages_ready() { return 0; }
 driver_loaded_exact() { return 1; }
 run_verify
 `,

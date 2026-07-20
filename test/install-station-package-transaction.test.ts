@@ -72,6 +72,53 @@ validate_apt_preinstall_plan "$HOME/targets" <<<"$APT_PLAN"
 }
 
 describe("DGX Station package transaction", () => {
+  it("warns and retains the qualified DKMS forward revision (#7211)", () => {
+    const { result, output } = runSourced(
+      `
+installed_version() {
+  if [[ "$1" == "dkms" ]]; then printf '%s' "$DKMS_ACTUAL"; fi
+}
+printf 'state='
+package_state 'dkms=1:3.4.0-1ubuntu1'
+package_is_ready 'dkms=1:3.4.0-1ubuntu1'
+warn_retained_package_version 'dkms=1:3.4.0-1ubuntu1'
+`,
+      { DKMS_ACTUAL: "1:3.4.1-1ubuntu1" },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("state=retained-compatible");
+    expect(output).toContain(
+      "package=dkms status=retained_compatible actual=1:3.4.1-1ubuntu1 validated=1:3.4.0-1ubuntu1 decision=retain",
+    );
+  });
+
+  it("retains qualified DKMS without entering package installation (#7211)", () => {
+    const { result, output } = runSourced(`
+common_preflight() { :; }
+require_command() { :; }
+acquire_sudo() { :; }
+package_state() {
+  if [[ "$1" == dkms=* ]]; then printf 'retained-compatible\n'; else printf 'exact\n'; fi
+}
+installed_version() {
+  if [[ "$1" == "dkms" ]]; then printf '1:3.4.1-1ubuntu1'; fi
+}
+install_boot_marker_matches_current_boot() { return 1; }
+driver_loaded_exact() { return 0; }
+install_packages() { printf 'INSTALL_PACKAGES\n'; }
+finish_runtime() { printf 'FINISH_RUNTIME\n'; }
+verify_apply_state() { printf 'VERIFY_APPLY_STATE\n'; }
+run_apply
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("status=retained_compatible");
+    expect(output).toContain("decision=retain");
+    expect(output).not.toContain("INSTALL_PACKAGES");
+    expect(output).toContain("APPLY_RESULT=COMPLETE");
+  });
+
   it("passes the complete pinned tuple when every package is missing", () => {
     const { result, output } = runSourced(`
 configure_repositories() { printf 'CONFIGURE_REPOSITORIES\n'; }
@@ -91,7 +138,7 @@ apt-get() {
 }
 require_docker_restart_quiescence() { printf 'RECHECK_DOCKER_RESTART %s\n' "$1"; }
 package_state() { printf 'missing\n'; }
-package_is_exact() { return 0; }
+package_is_ready() { return 0; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
@@ -135,11 +182,24 @@ cat "$HOME/apt-cache-calls"
     expect(output).toContain(quiescenceMarker);
     expect(output.indexOf(installMarker)).toBeGreaterThan(output.indexOf(quiescenceMarker));
     expect(output).toContain("CLEANUP_GUARD");
-    expect(output).toContain("pinned_packages=installed");
+    expect(output).toContain("prerequisite_packages=ready");
   });
 
-  it("excludes retained exact packages from every APT transaction command", () => {
-    const retainedSpec = "docker-ce=5:29.6.1-1~ubuntu.24.04~noble";
+  it.each([
+    {
+      label: "exact",
+      retainedSpec: "docker-ce=5:29.6.1-1~ubuntu.24.04~noble",
+      retainedState: "exact",
+    },
+    {
+      label: "qualified",
+      retainedSpec: DKMS_SPEC,
+      retainedState: "retained-compatible",
+    },
+  ])("excludes $label retained packages from every APT transaction command (#7211)", ({
+    retainedSpec,
+    retainedState,
+  }) => {
     const missingSpecs = EXPECTED_PACKAGE_SPECS.filter((spec) => spec !== retainedSpec);
     const { result, output } = runSourced(`
 configure_repositories() { :; }
@@ -159,9 +219,9 @@ apt-get() {
 }
 require_docker_restart_quiescence() { :; }
 package_state() {
-  if [[ "$1" == '${retainedSpec}' ]]; then printf 'exact\n'; else printf 'missing\n'; fi
+  if [[ "$1" == '${retainedSpec}' ]]; then printf '${retainedState}\n'; else printf 'missing\n'; fi
 }
-package_is_exact() { return 0; }
+package_is_ready() { return 0; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
@@ -214,7 +274,7 @@ package_state() {
   if [[ "$1" == docker-ce=* ]]; then printf 'missing\n'; else printf 'exact\n'; fi
 }
 installed_version() { if [[ "$1" == "libc6" ]]; then printf '2.39-0ubuntu8'; fi; }
-package_is_exact() { return 0; }
+package_is_ready() { return 0; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
