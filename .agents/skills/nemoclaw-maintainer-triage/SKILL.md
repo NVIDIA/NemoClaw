@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-triage
-description: AI-assisted triage for NVIDIA/NemoClaw issues and PRs using native Issue Type, Project fields, and the canonical label taxonomy. Supports single-item and batch modes, presents a dry run, and applies only the accepted write set. Trigger keywords - triage, label issues, suggest labels, batch triage, triage issue, triage PR, label this, what labels.
+description: Triage NemoClaw issues and PRs with Issue Type, Project fields, and allowed labels. Support one item or a batch. Show proposed changes and apply only changes the maintainer accepts. Trigger keywords - triage, label issues, suggest labels, batch triage, triage issue, triage PR, label this, what labels.
 user_invocable: true
 ---
 
@@ -9,7 +9,8 @@ user_invocable: true
 
 # NemoClaw Maintainer — Triage
 
-Triage issues and PRs through the canonical NemoClaw workflow. Native Issue Type owns issue classification, Project fields own priority and lifecycle, and labels own routing and immediate action queues.
+Use Issue Type for issue classification. Use Project fields for priority and lifecycle.
+Use labels for routing and action queues.
 
 ## Step 1: Load Canonical Policy
 
@@ -20,7 +21,8 @@ Before evaluating an item, read these files in order:
 3. [label-taxonomy.json](../nemoclaw-maintainer-policies/references/label-taxonomy.json)
 4. [examples.md](../nemoclaw-maintainer-policies/references/examples.md)
 
-Do not use a skill-local label guide. The policy package is the only source of truth for Issue Type, Project fields, labels, confidence, authorization, and output shape.
+Do not use another label guide.
+The policy package is the source of truth for Issue Type, Project fields, labels, confidence, authorization, and output shape.
 
 ## Step 2: Determine Mode
 
@@ -31,7 +33,9 @@ gh issue view <number> --repo NVIDIA/NemoClaw --json number,title,body,labels,ur
 gh pr view <number> --repo NVIDIA/NemoClaw --json number,title,body,labels,url,author,files,isDraft,mergeStateStatus,projectItems,statusCheckRollup
 ```
 
-Use the command matching the item kind. For issues, also read the native Issue Type through the GitHub GraphQL API. For Project Priority and Status, use live Project 199 data rather than inferring state from labels.
+Use the command for the item type.
+For issues, read Issue Type through the GitHub GraphQL API.
+Read Project Priority and Status from Project 199. Do not infer them from labels.
 
 **Batch mode** — collect both normal inbox items and unlabeled items:
 
@@ -42,26 +46,34 @@ gh pr list --repo NVIDIA/NemoClaw --state open --label "needs: triage" --limit 5
 gh pr list --repo NVIDIA/NemoClaw --state open --limit 50 --json number,title,body,labels,url,author,isDraft,mergeStateStatus
 ```
 
-From the unfiltered results, retain items with no labels, merge them with the `needs: triage` results, and deduplicate by item kind and number. Work through the resulting set one item at a time.
+Keep unlabeled items from the unfiltered results.
+Combine them with the `needs: triage` results. Remove duplicates by item type and number.
+Process one item at a time.
 
 ## Step 3: Present the Dry Run
 
 Use the JSON-compatible payload defined by canonical `triage-instructions.md`. Include:
 
-- native Issue Type for issues;
-- Project Priority and Status recommendations;
-- only canonical labels from `label-taxonomy.json`;
-- labels to remove, including a completed `needs: triage` inbox marker;
-- confidence, rationale, questions, and `human_review_required`;
+- native Issue Type for issues
+- Project Priority and Status recommendations
+- only labels from `label-taxonomy.json`
+- labels to remove, including a completed `needs: triage` inbox marker
+- confidence, rationale, questions, and `human_review_required`
 - the proposed public comment, when one is useful.
 
-Prefer no label over a guessed label. Never substitute labels for Issue Type, Priority, Status, or resolution. Never propose an unknown label, and never propose `PRR` during normal triage.
+Prefer no label over a guessed label.
+Do not use labels for Issue Type, Priority, Status, or resolution.
+Do not propose an unknown label. Do not propose `PRR` during triage.
 
 In batch mode, present each dry run and wait for an explicit `apply`, `skip`, or edited write set before moving to the next item.
 
 ## Step 4: Apply Only the Accepted Write Set
 
-An accepted dry run authorizes only the fields, labels, and comment the maintainer accepted. Resolve live Issue Type IDs, Project field IDs, and Project option IDs immediately before writing; do not hardcode mutable IDs in this skill.
+Acceptance authorizes only the fields, labels, and comment in the proposal.
+Before each write, re-read Issue Type, Project fields, and labels, then resolve all live IDs.
+Do not store mutable IDs in this skill.
+If the state differs from the accepted proposal's base state, stop and present an updated proposal for acceptance.
+Resume writes only after the user accepts the updated proposal.
 
 Apply writes in this order:
 
@@ -70,16 +82,17 @@ Apply writes in this order:
 3. Remove `needs: triage` when the inbox action is complete.
 4. Post the accepted comment, if any.
 
-If the accepted plan contains a low-confidence inference, an unknown label, or a write outside the current authorization context, stop and return a corrected dry run instead of writing.
+Do not write if the accepted plan contains a low-confidence inference, an unknown label, or an unauthorized field.
+Return a corrected proposal.
 
 ## Step 5: Report
 
 For every applied item, report:
 
-- Issue Type before and after, when applicable;
-- Project Priority and Status before and after;
-- labels added and removed;
-- whether a comment was posted;
+- Issue Type before and after, when applicable
+- Project Priority and Status before and after
+- labels added and removed
+- whether a comment was posted
 - any proposed write that was skipped and why.
 
 Do not write an external activity log unless the invoking maintainer explicitly asks for one.
@@ -88,7 +101,7 @@ Do not write an external activity log unless the invoking maintainer explicitly 
 
 Prioritize candidates using policy evidence, not labels that duplicate Project Priority:
 
-1. Security-sensitive or outage/data-loss reports that may warrant Project Priority `Urgent` or `High`.
-2. Action-blocked items requiring a precise author or maintainer response.
-3. Items waiting longest for an initial actionable triage decision.
+1. Security, outage, or data-loss reports that might need Project Priority `Urgent` or `High`.
+2. Items that need a response from an author or maintainer.
+3. Items waiting longest for triage.
 4. Remaining items by recency.

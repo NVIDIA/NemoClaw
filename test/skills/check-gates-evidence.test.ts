@@ -559,7 +559,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       ],
     ],
     ["from an incomplete page set", [{ total_count: 2, check_runs: [coordinationCheck()] }]],
-  ])("fails closed when exact-diff E2E coordination evidence is %s", (_name, pages) => {
+  ])("fails closed when PR/base SHA E2E coordination evidence is %s", (_name, pages) => {
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
@@ -574,7 +574,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
 
-  it("requires exact-diff evidence for optional Actions checks", () => {
+  it("requires PR/base SHA evidence for optional Actions checks", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
@@ -857,7 +857,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       failingChecks: ["matrix-check: FAILURE"],
     });
   });
-  it("accepts exact-head evidence from a non-PR Actions event", () => {
+  it("accepts SHA evidence from a non-PR Actions event", () => {
     const fixture = e2eRunFixture(e2eChecks([874, 2, "SUCCESS"]), {
       "874": exactDiffGateRun("success", e2eJobs(2)),
       "875": {
@@ -1354,7 +1354,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       runs: {} as Record<string, ActionRunFixture>,
     },
     {
-      name: "rejects exact-diff runs with different workflow identities",
+      name: "rejects PR/base SHA runs with different workflow identities",
       checks: e2eChecks([480, 40, "FAILURE"], [481, 41, "SUCCESS"]),
       runs: {
         "480": {
@@ -1369,7 +1369,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       } as Record<string, ActionRunFixture>,
     },
     {
-      name: "rejects an exact-diff run with a null workflow path",
+      name: "rejects a PR/base SHA run with a null workflow path",
       checks: e2eChecks([482, 41, "SUCCESS"]),
       runs: {
         "482": { ...exactDiffGateRun("success", e2eJobs(41)), path: undefined },

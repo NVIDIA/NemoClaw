@@ -142,7 +142,7 @@ head and base commits, including fork heads. Metadata-only edits preserve the
 existing exact-diff result instead of publishing a skipped success. A base
 retarget fails any still-active earlier
 result in that head's lineage, preserves completed audit history, and then
-reserves the new exact-diff identity. The
+reserves the new PR/base SHA identity. The
 `CI / Pull Request` run name binds its PR number, head SHA, base SHA, and gate
 eligibility so the trusted controller can authenticate the completed run even
 when a fork `workflow_run` payload omits pull-request metadata. The controller
@@ -187,7 +187,7 @@ maintainer authorization below before credentialed execution begins. If no job
 or target is selected, the required check passes without an E2E run.
 
 Before dispatch, the controller verifies that the live PR still matches the CI
-run's exact head and base. It uses its own workflow commit when that commit is
+run's PR SHA and base SHA. It uses its own workflow commit when that commit is
 still `main`. If `main` advanced, the controller accepts the current commit
 only when GitHub reports it as a descendant whose merge base is the workflow
 commit, the comparison contains fewer than 300 fully enumerated files, neither
@@ -243,7 +243,7 @@ check carries a current-version retry reason:
 conclusively cancelled child, or `evidence-download` after a successful child
 whose evidence download failed, was cancelled, or was skipped. The trusted
 controller leaves the completed check as audit history, creates and validates a
-new `in_progress` check with the same exact-diff external identity, and rebuilds
+new `in_progress` check with the same PR/base SHA external identity, and rebuilds
 the deterministic plan before exposing a fresh authorization state. The
 controller selects the highest check-run ID only when every
 older duplicate is a completed failure with a recognized versioned retry
@@ -253,7 +253,7 @@ candidates fails closed. Selected-job product or
 assertion failures, evidence policy or integrity failures, schema or identity
 mismatches, traversal or provenance failures, reconciliation, controller
 errors, unknown states, and failures recorded before retry reasons existed
-remain terminal for that exact diff. Fork approval failures are not retried by
+remain terminal for that PR/base SHA pair. Fork approval failures are not retried by
 PR CI; follow the protected or manual skip path, or update the PR to create a
 new head. Update the PR and run fresh CI for the other terminal outcomes. The
 normal wait, evidence download, and finish path is the only path that can record
@@ -301,8 +301,8 @@ the open PR, repository origin, exact head and base SHAs, deterministic plan,
 matching failed required check, and that the controller commit is either
 still `main` or
 has only a compatible safe descendant as described above. Immediately before
-recording success, it reads the live PR again and requires the same exact head
-and base. The result records the reviewer, bounded optional comment, validated
+recording success, it reads the live PR again and requires the same PR SHA and
+base SHA. The result records the reviewer, bounded optional comment, validated
 approval-run URL, plan hash, and jobs and targets that did not run. The
 successful skip required check is titled
 `Credentialed E2E skipped for fork PR — approved by @<maintainer>` and begins
@@ -388,7 +388,7 @@ and runner or network incidents can still affect the signal, so maintainers
 should inspect the timing table before acting on a warning.
 
 For PRs, the unified PR Review Advisor builds and renders guidance from the
-deterministic risk plan for the PR head commit and changed-file set. It
+deterministic risk plan for the PR SHA and changed-file set. It
 recommends jobs for known regression families and includes `cloud-onboard` when
 changes affect onboard behavior, trace timing, scorecard analysis, budget
 configuration, or the unified E2E workflow. Compatibility schema fields may

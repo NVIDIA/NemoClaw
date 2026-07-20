@@ -387,6 +387,12 @@ The confirmation permits those legacy entries to recover onto the current manage
 After successful recovery, the installer skips generic onboarding.
 For a manually prepared upgrade, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after preserving every registered sandbox and retiring the old gateway.
 
+<Warning title="Legacy Upgrade Recovery Scope">
+Prepared backup recovery for a legacy sandbox restores only the managed state directory recorded in its validated manifest, such as `/sandbox/.openclaw` or `/sandbox/.hermes`.
+Files outside that recorded path, including `/sandbox/user-data`, are not preserved when the installer recreates the sandbox.
+Back up those paths outside the sandbox before you continue.
+</Warning>
+
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are registered with the OpenShell gateway and never persisted to host disk.
@@ -679,7 +685,14 @@ For faster custom builds, plan for Docker cache behavior:
 To diagnose where a slow build spends time, set `NEMOCLAW_TRACE=1` and read the phase timings in [Onboard Profiling Traces](#onboard-profiling-traces).
 NemoClaw does not guarantee exact build timings.
 
-All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_PROVIDER_KEY`, `NEMOCLAW_INFERENCE_BASE_URL`, etc.) are injected as `ARG` overrides at build time, so declare them in your Dockerfile if you need to reference them.
+All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_INFERENCE_PROVIDER_ID`, `NEMOCLAW_INFERENCE_BASE_URL`, etc.) are injected as `ARG` overrides at build time, so declare them in your Dockerfile if you need to reference them.
+
+`NEMOCLAW_INFERENCE_PROVIDER_ID` is a non-secret inference route identifier (for example `inference` for proxied providers, or a provider family such as `openai`), never a credential; provider credentials stay in OpenShell provider storage.
+It replaces the former `NEMOCLAW_PROVIDER_KEY` image argument, whose secret-shaped name triggered a BuildKit `SecretsUsedInArgOrEnv` warning.
+The host-side `NEMOCLAW_PROVIDER_KEY` credential alias is unchanged; this migration only renames the managed image route selector.
+Custom Dockerfiles that declare either `ARG NEMOCLAW_INFERENCE_PROVIDER_ID` or the legacy `ARG NEMOCLAW_PROVIDER_KEY` keep working through v0.0.90.
+NemoClaw updates whichever supported declaration is present, and runtime consumers read the legacy name as a fallback.
+Rename the legacy `ARG`/`ENV` declaration to `NEMOCLAW_INFERENCE_PROVIDER_ID` before legacy support is removed in v0.0.91.
 
 Custom Dockerfiles must declare `ARG NEMOCLAW_TOOL_DISCLOSURE=progressive` exactly once in the final build stage and promote it into that stage's runtime environment.
 The usual runtime contract is:
@@ -863,6 +876,8 @@ Use it for health checks and scripted readiness probes.
 Run a single command non-interactively in a running sandbox via the OpenShell exec endpoint.
 The command runs as the sandbox user with `HOME=/sandbox`, so in-sandbox tooling resolves NemoClaw-provisioned config the same way it does for `connect` and `openshell sandbox connect`.
 This is the supported substitute for `docker exec` on the sandbox container; raw `docker exec` runs as root and lands on `HOME=/root`, where the selected agent config is not present.
+For a registered sandbox, NemoClaw selects its recorded owning OpenShell gateway before the workdir probe and command dispatch.
+If gateway selection fails, `exec` stops without running the sandbox command.
 
 <AgentOnly variant="openclaw">
 
@@ -1182,6 +1197,8 @@ If the container was removed entirely, `start` fails and points you to `$$nemocl
 Show sandbox-scoped status, health, and inference configuration for one registered sandbox.
 Use this form when you care about a specific sandbox's live OpenShell state, agent runtime, inference health, GPU proof, permissions, and recovery hints.
 Do not pass a sandbox name to `$$nemoclaw status`; that command is the global all-sandbox/service overview.
+NemoClaw resolves the sandbox's recorded owning OpenShell gateway before querying live state.
+If another gateway is active, it selects the owner and queries again instead of trusting a result from the sibling gateway.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
 The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
@@ -1938,12 +1955,13 @@ $$nemoclaw my-assistant channels start telegram
 
 Run messaging channel status checks.
 Without `--channel`, the command prints a compact summary for every configured channel, including registration, policy coverage, and non-secret rendered config comparisons.
-For channels that support a live health probe (WhatsApp, Telegram), the summary adds a `Runtime health: not checked in summary view` pointer instead of running the probe, so it never reads as healthy without an explicit check.
+For channel and agent combinations that support a live health probe (WhatsApp or Telegram on OpenClaw), the summary adds a `Runtime health: not checked in summary view` pointer instead of running the probe, so it never reads as healthy without an explicit check.
 With `--channel`, it prints the detailed status for that channel.
 
-For WhatsApp, `--channel whatsapp` also probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy coverage.
+For an OpenClaw WhatsApp sandbox, `--channel whatsapp` also probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy coverage.
 A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
 The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
+A Hermes WhatsApp sandbox uses the basic registration, policy, and config report because NemoClaw does not treat the Hermes session file as a live-health signal.
 
 For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison, and classifies the current state into a verdict such as `healthy`, `idle`, `unreachable` (network or egress), `token_rejected`, or `not_started`.
 It reads the gateway's own startup and poll log breadcrumbs rather than issuing its own Bot API request, so the resolved bot token never leaves the gateway.
@@ -1964,9 +1982,11 @@ $$nemoclaw my-assistant channels status --channel telegram
 | Flag | Description |
 |------|-------------|
 | `--channel <channel>` | Channel to inspect in detail |
-| `--json` | Emit the status report as JSON (for the detailed WhatsApp and Telegram probes, exit non-zero when the verdict is not `healthy` or `unknown`) |
+| `--json` | Emit the status report as JSON (for an available detailed WhatsApp or Telegram probe on OpenClaw, exit non-zero when the verdict is not `healthy` or `unknown`) |
 
-Each probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout and returns only matched bridge/gateway log lines (e.g. `connection.open`, `401 unauthorized`, `qr expired`, or `[telegram]` startup breadcrumbs) to the host, where NemoClaw reduces them to fixed classifications; the raw lines are never rendered, so the diagnostic output carries only those classifications, never message bodies or tokens.
+Each live probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout.
+The WhatsApp probe returns strict OpenClaw status JSON to the host, where NemoClaw allowlists pairing, liveness, connection-state, and timestamp fields before rendering the report and discards phone-number and free-text error fields.
+The Telegram probe returns only matched gateway log lines to the host, where NemoClaw reduces them to fixed classifications without rendering the raw lines, message bodies, or tokens.
 
 </AgentOnly>
 

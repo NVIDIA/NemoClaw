@@ -15,7 +15,7 @@ Daily release labels coordinate release work. They do not classify issues and th
 - Issues may also carry daily version labels when they need a PR, fix, or regression follow-up for the daily tag.
 - Applying a daily version label is not a readiness claim.
 - Release includes PRs that both carry the daily version label and are merged by cutoff.
-- Issue version labels are tracking signals only; an issue label does not include work in the release without a merged labeled PR.
+- Issue version labels are tracking signals. An issue label does not include work in the release without a merged, labeled PR.
 - Open PRs and issues that miss a tagged release carry forward automatically by moving from the released version label to the next patch label.
 - After the semver tag and workflow-managed `latest` are verified, post-tag housekeeping moves open stragglers and deletes the released version label. Tags and commit ancestry are the only durable release-membership record.
 - Released version labels must be deleted, never renamed or reused for a later release.
@@ -23,8 +23,9 @@ Daily release labels coordinate release work. They do not classify issues and th
 ## Release-Prep Docs
 
 Run `/nemoclaw-contributor-update-docs for vX.Y.Z` before generating the final release plan for `vX.Y.Z`.
-The pre-tag release-note docs PR must create or update `docs/changelog/YYYY-MM-DD.mdx` with the exact `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets.
-This dated file is the canonical release history shared by all documentation variants; ordinary doc pages and the post-tag Announcement do not replace it.
+The pre-tag release-note docs PR must create or update `docs/changelog/YYYY-MM-DD.mdx`.
+Use the required `## vX.Y.Z` heading, parser-safe MDX SPDX comment, summary, and detailed bullets.
+This dated file is the release history for all documentation variants. Ordinary documentation pages and the post-tag Announcement do not replace it.
 Release-prep docs, including that entry, must be merged or explicitly waived before `release:plan` captures the release commit.
 If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
 
@@ -69,7 +70,7 @@ Maintainers may:
 
 - Add the current version label when they want the PR visible in the current day queue.
 - Remove a version label without replacement when an item is deferred, superseded, closed, or no longer part of the daily cycle.
-- Rerun post-tag housekeeping after a partial failure; already-moved items no longer match the released source label, so the operation is safely resumable.
+- Rerun post-tag housekeeping after a partial failure. Moved items no longer have the released label, so the operation can resume safely.
 
 ## Label Retirement
 

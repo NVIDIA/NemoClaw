@@ -399,7 +399,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
       summary: "The prerequisite CI failed.\n\n<!-- nemoclaw-pr-e2e-retry:v1:prerequisite-ci -->",
       currentCiConclusion: "failure",
     },
-  ])("preserves $label instead of reopening the exact diff", async ({
+  ])("preserves $label instead of reopening the PR/base SHA pair", async ({
     title,
     summary,
     currentCiConclusion,
@@ -429,7 +429,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     try {
       await expect(
         startPrGate({ ...startCommand(workDir), ciConclusion: currentCiConclusion }),
-      ).rejects.toThrow(/exact-diff PR gate state is not retryable/u);
+      ).rejects.toThrow(/PR gate state for this PR\/base SHA pair is not retryable/u);
       expect(requests.some((request) => request.method === "PATCH")).toBe(false);
       expect(originalState).toEqual({
         status: "completed",
@@ -457,9 +457,9 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     {
       label: "multiple active current candidates",
       checks: [exactPrGateCheck(), exactPrGateCheck({ id: 18 })],
-      expectedError: "Multiple active exact-diff PR gate checks exist",
+      expectedError: "Multiple active PR gate checks exist for one PR/base SHA pair",
     },
-  ])("fails closed when exact-diff history contains $label", async ({ checks, expectedError }) => {
+  ])("fails closed when PR/base SHA history contains $label", async ({ checks, expectedError }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-history-"));
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
@@ -542,7 +542,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
       });
       expect(JSON.stringify(completion?.body)).not.toContain("conclusion");
       expect(JSON.stringify(completion?.body)).toContain(
-        "run `run-control-plane` with the PR number, exact head and base SHAs",
+        "run `run-control-plane` with the PR number, PR SHA, base SHA",
       );
       expect(fs.readFileSync(outputPath, "utf8")).not.toContain("fork_skip_mode=");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
@@ -830,7 +830,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
     expect(JSON.stringify(completion?.body)).not.toContain("tests passed");
   });
 
-  it("dispatches an authorized exact-SHA control-plane run without clearing the gate", async () => {
+  it("dispatches an authorized control-plane run for the PR SHA without clearing the gate", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-authorized-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -1049,7 +1049,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         conclusion: "failure",
         output: {
           title: "Authorized E2E run requires reconciliation",
-          summary: expect.stringContaining("this exact-diff authorization cannot be retried"),
+          summary: expect.stringContaining("cannot be retried"),
         },
       });
       await expect(startControlPlanePrGate(startControlPlaneCommand(workDirs[1]!))).rejects.toThrow(
@@ -1311,7 +1311,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         status: "in_progress",
         output: {
           title: "Maintainer authorization required to run E2E",
-          summary: expect.stringContaining("launch a fresh first-attempt `run-control-plane`"),
+          summary: expect.stringContaining("launch a first-attempt `run-control-plane`"),
         },
       });
       expect(restoredAuthorizations[0]?.body).not.toHaveProperty("conclusion");
@@ -1440,7 +1440,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
         maintainer: "maintainer",
         reason: "The reviewed base revision has since changed upstream.",
       }),
-    ).rejects.toThrow(/no longer matches the reviewed exact head and base SHAs/u);
+    ).rejects.toThrow(/no longer matches the reviewed PR SHA and base SHA/u);
     expect(requests.some((request) => request.method === "PATCH")).toBe(false);
   });
 

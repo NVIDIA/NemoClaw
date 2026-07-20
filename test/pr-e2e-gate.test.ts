@@ -715,7 +715,7 @@ describe("PR E2E controller", () => {
     ).toThrow(/display_title/u);
   });
 
-  it("seeds one idempotent exact-diff gate", async () => {
+  it("seeds one idempotent gate for a PR/base SHA pair", async () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -887,7 +887,7 @@ describe("PR E2E controller", () => {
     }
   });
 
-  it("closes a superseded exact-diff check without failing the controller", async () => {
+  it("closes a superseded PR/base SHA check without failing the controller", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-superseded-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -1354,7 +1354,7 @@ describe("PR E2E controller", () => {
       expect(gate.expectedJobs).toEqual(BROAD_JOBS);
       expect(gate.expectedTargets).toEqual([]);
       expect(requests.filter((request) => request.url.includes("/pulls?"))).toHaveLength(1);
-      // Finalization brackets evidence parsing with exact-diff reads so a PR update cannot
+      // Finalization reads the PR/base SHA pair before and after parsing so a PR update cannot
       // turn stale evidence into a current-revision result.
       expect(requests.filter((request) => request.url.endsWith("/pulls/42"))).toHaveLength(4);
       const checkCreation = requests.find(
@@ -1367,7 +1367,7 @@ describe("PR E2E controller", () => {
         status: "in_progress",
         output: {
           title: "Waiting for PR CI",
-          summary: expect.stringContaining("exact PR head and base revision"),
+          summary: expect.stringContaining("PR SHA and base SHA"),
         },
       });
       const dispatch = requests.find((request) => request.url.endsWith("/dispatches"));

@@ -1,6 +1,10 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # State File Schema
 
-Path: `.nemoclaw-maintainer/state.json` (excluded via `.git/info/exclude`).
+Store state in `.nemoclaw-maintainer/state.json`.
+Git excludes this file through `.git/info/exclude`.
 
 ```json
 {
@@ -49,8 +53,11 @@ Path: `.nemoclaw-maintainer/state.json` (excluded via `.git/info/exclude`).
 
 ## Field Notes
 
-- `gates.autoMerge` is always `false`. The loop may approve but never merges.
-- `gates.autoPushSmallFixes` allows pushing narrow fixes to contributor branches.
-- `excluded.prs` / `excluded.issues`: keys are numbers (as strings), values are `{ "reason": "...", "excludedAt": "ISO" }`. Items here are permanently skipped by triage until the user removes them.
-- `history` entries: `{ "at": "ISO", "item": "PR#1234", "action": "approved|salvaged|blocked|sequenced", "note": "one line" }`. Keep under 50 entries; trim oldest.
+- Set `gates.autoMerge` to `false`. The loop can approve a PR but must not merge it.
+- `gates.autoPushSmallFixes` permits small fixes on contributor branches.
+- Use number strings as keys in `excluded.prs` and `excluded.issues`.
+  Use `{ "reason": "...", "excludedAt": "ISO" }` as each value.
+  Triage skips these items until the user removes them.
+- Use this format for `history` entries: `{ "at": "ISO", "item": "PR#1234", "action": "approved|salvaged|blocked|sequenced", "note": "one line" }`.
+  Keep at most 50 entries. Remove the oldest entries first.
 - `queue.items` and `queue.nearMisses` store the latest triage output for comparison across runs.

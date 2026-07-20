@@ -198,6 +198,8 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 - Use existing repository vocabulary and name what a thing does.
 - Remove modifiers that do not distinguish a real current case.
 - Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
+- Apply [NemoClaw Technical English](CONTRIBUTING.md#nemoclaw-technical-english) to changed comments, test titles, PR text, changelog entries, Announcements, and agent guidance.
+- During the 30-day changed-text pilot, treat language findings as suggestions unless ambiguity can change behavior, security, data safety, test meaning, or release meaning. Do not request unrelated language cleanup.
 - Do not turn one case into a system of categories or a new abstraction.
 - Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.
 - Report conclusions and evidence, not an analysis transcript.
@@ -266,5 +268,6 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 - Run targeted tests once per relevant change set, rerunning after later behavior-affecting edits or hook autofixes, and run `npm run docs` for doc changes
 - Count successful normal hooks as verification; if hooks were skipped or unavailable, refresh `origin/main` and use `npm run check:diff`
 - Follow PR template (`.github/PULL_REQUEST_TEMPLATE.md`)
+- PRs that change `scripts/prepare-dgx-station-host.sh` must include reviewable DGX Station test evidence identifying the tested commit, Station profile or scenario, result, and a supporting link. Any maintainer may review the evidence; without acceptable evidence, the PR is not ready to approve or merge. Treat the evidence as human-reviewed, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must document the reason on the PR.
 - No secrets, API keys, or credentials committed
 - Limit open PRs to fewer than 10

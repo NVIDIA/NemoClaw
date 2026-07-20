@@ -460,11 +460,11 @@ describe("PR E2E gate workflow", () => {
     expect(
       collectStrings(recordForkSkip).some((value) => value.includes("--mode record-fork-e2e-skip")),
     ).toBe(true);
-    expect(step(initialize, "Reserve exact-diff gate").run).toContain('--head "$HEAD_SHA"');
-    expect(step(initialize, "Reserve exact-diff gate").env?.BASE_SHA).toBe(
+    expect(step(initialize, "Reserve PR/base SHA gate").run).toContain('--head "$HEAD_SHA"');
+    expect(step(initialize, "Reserve PR/base SHA gate").env?.BASE_SHA).toBe(
       "${{ github.event.pull_request.base.sha }}",
     );
-    expect(step(initialize, "Reserve exact-diff gate").run).toContain('--base "$BASE_SHA"');
+    expect(step(initialize, "Reserve PR/base SHA gate").run).toContain('--base "$BASE_SHA"');
     const start = step(coordinate, "Start evaluation");
     expect(start.env?.CI_DISPLAY_TITLE).toBe("${{ github.event.workflow_run.display_title }}");
     expect(start.env?.GATE_RUN_ID).toBe("${{ github.run_id }}");
@@ -619,7 +619,7 @@ describe("PR E2E gate workflow", () => {
   });
 
   it("passes the control-plane review reason as one inert argument", () => {
-    const reason = "Reviewed exact diff; $(printf injected)";
+    const reason = "Reviewed PR/base SHA pair; $(printf injected)";
     const execution = runControlPlaneStartStep(reason);
     const reasonFlag = execution.arguments.indexOf("--reason");
 
@@ -652,7 +652,7 @@ describe("PR E2E gate workflow", () => {
     expect(current.status).toBe(0);
     expect(combined.status).toBe(0);
     expect(stale.status).toBe(1);
-    expect(stale.stdout).toContain("checkout_sha must match the PR head commit");
+    expect(stale.stdout).toContain("checkout_sha must match the PR SHA");
     expect(retargeted.status).toBe(1);
     expect(retargeted.stdout).toContain("base_sha must match the PR base commit");
     expect(racedWorkflow.status).toBe(1);

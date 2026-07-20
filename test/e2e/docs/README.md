@@ -155,7 +155,7 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  PR E2E dispatches validate the PR head commit and controller metadata before
+  PR E2E dispatches validate the PR SHA and controller metadata before
   preparation, attach `test/e2e/risk-signal-reporter.ts` to live Vitest
   invocations, and suppress PR reporting and scorecards. The workflow boundary
   requires every selected job shard to upload its evidence artifact.

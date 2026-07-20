@@ -978,17 +978,18 @@ function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
   if (checks.length === 0) return undefined;
   const ordered = [...checks].sort((left, right) => left.id - right.id);
   if (new Set(ordered.map((check) => check.id)).size !== ordered.length) {
-    throw new Error("Duplicate exact-diff PR gate check IDs exist");
+    throw new Error("Duplicate PR gate check IDs exist for one PR/base SHA pair");
   }
   const active = ordered.filter((check) => check.status !== "completed");
-  if (active.length > 1) throw new Error("Multiple active exact-diff PR gate checks exist");
+  if (active.length > 1)
+    throw new Error("Multiple active PR gate checks exist for one PR/base SHA pair");
   const history = ordered.slice(0, -1);
   if (history.some((check) => retryableFailureReason(check) === undefined)) {
-    throw new Error("Exact-diff PR gate history contains a non-retryable older check");
+    throw new Error("PR gate history contains a non-retryable older check for one PR/base SHA pair");
   }
   const current = ordered.at(-1)!;
   if (active[0] && active[0].id !== current.id) {
-    throw new Error("Exact-diff PR gate history contains an older active check");
+    throw new Error("PR gate history for one PR/base SHA pair contains an older active check");
   }
   return current;
 }
@@ -1076,7 +1077,7 @@ async function createPrGateCheck(options: {
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
   const title = "Waiting for PR CI";
   const summary =
-    "This exact PR head and base revision is reserved for deterministic E2E planning after CI completes.";
+    "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
   const check = await githubApi<unknown>(`repos/${options.repository}/check-runs`, options.token, {
     method: "POST",
     body: {
@@ -1156,7 +1157,7 @@ export async function seedPrGate(
     prNumber,
   });
   console.log(
-    `Exact-diff gate reserved: pr=${prNumber} head=${headSha} base=${baseSha} check=${checkRunId}`,
+    `PR gate reserved: pr=${prNumber} pr_sha=${headSha} base_sha=${baseSha} check=${checkRunId}`,
   );
   return checkRunId;
 }
@@ -1195,7 +1196,7 @@ function assertCheckCanStart(check: CheckRun | undefined, ciConclusion: string):
   if (ciConclusion === "success" && reason) return;
   const title = normalizedCiMetadata(check.output?.title ?? "untitled", "untitled");
   throw new Error(
-    `Existing exact-diff PR gate state is not retryable: status=${check.status ?? "unknown"} conclusion=${check.conclusion ?? "none"} title=${title}`,
+    `Existing PR gate state for this PR/base SHA pair is not retryable: status=${check.status ?? "unknown"} conclusion=${check.conclusion ?? "none"} title=${title}`,
   );
 }
 
@@ -2419,7 +2420,7 @@ export async function startPrGate(
     prNumber: ciIdentity.prNumber,
   });
   if (existingChecks.length > 1) {
-    throw new Error("Multiple exact-diff PR gate checks already exist");
+    throw new Error("Multiple PR gate checks already exist for this PR/base SHA pair");
   }
   const existingCheckRunId =
     existingChecks[0]?.status === "in_progress" ? existingChecks[0].id : undefined;
@@ -2471,7 +2472,7 @@ export async function startPrGate(
     },
     token,
     "Evaluating PR commit",
-    "Validating the exact PR revision and selecting deterministic E2E jobs and typed targets.",
+    "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
   );
 
   let finalized = false;
@@ -2586,9 +2587,9 @@ export async function startPrGate(
         token,
         CONTROL_PLANE_AUTHORIZATION_TITLE,
         [
-          `This exact internal diff (head \`${command.headSha}\`, base \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
+          `This internal diff (PR SHA \`${command.headSha}\`, base SHA \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
           "No selected E2E job or target ran and no repository secret was exposed.",
-          `A repository maintainer or administrator must review this exact revision, then open the [${WORKFLOW_NAME}](${workflowUrl}) workflow and run \`run-control-plane\` with the PR number, exact head and base SHAs, and a review reason. That authorized run dispatches the selected jobs and targets in one bound workflow run, and this gate passes only if their exact-SHA evidence verifies successfully.`,
+          `A repository maintainer or administrator must review PR SHA \`${command.headSha}\` against base SHA \`${ciIdentity.baseSha}\`. Then, they must open the [${WORKFLOW_NAME}](${workflowUrl}) workflow and run \`run-control-plane\` with the PR number, PR SHA, base SHA, and a review reason. That run dispatches the selected jobs and targets in one workflow run. This gate passes only if the evidence references both SHAs and verifies successfully.`,
           `Deterministic plan: \`${plan.planHash}\`.`,
         ].join("\n\n"),
       );
@@ -2705,7 +2706,9 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
       prNumber: command.prNumber,
     });
     if (matchingChecks.length !== 1) {
-      throw new Error(`Expected one exact-diff PR gate check; found ${matchingChecks.length}`);
+      throw new Error(
+        `Expected one PR gate check for the PR/base SHA pair; found ${matchingChecks.length}`,
+      );
     }
     const check = matchingChecks[0]!;
     const pendingAuthorization = check.status === "in_progress" && check.conclusion === null;
@@ -2757,7 +2760,7 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
             error,
             detailsUrl: `https://github.com/${repository}/actions/runs/${error.childRunId}`,
             recovery:
-              "A credential-bearing child run was dispatched, so this exact-diff authorization cannot be retried. Inspect the linked run, then update the PR and run fresh CI before authorizing again.",
+              "A credential-bearing child run was dispatched, so this authorization for the PR/base SHA pair cannot be retried. Inspect the linked run, then update the PR and run fresh CI before authorizing again.",
           },
         );
         if (closed) appendOutput("finalized", "true");
@@ -2776,7 +2779,7 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
             CONTROL_PLANE_AUTHORIZATION_TITLE,
             [
               `The authorized E2E attempt did not produce an accepted result: \`${reason}\`.`,
-              "Review the controller error and any linked child run, then launch a fresh first-attempt `run-control-plane` workflow for this exact revision.",
+              "Review the controller error and any linked child run. Then, launch a first-attempt `run-control-plane` workflow for the PR/base SHA pair.",
             ].join("\n\n"),
           );
           appendOutput("finalized", "true");
@@ -2892,7 +2895,7 @@ export async function finishPrGate(options: {
       prNumber: state.prNumber,
     });
     if (matchingHistory.at(-1)?.id !== options.checkRunId) {
-      throw new Error("controller state does not match the exact PR gate check");
+      throw new Error("controller state does not match the PR gate check");
     }
     const priorRunnerLossUrls = priorRunnerLossRunUrls(
       repository,
@@ -3189,7 +3192,7 @@ async function completeForkE2ESkip(command: ForkSkipCommand): Promise<void> {
     pull.head.sha !== command.headSha ||
     pull.base.sha !== command.baseSha
   ) {
-    throw new Error("pull request no longer matches the reviewed exact head and base SHAs");
+    throw new Error("pull request no longer matches the reviewed PR SHA and base SHA");
   }
   const isFork = pull.head.repo.full_name !== repository;
   if (!isFork) {
@@ -3227,7 +3230,9 @@ async function completeForkE2ESkip(command: ForkSkipCommand): Promise<void> {
     prNumber: command.prNumber,
   });
   if (matchingChecks.length !== 1) {
-    throw new Error(`Expected one exact-diff PR gate check; found ${matchingChecks.length}`);
+    throw new Error(
+      `Expected one PR gate check for the PR/base SHA pair; found ${matchingChecks.length}`,
+    );
   }
   const check = matchingChecks[0]!;
   if (
