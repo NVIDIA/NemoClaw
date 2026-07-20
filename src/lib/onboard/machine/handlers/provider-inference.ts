@@ -4,7 +4,6 @@
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import { resolveAgentProviderInferenceApi } from "../../../inference/config";
 import type { TrustedPrivateEndpointCapability } from "../../../inference/endpoint-ssrf-preflight";
-import type { InferenceEndpointSource } from "../../../inference/selection";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   type CurrentGatewayRouteDiscoveryPreflight,
@@ -12,6 +11,7 @@ import {
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
 import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-runtime-context";
+import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
@@ -608,6 +608,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       });
     }
     if (shouldRecordProviderSelection) {
+      // Provider selection is not yet durable route trust. Deliberately omit
+      // endpointSource/onboardEndpointUrl here so an interrupted run fails
+      // closed and revalidates the endpoint before inference setup on resume.
       session = await deps.recordStepComplete(
         "provider_selection",
         deps.toSessionUpdates({

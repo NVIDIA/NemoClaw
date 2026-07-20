@@ -56,6 +56,11 @@ describe("handleProviderInferenceState", () => {
       expect.any(Function),
       session.sessionId,
     );
+    const selectionUpdates = (
+      calls.complete.mock.calls as unknown as Array<[string, Record<string, unknown>]>
+    ).find(([stepName]) => stepName === "provider_selection")?.[1];
+    expect(selectionUpdates).not.toHaveProperty("endpointSource");
+    expect(selectionUpdates).not.toHaveProperty("onboardEndpointUrl");
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
     expect(calls.startStep).toHaveBeenNthCalledWith(2, "inference", {
