@@ -27,11 +27,11 @@ describe("selectSandboxOwningGateway", () => {
     );
   });
 
-  it("replays selection output through the parent stdout writer", () => {
+  it("replays selection output through stderr", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8080 } as never);
     const output = "\u001b[32m✓ Active gateway set to 'nemoclaw'\u001b[0m\n";
     const run = vi.fn(() => ({ status: 0, stdout: output }) as never);
-    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     expect(selectSandboxOwningGateway("alpha", run)).toEqual({
       outcome: "selected",

@@ -23,7 +23,7 @@ export function selectSandboxOwningGateway(
     stdio: ["inherit", "pipe", "inherit"],
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
-  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stdout) process.stderr.write(result.stdout);
   if (result.error || result.status !== 0) {
     return { outcome: "failed", gatewayName: targetGatewayName };
   }
