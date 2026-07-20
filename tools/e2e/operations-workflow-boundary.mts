@@ -215,11 +215,16 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
         jobName === "report-to-pr" &&
         step.name === "Check out the trusted E2E reporting helper" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedLaunchableLaneCheckout =
+        jobName === "staging-brev-launchable" &&
+        step.name === "Checkout trusted Launchable lane" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
         !trustedHermesFixtureCheckout &&
-        !trustedReportHelperCheckout
+        !trustedReportHelperCheckout &&
+        !trustedLaunchableLaneCheckout
       ) {
         errors.push(`${jobName} checkout must use the selected PR commit`);
       }
