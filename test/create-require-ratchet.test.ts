@@ -805,7 +805,7 @@ describe("base-trusted createRequire ratchet", () => {
     expect(failing.stderr).not.toContain("src/lib/fixture-property.ts");
   });
 
-  it("accepts only validated exact revisions from the pull-request event (#7056)", () => {
+  it("accepts only validated SHAs from the pull-request event (#7056)", () => {
     expect(
       extractPullRequestBaseSha(JSON.stringify({ pull_request: { base: { sha: BASE_SHA } } })),
     ).toBe(BASE_SHA);
@@ -852,7 +852,7 @@ describe("base-trusted createRequire ratchet", () => {
     expect(called).toBe(false);
   });
 
-  it("unshallows exact head and base histories before computing the merge base (#7056)", () => {
+  it("unshallows PR and base SHA histories before computing the merge base (#7056)", () => {
     const root = temporaryRepo();
     const calls: Array<{ args: readonly string[]; timeoutMs: number | undefined }> = [];
     let available = false;
@@ -983,7 +983,7 @@ describe("base-trusted createRequire ratchet", () => {
     ).toBeNull();
   });
 
-  it("fails closed when exact pull-request history cannot be fetched (#7056)", () => {
+  it("fails closed when pull-request SHA history cannot be fetched (#7056)", () => {
     const root = temporaryRepo();
     const runner: GitRunner = (args) =>
       args[0] === "rev-parse"

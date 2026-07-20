@@ -14,7 +14,7 @@ const renderer = path.join(
 
 const passingGates = {
   state_open: true,
-  ci_green_latest_sha: true,
+  ci_green_sha: true,
   mergeable: true,
   contributor_compliance: true,
   branch_protection: true,
@@ -58,6 +58,15 @@ describe("PR comparator verdict renderer", () => {
     expect(result.stdout).toContain("### Verdict: MERGE PR #123");
   });
 
+  it("allows a no-winner result when happy-mode evidence is insufficient", () => {
+    const result = render(specFor(passingGates, { mode: "happy" }));
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("### Verdict: No clear winner");
+    expect(result.stdout).not.toContain("MERGE PR");
+  });
+
   it("rejects a supplied winner if contributor compliance failed", () => {
     const result = render(
       specFor({ ...passingGates, contributor_compliance: false }, { mode: "happy", winner: 123 }),
@@ -82,10 +91,7 @@ describe("PR comparator verdict renderer", () => {
 
   it("rejects a supplied mode that contradicts derived eligibility", () => {
     const result = render(
-      specFor(
-        { ...passingGates, ci_green_latest_sha: false },
-        { mode: "happy", closest_to_ready: 123 },
-      ),
+      specFor({ ...passingGates, ci_green_sha: false }, { mode: "happy", closest_to_ready: 123 }),
     );
 
     expect(result.status).toBe(64);
@@ -96,7 +102,7 @@ describe("PR comparator verdict renderer", () => {
   it("uses closest_to_ready for an eligible degraded-mode salvage candidate", () => {
     const result = render(
       specFor(
-        { ...passingGates, ci_green_latest_sha: false },
+        { ...passingGates, ci_green_sha: false },
         { mode: "degraded", closest_to_ready: 123 },
       ),
     );
@@ -129,8 +135,16 @@ describe("PR comparator verdict renderer", () => {
     for (const gate of Object.keys(passingGates)) {
       expect(skill).toContain(`\`${gate}\``);
     }
-    expect(skill).toContain("set `winner` only to a PR in that set");
-    expect(skill).toContain("use `closest_to_ready` only for an open, contributor-compliant");
-    expect(skill).toContain("do not render or recommend a merge if it exits nonzero");
+    expect(skill).toContain("set `winner` only to an eligible PR");
+    expect(skill).toContain("Leave `winner` null when the evidence does not support");
+    expect(skill).toContain(
+      "Set `closest_to_ready` only to an open PR that passes contributor requirements",
+    );
+    expect(skill).toContain(
+      "Stop if the renderer exits with a nonzero status. Do not recommend a merge",
+    );
+    expect(skill).toContain(
+      "The reviewer remains responsible for the score, ranking, and evidence",
+    );
   });
 });

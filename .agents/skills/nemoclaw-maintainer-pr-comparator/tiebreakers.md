@@ -3,7 +3,7 @@
 
 # Tier 3 — Ranking and Degraded Mode
 
-Final decision logic. Two paths: happy mode when at least one PR passes all Tier 0 gates, degraded mode when none do.
+Use happy mode when one or more PRs pass Tier 0. Use degraded mode when none pass.
 
 ## Contents
 
@@ -18,39 +18,40 @@ Eliminate any PR failing Tier 0. Among survivors:
 - Set `winner` only to a survivor and leave `closest_to_ready` null.
 
 1. Compute weighted score across Tiers 1-2.
-2. Build the **behavior-coverage matrix** (see below). If matrix has a clear winner per criterion, that wins.
-3. Apply tiebreakers in order. First tiebreaker that distinguishes the PRs picks the winner.
+2. Build the **behavior-coverage matrix**. Use it as evidence for the weighted score and tiebreakers.
+3. Apply tiebreakers in order.
+   Set the winner when the evidence distinguishes a PR.
+   Otherwise, leave `winner` null.
 
 ### Tiebreakers (in order)
 
-1. **Supersession.** Any PR whose body declares `supersedes #N` / `replaces #N` / `closes in favor of #N` / `folds in #N` against another candidate wins immediately. (See `scripts/parse-supersession.sh`.)
-2. **Smaller diff.** Lines changed proportional to the issue's scope. Bug fixes target <200 LOC.
+1. **Supersession.** Prefer a PR whose body states that it supersedes another candidate. See `scripts/parse-supersession.sh`.
+2. **Smaller diff.** Prefer the smaller diff when both PRs cover the issue scope.
 3. **Better edge-case test coverage.** Compare Tier 1.3 (negative test coverage) outputs.
-4. **Most recent activity.** Compare last commit timestamps. Catches stalled-PR-replaced-by-fresh patterns.
-5. **Earlier PR (final deterministic fallback).** Use only when nothing above distinguishes — first-mover gets the tie.
-
-If after all five tiebreakers no PR wins: recommend "merge A, cherry-pick relevant tests from B," picking A by lowest PR number deterministically.
+4. **Most recent activity.** Prefer the PR with the most recent commit.
+5. **Lower PR number.** Use the lower PR number if the PRs remain tied.
 
 ## Degraded mode (no PR passes Tier 0)
 
-Don't give up — pick the closest-to-ready and recommend salvage steps.
+When no PR passes Tier 0, rank eligible PRs by the work needed before merge.
 
 1. Classify each Tier 0 failure per PR:
    - **Trivial** (author-fixable without changing commit compliance): missing issue link, stale base, force-pushed since last review
-   - **Ineligible**: missing PR-body DCO declaration or any commit that is not GitHub Verified. Reject rather than salvage; the contributor must provide a clean compliant history.
+   - **Ineligible**: The PR body has no DCO declaration, or GitHub does not show each commit as `Verified`. Reject the PR. The contributor must provide a compliant history.
    - **Substantive** (real work): CI red, mergeability conflicts, missing CODEOWNERS approvals, unresolved CodeRabbit threads
 2. Distance-to-ready ranking:
-   - Any PR with an **Ineligible** failure ranks below every eligible PR; if all candidates are ineligible, return a rejection-only verdict
+   - Rank each ineligible PR below every eligible PR. If all candidates are ineligible, return a rejection-only verdict.
    - Among eligible PRs, fewer substantive failures wins
    - Tie → fewer trivial failures wins
-   - Tie → higher Tier 1-2 weighted score wins (correctness beneath the broken plumbing)
+   - If still tied, use the higher Tier 1 and Tier 2 weighted score.
+   - If the available evidence cannot support this ordering, leave `closest_to_ready` null.
 3. Output:
-   - Leave `winner` null; it is reserved for a fully eligible merge recommendation
-   - Set `closest_to_ready` only to an open PR that passes contributor compliance; leave it null for a rejection-only verdict
+   - Leave `winner` null. Use it only for an eligible merge recommendation.
+   - Set `closest_to_ready` only to an open PR that passes contributor compliance. Leave it null for a rejection-only verdict.
    - Per-PR Tier 0 failure list
-   - Per-PR Tier 1-2 scorecard (so the winner has objective merit beneath the gates)
+   - Tier 1 and Tier 2 scorecard for each PR
    - Verdict: "Neither mergeable yet. PR A is closer — fix [substantive list]. PR B has [issues]."
-   - Salvage steps per eligible PR (rebase command, CR thread links, etc.)
+   - Put salvage steps for each eligible PR in that PR's evidence map so the renderer includes them in the reasoning evidence.
 
 ## Behavior-coverage matrix
 
@@ -61,10 +62,11 @@ For each acceptance criterion (from issue body + comments), build a row showing 
 |------------------------------|------------|------------|
 | Empty input rejected         | covered    | covered    |
 | Boundary value handled       | covered    | missing    |
-| "Don't break Y" (commenter)  | missing    | covered    |
+| Preserve Y (commenter)        | missing    | covered    |
 | Error message preserved      | covered    | partial    |
 ```
 
-**Why the matrix matters:** When neither PR dominates on weighted score, the matrix surfaces the cherry-pick opportunity. The verdict can recommend "merge A for criteria 1+2+4, cherry-pick B's test for criterion 3."
+Use the matrix to find tests or changes that the selected PR does not include.
+The verdict can recommend a small transfer from another PR.
 
 Per-criterion winner cells: `covered` (full), `partial` (yellow), `missing` (red).

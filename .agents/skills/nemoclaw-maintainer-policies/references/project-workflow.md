@@ -59,18 +59,24 @@ For each recommended daily item, agents should report:
 - Whether a PR exists, is needed, or is already merged.
 - Whether a daily `v0.0.x` label is present on the PR, issue, or both.
 
-Standup converts the recommendation into assignments. Every recommended item should leave standup either assigned with a next action and exit signal, or explicitly deferred with rationale.
+After standup, assign each item with a next action and exit condition.
+Otherwise, record its deferral and reason.
 
 ## Release Labels In Project Context
 
 Daily `v0.0.x` labels have different meanings by item kind and PR state:
 
 - On open PRs, the label activates the PR for daily release work. Open labeled PRs that merge by cutoff are candidates for that release.
-- After a PR merges to `main`, authorized automation adds the next patch label only when the merge is ahead of the latest release tag. This keeps the untagged release queue complete before cutoff.
+- After a PR merges to `main`, authorized automation checks whether the merge is ahead of the release tag.
+  If it is, automation adds the next patch label. This keeps the release queue complete before cutoff.
 - After the release tag and workflow-managed `latest` are verified, the released label is deleted. The tag comparison range owns durable release membership.
 - On issues, the label is an attention, regression-tracking, or "needs PR for this daily release" signal. It does not include the issue in the release by itself.
 
-Open labeled PRs and issues that miss a tagged release are automatically moved to the next patch label during post-tag housekeeping. After no open item remains, housekeeping deletes the released label from the repository. Remove a version label without replacement only when an open item is deferred, superseded, closed, or no longer part of the daily release cycle. Never rename or reuse a released label.
+After a release, post-tag housekeeping moves open labeled PRs and issues to the next patch label.
+It deletes the released label when no open item has it.
+Remove a version label without replacement only for a deferred, superseded, or closed item.
+You can also remove it when the item leaves the daily release cycle.
+Do not rename or reuse a released label.
 
 ## Issue Templates
 
@@ -101,10 +107,10 @@ Do not use labels for:
 
 ## Agent Writes
 
-Agents should emit a dry-run plan containing labels, field changes, comments, and rationale unless they are already operating inside an explicit authorization context for the proposed write class.
+Show a dry run unless the request authorizes the writes.
 
 When writes are authorized:
 
-1. Apply field updates first.
-2. Add canonical labels.
-3. Post comments only when the authorization context covers the comment text or intent.
+1. Update Project fields.
+2. Add labels.
+3. Post comments only when the authorization includes them.

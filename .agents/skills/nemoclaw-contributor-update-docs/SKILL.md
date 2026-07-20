@@ -3,6 +3,9 @@ name: nemoclaw-contributor-update-docs
 description: Scan recent git commits for user-facing changes, update the corresponding documentation, and create the canonical dated MDX changelog entry for pre-tag release prep. Use when docs have fallen behind code changes, after a batch of features lands, before opening a release-note docs PR or cutting a release tag, or when recovering missed post-release docs. Trigger keywords - update docs, draft docs, docs from commits, sync docs, catch up docs, doc debt, docs behind, docs drift, release prep docs, pre-tag docs, release note docs, changelog entry.
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Update Docs from Commits
 
 Scan recent git history for commits that affect user-facing behavior and draft documentation updates for each.
@@ -39,11 +42,11 @@ Ignore comment lines (starting with `#`) and inline comments (everything after `
 
 Keep the loaded skip list in memory for use throughout the skill execution and the whole documentation process.
 
-## Step 0.5: Find Release Announcement Notes
+## Step 0.5: Find the Announcement
 
 When the user asks for release-prep docs for a specific version `n` (for example `0.0.63`), first determine whether this is pre-tag release prep or post-release recovery.
 For pre-tag release prep, use the draft release plan, maintainer context, PR list, and commit scan as source context because the announcement may not exist yet.
-For post-release recovery, find the NemoClaw GitHub discussion announcement for that release before drafting release notes.
+For post-release recovery, find the NemoClaw GitHub discussion Announcement before drafting the release entry.
 Use any available announcement as source context alongside the commit scan, especially for release themes, PR grouping, contributor thanks, and maintainer wording.
 
 For post-release recovery, or when the user says the announcement already exists, search recent discussions and select the announcement whose title or body references `v<n>` or `NemoClaw v<n>`:
@@ -145,11 +148,14 @@ Identify where the new content should go. Follow the page's existing structure.
 
 Before writing, verify that the commit was not excluded in Step 1. Do not draft content for commits matched by the skip list or for agent integrations not in the tested agent support matrix. After drafting, scan the content for any `skip-terms` from `docs/.docs-skip`. Remove any sentence or section that contains a skip-term. If in doubt, skip the commit and report it.
 
+Apply [NemoClaw Technical English](../../../CONTRIBUTING.md#nemoclaw-technical-english) to changed documentation and changelog text.
+During the changed-text pilot, do not rewrite unrelated prose.
+
 Write the doc update following these conventions:
 
 - **Active voice, present tense, second person.**
 - **No unnecessary bold.** Reserve bold for UI labels and parameter names.
-- **No em dashes** unless used sparingly. Prefer commas or separate sentences.
+- **Do not use em dashes.** Use commas, colons, or separate sentences.
 - **Start sections with an introductory sentence** that orients the reader.
 - **No superlatives.** Say what the feature does, not how great it is.
 - **Copyable code examples use language-specific fences** such as `bash`, `sh`, or `powershell`, without prompt markers.

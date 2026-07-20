@@ -1,6 +1,11 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Tier 1 — Correctness Checks
 
-Six 1%-clever LLM judgments. Each catches a failure mode CI cannot see. Score: pass = 1, yellow = 0.5, fail = 0; weight 2.0× per check. Every judgment must carry file:line evidence.
+Six model judgments cover failures that CI can miss.
+Score each check as pass = 1, yellow = 0.5, or fail = 0. Use a weight of 2.0 for each check.
+Include file and line evidence for each judgment.
 
 ## Contents
 
@@ -9,13 +14,14 @@ Six 1%-clever LLM judgments. Each catches a failure mode CI cannot see. Score: p
 - 1.3 Negative test coverage
 - 1.4 Coverage shape
 - 1.5 Refactor-vs-behavior scan
-- 1.6 Mocking purity
+- 1.6 Mock boundaries
 
 ## 1.1 Test exercises bug path
 
 The PR's new/modified test must, when run on the pre-fix code, fail. A test that passes both before and after the fix proves nothing.
 
-**How to evaluate:** Read each new test in the diff. For each assertion, ask: "Would this assertion have held on the pre-fix code?" If yes, the test doesn't exercise the bug.
+**How to evaluate:** Read each changed test and its assertions.
+Check whether each assertion fails on the code before the fix. If it passes, the test does not exercise the bug.
 
 **Common false-positive patterns to flag as yellow:**
 
@@ -25,9 +31,10 @@ The PR's new/modified test must, when run on the pre-fix code, fail. A test that
 
 **Evidence to record:** Diff line of the assertion + the bug's pre-fix behavior + reasoning that the assertion would have failed pre-fix.
 
-## 1.2 Comment-as-spec coverage
+## 1.2 Acceptance criteria from comments
 
-Acceptance criteria come from the issue body **and every comment**. Commenters often add asks the body doesn't capture: "and don't break Y while you're at it." All asks must map to a fix or test in the diff.
+Read requirements in the issue body and comments.
+Convert each requirement into an acceptance criterion. Map each criterion to a change or test in the diff.
 
 **How to evaluate:** From the issue's parsed criteria checklist (Step 1 of the workflow), check each item against:
 
@@ -40,7 +47,7 @@ Acceptance criteria come from the issue body **and every comment**. Commenters o
 
 ## 1.3 Negative test coverage
 
-The fix must have tests for invalid/edge inputs, not just the happy path that matches the reported bug.
+The fix must have tests for invalid and boundary inputs, not only the reported valid case.
 
 **Look for assertions on:**
 
@@ -56,9 +63,11 @@ The fix must have tests for invalid/edge inputs, not just the happy path that ma
 
 ## 1.4 Coverage shape
 
-Every new code path in the diff has a test. Standard coverage % does not catch this — coverage can stay flat while new branches are untested if they're hit incidentally by unrelated tests.
+Test each code path added by the diff.
+Coverage percentage can stay unchanged when an unrelated test reaches a new branch.
 
-**How to evaluate:** For each new branch (`if`, `else`, `try`/`catch`, `switch` arm) in the diff, find a test that exercises that branch specifically. A new `else` branch with no test is a yellow.
+**How to evaluate:** Find a test for each new `if`, `else`, `catch`, or `switch` arm.
+Mark an untested branch yellow.
 
 ## 1.5 Refactor-vs-behavior scan
 
@@ -69,15 +78,19 @@ If the PR's title or description claims `refactor` / `rename` / `extract` / `mov
 - Changed `process.exit(` codes
 - Changed return values
 
-**How to evaluate:** Run a count over the diff for these tokens. Net-zero is normal — code moves around. Net-positive in any of these = hidden behavior change inside what claims to be a refactor → yellow or fail depending on magnitude.
+**How to evaluate:** Count these tokens in added and removed lines.
+A refactor must not increase the total. An increase can show a behavior change.
+Mark it yellow or fail based on its effect.
 
-**Why this catches real bugs:** Authors sometimes "fix while refactoring" without flagging it. The fix may be correct, but landing it as a refactor bypasses the review attention a behavior change would get.
+A behavior change in a refactor can miss the review required for that change.
 
-## 1.6 Mocking purity
+## 1.6 Mock boundaries
 
-Tests must isolate **external** dependencies (network, filesystem, time, randomness, third-party APIs), not replace the **unit under test**. If a test for `validateInput()` mocks `validateInput()` itself, the test proves nothing.
+Mock external dependencies. Do not mock the unit under test.
+Fail the check when a mock replaces the behavior that the test claims to verify.
 
-**How to evaluate:** Read each new test's mock setup. For each mock, ask: "Is this mock replacing an external dependency, or is it replacing the function this test is supposed to verify?" If the latter, fail.
+**How to evaluate:** Read each mock setup.
+Fail when a mock replaces the function that the test claims to verify.
 
 **Common red flags:**
 
