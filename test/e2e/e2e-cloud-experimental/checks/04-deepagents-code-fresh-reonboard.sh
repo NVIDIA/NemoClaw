@@ -257,9 +257,9 @@ if (JSON.parse(process.env.CONFIG_MODEL_JSON) !== "openai:" + process.env.MODEL_
 ' || fail "keyed config get did not return model B after re-onboard"
 pass "keyed config get reports model B after re-onboard"
 
-status_output="$("$CLI" "$SANDBOX_NAME" status --json 2>&1)" || fail "nemoclaw status failed after re-onboard: $status_output"
-STATUS_OUTPUT="$status_output" SANDBOX_NAME="$SANDBOX_NAME" MODEL_B="$model_b" node -e '
-const status = JSON.parse(process.env.STATUS_OUTPUT);
+status_json="$("$CLI" "$SANDBOX_NAME" status --json)" || fail "nemoclaw status failed after re-onboard: ${status_json:-<no stdout>}"
+STATUS_JSON="$status_json" SANDBOX_NAME="$SANDBOX_NAME" MODEL_B="$model_b" node -e '
+const status = JSON.parse(process.env.STATUS_JSON);
 if (status.name !== process.env.SANDBOX_NAME ||
     status.model !== process.env.MODEL_B ||
     status.provider !== "compatible-endpoint") process.exit(1);
