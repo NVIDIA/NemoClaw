@@ -107,6 +107,7 @@ describe("prepared provider reconfiguration handoff", () => {
     onboardLockAlreadyHeld: true,
     targetGatewayName: "nemoclaw-8081",
     targetGatewayPort: 8081,
+    endpointSource: "onboard" as const,
     rebuildProviderReconfigure: providerTarget,
   };
 
@@ -148,6 +149,7 @@ describe("prepared provider reconfiguration handoff", () => {
         provider: "compatible-endpoint",
         model: "nvidia/model",
         endpointUrl: "https://inference.example.test/v1",
+        endpointSource: "onboard",
         preferredInferenceApi: "openai-completions",
         source: "registry",
       },
@@ -177,6 +179,17 @@ describe("prepared provider reconfiguration handoff", () => {
       { ...flowContext, sandboxName: "beta" },
     );
     expect(wrongSandbox.providerRecoveryReceipt).toBeNull();
+
+    const wrongEndpointSource = rebuildProviderFlowOptions(
+      {
+        ...authorizedOptions,
+        endpointSource: "inference-set" as const,
+        providerRecoveryReceipt: receipt,
+        rebuildProviderReconfigure: undefined,
+      },
+      flowContext,
+    );
+    expect(wrongEndpointSource.providerRecoveryReceipt).toBeNull();
   });
 
   it("rejects an unauthorized or mismatched handoff (#6114)", () => {

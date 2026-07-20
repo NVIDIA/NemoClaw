@@ -156,6 +156,7 @@ export function rebuildProviderFlowOptions(
               provider: target.provider,
               model: target.model,
               endpointUrl: target.endpointUrl ?? null,
+              endpointSource: opts.endpointSource ?? null,
               preferredInferenceApi: target.preferredInferenceApi ?? "",
               source: "registry",
             },
