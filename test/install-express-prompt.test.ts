@@ -8,6 +8,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
+const INSTALLER_BOOTSTRAP = path.resolve(import.meta.dirname, "..", "install.sh");
+
 describe("installer express install prompt (sourced)", () => {
   function runInstallerSourced(body: string) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-sourced-"));
@@ -294,6 +296,24 @@ detect_express_platform
     expect(output).toMatch(
       /--station-deepseek\s+Use DeepSeek V4 Flash for DGX Station express install/,
     );
+    expect(output).toMatch(/HF_TOKEN\s+Optional Hugging Face read token/);
+    expect(output).toContain("https://huggingface.co/settings/tokens");
+    expect(output).toMatch(/HUGGING_FACE_HUB_TOKEN\s+Compatibility alias for HF_TOKEN/);
+  });
+
+  it("documents optional Hugging Face authentication in piped bootstrap help (#7157)", () => {
+    const result = spawnSync("bash", ["-s", "--", "--help"], {
+      cwd: os.tmpdir(),
+      input: fs.readFileSync(INSTALLER_BOOTSTRAP, "utf8"),
+      encoding: "utf8",
+      env: { HOME: os.tmpdir(), PATH: TEST_SYSTEM_PATH },
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/HF_TOKEN\s+Optional Hugging Face read token/);
+    expect(output).toContain("https://huggingface.co/settings/tokens");
+    expect(output).toMatch(/HUGGING_FACE_HUB_TOKEN\s+Compatibility alias for HF_TOKEN/);
   });
 
   it("parses and documents the metadata-only Station override", () => {
@@ -370,6 +390,14 @@ detect_express_platform
       /Express install will configure managed local vLLM with NVIDIA Nemotron 3 Ultra 550B/,
     );
     expect(output).toMatch(/approximately 352 GB model/);
+    expect(output).toContain(
+      "Hugging Face authentication is optional for this public model but recommended",
+    );
+    expect(output).toContain("https://huggingface.co/settings/tokens");
+    expect(output).toContain("export HF_TOKEN=<read-token>");
+    expect(output.indexOf("Hugging Face authentication is optional")).toBeLessThan(
+      output.indexOf("Run express install with these settings?"),
+    );
     expect(output).toMatch(
       /installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages/,
     );
@@ -478,10 +506,31 @@ describe_express_install 'DGX Station'`,
     expect(output).toMatch(
       /Express install will configure managed local vLLM with DeepSeek V4 Flash/,
     );
+    expect(output).toContain("Hugging Face authentication is optional for this public model");
+    expect(output).toContain("export HF_TOKEN=<read-token>");
+    expect(output.indexOf("Hugging Face authentication is optional")).toBeLessThan(
+      output.indexOf("Run express install with these settings?"),
+    );
     expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=deepseek-ai\/DeepSeek-V4-Flash VLLM_MODEL=deepseek-v4-flash POLICY=suggested YES=1 SANDBOX=my-assistant/,
+    );
+  });
+
+  it("reports authenticated Station downloads without displaying the token (#7157)", () => {
+    const token = `hf_${"s".repeat(32)}`;
+    const result = runExpressPromptWithTty("\n", "pipe", "DGX Station", {
+      HF_TOKEN: token,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("Hugging Face model download: authenticated");
+    expect(output).toContain("token value is not displayed");
+    expect(output).not.toContain(token);
+    expect(output.indexOf("Hugging Face model download: authenticated")).toBeLessThan(
+      output.indexOf("Run express install with these settings?"),
     );
   });
 

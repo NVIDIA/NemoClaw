@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import {
   dockerCapture,
   dockerForceRm,
@@ -18,12 +19,14 @@ import {
   dockerStop,
 } from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import { CLI_NAME } from "../cli/branding";
 import { warnLine } from "../cli/terminal-style";
 import { markPhaseActivity } from "../core/phase-activity";
 import { VLLM_PORT } from "../core/ports";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
 import { runCapture } from "../runner";
+import { redactFull } from "../security/redact";
 import { isSafeModelId } from "../validation";
 import { getGpuIndicesByName } from "./nim";
 import { buildVllmDockerEnv } from "./vllm-docker-env";
@@ -144,6 +147,8 @@ function qwen35bNvfp4Model(): VllmModelDef {
 }
 
 const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
+const HF_TOKEN_SETTINGS_URL = "https://huggingface.co/settings/tokens";
+const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
 const HF_CACHE_CONTAINER_DIR = "/root/.cache/huggingface";
@@ -218,6 +223,60 @@ function pickHfTokenEntry(
     if (value) return { key, value };
   }
   return null;
+}
+
+export type HfDownloadAuthentication =
+  | { authenticated: false }
+  | { authenticated: true; source: (typeof HF_TOKEN_ENV_KEYS)[number] };
+
+/** Return only the presence and source of Hugging Face authentication, never its value. */
+export function hfDownloadAuthentication(
+  env: NodeJS.ProcessEnv = process.env,
+): HfDownloadAuthentication {
+  const entry = pickHfTokenEntry(env);
+  return entry ? { authenticated: true, source: entry.key } : { authenticated: false };
+}
+
+function printHfDownloadAuthentication(nonInteractive: boolean): void {
+  const authentication = hfDownloadAuthentication();
+  if (authentication.authenticated) {
+    console.log(`    Hugging Face download: authenticated with ${authentication.source}.`);
+    console.log(
+      "    The token value is not displayed and is passed only to the temporary downloader.",
+    );
+    return;
+  }
+
+  if (nonInteractive) {
+    console.log("    Hugging Face download: continuing anonymously for this public model.");
+    console.log("    For large downloads, a read token reduces anonymous HTTP 429 rate limiting.");
+    console.log(`    Create one at ${HF_TOKEN_SETTINGS_URL}.`);
+    console.log("    Before restarting onboarding, run: export HF_TOKEN=<read-token>");
+    return;
+  }
+
+  console.log("    Hugging Face authentication is optional for this public model but recommended");
+  console.log(
+    "    for this large download. Anonymous downloads may be rate-limited with HTTP 429.",
+  );
+  console.log(`    Create a read token at ${HF_TOKEN_SETTINGS_URL}.`);
+  console.log("    Before restarting onboarding, run: export HF_TOKEN=<read-token>");
+  console.log("    The token is passed only to the temporary model downloader.");
+}
+
+function redactHfDownloadOutput(text: string, tokenValue: string | null): string {
+  const withoutKnownToken = tokenValue ? text.split(tokenValue).join("<REDACTED>") : text;
+  return redactFull(withoutKnownToken);
+}
+
+function printHfRateLimitRecovery(): void {
+  process.stderr.write("  Hugging Face rate limiting was detected.\n");
+  process.stderr.write(`  Create a read token at ${HF_TOKEN_SETTINGS_URL}.\n`);
+  process.stderr.write("  In your shell, run: export HF_TOKEN=<read-token>\n");
+  process.stderr.write(`  Then run: ${CLI_NAME} onboard --resume\n`);
+  process.stderr.write(
+    "  Existing files in ~/.cache/huggingface are reused when the download resumes.\n",
+  );
 }
 
 /**
@@ -392,6 +451,7 @@ function downloadModel(
 ): Promise<{ ok: boolean; reason?: string }> {
   emit(`Pre-downloading model with hf: ${model.id}`);
   return new Promise((resolve) => {
+    const tokenValue = pickHfTokenEntry()?.value ?? null;
     const proc = dockerSpawn(
       [
         "run",
@@ -418,8 +478,17 @@ function downloadModel(
     );
 
     const tail: string[] = [];
+    const outputState: { pending: string; stream: NodeJS.WriteStream } = {
+      pending: "",
+      stream: process.stdout,
+    };
+    const outputDecoders = [
+      { decoder: new StringDecoder("utf8"), stream: process.stdout },
+      { decoder: new StringDecoder("utf8"), stream: process.stderr },
+    ];
     const TAIL_MAX = 50;
     let resolved = false;
+    let decodersFinalized = false;
     const start = Date.now();
     let lastOutputAt = start;
     let lastOutputEndedCleanly = true;
@@ -449,34 +518,66 @@ function downloadModel(
       }
     }
 
-    function onChunk(buf: Buffer, stream: NodeJS.WriteStream): void {
-      lastOutputAt = Date.now();
-      stream.write(buf);
-      const text = buf.toString();
-      lastOutputEndedCleanly = /[\r\n]$/.test(text);
-      rememberTail(text);
+    function flushOutput(flushAll = false): void {
+      const end = flushAll
+        ? outputState.pending.length
+        : Math.max(outputState.pending.lastIndexOf("\n"), outputState.pending.lastIndexOf("\r")) +
+          1;
+      if (end <= 0) return;
+      const safeText = redactHfDownloadOutput(outputState.pending.slice(0, end), tokenValue);
+      outputState.pending = outputState.pending.slice(end);
+      outputState.stream.write(safeText);
+      lastOutputEndedCleanly = /[\r\n]$/.test(safeText);
+      rememberTail(safeText);
     }
 
-    proc.stdout?.on("data", (buf: Buffer) => onChunk(buf, process.stdout));
-    proc.stderr?.on("data", (buf: Buffer) => onChunk(buf, process.stderr));
+    function finalizeOutputDecoders(): void {
+      if (decodersFinalized) return;
+      decodersFinalized = true;
+      for (const { decoder, stream } of outputDecoders) {
+        const text = decoder.end();
+        if (!text) continue;
+        outputState.pending += text;
+        outputState.stream = stream;
+      }
+    }
+
+    function onChunk(buf: Buffer, stream: NodeJS.WriteStream, decoder: StringDecoder): void {
+      lastOutputAt = Date.now();
+      outputState.pending += decoder.write(buf);
+      outputState.stream = stream;
+      flushOutput();
+    }
+
+    proc.stdout?.on("data", (buf: Buffer) =>
+      onChunk(buf, process.stdout, outputDecoders[0].decoder),
+    );
+    proc.stderr?.on("data", (buf: Buffer) =>
+      onChunk(buf, process.stderr, outputDecoders[1].decoder),
+    );
 
     proc.on("error", (err: Error) => {
+      finalizeOutputDecoders();
+      flushOutput(true);
       done({ ok: false, reason: `spawn error: ${err.message}` });
     });
 
     proc.on("exit", (code: number | null) => {
+      finalizeOutputDecoders();
+      flushOutput(true);
       if (code === 0) {
         if (!lastOutputEndedCleanly) process.stdout.write("\n");
         emit("Model download complete");
         done({ ok: true });
         return;
       }
-      // Surface the last few raw lines so a failure has actionable context.
+      // Surface the last few sanitized lines so a failure has actionable context.
       if (tail.length > 0) {
         process.stderr.write(`  --- Last ${String(tail.length)} hf output lines: ---\n`);
         for (const line of tail) process.stderr.write(`    ${line}\n`);
         process.stderr.write("  ---\n");
       }
+      if (HF_RATE_LIMIT_PATTERN.test(tail.join("\n"))) printHfRateLimitRecovery();
       done({ ok: false, reason: `hf download failed (exit ${String(code)})` });
     });
   });
@@ -1219,6 +1320,7 @@ async function runVllmInstall(
   }
   if (!opts.hasImage) console.log("    Image download on first run, cached after");
   console.log("    Model download on first run, cached after");
+  printHfDownloadAuthentication(opts.nonInteractive);
   console.log("");
 
   const proceed = opts.nonInteractive

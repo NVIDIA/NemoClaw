@@ -195,6 +195,18 @@ Use these details when your first-run path needs more control.
     After you confirm the interactive express prompt, the installer switches the remaining onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
     DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default.
     DGX Station express install explicitly selects `nemotron-3-ultra-550b-a55b` instead of the Station managed-vLLM profile default, `deepseek-v4-flash`, and discloses the approximately `352 GB` model download before confirmation.
+    Before the Station express confirmation, the installer reports whether the Hugging Face download is authenticated without displaying the token value.
+    Authentication is optional for the public Nemotron 3 Ultra and DeepSeek V4 Flash recipes, but a read token reduces exposure to anonymous HTTP `429` rate limiting during these large downloads.
+    Create a read token at [Hugging Face Access Tokens](https://huggingface.co/settings/tokens), export it before you launch the installer, and do not paste it into NemoClaw prompts or chat.
+
+    ```bash
+    export HF_TOKEN="<your-read-token>"
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+    ```
+
+    The installer passes `HF_TOKEN` only to the temporary model downloader, and the long-running vLLM container does not retain it.
+    If the download receives HTTP `429`, keep the existing cache, export `HF_TOKEN`, and run `nemoclaw onboard --resume`.
+    Authentication reduces anonymous rate-limit exposure but does not guarantee that a download cannot receive HTTP `429`.
     If the host does not meet the [Station prerequisites](additional-setup/dgx-station-preparation), the installer stops before host preparation.
     Before Station host preparation begins, the installer stores the accepted Express recipe in owner-only local state.
     If preparation requires a reboot or a new login, run the printed command to restore the exact revision, agent, model, sandbox, policy tier, and gateway, dashboard, and vLLM ports without repeating the Express prompt.
