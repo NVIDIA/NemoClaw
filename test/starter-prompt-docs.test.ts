@@ -30,7 +30,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this exact Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "f814db4f7708ecf9ab054fcee449f11c95076dfd";
+const promptAssetRevision = "61afaf94d1d8a9e018b75306a1765cfc7e538c28";
 
 type PromptAsset = {
   path: string;
@@ -53,7 +53,7 @@ const promptAssets = {
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
-    "783a3f5973e1471178c78ead1952b904f3888dc603f5e079ad31d82cd2037f9a", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "0a72ba41863e387c91e28893a8bccb488fede271c211296463c8eff2faddddbd", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   windowsWsl: definePromptAsset(
     "docs/resources/prompt-assets/windows-wsl.md",
@@ -889,7 +889,7 @@ describe("starter prompt docs CTA", () => {
     );
     const stationConfirmationIndex = stationSource.indexOf("Choices:");
     const stationDefaultIndex = stationSource.indexOf(
-      "For Nemotron Ultra, run the ordinary installer without",
+      "For automatic pair selection, run the ordinary installer without",
     );
     const stationOverrideIndex = stationSource.indexOf("For DeepSeek, pass `--station-deepseek`");
     expect(stationDisclosureIndex).toBeGreaterThan(-1);
