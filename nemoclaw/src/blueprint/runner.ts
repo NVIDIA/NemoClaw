@@ -15,7 +15,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, sep } from "node:path";
+import { isAbsolute, join, normalize, sep } from "node:path";
 
 import { execa } from "execa";
 import YAML from "yaml";
@@ -39,7 +39,10 @@ const { parseOpenShellPolicy, withoutProviderComposedPolicies } =
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
-type RollbackPlanSource = { sandbox_name?: unknown };
+type RollbackPlanSource = {
+  sandbox_name?: unknown;
+  identity?: { provider_name?: unknown };
+};
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 type RestProtocol = "rest";
 type EndpointEnforcement = "enforce" | "audit";
@@ -68,11 +71,37 @@ interface PolicyAddition {
 }
 
 type PolicyAdditions = { [name: string]: PolicyAddition };
+type PolicyMiddlewares = { [name: string]: PolicyMiddleware };
+
+interface PolicyMiddleware {
+  name?: string;
+  middleware: string;
+  order?: number;
+  config?: UnknownRecord;
+  on_error?: "fail_closed" | "fail_open";
+  endpoints: {
+    include: string[];
+    exclude?: string[];
+  };
+}
+
+interface OktaIdentityConfig {
+  profile_path: string;
+  provider_type: string;
+  provider_name: string;
+  credential_key: string;
+  client_id_env: string;
+  refresh_token_env: string;
+  client_secret_env?: string;
+}
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
 const REST_PROTOCOLS = new Set(["rest"]);
 const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
 const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
+const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/;
+const PROVIDER_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,127}$/;
+const PROVIDER_TYPE_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
 
 function isAction(value: string | undefined): value is Action {
   return value === "plan" || value === "apply" || value === "status" || value === "rollback";
@@ -187,6 +216,90 @@ function isPolicyAdditions(value: unknown): value is PolicyAdditions {
   return isPlainObject(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
 }
 
+function isPolicyMiddleware(value: unknown): value is PolicyMiddleware {
+  if (
+    !isPlainObject(value) ||
+    !hasOnlyKeys(value, ["name", "middleware", "order", "config", "on_error", "endpoints"])
+  ) {
+    return false;
+  }
+  if (typeof value.middleware !== "string" || value.middleware.trim() === "") return false;
+  if (value.name !== undefined && typeof value.name !== "string") return false;
+  if (
+    value.order !== undefined &&
+    (typeof value.order !== "number" || !Number.isInteger(value.order) || value.order < 0)
+  ) {
+    return false;
+  }
+  if (value.config !== undefined && !isPlainObject(value.config)) return false;
+  if (
+    value.on_error !== undefined &&
+    value.on_error !== "fail_closed" &&
+    value.on_error !== "fail_open"
+  ) {
+    return false;
+  }
+  if (!isPlainObject(value.endpoints) || !hasOnlyKeys(value.endpoints, ["include", "exclude"])) {
+    return false;
+  }
+  const include = value.endpoints.include;
+  const exclude = value.endpoints.exclude;
+  return (
+    Array.isArray(include) &&
+    include.length > 0 &&
+    include.every((entry) => typeof entry === "string" && entry.trim() !== "") &&
+    (exclude === undefined ||
+      (Array.isArray(exclude) &&
+        exclude.every((entry) => typeof entry === "string" && entry.trim() !== "")))
+  );
+}
+
+function isPolicyMiddlewares(value: unknown): value is PolicyMiddlewares {
+  if (!isPlainObject(value) || Object.keys(value).length > 10) return false;
+  const orders = new Set<number>();
+  for (const entry of Object.values(value)) {
+    if (!isPolicyMiddleware(entry)) return false;
+    const order = entry.order ?? 0;
+    if (orders.has(order)) return false;
+    orders.add(order);
+  }
+  return true;
+}
+
+function isOktaIdentityConfig(value: unknown): value is OktaIdentityConfig {
+  if (
+    !isPlainObject(value) ||
+    !hasOnlyKeys(value, [
+      "profile_path",
+      "provider_type",
+      "provider_name",
+      "credential_key",
+      "client_id_env",
+      "refresh_token_env",
+      "client_secret_env",
+    ])
+  ) {
+    return false;
+  }
+  return (
+    typeof value.profile_path === "string" &&
+    value.profile_path.length > 0 &&
+    typeof value.provider_type === "string" &&
+    PROVIDER_TYPE_PATTERN.test(value.provider_type) &&
+    typeof value.provider_name === "string" &&
+    PROVIDER_NAME_PATTERN.test(value.provider_name) &&
+    typeof value.credential_key === "string" &&
+    ENV_NAME_PATTERN.test(value.credential_key) &&
+    typeof value.client_id_env === "string" &&
+    ENV_NAME_PATTERN.test(value.client_id_env) &&
+    typeof value.refresh_token_env === "string" &&
+    ENV_NAME_PATTERN.test(value.refresh_token_env) &&
+    (value.client_secret_env === undefined ||
+      (typeof value.client_secret_env === "string" &&
+        ENV_NAME_PATTERN.test(value.client_secret_env)))
+  );
+}
+
 function isInferenceProfile(value: unknown): value is InferenceProfile {
   if (!isPlainObject(value)) {
     return false;
@@ -275,6 +388,19 @@ function isBlueprint(value: unknown): value is Blueprint {
         return false;
       }
     }
+    if (policy.middlewares !== undefined && !isPolicyMiddlewares(policy.middlewares)) {
+      return false;
+    }
+  }
+
+  const identity = components.identity;
+  if (identity !== undefined) {
+    if (!isPlainObject(identity) || !hasOnlyKeys(identity, ["okta"])) {
+      return false;
+    }
+    if (identity.okta !== undefined && !isOktaIdentityConfig(identity.okta)) {
+      return false;
+    }
   }
 
   return true;
@@ -296,6 +422,25 @@ function readRollbackSandboxName(value: RollbackPlanSource | null): string {
   }
 
   return value.sandbox_name;
+}
+
+function resolveBlueprintRelativePath(relativePath: string): string {
+  if (isAbsolute(relativePath)) {
+    throw new Error("identity profile_path must be relative to the blueprint directory");
+  }
+  const normalized = normalize(relativePath);
+  if (normalized === ".." || normalized.startsWith(`..${sep}`)) {
+    throw new Error("identity profile_path must stay inside the blueprint directory");
+  }
+  return join(process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".", normalized);
+}
+
+function requiredIdentityEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Okta identity requires local environment variable '${name}' to be set`);
+  }
+  return value;
 }
 
 // ── Utilities ───────────────────────────────────────────────────
@@ -324,6 +469,10 @@ interface Blueprint {
     router?: RouterConfig;
     policy?: {
       additions?: PolicyAdditions;
+      middlewares?: PolicyMiddlewares;
+    };
+    identity?: {
+      okta?: OktaIdentityConfig;
     };
   };
 }
@@ -352,7 +501,11 @@ interface RouterConfig {
 
 const DEFAULT_ROUTER_PORT = 4000;
 
-function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
+function mergePolicyAdditions(
+  currentPolicyRaw: string,
+  additions: PolicyAdditions,
+  middlewares: PolicyMiddlewares,
+): string {
   // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
   const current = parseOpenShellPolicy(currentPolicyRaw).policy;
   const existingNetworkPolicies = current.network_policies ?? {};
@@ -363,7 +516,7 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
   // fail closed on a scalar or sequence until its mutation semantics are
   // reviewed for the next supported OpenShell contract.
   for (const [key, value] of Object.entries(current)) {
-    if (key !== "version" && key !== "network_policies") {
+    if (key !== "version" && key !== "network_policies" && key !== "network_middlewares") {
       if (!isPlainObject(value)) {
         throw new Error(`Current policy top-level field "${key}" must be a YAML mapping`);
       }
@@ -376,6 +529,13 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
     ...existingNetworkPolicies,
     ...additions,
   });
+  const existingMiddlewares = current.network_middlewares ?? {};
+  if (!isPlainObject(existingMiddlewares)) {
+    throw new Error("network_middlewares must be a YAML mapping");
+  }
+  if (Object.keys(existingMiddlewares).length > 0 || Object.keys(middlewares).length > 0) {
+    output.network_middlewares = { ...existingMiddlewares, ...middlewares };
+  }
   return YAML.stringify(output);
 }
 
@@ -493,6 +653,10 @@ interface PersistedRunPlan {
   sandbox_name: string;
   policy_additions: PolicyAdditions;
   inference: SafeInferencePlan;
+  identity?: {
+    provider_name: string;
+    credential_key: string;
+  };
   timestamp: string;
 }
 
@@ -507,6 +671,10 @@ type StatusRunPlan = {
   sandbox_name?: string;
   policy_additions?: PolicyAdditions;
   inference?: SafeInferencePlan;
+  identity?: {
+    provider_name?: string;
+    credential_key?: string;
+  };
   router?: {
     enabled?: boolean;
     port?: number;
@@ -566,9 +734,10 @@ function buildPersistedRunPlan(args: {
   sandboxName: string;
   policyAdditions: PolicyAdditions;
   inferenceCfg: InferenceProfile;
+  oktaIdentity?: OktaIdentityConfig;
   timestamp: string;
 }): PersistedRunPlan {
-  return {
+  const plan: PersistedRunPlan = {
     run_id: args.runId,
     profile: args.profile,
     sandbox_name: args.sandboxName,
@@ -576,6 +745,13 @@ function buildPersistedRunPlan(args: {
     inference: buildSafeInferencePlan(args.inferenceCfg),
     timestamp: args.timestamp,
   };
+  if (args.oktaIdentity) {
+    plan.identity = {
+      provider_name: args.oktaIdentity.provider_name,
+      credential_key: args.oktaIdentity.credential_key,
+    };
+  }
+  return plan;
 }
 
 function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPlan | null {
@@ -624,6 +800,14 @@ function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPl
 
   if (isPlainObject(source.inference)) {
     safePlan.inference = buildSafeInferencePlan(source.inference);
+  }
+
+  if (isPlainObject(source.identity)) {
+    const providerName = optionalString(source.identity.provider_name);
+    const credentialKey = optionalString(source.identity.credential_key);
+    if (providerName !== undefined || credentialKey !== undefined) {
+      safePlan.identity = { provider_name: providerName, credential_key: credentialKey };
+    }
   }
 
   if (isPlainObject(source.router)) {
@@ -713,8 +897,100 @@ export async function actionApply(
   const sandboxImage = sandboxCfg.image ?? "openclaw";
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
   const policyAdditions = blueprint.components?.policy?.additions ?? {};
+  const policyMiddlewares = blueprint.components?.policy?.middlewares ?? {};
+  const oktaIdentity = blueprint.components?.identity?.okta;
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
   mkdirSync(stateDir, { recursive: true });
+
+  if (oktaIdentity) {
+    progress(10, "Configuring Okta runtime identity");
+    const profilePath = resolveBlueprintRelativePath(oktaIdentity.profile_path);
+    const profileImport = await runCmd(
+      ["openshell", "provider", "profile", "import", "--file", profilePath],
+      { reject: false },
+    );
+    if (profileImport.exitCode !== 0 && !/already exists/i.test(profileImport.stderr)) {
+      throw new Error(
+        `Failed to import Okta provider profile: ${boundedCommandError(profileImport.stderr)}`,
+      );
+    }
+
+    const providerCreate = await runCmd(
+      [
+        "openshell",
+        "provider",
+        "create",
+        "--name",
+        oktaIdentity.provider_name,
+        "--type",
+        oktaIdentity.provider_type,
+        "--runtime-credentials",
+      ],
+      { reject: false },
+    );
+    if (providerCreate.exitCode !== 0 && !/already exists/i.test(providerCreate.stderr)) {
+      throw new Error(
+        `Failed to create Okta runtime provider '${oktaIdentity.provider_name}': ${boundedCommandError(providerCreate.stderr)}`,
+      );
+    }
+
+    const clientId = requiredIdentityEnv(oktaIdentity.client_id_env);
+    const refreshToken = requiredIdentityEnv(oktaIdentity.refresh_token_env);
+    const refreshArgs = [
+      "openshell",
+      "provider",
+      "refresh",
+      "configure",
+      oktaIdentity.provider_name,
+      "--credential-key",
+      oktaIdentity.credential_key,
+      "--strategy",
+      "oauth2-refresh-token",
+      "--material",
+      `client_id=${clientId}`,
+      "--secret-material-env",
+      `refresh_token=${oktaIdentity.refresh_token_env}`,
+    ];
+    const refreshEnv: Record<string, string> = {
+      [oktaIdentity.refresh_token_env]: refreshToken,
+    };
+    const clientSecret = oktaIdentity.client_secret_env
+      ? requiredIdentityEnv(oktaIdentity.client_secret_env)
+      : undefined;
+    if (oktaIdentity.client_secret_env && clientSecret) {
+      refreshArgs.push("--secret-material-env", `client_secret=${oktaIdentity.client_secret_env}`);
+      refreshEnv[oktaIdentity.client_secret_env] = clientSecret;
+    }
+    const refreshResult = await execa(refreshArgs[0], refreshArgs.slice(1), {
+      reject: false,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: buildSubprocessEnv(refreshEnv),
+    });
+    if (refreshResult.exitCode !== 0) {
+      throw new Error(
+        `Failed to configure Okta credential refresh: ${boundedCommandError(refreshResult.stderr, [refreshToken, clientSecret ?? ""])}`,
+      );
+    }
+
+    const rotate = await runCmd(
+      [
+        "openshell",
+        "provider",
+        "refresh",
+        "rotate",
+        oktaIdentity.provider_name,
+        "--credential-key",
+        oktaIdentity.credential_key,
+      ],
+      { reject: false },
+    );
+    if (rotate.exitCode !== 0) {
+      throw new Error(
+        `Failed to mint Okta runtime credential: ${boundedCommandError(rotate.stderr)}`,
+      );
+    }
+  }
 
   progress(20, "Creating OpenClaw sandbox");
   const createArgs = [
@@ -736,6 +1012,18 @@ export async function actionApply(
       log(`Sandbox '${sandboxName}' already exists, reusing.`);
     } else {
       throw new Error(`Failed to create sandbox: ${createResult.stderr}`);
+    }
+  }
+
+  if (oktaIdentity) {
+    const attach = await runCmd(
+      ["openshell", "sandbox", "provider", "attach", sandboxName, oktaIdentity.provider_name],
+      { reject: false },
+    );
+    if (attach.exitCode !== 0 && !/already attached/i.test(attach.stderr)) {
+      throw new Error(
+        `Failed to attach Okta runtime provider '${oktaIdentity.provider_name}': ${boundedCommandError(attach.stderr)}`,
+      );
     }
   }
 
@@ -816,7 +1104,7 @@ export async function actionApply(
     );
   }
 
-  if (Object.keys(policyAdditions).length > 0) {
+  if (Object.keys(policyAdditions).length > 0 || Object.keys(policyMiddlewares).length > 0) {
     progress(78, "Applying policy additions");
     const currentPolicy = await runCmd(["openshell", "policy", "get", "--base", sandboxName], {
       reject: false,
@@ -828,10 +1116,14 @@ export async function actionApply(
     }
 
     const mergedPolicyFile = join(stateDir, "merged-policy.yaml");
-    writeFileSync(mergedPolicyFile, mergePolicyAdditions(currentPolicy.stdout, policyAdditions), {
-      encoding: "utf-8",
-      mode: 0o600,
-    });
+    writeFileSync(
+      mergedPolicyFile,
+      mergePolicyAdditions(currentPolicy.stdout, policyAdditions, policyMiddlewares),
+      {
+        encoding: "utf-8",
+        mode: 0o600,
+      },
+    );
 
     const policySet = await runCmd(
       ["openshell", "policy", "set", "--policy", mergedPolicyFile, "--wait", sandboxName],
@@ -852,6 +1144,7 @@ export async function actionApply(
         sandboxName,
         policyAdditions,
         inferenceCfg,
+        oktaIdentity,
         timestamp: new Date().toISOString(),
       }),
       null,
@@ -930,6 +1223,7 @@ export async function actionRollback(rid: string): Promise<void> {
 
   const planFile = join(stateDir, "plan.json");
   let sandboxName: string;
+  let providerName: string | undefined;
   try {
     const planData = readFileSync(planFile, "utf-8");
     const parsedPlan: unknown = JSON.parse(planData);
@@ -938,12 +1232,20 @@ export async function actionRollback(rid: string): Promise<void> {
         ? parsedPlan
         : null;
     sandboxName = readRollbackSandboxName(rollbackPlan);
+    if (typeof rollbackPlan?.identity?.provider_name === "string") {
+      providerName = rollbackPlan.identity.provider_name;
+    }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot read rollback plan for run ${rid}: ${detail}`);
   }
 
   try {
+    if (providerName) {
+      await runCmd(["openshell", "sandbox", "provider", "detach", sandboxName, providerName], {
+        reject: false,
+      });
+    }
     progress(30, `Stopping sandbox ${sandboxName}`);
     await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
 
