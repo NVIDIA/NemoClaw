@@ -116,6 +116,36 @@ function writeNoOtaFactoryRelease(
   return target;
 }
 
+function writeOtaUpgradedRelease(
+  overrides: Partial<{ pretty: string; otaVersion: string; swbuildVersion: string }> = {},
+) {
+  const fields = {
+    pretty: "NVIDIA DGX GB300WS",
+    otaVersion: "7.5.0",
+    swbuildVersion: "7.4.1-GB300ws",
+    ...overrides,
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-ota-upgraded-"));
+  const target = path.join(dir, "dgx-release");
+  fs.writeFileSync(
+    target,
+    [
+      'DGX_NAME="DGX GB300WS"',
+      `DGX_PRETTY_NAME="${fields.pretty}"`,
+      'DGX_SWBUILD_DATE="2026-02-20-05-22-42"',
+      `DGX_SWBUILD_VERSION="${fields.swbuildVersion}"`,
+      'DGX_COMMIT_ID="51c59a9"',
+      'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
+      'DGX_SERIAL_NUMBER="Unknown"',
+      "",
+      `DGX_OTA_VERSION="${fields.otaVersion}"`,
+      'DGX_OTA_DATE="Sun Apr 12 16:25:30 PDT 2026"',
+      "",
+    ].join("\n"),
+  );
+  return target;
+}
+
 describe("DGX Station stock DGX OS classification", () => {
   it.each([
     "7.2.0",
@@ -347,6 +377,37 @@ dgx_station_release_state "$DGX_RELEASE"
 
     expect(result.status, output).toBe(0);
     expect(result.stdout).toBe(expected);
+  });
+
+  it("classifies an OTA-upgraded GB300 workstation without the fresh-install marker as supported-dgx-os (#7103)", () => {
+    const release = writeOtaUpgradedRelease();
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+stat() { printf '0|0|644|256\n'; }
+dgx_station_release_state "$DGX_RELEASE"
+`,
+      { DGX_RELEASE: release },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout).toBe("supported-dgx-os");
+  });
+
+  it.each([
+    [
+      "a non-workstation DGX Server identity",
+      writeOtaUpgradedRelease({ pretty: "NVIDIA DGX Server" }),
+    ],
+    ["an unreviewed latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.6.0" })],
+  ])("keeps a marker-less OTA host fail-closed with %s (#7103)", (_scenario, release) => {
+    const { result } = runSourced(
+      STATION_PREPARE,
+      `dgx_station_release_contents_are_supported "$DGX_RELEASE"`,
+      { DGX_RELEASE: release },
+    );
+
+    expect(result.status).not.toBe(0);
   });
 
   it("keeps the classifier self-contained when the helper is transported alone", () => {

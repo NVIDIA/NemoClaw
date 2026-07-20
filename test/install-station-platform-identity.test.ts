@@ -82,6 +82,18 @@ describe("DGX Station platform identity", () => {
     expect(result.status, output).toBe(0);
   });
 
+  it.each([
+    ["0x31c2", "0x31c2"],
+    ["0x31c3", "0x31c3"],
+  ])("accepts GB300 PCI device id %s (#7235)", (_scenario, device) => {
+    const pciRoot = writePciIdentityFixture("0x10de", device);
+    const { result, output } = runStationPrepare(`station_has_exact_gb300_pci_gpu "$PCI_ROOT"`, {
+      PCI_ROOT: pciRoot,
+    });
+
+    expect(result.status, output).toBe(0);
+  });
+
   it("selects the GB300 by PCI identity when an auxiliary GPU has the same name", () => {
     const pciRoot = writePciIdentityFixture();
     const { result, output } = runStationPrepare(
@@ -180,7 +192,7 @@ run_apply
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2)");
+    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2/31c3)");
     expect(output).not.toContain("UNEXPECTED_MUTATION");
   });
 
@@ -226,7 +238,7 @@ run_apply
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2)");
+    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2/31c3)");
     expect(output).not.toContain("UNEXPECTED_MUTATION");
   });
 });
