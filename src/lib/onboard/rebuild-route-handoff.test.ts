@@ -16,6 +16,7 @@ function registryRoute(): RegistryInferenceRoute {
     provider: "compatible-endpoint",
     model: "nvidia/model",
     endpointUrl: "https://inference.example.test/v1",
+    endpointSource: "onboard",
     preferredInferenceApi: "openai-completions",
     source: "registry",
   };

@@ -13,7 +13,7 @@ import {
   type LiveTestOutcome,
   writeLiveTestOutcome,
 } from "../../tools/e2e/live-test-outcome.mts";
-import { readPrivateRegularFile, writePrivateRegularFile } from "../../tools/e2e/private-file.ts";
+import { readPrivateRegularFile, writePrivateRegularFile } from "../../tools/e2e/private-file.mts";
 import type { E2eRiskSignal } from "../../tools/e2e/risk-signal.ts";
 
 export const RISK_SIGNAL_FILE = "risk-signal.json";

@@ -168,6 +168,7 @@ function getRegistryInferenceRoute(
     provider: registrySelection.provider,
     model: registrySelection.model,
     endpointUrl: rebuildEndpoint.endpointUrl,
+    endpointSource: registrySelection.endpointSource ?? null,
     preferredInferenceApi: registrySelection.preferredInferenceApi,
     source: "registry",
   };

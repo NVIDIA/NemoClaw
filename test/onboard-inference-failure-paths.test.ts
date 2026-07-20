@@ -1078,6 +1078,7 @@ describe("setupInference dependency failures", () => {
       model: "router/model",
       provider: "nvidia-router",
       endpointUrl: "http://host.openshell.internal:4000/v1",
+      endpointSource: "onboard",
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: null,
       gatewayName: "nemoclaw",

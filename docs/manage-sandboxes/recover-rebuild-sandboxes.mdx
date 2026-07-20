@@ -13,6 +13,18 @@ skill:
 ---
 Use the lightest recovery operation that repairs the sandbox while preserving its supported state.
 
+## Restart a Stopped Sandbox Container
+
+If status reports `Phase: Error` and confirms that the sandbox container exists but is stopped, restart the existing container:
+
+```bash
+$$nemoclaw <sandbox-name> start
+```
+
+This path preserves the sandbox workspace and repairs the agent runtime and host-side forwards after the container starts.
+If the container is paused, follow the printed `docker unpause` guidance instead.
+If the container is missing or OpenShell reports another terminal phase such as `Failed`, follow the printed `rebuild --yes` guidance so NemoClaw can recreate the sandbox from its recorded metadata.
+
 ## Recover the Agent Runtime
 
 <AgentOnly variant="openclaw">
