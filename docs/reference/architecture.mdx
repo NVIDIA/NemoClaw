@@ -241,6 +241,29 @@ flowchart LR
 4. Apply. The runner executes the plan by calling `openshell` CLI commands.
 5. Status. The runner reports current state.
 
+### Proposed Microsoft Entra Runtime Identity Reference
+
+NemoClaw is designing a Microsoft Entra reference for delegated agent access to a narrowly scoped Microsoft Graph API.
+The reference is not implemented, enabled by normal onboarding, or validated against a live Entra tenant.
+Do not treat this design as a configuration guide or supported integration.
+
+The proposed flow keeps the application user, OpenShell gateway administrator, application backend, sandbox workload, and agent as separate principals.
+An application completes the user authorization flow outside the sandbox and transfers approved refresh or delegation material to an OpenShell provider.
+OpenShell Providers v2 owns that material, refreshes or exchanges it, and attaches the provider to the sandbox.
+The agent receives only an opaque placeholder, such as `MS_GRAPH_ACCESS_TOKEN`.
+OpenShell injects the current bearer token only for an admitted request to the approved Microsoft Graph host and path.
+
+The design does not reuse an OpenShell gateway-login token as the delegated application-user credential.
+It does not place access tokens, refresh tokens, client secrets, or Azure deployment credentials in the sandbox, generated blueprint, logs, snapshots, or NemoClaw host state.
+It also does not require Azure infrastructure because Azure was only a prior test environment, not part of the intended reference.
+
+The proposed profile will pin a tenant-specific issuer and token endpoint, use least-privilege delegated Microsoft Graph permissions, and restrict credential injection to reviewed HTTPS destinations and allowed binaries.
+Middleware may add request-aware identity policy before credential injection, but it does not mint, inspect, or write bearer credentials.
+On-behalf-of exchange remains outside this first reference until OpenShell provides a generic dynamic actor-credential source.
+
+Before this reference becomes operational, it requires a reviewed blueprint contract, deterministic mock coverage, and separate manual validation against a live Entra tenant.
+The validation must cover refresh or exchange rotation, sandbox attachment, least-privilege Graph access, revocation, cleanup, and secret-negative assertions.
+
 ## Sandbox Environment
 
 <AgentOnly variant="openclaw,hermes">
