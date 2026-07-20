@@ -81,7 +81,7 @@ for name in WORK_DIR CANDIDATE_SHA CORRELATION_ID GH_TOKEN GITHUB_RUN_ID \
   GITHUB_RUN_ATTEMPT BREV_LAUNCHABLE_ID INSTANCE_NAME NVIDIA_INFERENCE_API_KEY; do
   require "$name"
 done
-for tool in brev gh jq python3 ssh timeout; do
+for tool in brev gh jq python3 sed ssh timeout; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is required"
 done
 [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || die "candidate SHA is not canonical"
@@ -182,9 +182,11 @@ identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
   disk=$(curl -fsS -H "$header" "$metadata/instance/disks/0/device-name")
   token=$(curl -fsS -H "$header" "$metadata/instance/service-accounts/default/token" | jq -er .access_token)
   source=$(curl -fsS -H "Authorization: Bearer $token" "https://compute.googleapis.com/compute/v1/projects/$project/zones/$zone/disks/$disk")
+  printf "NEMOCLAW_IDENTITY="
   jq -cn --arg repoSha "$repo_sha" --arg provisionSha "$provision_sha" \
     --arg image "$(jq -r .sourceImage <<<"$source")" --arg imageId "$(jq -r .sourceImageId <<<"$source")" \
-    "{repoSha:\$repoSha,provisionSha:\$provisionSha,image:\$image,imageId:\$imageId}"' --host | tail -n 1)"
+    "{repoSha:\$repoSha,provisionSha:\$provisionSha,image:\$image,imageId:\$imageId}"' --host \
+  | sed -n 's/^NEMOCLAW_IDENTITY=//p' | tail -n 1)"
 jq -e --arg sha "$CANDIDATE_SHA" --arg image "$image_link" --arg id "$image_id" '
   .provisionSha as $provision | .repoSha == $sha and
   ($provision | type == "string" and test("^[0-9a-f]{7,40}$")) and ($sha | startswith($provision)) and

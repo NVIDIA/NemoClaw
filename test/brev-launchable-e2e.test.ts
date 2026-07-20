@@ -78,7 +78,9 @@ case "$1" in
   exec)
     case "$3" in
       *provision_sha*)
-        jq -cn --arg sha "$CANDIDATE_SHA" --arg id "$FAKE_IMAGE_ID" '{repoSha:$sha,provisionSha:($sha[0:12]),image:"https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/image-a",imageId:$id}' ;;
+        printf 'NEMOCLAW_IDENTITY='
+        jq -cn --arg sha "$CANDIDATE_SHA" --arg id "$FAKE_IMAGE_ID" '{repoSha:$sha,provisionSha:($sha[0:12]),image:"https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/image-a",imageId:$id}'
+        printf '%s\\n' "$INSTANCE_NAME" ;;
       *) exit 2 ;;
     esac ;;
   delete) [ "$FAKE_DELETE_FAILS" = 1 ] || rm -f "$FAKE_STATE" ;;
