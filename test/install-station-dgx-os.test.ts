@@ -647,11 +647,12 @@ run_apply
     const exact = runSourced(
       STATION_PREPARE,
       `
-installed_version() {
+installed_package_record() {
   local spec
   for spec in "\${BASEOS_PACKAGE_SPECS[@]}"; do
-    if [[ "\${spec%%=*}" == "$1" ]]; then printf '%s' "\${spec#*=}"; return; fi
+    if [[ "\${spec%%=*}" == "$1" ]]; then printf 'ii |arm64|%s' "\${spec#*=}"; return; fi
   done
+  return 1
 }
 all_baseos_packages_exact
 `,
@@ -661,12 +662,13 @@ all_baseos_packages_exact
     const drifted = runSourced(
       STATION_PREPARE,
       `
-installed_version() {
-  if [[ "$1" == "docker-ce" ]]; then printf '5:30.0.0-1~ubuntu.24.04~noble'; return; fi
+installed_package_record() {
+  if [[ "$1" == "docker-ce" ]]; then printf 'ii |arm64|5:30.0.0-1~ubuntu.24.04~noble'; return; fi
   local spec
   for spec in "\${BASEOS_PACKAGE_SPECS[@]}"; do
-    if [[ "\${spec%%=*}" == "$1" ]]; then printf '%s' "\${spec#*=}"; return; fi
+    if [[ "\${spec%%=*}" == "$1" ]]; then printf 'ii |arm64|%s' "\${spec#*=}"; return; fi
   done
+  return 1
 }
 all_baseos_packages_exact
 `,

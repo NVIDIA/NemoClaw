@@ -33,6 +33,7 @@ readonly DRIVER_VERSION="610.43.02"
 readonly BASEOS_DRIVER_VERSION="595.58.03"
 readonly DOCKER_VERSION="29.6.1"
 readonly TOOLKIT_VERSION="1.19.1"
+readonly STATION_PACKAGE_ARCH="arm64"
 readonly FACTORY_DKMS_VERSION="3.0.11-1ubuntu13"
 readonly TARGET_DKMS_VERSION="1:3.4.0-1ubuntu1"
 # Keep this as a plain Ubuntu image: NVIDIA Container Toolkit injects the host
@@ -583,23 +584,51 @@ installed_version() {
   dpkg-query -W -f='${Version}' "$1" 2>/dev/null || true
 }
 
+installed_package_record() {
+  local record status
+  if record="$(LC_ALL=C dpkg-query -W -f='${db:Status-Abbrev}|${Architecture}|${Version}\n' "$1" 2>/dev/null)"; then
+    printf '%s' "$record"
+    return 0
+  else
+    status=$?
+  fi
+  return "$status"
+}
+
 package_is_exact() {
-  local spec=$1
-  local name expected actual
-  name="$(package_name "$spec")"
-  expected="$(package_expected_version "$spec")"
-  actual="$(installed_version "$name")"
-  [[ "$actual" == "$expected" ]]
+  [[ "$(package_state "$1")" == "exact" ]]
 }
 
 package_state() {
   local spec=$1
-  local name expected actual
+  local name expected record query_status status architecture actual extra
   name="$(package_name "$spec")"
   expected="$(package_expected_version "$spec")"
-  actual="$(installed_version "$name")"
-  if [[ -z "$actual" ]]; then
+
+  if record="$(installed_package_record "$name")"; then
+    query_status=0
+  else
+    query_status=$?
+  fi
+  if ((query_status == 1)); then
     printf 'missing\n'
+    return
+  elif ((query_status != 0)); then
+    printf 'query-error\n'
+    return
+  fi
+  if [[ -z "$record" || "$record" == *$'\n'* ]]; then
+    printf 'invalid-record\n'
+    return
+  fi
+
+  IFS='|' read -r status architecture actual extra <<<"$record"
+  if [[ -n "$extra" || "${status}|${architecture}|${actual}" != "$record" ]]; then
+    printf 'invalid-record\n'
+  elif [[ "$status" != "ii " ]]; then
+    printf 'unhealthy-status\n'
+  elif [[ "$architecture" != "$STATION_PACKAGE_ARCH" && "$architecture" != "all" ]]; then
+    printf 'wrong-architecture\n'
   elif [[ "$actual" == "$expected" ]]; then
     printf 'exact\n'
   elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" && "$expected" == "$TARGET_DKMS_VERSION" ]]; then
@@ -610,24 +639,34 @@ package_state() {
 }
 
 assert_no_package_mismatches() {
-  local spec state name expected actual mismatch=0
+  local spec state name expected actual rejected=0
   for spec in "${PACKAGE_SPECS[@]}"; do
     state="$(package_state "$spec")"
-    if [[ "$state" == "approved-transition" ]]; then
-      name="$(package_name "$spec")"
-      expected="$(package_expected_version "$spec")"
-      actual="$(installed_version "$name")"
-      info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
-      continue
-    fi
-    [[ "$state" == "mismatch" ]] || continue
     name="$(package_name "$spec")"
     expected="$(package_expected_version "$spec")"
-    actual="$(installed_version "$name")"
-    warn "package=${name} status=mismatch actual=${actual} expected=${expected}"
-    mismatch=1
+    case "$state" in
+      exact | missing) ;;
+      approved-transition)
+        actual="$(installed_version "$name")"
+        info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
+        ;;
+      mismatch)
+        actual="$(installed_version "$name")"
+        warn "package=${name} status=mismatch actual=${actual} expected=${expected}"
+        rejected=1
+        ;;
+      unhealthy-status | wrong-architecture | invalid-record | query-error)
+        warn "package=${name} status=${state} expected=${expected}"
+        rejected=1
+        ;;
+      *)
+        warn "package=${name} status=unknown_state expected=${expected}"
+        rejected=1
+        ;;
+    esac
   done
-  ((mismatch == 0)) || fatal "Existing Station prerequisite versions differ from the validated pins or approved factory transition; refusing to change them automatically"
+  ((rejected == 0)) \
+    || fatal "Station prerequisite package state is unhealthy or differs from the validated pins; repair dpkg status or architecture issues before retrying"
 }
 
 all_packages_exact() {
@@ -647,9 +686,11 @@ all_baseos_packages_exact() {
 }
 
 verify_baseos_packages() {
-  local spec
+  local spec state
   for spec in "${BASEOS_PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || fatal "BaseOS package does not match the qualified image: ${spec}"
+    state="$(package_state "$spec")"
+    [[ "$state" == "exact" ]] \
+      || fatal "BaseOS package does not match the qualified image: ${spec} (${state})"
   done
   info "baseos_packages=exact"
 }
@@ -756,11 +797,49 @@ check_network() {
   info "network=required_vendor_hosts_resolve"
 }
 
+station_checks_package_inventory() {
+  [[ "$STATION_HOST_PROFILE" == "generic-ubuntu" || "$STATION_HOST_PROFILE" == "colossus-baseos" ]]
+}
+
+check_dpkg_database_health() {
+  local audit
+  if ! audit="$(LC_ALL=C dpkg --audit 2>&1)"; then
+    fatal "Unable to audit the dpkg database; run 'sudo dpkg --audit' and repair the package database before retrying"
+  fi
+  [[ -z "${audit//[[:space:]]/}" ]] \
+    || fatal "dpkg reports unfinished package work; run 'sudo dpkg --audit' and repair every listed package before retrying"
+  info "dpkg_audit=clean"
+}
+
+package_manager_lock_inventory() {
+  local inventory
+  if [[ "$MODE" == "--apply" ]]; then
+    inventory="$(sudo -n lslocks --noheadings --raw --notruncate --output PID,COMMAND,PATH)" || return 1
+  else
+    inventory="$(lslocks --noheadings --raw --notruncate --output PID,COMMAND,PATH)" || return 1
+  fi
+  awk '$3 == "/var/lib/dpkg/lock-frontend" ||
+       $3 == "/var/lib/dpkg/lock" ||
+       $3 == "/var/cache/apt/archives/lock" ||
+       $3 == "/var/lib/apt/lists/lock" {print}' <<<"$inventory"
+}
+
 check_package_managers_idle() {
-  local active
-  active="$(ps -eo pid=,comm= | awk '$2 ~ /^(apt|apt-get|dpkg|unattended-upgrade)$/ {print}')"
-  [[ -z "$active" ]] || fatal "A package-manager process is active: ${active}"
-  info "package_manager=idle"
+  local phase=${1:-Station preflight} active locks
+  active="$(ps -eo pid=,comm= | awk '$2 ~ /^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|packagekitd|unattended-upgr|unattended-upgrade)$/ {print}')"
+  [[ -z "$active" ]] || fatal "A package-manager process is active during ${phase}: ${active}"
+  if [[ "$STATION_HOST_PROFILE" == "generic-ubuntu" ]]; then
+    locks="$(package_manager_lock_inventory)" \
+      || fatal "Unable to inspect APT and dpkg locks during ${phase}"
+    [[ -z "$locks" ]] || fatal "An APT or dpkg lock is active during ${phase}: ${locks}"
+  fi
+  info "package_manager=idle phase=${phase// /_}"
+}
+
+assert_package_transaction_ready() {
+  local phase=$1
+  check_package_managers_idle "$phase"
+  check_dpkg_database_health
 }
 
 check_dgx_os_docker_selection() {
@@ -1065,20 +1144,28 @@ install_boot_marker_matches_current_boot() {
 }
 
 print_package_status() {
-  local spec name expected actual
+  local spec state name expected actual
   for spec in "${PACKAGE_SPECS[@]}"; do
     name="$(package_name "$spec")"
     expected="$(package_expected_version "$spec")"
-    actual="$(installed_version "$name")"
-    if [[ "$actual" == "$expected" ]]; then
-      info "package=${name} status=exact version=${actual}"
-    elif [[ -z "$actual" ]]; then
-      info "package=${name} status=missing expected=${expected}"
-    elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" ]]; then
-      info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
-    else
-      warn "package=${name} status=mismatch actual=${actual} expected=${expected}"
-    fi
+    state="$(package_state "$spec")"
+    case "$state" in
+      exact)
+        info "package=${name} status=exact version=${expected}"
+        ;;
+      missing)
+        info "package=${name} status=missing expected=${expected}"
+        ;;
+      approved-transition)
+        actual="$(installed_version "$name")"
+        info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
+        ;;
+      mismatch)
+        actual="$(installed_version "$name")"
+        warn "package=${name} status=mismatch actual=${actual} expected=${expected}"
+        ;;
+      *) warn "package=${name} status=${state} expected=${expected}" ;;
+    esac
   done
 }
 
@@ -1096,6 +1183,18 @@ common_preflight() {
   require_command stat
   require_command systemctl
   check_platform
+  if station_checks_package_inventory; then
+    require_command dpkg
+    if [[ "$STATION_HOST_PROFILE" == "generic-ubuntu" ]]; then
+      require_command lslocks
+      assert_package_transaction_ready "initial Station package preflight"
+    else
+      check_package_managers_idle "initial Station package preflight"
+      check_dpkg_database_health
+    fi
+  else
+    check_package_managers_idle "initial Station package preflight"
+  fi
   if station_uses_factory_runtime; then
     info "factory_packages=preserved package_and_driver_mutation=disabled"
     check_dgx_os_docker_selection
@@ -1108,7 +1207,6 @@ common_preflight() {
   fi
   check_capacity
   check_network
-  check_package_managers_idle
   check_failed_units
   check_agent_and_inference_conflicts
   capture_docker_container_baseline
@@ -1177,23 +1275,33 @@ assert_root_regular_file_safe() {
 }
 
 ensure_cuda_keyring() {
-  local cuda_deb=$1 actual verification
+  local cuda_deb=$1 actual state verification
   assert_root_directory_safe /usr/share/keyrings "CUDA repository keyring directory"
-  actual="$(installed_version cuda-keyring)"
-  if [[ -z "$actual" ]]; then
-    curl --fail --silent --show-error --location "$CUDA_KEYRING_URL" --output "$cuda_deb"
-    verify_file_sha256 "$cuda_deb" "$CUDA_KEYRING_SHA256"
-    sudo dpkg -i "$cuda_deb"
-    package_is_exact "cuda-keyring=${CUDA_KEYRING_PACKAGE_VERSION}" \
-      || fatal "Installed cuda-keyring does not match ${CUDA_KEYRING_PACKAGE_VERSION}"
-  elif [[ "$actual" == "$CUDA_KEYRING_PACKAGE_VERSION" ]]; then
-    verification="$(dpkg -V cuda-keyring 2>&1)" \
-      || fatal "Unable to verify the installed cuda-keyring package"
-    [[ -z "$verification" ]] || fatal "Installed cuda-keyring files differ from the package manifest: ${verification}"
-    info "cuda_keyring=exact version=${actual}"
-  else
-    fatal "Existing cuda-keyring version ${actual} differs from validated pin ${CUDA_KEYRING_PACKAGE_VERSION}; refusing to upgrade or downgrade it automatically"
-  fi
+  state="$(package_state "cuda-keyring=${CUDA_KEYRING_PACKAGE_VERSION}")"
+  case "$state" in
+    missing)
+      curl --fail --silent --show-error --location "$CUDA_KEYRING_URL" --output "$cuda_deb"
+      verify_file_sha256 "$cuda_deb" "$CUDA_KEYRING_SHA256"
+      assert_package_transaction_ready "CUDA keyring installation"
+      sudo dpkg -i "$cuda_deb"
+      check_dpkg_database_health
+      package_is_exact "cuda-keyring=${CUDA_KEYRING_PACKAGE_VERSION}" \
+        || fatal "Installed cuda-keyring does not match ${CUDA_KEYRING_PACKAGE_VERSION}"
+      ;;
+    exact)
+      verification="$(dpkg -V cuda-keyring 2>&1)" \
+        || fatal "Unable to verify the installed cuda-keyring package"
+      [[ -z "$verification" ]] || fatal "Installed cuda-keyring files differ from the package manifest: ${verification}"
+      info "cuda_keyring=exact version=${CUDA_KEYRING_PACKAGE_VERSION}"
+      ;;
+    mismatch)
+      actual="$(installed_version cuda-keyring)"
+      fatal "Existing cuda-keyring version ${actual} differs from validated pin ${CUDA_KEYRING_PACKAGE_VERSION}; refusing to upgrade or downgrade it automatically"
+      ;;
+    *)
+      fatal "Existing cuda-keyring package state is not safe to reuse: ${state}; repair dpkg status or architecture issues before retrying"
+      ;;
+  esac
 
   assert_root_regular_file_safe /usr/share/keyrings/cuda-archive-keyring.gpg 0644 "CUDA repository keyring"
   verify_key_fingerprint /usr/share/keyrings/cuda-archive-keyring.gpg "$CUDA_KEY_FINGERPRINT"
@@ -1266,6 +1374,7 @@ configure_repositories() {
   verify_file_sha256 "$docker_asc" "$DOCKER_KEY_SHA256"
   verify_key_fingerprint "$docker_asc" "$DOCKER_KEY_FINGERPRINT"
   gpg --batch --yes --dearmor --output "$docker_gpg" "$docker_asc"
+  assert_package_transaction_ready "Docker repository configuration"
   ensure_root_directory_safe /etc/apt/keyrings /etc/apt 0755 "Docker repository key directory"
   assert_root_directory_safe /etc/apt/sources.list.d "Docker repository source directory"
   printf '%s\n' \
@@ -1546,14 +1655,18 @@ simulate_install() {
 }
 
 install_packages() {
-  collect_package_transaction_specs
+  assert_package_transaction_ready "Station repository configuration"
   configure_repositories
+  assert_package_transaction_ready "APT metadata refresh"
+  collect_package_transaction_specs
   info "Refreshing package metadata"
   sudo apt-get update
   validate_package_availability "${PACKAGE_TRANSACTION_SPECS[@]}"
   create_apt_transaction_guard
+  assert_package_transaction_ready "APT transaction simulation"
   simulate_install "${PACKAGE_TRANSACTION_SPECS[@]}"
   require_docker_restart_quiescence "Station prerequisite package installation"
+  assert_package_transaction_ready "Station prerequisite package installation"
   info "Installing missing pinned Station prerequisites"
   sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
     apt-get install -y --no-install-recommends --no-remove \
@@ -1561,6 +1674,7 @@ install_packages() {
     -o "DPkg::Tools::options::/bin/bash::Version=3" \
     "${PACKAGE_TRANSACTION_SPECS[@]}"
   cleanup_apt_transaction_guard
+  check_dpkg_database_health
 
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
@@ -1990,6 +2104,7 @@ run_check() {
     return 0
   fi
   print_package_status
+  assert_no_package_mismatches
   if all_packages_exact; then
     if install_boot_marker_matches_current_boot; then
       warn "Package installation completed in the current boot; reboot is required"
