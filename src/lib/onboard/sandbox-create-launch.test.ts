@@ -374,14 +374,16 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       prebuild: {
         buildCtx,
         buildId: "build-123",
-        builder: "legacy",
-        dockerEnv: Object.freeze({ DOCKER_CONTEXT: "verified-builder" }),
         dockerDriverGateway: true,
         env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
         buildImage,
         inspectImageId: () => IMAGE_ID,
         log: vi.fn(),
         origin: "generated",
+        prepared: {
+          prebuildBuilder: "legacy",
+          prebuildDockerEnv: Object.freeze({ DOCKER_CONTEXT: "verified-builder" }),
+        },
       },
     });
 

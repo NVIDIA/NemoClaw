@@ -4,6 +4,7 @@
 import type { AgentDefinition } from "../agent/defs";
 import { formatEnvAssignment } from "../core/url-utils";
 import { buildSubprocessEnv } from "../subprocess-env";
+import type { PreparedSandboxBuildContext } from "./build-context-stage";
 import { isValidProxyHost, isValidProxyPort } from "./dockerfile-patch";
 import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
@@ -68,7 +69,9 @@ export interface SandboxCreateLaunch {
 
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
   sandboxName: string;
-  prebuild: Omit<SandboxPrebuildInput, "createArgs" | "sandboxName">;
+  prebuild: Omit<SandboxPrebuildInput, "builder" | "createArgs" | "dockerEnv" | "sandboxName"> & {
+    prepared?: Pick<PreparedSandboxBuildContext, "prebuildBuilder" | "prebuildDockerEnv"> | null;
+  };
 }
 
 export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
@@ -220,9 +223,12 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
   input: SandboxCreateLaunchWithPrebuildInput,
 ): Promise<SandboxCreateLaunchWithPrebuild> {
   const { prebuild: prebuildInput, ...launchInput } = input;
+  const { prepared, ...prebuildOptions } = prebuildInput;
   const prebuild = await prebuildSandboxImageIfEligible({
-    ...prebuildInput,
+    ...prebuildOptions,
+    builder: prepared?.prebuildBuilder,
     createArgs: input.createArgs,
+    dockerEnv: prepared?.prebuildDockerEnv,
     sandboxName: input.sandboxName,
   });
   return {
