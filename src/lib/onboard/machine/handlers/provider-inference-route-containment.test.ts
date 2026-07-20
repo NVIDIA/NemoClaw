@@ -259,6 +259,53 @@ describe("provider route containment", () => {
     expect(calls.error).not.toHaveBeenCalled();
   });
 
+  it("binds fresh onboard provenance to the exact selected endpoint", async () => {
+    const { calls, deps } = createDeps();
+    calls.setupNim.mockResolvedValue({
+      ...fallbackSelection,
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: "https://selected.example.test/v1",
+      endpointSource: "onboard",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    const options = resumeOptions(deps, createSession());
+
+    await handleProviderInferenceState({
+      ...options,
+      resume: false,
+      fresh: true,
+      sandboxName: null,
+    });
+
+    expect(calls.setupInference.mock.calls[0]?.at(-1)).toMatchObject({
+      endpointSource: "onboard",
+      onboardEndpointUrl: "https://selected.example.test/v1",
+    });
+  });
+
+  it("drops onboard trust when a resumed endpoint differs from its canonical endpoint", async () => {
+    const session = createSession({
+      provider: "hermes-provider",
+      model: "custom/model",
+      endpointUrl: "https://current.example.test/v1",
+      credentialEnv: "NOUS_API_KEY",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { calls, deps } = createDeps();
+    const options = resumeOptions(deps, session);
+    options.initial.endpointSource = "onboard";
+    options.initial.onboardEndpointUrl = "https://persisted.example.test/v1";
+
+    const result = await handleProviderInferenceState(options);
+
+    const inferenceOptions = calls.setupInference.mock.calls[0]?.at(-1);
+    expect(inferenceOptions).toMatchObject({ endpointSource: null });
+    expect(inferenceOptions).not.toHaveProperty("onboardEndpointUrl");
+    expect(result).toMatchObject({ endpointSource: null, onboardEndpointUrl: null });
+  });
+
   it("allows routed-provider repair across a valid peer-route difference (#6315)", async () => {
     const session = createSession({ provider: "nvidia-router", model: "router/model" });
     session.steps.provider_selection.status = "complete";

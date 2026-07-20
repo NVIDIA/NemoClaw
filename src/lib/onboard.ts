@@ -4424,6 +4424,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         authoritativePolicyTier:
           opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
         endpointSource: opts.endpointSource,
+        endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null,
+        endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null,
         recreateSandbox: isRecreateSandbox,
         controlUiPort: _preflightDashboardPort,
         rootDir: ROOT,
