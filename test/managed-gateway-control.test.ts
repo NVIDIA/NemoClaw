@@ -390,6 +390,71 @@ with tempfile.TemporaryDirectory() as root:
         control._verify_locked_hermes_hash = lambda: preflight_steps.append({"hash": "checked"})
         try:
             control._hermes_preflight(reader, supervisor)
+            verified_preflight_steps = list(preflight_steps)
+
+            real_read_stable_file = reader.read_stable_file
+            real_monotonic = control.time.monotonic
+            real_sleep = control.time.sleep
+            transient_preflight_reads = []
+            fake_clock = [0.0]
+            def transient_preflight_read(identity, name, limit):
+                transient_preflight_reads.append(identity.pid)
+                if len(transient_preflight_reads) <= 2:
+                    raise control.ControlError("SUPERVISOR_UNAVAILABLE")
+                return real_read_stable_file(identity, name, limit)
+            reader.read_stable_file = transient_preflight_read
+            control.time.monotonic = lambda: fake_clock[0]
+            control.time.sleep = lambda seconds: fake_clock.__setitem__(0, fake_clock[0] + seconds)
+            try:
+                control._hermes_preflight(reader, supervisor)
+                transient_preflight_retry = [
+                    len(transient_preflight_reads),
+                    round(fake_clock[0], 3),
+                ]
+            finally:
+                reader.read_stable_file = real_read_stable_file
+
+            persistent_preflight_reads = []
+            fake_clock[0] = 0.0
+            def persistent_preflight_read(identity, _name, _limit):
+                persistent_preflight_reads.append(identity.pid)
+                raise control.ControlError("SUPERVISOR_UNAVAILABLE")
+            reader.read_stable_file = persistent_preflight_read
+            try:
+                control._hermes_preflight(reader, supervisor)
+                persistent_preflight_retry = ["accepted", False, fake_clock[0]]
+            except control.ControlError as error:
+                persistent_preflight_retry = [
+                    error.code,
+                    len(persistent_preflight_reads) > 1,
+                    round(fake_clock[0], 3),
+                ]
+            finally:
+                reader.read_stable_file = real_read_stable_file
+
+            identity_change_reads = []
+            fake_clock[0] = 0.0
+            real_capture = reader.capture
+            def identity_change_read(identity, _name, _limit):
+                identity_change_reads.append(identity.pid)
+                raise control.ControlError("SUPERVISOR_UNAVAILABLE")
+            def capture_changed_supervisor(pid):
+                captured = real_capture(pid)
+                if pid == supervisor.pid:
+                    return replace(captured, start_time="replaced")
+                return captured
+            reader.read_stable_file = identity_change_read
+            reader.capture = capture_changed_supervisor
+            try:
+                control._hermes_preflight(reader, supervisor)
+                changed_preflight_identity = ["accepted", fake_clock[0]]
+            except control.ControlError as error:
+                changed_preflight_identity = [error.code, fake_clock[0]]
+            finally:
+                reader.read_stable_file = real_read_stable_file
+                reader.capture = real_capture
+                control.time.monotonic = real_monotonic
+                control.time.sleep = real_sleep
         finally:
             control._run_fixed_validator = real_validator
             control._validate_runtime_environment = real_runtime_validator
@@ -898,7 +963,12 @@ with tempfile.TemporaryDirectory() as root:
         "persistent_supervisor_churn": persistent_supervisor_churn,
         "transient_gateway_candidates": transient_gateway_candidates,
         "namespace_denied": namespace_denied,
-        "preflight": preflight_steps,
+        "preflight": verified_preflight_steps,
+        "preflight_proof_retry": [
+            transient_preflight_retry,
+            persistent_preflight_retry,
+            changed_preflight_identity,
+        ],
         "runtime_validation": runtime_validation,
         "missing_supervisor": missing_supervisor,
         "appearing_supervisor": appearing_supervisor,
@@ -989,6 +1059,11 @@ describe("managed gateway root control", () => {
           runtime_port: "18789",
         },
         { hash: "checked" },
+      ],
+      preflight_proof_retry: [
+        [3, 0.1],
+        ["SUPERVISOR_UNAVAILABLE", true, 1],
+        ["SUPERVISOR_UNAVAILABLE", 0],
       ],
       runtime_validation: "in-process",
       missing_supervisor: "SUPERVISOR_NOT_RUNNING",
