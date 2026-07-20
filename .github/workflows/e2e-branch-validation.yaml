@@ -22,9 +22,8 @@ name: E2E / Branch Validation
 #   - To run security regression suites (credential-sanitization, injection)
 #   - Manually via workflow_dispatch, or called from other workflows
 #
-# NOTE: This does NOT test the community install path (launch-plugin.sh).
-# For validating what Brev Launchable users actually get, run the
-# e2e-launchable-smoke job in e2e.yaml.
+# NOTE: This does NOT test a published Brev Launchable image. It bootstraps a
+# generic Brev VM, overlays the selected source revision, and rebuilds NemoClaw.
 #
 # Test suites:
 #   full                     — Install → onboard → sandbox verify → live inference
@@ -75,11 +74,6 @@ on:
           - dashboard-remote-bind
           - gpu
           - all
-      use_launchable:
-        description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
-        required: false
-        type: boolean
-        default: true
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
@@ -118,10 +112,6 @@ on:
         required: false
         type: string
         default: "full"
-      use_launchable:
-        required: false
-        type: boolean
-        default: true
       keep_alive:
         required: false
         type: boolean
@@ -277,7 +267,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: ${{ env.BREV_E2E_INSTANCE_NAME }}
           TEST_SUITE: ${{ inputs.test_suite }}
-          USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
           BREV_PROVIDER: ${{ inputs.brev_provider || vars.BREV_PROVIDER || '' }}
           BREV_GPU_TYPE: ${{ inputs.brev_gpu_type || vars.BREV_GPU_TYPE || '' }}
           BREV_GPU_NAME: ${{ inputs.brev_gpu_name || vars.BREV_GPU_NAME || '' }}
