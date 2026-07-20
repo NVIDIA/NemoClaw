@@ -160,6 +160,10 @@ literal so the collection-only checker can validate the transition without
 executing the test body; variables and array lookups are rejected. A phase
 transition may skip optional intermediate phases, which are recorded with a
 `skipped` outcome, but it cannot move backward or select an undeclared label.
+When a module has multiple tests, including tests with the same phase plan,
+keep each literal transition inside its owning test callback so the checker can
+attribute it to that case. A helper may own the operational boundary by
+accepting a callback that performs the transition.
 Completed phases use `passed`, `failed`, or `skipped` outcomes. A passing path
 must enter the final declared phase before returning, or fixture teardown fails
 the test. Do not declare or enter `release registered E2E resources`; the

@@ -85,6 +85,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json",
         "e2e-artifacts/live/skill-agent/*/target.json",
         "e2e-artifacts/live/skill-agent/*/target-result.json",
+        "e2e-artifacts/live/skill-agent/*/test-progress.json",
         "e2e-artifacts/live/skill-agent/*/shell/*.result.json",
         "e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt",
         "e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt",

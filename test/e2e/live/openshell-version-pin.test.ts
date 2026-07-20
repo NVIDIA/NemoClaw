@@ -10,7 +10,6 @@ import path from "node:path";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
-import type { TestProgress } from "../fixtures/progress.ts";
 
 // #3474). The former bash script is a self-contained installer-script behavioral
 // test: it runs scripts/install-openshell.sh under a stubbed PATH where the
@@ -340,8 +339,8 @@ exec /usr/bin/sha256sum "$@"`,
 
 async function runVersionPinTarget(
   artifacts: ArtifactSink,
-  progress: TestProgress,
   options: { ghDownloadMode: GhDownloadMode },
+  enterInspectionPhase: () => void,
 ): Promise<void> {
   await artifacts.target.declare({
     id: "openshell-version-pin",
@@ -381,7 +380,7 @@ async function runVersionPinTarget(
     await artifacts.writeText("install-openshell.stderr", result.stderr ?? "");
     await artifacts.writeText("downloads.log", fs.readFileSync(downloadLog, "utf-8"));
 
-    progress.phase("inspect release selection and the replacement binary");
+    enterInspectionPhase();
     // Assertion 1: installer-exits-zero — the happy path completes (no
     // "above the maximum" hard-fail before download).
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -429,8 +428,8 @@ test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.8
   },
 }, async ({ artifacts, progress }) => {
   progress.phase("run the pinned installer through GitHub releases");
-  await runVersionPinTarget(artifacts, progress, {
-    ghDownloadMode: "success",
+  await runVersionPinTarget(artifacts, { ghDownloadMode: "success" }, () => {
+    progress.phase("inspect release selection and the replacement binary");
   });
 });
 
@@ -444,7 +443,7 @@ test("openshell-version-pin: falls back to curl when gh cannot fetch the pinned 
   },
 }, async ({ artifacts, progress }) => {
   progress.phase("run the pinned installer through curl fallback");
-  await runVersionPinTarget(artifacts, progress, {
-    ghDownloadMode: "fail",
+  await runVersionPinTarget(artifacts, { ghDownloadMode: "fail" }, () => {
+    progress.phase("inspect release selection and the replacement binary");
   });
 });

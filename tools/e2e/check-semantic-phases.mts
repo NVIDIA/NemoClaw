@@ -33,6 +33,7 @@ export interface TestPhaseBody {
   file: string;
   line: number;
   phaseCalls: PhaseCall[];
+  skipped?: boolean;
 }
 
 export interface ScopedPhasePlan {
@@ -181,6 +182,9 @@ function collectTestPhaseBodies(file: string, sourceFile: ts.SourceFile): TestPh
         file: path.relative(REPO_ROOT, file),
         line: location.line + 1,
         phaseCalls,
+        skipped:
+          ts.isPropertyAccessExpression(node.expression) &&
+          ["skip", "todo"].includes(node.expression.name.text),
       });
       return;
     }
@@ -203,11 +207,21 @@ export function validateTestScopedPhaseCalls(
 
   const failures: string[] = [];
   for (const [index, plan] of plans.entries()) {
+    const body = bodies[index];
     const declaredLabels = new Set(plan.phases);
-    for (const call of bodies[index].phaseCalls) {
+    const calledLabels = new Set<string>();
+    for (const call of body.phaseCalls) {
       if (call.label !== null && !declaredLabels.has(call.label)) {
         failures.push(
           `${call.file}:${call.line}: semantic phase is not declared by its test (${plan.name}): ${call.label}`,
+        );
+      }
+      if (call.label !== null) calledLabels.add(call.label);
+    }
+    for (const label of plan.phases.slice(1)) {
+      if (!calledLabels.has(label)) {
+        failures.push(
+          `${body.file}:${body.line}: semantic phase is never entered by its test (${plan.name}): ${label}`,
         );
       }
     }
@@ -312,8 +326,43 @@ export function validateCollectedSemanticPhaseModule(
     }
   }
   const uniquePlans = new Map(phasePlans.map((plan) => [JSON.stringify(plan), plan]));
-  if (uniquePlans.size > 1 && scopedPhasePlans.length === moduleTests) {
-    failures.push(...validateTestScopedPhaseCalls(scopedPhasePlans, source.testPhaseBodies));
+  if (moduleTests > 1 && scopedPhasePlans.length === moduleTests) {
+    if (uniquePlans.size === 1) {
+      const sharedPlan = [...uniquePlans.values()][0] as string[];
+      const sourcePairs = source.testPhaseBodies.flatMap((body, index) =>
+        body.skipped
+          ? []
+          : [
+              {
+                body,
+                plan: {
+                  name:
+                    source.testPhaseBodies.length === moduleTests
+                      ? (collectedModule.tests[index]?.fullName ??
+                        `source test at line ${body.line}`)
+                      : `source test at line ${body.line}`,
+                  phases: sharedPlan,
+                },
+              },
+            ],
+      );
+      failures.push(
+        ...validateTestScopedPhaseCalls(
+          sourcePairs.map(({ plan }) => plan),
+          sourcePairs.map(({ body }) => body),
+        ),
+      );
+    } else if (source.testPhaseBodies.length === moduleTests) {
+      const sourcePairs = source.testPhaseBodies.flatMap((body, index) =>
+        body.skipped ? [] : [{ body, plan: scopedPhasePlans[index] as ScopedPhasePlan }],
+      );
+      failures.push(
+        ...validateTestScopedPhaseCalls(
+          sourcePairs.map(({ plan }) => plan),
+          sourcePairs.map(({ body }) => body),
+        ),
+      );
+    }
   }
   for (const phasePlan of uniquePlans.values()) {
     for (const label of phasePlan.slice(1)) {

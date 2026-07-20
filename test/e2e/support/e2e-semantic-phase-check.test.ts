@@ -68,8 +68,100 @@ describe("semantic E2E phase checker", () => {
 
     expect(failures).toEqual([
       "test/e2e/live/example.test.ts:12: semantic phase is not declared by its test (GitHub download): download with curl",
+      "test/e2e/live/example.test.ts:10: semantic phase is never entered by its test (GitHub download): download with GitHub",
       "test/e2e/live/example.test.ts:22: semantic phase is not declared by its test (curl fallback): download with GitHub",
+      "test/e2e/live/example.test.ts:20: semantic phase is never entered by its test (curl fallback): download with curl",
     ]);
+  });
+
+  test("rejects a same-plan sibling that omits its final phase", () => {
+    const phases = ["prepare shared fixture", "verify shared fixture"] as const;
+    const failures = validateCollectedSemanticPhaseModule({
+      relativeModuleId: "test/e2e/live/same-plan-siblings.test.ts",
+      errors: [],
+      tests: [
+        { fullName: "complete sibling", phases },
+        { fullName: "incomplete sibling", phases },
+      ],
+      source: {
+        importsDirectTest: false,
+        importsSharedTest: true,
+        phaseCalls: [
+          {
+            file: "test/e2e/live/same-plan-siblings.test.ts",
+            line: 12,
+            label: "verify shared fixture",
+          },
+        ],
+        testPhaseBodies: [
+          {
+            file: "test/e2e/live/same-plan-siblings.test.ts",
+            line: 10,
+            phaseCalls: [
+              {
+                file: "test/e2e/live/same-plan-siblings.test.ts",
+                line: 12,
+                label: "verify shared fixture",
+              },
+            ],
+          },
+          {
+            file: "test/e2e/live/same-plan-siblings.test.ts",
+            line: 20,
+            phaseCalls: [],
+          },
+        ],
+      },
+    });
+
+    expect(failures).toEqual([
+      "test/e2e/live/same-plan-siblings.test.ts:20: semantic phase is never entered by its test (incomplete sibling): verify shared fixture",
+    ]);
+  });
+
+  test("validates expanded same-plan registrations and ignores unconditional skips", () => {
+    const phases = ["prepare shared fixture", "verify shared fixture"] as const;
+    const failures = validateCollectedSemanticPhaseModule({
+      relativeModuleId: "test/e2e/live/expanded-same-plan.test.ts",
+      errors: [],
+      tests: [
+        { fullName: "skipped case", phases },
+        { fullName: "expanded case one", phases },
+        { fullName: "expanded case two", phases },
+      ],
+      source: {
+        importsDirectTest: false,
+        importsSharedTest: true,
+        phaseCalls: [
+          {
+            file: "test/e2e/live/expanded-same-plan.test.ts",
+            line: 22,
+            label: "verify shared fixture",
+          },
+        ],
+        testPhaseBodies: [
+          {
+            file: "test/e2e/live/expanded-same-plan.test.ts",
+            line: 10,
+            phaseCalls: [],
+            skipped: true,
+          },
+          {
+            file: "test/e2e/live/expanded-same-plan.test.ts",
+            line: 20,
+            phaseCalls: [
+              {
+                file: "test/e2e/live/expanded-same-plan.test.ts",
+                line: 22,
+                label: "verify shared fixture",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(failures).toEqual([]);
   });
 
   test("accepts transitions declared by their own tests", () => {
