@@ -455,7 +455,7 @@ describe("native PR E2E required job", () => {
       expect(sleepCalls[0]).toBeLessThanOrEqual(100);
     });
 
-    it("exhausts retries and preserves the original error", async () => {
+    it("exhausts retries and preserves the first error as cause", async () => {
       let calls = 0;
       const error = await retryableGithubRead(
         "test-op",
@@ -474,7 +474,9 @@ describe("native PR E2E required job", () => {
       expect(calls).toBe(3);
       expect(error).toBeInstanceOf(TypeError);
       expect((error as TypeError).message).toBe("fetch failed attempt 3");
-      expect((error as Error & { cause?: unknown }).cause).toBeInstanceOf(TypeError);
+      const cause = (error as Error & { cause?: unknown }).cause;
+      expect(cause).toBeInstanceOf(TypeError);
+      expect((cause as TypeError).message).toBe("fetch failed attempt 1");
     });
 
     it("does not retry non-retryable HTTP responses", async () => {

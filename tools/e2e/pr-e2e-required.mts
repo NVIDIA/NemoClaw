@@ -187,17 +187,19 @@ export async function retryableGithubRead<T>(
   const sleep =
     options?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
+  let firstError: unknown;
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (error: unknown) {
       if (!isRetryableError(error) || attempt === maxAttempts) {
-        if (attempt > 1 && error instanceof Error && lastError instanceof Error) {
-          (error as Error & { cause?: unknown }).cause = lastError;
+        if (attempt > 1 && error instanceof Error && firstError instanceof Error) {
+          (error as Error & { cause?: unknown }).cause = firstError;
         }
         throw error;
       }
+      firstError ??= error;
       lastError = error;
       const errorClass = error instanceof TypeError ? "network" : "http";
       console.log(`E2E / PR Gate [${operation}] attempt ${attempt}/${maxAttempts}: ${errorClass}`);
