@@ -36,6 +36,13 @@ readonly TOOLKIT_VERSION="1.19.1"
 readonly STATION_PACKAGE_ARCH="arm64"
 readonly FACTORY_DKMS_VERSION="3.0.11-1ubuntu13"
 readonly TARGET_DKMS_VERSION="1:3.4.0-1ubuntu1"
+# NemoClaw DGX Station maintainers own this allowlist. The qualified tuple below
+# binds each retained revision to the complete generic-Ubuntu package contract.
+# Update both only after requalification; remove an entry when runtime
+# validation no longer passes. Any PACKAGE_SPECS change invalidates retention.
+readonly -a RETAINED_DKMS_VERSIONS=(
+  "1:3.4.1-1ubuntu1"
+)
 # Keep this as a plain Ubuntu image: NVIDIA Container Toolkit injects the host
 # driver utility when CDI or --gpus is requested. This intentionally exercises
 # the documented runtime contract instead of relying on a CUDA image payload:
@@ -48,9 +55,26 @@ DOCKER_CONTAINER_BASELINE=""
 DOCKER_CONTAINER_BASELINE_TOTAL=0
 DOCKER_QUERY_OUTPUT=""
 DOCKER_QUERY_USES_SUDO=0
+readonly PACKAGEKIT_UNIT="packagekit.service"
+PACKAGEKIT_RUNTIME_MASK_OWNED=0
+PACKAGEKIT_WAS_ACTIVE=0
 
 readonly -a PACKAGE_SPECS=(
   "dkms=${TARGET_DKMS_VERSION}"
+  "nvidia-driver-pinning-610=610-2ubuntu1"
+  "nvidia-driver-open=610.43.02-1ubuntu1"
+  "containerd.io=2.2.6-1~ubuntu.24.04~noble"
+  "docker-buildx-plugin=0.35.0-1~ubuntu.24.04~noble"
+  "docker-ce=5:29.6.1-1~ubuntu.24.04~noble"
+  "docker-ce-cli=5:29.6.1-1~ubuntu.24.04~noble"
+  "libnvidia-container-tools=1.19.1-1"
+  "libnvidia-container1=1.19.1-1"
+  "nvidia-container-toolkit=1.19.1-1"
+  "nvidia-container-toolkit-base=1.19.1-1"
+)
+
+readonly -a RETAINED_DKMS_QUALIFIED_PACKAGE_SPECS=(
+  "dkms=1:3.4.0-1ubuntu1"
   "nvidia-driver-pinning-610=610-2ubuntu1"
   "nvidia-driver-open=610.43.02-1ubuntu1"
   "containerd.io=2.2.6-1~ubuntu.24.04~noble"
@@ -599,6 +623,23 @@ package_is_exact() {
   [[ "$(package_state "$1")" == "exact" ]]
 }
 
+retained_dkms_policy_is_current() {
+  local index
+  ((${#PACKAGE_SPECS[@]} == ${#RETAINED_DKMS_QUALIFIED_PACKAGE_SPECS[@]})) || return 1
+  for index in "${!PACKAGE_SPECS[@]}"; do
+    [[ "${PACKAGE_SPECS[$index]}" == "${RETAINED_DKMS_QUALIFIED_PACKAGE_SPECS[$index]}" ]] || return 1
+  done
+}
+
+dkms_version_is_retained() {
+  local actual=$1 retained
+  retained_dkms_policy_is_current || return 1
+  for retained in "${RETAINED_DKMS_VERSIONS[@]}"; do
+    [[ "$actual" == "$retained" ]] && return 0
+  done
+  return 1
+}
+
 package_state() {
   local spec=$1
   local name expected record query_status status architecture actual extra
@@ -631,11 +672,30 @@ package_state() {
     printf 'wrong-architecture\n'
   elif [[ "$actual" == "$expected" ]]; then
     printf 'exact\n'
+  elif [[ "$name" == "dkms" && "$expected" == "$TARGET_DKMS_VERSION" ]] && dkms_version_is_retained "$actual"; then
+    printf 'retained-compatible\n'
   elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" && "$expected" == "$TARGET_DKMS_VERSION" ]]; then
     printf 'approved-transition\n'
   else
     printf 'mismatch\n'
   fi
+}
+
+warn_retained_package_version() {
+  local spec=$1 state name expected actual
+  state="$(package_state "$spec")"
+  [[ "$state" == "retained-compatible" ]] || return 0
+  name="$(package_name "$spec")"
+  expected="$(package_expected_version "$spec")"
+  actual="$(installed_version "$name")"
+  warn "package=${name} status=retained_compatible actual=${actual} validated=${expected} decision=retain"
+}
+
+warn_retained_package_versions() {
+  local spec
+  for spec in "${PACKAGE_SPECS[@]}"; do
+    warn_retained_package_version "$spec"
+  done
 }
 
 assert_no_package_mismatches() {
@@ -645,7 +705,7 @@ assert_no_package_mismatches() {
     name="$(package_name "$spec")"
     expected="$(package_expected_version "$spec")"
     case "$state" in
-      exact | missing) ;;
+      exact | retained-compatible | missing) ;;
       approved-transition)
         actual="$(installed_version "$name")"
         info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
@@ -666,13 +726,19 @@ assert_no_package_mismatches() {
     esac
   done
   ((rejected == 0)) \
-    || fatal "Station prerequisite package state is unhealthy or differs from the validated pins; repair dpkg status or architecture issues before retrying"
+    || fatal "Station prerequisite package state is unhealthy or differs from the validated pins, retained-compatible versions, or approved factory transition; repair dpkg status or architecture issues before retrying"
 }
 
-all_packages_exact() {
+package_is_ready() {
+  local state
+  state="$(package_state "$1")"
+  [[ "$state" == "exact" || "$state" == "retained-compatible" ]]
+}
+
+all_packages_ready() {
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || return 1
+    package_is_ready "$spec" || return 1
   done
   return 0
 }
@@ -825,8 +891,14 @@ package_manager_lock_inventory() {
 }
 
 check_package_managers_idle() {
-  local phase=${1:-Station preflight} active locks
-  active="$(ps -eo pid=,comm= | awk '$2 ~ /^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|packagekitd|unattended-upgr|unattended-upgrade)$/ {print}')"
+  local phase=${1:-Station preflight} active locks process_pattern
+  process_pattern='^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|unattended-upgr|unattended-upgrade)$'
+  # Ubuntu keeps packagekitd resident after APT refreshes. Generic apply mode
+  # quiesces it separately before the repository/package critical section.
+  if [[ "$STATION_HOST_PROFILE" != "generic-ubuntu" ]]; then
+    process_pattern='^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|packagekitd|unattended-upgr|unattended-upgrade)$'
+  fi
+  active="$(ps -eo pid=,comm= | awk -v pattern="$process_pattern" '$2 ~ pattern {print}')"
   [[ -z "$active" ]] || fatal "A package-manager process is active during ${phase}: ${active}"
   if [[ "$STATION_HOST_PROFILE" == "generic-ubuntu" ]]; then
     locks="$(package_manager_lock_inventory)" \
@@ -834,6 +906,128 @@ check_package_managers_idle() {
     [[ -z "$locks" ]] || fatal "An APT or dpkg lock is active during ${phase}: ${locks}"
   fi
   info "package_manager=idle phase=${phase// /_}"
+}
+
+packagekit_unit_property() {
+  local property=$1
+  systemctl show "$PACKAGEKIT_UNIT" -p "$property" --value 2>/dev/null
+}
+
+restore_packagekit_after_transaction() {
+  local active_state restored=0
+  if ((PACKAGEKIT_RUNTIME_MASK_OWNED == 1)); then
+    if ! sudo systemctl unmask --runtime "$PACKAGEKIT_UNIT"; then
+      warn "Could not remove NemoClaw's runtime-only PackageKit mask"
+      return 1
+    fi
+    PACKAGEKIT_RUNTIME_MASK_OWNED=0
+    restored=1
+  fi
+
+  if ((PACKAGEKIT_WAS_ACTIVE == 1)); then
+    active_state="$(packagekit_unit_property ActiveState)" || {
+      warn "Could not inspect PackageKit while restoring its prior runtime state"
+      return 1
+    }
+    if [[ "$active_state" != "active" ]]; then
+      if ! sudo systemctl start "$PACKAGEKIT_UNIT"; then
+        warn "Could not restore the previously active PackageKit service"
+        return 1
+      fi
+    fi
+    PACKAGEKIT_WAS_ACTIVE=0
+    restored=1
+  fi
+  ((restored == 0)) || info "packagekit=runtime_state_restored"
+}
+
+quiesce_packagekit_for_transaction() {
+  local load_state unit_file_state active_state transaction_output transaction_type transaction_count transaction_paths
+  local attempt
+
+  [[ "$STATION_HOST_PROFILE" == "generic-ubuntu" && "$MODE" == "--apply" ]] || return 0
+  ((PACKAGEKIT_RUNTIME_MASK_OWNED == 0)) || fatal "PackageKit is already under NemoClaw transaction control"
+
+  load_state="$(packagekit_unit_property LoadState)" \
+    || fatal "Unable to inspect the PackageKit service before Station package preparation"
+  if [[ "$load_state" == "not-found" ]]; then
+    info "packagekit=not_installed"
+    return 0
+  fi
+  [[ "$load_state" == "loaded" ]] \
+    || fatal "PackageKit service has an unexpected load state: ${load_state}"
+
+  unit_file_state="$(packagekit_unit_property UnitFileState)" \
+    || fatal "Unable to inspect the PackageKit unit-file state"
+  active_state="$(packagekit_unit_property ActiveState)" \
+    || fatal "Unable to inspect the PackageKit runtime state"
+  case "$unit_file_state" in
+    masked | masked-runtime)
+      [[ "$active_state" == "inactive" ]] \
+        || fatal "PackageKit is ${active_state} despite its ${unit_file_state} unit state"
+      info "packagekit=already_quiesced state=${unit_file_state}"
+      return 0
+      ;;
+  esac
+
+  # A runtime-only mask prevents D-Bus from reactivating PackageKit after its
+  # idle daemon exits. It does not stop or cancel an existing transaction.
+  PACKAGEKIT_RUNTIME_MASK_OWNED=1
+  sudo systemctl mask --runtime "$PACKAGEKIT_UNIT" \
+    || fatal "Could not establish the runtime-only PackageKit exclusion boundary"
+  unit_file_state="$(packagekit_unit_property UnitFileState)" \
+    || fatal "Unable to verify the runtime-only PackageKit mask"
+  [[ "$unit_file_state" == "masked-runtime" ]] \
+    || fatal "PackageKit runtime mask did not take effect: ${unit_file_state}"
+
+  active_state="$(packagekit_unit_property ActiveState)" \
+    || fatal "Unable to inspect PackageKit after establishing its runtime mask"
+  case "$active_state" in
+    inactive) ;;
+    active)
+      PACKAGEKIT_WAS_ACTIVE=1
+      require_command busctl
+      if ! transaction_output="$(busctl --system call \
+        org.freedesktop.PackageKit /org/freedesktop/PackageKit \
+        org.freedesktop.PackageKit GetTransactionList 2>/dev/null)"; then
+        active_state="$(packagekit_unit_property ActiveState)" \
+          || fatal "Unable to inspect PackageKit after its transaction query failed"
+        [[ "$active_state" == "inactive" ]] \
+          || fatal "Unable to query active PackageKit transactions"
+      else
+        read -r transaction_type transaction_count transaction_paths <<<"$transaction_output"
+        [[ "$transaction_type" == "ao" && "$transaction_count" =~ ^[0-9]+$ ]] \
+          || fatal "PackageKit returned malformed transaction state: ${transaction_output}"
+        ((transaction_count == 0)) \
+          || fatal "An active PackageKit transaction blocks Station package preparation: ${transaction_output}"
+        [[ -z "$transaction_paths" ]] \
+          || fatal "PackageKit returned inconsistent empty transaction state: ${transaction_output}"
+
+        if ! busctl --system call \
+          org.freedesktop.PackageKit /org/freedesktop/PackageKit \
+          org.freedesktop.PackageKit SuggestDaemonQuit >/dev/null 2>&1; then
+          active_state="$(packagekit_unit_property ActiveState)" \
+            || fatal "Unable to inspect PackageKit after its idle-quit request failed"
+          [[ "$active_state" == "inactive" ]] \
+            || fatal "Could not ask the idle PackageKit daemon to exit"
+        fi
+      fi
+
+      for ((attempt = 0; attempt < 50; attempt++)); do
+        active_state="$(packagekit_unit_property ActiveState)" \
+          || fatal "Unable to verify PackageKit quiescence"
+        [[ "$active_state" != "inactive" ]] || break
+        [[ "$active_state" == "active" || "$active_state" == "deactivating" ]] \
+          || fatal "PackageKit entered an unexpected state while quiescing: ${active_state}"
+        sleep 0.1
+      done
+      [[ "$active_state" == "inactive" ]] \
+        || fatal "PackageKit did not become inactive before the Station package critical section"
+      ;;
+    *) fatal "PackageKit is not in a safe state for Station package preparation: ${active_state}" ;;
+  esac
+
+  info "packagekit=quiesced scope=station_package_transaction mask=runtime_only"
 }
 
 assert_package_transaction_ready() {
@@ -1002,7 +1196,7 @@ check_failed_units() {
     return 0
   fi
   for unit in "${units[@]}"; do
-    if is_driver_transitional_unit "$unit" && all_packages_exact && ! driver_loaded_exact; then
+    if is_driver_transitional_unit "$unit" && all_packages_ready && ! driver_loaded_exact; then
       warn "driver unit failure allowed only until post-reboot verification: ${unit}"
     elif is_preparation_critical_unit "$unit"; then
       warn "failed preparation-critical unit: ${unit}"
@@ -1159,6 +1353,9 @@ print_package_status() {
       approved-transition)
         actual="$(installed_version "$name")"
         info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
+        ;;
+      retained-compatible)
+        warn_retained_package_version "$spec"
         ;;
       mismatch)
         actual="$(installed_version "$name")"
@@ -1396,7 +1593,7 @@ collect_package_transaction_specs() {
     state="$(package_state "$spec")"
     case "$state" in
       missing | approved-transition) PACKAGE_TRANSACTION_SPECS+=("$spec") ;;
-      exact) ;;
+      exact | retained-compatible) ;;
       *) fatal "Package transaction contains an unapproved prerequisite state: ${spec} (${state})" ;;
     esac
   done
@@ -1544,6 +1741,19 @@ cleanup_apt_transaction_guard() {
     || warn "could not remove APT transaction guard directory: ${guard_dir}"
 }
 
+cleanup_station_prepare() {
+  local rc=$?
+  trap - EXIT
+  cleanup_apt_transaction_guard || true
+  if ! restore_packagekit_after_transaction; then
+    warn "PackageKit runtime state requires manual verification after interrupted Station preparation"
+    if ((rc == 0)); then
+      rc=1
+    fi
+  fi
+  exit "$rc"
+}
+
 create_apt_transaction_guard() {
   local spec state name expected allowed_old native_arch targets="" hook_path targets_path
   native_arch="$(sudo dpkg --print-architecture)"
@@ -1655,6 +1865,7 @@ simulate_install() {
 }
 
 install_packages() {
+  quiesce_packagekit_for_transaction
   assert_package_transaction_ready "Station repository configuration"
   configure_repositories
   assert_package_transaction_ready "APT metadata refresh"
@@ -1678,9 +1889,11 @@ install_packages() {
 
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || fatal "Installed package does not match ${spec}"
+    package_is_ready "$spec" || fatal "Installed package is outside the accepted state for ${spec}"
   done
-  info "pinned_packages=installed"
+  restore_packagekit_after_transaction \
+    || fatal "Could not restore PackageKit after Station package preparation"
+  info "prerequisite_packages=ready"
 }
 
 ensure_docker_group() {
@@ -2010,7 +2223,7 @@ verify_dgx_os_runtime_user() {
 verify_apply_state() {
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || fatal "Package verification failed: ${spec}"
+    package_is_ready "$spec" || fatal "Package verification failed: ${spec}"
   done
   verify_gpu
   systemctl is-active --quiet nvidia-persistenced.service || fatal "nvidia-persistenced.service is not active"
@@ -2078,7 +2291,7 @@ verify_gpu() {
 verify_host() {
   local spec user_name=${SUDO_USER:-$USER}
   for spec in "${PACKAGE_SPECS[@]}"; do
-    package_is_exact "$spec" || fatal "Package verification failed: ${spec}"
+    package_is_ready "$spec" || fatal "Package verification failed: ${spec}"
   done
   verify_gpu
   systemctl is-active --quiet nvidia-persistenced.service || fatal "nvidia-persistenced.service is not active"
@@ -2105,14 +2318,14 @@ run_check() {
   fi
   print_package_status
   assert_no_package_mismatches
-  if all_packages_exact; then
+  if all_packages_ready; then
     if install_boot_marker_matches_current_boot; then
       warn "Package installation completed in the current boot; reboot is required"
       info "CHECK_RESULT=REBOOT_REQUIRED"
     elif driver_loaded_exact; then
       info "CHECK_RESULT=PACKAGES_AND_DRIVER_PRESENT"
     else
-      warn "Exact packages are installed but driver ${DRIVER_VERSION} is not loaded; reboot is required"
+      warn "Accepted prerequisite packages are installed but driver ${DRIVER_VERSION} is not loaded; reboot is required"
       info "CHECK_RESULT=REBOOT_REQUIRED"
     fi
   else
@@ -2154,16 +2367,17 @@ run_apply() {
   require_command grep
   require_command readlink
   require_command sha256sum
+  warn_retained_package_versions
 
   if reboot_required; then
-    if all_packages_exact && ! driver_loaded_exact; then
+    if all_packages_ready && ! driver_loaded_exact; then
       warn "A reboot is required before runtime setup can continue"
       exit_reboot_required
     fi
     fatal "An unrelated reboot is already pending"
   fi
 
-  if ! all_packages_exact; then
+  if ! all_packages_ready; then
     assert_no_package_mismatches
     install_packages
     ensure_docker_group
@@ -2180,7 +2394,7 @@ run_apply() {
   fi
 
   driver_loaded_exact || {
-    warn "Pinned packages are installed but driver ${DRIVER_VERSION} is not loaded"
+    warn "Accepted prerequisite packages are installed but driver ${DRIVER_VERSION} is not loaded"
     exit_reboot_required
   }
 
@@ -2206,7 +2420,8 @@ run_verify() {
     verify_dgx_os_runtime_user
     return 0
   fi
-  all_packages_exact || fatal "Pinned prerequisite packages are incomplete; run --apply"
+  warn_retained_package_versions
+  all_packages_ready || fatal "Accepted prerequisite packages are incomplete; run --apply"
   driver_loaded_exact || fatal "Pinned driver is not loaded; reboot, then run --apply"
   verify_host
 }
@@ -2226,7 +2441,7 @@ main() {
     info "version=${SCRIPT_VERSION} mode=${MODE} log=disabled_read_only"
   fi
   trap 'on_error "$LINENO"' ERR
-  trap 'cleanup_apt_transaction_guard' EXIT
+  trap 'cleanup_station_prepare' EXIT
   case "$MODE" in
     --check) run_check ;;
     --apply) run_apply ;;

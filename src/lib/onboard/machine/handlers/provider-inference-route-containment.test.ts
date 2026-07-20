@@ -63,11 +63,17 @@ function createDeps() {
     surfaceReady: vi.fn(() => true),
     reconcileRouter: vi.fn(async () => undefined),
     reupsertRoutedProvider: vi.fn(
-      (_provider: string, endpointUrl: string | null, _credentialEnv: string | null) => ({
+      (
+        _gatewayName: string,
+        _provider: string,
+        endpointUrl: string | null,
+        _credentialEnv: string | null,
+      ) => ({
         ok: true as const,
         endpointUrl: endpointUrl ?? "http://host.openshell.internal:4000/v1",
       }),
     ),
+    reserveRoute: vi.fn(() => true),
     updateSandbox: vi.fn(),
     log: vi.fn(),
     error: vi.fn(),
@@ -105,7 +111,7 @@ function createDeps() {
     isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
     reconcileModelRouter: calls.reconcileRouter,
     reupsertRoutedProvider: calls.reupsertRoutedProvider,
-    reserveSandboxInferenceRoute: vi.fn(() => true),
+    reserveSandboxInferenceRoute: calls.reserveRoute,
     registryUpdateSandbox: calls.updateSandbox,
     promptValidatedSandboxName: vi.fn(async () => "target-sandbox"),
     assessHost: () => ({ cpus: 8 }),
@@ -253,18 +259,65 @@ describe("provider route containment", () => {
     expect(calls.error).not.toHaveBeenCalled();
   });
 
+  it("binds fresh onboard provenance to the exact selected endpoint", async () => {
+    const { calls, deps } = createDeps();
+    calls.setupNim.mockResolvedValue({
+      ...fallbackSelection,
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: "https://selected.example.test/v1",
+      endpointSource: "onboard",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    const options = resumeOptions(deps, createSession());
+
+    await handleProviderInferenceState({
+      ...options,
+      resume: false,
+      fresh: true,
+      sandboxName: null,
+    });
+
+    expect(calls.setupInference.mock.calls[0]?.at(-1)).toMatchObject({
+      endpointSource: "onboard",
+      onboardEndpointUrl: "https://selected.example.test/v1",
+    });
+  });
+
+  it("drops onboard trust when a resumed endpoint differs from its canonical endpoint", async () => {
+    const session = createSession({
+      provider: "hermes-provider",
+      model: "custom/model",
+      endpointUrl: "https://current.example.test/v1",
+      credentialEnv: "NOUS_API_KEY",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { calls, deps } = createDeps();
+    const options = resumeOptions(deps, session);
+    options.initial.endpointSource = "onboard";
+    options.initial.onboardEndpointUrl = "https://persisted.example.test/v1";
+
+    const result = await handleProviderInferenceState(options);
+
+    const inferenceOptions = calls.setupInference.mock.calls[0]?.at(-1);
+    expect(inferenceOptions).toMatchObject({ endpointSource: null });
+    expect(inferenceOptions).not.toHaveProperty("onboardEndpointUrl");
+    expect(result).toMatchObject({ endpointSource: null, onboardEndpointUrl: null });
+  });
+
   it("allows routed-provider repair across a valid peer-route difference (#6315)", async () => {
     const session = createSession({ provider: "nvidia-router", model: "router/model" });
     session.steps.provider_selection.status = "complete";
     const { calls, deps } = createDeps();
     reportDifferentRoute(calls, "nvidia-router", "router/model");
 
-    await expect(handleProviderInferenceState(resumeOptions(deps, session))).resolves.toMatchObject(
-      {
-        provider: "nvidia-router",
-        model: "router/model",
-      },
-    );
+    const options = resumeOptions(deps, session);
+    options.initial.endpointSource = "inference-set";
+    await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
+      provider: "nvidia-router",
+      model: "router/model",
+    });
 
     expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
@@ -280,6 +333,16 @@ describe("provider route containment", () => {
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
     expect(calls.surfaceReady).toHaveBeenCalledOnce();
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
+    expect(calls.reserveRoute).toHaveBeenCalledWith("target-sandbox", {
+      provider: "nvidia-router",
+      model: "router/model",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      endpointSource: "inference-set",
+      credentialEnv: null,
+      preferredInferenceApi: null,
+      gatewayName: "nemoclaw-9090",
+      reservationSessionId: session.sessionId,
+    });
     expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
   });
@@ -325,9 +388,12 @@ describe("provider route containment", () => {
     const { calls, deps } = createDeps();
     reportDifferentRoute(calls, "compatible-endpoint", "custom/model");
 
-    await expect(
-      handleProviderInferenceState(resumeOptions(deps, session, ["telegram"])),
-    ).resolves.toMatchObject({ provider: "compatible-endpoint", model: "custom/model" });
+    const options = resumeOptions(deps, session, ["telegram"]);
+    options.initial.endpointSource = "inference-set";
+    await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+    });
 
     expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
@@ -341,6 +407,10 @@ describe("provider route containment", () => {
       },
     });
     expect(calls.setupInference).toHaveBeenCalledOnce();
+    expect(calls.setupInference.mock.calls[0]?.at(-1)).toMatchObject({
+      endpointSource: "inference-set",
+    });
+    expect(calls.setupInference.mock.calls[0]?.at(-1)).not.toHaveProperty("onboardEndpointUrl");
     expect(calls.surfaceReady).toHaveBeenCalledOnce();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(calls.error).not.toHaveBeenCalled();
