@@ -347,6 +347,7 @@ describe("E2E fixture primitives", () => {
       await artifacts.ensureRoot();
       const secret = "spawn-secret-value";
       const controller = new AbortController();
+      const activities: string[] = [];
       let abortAdds = 0;
       let abortRemoves = 0;
       const addEventListener = controller.signal.addEventListener.bind(controller.signal);
@@ -379,6 +380,10 @@ describe("E2E fixture primitives", () => {
             text,
           ),
         signal: controller.signal,
+        onActivity: (label) => {
+          activities.push(`start ${label}`);
+          return () => activities.push(`finish ${label}`);
+        },
       });
 
       let thrown: unknown;
@@ -405,6 +410,7 @@ describe("E2E fixture primitives", () => {
       expect(message).not.toContain(secret);
       expect(abortAdds).toBe(1);
       expect(abortRemoves).toBe(1);
+      expect(activities).toEqual(["start command: spawn-error", "finish command: spawn-error"]);
       const spawnArtifact = fs.readFileSync(
         artifacts.pathFor("shell/spawn-error.result.json"),
         "utf8",

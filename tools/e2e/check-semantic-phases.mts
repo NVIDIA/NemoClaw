@@ -42,6 +42,7 @@ export interface ScopedPhasePlan {
 }
 
 export interface SemanticPhaseSourceGraph {
+  forwardedTestModules?: string[];
   importsDirectTest: boolean;
   importsSharedTest: boolean;
   phaseCalls: PhaseCall[];
@@ -59,6 +60,9 @@ export interface CollectedSemanticPhaseModule {
 }
 
 const LIVE_ROOT = path.join(REPO_ROOT, "test", "e2e", "live");
+const LIVE_TEST_FORWARDERS = new Map([
+  ["test/e2e/live/bootstrap-install-smoke.test.ts", "test/e2e/live/launchable-smoke.test.ts"],
+]);
 
 function resolveLiveImport(fromFile: string, specifier: string): string | null {
   if (!specifier.startsWith(".")) return null;
@@ -160,6 +164,21 @@ function phaseCallFromNode(
   };
 }
 
+function forwardedLiveTestFromNode(node: ts.Node, file: string): string | null {
+  const specifier = ts.isCallExpression(node) ? node.arguments[0] : undefined;
+  if (
+    !ts.isCallExpression(node) ||
+    node.expression.kind !== ts.SyntaxKind.ImportKeyword ||
+    !specifier ||
+    !ts.isStringLiteral(specifier)
+  ) {
+    return null;
+  }
+  const resolved = resolveLiveImport(file, specifier.text);
+  if (!resolved?.endsWith(".test.ts")) return null;
+  return path.relative(REPO_ROOT, resolved).split(path.sep).join("/");
+}
+
 function collectTestPhaseBodies(file: string, sourceFile: ts.SourceFile): TestPhaseBody[] {
   const bodies: TestPhaseBody[] = [];
 
@@ -231,6 +250,7 @@ export function validateTestScopedPhaseCalls(
 
 export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph {
   const visited = new Set<string>();
+  const forwardedTestModules: string[] = [];
   const phaseCalls: PhaseCall[] = [];
   let testPhaseBodies: TestPhaseBody[] = [];
   let importsDirectTest = false;
@@ -260,6 +280,10 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
     }
 
     function inspect(node: ts.Node): void {
+      if (file === entryFile) {
+        const forwardedTest = forwardedLiveTestFromNode(node, file);
+        if (forwardedTest) forwardedTestModules.push(forwardedTest);
+      }
       const call = phaseCallFromNode(node, file, sourceFile);
       if (call) phaseCalls.push(call);
       ts.forEachChild(node, inspect);
@@ -268,7 +292,13 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
   }
 
   visit(entryFile);
-  return { importsDirectTest, importsSharedTest, phaseCalls, testPhaseBodies };
+  return {
+    forwardedTestModules,
+    importsDirectTest,
+    importsSharedTest,
+    phaseCalls,
+    testPhaseBodies,
+  };
 }
 
 export function validateCollectedSemanticPhaseModule(
@@ -280,6 +310,22 @@ export function validateCollectedSemanticPhaseModule(
   const phasePlans: string[][] = [];
   const scopedPhasePlans: ScopedPhasePlan[] = [];
   const moduleTests = collectedModule.tests.length;
+  const forwardingTarget = LIVE_TEST_FORWARDERS.get(collectedModule.relativeModuleId);
+
+  if (forwardingTarget) {
+    if (moduleTests !== 0) {
+      failures.push(
+        `${collectedModule.relativeModuleId}: forwarding module must collect zero tests`,
+      );
+    }
+    const forwardedTestModules = collectedModule.source.forwardedTestModules ?? [];
+    if (forwardedTestModules.length !== 1 || forwardedTestModules[0] !== forwardingTarget) {
+      failures.push(
+        `${collectedModule.relativeModuleId}: forwarding module must import exactly ${forwardingTarget}`,
+      );
+    }
+    return failures;
+  }
 
   for (const test of collectedModule.tests) {
     const phasePlan = test.phases;

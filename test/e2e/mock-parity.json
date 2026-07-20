@@ -33,6 +33,29 @@
       ]
     },
     {
+      "live": "test/e2e/live/bootstrap-install-smoke.test.ts",
+      "fast": [
+        "test/brev-launchable-ci-cpu-checksum.test.ts",
+        "test/e2e/support/e2e-live-target-gating.test.ts",
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
+        "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
+        "test/installer-hash-check.test.ts",
+        "test/runner.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/launchable-smoke.test.ts",
+      "fast": [
+        "test/brev-launchable-ci-cpu-checksum.test.ts",
+        "test/e2e/support/e2e-live-target-gating.test.ts",
+        "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
+        "test/installer-hash-check.test.ts",
+        "test/runner.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
@@ -530,14 +553,6 @@
     },
     {
       "live": "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts",
-      "fast": [
-        "test/e2e/support/e2e-progress-fixture.test.ts",
-        "test/e2e/support/e2e-progress-outcome.test.ts",
-        "test/e2e/support/e2e-semantic-phase-check.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/launchable-smoke.test.ts",
       "fast": [
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",

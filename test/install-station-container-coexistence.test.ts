@@ -111,7 +111,7 @@ check_dpkg_database_health() { :; }
 check_failed_units() { :; }
 check_agent_and_inference_conflicts() { :; }
 driver_loaded_exact() { return 0; }
-package_is_exact() { return 0; }
+package_is_ready() { return 0; }
 verify_gpu() { :; }
 systemctl() {
   case "$*" in
@@ -186,7 +186,7 @@ require_docker_mutation_quiescence "refreshing NVIDIA CDI configuration"
       name: "pending prerequisite",
       setup: `
 reboot_required() { return 0; }
-all_packages_exact() { return 0; }
+all_packages_ready() { return 0; }
 driver_loaded_exact() { return 1; }
 `,
       expectedGate: "REBOOT_HANDOFF_BLOCKED check=1",
@@ -195,7 +195,7 @@ driver_loaded_exact() { return 1; }
       name: "post-install",
       setup: `
 reboot_required() { return 1; }
-all_packages_exact() { return 1; }
+all_packages_ready() { return 1; }
 require_docker_restart_quiescence() {
   local checks
   checks="$(cat "$HOME/reboot-gate-checks" 2>/dev/null || printf '0')"
@@ -212,7 +212,7 @@ require_docker_restart_quiescence() {
       name: "same-boot marker",
       setup: `
 reboot_required() { return 1; }
-all_packages_exact() { return 0; }
+all_packages_ready() { return 0; }
 install_boot_marker_matches_current_boot() { return 0; }
 `,
       expectedGate: "REBOOT_HANDOFF_BLOCKED check=1",
@@ -221,7 +221,7 @@ install_boot_marker_matches_current_boot() { return 0; }
       name: "unloaded driver",
       setup: `
 reboot_required() { return 1; }
-all_packages_exact() { return 0; }
+all_packages_ready() { return 0; }
 install_boot_marker_matches_current_boot() { return 1; }
 driver_loaded_exact() { return 1; }
 `,
@@ -231,7 +231,7 @@ driver_loaded_exact() { return 1; }
       name: "Docker group",
       setup: `
 reboot_required() { return 1; }
-all_packages_exact() { return 0; }
+all_packages_ready() { return 0; }
 install_boot_marker_matches_current_boot() { return 1; }
 driver_loaded_exact() { return 0; }
 finish_runtime() { DOCKER_GROUP_ADDED=1; }

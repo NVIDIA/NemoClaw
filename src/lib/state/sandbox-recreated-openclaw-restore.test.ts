@@ -242,6 +242,35 @@ describe("recreated OpenClaw state restore", () => {
     expect(result.cleanupCommand).toContain("! -name 'weather'");
   });
 
+  it("uses fresh primary-model routing during an ordinary sandbox re-create (#7011)", () => {
+    const result = runRestoreScenario({
+      previousPluginInstalls: [],
+      freshPluginInstalls: [],
+      backupExtensionDirs: [],
+      backupConfig: {
+        agents: {
+          defaults: {
+            model: { primary: "inference/stale-model" },
+            thinkingDefault: "off",
+          },
+          list: [{ id: "main", default: true, model: "inference/stale-model" }],
+        },
+      },
+      freshConfig: {
+        agents: { defaults: { model: { primary: "inference/fresh-model" } } },
+      },
+    });
+
+    expectSuccessfulRestore(result);
+    expect(result.restoredConfig.agents).toEqual({
+      defaults: {
+        model: { primary: "inference/fresh-model" },
+        thinkingDefault: "off",
+      },
+      list: [{ id: "main", default: true, model: "inference/fresh-model" }],
+    });
+  });
+
   it("reconciles populated previous and fresh image-plugin provenance during config restore", () => {
     const previousWeather = imageInstall("weather", "weather-v1");
     const freshWeather = imageInstall("weather", "weather-v2");

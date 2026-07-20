@@ -312,6 +312,7 @@ describe("runtime shared gateway route containment", () => {
         provider: customRoute.provider,
         model: customRoute.model,
         canReuseRecordedRoute: false,
+        onboardEndpointUrl: null,
         getSandboxes: () => [alpha, peer],
         rewriteUrlWithDnsPinning,
       }),

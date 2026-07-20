@@ -1,32 +1,53 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../../state/registry";
 import { getSandboxDockerHealth, getSandboxDockerRuntime } from "./docker-health";
 
 function fixture({
   driver = "docker",
   psNames = "openshell-cluster-nemoclaw\nopenshell-my-assistant-12ab\nopenshell-other-aa11",
+  psAllNames = psNames,
   healthRaw = "unhealthy\n",
   pausedRaw = "false\n",
   throwOnInspect = false,
   throwOnPaused = false,
   knownSandboxes = ["my-assistant"],
+  labeledContainers,
 }: {
   driver?: string | null;
   psNames?: string;
+  psAllNames?: string;
   healthRaw?: string;
   pausedRaw?: string;
   throwOnInspect?: boolean;
   throwOnPaused?: boolean;
   knownSandboxes?: string[];
+  labeledContainers?: Array<{ name: string; status: string; running: boolean }>;
 } = {}) {
   const sandbox: Partial<SandboxEntry> = { name: "my-assistant", openshellDriver: driver };
+  const runningNames = new Set(
+    psNames
+      .split("\n")
+      .map((name) => name.trim())
+      .filter(Boolean),
+  );
   return {
     getSandbox: () => sandbox as SandboxEntry,
     listSandboxNames: () => knownSandboxes,
     dockerPsNames: () => psNames,
+    findLabeledSandboxContainers: () =>
+      labeledContainers ??
+      psAllNames
+        .split("\n")
+        .map((name) => name.trim())
+        .filter(Boolean)
+        .map((name) => ({
+          name,
+          status: runningNames.has(name) ? "Up 1 minute" : "Exited (0) 1 minute ago",
+          running: runningNames.has(name),
+        })),
     dockerInspectHealth: () => {
       if (throwOnInspect) throw new Error("docker inspect crashed");
       return healthRaw;
@@ -150,6 +171,45 @@ describe("getSandboxDockerHealth", () => {
 });
 
 describe("getSandboxDockerRuntime (#4495)", () => {
+  it("ignores matching container names without OpenShell ownership labels", () => {
+    const deps = fixture({
+      psNames: "openshell-my-assistant-live\n",
+      psAllNames: "openshell-my-assistant-live\n",
+      labeledContainers: [],
+    });
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      containerName: null,
+    });
+  });
+
+  it("prefers the live container over an exited exact-name sibling", () => {
+    const deps = fixture({
+      psNames: "openshell-my-assistant-live\n",
+      psAllNames: "openshell-my-assistant\nopenshell-my-assistant-live\n",
+      pausedRaw: "true",
+    });
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "unhealthy",
+      paused: true,
+      containerName: "openshell-my-assistant-live",
+    });
+  });
+
+  it("finds an exited container that is absent from the running-only listing (#7222)", () => {
+    const deps = fixture({
+      psNames: "openshell-cluster-nemoclaw\n",
+      psAllNames: "openshell-cluster-nemoclaw\nopenshell-my-assistant-12ab\n",
+      healthRaw: "none",
+    });
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      containerName: "openshell-my-assistant-12ab",
+    });
+  });
+
   it("reports paused=true when the resolved docker-driver container is paused", () => {
     const deps = fixture({ healthRaw: "healthy\n", pausedRaw: "true\n" });
     expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
@@ -183,12 +243,16 @@ describe("getSandboxDockerRuntime (#4495)", () => {
   });
 
   it("returns health 'none', paused false for non-docker-driver sandboxes", () => {
-    const deps = fixture({ driver: "kubernetes" });
+    const findLabeledSandboxContainers = vi.fn(() => {
+      throw new Error("Docker must not be queried for a non-Docker sandbox");
+    });
+    const deps = { ...fixture({ driver: "kubernetes" }), findLabeledSandboxContainers };
     expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
       health: "none",
       paused: false,
       containerName: null,
     });
+    expect(findLabeledSandboxContainers).not.toHaveBeenCalled();
   });
 
   it("returns health 'none', paused false when no container is found", () => {

@@ -42,6 +42,41 @@ describe("semantic E2E phase checker", () => {
     );
   });
 
+  test("accepts only the exact bootstrap forwarding alias", () => {
+    const forwardingModule = {
+      relativeModuleId: "test/e2e/live/bootstrap-install-smoke.test.ts",
+      errors: [],
+      tests: [],
+      source: {
+        importsDirectTest: false,
+        importsSharedTest: false,
+        phaseCalls: [],
+        testPhaseBodies: [],
+      },
+    };
+
+    expect(
+      validateCollectedSemanticPhaseModule({
+        ...forwardingModule,
+        source: {
+          ...forwardingModule.source,
+          forwardedTestModules: ["test/e2e/live/launchable-smoke.test.ts"],
+        },
+      }),
+    ).toEqual([]);
+    expect(
+      validateCollectedSemanticPhaseModule({
+        ...forwardingModule,
+        source: {
+          ...forwardingModule.source,
+          forwardedTestModules: ["test/e2e/live/other.test.ts"],
+        },
+      }),
+    ).toEqual([
+      "test/e2e/live/bootstrap-install-smoke.test.ts: forwarding module must import exactly test/e2e/live/launchable-smoke.test.ts",
+    ]);
+  });
+
   test("rejects phase transitions that belong to sibling tests", () => {
     const failures = validateTestScopedPhaseCalls(
       [

@@ -3584,17 +3584,17 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  launchable-smoke:
+  bootstrap-install-smoke:
     needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',launchable-smoke,') || contains(format(',{0},', inputs.targets), ',launchable-smoke,') }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',bootstrap-install-smoke,') || contains(format(',{0},', inputs.targets), ',bootstrap-install-smoke,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       E2E_JOB: "1"
-      E2E_TARGET_ID: "launchable-smoke"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/launchable-smoke
+      E2E_TARGET_ID: "bootstrap-install-smoke"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/bootstrap-install-smoke
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
+      NEMOCLAW_SANDBOX_NAME: "e2e-bootstrap"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_PROVIDER: custom
@@ -3616,15 +3616,15 @@ jobs:
         with:
           build-cli: "false"
 
-      - name: Run launchable smoke live test
+      - name: Run bootstrap install smoke live test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/launchable-smoke.test.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/bootstrap-install-smoke.test.ts
 
-      - name: Upload launchable smoke artifacts
+      - name: Upload bootstrap install smoke artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
@@ -4899,7 +4899,7 @@ jobs:
         token-rotation,
         messaging-compatible-endpoint,
         messaging-providers,
-        launchable-smoke,
+        bootstrap-install-smoke,
         double-onboard,
         jetson-nvmap-gpu,
         concurrent-gateway-ports,
