@@ -130,6 +130,7 @@ describe("e2e workflow boundary", () => {
     );
   });
 
+  // source-shape-contract: security -- Dispatch-only image-builder credentials must not gain repository-content access
   it("binds the Launchable image build to the returned run without repository-content access (#6943)", () => {
     const workflow = readWorkflow() as {
       jobs: Record<string, { steps?: Array<{ id?: string; name?: string; run?: string }> }>;

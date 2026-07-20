@@ -96,29 +96,10 @@ verify_identity() {
   [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     || die "CANDIDATE_SHA must be a lowercase full SHA"
 
-  local provision repo_sha identity
-  provision="$(host_exec 'sudo -n cat /etc/nemoclaw/provision.json')"
-  provision="$(tail -n 1 <<<"$provision")"
-  jq -e 'type == "object" and (.gitSha | type == "string")' <<<"$provision" >/dev/null \
-    || die "the baked provision metadata is missing or malformed"
-  printf '%s\n' "$provision" >"$WORK_DIR/brev-provision.json"
-
-  # HOME is expanded by the remote host shell.
-  # shellcheck disable=SC2016
-  repo_sha="$(host_exec 'set -euo pipefail
-    repo="$HOME/NemoClaw"
-    test -d "$repo/.git"
-    git -C "$repo" diff --quiet --no-ext-diff HEAD --
-    git -C "$repo" diff --cached --quiet --no-ext-diff HEAD --
-    git -C "$repo" rev-parse HEAD' | tail -n 1)"
-  [ "$repo_sha" = "$CANDIDATE_SHA" ] \
-    || die "baked NemoClaw SHA $repo_sha does not match candidate $CANDIDATE_SHA"
-  [[ "$CANDIDATE_SHA" == "$(jq -r '.gitSha' <<<"$provision")"* ]] \
-    || die "provision metadata does not identify candidate $CANDIDATE_SHA"
-
   # Metadata variables are expanded by the remote host shell. The image labels
   # are the producer contract; the disk and image API responses are independent
   # observations of what the Launchable actually booted.
+  local identity repo_sha
   # shellcheck disable=SC2016
   identity="$(host_exec 'set -euo pipefail
     metadata=http://metadata.google.internal/computeMetadata/v1
@@ -144,6 +125,18 @@ verify_identity() {
   ' <<<"$identity" >/dev/null \
     || die "workspace boot image does not match the exact staging image for $CANDIDATE_SHA"
   printf '%s\n' "$identity" >"$WORK_DIR/brev-boot-image.json"
+
+  # HOME is expanded by the remote host shell. A clean exact checkout confirms
+  # the baked repository content without depending on a second metadata format.
+  # shellcheck disable=SC2016
+  repo_sha="$(host_exec 'set -euo pipefail
+    repo="$HOME/NemoClaw"
+    test -d "$repo/.git"
+    git -C "$repo" diff --quiet --no-ext-diff HEAD --
+    git -C "$repo" diff --cached --quiet --no-ext-diff HEAD --
+    git -C "$repo" rev-parse HEAD' | tail -n 1)"
+  [ "$repo_sha" = "$CANDIDATE_SHA" ] \
+    || die "baked NemoClaw SHA $repo_sha does not match candidate $CANDIDATE_SHA"
 
   jq -n \
     --arg candidateSha "$CANDIDATE_SHA" \
@@ -235,7 +228,7 @@ cleanup() {
     timeout 60s brev delete "$INSTANCE_NAME" || true
   fi
 
-  deadline=$((SECONDS + ${BREV_DELETE_TIMEOUT_SECONDS:-600}))
+  deadline=$((SECONDS + ${BREV_DELETE_TIMEOUT_SECONDS:-1200}))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if record="$(workspace_record)"; then
       if [ -z "$record" ]; then

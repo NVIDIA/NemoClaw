@@ -233,6 +233,11 @@
     },
     {
       "file": "test/e2e/support/e2e-workflow.test.ts",
+      "test": "binds the Launchable image build to the returned run without repository-content access (#6943)",
+      "category": "security"
+    },
+    {
+      "file": "test/e2e/support/e2e-workflow.test.ts",
       "test": "rejects channels stop/start workflow-boundary drift for secret and artifact handling",
       "category": "security"
     },

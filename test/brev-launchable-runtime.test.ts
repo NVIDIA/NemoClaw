@@ -18,7 +18,6 @@ type FixtureOptions = {
   emptyWorkspacesMode?: "array" | "null";
   e2eStatus?: "failed" | "passed";
   imageLabelSha?: string;
-  provisionSha?: string;
   repoSha?: string;
   workspaceMode?: "create-failed" | "failure" | "pending" | "ready";
 };
@@ -106,18 +105,6 @@ esac
 `,
   );
   executable(
-    path.join(bin, "sudo"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-[ "\${1:-}" != -n ] || shift
-if [ "\${1:-}" = cat ] && [ "\${2:-}" = /etc/nemoclaw/provision.json ]; then
-  jq -cn --arg sha "$FAKE_PROVISION_SHA" '{gitSha:$sha}'
-  exit 0
-fi
-exec "$@"
-`,
-  );
-  executable(
     path.join(bin, "git"),
     `#!/usr/bin/env bash
 set -euo pipefail
@@ -177,7 +164,6 @@ exit 2
     FAKE_E2E_EXECUTED: e2eExecuted,
     FAKE_E2E_STATUS: options.e2eStatus ?? "passed",
     FAKE_IMAGE_LABEL_SHA: options.imageLabelSha ?? candidateSha,
-    FAKE_PROVISION_SHA: options.provisionSha ?? candidateSha.slice(0, 7),
     FAKE_REPO_SHA: options.repoSha ?? candidateSha,
     HOME: home,
     INSTANCE_NAME: "nclaw-e2e-test-1",
@@ -206,7 +192,11 @@ describe("Brev Launchable E2E runtime", () => {
     );
     expect(commands).toContain("test/e2e/live/full-e2e.test.ts");
     expect(commands).toContain("NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable");
+    expect(commands).not.toContain("/etc/nemoclaw/provision.json");
     expect(commands).not.toMatch(/rsync|install\.sh|npm (?:ci|install)|git clone/u);
+    expect(commands.indexOf("instance/disks/0/device-name")).toBeLessThan(
+      commands.indexOf('git -C "$repo" rev-parse HEAD'),
+    );
     expect(
       JSON.parse(fs.readFileSync(path.join(workDir, "brev-cleanup-evidence.json"), "utf8")),
     ).toMatchObject({ terminalState: "ABSENT" });
