@@ -63,11 +63,17 @@ function createDeps() {
     surfaceReady: vi.fn(() => true),
     reconcileRouter: vi.fn(async () => undefined),
     reupsertRoutedProvider: vi.fn(
-      (_provider: string, endpointUrl: string | null, _credentialEnv: string | null) => ({
+      (
+        _gatewayName: string,
+        _provider: string,
+        endpointUrl: string | null,
+        _credentialEnv: string | null,
+      ) => ({
         ok: true as const,
         endpointUrl: endpointUrl ?? "http://host.openshell.internal:4000/v1",
       }),
     ),
+    reserveRoute: vi.fn(() => true),
     updateSandbox: vi.fn(),
     log: vi.fn(),
     error: vi.fn(),
@@ -105,7 +111,7 @@ function createDeps() {
     isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
     reconcileModelRouter: calls.reconcileRouter,
     reupsertRoutedProvider: calls.reupsertRoutedProvider,
-    reserveSandboxInferenceRoute: vi.fn(() => true),
+    reserveSandboxInferenceRoute: calls.reserveRoute,
     registryUpdateSandbox: calls.updateSandbox,
     promptValidatedSandboxName: vi.fn(async () => "target-sandbox"),
     assessHost: () => ({ cpus: 8 }),
@@ -259,12 +265,12 @@ describe("provider route containment", () => {
     const { calls, deps } = createDeps();
     reportDifferentRoute(calls, "nvidia-router", "router/model");
 
-    await expect(handleProviderInferenceState(resumeOptions(deps, session))).resolves.toMatchObject(
-      {
-        provider: "nvidia-router",
-        model: "router/model",
-      },
-    );
+    const options = resumeOptions(deps, session);
+    options.initial.endpointSource = "inference-set";
+    await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
+      provider: "nvidia-router",
+      model: "router/model",
+    });
 
     expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
@@ -280,6 +286,16 @@ describe("provider route containment", () => {
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
     expect(calls.surfaceReady).toHaveBeenCalledOnce();
     expect(calls.reupsertRoutedProvider).toHaveBeenCalledOnce();
+    expect(calls.reserveRoute).toHaveBeenCalledWith("target-sandbox", {
+      provider: "nvidia-router",
+      model: "router/model",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      endpointSource: "inference-set",
+      credentialEnv: null,
+      preferredInferenceApi: null,
+      gatewayName: "nemoclaw-9090",
+      reservationSessionId: session.sessionId,
+    });
     expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
   });

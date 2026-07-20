@@ -206,6 +206,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
         provider: string;
         model: string;
         endpointUrl: string | null;
+        endpointSource: InferenceEndpointSource | null;
         credentialEnv: string | null;
         preferredInferenceApi: string | null;
         gatewayName: string;
@@ -725,6 +726,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                   provider: selectedProvider,
                   model: selectedModel,
                   endpointUrl: reupserted.endpointUrl,
+                  endpointSource,
                   credentialEnv,
                   preferredInferenceApi,
                   gatewayName,
@@ -759,6 +761,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
+            endpointSource,
             credentialEnv,
             preferredInferenceApi,
             gatewayName,
