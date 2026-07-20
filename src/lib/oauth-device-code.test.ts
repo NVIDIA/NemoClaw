@@ -6,10 +6,11 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SCOPE,
   isNousInvokeAccessToken,
+  jwtExpiresAt,
   mintAgentKeyWithAccessToken,
   pollForToken,
-  requestDeviceCode,
   refreshAccessTokenWithRefreshToken,
+  requestDeviceCode,
 } from "./oauth-device-code";
 
 function jwtWithClaims(claims: Record<string, unknown>): string {
@@ -83,6 +84,22 @@ describe("isNousInvokeAccessToken", () => {
 
     expect(isNousInvokeAccessToken(token)).toBe(true);
     expect(isNousInvokeAccessToken("opaque-access-token")).toBe(false);
+  });
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  it.each([
+    { description: "malformed", exp: "not-a-number", hasValidDate: false },
+    { description: "out-of-range", exp: Number.MAX_SAFE_INTEGER, hasValidDate: false },
+    { description: "expired", exp: nowSeconds - 60, hasValidDate: true },
+    { description: "near-expiry", exp: nowSeconds + 60, hasValidDate: true },
+  ])("rejects invoke JWTs with $description expiration values", ({ exp, hasValidDate }) => {
+    const token = jwtWithClaims({
+      exp,
+      scope: "inference:invoke inference:mint_agent_key",
+    });
+
+    expect(jwtExpiresAt(token) !== null).toBe(hasValidDate);
+    expect(isNousInvokeAccessToken(token)).toBe(false);
   });
 });
 

@@ -293,7 +293,9 @@ function jwtExpiresAtIso(token) {
   const seconds =
     typeof exp === "number" ? exp : typeof exp === "string" && exp.trim() ? Number(exp) : NaN;
   if (!Number.isFinite(seconds)) return null;
-  return new Date(seconds * 1000).toISOString();
+  const expiresAt = new Date(seconds * 1000);
+  if (!Number.isFinite(expiresAt.getTime())) return null;
+  return expiresAt.toISOString();
 }
 
 function isUsableInvokeJwt(token) {

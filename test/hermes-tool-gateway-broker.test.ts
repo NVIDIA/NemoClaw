@@ -403,4 +403,179 @@ describe("Hermes managed-tool gateway broker", () => {
     expect(output).not.toContain("sandbox-secret");
     expect(output).not.toContain("agent-key-2");
   });
+
+  it("falls back to one legacy agent key when refresh returns an unusable invoke token", {
+    timeout: BROKER_TEST_TIMEOUT_MS,
+  }, async ({ resources }) => {
+    const tmp = resources.temporaryDirectory("nemoclaw-hermes-tool-broker-fallback-");
+    const stateDir = path.join(tmp, "state");
+    const binDir = path.join(tmp, "bin");
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(binDir, { recursive: true });
+
+    const oldRefreshToken = "old-refresh-secret";
+    const newRefreshToken = "new-refresh-secret";
+    const rejectedAccessToken = jwtWithClaims({
+      exp: Number.MAX_SAFE_INTEGER,
+      scope: "inference:invoke inference:mint_agent_key",
+    });
+    const brokerToken = "broker-secret";
+    const agentKey = "agent-key-secret";
+    const trustedInferenceBaseUrl = "https://inference-api.nousresearch.com/v1";
+
+    const openshellLog = path.join(tmp, "openshell.log");
+    const openshellBin = path.join(binDir, "openshell");
+    fs.writeFileSync(
+      openshellBin,
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$*" >> "${openshellLog}"`,
+        `printf 'refresh=%s\\n' "$NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN" >> "${openshellLog}"`,
+        `printf 'openai=%s\\n' "$OPENAI_API_KEY" >> "${openshellLog}"`,
+        'printf \'fixture stdout: %s %s %s %s %s\\n\' "$TEST_OLD_REFRESH_TOKEN" "$TEST_NEW_REFRESH_TOKEN" "$TEST_REJECTED_ACCESS_TOKEN" "$TEST_BROKER_TOKEN" "$TEST_AGENT_KEY"',
+        'printf \'fixture stderr: %s %s %s %s %s\\n\' "$TEST_OLD_REFRESH_TOKEN" "$TEST_NEW_REFRESH_TOKEN" "$TEST_REJECTED_ACCESS_TOKEN" "$TEST_BROKER_TOKEN" "$TEST_AGENT_KEY" >&2',
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const statePath = path.join(stateDir, "sandbox.json");
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify(
+        {
+          version: 1,
+          sandbox: "sandbox",
+          provider_name: "sandbox-hermes-tool-gateway",
+          credential_env: "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN",
+          broker_token: brokerToken,
+          broker_token_sha256: sha256(brokerToken),
+          refresh_token_sha256: sha256(oldRefreshToken),
+          client_id: "hermes-cli",
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+
+    const tokenRequests: Array<{ body: string; refreshHeader?: string }> = [];
+    const agentKeyRequests: Array<{ body: string; authorization?: string }> = [];
+    const portalResponses: Record<
+      string,
+      (body: string, req: http.IncomingMessage) => Record<string, unknown>
+    > = {
+      "/api/oauth/token": (body, req) => {
+        tokenRequests.push({
+          body,
+          refreshHeader: req.headers["x-nous-refresh-token"] as string | undefined,
+        });
+        return {
+          access_token: rejectedAccessToken,
+          refresh_token: newRefreshToken,
+          expires_in: 900,
+          token_type: "Bearer",
+        };
+      },
+      "/api/oauth/agent-key": (body, req) => {
+        agentKeyRequests.push({ body, authorization: req.headers.authorization });
+        return {
+          api_key: agentKey,
+          expires_in: 1800,
+          inference_base_url: "https://untrusted.example/v1",
+        };
+      },
+    };
+    const portal = resources.ownServer(
+      http.createServer((req, res) => {
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk) => chunks.push(chunk));
+        req.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(portalResponses[req.url || ""]?.(body, req) ?? {}));
+        });
+      }),
+    );
+    const portalPort = await listen(portal);
+
+    const matrixPath = path.join(tmp, "matrix.json");
+    fs.writeFileSync(matrixPath, "{}");
+    const brokerPort = await freePort();
+    const child = resources.ownChild(
+      spawn(process.execPath, ["--experimental-strip-types", SCRIPT], {
+        env: {
+          ...process.env,
+          HERMES_TOOL_GATEWAY_PORT: String(brokerPort),
+          HERMES_TOOL_GATEWAY_STATE_DIR: stateDir,
+          HERMES_TOOL_GATEWAY_MATRIX_PATH: matrixPath,
+          NOUS_PORTAL_BASE_URL: `http://127.0.0.1:${portalPort}`,
+          NEMOCLAW_OPENSHELL_BIN: openshellBin,
+          NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN: oldRefreshToken,
+          TEST_OLD_REFRESH_TOKEN: oldRefreshToken,
+          TEST_NEW_REFRESH_TOKEN: newRefreshToken,
+          TEST_REJECTED_ACCESS_TOKEN: rejectedAccessToken,
+          TEST_BROKER_TOKEN: brokerToken,
+          TEST_AGENT_KEY: agentKey,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    const output = () => `${stdout}\n${stderr}`;
+
+    await waitForBrokerCondition("legacy inference provider fallback", child, output, () => {
+      try {
+        const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+        return state.inference_auth_path === "legacy_agent_key";
+      } catch {
+        return false;
+      }
+    });
+
+    expect(tokenRequests).toHaveLength(1);
+    expect(tokenRequests[0]?.refreshHeader).toBe(oldRefreshToken);
+    expect(new URLSearchParams(tokenRequests[0]?.body).get("refresh_token")).toBeNull();
+    expect(agentKeyRequests).toHaveLength(1);
+    expect(agentKeyRequests[0]?.authorization).toBe(`Bearer ${rejectedAccessToken}`);
+    expect(JSON.parse(agentKeyRequests[0]?.body || "{}")).toEqual({
+      min_ttl_seconds: 1800,
+    });
+
+    const rotatedState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    expect(rotatedState).toMatchObject({
+      refresh_token_sha256: sha256(newRefreshToken),
+      inference_provider_name: "hermes-provider",
+      inference_credential_env: "OPENAI_API_KEY",
+      inference_base_url: trustedInferenceBaseUrl,
+      inference_auth_path: "legacy_agent_key",
+    });
+    expect(rotatedState.inference_credential_expires_at).toBeTruthy();
+    expect(rotatedState.inference_agent_key_expires_at).toBe(
+      rotatedState.inference_credential_expires_at,
+    );
+
+    const openshellOutput = fs.readFileSync(openshellLog, "utf8");
+    expect(openshellOutput).toContain(
+      `provider update hermes-provider --credential OPENAI_API_KEY --config OPENAI_BASE_URL=${trustedInferenceBaseUrl}`,
+    );
+    expect(openshellOutput).toContain(`openai=${agentKey}`);
+
+    for (const stream of [stdout, stderr]) {
+      expect(stream).not.toContain(oldRefreshToken);
+      expect(stream).not.toContain(newRefreshToken);
+      expect(stream).not.toContain(rejectedAccessToken);
+      expect(stream).not.toContain(brokerToken);
+      expect(stream).not.toContain(agentKey);
+    }
+  });
 });

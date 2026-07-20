@@ -11,8 +11,8 @@
  * Hermes/Nous OAuth tokens or API keys.
  */
 
-import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
+import { spawn } from "node:child_process";
 
 export const DEFAULT_PORTAL_BASE_URL = "https://portal.nousresearch.com";
 export const DEFAULT_INFERENCE_BASE_URL = "https://inference-api.nousresearch.com/v1";
@@ -181,13 +181,20 @@ export function accessTokenHasScope(token: unknown, scope: string): boolean {
   return Boolean(claims && jwtScopeSet(claims).has(scope));
 }
 
-export function jwtExpiresAt(token: unknown): string | null {
-  const claims = decodeJwtClaims(token);
-  const exp = claims?.exp;
+function jwtExpirationTime(claims: Record<string, unknown>): number | null {
+  const exp = claims.exp;
   const seconds =
     typeof exp === "number" ? exp : typeof exp === "string" && exp.trim() ? Number(exp) : NaN;
   if (!Number.isFinite(seconds)) return null;
-  return new Date(seconds * 1000).toISOString();
+  const expirationTime = new Date(seconds * 1000).getTime();
+  return Number.isFinite(expirationTime) ? expirationTime : null;
+}
+
+export function jwtExpiresAt(token: unknown): string | null {
+  const claims = decodeJwtClaims(token);
+  if (!claims) return null;
+  const expirationTime = jwtExpirationTime(claims);
+  return expirationTime === null ? null : new Date(expirationTime).toISOString();
 }
 
 export function isNousInvokeAccessToken(token: unknown, minTtlSeconds = 120): boolean {
@@ -195,10 +202,8 @@ export function isNousInvokeAccessToken(token: unknown, minTtlSeconds = 120): bo
   if (!claims || !jwtScopeSet(claims).has(NOUS_INFERENCE_INVOKE_SCOPE)) {
     return false;
   }
-  const exp = claims.exp;
-  const seconds =
-    typeof exp === "number" ? exp : typeof exp === "string" && exp.trim() ? Number(exp) : NaN;
-  return Number.isFinite(seconds) && seconds * 1000 - Date.now() > minTtlSeconds * 1000;
+  const expirationTime = jwtExpirationTime(claims);
+  return expirationTime !== null && expirationTime - Date.now() > minTtlSeconds * 1000;
 }
 
 async function postForm(
