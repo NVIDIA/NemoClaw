@@ -4830,8 +4830,23 @@ launch_openclaw_gateway() {
   # script -- keeps it in place.
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
+  # Launch the gateway without the private veth OPENCLAW_GATEWAY_URL
+  # (NemoClaw#6413/#6645 generalized to the daemon): with the URL exported,
+  # the daemon's own embedded clients — the agent tool bridge and anything
+  # the daemon spawns — dial back through the transparent proxy, the gateway
+  # sees a private-IP origin, and its pairing locality check demands device
+  # approval that in-sandbox clients can never satisfy (fresh device identity
+  # per run), so channel tools fail on the warm daemon path with "pairing
+  # required" (#4616 family). With no URL in the environment OpenClaw
+  # resolves ws://127.0.0.1:<port> from its own config — the same loopback
+  # resolution the connect-shell wrappers above already force with
+  # `env -u OPENCLAW_GATEWAY_URL` — keeping shared-token auth and omitting
+  # the per-run device identity entirely, so dial-backs stop minting pairing
+  # records. OPENCLAW_ALLOW_INSECURE_PRIVATE_WS stays exported: it may still
+  # cover other private-ws consumers inside the daemon.
   nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" sh -c \
     'umask 0007; exec "$@" >>/tmp/gateway.log 2>&1' sh \
+    env -u OPENCLAW_GATEWAY_URL \
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" &
   GATEWAY_PID=$!
   if ! capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY; then
@@ -4853,7 +4868,10 @@ launch_openclaw_gateway() {
 launch_openclaw_gateway_non_root() {
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
+  # env -u OPENCLAW_GATEWAY_URL: see launch_openclaw_gateway (#6413/#6645
+  # loopback resolution, generalized to the daemon).
+  nohup env -u OPENCLAW_GATEWAY_URL \
+    "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
   GATEWAY_PID=$!
   capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
   record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
@@ -5514,7 +5532,10 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[gateway] pid $EXITED_GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
     sleep 2
     prepare_openclaw_automatic_respawn || exit 1
-    nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
+    # env -u OPENCLAW_GATEWAY_URL: see launch_openclaw_gateway (#6413/#6645
+    # loopback resolution, generalized to the daemon).
+    nohup env -u OPENCLAW_GATEWAY_URL \
+      "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
     GATEWAY_PID=$!
     capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
     record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"
