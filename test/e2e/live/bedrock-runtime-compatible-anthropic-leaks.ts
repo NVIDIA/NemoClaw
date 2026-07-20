@@ -2,13 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const SNAPSHOT_PROBE_PID_PREFIX = "@@NEMOCLAW_E2E_PROBE_PID@@ ";
-const SNAPSHOT_FILE_PREFIX = "@@NEMOCLAW_E2E_FILE@@ ";
+export const SNAPSHOT_FILE_PREFIX = "@@NEMOCLAW_E2E_FILE@@ ";
+export const SNAPSHOT_DATA_PREFIX = "@@NEMOCLAW_E2E_DATA@@ ";
 const PID_PATTERN = /^[1-9][0-9]*$/u;
 
 export interface ForbiddenLeakPattern {
   name: string;
   value: string;
   allowInSnapshotProbeEnvironment?: boolean;
+}
+
+export function frameSnapshotFile(location: string, contents: string): string {
+  if (!location || /[\r\n]/u.test(location)) {
+    throw new Error("snapshot file location must be a non-empty single line");
+  }
+  return [
+    `${SNAPSHOT_FILE_PREFIX}${location}`,
+    ...contents.split("\n").map((line) => `${SNAPSHOT_DATA_PREFIX}${line}`),
+  ].join("\n");
 }
 
 function isSnapshotProbeEnvironment(location: string, probePid: string | undefined): boolean {
@@ -30,7 +41,7 @@ export function findForbiddenLeaks(
   patterns: readonly ForbiddenLeakPattern[],
 ): string[] {
   const locations: string[] = [];
-  let current = label;
+  let current: string | undefined;
   let probePid: string | undefined;
   let firstNonEmptyLineSeen = false;
 
@@ -47,15 +58,18 @@ export function findForbiddenLeaks(
       current = line.slice(SNAPSHOT_FILE_PREFIX.length);
       continue;
     }
+    if (!line.startsWith(SNAPSHOT_DATA_PREFIX)) continue;
+    const data = line.slice(SNAPSHOT_DATA_PREFIX.length);
+    const location = current ?? label;
     for (const pattern of patterns) {
-      if (!pattern.value || !line.includes(pattern.value)) continue;
+      if (!pattern.value || !data.includes(pattern.value)) continue;
       if (
         pattern.allowInSnapshotProbeEnvironment &&
-        isSnapshotProbeEnvironment(current, probePid)
+        isSnapshotProbeEnvironment(location, probePid)
       ) {
         continue;
       }
-      locations.push(`${pattern.name}: ${current}`);
+      locations.push(`${pattern.name}: ${location}`);
     }
   }
   return [...new Set(locations)].sort();

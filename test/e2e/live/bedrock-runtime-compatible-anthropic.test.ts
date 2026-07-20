@@ -39,6 +39,9 @@ import {
 import {
   type ForbiddenLeakPattern,
   findForbiddenLeaks,
+  frameSnapshotFile,
+  SNAPSHOT_DATA_PREFIX,
+  SNAPSHOT_FILE_PREFIX,
   SNAPSHOT_PROBE_PID_PREFIX,
 } from "./bedrock-runtime-compatible-anthropic-leaks.ts";
 import {
@@ -1164,8 +1167,8 @@ emit_file() {
   [ -r "$path" ] || return 0
   size=$(wc -c <"$path" 2>/dev/null || echo 0)
   [ "$size" -le 1048576 ] || return 0
-  printf '\\n@@NEMOCLAW_E2E_FILE@@ %s\\n' "$path"
-  tr '\\000' '\\n' <"$path" 2>/dev/null || true
+  printf '\\n${SNAPSHOT_FILE_PREFIX}%s\\n' "$path"
+  tr '\\000' '\\n' <"$path" 2>/dev/null | sed 's/^/${SNAPSHOT_DATA_PREFIX}/' || true
 }
 
 for root in /sandbox/.openclaw /sandbox/.hermes /etc/nemoclaw /tmp; do
@@ -1269,14 +1272,10 @@ async function assertNoBedrockLeaks(options: {
     ? fs.readFileSync(adapterLogPath(options.home), "utf8")
     : "";
   const hostLogs = [
-    "@@NEMOCLAW_E2E_FILE@@ onboard stdout",
-    options.onboarding.stdout,
-    "@@NEMOCLAW_E2E_FILE@@ onboard stderr",
-    options.onboarding.stderr,
-    "@@NEMOCLAW_E2E_FILE@@ adapter log",
-    adapterLog,
-    "@@NEMOCLAW_E2E_FILE@@ fake Bedrock mock log",
-    options.mock.logs.join("\n"),
+    frameSnapshotFile("onboard stdout", options.onboarding.stdout),
+    frameSnapshotFile("onboard stderr", options.onboarding.stderr),
+    frameSnapshotFile("adapter log", adapterLog),
+    frameSnapshotFile("fake Bedrock mock log", options.mock.logs.join("\n")),
   ].join("\n");
   await options.artifacts.writeText(
     "host-bedrock-runtime-logs.txt",

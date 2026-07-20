@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   appendPrivateRegularFile,
   readPrivateRegularFile,
@@ -74,10 +74,44 @@ describe("private E2E controller files", () => {
 
       expect(read.error).toBeUndefined();
       expect(read.status).not.toBe(0);
+      expect(read.stderr).toContain(`Error: ${fifo} must be a private regular file`);
+      expect(read.stderr).toContain("at readPrivateRegularFile");
       expect(write.error).toBeUndefined();
       expect(write.status).not.toBe(0);
+      expect(write.stderr).toContain("Error: ENXIO:");
+      expect(write.stderr).toContain(`open '${fifo}'`);
+      expect(write.stderr).toContain("at openPrivateFileForWrite");
+      for (const output of [read.stderr, write.stderr]) {
+        expect(output).not.toMatch(
+          /ERR_(?:MODULE_NOT_FOUND|UNKNOWN_FILE_EXTENSION|UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING)|Cannot find module|Unknown file extension|bad option: --experimental-strip-types|SyntaxError/u,
+        );
+      }
       expect(fs.lstatSync(fifo).isFIFO()).toBe(true);
     } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a regular file that grows beyond maxBytes after fstat", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-private-growth-"));
+    const file = path.join(directory, "state.json");
+    const originalFstatSync = fs.fstatSync;
+    let grewAfterFstat = false;
+    const fstatSync = vi.spyOn(fs, "fstatSync").mockImplementation((descriptor) => {
+      const stat = originalFstatSync(descriptor);
+      fs.appendFileSync(file, "x");
+      grewAfterFstat = true;
+      return stat;
+    });
+
+    try {
+      fs.writeFileSync(file, "12345678");
+      expect(() => readPrivateRegularFile(file, { maxBytes: 8 })).toThrow(
+        `${file} exceeds 8 bytes`,
+      );
+      expect(grewAfterFstat).toBe(true);
+    } finally {
+      fstatSync.mockRestore();
       fs.rmSync(directory, { recursive: true, force: true });
     }
   });
