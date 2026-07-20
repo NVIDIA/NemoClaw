@@ -16,6 +16,7 @@ type FixtureOptions = {
   bootImageId?: string;
   bootImageSelfLink?: string;
   deleteMode?: "remove" | "retain";
+  emptyWorkspacesMode?: "array" | "null";
   evidenceMode?:
     | "duplicate"
     | "failed-turn"
@@ -31,7 +32,7 @@ type FixtureOptions = {
   repoSha?: string;
   supportsLaunchableMode?: boolean;
   trackedDrift?: "index" | "none" | "worktree";
-  workspaceMode?: "ready" | "pending";
+  workspaceMode?: "create-failed" | "failure" | "pending" | "ready";
 };
 
 afterEach(() => {
@@ -131,14 +132,29 @@ case "$1" in
       exit 9
     fi
     if [ "$FAKE_BREV_LS_MODE" = malformed ]; then printf '{}\\n'; exit 0; fi
-    if [ -f "$FAKE_BREV_STATE" ]; then cat "$FAKE_BREV_STATE"; else printf '{"workspaces":[]}\\n'; fi
+    if [ -f "$FAKE_BREV_STATE" ]; then
+      cat "$FAKE_BREV_STATE"
+    elif [ "$FAKE_BREV_EMPTY_WORKSPACES_MODE" = null ]; then
+      printf '{"workspaces":null}\\n'
+    else
+      printf '{"workspaces":[]}\\n'
+    fi
     ;;
   create)
-    if [ "$FAKE_BREV_WORKSPACE_MODE" = pending ]; then
-      printf '{"workspaces":[{"id":"ws-1","name":"%s","status":"PROVISIONING","shell_status":"PENDING","health_status":"PENDING","build_status":"PENDING"}]}\\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
-    else
-      printf '{"workspaces":[{"id":"ws-1","name":"%s","status":"RUNNING","shell_status":"READY","health_status":"HEALTHY","build_status":"COMPLETED"}]}\\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
-    fi
+    case "$FAKE_BREV_WORKSPACE_MODE" in
+      pending)
+        printf '{"workspaces":[{"id":"ws-1","name":"%s","status":"PROVISIONING","shell_status":"PENDING","health_status":"PENDING","build_status":"PENDING"}]}\\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
+        ;;
+      failure)
+        printf '{"workspaces":[{"id":"ws-1","name":"%s","status":"FAILURE","shell_status":"NOT_READY","health_status":"UNHEALTHY","build_status":"PENDING"}]}\\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
+        ;;
+      create-failed)
+        printf '{"workspaces":[{"id":"ws-1","name":"%s","status":"PROVISIONING","shell_status":"NOT_READY","health_status":"UNHEALTHY","build_status":"CREATE_FAILED"}]}\\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
+        ;;
+      *)
+        printf '{"workspaces":[{"id":"ws-1","name":"%s","status":"RUNNING","shell_status":"READY","health_status":"HEALTHY","build_status":"COMPLETED"}]}\\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
+        ;;
+    esac
     ;;
   exec)
     shift 3
@@ -238,6 +254,7 @@ exec "$@"
       options.bootImageSelfLink ??
       "https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/image-a",
     FAKE_BREV_DELETE_MODE: options.deleteMode ?? "remove",
+    FAKE_BREV_EMPTY_WORKSPACES_MODE: options.emptyWorkspacesMode ?? "array",
     FAKE_BREV_LS_MODE: options.lsMode ?? "ok",
     FAKE_BREV_LOG: log,
     FAKE_BREV_LS_COUNT: lsCount,
@@ -409,6 +426,21 @@ describe("exact staging Brev Launchable runtime", () => {
     expect(run("cleanup", env).status).toBe(0);
   });
 
+  it.each([
+    "failure",
+    "create-failed",
+  ] as const)("fails immediately when Brev reports terminal %s state", (workspaceMode) => {
+    const { env } = fixture({ workspaceMode });
+    const deploy = run("deploy", {
+      ...env,
+      BREV_POLL_SECONDS: "1",
+      BREV_READY_TIMEOUT_SECONDS: "1",
+    });
+
+    expect(deploy.status).not.toBe(0);
+    expect(deploy.stderr).toContain("Brev workspace entered terminal failure");
+  });
+
   it.each(["fail", "malformed"] as const)("fails closed when Brev inventory is %s", (lsMode) => {
     const { env, log } = fixture({ lsMode });
     const deploy = run("deploy", env);
@@ -423,6 +455,18 @@ describe("exact staging Brev Launchable runtime", () => {
 
     expect(cleanup.status, [cleanup.stderr, cleanup.stdout].join("\n")).toBe(0);
     expect(cleanup.stderr).toContain("brev ls failed before cleanup");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "brev-cleanup-evidence.json"), "utf8")),
+    ).toMatchObject({ terminalState: "ABSENT", workspaceName: "nclaw-e2e-test-1" });
+  });
+
+  it("accepts Brev's null workspaces collection after deleting the final workspace", () => {
+    const { env, workDir } = fixture({ emptyWorkspacesMode: "null" });
+    expect(run("deploy", env).status).toBe(0);
+
+    const cleanup = run("cleanup", env);
+
+    expect(cleanup.status, [cleanup.stderr, cleanup.stdout].join("\n")).toBe(0);
     expect(
       JSON.parse(fs.readFileSync(path.join(workDir, "brev-cleanup-evidence.json"), "utf8")),
     ).toMatchObject({ terminalState: "ABSENT", workspaceName: "nclaw-e2e-test-1" });
