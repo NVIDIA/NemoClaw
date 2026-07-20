@@ -32,6 +32,20 @@ const MAX_LOG_URLS = 20;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
 
+export type RetryableGithubReadOptions = {
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+};
+
+const RETRYABLE_HTTP_PATTERN = /failed: (5\d{2}|429)\b/;
+
+export function isRetryableError(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  if (error instanceof Error && RETRYABLE_HTTP_PATTERN.test(error.message)) return true;
+  return false;
+}
+
 export type CoordinationCheckRun = {
   id: number;
   name: string;
@@ -162,6 +176,50 @@ async function requireExactPullRequest(identity: RequiredGateIdentity): Promise<
   );
 }
 
+export async function retryableGithubRead<T>(
+  operation: string,
+  fn: () => Promise<T>,
+  identity: RequiredGateIdentity | null,
+  options?: RetryableGithubReadOptions,
+): Promise<T> {
+  const maxAttempts = Math.max(1, options?.maxAttempts ?? 3);
+  const baseDelayMs = options?.baseDelayMs ?? 1000;
+  const sleep =
+    options?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error: unknown) {
+      if (!isRetryableError(error) || attempt === maxAttempts) {
+        if (attempt > 1 && error instanceof Error && lastError instanceof Error) {
+          (error as Error & { cause?: unknown }).cause = lastError;
+        }
+        throw error;
+      }
+      lastError = error;
+      const errorClass = error instanceof TypeError ? "network" : "http";
+      console.log(`E2E / PR Gate [${operation}] attempt ${attempt}/${maxAttempts}: ${errorClass}`);
+
+      if (identity) {
+        try {
+          await requireExactPullRequest(identity);
+        } catch (revalidationError: unknown) {
+          if (!isRetryableError(revalidationError)) {
+            throw revalidationError;
+          }
+        }
+      }
+
+      const jitter = 0.5 + Math.random() * 0.5;
+      const delay = Math.min(baseDelayMs * 2 ** (attempt - 1) * jitter, 4000);
+      await sleep(delay);
+    }
+  }
+  throw lastError;
+}
+
 function hasRetryableFailureMarker(check: CoordinationCheckRun): boolean {
   if (check.status !== "completed" || check.conclusion !== "failure") return false;
   if (NEVER_RETRY_FAILURE_TITLES.has(check.output?.title ?? "")) return false;
@@ -207,10 +265,15 @@ async function matchingChecks(
   name: string,
 ): Promise<CoordinationCheckRun[]> {
   const response = validateCheckRunsResponse(
-    await githubApi<unknown>(
-      `repos/${identity.repository}/commits/${identity.headSha}/check-runs?check_name=${encodeURIComponent(name)}&filter=all&per_page=100`,
-      identity.token,
-      { userAgent: USER_AGENT },
+    await retryableGithubRead(
+      `matchingChecks(${name})`,
+      () =>
+        githubApi<unknown>(
+          `repos/${identity.repository}/commits/${identity.headSha}/check-runs?check_name=${encodeURIComponent(name)}&filter=all&per_page=100`,
+          identity.token,
+          { userAgent: USER_AGENT },
+        ),
+      identity,
     ),
   );
   const externalId = coordinationExternalId(identity.prNumber, identity.headSha, identity.baseSha);
@@ -362,14 +425,24 @@ export async function waitForRequiredGate(
   let lastDescription = "";
   let lastLogUrls: string[] | undefined;
 
-  await requireExactPullRequest(identity);
+  await retryableGithubRead(
+    "requireExactPullRequest",
+    () => requireExactPullRequest(identity),
+    null,
+    { sleep },
+  );
   while (now() < deadline) {
     const classified = classifyCoordinationCheck(
       await findCoordinationCheck(identity),
       identity.repository,
     );
     if (classified.state === "complete") {
-      await requireExactPullRequest(identity);
+      await retryableGithubRead(
+        "requireExactPullRequest",
+        () => requireExactPullRequest(identity),
+        null,
+        { sleep },
+      );
       return classified.result;
     }
     const message = `${classified.description}${logUrlSuffix(classified.logUrls)}`;

@@ -11,8 +11,10 @@ import {
   coordinationExternalId,
   findCoordinationCheck,
   formatRequiredGateOutcome,
+  isRetryableError,
   type RequiredGateIdentity,
   type RequiredGateResult,
+  retryableGithubRead,
   waitForRequiredGate,
 } from "../tools/e2e/pr-e2e-required.mts";
 import { createGitHubFetchRouter, githubFetchRoute } from "./support/github-fetch-router.ts";
@@ -423,5 +425,103 @@ describe("native PR E2E required job", () => {
     await expect(
       waitForRequiredGate(identity, { timeoutMs: 100, pollIntervalMs: 10 }),
     ).rejects.toThrow("no longer matches the exact head and base revision");
+  });
+
+  describe("retryableGithubRead", () => {
+    it("retries a transient fetch failure and succeeds on the next attempt", async () => {
+      const responses = [
+        () => {
+          throw new TypeError("fetch failed");
+        },
+        () => "success",
+      ];
+      const sleepCalls: number[] = [];
+      const result = await retryableGithubRead(
+        "test-op",
+        async () => responses.shift()!() as string,
+        null,
+        {
+          baseDelayMs: 100,
+          sleep: async (ms) => {
+            sleepCalls.push(ms);
+          },
+        },
+      );
+
+      expect(result).toBe("success");
+      expect(responses).toHaveLength(0);
+      expect(sleepCalls).toHaveLength(1);
+      expect(sleepCalls[0]).toBeGreaterThan(0);
+      expect(sleepCalls[0]).toBeLessThanOrEqual(100);
+    });
+
+    it("exhausts retries and preserves the original error", async () => {
+      let calls = 0;
+      const error = await retryableGithubRead(
+        "test-op",
+        async () => {
+          calls += 1;
+          throw new TypeError(`fetch failed attempt ${calls}`);
+        },
+        null,
+        {
+          maxAttempts: 3,
+          baseDelayMs: 10,
+          sleep: async () => {},
+        },
+      ).catch((e: unknown) => e);
+
+      expect(calls).toBe(3);
+      expect(error).toBeInstanceOf(TypeError);
+      expect((error as TypeError).message).toBe("fetch failed attempt 3");
+      expect((error as Error & { cause?: unknown }).cause).toBeInstanceOf(TypeError);
+    });
+
+    it("does not retry non-retryable HTTP responses", async () => {
+      let calls = 0;
+      await expect(
+        retryableGithubRead(
+          "test-op",
+          async () => {
+            calls += 1;
+            throw new Error("GitHub API repos/x/pulls/1 failed: 404 Not Found");
+          },
+          null,
+          { sleep: async () => {} },
+        ),
+      ).rejects.toThrow("failed: 404 Not Found");
+
+      expect(calls).toBe(1);
+    });
+
+    it("fails closed when PR identity changes during retry", async () => {
+      let calls = 0;
+      vi.spyOn(globalThis, "fetch").mockImplementation(
+        createGitHubFetchRouter([
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls/42"),
+            () => githubResponse(pullRequest({ head: { sha: "c".repeat(40) } })),
+          ),
+          githubFetchRoute(
+            ({ url }) => !url.includes("/pulls/42"),
+            () => githubResponse({}),
+          ),
+        ]),
+      );
+
+      await expect(
+        retryableGithubRead(
+          "test-op",
+          async () => {
+            calls += 1;
+            throw new TypeError("fetch failed");
+          },
+          identity,
+          { sleep: async () => {} },
+        ),
+      ).rejects.toThrow("no longer matches the exact head and base revision");
+
+      expect(calls).toBe(1);
+    });
   });
 });
