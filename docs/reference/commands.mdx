@@ -1550,7 +1550,7 @@ Different sandbox homes receive different tokens.
 NemoClaw preserves it across a gateway restart, sandbox stop and start, and host OpenShell gateway restart.
 When you rebuild or replace the sandbox, the replacement home receives a new token.
 At gateway startup, NemoClaw also generates a new token when `API_SERVER_KEY` is missing or is not exactly 64 lowercase hexadecimal characters.
-If an ordinary restart changes the token without replacing the sandbox, collect the before and after sandbox identity plus redacted mint logs and report it as a bug.
+If an ordinary restart changes the token while the existing `API_SERVER_KEY` was present and valid, collect the before and after sandbox identity plus redacted mint logs and report it as a bug.
 Capture the token and pass it in the `Authorization` header:
 
 ```bash

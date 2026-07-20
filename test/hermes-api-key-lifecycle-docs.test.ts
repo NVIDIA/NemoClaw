@@ -44,6 +44,7 @@ describe("Hermes API bearer token lifecycle documentation (#7175)", () => {
     );
     expect(commands).toContain("rebuild or replace the sandbox");
     expect(commands).toContain("missing or is not exactly 64 lowercase hexadecimal characters");
+    expect(commands).toContain("while the existing `API_SERVER_KEY` was present and valid");
   });
 
   it("points rebuild operators to supported token retrieval", () => {
