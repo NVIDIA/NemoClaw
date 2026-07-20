@@ -132,7 +132,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
       "nemoclaw debug --output creates an extractable archive without NVIDIA credential values",
       "debug --sandbox accepts a registered sandbox and rejects an unknown sandbox without a partial archive",
       "sandbox openclaw.json is readable through real OpenShell sandbox exec and host status includes model data",
-      "credentials list hides secret values and credentials reset removes the provider credential from the gateway",
+      "credentials list hides secret values and credentials reset removes an explicitly detached provider credential from the gateway",
     ],
   });
 
@@ -344,8 +344,33 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
   let credentialsResetExercised = false;
   let postResetCredentialsListRedacted = false;
   let providerCredentialAbsentBeforeReset = false;
+  let providerDetachedBeforeReset = false;
   if (credentialsText.includes(hosted.providerName)) {
     credentialsResetExercised = true;
+    const detach = await sandbox.openshell(
+      ["sandbox", "provider", "detach", SANDBOX_NAME, hosted.providerName],
+      {
+        artifactName: "diagnostics-inference-provider-detach-before-credentials-reset",
+        env,
+        redactionValues: [apiKey],
+        timeoutMs: 60_000,
+      },
+    );
+    expect(detach.exitCode, resultText(detach)).toBe(0);
+
+    const providersAfterDetach = await sandbox.openshell(
+      ["sandbox", "provider", "list", SANDBOX_NAME],
+      {
+        artifactName: "diagnostics-inference-providers-after-detach",
+        env,
+        redactionValues: [apiKey],
+        timeoutMs: 60_000,
+      },
+    );
+    expect(providersAfterDetach.exitCode, resultText(providersAfterDetach)).toBe(0);
+    expect(resultText(providersAfterDetach)).not.toContain(hosted.providerName);
+    providerDetachedBeforeReset = true;
+
     const reset = await host.command(
       "node",
       [CLI_ENTRYPOINT, "credentials", "reset", hosted.providerName, "--yes"],
@@ -404,6 +429,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
       credentialsListRedacted: !credentialsText.includes(apiKey),
       credentialsResetExercised,
       providerCredentialAbsentBeforeReset,
+      providerDetachedBeforeReset,
       postResetCredentialsListRedacted,
     },
   });
