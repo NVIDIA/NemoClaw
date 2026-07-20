@@ -29,6 +29,7 @@ validate_common() {
 workspace_rows() {
   timeout 30s brev ls --json | jq -c '
     if type == "array" then .
+    elif type == "object" and has("workspaces") and .workspaces == null then []
     elif type == "object" and (.workspaces | type) == "array" then .workspaces
     else error("unexpected brev ls --json shape")
     end
@@ -61,7 +62,7 @@ wait_for_workspace_ready() {
         return 0
       fi
       case "$status:$build_status" in
-        FAILED:* | ERROR:* | *:FAILED | *:ERROR) die "Brev workspace entered terminal failure ($status/$build_status)" ;;
+        FAILURE:* | FAILED:* | ERROR:* | *:CREATE_FAILED | *:FAILED | *:ERROR) die "Brev workspace entered terminal failure ($status/$build_status)" ;;
       esac
     fi
     sleep "${BREV_POLL_SECONDS:-15}"

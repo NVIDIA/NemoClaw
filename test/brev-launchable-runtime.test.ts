@@ -15,11 +15,12 @@ const roots: string[] = [];
 type FixtureOptions = {
   bootImageId?: string;
   deleteMode?: "remove" | "retain";
+  emptyWorkspacesMode?: "array" | "null";
   e2eStatus?: "failed" | "passed";
   imageLabelSha?: string;
   provisionSha?: string;
   repoSha?: string;
-  workspaceMode?: "pending" | "ready";
+  workspaceMode?: "create-failed" | "failure" | "pending" | "ready";
 };
 
 afterEach(() => {
@@ -69,14 +70,29 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_BREV_LOG"
 case "$1" in
   ls)
-    if [ -f "$FAKE_BREV_STATE" ]; then cat "$FAKE_BREV_STATE"; else printf '{"workspaces":[]}\n'; fi
+    if [ -f "$FAKE_BREV_STATE" ]; then
+      cat "$FAKE_BREV_STATE"
+    elif [ "$FAKE_BREV_EMPTY_WORKSPACES_MODE" = null ]; then
+      printf '{"workspaces":null}\\n'
+    else
+      printf '{"workspaces":[]}\\n'
+    fi
     ;;
   create)
-    if [ "$FAKE_BREV_WORKSPACE_MODE" = pending ]; then
-      printf '{"workspaces":[{"name":"%s","status":"PROVISIONING","shell_status":"PENDING","health_status":"PENDING","build_status":"PENDING"}]}\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
-    else
-      printf '{"workspaces":[{"name":"%s","status":"RUNNING","shell_status":"READY","health_status":"HEALTHY","build_status":"COMPLETED"}]}\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
-    fi
+    case "$FAKE_BREV_WORKSPACE_MODE" in
+      pending)
+        printf '{"workspaces":[{"id":"ws-1","name":"%s","status":"PROVISIONING","shell_status":"PENDING","health_status":"PENDING","build_status":"PENDING"}]}\\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
+        ;;
+      failure)
+        printf '{"workspaces":[{"id":"ws-1","name":"%s","status":"FAILURE","shell_status":"NOT_READY","health_status":"UNHEALTHY","build_status":"PENDING"}]}\\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
+        ;;
+      create-failed)
+        printf '{"workspaces":[{"id":"ws-1","name":"%s","status":"PROVISIONING","shell_status":"NOT_READY","health_status":"UNHEALTHY","build_status":"CREATE_FAILED"}]}\\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
+        ;;
+      *)
+        printf '{"workspaces":[{"id":"ws-1","name":"%s","status":"RUNNING","shell_status":"READY","health_status":"HEALTHY","build_status":"COMPLETED"}]}\\n' "$INSTANCE_NAME" > "$FAKE_BREV_STATE"
+        ;;
+    esac
     ;;
   exec) shift 3; bash -c "$*" ;;
   copy)
@@ -154,6 +170,7 @@ exit 2
     CANDIDATE_SHA: candidateSha,
     FAKE_BOOT_IMAGE_ID: options.bootImageId ?? "123456789",
     FAKE_BREV_DELETE_MODE: options.deleteMode ?? "remove",
+    FAKE_BREV_EMPTY_WORKSPACES_MODE: options.emptyWorkspacesMode ?? "array",
     FAKE_BREV_LOG: log,
     FAKE_BREV_STATE: state,
     FAKE_BREV_WORKSPACE_MODE: options.workspaceMode ?? "ready",
@@ -231,7 +248,34 @@ describe("Brev Launchable E2E runtime", () => {
     expect(result.stderr).toContain("did not become ready");
   });
 
-  it("fails cleanup while the workspace still exists", () => {
+  it.each([
+    "failure",
+    "create-failed",
+  ] as const)("fails immediately when Brev reports terminal %s state", (workspaceMode) => {
+    const { env } = fixture({ workspaceMode });
+    const deploy = run("deploy", {
+      ...env,
+      BREV_POLL_SECONDS: "1",
+      BREV_READY_TIMEOUT_SECONDS: "1",
+    });
+
+    expect(deploy.status).not.toBe(0);
+    expect(deploy.stderr).toContain("Brev workspace entered terminal failure");
+  });
+
+  it("accepts Brev's null workspaces collection after deleting the final workspace", () => {
+    const { env, workDir } = fixture({ emptyWorkspacesMode: "null" });
+    expect(run("deploy", env).status).toBe(0);
+
+    const cleanup = run("cleanup", env);
+
+    expect(cleanup.status, [cleanup.stderr, cleanup.stdout].join("\n")).toBe(0);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "brev-cleanup-evidence.json"), "utf8")),
+    ).toMatchObject({ terminalState: "ABSENT", workspaceName: "nclaw-e2e-test-1" });
+  });
+
+  it("fails cleanup when the workspace remains after the deletion deadline", () => {
     const { env } = fixture({ deleteMode: "retain" });
     expect(run("deploy", env).status).toBe(0);
     const result = run("cleanup", {
