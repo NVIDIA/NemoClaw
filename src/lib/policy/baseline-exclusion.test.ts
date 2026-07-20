@@ -11,6 +11,7 @@ import {
   getBaselineEntry,
   listBaselineEntryKeys,
   mergeBaselineEntryIntoPolicy,
+  ProtectedBaselineExclusionError,
   removeBaselineEntryFromPolicy,
   renderBaselineEntryScope,
   resolveBaselineExclusion,
@@ -174,5 +175,13 @@ describe("applyBaselineExclusions fail-closed (#7178)", () => {
     expect((error as BaselineExclusionDriftError).reason).toBe("missing");
     expect((error as Error).message).toContain("Clear it with 'policy restore'.");
     expect((error as Error).message).not.toContain("re-exclude");
+  });
+
+  it("rejects protected entries even when imported state has a matching digest", () => {
+    expect(() =>
+      applyBaselineExclusions(BASE_POLICY, [
+        { key: "managed_inference", digest: digestOf("managed_inference") },
+      ]),
+    ).toThrowError(ProtectedBaselineExclusionError);
   });
 });

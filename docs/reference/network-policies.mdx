@@ -312,7 +312,7 @@ Sandbox creation or recreation, rebuild, and cross-sandbox snapshot cloning stop
 An unreadable or third live state remains fail-closed for manual inspection instead of being guessed or overwritten.
 An interrupted restore finalizes only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled target; if either changes or becomes unreadable, the journal remains pending for inspection and re-review.
 If a later release changes that entry, create and rebuild fail closed until re-review; if the release removes it, they fail closed until the stale record is cleared.
-The critical `managed_inference` entry cannot currently be excluded pending product direction.
+The critical `managed_inference` entry cannot be excluded because it carries the required managed inference route. NemoClaw enforces this both when the command runs and whenever durable exclusion state is replayed.
 
 To recover from baseline drift, first check whether the release changed the entry's content or removed it entirely (`$$nemoclaw <sandbox-name> policy explain` or `doctor` reports which).
 

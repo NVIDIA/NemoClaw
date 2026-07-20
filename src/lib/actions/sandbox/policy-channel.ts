@@ -43,6 +43,7 @@ import * as policies from "../../policy";
 import {
   BASELINE_EXCLUSION_SUPPORT_IMPACT,
   digestBaselineEntry,
+  isProtectedBaselineExclusionKey,
   listBaselineEntryKeys,
   renderBaselineEntryScope,
 } from "../../policy/baseline-exclusion";
@@ -1670,10 +1671,6 @@ async function removeSandboxPolicyUnlocked(
   refreshSandboxPolicyContextFile(sandboxName);
 }
 
-// Baseline entries whose exclusion needs product direction; refuse until that
-// lands rather than let an operator silently sever a critical managed egress.
-const PROTECTED_BASELINE_KEYS = new Set(["managed_inference"]);
-
 function printBaselineEntryScope(prefix: string, key: string, entry: PolicyObject): void {
   console.log(prefix);
   for (const line of renderBaselineEntryScope(key, entry)) {
@@ -1718,9 +1715,9 @@ async function excludeSandboxBaselineUnlocked(
     process.exit(1);
   }
 
-  if (PROTECTED_BASELINE_KEYS.has(key)) {
+  if (isProtectedBaselineExclusionKey(key)) {
     console.error(
-      `  Baseline entry '${key}' is protected and cannot be excluded pending product direction.`,
+      `  Baseline entry '${key}' is required for managed inference and cannot be excluded.`,
     );
     process.exit(1);
   }

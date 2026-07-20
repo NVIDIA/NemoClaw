@@ -17,6 +17,13 @@ import {
 export const BASELINE_EXCLUSION_SUPPORT_IMPACT =
   "Excluded egress leaves dependent agent features unsupported for this sandbox.";
 
+const PROTECTED_BASELINE_EXCLUSION_KEYS = new Set(["managed_inference"]);
+
+/** Baseline entries that remain mandatory for the managed sandbox contract. */
+export function isProtectedBaselineExclusionKey(key: string): boolean {
+  return PROTECTED_BASELINE_EXCLUSION_KEYS.has(key);
+}
+
 export interface BaselineExclusionRequest {
   readonly key: string;
   readonly digest: string;
@@ -111,6 +118,21 @@ export class BaselineExclusionDriftError extends Error {
 }
 
 /**
+ * Raised when durable state attempts to exclude an entry that the supported
+ * sandbox contract requires. This check belongs in the replay path as well as
+ * the CLI so imported or manually edited registry state cannot bypass it.
+ */
+export class ProtectedBaselineExclusionError extends Error {
+  readonly key: string;
+
+  constructor(key: string) {
+    super(`Baseline entry '${key}' is required and cannot be excluded.`);
+    this.name = "ProtectedBaselineExclusionError";
+    this.key = key;
+  }
+}
+
+/**
  * Apply recorded exclusions to a base policy for create/rebuild. Verifies each
  * approval's digest against the current baseline and drops the matching entry;
  * throws `BaselineExclusionDriftError` on any missing or changed entry so a
@@ -123,6 +145,9 @@ export function applyBaselineExclusions(
   let content = basePolicyContent;
   const excludedKeys: string[] = [];
   for (const request of requests) {
+    if (isProtectedBaselineExclusionKey(request.key)) {
+      throw new ProtectedBaselineExclusionError(request.key);
+    }
     const resolution = resolveBaselineExclusion(content, request);
     if (resolution.drift) throw new BaselineExclusionDriftError(request.key, resolution.drift);
     const removal = removeBaselineEntryFromPolicy(content, request.key);
