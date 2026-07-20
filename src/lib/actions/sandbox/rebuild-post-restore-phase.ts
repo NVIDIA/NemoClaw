@@ -80,6 +80,16 @@ export function printSuccessfulRebuildSummary(
   }
 }
 
+function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
+  if (targetAgentName !== "hermes") {
+    return;
+  }
+  console.log(`    ${YW}\u26a0${R} Hermes API bearer token changed during rebuild.`);
+  console.log(
+    `    After rebuild recovery completes successfully, retrieve the new token with \`${CLI_NAME} ${sandboxName} gateway-token --quiet\`.`,
+  );
+}
+
 export function resolveRestoredPolicyRegistryState(
   sandboxEntry: Pick<RebuildSandboxEntry, "policyPresetsFinalized">,
   restoredBuiltinPresets: readonly string[],
@@ -214,6 +224,7 @@ export async function runRebuildPostRestorePhase(
     targetAgentName,
   );
   const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
+  printHermesApiTokenChangeNotice(sandboxName, targetAgentName);
   if (hermesGatewayRestoreState === "healthy") {
     console.log(`  ${G}\u2713${R} Hermes gateway health verified after state restore`);
   } else if (hermesGatewayRestoreState === "recovered") {
