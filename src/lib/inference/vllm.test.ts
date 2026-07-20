@@ -153,19 +153,19 @@ function mockSuccessfulVllmInstall(
   mocks.dockerSpawn.mockReturnValue(mockDockerSpawnSuccess());
   mocks.dockerRunDetached.mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
   const ownershipQueue = [...ownershipResponses];
-  let canonicalInspection = true;
+  let ownershipCallIndex = 0;
+  const ownershipHandlers = [
+    (): string => "",
+    (): string =>
+      (
+        ownershipQueue.shift() ??
+        (() => {
+          throw new Error("Unexpected extra ambient vLLM ownership inspection");
+        })
+      )(),
+  ];
   const dockerCaptureByCommand = new Map<string, () => string>([
-    [
-      "container",
-      () => {
-        if (canonicalInspection) {
-          canonicalInspection = false;
-          return "";
-        }
-        canonicalInspection = true;
-        return (ownershipQueue.shift() ?? (() => ""))();
-      },
-    ],
+    ["container", () => ownershipHandlers[ownershipCallIndex++ % ownershipHandlers.length]()],
     ["ps", () => `${containerName}\n`],
   ]);
   mocks.dockerCapture.mockImplementation((args: readonly string[]) =>
