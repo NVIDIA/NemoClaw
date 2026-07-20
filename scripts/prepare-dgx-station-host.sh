@@ -197,8 +197,23 @@ dgx_station_release_profile() {
   platform="$(dgx_station_release_value "$path" DGX_PLATFORM)" || return 1
   [[ "$platform" == "DGX Server for GALAXY-GB300" ]] || return 1
 
-  if ota_pretty="$(dgx_station_release_value "$path" DGX_OTA_PRETTY_NAME 2>/dev/null)"; then
-    [[ "$ota_pretty" == "DGX OS" ]] || return 1
+  # DGX OS keeps its upgrade history in the DGX_OTA_* fields, so a host that has
+  # an OTA history is classified by the most recent OTA version it applied.
+  #
+  # A host provisioned from a full DGX OS image also carries the identity field
+  # DGX_OTA_PRETTY_NAME="DGX OS"; when that field is present it must read exactly
+  # "DGX OS". It is absent on a host that was first installed from an older base
+  # image (for example 7.4.1-GB300ws) and later OTA-upgraded, because an OTA
+  # upgrade never adds that field. In that case, fall back to the hardware
+  # identity and require DGX_PRETTY_NAME="NVIDIA DGX GB300WS" so that other
+  # release lineages that also emit DGX_OTA_* fields stay fail-closed.
+  if dgx_station_release_value "$path" DGX_OTA_VERSION >/dev/null 2>&1; then
+    if ota_pretty="$(dgx_station_release_value "$path" DGX_OTA_PRETTY_NAME 2>/dev/null)"; then
+      [[ "$ota_pretty" == "DGX OS" ]] || return 1
+    else
+      pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
+      [[ "$pretty" == "NVIDIA DGX GB300WS" ]] || return 1
+    fi
     version="$(dgx_station_release_value "$path" DGX_OTA_VERSION)" || return 1
     case "$version" in
       7.2.0 | 7.4.0 | 7.5.0) printf '%s' supported-dgx-os ;;
@@ -210,7 +225,6 @@ dgx_station_release_profile() {
   # No-OTA factory images are separate, exact profiles. Do not infer support
   # merely from a missing OTA identity: internal BaseOS and customer images
   # use different software stacks and qualification evidence.
-  dgx_station_release_value "$path" DGX_OTA_VERSION >/dev/null 2>&1 && return 1
   dgx_station_release_value "$path" DGX_OTA_DATE >/dev/null 2>&1 && return 1
   pretty="$(dgx_station_release_value "$path" DGX_PRETTY_NAME)" || return 1
   version="$(dgx_station_release_value "$path" DGX_SWBUILD_VERSION)" || return 1
