@@ -131,5 +131,8 @@ describe("nemoclaw-start gateway launch environment", () => {
     const dumped = fs.readFileSync(envDumpPath, "utf-8");
     expect(dumped).not.toMatch(/^OPENCLAW_GATEWAY_URL=/m);
     expect(dumped).toMatch(/^OPENCLAW_GATEWAY_TOKEN=test-gateway-token$/m);
+    // Only the gateway URL is scrubbed; the respawn path retains the same
+    // private-ws contract as the initial launch functions.
+    expect(dumped).toMatch(/^OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1$/m);
   });
 });
