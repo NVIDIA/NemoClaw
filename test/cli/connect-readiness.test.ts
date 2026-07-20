@@ -98,7 +98,9 @@ describe("CLI connect readiness", () => {
     expect(r.out.includes("Sandbox is ready. Connecting")).toBeTruthy();
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
     expect(calls).toContain("sandbox get alpha");
-    expect(calls.filter((call) => call === "sandbox list").length).toBeGreaterThanOrEqual(2);
+    expect(
+      calls.filter((call) => call === "sandbox list -g nemoclaw").length,
+    ).toBeGreaterThanOrEqual(2);
     expect(calls).toContain("sandbox connect alpha");
   });
 
@@ -252,7 +254,7 @@ describe("CLI connect readiness", () => {
     expect(r.out.includes("nemoclaw alpha status")).toBeTruthy();
     const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
     expect(calls).toContain("sandbox get alpha");
-    expect(calls).toContain("sandbox list");
+    expect(calls).toContain("sandbox list -g nemoclaw");
     expect(calls).not.toContain("should-not-connect");
   });
 });

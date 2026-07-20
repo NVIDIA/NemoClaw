@@ -689,23 +689,21 @@ with tempfile.TemporaryDirectory() as root:
         real_agent_spec = control._agent_spec
         real_gateway_candidates = control._gateway_candidates
         real_wait_for_healthy = control._wait_for_healthy_gateway
-        real_publish_lease = control._publish_expected_exit_lease
         control._detect_agent = lambda: "openclaw"
         control._agent_spec = lambda *_args: control.AgentSpec("openclaw", 18642)
         control._gateway_candidates = lambda reader, *_args: [reader.capture(43)]
         control._wait_for_healthy_gateway = lambda reader, *_args: reader.capture(43)
-        control._terminate_gateway = lambda *_args: None
-        control._publish_expected_exit_lease = lambda *_args: (_ for _ in ()).throw(
-            AssertionError("OpenClaw must not publish a Hermes crash-budget lease")
+        control._terminate_gateway = lambda _reader, identity: observe_expected_exit_lease(
+            identity, "openclaw-restart"
         )
         try:
             openclaw_restart = control._control("restart", "f" * 64)
+            openclaw_lease_cleared = not os.path.exists(lease_path)
         finally:
             control._detect_agent = real_detect_agent
             control._agent_spec = real_agent_spec
             control._gateway_candidates = real_gateway_candidates
             control._wait_for_healthy_gateway = real_wait_for_healthy
-            control._publish_expected_exit_lease = real_publish_lease
             control._terminate_gateway = replace_gateway
 
         real_wait_for_healthy = control._wait_for_healthy_gateway
@@ -936,6 +934,7 @@ with tempfile.TemporaryDirectory() as root:
             lease_observations,
             restart_lease_cleared,
             timeout_lease_cleared,
+            openclaw_lease_cleared,
         ],
         "timeout_refresh": [
             timeout_refresh,
@@ -1016,11 +1015,17 @@ describe("managed gateway root control", () => {
             secure: true,
           },
           {
+            label: "openclaw-restart",
+            identity: ["v1", 43, "555", expect.any(Number), "777"],
+            secure: true,
+          },
+          {
             label: "unhealthy-recover",
             identity: ["v1", 44, "666", expect.any(Number), "777"],
             secure: true,
           },
         ],
+        true,
         true,
         true,
       ],

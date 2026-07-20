@@ -11,6 +11,7 @@ import {
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
 import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-runtime-context";
+import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
@@ -35,6 +36,8 @@ export interface ProviderInferenceSetupOptions {
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
+  /** Exact onboarding-provenanced endpoint permitted to skip DNS re-resolution. */
+  onboardEndpointUrl?: string;
   /**
    * Resolved (agent-coerced) inference API for the selection. Lets the
    * remote-provider registration pick the gateway surface that matches the
@@ -44,6 +47,8 @@ export interface ProviderInferenceSetupOptions {
   preferredInferenceApi?: string | null;
   /** Public addresses approved for custom endpoint host probes. */
   endpointPinnedAddresses?: readonly string[];
+  /** Durable route provenance to preserve when reserving a refreshed route. */
+  endpointSource?: InferenceEndpointSource | null;
   /** Non-forgeable proof of the exact private subset admitted by the custom preflight. */
   endpointTrustedPrivateCapability?: TrustedPrivateEndpointCapability;
   /** One-shot host capability cache carried only through this onboarding run. */
@@ -58,6 +63,7 @@ export interface ProviderSelectionResult {
   model: string | null;
   provider: string;
   endpointUrl: string | null;
+  endpointSource?: InferenceEndpointSource | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   hermesToolGateways: string[];
@@ -95,6 +101,9 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     model: string | null;
     provider: string | null;
     endpointUrl: string | null;
+    endpointSource?: InferenceEndpointSource | null;
+    /** Canonical endpoint paired with onboard provenance; never inferred from a later URL. */
+    onboardEndpointUrl?: string | null;
     credentialEnv: string | null;
     hermesAuthMethod: HermesAuthMethod | null;
     hermesToolGateways: string[];
@@ -199,6 +208,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
         provider: string;
         model: string;
         endpointUrl: string | null;
+        endpointSource: InferenceEndpointSource | null;
         credentialEnv: string | null;
         preferredInferenceApi: string | null;
         gatewayName: string;
@@ -238,6 +248,8 @@ export interface ProviderInferenceStateResult {
   model: string;
   provider: string;
   endpointUrl: string | null;
+  endpointSource: InferenceEndpointSource | null;
+  onboardEndpointUrl: string | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   hermesToolGateways: string[];
@@ -276,6 +288,16 @@ function clearStagedCredentialEnv(
 function agentName(agent: unknown): string {
   const name = (agent as { name?: string | null } | null)?.name;
   return typeof name === "string" && name.length > 0 ? name : "openclaw";
+}
+
+function endpointSourceForCurrentUrl(
+  endpointSource: InferenceEndpointSource | null,
+  endpointUrl: string | null,
+  onboardEndpointUrl: string | null,
+): InferenceEndpointSource | null {
+  return endpointSource === "onboard" && (!onboardEndpointUrl || endpointUrl !== onboardEndpointUrl)
+    ? null
+    : endpointSource;
 }
 
 function hasActiveMessagingChannels(
@@ -351,6 +373,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let skipHostInferenceSmoke = false;
   let reuseGatewayCredentialWithoutLocalKey = false;
   let endpointPinnedAddresses: string[] | undefined;
+  let endpointSource: InferenceEndpointSource | null = initial.endpointSource ?? null;
+  let onboardEndpointUrl =
+    endpointSource === "onboard" && initial.onboardEndpointUrl === initial.endpointUrl
+      ? initial.onboardEndpointUrl
+      : null;
+  endpointSource = endpointSourceForCurrentUrl(endpointSource, endpointUrl, onboardEndpointUrl);
   let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
@@ -546,6 +574,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       recoveredRecordedProvider = selection.recoveredFromSandbox === true;
       forceInferenceSetup ||= recoveredRecordedProvider;
       endpointPinnedAddresses = selection.endpointPinnedAddresses;
+      endpointSource = selection.endpointSource ?? null;
+      onboardEndpointUrl =
+        endpointSource === "onboard" && selection.endpointUrl ? selection.endpointUrl : null;
       endpointTrustedPrivateCapability = selection.endpointTrustedPrivateCapability;
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
       vllmModelIdentity = selection.vllmModelIdentity;
@@ -577,6 +608,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       });
     }
     if (shouldRecordProviderSelection) {
+      // Provider selection is not yet durable route trust. Deliberately omit
+      // endpointSource/onboardEndpointUrl here so an interrupted run fails
+      // closed and revalidates the endpoint before inference setup on resume.
       session = await deps.recordStepComplete(
         "provider_selection",
         deps.toSessionUpdates({
@@ -604,6 +638,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }),
     );
     env.NEMOCLAW_OPENSHELL_BIN = deps.getOpenshellBinary();
+    endpointSource = endpointSourceForCurrentUrl(endpointSource, endpointUrl, onboardEndpointUrl);
+    if (endpointSource !== "onboard") onboardEndpointUrl = null;
     const needsBedrockRuntimeAdapter = deps.needsBedrockRuntimeAdapter(provider, endpointUrl);
     const resumeInference =
       !needsBedrockRuntimeAdapter &&
@@ -626,6 +662,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               : {}),
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
             ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+            endpointSource,
+            ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
             ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
             ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
             reservationSessionId: session?.sessionId,
@@ -706,21 +744,27 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             endpointUrl,
             credentialEnv,
           );
+          const reservationEndpointSource = endpointSourceForCurrentUrl(
+            endpointSource,
+            reupserted.endpointUrl,
+            onboardEndpointUrl,
+          );
           const reserved =
             reupserted.ok && resumeReservationName
               ? deps.reserveSandboxInferenceRoute(resumeReservationName, {
                   provider: selectedProvider,
                   model: selectedModel,
                   endpointUrl: reupserted.endpointUrl,
+                  endpointSource: reservationEndpointSource,
                   credentialEnv,
                   preferredInferenceApi,
                   gatewayName,
                   reservationSessionId: session?.sessionId,
                 })
               : null;
-          return { reupserted, reserved };
+          return { reupserted, reservationEndpointSource, reserved };
         });
-        const { reupserted, reserved } = routedRepair;
+        const { reupserted, reservationEndpointSource, reserved } = routedRepair;
         if (!reupserted.ok) {
           deps.error(
             `  ${reupserted.message ?? "Failed to update the routed inference provider."}`,
@@ -732,6 +776,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           deps.exitProcess(1);
         }
         endpointUrl = reupserted.endpointUrl;
+        endpointSource = reservationEndpointSource;
+        if (endpointSource !== "onboard") onboardEndpointUrl = null;
       }
       if (resumeReservationName && !routedInferenceProvider) {
         const reserved = await deps.withGatewayRouteMutationLock(gatewayName, () => {
@@ -746,6 +792,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
+            endpointSource,
             credentialEnv,
             preferredInferenceApi,
             gatewayName,
@@ -816,6 +863,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+        endpointSource,
+        ...(endpointSource === "onboard" && onboardEndpointUrl ? { onboardEndpointUrl } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
         ...providerRecovery.setupOptions(
@@ -882,6 +931,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     model,
     provider,
     endpointUrl,
+    endpointSource,
+    onboardEndpointUrl,
     credentialEnv,
     hermesAuthMethod,
     hermesToolGateways,

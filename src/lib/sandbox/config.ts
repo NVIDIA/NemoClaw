@@ -119,6 +119,7 @@ function configFail(lines: string | readonly string[], exitCode = 1): never {
 
 function restartSandboxAgentAfterConfigSet(
   sandboxName: string,
+  agentName: string,
   restartImpl?: ManagedGatewayRestart,
 ): void {
   const restart =
@@ -126,9 +127,15 @@ function restartSandboxAgentAfterConfigSet(
     (require("../actions/sandbox/process-recovery").restartSandboxGateway as ManagedGatewayRestart);
   const result = restart(sandboxName);
   if (!result.ok) {
-    configFail(
-      `  Config was updated, but the managed gateway restart failed for '${sandboxName}'.`,
-    );
+    // The config was already written to disk (the CAS write above succeeded),
+    // but the running agent was not reloaded. Say so plainly and point at the
+    // idempotent retry rather than leaving disk and the live gateway silently
+    // diverged. The restart layer has already printed its own failure detail.
+    configFail([
+      `  Config was written to disk but NOT applied to the running agent.`,
+      `  The ${agentName} gateway restart did not complete for '${sandboxName}' (see the failure above).`,
+      `  Retry the restart with: nemoclaw ${shellQuote(sandboxName)} gateway restart`,
+    ]);
   }
 }
 
@@ -1252,7 +1259,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
   // Restart if requested
   if (opts.restart) {
-    restartSandboxAgentAfterConfigSet(sandboxName);
+    restartSandboxAgentAfterConfigSet(sandboxName, target.agentName);
   } else {
     console.log("");
     for (const line of buildConfigSetRestartGuidance(sandboxName, target.agentName)) {

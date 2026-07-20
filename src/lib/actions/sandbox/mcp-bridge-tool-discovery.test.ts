@@ -67,7 +67,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
       "import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:], check=False).returncode)";
 
     try {
-      const result = spawnSync("python3", ["-I", "-c", runner, "/bin/true"], {
+      const result = spawnSync("python3", ["-I", "-c", runner, process.execPath, "-e", ""], {
         cwd: tmpDir,
         encoding: "utf8",
       });

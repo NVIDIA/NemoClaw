@@ -62,6 +62,7 @@ describe("handleSandboxState live DCode selection", () => {
 
     await handleSandboxState({
       ...baseOptions(deps, session),
+      fresh: true,
       agent: { name: "langchain-deepagents-code" },
     });
 
@@ -70,6 +71,7 @@ describe("handleSandboxState live DCode selection", () => {
       recreate: false,
       toolDisclosure: "progressive",
       observabilityEnabled: true,
+      endpointSource: "onboard",
       observabilityRequestedExplicitly: true,
       dcodeAutoApprovalMode: "disabled",
       extraProviders: [],
@@ -190,6 +192,7 @@ describe("handleSandboxState live DCode selection", () => {
       recreate: true,
       toolDisclosure: "progressive",
       observabilityEnabled: false,
+      endpointSource: null,
       dcodeAutoApprovalMode: "disabled",
       extraProviders: [],
     });
@@ -212,6 +215,7 @@ describe("handleSandboxState live DCode selection", () => {
       recreate: true,
       toolDisclosure: "progressive",
       observabilityEnabled: false,
+      endpointSource: null,
       dcodeAutoApprovalMode: "disabled",
       extraProviders: [],
     });

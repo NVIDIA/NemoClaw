@@ -3,6 +3,7 @@
 
 import { dockerContainerInspectFormat } from "../../adapters/docker/inspect";
 import { dockerCapture } from "../../adapters/docker/run";
+import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
 import * as registry from "../../state/registry";
 import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
 
@@ -30,6 +31,7 @@ interface ResolveDeps {
   getSandbox: (name: string) => registry.SandboxEntry | null;
   listSandboxNames: () => string[];
   dockerPsNames: () => string;
+  findLabeledSandboxContainers: typeof findLabeledSandboxContainers;
   dockerInspectHealth: (containerName: string) => string;
   dockerInspectPaused: (containerName: string) => string;
 }
@@ -38,6 +40,7 @@ const defaultDeps: ResolveDeps = {
   getSandbox: (name) => registry.getSandbox(name),
   listSandboxNames: () => registry.listSandboxes().sandboxes.map((entry) => entry.name),
   dockerPsNames: () => dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true }),
+  findLabeledSandboxContainers: (sandboxName) => findLabeledSandboxContainers(sandboxName),
   dockerInspectHealth: (containerName) =>
     dockerContainerInspectFormat(
       "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
@@ -106,18 +109,46 @@ function normalizePausedState(raw: string): boolean {
 }
 
 /**
- * Resolve a docker-driver sandbox container once and read both its HEALTHCHECK
- * state and `.State.Paused` flag. Returns `health: "none", paused: false` when
- * the sandbox is not on the docker driver or no container is found — same
- * resolution contract as {@link getSandboxDockerHealth}. A paused container is
- * still listed by `docker ps`, so the existing resolver finds it. See #4495.
+ * Resolve an OpenShell-labeled docker-driver sandbox container across all states
+ * and read both its HEALTHCHECK state and `.State.Paused` flag. Label-scoped
+ * discovery matches the ownership boundary enforced by `start`; preferring its
+ * running rows preserves paused-container guidance before falling back to an
+ * exited container that `start` can recover (#7222). Returns `health: "none",
+ * paused: false` when the sandbox is not on the docker driver or no owned
+ * container is found. See #4495.
  */
 export function getSandboxDockerRuntime(
   sandboxName: string,
   depsOverride: Partial<ResolveDeps> = {},
 ): SandboxDockerRuntime {
   const deps: ResolveDeps = { ...defaultDeps, ...depsOverride };
-  const containerName = resolveDockerDriverSandboxContainer(sandboxName, deps);
+  try {
+    if (deps.getSandbox(sandboxName)?.openshellDriver !== "docker") {
+      return { health: "none", paused: false, containerName: null };
+    }
+  } catch {
+    return { health: "none", paused: false, containerName: null };
+  }
+  let labeledContainers: ReturnType<typeof findLabeledSandboxContainers>;
+  try {
+    labeledContainers = deps.findLabeledSandboxContainers(sandboxName);
+  } catch {
+    return { health: "none", paused: false, containerName: null };
+  }
+  const runningNames = labeledContainers
+    .filter((container) => container.running)
+    .map((container) => container.name)
+    .join("\n");
+  const allNames = labeledContainers.map((container) => container.name).join("\n");
+  const containerName =
+    resolveDockerDriverSandboxContainer(sandboxName, {
+      ...deps,
+      dockerPsNames: () => runningNames,
+    }) ??
+    resolveDockerDriverSandboxContainer(sandboxName, {
+      ...deps,
+      dockerPsNames: () => allNames,
+    });
   if (!containerName) return { health: "none", paused: false, containerName: null };
   let health: DockerHealthState;
   try {

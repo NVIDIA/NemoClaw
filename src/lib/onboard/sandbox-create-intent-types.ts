@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { DockerGpuRoutePlan } from "./docker-gpu-route";
+import type { InitialSandboxPolicy } from "./initial-policy";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
@@ -40,6 +41,7 @@ export type SandboxCreatePolicyRequest = {
  */
 export type SandboxCreateIntent = {
   readonly sandboxName: string;
+  readonly inferenceProvider: string | null;
   readonly activeMessagingChannels: readonly string[];
   readonly messagingProviderRequests: readonly SandboxCreateMessagingProviderRequest[];
   readonly reusableMessagingProviders: readonly string[];
@@ -58,6 +60,7 @@ export type SandboxCreateIntent = {
 export type ResolveSandboxCreateIntentInput = {
   basePolicyPath: string;
   sandboxName: string;
+  inferenceProvider?: string | null;
   channels: readonly MessagingChannel[];
   enabledChannels: string[] | null;
   disabledChannelNames: ReadonlySet<string>;
@@ -88,5 +91,6 @@ export type MaterializeSandboxCreatePlanInput = {
     options: { replaceExisting: true },
   ): string[];
   getHermesToolGatewayProviderName(sandboxName: string): string;
+  discloseInitialSandboxPolicy?(policy: InitialSandboxPolicy): void;
   prepareInitialSandboxCreatePolicy?: PrepareInitialSandboxCreatePolicy;
 };

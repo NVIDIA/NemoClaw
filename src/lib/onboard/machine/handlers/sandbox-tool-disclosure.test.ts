@@ -72,6 +72,7 @@ describe("handleSandboxState tool disclosure", () => {
     await handleSandboxState({
       ...baseOptions(deps, session),
       resume: true,
+      endpointSource: "inference-set",
       sandboxName: "saved",
     });
 
@@ -101,6 +102,7 @@ describe("handleSandboxState tool disclosure", () => {
     await handleSandboxState({
       ...baseOptions(deps, session),
       resume: true,
+      endpointSource: "inference-set",
       sandboxName: "saved",
     });
 
@@ -125,6 +127,7 @@ describe("handleSandboxState tool disclosure", () => {
         recreate: true,
         toolDisclosure: requestedMode,
         observabilityEnabled: false,
+        endpointSource: "inference-set",
         extraProviders: [],
         reuseRegisteredCredentials: true,
       },

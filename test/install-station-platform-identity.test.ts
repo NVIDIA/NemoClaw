@@ -32,9 +32,14 @@ function runStationPrepare(body: string, extraEnv: Record<string, string> = {}) 
   return { result, output: `${result.stdout}${result.stderr}` };
 }
 
-function writePciIdentityFixture(vendor = "0x10de", device = "0x31c2", pciClass = "0x030200") {
+function writePciIdentityFixture(
+  vendor = "0x10de",
+  device = "0x31c2",
+  pciClass = "0x030200",
+  busId = "0000:01:00.0",
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-pci-"));
-  const pciDevice = path.join(root, "0000:01:00.0");
+  const pciDevice = path.join(root, busId);
   fs.mkdirSync(pciDevice);
   fs.writeFileSync(path.join(pciDevice, "vendor"), `${vendor}\n`);
   fs.writeFileSync(path.join(pciDevice, "device"), `${device}\n`);
@@ -73,6 +78,61 @@ describe("DGX Station platform identity", () => {
     const { result, output } = runStationPrepare(`station_has_exact_gb300_pci_gpu "$PCI_ROOT"`, {
       PCI_ROOT: pciRoot,
     });
+
+    expect(result.status, output).toBe(0);
+  });
+
+  it.each([
+    ["0x31c2", "0x31c2"],
+    ["0x31c3", "0x31c3"],
+  ])("accepts GB300 PCI device id %s (#7235)", (_scenario, device) => {
+    const pciRoot = writePciIdentityFixture("0x10de", device);
+    const { result, output } = runStationPrepare(`station_has_exact_gb300_pci_gpu "$PCI_ROOT"`, {
+      PCI_ROOT: pciRoot,
+    });
+
+    expect(result.status, output).toBe(0);
+  });
+
+  it("selects the GB300 by PCI identity when an auxiliary GPU has the same name", () => {
+    const pciRoot = writePciIdentityFixture();
+    const { result, output } = runStationPrepare(
+      `
+station_pci_devices_path() { printf '%s' "$PCI_ROOT"; }
+nvidia-smi() {
+  printf '%s\n' \
+    '00000000:02:00.0, NVIDIA GB300, 595.71.05, 1, 0' \
+    '00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0'
+}
+STATION_HOST_PROFILE=stock-dgx-os
+verify_gpu
+`,
+      { PCI_ROOT: pciRoot },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(
+      "gpu_bdf=0000:02:00.0 gpu=NVIDIA GB300 role=auxiliary validation=skipped",
+    );
+    expect(output).toContain(
+      "gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 role=inference driver=595.71.05 ecc_corrected=0 ecc_uncorrected=0",
+    );
+  });
+
+  it("qualifies the loaded driver from the PCI-identified GB300 instead of GPU index zero", () => {
+    const pciRoot = writePciIdentityFixture();
+    const { result, output } = runStationPrepare(
+      `
+station_pci_devices_path() { printf '%s' "$PCI_ROOT"; }
+nvidia-smi() {
+  printf '%s\n' \
+    '00000000:02:00.0, 620.1' \
+    '00000000:01:00.0, 610.43.02'
+}
+driver_loaded_exact
+`,
+      { PCI_ROOT: pciRoot },
+    );
 
     expect(result.status, output).toBe(0);
   });
@@ -132,7 +192,7 @@ run_apply
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2)");
+    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2/31c3)");
     expect(output).not.toContain("UNEXPECTED_MUTATION");
   });
 
@@ -178,7 +238,7 @@ run_apply
     );
 
     expect(result.status, output).not.toBe(0);
-    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2)");
+    expect(output).toContain("Expected an NVIDIA GB300 PCI GPU (10de:31c2/31c3)");
     expect(output).not.toContain("UNEXPECTED_MUTATION");
   });
 });

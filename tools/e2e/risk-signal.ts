@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
+import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 
 export const RISK_SIGNAL_FILE = "risk-signal.json";
 

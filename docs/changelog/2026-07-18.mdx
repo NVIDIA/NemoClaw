@@ -1,0 +1,24 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.88
+
+NemoClaw v0.0.88 strengthens DGX Station host preparation, makes inference health claims more precise, fixes multi-gateway sandbox operations and recovery, aligns onboarding policy defaults with web search, and restores credential-aware rebuilds.
+
+- DGX Station preparation preserves stopped containers whose restart policy is `no` and stops if the container inventory changes or a workload becomes active.
+  It provides RDMA-aware remediation when `openibd.service` fails and can restore the packaged CDI refresh lifecycle on the exact June 2026 NVIDIA AI Developer Tools factory image without generating CDI directly or restarting Docker or containerd.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/prerequisites/dgx-station-preparation), [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support), and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Sandbox `status` and `doctor` now distinguish an inference route that is `reachable` from an upstream model that is `healthy` by using bounded authenticated model-invocation probes for supported remote providers.
+  Gateway-based agents also report `Serving process: not checked` so a fresh sandbox exec is not presented as proof that the long-running gateway process has equivalent inference access.
+  For more information, refer to [Verify the Sandbox Inference Route](/user-guide/openclaw/inference/validate-inference/verify-inference-route) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Sandbox-scoped status and exec operations select the sandbox's owning OpenShell gateway before querying or dispatching, which prevents another active gateway on the host from producing stale state or receiving the command.
+  Recovery also accepts an already-active port forward as success only after the live forward inventory confirms that the target sandbox owns the reachable listener.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- Fresh interactive onboarding now checks only the policy presets implied by the selected agent and web-search provider.
+  Disabling web search no longer preselects Brave egress, while Brave and Tavily selections continue to preselect only their matching maintained preset.
+  For more information, refer to [Common NemoClaw Integration Policy Examples](/user-guide/openclaw/network-policy/integration-policy-examples).
+- OpenClaw rebuild preflight now reuses the sandbox's exact gateway-registered Brave or Tavily credential binding when no host key is staged.
+  Rebuilds therefore no longer require you to export a web-search key again when the durable gateway provider already matches the sandbox configuration, while missing or mismatched bindings still fail closed.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).

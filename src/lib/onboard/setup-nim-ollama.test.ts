@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import { createSetupNimOllamaHandlers } from "./setup-nim-ollama";
@@ -25,6 +25,10 @@ function makeState(): SetupNimSelectionState {
 }
 
 type Deps = Parameters<typeof createSetupNimOllamaHandlers>[0];
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function makeDeps(overrides: Partial<Deps> = {}): Deps {
   return {
@@ -64,6 +68,7 @@ function makeDeps(overrides: Partial<Deps> = {}): Deps {
 describe("createSetupNimOllamaHandlers", () => {
   it("guards the selected route before systemd recovery and model preparation (#6315)", async () => {
     const events: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const state = makeState();
     state.assertRouteCompatible = () => {
       events.push(`guard:${String(state.model)}`);
@@ -75,6 +80,7 @@ describe("createSetupNimOllamaHandlers", () => {
     };
     const { handleRunningOllamaSelection } = createSetupNimOllamaHandlers(
       makeDeps({
+        isNonInteractive: () => false,
         ensureOllamaLoopbackSystemdOverride: () => {
           events.push("systemd");
           return "unchanged";
@@ -97,6 +103,42 @@ describe("createSetupNimOllamaHandlers", () => {
       "prepare-model",
       "guard:required/model",
     ]);
+    expect(log.mock.calls.map(([message]) => message)).toContain(
+      "  Shared gateway route requires Ollama model 'required/model'.",
+    );
+    expect(log.mock.calls.map(([message]) => message)).toContain(
+      "  To use a different model for this agent, rerun with an unused NEMOCLAW_GATEWAY_PORT.",
+    );
+    log.mockRestore();
+  });
+
+  it("keeps shared-route guidance silent in non-interactive mode (#6758)", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const selectModel = vi.fn<Deps["selectAndValidateOllamaModel"]>(async () => ({
+      outcome: "selected" as const,
+      model: "required/model",
+      allowToolsIncompatible: false,
+    }));
+    const state = makeState();
+    state.assertRouteCompatible = () => ({
+      requiredModel: "required/model",
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    const { handleRunningOllamaSelection } = createSetupNimOllamaHandlers(
+      makeDeps({ selectAndValidateOllamaModel: selectModel }),
+    );
+
+    await handleRunningOllamaSelection(null, "required/model", null, true, state);
+
+    expect(selectModel.mock.calls[0]?.[2].lockedModel).toBe("required/model");
+    expect(log).not.toHaveBeenCalledWith(
+      "  Shared gateway route requires Ollama model 'required/model'.",
+    );
+    expect(log).not.toHaveBeenCalledWith(
+      "  To use a different model for this agent, rerun with an unused NEMOCLAW_GATEWAY_PORT.",
+    );
+    log.mockRestore();
   });
 
   it("passes NEMOCLAW_MODEL as the interactive Ollama prompt default", async () => {

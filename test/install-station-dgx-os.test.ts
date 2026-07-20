@@ -116,6 +116,36 @@ function writeNoOtaFactoryRelease(
   return target;
 }
 
+function writeOtaUpgradedRelease(
+  overrides: Partial<{ pretty: string; otaVersion: string; swbuildVersion: string }> = {},
+) {
+  const fields = {
+    pretty: "NVIDIA DGX GB300WS",
+    otaVersion: "7.5.0",
+    swbuildVersion: "7.4.1-GB300ws",
+    ...overrides,
+  };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-ota-upgraded-"));
+  const target = path.join(dir, "dgx-release");
+  fs.writeFileSync(
+    target,
+    [
+      'DGX_NAME="DGX GB300WS"',
+      `DGX_PRETTY_NAME="${fields.pretty}"`,
+      'DGX_SWBUILD_DATE="2026-02-20-05-22-42"',
+      `DGX_SWBUILD_VERSION="${fields.swbuildVersion}"`,
+      'DGX_COMMIT_ID="51c59a9"',
+      'DGX_PLATFORM="DGX Server for GALAXY-GB300"',
+      'DGX_SERIAL_NUMBER="Unknown"',
+      "",
+      `DGX_OTA_VERSION="${fields.otaVersion}"`,
+      'DGX_OTA_DATE="Sun Apr 12 16:25:30 PDT 2026"',
+      "",
+    ].join("\n"),
+  );
+  return target;
+}
+
 describe("DGX Station stock DGX OS classification", () => {
   it.each([
     "7.2.0",
@@ -349,6 +379,37 @@ dgx_station_release_state "$DGX_RELEASE"
     expect(result.stdout).toBe(expected);
   });
 
+  it("classifies an OTA-upgraded GB300 workstation without the fresh-install marker as supported-dgx-os (#7103)", () => {
+    const release = writeOtaUpgradedRelease();
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+stat() { printf '0|0|644|256\n'; }
+dgx_station_release_state "$DGX_RELEASE"
+`,
+      { DGX_RELEASE: release },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(result.stdout).toBe("supported-dgx-os");
+  });
+
+  it.each([
+    [
+      "a non-workstation DGX Server identity",
+      writeOtaUpgradedRelease({ pretty: "NVIDIA DGX Server" }),
+    ],
+    ["an unreviewed latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.6.0" })],
+  ])("keeps a marker-less OTA host fail-closed with %s (#7103)", (_scenario, release) => {
+    const { result } = runSourced(
+      STATION_PREPARE,
+      `dgx_station_release_contents_are_supported "$DGX_RELEASE"`,
+      { DGX_RELEASE: release },
+    );
+
+    expect(result.status).not.toBe(0);
+  });
+
   it("keeps the classifier self-contained when the helper is transported alone", () => {
     const isolated = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-helper-only-"));
     const copiedHelper = path.join(isolated, "prepare-dgx-station-host.sh");
@@ -522,16 +583,17 @@ describe("DGX Station forced metadata installer handoff", () => {
       INSTALLER_PAYLOAD,
       `
 SCRIPT_DIR="$HOME"
-touch "$SCRIPT_DIR/prepare-dgx-station-host.sh"
-bash() { printf 'HELPER_ARGS=%s\n' "$*"; }
+cat >"$SCRIPT_DIR/prepare-dgx-station-host.sh" <<'HELPER'
+printf '%s\n' "$*" >"$HOME/helper-args"
+HELPER
 FORCE_STATION_INSTALL=1
 run_station_host_preparation
 `,
     );
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain(
-      `HELPER_ARGS=${path.join(home, "prepare-dgx-station-host.sh")} --apply --force-station-install`,
+    expect(fs.readFileSync(path.join(home, "helper-args"), "utf8")).toBe(
+      "--apply --force-station-install\n",
     );
   });
 
@@ -585,11 +647,12 @@ run_apply
     const exact = runSourced(
       STATION_PREPARE,
       `
-installed_version() {
+installed_package_record() {
   local spec
   for spec in "\${BASEOS_PACKAGE_SPECS[@]}"; do
-    if [[ "\${spec%%=*}" == "$1" ]]; then printf '%s' "\${spec#*=}"; return; fi
+    if [[ "\${spec%%=*}" == "$1" ]]; then printf 'ii |arm64|%s' "\${spec#*=}"; return; fi
   done
+  return 1
 }
 all_baseos_packages_exact
 `,
@@ -599,12 +662,13 @@ all_baseos_packages_exact
     const drifted = runSourced(
       STATION_PREPARE,
       `
-installed_version() {
-  if [[ "$1" == "docker-ce" ]]; then printf '5:30.0.0-1~ubuntu.24.04~noble'; return; fi
+installed_package_record() {
+  if [[ "$1" == "docker-ce" ]]; then printf 'ii |arm64|5:30.0.0-1~ubuntu.24.04~noble'; return; fi
   local spec
   for spec in "\${BASEOS_PACKAGE_SPECS[@]}"; do
-    if [[ "\${spec%%=*}" == "$1" ]]; then printf '%s' "\${spec#*=}"; return; fi
+    if [[ "\${spec%%=*}" == "$1" ]]; then printf 'ii |arm64|%s' "\${spec#*=}"; return; fi
   done
+  return 1
 }
 all_baseos_packages_exact
 `,
@@ -789,6 +853,219 @@ run_apply
     expect(output).not.toContain("UNEXPECTED_REQUIREMENT");
   });
 
+  it("keeps healthy AI Developer Tools CDI validation-only", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() {
+  [[ "$1" == "sudo" ]] || { printf 'UNEXPECTED_REQUIREMENT %s\n' "$1"; return 1; }
+}
+acquire_sudo() { :; }
+common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version'|'ps -aq') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+sudo() {
+  case "$*" in
+    'nvidia-ctk cdi list') printf 'nvidia.com/gpu=all\n' ;;
+    *) printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1 ;;
+  esac
+}
+refresh_cdi() { printf 'UNEXPECTED_CDI_REFRESH\n'; return 1; }
+ensure_dgx_os_acceptance_image() { printf 'IMAGE_CACHE_READY\n'; }
+run_dgx_os_cdi_test_sudo() { printf 'DIGEST_PINNED_CDI_PROBE_OK\n'; }
+run_dgx_os_gpus_test_sudo() { printf 'DIGEST_PINNED_GPUS_PROBE_OK\n'; }
+ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
+install_packages() { printf 'UNEXPECTED_PACKAGE_MUTATION\n'; return 1; }
+finish_runtime() { printf 'UNEXPECTED_RUNTIME_MUTATION\n'; return 1; }
+run_apply
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toContain("cdi=nvidia.com/gpu=all source=factory_runtime");
+    expect(output).toContain("DIGEST_PINNED_CDI_PROBE_OK");
+    expect(output).toContain("DIGEST_PINNED_GPUS_PROBE_OK");
+    expect(output.indexOf("FACTORY_GATES_OK")).toBeLessThan(
+      output.indexOf("cdi=nvidia.com/gpu=all source=factory_runtime"),
+    );
+    expect(output).toContain("APPLY_RESULT=COMPLETE");
+    expect(output).not.toContain("UNEXPECTED_");
+  });
+
+  it("repairs missing AI Developer Tools CDI through the packaged lifecycle before validation", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+cdi_ready=0
+require_command() {
+  [[ "$1" == "sudo" ]] || { printf 'UNEXPECTED_REQUIREMENT %s\n' "$1"; return 1; }
+}
+acquire_sudo() { :; }
+common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version'|'ps -aq') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+require_docker_mutation_quiescence() { printf 'WORKLOAD_GATE_OK %s\n' "$1"; }
+sudo() {
+  case "$*" in
+    'nvidia-ctk cdi list')
+      ((cdi_ready == 1)) && printf 'nvidia.com/gpu=all\n'
+      ;;
+    'systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service'|'systemctl start nvidia-cdi-refresh.path')
+      printf 'PACKAGED_LIFECYCLE %s\n' "$*"
+      ;;
+    'systemctl restart nvidia-cdi-refresh.service')
+      printf 'PACKAGED_LIFECYCLE %s\n' "$*"
+      cdi_ready=1
+      ;;
+    *) printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1 ;;
+  esac
+}
+nvidia-ctk() {
+  [[ "$*" == "cdi list" && "$cdi_ready" == "1" ]] && printf 'nvidia.com/gpu=all\n'
+}
+ensure_dgx_os_acceptance_image() { printf 'IMAGE_CACHE_READY\n'; }
+run_dgx_os_cdi_test_sudo() { printf 'DIGEST_PINNED_CDI_PROBE_OK\n'; }
+run_dgx_os_gpus_test_sudo() { printf 'DIGEST_PINNED_GPUS_PROBE_OK\n'; }
+ensure_docker_group() { printf 'DOCKER_GROUP_PRESENT\n'; }
+install_packages() { printf 'UNEXPECTED_PACKAGE_MUTATION\n'; return 1; }
+finish_runtime() { printf 'UNEXPECTED_RUNTIME_MUTATION\n'; return 1; }
+configure_docker_runtime_if_needed() { printf 'UNEXPECTED_DOCKER_RUNTIME_MUTATION\n'; return 1; }
+run_apply
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toContain("WORKLOAD_GATE_OK");
+    expect(output).toContain(
+      "PACKAGED_LIFECYCLE systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service",
+    );
+    expect(output).toContain("PACKAGED_LIFECYCLE systemctl start nvidia-cdi-refresh.path");
+    expect(output).toContain("PACKAGED_LIFECYCLE systemctl restart nvidia-cdi-refresh.service");
+    expect(output).toContain("cdi=nvidia.com/gpu=all source=packaged_refresh_service");
+    expect(output).toContain("DIGEST_PINNED_CDI_PROBE_OK");
+    expect(output).toContain("DIGEST_PINNED_GPUS_PROBE_OK");
+    expect(output.indexOf("FACTORY_GATES_OK")).toBeLessThan(
+      output.indexOf("PACKAGED_LIFECYCLE systemctl enable"),
+    );
+    expect(output.indexOf("cdi=nvidia.com/gpu=all source=packaged_refresh_service")).toBeLessThan(
+      output.indexOf("DIGEST_PINNED_CDI_PROBE_OK"),
+    );
+    expect(output).toContain("APPLY_RESULT=COMPLETE");
+    expect(output).not.toContain("UNEXPECTED_");
+    expect(output).not.toContain("nvidia-ctk cdi generate");
+    expect(output).not.toContain("systemctl restart docker.service");
+    expect(output).not.toContain("systemctl restart containerd.service");
+  });
+
+  it.each([
+    ["restart failure", "return 1", "Packaged CDI refresh failed"],
+    ["missing device after restart", "return 0", "did not advertise nvidia.com/gpu=all"],
+  ] as const)("fails closed on AI Developer Tools CDI %s", (_scenario, restartResult, error) => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+require_command() { :; }
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+require_docker_mutation_quiescence() { printf 'WORKLOAD_GATE_OK %s\n' "$1"; }
+sudo() {
+  case "$*" in
+    'nvidia-ctk cdi list') return 0 ;;
+    'systemctl enable nvidia-cdi-refresh.path nvidia-cdi-refresh.service'|'systemctl start nvidia-cdi-refresh.path') return 0 ;;
+    'systemctl restart nvidia-cdi-refresh.service') ${restartResult} ;;
+    'systemctl status nvidia-cdi-refresh.service --no-pager'|'journalctl -u nvidia-cdi-refresh.service --no-pager -n 50')
+      printf 'SERVICE_DIAGNOSTICS %s\n' "$*"
+      ;;
+    *) printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1 ;;
+  esac
+}
+nvidia-ctk() { return 0; }
+ensure_dgx_os_acceptance_image() { printf 'UNEXPECTED_ACCEPTANCE_IMAGE\n'; return 1; }
+run_dgx_os_cdi_test_sudo() { printf 'UNEXPECTED_CDI_PROBE\n'; return 1; }
+run_dgx_os_gpus_test_sudo() { printf 'UNEXPECTED_GPUS_PROBE\n'; return 1; }
+STATION_HOST_PROFILE=ai-developer-tools
+verify_dgx_os_runtime_sudo
+`,
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toContain("WORKLOAD_GATE_OK");
+    expect(output).toContain("SERVICE_DIAGNOSTICS");
+    expect(output).toContain(error);
+    expect(output).not.toContain("UNEXPECTED_");
+    expect(output).not.toContain("systemctl restart docker.service");
+    expect(output).not.toContain("systemctl restart containerd.service");
+  });
+
+  it("keeps forced factory-runtime profiles out of packaged CDI repair", () => {
+    const { result, output } = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=forced-factory-runtime
+check_dgx_os_runtime_commands() { printf 'FACTORY_GATES_OK\n'; }
+systemctl() {
+  case "$*" in
+    'is-active --quiet containerd.service'|'is-active --quiet docker.service') return 0 ;;
+    *) printf 'UNEXPECTED_SYSTEMCTL %s\n' "$*"; return 1 ;;
+  esac
+}
+station_sudo_local_default_docker() {
+  case "$*" in
+    'info'|'buildx version') return 0 ;;
+    *) printf 'UNEXPECTED_DOCKER %s\n' "$*"; return 1 ;;
+  esac
+}
+sudo() {
+  [[ "$*" == "nvidia-ctk cdi list" ]] || { printf 'UNEXPECTED_SUDO %s\n' "$*"; return 1; }
+}
+refresh_cdi() { printf 'UNEXPECTED_CDI_REFRESH\n'; return 1; }
+verify_dgx_os_runtime_sudo
+`,
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("FACTORY_GATES_OK");
+    expect(output).toMatch(/does not advertise the nvidia\.com\/gpu=all CDI device/);
+    expect(output).not.toContain("UNEXPECTED_");
+    expect(output).not.toContain("nvidia-cdi-refresh");
+  });
+
   it("returns a relogin result instead of requesting a reboot for factory Docker access", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
@@ -796,6 +1073,9 @@ run_apply
 require_command() { :; }
 acquire_sudo() { :; }
 common_preflight() { STATION_HOST_PROFILE=ai-developer-tools; }
+sudo() {
+  [[ "$*" == "nvidia-ctk cdi list" ]] && printf 'nvidia.com/gpu=all\n'
+}
 verify_dgx_os_runtime_sudo() { printf 'FACTORY_RUNTIME_VALIDATED\n'; }
 ensure_docker_group() { DOCKER_GROUP_ADDED=1; }
 run_apply
@@ -813,7 +1093,8 @@ run_apply
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=stock-dgx-os
-nvidia-smi() { printf 'NVIDIA GB300, 595.71.05, 0, 0\n'; }
+station_pci_device_is_gb300() { return 0; }
+nvidia-smi() { printf '00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0\n'; }
 verify_gpu
 `,
     );
@@ -824,7 +1105,8 @@ verify_gpu
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=generic-ubuntu
-nvidia-smi() { printf 'NVIDIA GB300, 595.71.05, 0, 0\n'; }
+station_pci_device_is_gb300() { return 0; }
+nvidia-smi() { printf '00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0\n'; }
 verify_gpu
 `,
     );
@@ -837,18 +1119,19 @@ verify_gpu
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=ai-developer-tools
+station_pci_device_is_gb300() { [[ "$1" == "0000:01:00.0" ]]; }
 nvidia-smi() {
-  printf 'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
-  printf 'NVIDIA GB300, 610.43.03, 0, 0\n'
+  printf '00000000:02:00.0, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
+  printf '00000000:01:00.0, NVIDIA GB300, 610.43.03, 0, 0\n'
 }
 verify_gpu
 `,
     );
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain("gpu_index=0 gpu=NVIDIA RTX PRO 6000");
+    expect(output).toContain("gpu_bdf=0000:02:00.0 gpu=NVIDIA RTX PRO 6000");
     expect(output).toContain("role=auxiliary validation=skipped");
-    expect(output).toContain("gpu_index=1 gpu=NVIDIA GB300 role=inference");
+    expect(output).toContain("gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 role=inference");
   });
 
   it("requires both factory container probes to expose the GB300 on a mixed-GPU host", () => {
@@ -856,29 +1139,31 @@ verify_gpu
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=ai-developer-tools
+station_pci_device_is_gb300() { [[ "$1" == "0000:01:00.0" ]]; }
 station_sudo_local_default_docker() {
-  printf 'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
-  printf 'NVIDIA GB300, 610.43.03, 0, 0\n'
+  printf '00000000:02:00.0, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
+  printf '00000000:01:00.0, NVIDIA GB300, 610.43.03, 0, 0\n'
 }
 run_dgx_os_cdi_test_sudo
 run_dgx_os_gpus_test_sudo
 `,
     );
     expect(mixed.result.status, mixed.output).toBe(0);
-    expect(mixed.output).toContain("gpu_index=1 gpu=NVIDIA GB300 role=inference");
+    expect(mixed.output).toContain("gpu_bdf=0000:01:00.0 gpu=NVIDIA GB300 role=inference");
 
     const rtxOnly = runSourced(
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=ai-developer-tools
+station_pci_device_is_gb300() { [[ "$1" == "0000:01:00.0" ]]; }
 station_sudo_local_default_docker() {
-  printf 'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
+  printf '00000000:02:00.0, NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition, 610.43.03, [N/A], [N/A]\n'
 }
 run_dgx_os_cdi_test_sudo
 `,
     );
     expect(rtxOnly.result.status, rtxOnly.output).not.toBe(0);
-    expect(rtxOnly.output).toContain("Expected exactly one NVIDIA GB300, found 0");
+    expect(rtxOnly.output).toContain("Expected exactly one NVIDIA GB300 PCI device, found 0");
   });
 
   it("requires the qualified BaseOS driver to be loaded", () => {
@@ -886,7 +1171,8 @@ run_dgx_os_cdi_test_sudo
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=colossus-baseos
-nvidia-smi() { printf 'NVIDIA GB300, 595.71.05, 0, 0\n'; }
+station_pci_device_is_gb300() { return 0; }
+nvidia-smi() { printf '00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0\n'; }
 verify_gpu
 `,
     );
@@ -986,18 +1272,30 @@ verify_dgx_os_runtime_sudo
   });
 
   it.each([
-    ["wrong GPU", "NVIDIA GB200, 595.71.05, 0, 0", /Expected exactly one NVIDIA GB300, found 0/],
-    ["non-zero volatile ECC", "NVIDIA GB300, 595.71.05, 1, 0", /ECC must be 0\/0/],
     [
-      "a failing second GPU row",
-      "NVIDIA GB300, 595.71.05, 0, 0\nNVIDIA GB300, 595.71.05, 0, 1",
+      "a missing GB300 PCI identity",
+      "00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0",
+      "return 1",
+      /Expected exactly one NVIDIA GB300 PCI device, found 0/,
+    ],
+    [
+      "non-zero volatile ECC",
+      "00000000:01:00.0, NVIDIA GB300, 595.71.05, 1, 0",
+      "return 0",
       /ECC must be 0\/0/,
     ],
-  ])("fails stock validation for %s", (_scenario, row, message) => {
+    [
+      "a failing second GPU row",
+      "00000000:01:00.0, NVIDIA GB300, 595.71.05, 0, 0\n00000000:02:00.0, NVIDIA GB300, 595.71.05, 0, 1",
+      "return 0",
+      /ECC must be 0\/0/,
+    ],
+  ])("fails stock validation for %s", (_scenario, row, pciResult, message) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `
 STATION_HOST_PROFILE=stock-dgx-os
+station_pci_device_is_gb300() { ${pciResult}; }
 nvidia-smi() { printf '%s\n' "$GPU_ROW"; }
 verify_gpu
 `,
