@@ -65,6 +65,7 @@ After successful registration, the runtime remains configured until the same acc
 Preparation requires Secure Boot to be disabled, matching headers for the running kernel, at least 20 GiB free on the root filesystem, and no active agent, inference, or Docker workloads.
 It also stops when systemd reports a failed unit unless the unit matches an exact, condition-qualified state from the generic Station image: the pinned OEM `cloud-init` telemetry failure, a network-wait failure while current network health is established, masked `fwupd`, or an SSSD socket on a host without SSSD configuration.
 Any other failed unit blocks preparation for administrator review.
+On the `--force-station-install` path, preparation also tolerates the InfiniBand communication manager (`ibacm`) and the realtime audio scheduler (`rtkit-daemon`) as failed units, because neither affects GPU or container capability; the required GPU, container, and preparation-critical service checks still apply.
 It does not install a host CUDA toolkit or Docker Compose.
 If any other existing prerequisite version differs, preparation stops instead of changing it automatically.
 After changing pinned packages, the installer exits with status `10`; reboot, sign in, and run the printed command, which pins the exact accepted NemoClaw commit before resuming express setup.
