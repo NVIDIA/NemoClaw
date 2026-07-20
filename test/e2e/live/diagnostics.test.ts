@@ -132,7 +132,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
       "nemoclaw debug --output creates an extractable archive without NVIDIA credential values",
       "debug --sandbox accepts a registered sandbox and rejects an unknown sandbox without a partial archive",
       "sandbox openclaw.json is readable through real OpenShell sandbox exec and host status includes model data",
-      "credentials list hides secret values and credentials reset removes the provider credential from the gateway",
+      "credentials list hides secret values and credentials reset removes an explicitly detached provider credential from the gateway",
     ],
   });
 
@@ -319,19 +319,20 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
   expect(resultText(status)).toMatch(/Model/i);
 
   const rawCredentialsList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
-  const credentialsText = rawResultText(rawCredentialsList);
-  expect(rawCredentialsList.status, redactForAssertion(credentialsText, apiKey)).toBe(0);
+  const credentialsOutput = rawResultText(rawCredentialsList);
+  const credentialsStdout = rawCredentialsList.stdout;
+  expect(rawCredentialsList.status, redactForAssertion(credentialsOutput, apiKey)).toBe(0);
   expect(
-    credentialsText.includes(apiKey),
+    credentialsOutput.includes(apiKey),
     "credentials list must not expose the exact NVIDIA_INFERENCE_API_KEY",
   ).toBe(false);
   expect(
-    /nvapi-[A-Za-z0-9_-]{10,}/.test(credentialsText),
+    /nvapi-[A-Za-z0-9_-]{10,}/.test(credentialsOutput),
     "credentials list must not expose nvapi-shaped values",
   ).toBe(false);
   expect(
-    credentialsText.includes(hosted.providerName) ||
-      /No provider credentials registered/i.test(credentialsText),
+    credentialsStdout.includes(hosted.providerName) ||
+      /No provider credentials registered/i.test(credentialsStdout),
   ).toBe(true);
 
   await host.command("node", [CLI_ENTRYPOINT, "credentials", "list"], {
@@ -344,8 +345,35 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
   let credentialsResetExercised = false;
   let postResetCredentialsListRedacted = false;
   let providerCredentialAbsentBeforeReset = false;
-  if (credentialsText.includes(hosted.providerName)) {
+  let providerDetachedBeforeReset = false;
+  if (credentialsStdout.includes(hosted.providerName)) {
     credentialsResetExercised = true;
+    const detach = await sandbox.openshell(
+      ["sandbox", "provider", "detach", SANDBOX_NAME, hosted.providerName],
+      {
+        artifactName: "diagnostics-inference-provider-detach-before-credentials-reset",
+        env,
+        redactionValues: [apiKey],
+        timeoutMs: 60_000,
+      },
+    );
+    expect(detach.exitCode, resultText(detach)).toBe(0);
+
+    const providersAfterDetach = await sandbox.openshell(
+      ["sandbox", "provider", "list", SANDBOX_NAME],
+      {
+        artifactName: "diagnostics-inference-providers-after-detach",
+        env,
+        redactionValues: [apiKey],
+        timeoutMs: 60_000,
+      },
+    );
+    expect(providersAfterDetach.exitCode, resultText(providersAfterDetach)).toBe(0);
+    expect(providersAfterDetach.stdout, resultText(providersAfterDetach)).not.toContain(
+      hosted.providerName,
+    );
+    providerDetachedBeforeReset = true;
+
     const reset = await host.command(
       "node",
       [CLI_ENTRYPOINT, "credentials", "reset", hosted.providerName, "--yes"],
@@ -357,21 +385,24 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
       },
     );
     expect(reset.exitCode, resultText(reset)).toBe(0);
-    expect(resultText(reset)).toContain(`Removed provider '${hosted.providerName}'`);
+    expect(reset.stdout, resultText(reset)).toContain(`Removed provider '${hosted.providerName}'`);
 
     const rawPostResetList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
-    const postResetText = rawResultText(rawPostResetList);
-    expect(rawPostResetList.status, redactForAssertion(postResetText, apiKey)).toBe(0);
-    expect(postResetText.includes(hosted.providerName)).toBe(false);
+    const postResetOutput = rawResultText(rawPostResetList);
+    expect(rawPostResetList.status, redactForAssertion(postResetOutput, apiKey)).toBe(0);
     expect(
-      postResetText.includes(apiKey),
+      rawPostResetList.stdout.includes(hosted.providerName),
+      redactForAssertion(postResetOutput, apiKey),
+    ).toBe(false);
+    expect(
+      postResetOutput.includes(apiKey),
       "post-reset credentials list must not expose the exact NVIDIA_INFERENCE_API_KEY",
     ).toBe(false);
     expect(
-      /nvapi-[A-Za-z0-9_-]{10,}/.test(postResetText),
+      /nvapi-[A-Za-z0-9_-]{10,}/.test(postResetOutput),
       "post-reset credentials list must not expose nvapi-shaped values",
     ).toBe(false);
-    postResetCredentialsListRedacted = !postResetText.includes(apiKey);
+    postResetCredentialsListRedacted = !postResetOutput.includes(apiKey);
 
     await host.command("node", [CLI_ENTRYPOINT, "credentials", "list"], {
       artifactName: "diagnostics-credentials-list-after-reset",
@@ -384,7 +415,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
     await artifacts.writeJson("credentials-reset.skip.json", {
       provider: hosted.providerName,
       reason: `credentials list reported no ${hosted.providerName} provider credential after install/onboard`,
-      acceptedNoProviderStore: /No provider credentials registered/i.test(credentialsText),
+      acceptedNoProviderStore: /No provider credentials registered/i.test(credentialsStdout),
     });
   }
 
@@ -401,9 +432,10 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
       unknownSandboxDebugRejected: unknownSandboxDebug.exitCode !== 0,
       sandboxConfigReadable: config.exitCode === 0 && config.stdout.trim().length > 0,
       statusShowsModel: /Model/i.test(resultText(status)),
-      credentialsListRedacted: !credentialsText.includes(apiKey),
+      credentialsListRedacted: !credentialsOutput.includes(apiKey),
       credentialsResetExercised,
       providerCredentialAbsentBeforeReset,
+      providerDetachedBeforeReset,
       postResetCredentialsListRedacted,
     },
   });

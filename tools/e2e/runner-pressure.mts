@@ -43,7 +43,7 @@ import {
   appendPrivateRegularFile,
   readPrivateRegularFile,
   writePrivateRegularFile,
-} from "./private-file.ts";
+} from "./private-file.mts";
 import {
   assertPhaseLabel,
   classifyFailure,

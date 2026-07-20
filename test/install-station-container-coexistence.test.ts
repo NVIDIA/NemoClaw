@@ -107,6 +107,7 @@ check_kernel_headers() { :; }
 check_capacity() { :; }
 check_network() { :; }
 check_package_managers_idle() { :; }
+check_dpkg_database_health() { :; }
 check_failed_units() { :; }
 check_agent_and_inference_conflicts() { :; }
 driver_loaded_exact() { return 0; }
