@@ -287,10 +287,13 @@ describe("selection", () => {
       nimContainer: "wrong",
     });
 
-    expect(selection("demo", "compatible-endpoint", "llama", "openai-completions")).toEqual({
+    expect(
+      selection("demo", "compatible-endpoint", "llama", "openai-completions", "onboard"),
+    ).toEqual({
       provider: "compatible-endpoint",
       model: "llama",
       endpointUrl: null,
+      endpointSource: null,
       credentialEnv: null,
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: null,
@@ -309,10 +312,13 @@ describe("selection", () => {
       nimContainer: "nim-right",
     });
 
-    expect(selection("demo", "compatible-endpoint", "llama", "openai-completions")).toEqual({
+    expect(
+      selection("demo", "compatible-endpoint", "llama", "openai-completions", "onboard"),
+    ).toEqual({
       provider: "compatible-endpoint",
       model: "llama",
       endpointUrl: "https://right.test/v1",
+      endpointSource: "onboard",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: "true",

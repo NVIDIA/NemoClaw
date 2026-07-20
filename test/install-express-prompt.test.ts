@@ -64,6 +64,8 @@ ensure_openshell_build_deps() { :; }
 # Stop immediately after the real Station express prompt configures its recipe,
 # before setup-jetson.sh or any installation side effect can run.
 classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-ubuntu}"; }
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
 bash() {
   printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s\\n" \
     "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \
@@ -483,7 +485,7 @@ describe_express_install 'DGX Station'`,
     );
   });
 
-  it("preserves complete Station Express intent across a Docker-group relogin", () => {
+  it("pre-stages complete Station Express intent and ports before a Docker-group relogin (#7203)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-relogin-"));
     const revision = "a".repeat(40);
     const generation = "0123456789abcdef0123456789abcdef";
@@ -499,7 +501,10 @@ NEMOCLAW_VLLM_MODEL='deepseek-v4-flash'
 classify_dgx_station_release() { printf 'supported-ai-developer-tools'; }
 station_installer_revision() { printf '${revision}'; }
 station_express_resume_generation() { printf '${generation}'; }
-run_station_host_preparation() { return 11; }
+run_station_host_preparation() {
+  [[ -f "$(station_express_resume_file)" ]] && printf 'RECEIPT_PRESTAGED=yes\n'
+  return 11
+}
 ensure_station_express_host`,
       ],
       {
@@ -512,20 +517,149 @@ ensure_station_express_host`,
           NEMOCLAW_AGENT: "Hermes",
           NEMOCLAW_SANDBOX_NAME: "custom-agent",
           NEMOCLAW_POLICY_TIER: "restricted",
+          NEMOCLAW_GATEWAY_PORT: "18081",
+          NEMOCLAW_DASHBOARD_PORT: "18790",
+          NEMOCLAW_VLLM_PORT: "18000",
         },
       },
     );
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).toBe(11);
-    expect(fs.readFileSync(path.join(home, ".nemoclaw", "station-express-resume"), "utf8")).toBe(
+    expect(output).toContain("RECEIPT_PRESTAGED=yes");
+    expect(
+      fs.readFileSync(
+        path.join(home, ".nemoclaw", "gateways", "18081", "station-express-resume"),
+        "utf8",
+      ),
+    ).toBe(
       `revision=${revision}\nmodel=deepseek-v4-flash\ngeneration=${generation}\n` +
-        "agent=hermes\nsandbox=custom-agent\npolicy_tier=restricted\n",
+        "agent=hermes\nsandbox=custom-agent\npolicy_tier=restricted\n" +
+        "gateway_port=18081\ndashboard_port=18790\nvllm_port=18000\n",
     );
     expect(output).toContain("A reboot is not required");
     expect(output).toContain(
-      `NEMOCLAW_INSTALL_TAG=${revision} NEMOCLAW_AGENT=hermes NEMOCLAW_SANDBOX_NAME=custom-agent NEMOCLAW_POLICY_TIER=restricted bash`,
+      `NEMOCLAW_INSTALL_TAG=${revision} NEMOCLAW_AGENT=hermes NEMOCLAW_SANDBOX_NAME=custom-agent NEMOCLAW_POLICY_TIER=restricted NEMOCLAW_GATEWAY_PORT=18081 NEMOCLAW_DASHBOARD_PORT=18790 NEMOCLAW_VLLM_PORT=18000 bash`,
     );
+  });
+
+  it("does not invoke Station host preparation when the accepted receipt cannot be staged (#7203)", () => {
+    const { result, output } = runInstallerSourced(`
+mkdir "$HOME/receipt-target"
+ln -s "$HOME/receipt-target" "$HOME/.nemoclaw"
+_SELECTED_EXPRESS_PLATFORM='DGX Station'
+NEMOCLAW_VLLM_MODEL='deepseek-v4-flash'
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
+classify_dgx_station_release() { printf 'supported-ai-developer-tools'; }
+run_station_host_preparation() { printf 'HOST_PREPARATION_INVOKED\n'; }
+ensure_station_express_host
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("Refusing symbolic link in NemoClaw state path");
+    expect(output).not.toContain("HOST_PREPARATION_INVOKED");
+  });
+
+  it("rejects numerically equivalent Station Express ports before host preparation (#7203)", () => {
+    const { result, output } = runInstallerSourced(`
+_SELECTED_EXPRESS_PLATFORM='DGX Station'
+NEMOCLAW_VLLM_MODEL='deepseek-v4-flash'
+NEMOCLAW_GATEWAY_PORT='18081'
+NEMOCLAW_DASHBOARD_PORT='018000'
+NEMOCLAW_VLLM_PORT='18000'
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
+classify_dgx_station_release() { printf 'supported-ai-developer-tools'; }
+run_station_host_preparation() { printf 'HOST_PREPARATION_INVOKED\n'; }
+ensure_station_express_host
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("NEMOCLAW_DASHBOARD_PORT conflicts with NEMOCLAW_VLLM_PORT (18000)");
+    expect(output).not.toContain("HOST_PREPARATION_INVOKED");
+  });
+
+  it("restores custom Station Express ports from the accepted receipt without another prompt (#7203)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-port-resume-"));
+    const revision = "a".repeat(40);
+    const generation = "0123456789abcdef0123456789abcdef";
+    const stateDir = path.join(home, ".nemoclaw", "gateways", "18081");
+    fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.join(home, ".nemoclaw"), 0o700);
+    fs.chmodSync(path.join(home, ".nemoclaw", "gateways"), 0o700);
+    fs.writeFileSync(
+      path.join(stateDir, "station-express-resume"),
+      `revision=${revision}\nmodel=deepseek-v4-flash\ngeneration=${generation}\n` +
+        "agent=hermes\nsandbox=custom-agent\npolicy_tier=restricted\n" +
+        "gateway_port=18081\ndashboard_port=18790\nvllm_port=18000\n",
+      { mode: 0o600 },
+    );
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf 'DGX Station'; }
+station_installer_revision() { printf '${revision}'; }
+NON_INTERACTIVE=''
+NEMOCLAW_PROVIDER=''
+NEMOCLAW_NO_EXPRESS=''
+maybe_offer_express_install
+printf 'PORTS gateway=%s dashboard=%s vllm=%s\n' "$NEMOCLAW_GATEWAY_PORT" "$NEMOCLAW_DASHBOARD_PORT" "$NEMOCLAW_VLLM_PORT"`,
+      ],
+      {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: home,
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          NEMOCLAW_AGENT: "hermes",
+          NEMOCLAW_GATEWAY_PORT: "18081",
+        },
+      },
+    );
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("Resuming the accepted express install");
+    expect(output).not.toContain("Run express install with these settings?");
+    expect(output).toContain("PORTS gateway=18081 dashboard=18790 vllm=18000");
+
+    const mismatched = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        `source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform() { printf 'DGX Station'; }
+station_installer_revision() { printf '${revision}'; }
+NON_INTERACTIVE=''
+NEMOCLAW_PROVIDER=''
+NEMOCLAW_NO_EXPRESS=''
+maybe_offer_express_install`,
+      ],
+      {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: home,
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          NEMOCLAW_AGENT: "hermes",
+          NEMOCLAW_GATEWAY_PORT: "18081",
+          NEMOCLAW_DASHBOARD_PORT: "19999",
+        },
+      },
+    );
+    const mismatchedOutput = `${mismatched.stdout}${mismatched.stderr}`;
+    expect(mismatched.status, mismatchedOutput).not.toBe(0);
+    expect(mismatchedOutput).toContain("requires NEMOCLAW_DASHBOARD_PORT=18790");
+    expect(mismatchedOutput).not.toContain("Run express install with these settings?");
   });
 
   it("allows a matching explicit DeepSeek model with the Station demo override", () => {

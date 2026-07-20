@@ -18,7 +18,17 @@ The release is one signed annotated semver tag on an already-merged `origin/main
 When a release admin creates or moves `lkg` to a commit carrying a `vX.Y.Z` tag, the `Release / LKG Brev Image` workflow dispatches the `Release Production Image` workflow in `brevdev/nemoclaw-image` on its `main` branch.
 The dispatch passes the immutable semver tag instead of the mutable `lkg` tag.
 The source workflow requires the `NEMOCLAW_IMAGE_DISPATCH_TOKEN` Actions secret with Actions read/write access to `brevdev/nemoclaw-image`; a missing secret fails before the API request, and the workflow summary never includes its value.
-The trigger summary records the selected release tag, full commit SHA, target workflow, and dispatch result.
+The trigger summary records the selected release tag, full commit SHA, target workflow, dispatch result, downstream run ID, and a direct link to the downstream run.
+After `lkg` promotion, find and wait for the source trigger run using the promoted commit:
+
+```bash
+gh run list --repo NVIDIA/NemoClaw --workflow release-lkg-brev-image.yaml --commit <lkg-commit> --event push --limit 1 --json databaseId,status,conclusion,url
+gh run watch <source-run-id> --repo NVIDIA/NemoClaw --exit-status
+gh run view <source-run-id> --repo NVIDIA/NemoClaw --log
+```
+
+Extract the exact `https://github.com/brevdev/nemoclaw-image/actions/runs/<run-id>` URL printed by the source run, give that link to the maintainer immediately, and tell them to follow it to terminal success.
+Treat dispatch acceptance as an intermediate state, not proof of production image promotion: the downstream run must succeed and its summary must show successful runtime E2E validation and promotion of the `nemoclaw-brev-cpu` image family.
 A rejected dispatch fails the trigger run but does not move or roll back `lkg`.
 Deleting `lkg` does not dispatch an image build.
 The downstream scheduled reconciliation remains available if the event-driven dispatch fails or is delayed.

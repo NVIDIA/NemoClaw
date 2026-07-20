@@ -18,6 +18,7 @@ type ProbeMode =
   | "resume-initial"
   | "resume-core-gateway"
   | "resume-incomplete-core-gateway"
+  | "resume-core-gateway-provenance-resolver"
   | "authoritative-core-gateway"
   | "authoritative-core-gateway-policy-tier"
   | "ordinary-policy-tier"
@@ -206,10 +207,18 @@ const registry = require(${registryPath});
 const called = [];
 const sentinel = new Error("slice-called");
 
-if (scenario.mode.endsWith("policy-tier")) {
+if (scenario.mode.endsWith("policy-tier") || scenario.mode.endsWith("provenance-resolver")) {
   coreFlowPhases.createCoreOnboardFlowPhases = (options) => {
-    const tier = options.sandbox.authoritativePolicyTier;
-    called.push("authoritative-policy-tier:" + (tier === undefined ? "undefined" : String(tier)));
+    const detail = scenario.mode.endsWith("provenance-resolver")
+      ? (() => {
+          const entry = options.sandboxDeps.getSandboxRegistryEntry("fsm-sandbox");
+          return ["registry-provenance", entry?.provider, entry?.endpointUrl, entry?.endpointSource].join(":");
+        })()
+      : "authoritative-policy-tier:" +
+        (options.sandbox.authoritativePolicyTier === undefined
+          ? "undefined"
+          : String(options.sandbox.authoritativePolicyTier));
+    called.push(detail);
     throw sentinel;
   };
 }
@@ -346,11 +355,17 @@ if (scenario.mode === "resume-initial") {
 if (scenario.mode.includes("core-gateway")) {
   seedResumeSession("inference", scenario.mode !== "resume-incomplete-core-gateway");
 }
-if (scenario.mode === "resume-core-gateway" || scenario.mode === "resume-incomplete-core-gateway") {
+if (
+  scenario.mode === "resume-core-gateway" ||
+  scenario.mode === "resume-incomplete-core-gateway" ||
+  scenario.mode === "resume-core-gateway-provenance-resolver"
+) {
   registry.registerSandbox({
     name: "fsm-sandbox",
     provider: "openai-api",
     model: "gpt-test",
+    endpointUrl: "https://persisted.example.test/v1",
+    endpointSource: "onboard",
     gatewayName: "nemoclaw-9090",
     gatewayPort: 9090,
   });
@@ -479,6 +494,16 @@ describe("live onboard FSM slice boundaries", () => {
       "gateway:nemoclaw-9090:nemoclaw-9090",
       "provider-compat:nemoclaw-9090",
     ]);
+  });
+
+  it("wires the live sandbox registry resolver into core provenance", () => {
+    assert.deepEqual(
+      runSliceProbe({ slice: "core", mode: "resume-core-gateway-provenance-resolver" }),
+      [
+        "gateway:nemoclaw-9090:nemoclaw-9090",
+        "registry-provenance:openai-api:https://persisted.example.test/v1:onboard",
+      ],
+    );
   });
 
   it("keeps an authoritative rebuild gateway after the registry row is removed", () => {

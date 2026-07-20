@@ -19,6 +19,7 @@ jobs:
   dispatch-production-image:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event.deleted == false }}
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check out LKG target
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3

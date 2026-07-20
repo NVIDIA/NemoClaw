@@ -23,7 +23,7 @@ import {
   riskPlanRequiredTargetIds,
 } from "../advisors/risk-plan.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
-import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
+import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
 import {
   decideRetry,

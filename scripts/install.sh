@@ -197,7 +197,11 @@ resolve_nemoclaw_gateway_port() {
   local port="${NEMOCLAW_GATEWAY_PORT:-8080}"
   port="${port#"${port%%[![:space:]]*}"}"
   port="${port%"${port##*[![:space:]]}"}"
-  if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
+  if [[ ! "$port" =~ ^0*([0-9]{1,5})$ ]]; then
+    error "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535."
+  fi
+  port="$((10#${BASH_REMATCH[1]}))"
+  if [ "$port" -lt 1024 ] || [ "$port" -gt 65535 ]; then
     error "NEMOCLAW_GATEWAY_PORT must be an integer between 1024 and 65535."
   fi
   if [ "$port" -ge 18789 ] && [ "$port" -le 18799 ]; then
@@ -3083,6 +3087,9 @@ _SELECTED_EXPRESS_PLATFORM=""
 _STATION_EXPRESS_RESUME_REVISION=""
 _STATION_EXPRESS_RESUME_LOADED=""
 _STATION_EXPRESS_RESUME_GENERATION=""
+_STATION_EXPRESS_RESUME_GATEWAY_PORT=""
+_STATION_EXPRESS_RESUME_DASHBOARD_PORT=""
+_STATION_EXPRESS_RESUME_VLLM_PORT=""
 
 normalize_station_vllm_model() {
   printf "%s" "${1:-}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
@@ -3268,6 +3275,38 @@ validate_station_express_resume_generation() {
   [[ "${1:-}" =~ ^[0-9a-f]{32}$ ]]
 }
 
+validate_station_express_resume_port() {
+  local port="${1:-}"
+  [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1024 ] && [ "$port" -le 65535 ]
+}
+
+station_express_resume_port_value() {
+  local env_name="$1" fallback="$2" port
+  case "$env_name" in
+    NEMOCLAW_GATEWAY_PORT | NEMOCLAW_DASHBOARD_PORT | NEMOCLAW_VLLM_PORT) ;;
+    *) error "Unsupported DGX Station express resume port field: ${env_name}" ;;
+  esac
+  port="${!env_name:-$fallback}"
+  port="${port#"${port%%[![:space:]]*}"}"
+  port="${port%"${port##*[![:space:]]}"}"
+  validate_station_express_resume_port "$port" \
+    || error "${env_name} must be an integer between 1024 and 65535."
+  printf '%s' "$((10#$port))"
+}
+
+validate_station_express_resume_ports_distinct() {
+  local gateway_port="$1" dashboard_port="$2" vllm_port="$3"
+  gateway_port="$((10#$gateway_port))"
+  dashboard_port="$((10#$dashboard_port))"
+  vllm_port="$((10#$vllm_port))"
+  [[ "$gateway_port" != "$dashboard_port" ]] \
+    || error "NEMOCLAW_GATEWAY_PORT conflicts with NEMOCLAW_DASHBOARD_PORT (${gateway_port})."
+  [[ "$gateway_port" != "$vllm_port" ]] \
+    || error "NEMOCLAW_GATEWAY_PORT conflicts with NEMOCLAW_VLLM_PORT (${gateway_port})."
+  [[ "$dashboard_port" != "$vllm_port" ]] \
+    || error "NEMOCLAW_DASHBOARD_PORT conflicts with NEMOCLAW_VLLM_PORT (${dashboard_port})."
+}
+
 station_express_resume_generation() {
   local generation
   [[ -r /proc/sys/kernel/random/uuid ]] \
@@ -3330,7 +3369,9 @@ assert_station_express_resume_directory_safe() {
 
 load_station_express_resume() {
   local state_file revision_line model_line generation_line agent_line sandbox_line policy_tier_line
+  local gateway_port_line dashboard_port_line vllm_port_line
   local line_count saved_revision current_revision saved_agent saved_sandbox saved_policy_tier current_agent
+  local saved_gateway_port saved_dashboard_port saved_vllm_port current_gateway_port
   state_file="$(station_express_resume_file)" || return 1
   assert_nemoclaw_state_path_safe "$state_file"
   [[ -e "$state_file" || -L "$state_file" ]] || return 1
@@ -3342,6 +3383,9 @@ load_station_express_resume() {
   agent_line="$(sed -n '4p' "$state_file")"
   sandbox_line="$(sed -n '5p' "$state_file")"
   policy_tier_line="$(sed -n '6p' "$state_file")"
+  gateway_port_line="$(sed -n '7p' "$state_file")"
+  dashboard_port_line="$(sed -n '8p' "$state_file")"
+  vllm_port_line="$(sed -n '9p' "$state_file")"
   saved_revision="${revision_line#revision=}"
   NEMOCLAW_VLLM_MODEL="${model_line#model=}"
   _STATION_EXPRESS_RESUME_GENERATION="${generation_line#generation=}"
@@ -3353,33 +3397,76 @@ load_station_express_resume() {
     saved_agent="${agent_line#agent=}"
     saved_sandbox="${sandbox_line#sandbox=}"
     saved_policy_tier="${policy_tier_line#policy_tier=}"
+  elif [[ "$line_count" == "9" ]]; then
+    saved_agent="${agent_line#agent=}"
+    saved_sandbox="${sandbox_line#sandbox=}"
+    saved_policy_tier="${policy_tier_line#policy_tier=}"
+    saved_gateway_port="${gateway_port_line#gateway_port=}"
+    saved_dashboard_port="${dashboard_port_line#dashboard_port=}"
+    saved_vllm_port="${vllm_port_line#vllm_port=}"
   else
     error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
   fi
   if [[ "$revision_line" != "revision=${saved_revision}" || "$model_line" != "model=${NEMOCLAW_VLLM_MODEL}" || "$generation_line" != "generation=${_STATION_EXPRESS_RESUME_GENERATION}" ]] \
-    || { [[ "$line_count" == "6" ]] && [[ "$agent_line" != "agent=${saved_agent}" || "$sandbox_line" != "sandbox=${saved_sandbox}" || "$policy_tier_line" != "policy_tier=${saved_policy_tier}" ]]; } \
+    || { [[ "$line_count" != "3" ]] && [[ "$agent_line" != "agent=${saved_agent}" || "$sandbox_line" != "sandbox=${saved_sandbox}" || "$policy_tier_line" != "policy_tier=${saved_policy_tier}" ]]; } \
+    || { [[ "$line_count" == "9" ]] && [[ "$gateway_port_line" != "gateway_port=${saved_gateway_port}" || "$dashboard_port_line" != "dashboard_port=${saved_dashboard_port}" || "$vllm_port_line" != "vllm_port=${saved_vllm_port}" ]]; } \
     || ! validate_station_express_resume_revision "$saved_revision" \
     || ! validate_station_express_resume_model "$NEMOCLAW_VLLM_MODEL" \
     || ! validate_station_express_resume_generation "$_STATION_EXPRESS_RESUME_GENERATION" \
     || ! validate_station_express_resume_agent "$saved_agent" \
     || ! validate_station_express_resume_sandbox "$saved_sandbox" \
-    || ! validate_station_express_resume_policy_tier "$saved_policy_tier"; then
+    || ! validate_station_express_resume_policy_tier "$saved_policy_tier" \
+    || { [[ "$line_count" == "9" ]] && { ! validate_station_express_resume_port "$saved_gateway_port" || ! validate_station_express_resume_port "$saved_dashboard_port" || ! validate_station_express_resume_port "$saved_vllm_port"; }; }; then
     error "DGX Station express resume state is invalid. Remove ${state_file} and rerun the installer."
   fi
+  current_gateway_port="$(resolve_nemoclaw_gateway_port)"
+  if [[ "$line_count" != "9" ]]; then
+    saved_gateway_port="$current_gateway_port"
+    saved_dashboard_port="$(station_express_resume_port_value NEMOCLAW_DASHBOARD_PORT 18789)"
+    saved_vllm_port="$(station_express_resume_port_value NEMOCLAW_VLLM_PORT 8000)"
+  fi
+  validate_station_express_resume_ports_distinct \
+    "$saved_gateway_port" "$saved_dashboard_port" "$saved_vllm_port"
+  _STATION_EXPRESS_RESUME_REVISION="$saved_revision"
+  _STATION_EXPRESS_RESUME_AGENT="$saved_agent"
+  _STATION_EXPRESS_RESUME_SANDBOX="$saved_sandbox"
+  _STATION_EXPRESS_RESUME_POLICY_TIER="$saved_policy_tier"
+  _STATION_EXPRESS_RESUME_GATEWAY_PORT="$saved_gateway_port"
+  _STATION_EXPRESS_RESUME_DASHBOARD_PORT="$saved_dashboard_port"
+  _STATION_EXPRESS_RESUME_VLLM_PORT="$saved_vllm_port"
   current_revision="$(station_installer_revision)"
   if [[ "$current_revision" != "$saved_revision" ]]; then
-    error "DGX Station express resume requires NemoClaw revision ${saved_revision}, but this installer is ${current_revision}. Rerun with: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=${saved_revision} bash"
+    error "DGX Station Express resume requires NemoClaw revision ${saved_revision}, but this installer is ${current_revision}. Rerun with: $(station_express_resume_command)"
   fi
   current_agent="${NEMOCLAW_AGENT:-openclaw}"
   if [[ "$current_agent" != "$saved_agent" ]]; then
     error "DGX Station express resume requires NEMOCLAW_AGENT=${saved_agent}. Rerun the exact command printed after host preparation."
   fi
+  if [[ "$line_count" == "9" ]]; then
+    if [[ "$current_gateway_port" != "$saved_gateway_port" ]]; then
+      error "DGX Station express resume requires NEMOCLAW_GATEWAY_PORT=${saved_gateway_port}. Rerun the exact command printed after host preparation."
+    fi
+    if [[ -n "${NEMOCLAW_DASHBOARD_PORT:-}" ]] \
+      && [[ "$(station_express_resume_port_value NEMOCLAW_DASHBOARD_PORT 18789)" != "$saved_dashboard_port" ]]; then
+      error "DGX Station express resume requires NEMOCLAW_DASHBOARD_PORT=${saved_dashboard_port}. Rerun the exact command printed after host preparation."
+    fi
+    if [[ -n "${NEMOCLAW_VLLM_PORT:-}" ]] \
+      && [[ "$(station_express_resume_port_value NEMOCLAW_VLLM_PORT 8000)" != "$saved_vllm_port" ]]; then
+      error "DGX Station express resume requires NEMOCLAW_VLLM_PORT=${saved_vllm_port}. Rerun the exact command printed after host preparation."
+    fi
+  fi
   NEMOCLAW_SANDBOX_NAME="$saved_sandbox"
   NEMOCLAW_POLICY_TIER="$saved_policy_tier"
+  NEMOCLAW_GATEWAY_PORT="$saved_gateway_port"
+  NEMOCLAW_DASHBOARD_PORT="$saved_dashboard_port"
+  NEMOCLAW_VLLM_PORT="$saved_vllm_port"
   _STATION_EXPRESS_RESUME_LOADED=1
   export NEMOCLAW_VLLM_MODEL
   export NEMOCLAW_SANDBOX_NAME
   export NEMOCLAW_POLICY_TIER
+  export NEMOCLAW_GATEWAY_PORT
+  export NEMOCLAW_DASHBOARD_PORT
+  export NEMOCLAW_VLLM_PORT
   export NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION="$_STATION_EXPRESS_RESUME_GENERATION"
 }
 
@@ -3387,10 +3474,21 @@ save_station_express_resume() {
   local state_file state_dir temp_file revision generation
   local model="${NEMOCLAW_VLLM_MODEL:-}" agent="${NEMOCLAW_AGENT:-openclaw}"
   local sandbox="${NEMOCLAW_SANDBOX_NAME:-my-assistant}" policy_tier="${NEMOCLAW_POLICY_TIER:-balanced}"
+  local gateway_port dashboard_port vllm_port
   validate_station_express_resume_model "$model" || error "Cannot save an invalid DGX Station express model selector."
   validate_station_express_resume_agent "$agent" || error "Cannot save an invalid DGX Station express agent."
   validate_station_express_resume_sandbox "$sandbox" || error "Cannot save an invalid DGX Station express sandbox name."
   validate_station_express_resume_policy_tier "$policy_tier" || error "Cannot save an invalid DGX Station express policy tier."
+  gateway_port="$(resolve_nemoclaw_gateway_port)"
+  dashboard_port="$(station_express_resume_port_value NEMOCLAW_DASHBOARD_PORT 18789)"
+  vllm_port="$(station_express_resume_port_value NEMOCLAW_VLLM_PORT 8000)"
+  validate_station_express_resume_ports_distinct "$gateway_port" "$dashboard_port" "$vllm_port"
+  NEMOCLAW_GATEWAY_PORT="$gateway_port"
+  NEMOCLAW_DASHBOARD_PORT="$dashboard_port"
+  NEMOCLAW_VLLM_PORT="$vllm_port"
+  export NEMOCLAW_GATEWAY_PORT
+  export NEMOCLAW_DASHBOARD_PORT
+  export NEMOCLAW_VLLM_PORT
   revision="$(station_installer_revision)"
   state_file="$(station_express_resume_file)" || error "Could not resolve NemoClaw state for DGX Station express resume."
   state_dir="$(ensure_nemoclaw_state_dir)" || error "Could not prepare NemoClaw state for DGX Station express resume."
@@ -3404,8 +3502,9 @@ save_station_express_resume() {
     rm -f "$temp_file"
     error "Could not secure DGX Station express resume state under ${state_dir}."
   }
-  if ! printf 'revision=%s\nmodel=%s\ngeneration=%s\nagent=%s\nsandbox=%s\npolicy_tier=%s\n' \
-    "$revision" "$model" "$generation" "$agent" "$sandbox" "$policy_tier" >"$temp_file"; then
+  if ! printf 'revision=%s\nmodel=%s\ngeneration=%s\nagent=%s\nsandbox=%s\npolicy_tier=%s\ngateway_port=%s\ndashboard_port=%s\nvllm_port=%s\n' \
+    "$revision" "$model" "$generation" "$agent" "$sandbox" "$policy_tier" \
+    "$gateway_port" "$dashboard_port" "$vllm_port" >"$temp_file"; then
     rm -f "$temp_file"
     error "Could not write DGX Station express resume state under ${state_dir}."
   fi
@@ -3419,12 +3518,17 @@ save_station_express_resume() {
   _STATION_EXPRESS_RESUME_AGENT="$agent"
   _STATION_EXPRESS_RESUME_SANDBOX="$sandbox"
   _STATION_EXPRESS_RESUME_POLICY_TIER="$policy_tier"
+  _STATION_EXPRESS_RESUME_GATEWAY_PORT="$gateway_port"
+  _STATION_EXPRESS_RESUME_DASHBOARD_PORT="$dashboard_port"
+  _STATION_EXPRESS_RESUME_VLLM_PORT="$vllm_port"
 }
 
 station_express_resume_command() {
-  printf 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s NEMOCLAW_AGENT=%s NEMOCLAW_SANDBOX_NAME=%s NEMOCLAW_POLICY_TIER=%s bash' \
+  printf 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s NEMOCLAW_AGENT=%s NEMOCLAW_SANDBOX_NAME=%s NEMOCLAW_POLICY_TIER=%s NEMOCLAW_GATEWAY_PORT=%s NEMOCLAW_DASHBOARD_PORT=%s NEMOCLAW_VLLM_PORT=%s bash' \
     "$_STATION_EXPRESS_RESUME_REVISION" "$_STATION_EXPRESS_RESUME_AGENT" \
-    "$_STATION_EXPRESS_RESUME_SANDBOX" "$_STATION_EXPRESS_RESUME_POLICY_TIER"
+    "$_STATION_EXPRESS_RESUME_SANDBOX" "$_STATION_EXPRESS_RESUME_POLICY_TIER" \
+    "$_STATION_EXPRESS_RESUME_GATEWAY_PORT" "$_STATION_EXPRESS_RESUME_DASHBOARD_PORT" \
+    "$_STATION_EXPRESS_RESUME_VLLM_PORT"
   if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
     printf ' -s -- --force-station-install'
   fi
@@ -3544,6 +3648,11 @@ filter_station_host_preparation_output() {
 ensure_station_express_host() {
   [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
 
+  # Publish the accepted, secret-free recipe before the helper can mutate the
+  # host. The same receipt then binds reboot/login continuation and onboarding
+  # recovery to this exact Express attempt.
+  save_station_express_resume
+
   local release_state
   release_state="$(classify_dgx_station_release)"
   case "$release_state" in
@@ -3569,17 +3678,15 @@ ensure_station_express_host() {
       ok "DGX Station host prerequisites are ready"
       ;;
     10)
-      save_station_express_resume
       warn "DGX Station host prerequisites were installed and require a reboot."
       info "Run: sudo reboot"
-      info "After signing in again, rerun the accepted revision:"
+      info "After signing in again, rerun the accepted Station Express recipe:"
       info "$(station_express_resume_command)"
       exit 10
       ;;
     11)
-      save_station_express_resume
       warn "Docker access was granted and requires a new login session. A reboot is not required."
-      info "After signing in again, rerun the accepted revision:"
+      info "After signing in again, rerun the accepted Station Express recipe:"
       info "$(station_express_resume_command)"
       exit 11
       ;;

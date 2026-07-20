@@ -10,9 +10,8 @@
  * install.sh from source, onboards a sandbox, then executes the selected test
  * suite against the live environment. Tears down the instance when done.
  *
- * NOTE: This does NOT test the community Launchable install path
- * (launch-plugin.sh). For that, run e2e-launchable-smoke in
- * e2e.yaml.
+ * NOTE: This does NOT test a published Brev Launchable image. It bootstraps a
+ * generic Brev VM, overlays the selected source revision, and rebuilds NemoClaw.
  *
  * Intended to be run from CI via:
  *   npx vitest run --project e2e-branch-validation
@@ -108,15 +107,15 @@ function requireInstanceName(): string {
   return INSTANCE_NAME;
 }
 
-// Launchable configuration
-// CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, and npm deps.
+// Brev E2E bootstrap configuration
+// The CPU bootstrap script installs Docker, Node.js, OpenShell CLI, and npm deps.
 // The Brev CLI (v0.6.322+) uses `brev search cpu | brev create --startup-script @file`.
 // Use the repo-local script so secret-bearing branch validation cannot execute
 // mutable setup code selected outside the reviewed checkout.
-const SETUP_SCRIPT_PATH = path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
+const BOOTSTRAP_SCRIPT_PATH = path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
 // Sentinel file written by brev-launchable-ci-cpu.sh when setup is complete.
 // More reliable than grepping log files.
-const LAUNCHABLE_SENTINEL = "/var/run/nemoclaw-launchable-ready";
+const BOOTSTRAP_SENTINEL = "/var/run/nemoclaw-launchable-ready";
 
 let remoteDir = "";
 let instanceCreated = false;
@@ -352,22 +351,22 @@ function waitForSsh(maxWaitMs = BREV_SSH_READY_TIMEOUT_MS, intervalMs = 5_000): 
 }
 
 /**
- * Wait for the launchable setup script to finish by checking a sentinel file.
+ * Wait for the Brev E2E bootstrap script to finish by checking a sentinel file.
  * Much more reliable than grepping log files.
  */
-function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000): void {
+function waitForBootstrapReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000): void {
   const start = Date.now();
   const elapsed = () => `${Math.round((Date.now() - start) / 1000)}s`;
   let consecutiveSshFailures = 0;
 
   while (Date.now() - start < maxWaitMs) {
     try {
-      const result = ssh(`test -f ${LAUNCHABLE_SENTINEL} && echo READY || echo PENDING`, {
+      const result = ssh(`test -f ${BOOTSTRAP_SENTINEL} && echo READY || echo PENDING`, {
         timeout: 15_000,
       });
       consecutiveSshFailures = 0; // reset on success
       if (result.includes("READY")) {
-        console.log(`[${elapsed()}] Launchable setup complete (sentinel file found)`);
+        console.log(`[${elapsed()}] Brev E2E bootstrap complete (sentinel file found)`);
         return;
       }
       // Show progress from the setup log
@@ -402,8 +401,8 @@ function waitForLaunchableReady(maxWaitMs = 1_200_000, pollIntervalMs = 15_000):
   }
 
   throw new Error(
-    `Launchable setup did not complete within ${maxWaitMs / 60_000} minutes. ` +
-      `Sentinel file ${LAUNCHABLE_SENTINEL} not found.`,
+    `Brev E2E bootstrap did not complete within ${maxWaitMs / 60_000} minutes. ` +
+      `Sentinel file ${BOOTSTRAP_SENTINEL} not found.`,
   );
 }
 
@@ -522,7 +521,7 @@ function cleanupLeftoverInstance(elapsed: () => string): void {
 
 /**
  * Refresh brev SSH config and wait for SSH connectivity.
- * Shared by both the deploy-cli and launchable paths.
+ * Shared by both the deploy-cli and source-bootstrap paths.
  */
 function refreshAndWaitForSsh(elapsed: () => string): void {
   try {
@@ -589,7 +588,7 @@ function summarizeBrevCandidates(output: string, maxLines = 10): string {
 }
 
 /**
- * Create a Brev launchable instance with a startup script.
+ * Create a generic Brev instance with the reviewed E2E bootstrap script.
  *
  * The Brev API sometimes returns "unexpected EOF" after the instance is actually
  * created server-side. The CLI then falls back to the next instance type, which
@@ -598,8 +597,8 @@ function summarizeBrevCandidates(output: string, maxLines = 10): string {
  */
 function createBrevInstance(elapsed: () => string): void {
   const instanceKind = GPU_TEST_SUITE ? "gpu" : "cpu";
-  console.log(`[${elapsed()}] Creating ${instanceKind} instance via launchable...`);
-  console.log(`[${elapsed()}]   setup-script: ${SETUP_SCRIPT_PATH}`);
+  console.log(`[${elapsed()}] Creating generic Brev ${instanceKind} instance...`);
+  console.log(`[${elapsed()}]   bootstrap-script: ${BOOTSTRAP_SCRIPT_PATH}`);
   console.log(`[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`);
   if (GPU_TEST_SUITE) {
     if (BREV_GPU_TYPE) {
@@ -615,8 +614,8 @@ function createBrevInstance(elapsed: () => string): void {
     );
   }
 
-  const setupScriptPath = SETUP_SCRIPT_PATH;
-  console.log(`[${elapsed()}] Using repo-local setup script`);
+  const setupScriptPath = BOOTSTRAP_SCRIPT_PATH;
+  console.log(`[${elapsed()}] Using repo-local Brev E2E bootstrap script`);
 
   try {
     if (GPU_TEST_SUITE) {
@@ -767,19 +766,19 @@ function prepareGpuDockerRuntime(elapsed: () => string): void {
 }
 
 /**
- * Bootstrap the launchable environment on the remote VM:
+ * Overlay and build the selected source revision on the bootstrapped Brev VM:
  * rsync branch code, install deps, build plugin, and npm link the CLI.
  *
  * Returns { remoteDir, needsOnboard } so the caller can see what was
  * resolved without relying on hidden side-effects.
  */
-function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsOnboard: boolean } {
-  // The launchable clones NemoClaw to ~/NemoClaw
+function prepareBrevE2EHost(elapsed: () => string): { remoteDir: string; needsOnboard: boolean } {
+  // The bootstrap script clones NemoClaw to ~/NemoClaw.
   const remoteHome = ssh("echo $HOME");
   const resolvedRemoteDir = `${remoteHome}/NemoClaw`;
 
-  // Rsync PR branch code over the launchable's clone
-  console.log(`[${elapsed()}] Syncing PR branch code over launchable's clone...`);
+  // Rsync PR branch code over the bootstrap script's clone.
+  console.log(`[${elapsed()}] Syncing PR branch code over bootstrap clone...`);
   execFileSync(
     "rsync",
     [
@@ -800,11 +799,11 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   );
   console.log(`[${elapsed()}] Code synced`);
 
-  // Re-install deps for our branch (most already cached by launchable).
+  // Re-install deps for our branch (most already cached by the bootstrap).
   // Use `npm install` instead of `npm ci` because the rsync'd branch code
   // may have a package.json/package-lock.json that are slightly out of sync
   // (e.g. new transitive deps). npm install is more forgiving and still
-  // benefits from the launchable's pre-cached node_modules.
+  // benefits from the bootstrap's pre-cached node_modules.
   // Always run this even for TEST_SUITE=full — it primes the cache so
   // install.sh's npm install is a fast no-op.
   console.log(`[${elapsed()}] Running npm install to sync dependencies...`);
@@ -831,7 +830,7 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
 
   // Rebuild CLI dist/ for our branch. The rsync above excludes dist/, so
   // without this step bin/nemoclaw.js would `require("../dist/nemoclaw")`
-  // against the launchable's main-branch build and crash with
+  // against the bootstrap's main-branch build and crash with
   // MODULE_NOT_FOUND if main differs from the PR branch. `npm install
   // --ignore-scripts` skipped the `prepare` lifecycle that normally runs
   // `build:cli`, so do it explicitly.
@@ -853,10 +852,10 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   );
   console.log(`[${elapsed()}] Plugin built`);
 
-  // Expose the nemoclaw CLI on PATH. The launchable setup script already
+  // Expose the nemoclaw CLI on PATH. The bootstrap script already
   // creates /usr/local/bin/nemoclaw → $NEMOCLAW_CLONE_DIR/bin/nemoclaw.js
   // as a direct symlink, and rsync above preserves that path, so this is
-  // an idempotent re-link to make local dev runs (that skip the launchable)
+  // an idempotent re-link to make local dev runs (that skip the bootstrap)
   // still work. Avoid `sudo npm link` on cold CPU Brev — it routinely
   // hangs inside npm's global-prefix housekeeping.
   console.log(`[${elapsed()}] Linking nemoclaw CLI (direct symlink)...`);
@@ -1154,21 +1153,21 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
       const remoteHome = ssh("echo $HOME");
       remoteDir = `${remoteHome}/nemoclaw`;
     } else {
-      // ── Launchable path: pre-baked CI environment ──────────────────
+      // ── Source-bootstrap path: generic Brev environment ─────────────
       // Uses brev create with --startup-script.
       // The script pre-installs Docker, Node.js, OpenShell CLI, and npm deps.
       // We just need to rsync branch code and run onboard.
       createBrevInstanceAndWaitForSsh(elapsed);
 
-      // Wait for launchable setup to finish (sentinel file)
-      console.log(`[${elapsed()}] Waiting for launchable setup to complete...`);
-      waitForLaunchableReady();
+      // Wait for the Brev E2E bootstrap script to finish (sentinel file).
+      console.log(`[${elapsed()}] Waiting for Brev E2E bootstrap to complete...`);
+      waitForBootstrapReady();
 
       if (GPU_TEST_SUITE) {
         prepareGpuDockerRuntime(elapsed);
       }
 
-      const result = bootstrapLaunchable(elapsed);
+      const result = prepareBrevE2EHost(elapsed);
       remoteDir = result.remoteDir;
 
       if (result.needsOnboard) {

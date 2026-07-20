@@ -756,6 +756,7 @@ describe("Vitest project membership boundary", () => {
       ["test/install-station-dgx-os.test.ts", "installer-integration"],
       ["test/install-station-docker-repository.test.ts", "installer-integration"],
       ["test/install-station-host-preparation.test.ts", "installer-integration"],
+      ["test/install-station-package-state.test.ts", "installer-integration"],
       ["test/install-station-package-transaction.test.ts", "installer-integration"],
       ["test/package-contract/example.test.js", "package-contract"],
       ["test/e2e/support/example.test.js", "e2e-support"],
