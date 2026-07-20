@@ -145,9 +145,9 @@ test(
   { meta: { e2ePhases: PHASES } },
   async ({ progress }) => {
     await provisionSandbox();
-    progress.phase(PHASES[1]);
+    progress.phase("exercise token rotation");
     await rotateCredential();
-    progress.phase(PHASES[2]);
+    progress.phase("verify the rotated credential");
     await verifyCredential();
   },
 );
@@ -155,13 +155,15 @@ test(
 
 Use phases for meaningful scenario boundaries, not individual commands. Labels
 must be unique within the plan; generic labels such as `setup`, `execute`,
-`verify`, and `test body` are rejected. A phase transition may skip optional
-intermediate phases, which are recorded with a `skipped` outcome, but it cannot
-move backward or select an undeclared label. Completed phases use `passed`,
-`failed`, or `skipped` outcomes. A passing path must enter the final declared
-phase before returning, or fixture teardown fails the test. Do not declare or
-enter `release registered E2E resources`; the harness appends and enters it
-automatically after the test's phase plan.
+`verify`, and `test body` are rejected. Pass each phase label as a string
+literal so the collection-only checker can validate the transition without
+executing the test body; variables and array lookups are rejected. A phase
+transition may skip optional intermediate phases, which are recorded with a
+`skipped` outcome, but it cannot move backward or select an undeclared label.
+Completed phases use `passed`, `failed`, or `skipped` outcomes. A passing path
+must enter the final declared phase before returning, or fixture teardown fails
+the test. Do not declare or enter `release registered E2E resources`; the
+harness appends and enters it automatically after the test's phase plan.
 `npm run test:e2e-phases:check` collects the `e2e-live` project and rejects
 missing or invalid plans without executing live test bodies.
 

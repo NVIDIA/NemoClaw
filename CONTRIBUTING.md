@@ -230,11 +230,11 @@ This project is fast and does not run live targets. Live E2E remains opt-in thro
 `npm run test:live-e2e` or the applicable GitHub Actions workflow.
 
 Every `e2e-live` test must declare its ordered, behavior-specific phase plan in
-`meta.e2ePhases`, call `progress.phase(...)` at those boundaries, and reach the
-final test-declared phase on every passing path. The harness then appends
-`release registered E2E resources` so cleanup duration and failures have their
-own phase. Run `npm run test:e2e-phases:check` after adding or changing a live
-E2E case; collection validates the plans without running
+`meta.e2ePhases`, call `progress.phase("literal phase label")` at those
+boundaries, and reach the final test-declared phase on every passing path. The
+harness then appends `release registered E2E resources` so cleanup duration and
+failures have their own phase. Run `npm run test:e2e-phases:check` after adding
+or changing a live E2E case; collection validates the plans without running
 infrastructure-mutating test bodies. See
 [`test/e2e/docs/README.md`](test/e2e/docs/README.md) for the logging and artifact
 contract.

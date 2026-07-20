@@ -121,10 +121,11 @@ npm run test:runtime-audit -- path/to/run-1 path/to/run-2
 
 The audit groups each test by target and optional shard, ranks the groups by
 p95 runtime, and reports variability and the slowest observed phase. Keep phase
-labels specific to test behavior, call `progress.phase(...)` at the declared
-boundaries in order, and transition through the final test-declared phase on
-every passing path. The fixture rejects a passing live test that never reaches
-that phase; the harness enters the resource-release phase automatically.
+labels specific to test behavior, call `progress.phase("literal phase label")`
+at the declared boundaries in order, and transition through the final
+test-declared phase on every passing path. The fixture rejects a passing live
+test that never reaches that phase; the harness enters the resource-release
+phase automatically.
 Validate phase coverage without executing live test bodies with:
 
 ```bash

@@ -23,13 +23,13 @@ export interface SemanticPhaseCoverage {
   tests: number;
 }
 
-interface PhaseCall {
+export interface PhaseCall {
   file: string;
   label: string | null;
   line: number;
 }
 
-interface TestPhaseBody {
+export interface TestPhaseBody {
   file: string;
   line: number;
   phaseCalls: PhaseCall[];
@@ -38,6 +38,23 @@ interface TestPhaseBody {
 export interface ScopedPhasePlan {
   name: string;
   phases: readonly string[];
+}
+
+export interface SemanticPhaseSourceGraph {
+  importsDirectTest: boolean;
+  importsSharedTest: boolean;
+  phaseCalls: PhaseCall[];
+  testPhaseBodies: TestPhaseBody[];
+}
+
+export interface CollectedSemanticPhaseModule {
+  relativeModuleId: string;
+  errors: readonly string[];
+  tests: readonly {
+    fullName: string;
+    phases?: readonly string[];
+  }[];
+  source: SemanticPhaseSourceGraph;
 }
 
 const LIVE_ROOT = path.join(REPO_ROOT, "test", "e2e", "live");
@@ -198,12 +215,7 @@ export function validateTestScopedPhaseCalls(
   return failures;
 }
 
-function scanLiveSourceGraph(entryFile: string): {
-  importsDirectTest: boolean;
-  importsSharedTest: boolean;
-  phaseCalls: PhaseCall[];
-  testPhaseBodies: TestPhaseBody[];
-} {
+export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph {
   const visited = new Set<string>();
   const phaseCalls: PhaseCall[] = [];
   let testPhaseBodies: TestPhaseBody[] = [];
@@ -243,6 +255,76 @@ function scanLiveSourceGraph(entryFile: string): {
 
   visit(entryFile);
   return { importsDirectTest, importsSharedTest, phaseCalls, testPhaseBodies };
+}
+
+export function validateCollectedSemanticPhaseModule(
+  collectedModule: CollectedSemanticPhaseModule,
+): string[] {
+  const failures = collectedModule.errors.map(
+    (error) => `${collectedModule.relativeModuleId}: ${error}`,
+  );
+  const phasePlans: string[][] = [];
+  const scopedPhasePlans: ScopedPhasePlan[] = [];
+  const moduleTests = collectedModule.tests.length;
+
+  for (const test of collectedModule.tests) {
+    const phasePlan = test.phases;
+    if (!phasePlan) {
+      failures.push(
+        `${collectedModule.relativeModuleId} > ${test.fullName}: missing e2ePhases metadata`,
+      );
+      continue;
+    }
+    try {
+      validateE2EPhasePlan(phasePlan);
+      phasePlans.push([...phasePlan]);
+      scopedPhasePlans.push({ name: test.fullName, phases: [...phasePlan] });
+    } catch (error) {
+      failures.push(
+        `${collectedModule.relativeModuleId} > ${test.fullName}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  if (moduleTests === 0) {
+    failures.push(`${collectedModule.relativeModuleId}: collected zero tests`);
+  }
+
+  const { source } = collectedModule;
+  if (!source.importsSharedTest) {
+    failures.push(
+      `${collectedModule.relativeModuleId}: live E2E tests must import test from the shared e2e-test fixture`,
+    );
+  }
+  if (source.importsDirectTest) {
+    failures.push(
+      `${collectedModule.relativeModuleId}: live E2E tests must not import test or it directly from Vitest`,
+    );
+  }
+  const declaredLabels = new Set(phasePlans.flat());
+  const calledLabels = new Set<string>();
+  for (const call of source.phaseCalls) {
+    if (call.label === null) {
+      failures.push(`${call.file}:${call.line}: semantic phase transitions must use literals`);
+    } else if (!declaredLabels.has(call.label)) {
+      failures.push(`${call.file}:${call.line}: undeclared semantic phase: ${call.label}`);
+    } else {
+      calledLabels.add(call.label);
+    }
+  }
+  const uniquePlans = new Map(phasePlans.map((plan) => [JSON.stringify(plan), plan]));
+  if (uniquePlans.size > 1 && scopedPhasePlans.length === moduleTests) {
+    failures.push(...validateTestScopedPhaseCalls(scopedPhasePlans, source.testPhaseBodies));
+  }
+  for (const phasePlan of uniquePlans.values()) {
+    for (const label of phasePlan.slice(1)) {
+      if (!calledLabels.has(label)) {
+        failures.push(
+          `${collectedModule.relativeModuleId}: semantic phase is never entered: ${label}`,
+        );
+      }
+    }
+  }
+  return failures;
 }
 
 function quietStream(): Writable {
@@ -299,68 +381,19 @@ export async function checkSemanticPhaseCoverage(): Promise<SemanticPhaseCoverag
 
     for (const error of result.unhandledErrors) failures.push(String(error));
     for (const module of result.testModules) {
-      const phasePlans: string[][] = [];
-      const scopedPhasePlans: ScopedPhasePlan[] = [];
-      let moduleTests = 0;
-      for (const error of module.errors()) {
-        failures.push(`${module.relativeModuleId}: ${error.message}`);
-      }
-      for (const test of module.children.allTests()) {
-        moduleTests += 1;
-        tests += 1;
-        const phasePlan = test.meta().e2ePhases;
-        if (!phasePlan) {
-          failures.push(
-            `${module.relativeModuleId} > ${test.fullName}: missing e2ePhases metadata`,
-          );
-          continue;
-        }
-        try {
-          validateE2EPhasePlan(phasePlan);
-          phasePlans.push([...phasePlan]);
-          scopedPhasePlans.push({ name: test.fullName, phases: [...phasePlan] });
-        } catch (error) {
-          failures.push(
-            `${module.relativeModuleId} > ${test.fullName}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
-      if (moduleTests === 0) failures.push(`${module.relativeModuleId}: collected zero tests`);
-
-      const entryFile = path.resolve(REPO_ROOT, module.relativeModuleId);
-      const source = scanLiveSourceGraph(entryFile);
-      if (!source.importsSharedTest) {
-        failures.push(
-          `${module.relativeModuleId}: live E2E tests must import test from the shared e2e-test fixture`,
-        );
-      }
-      if (source.importsDirectTest) {
-        failures.push(
-          `${module.relativeModuleId}: live E2E tests must not import test or it directly from Vitest`,
-        );
-      }
-      const declaredLabels = new Set(phasePlans.flat());
-      const calledLabels = new Set<string>();
-      for (const call of source.phaseCalls) {
-        if (call.label === null) {
-          failures.push(`${call.file}:${call.line}: semantic phase transitions must use literals`);
-        } else if (!declaredLabels.has(call.label)) {
-          failures.push(`${call.file}:${call.line}: undeclared semantic phase: ${call.label}`);
-        } else {
-          calledLabels.add(call.label);
-        }
-      }
-      const uniquePlans = new Map(phasePlans.map((plan) => [JSON.stringify(plan), plan]));
-      if (uniquePlans.size > 1 && scopedPhasePlans.length === moduleTests) {
-        failures.push(...validateTestScopedPhaseCalls(scopedPhasePlans, source.testPhaseBodies));
-      }
-      for (const phasePlan of uniquePlans.values()) {
-        for (const label of phasePlan.slice(1)) {
-          if (!calledLabels.has(label)) {
-            failures.push(`${module.relativeModuleId}: semantic phase is never entered: ${label}`);
-          }
-        }
-      }
+      const collectedTests = [...module.children.allTests()].map((test) => ({
+        fullName: test.fullName,
+        phases: test.meta().e2ePhases,
+      }));
+      tests += collectedTests.length;
+      failures.push(
+        ...validateCollectedSemanticPhaseModule({
+          relativeModuleId: module.relativeModuleId,
+          errors: [...module.errors()].map((error) => error.message),
+          tests: collectedTests,
+          source: scanLiveSourceGraph(path.resolve(REPO_ROOT, module.relativeModuleId)),
+        }),
+      );
     }
 
     if (failures.length > 0) {

@@ -1,11 +1,47 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import { describe, expect, test } from "vitest";
 
-import { validateTestScopedPhaseCalls } from "../../../tools/e2e/check-semantic-phases.mts";
+import {
+  scanLiveSourceGraph,
+  validateCollectedSemanticPhaseModule,
+  validateTestScopedPhaseCalls,
+} from "../../../tools/e2e/check-semantic-phases.mts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
+
+const INVALID_SOURCE_FIXTURE = path.join(
+  REPO_ROOT,
+  "test/e2e/support/fixtures/semantic-phase-invalid.fixture.ts",
+);
 
 describe("semantic E2E phase checker", () => {
+  test("rejects missing metadata and invalid phase transitions from a collected module", () => {
+    const failures = validateCollectedSemanticPhaseModule({
+      relativeModuleId: "test/e2e/live/invalid-semantic-phase.test.ts",
+      errors: [],
+      tests: [
+        { fullName: "missing semantic phase metadata" },
+        {
+          fullName: "invalid semantic phase transitions",
+          phases: ["prepare fixture behavior", "exercise fixture behavior"],
+        },
+      ],
+      source: scanLiveSourceGraph(INVALID_SOURCE_FIXTURE),
+    });
+
+    expect(failures).toHaveLength(3);
+    expect(failures).toEqual(
+      expect.arrayContaining([
+        "test/e2e/live/invalid-semantic-phase.test.ts > missing semantic phase metadata: missing e2ePhases metadata",
+        expect.stringMatching(/semantic phase transitions must use literals/u),
+        expect.stringMatching(/undeclared semantic phase: undeclared fixture behavior/u),
+      ]),
+    );
+  });
+
   test("rejects phase transitions that belong to sibling tests", () => {
     const failures = validateTestScopedPhaseCalls(
       [
