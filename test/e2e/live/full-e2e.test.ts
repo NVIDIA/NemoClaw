@@ -55,9 +55,10 @@ interface ColdOnboardCapture {
   traceFile: string;
 }
 
-if (!new Set(["source-install", "preinstalled-launchable"]).has(SETUP_MODE)) {
-  throw new Error(`unsupported NEMOCLAW_E2E_SETUP_MODE: ${SETUP_MODE}`);
-}
+expect(
+  ["source-install", "preinstalled-launchable"],
+  `unsupported NEMOCLAW_E2E_SETUP_MODE: ${SETUP_MODE}`,
+).toContain(SETUP_MODE);
 process.env.NEMOCLAW_CLI_BIN ??= USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : CLI_ENTRYPOINT;
 validateSandboxName(SANDBOX_NAME);
 
