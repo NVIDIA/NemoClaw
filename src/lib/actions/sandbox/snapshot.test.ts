@@ -146,7 +146,6 @@ const latestBackupFixture = {
 };
 
 vi.mock("../../adapters/docker", () => ({
-  dockerCapture: vi.fn(() => ""),
   dockerInspect: dockerInspectMock,
 }));
 
@@ -154,6 +153,10 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: runOpenshellMock,
+}));
+
+vi.mock("../../adapters/openshell/sandbox-control-routing", () => ({
+  getOpenShellSandboxDescriptor: vi.fn(),
 }));
 
 vi.mock("../../credentials/store", () => ({

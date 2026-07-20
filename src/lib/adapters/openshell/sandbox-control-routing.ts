@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { log } from "../../cli/logger";
+import { assertNoOpenShellGatewayEndpointOverride } from "../../openshell-gateway-endpoint-guard";
 import {
   createGrpcOpenShellSandboxControlForGateway,
   OpenShellGrpcEdgeTunnelRequiredError,
@@ -9,6 +10,7 @@ import {
 import {
   type GrpcOpenShellSandboxControl,
   OpenShellGrpcPreDispatchError,
+  type OpenShellSandboxDescriptor,
 } from "./grpc-sandbox-control";
 import {
   createGatewayScopedCliOpenShellSandboxControl,
@@ -39,6 +41,31 @@ export interface OpenShellMutationControlSelection {
   close(): void;
 }
 
+function closeGrpc(
+  grpc: GrpcOpenShellSandboxControl | undefined,
+  dependencies: ReadOnlyRoutingDependencies,
+): void {
+  try {
+    grpc?.close();
+  } catch (error) {
+    dependencies.debug("OpenShell direct gRPC client close failed", error);
+  }
+}
+
+export async function getOpenShellSandboxDescriptor(
+  gatewayName: string,
+  sandboxName: string,
+  dependencies: ReadOnlyRoutingDependencies = defaultDependencies,
+): Promise<OpenShellSandboxDescriptor> {
+  assertNoOpenShellGatewayEndpointOverride();
+  const grpc = dependencies.createGrpc(gatewayName);
+  try {
+    return await grpc.getSandboxDescriptor(sandboxName);
+  } finally {
+    closeGrpc(grpc, dependencies);
+  }
+}
+
 /**
  * Select one transport before a mutating workflow starts. Direct gRPC is the
  * default. The CLI is selected only for the explicit Cloudflare edge-tunnel
@@ -54,13 +81,7 @@ export function selectOpenShellSandboxControlForMutation(
     return {
       control: grpc,
       transport: "grpc",
-      close: () => {
-        try {
-          grpc.close();
-        } catch (error) {
-          dependencies.debug("OpenShell direct gRPC client close failed", error);
-        }
-      },
+      close: () => closeGrpc(grpc, dependencies),
     };
   } catch (error) {
     if (!(error instanceof OpenShellGrpcEdgeTunnelRequiredError)) throw error;
@@ -128,11 +149,7 @@ export async function execSandboxReadOnlyWithGrpcFallback(
       return { status: null, stdout: "", stderr: "", error: cause };
     }
   } finally {
-    try {
-      grpc.close();
-    } catch (error) {
-      dependencies.debug("OpenShell direct gRPC client close failed", error);
-    }
+    closeGrpc(grpc, dependencies);
   }
 
   dependencies.debug(

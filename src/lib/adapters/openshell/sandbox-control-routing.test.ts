@@ -18,6 +18,7 @@ import {
 } from "./sandbox-control";
 import {
   execSandboxReadOnlyWithGrpcFallback,
+  getOpenShellSandboxDescriptor,
   selectOpenShellSandboxControlForMutation,
 } from "./sandbox-control-routing";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "./timeouts";
@@ -27,7 +28,12 @@ function dependencies(grpcResult: SandboxExecResult | Error, cliResult?: Sandbox
   const grpcExec = vi.fn(() =>
     grpcResult instanceof Error ? Promise.reject(grpcResult) : Promise.resolve(grpcResult),
   );
-  const grpc: GrpcOpenShellSandboxControl = { close, exec: grpcExec };
+  const getSandboxDescriptor = vi.fn(async (sandboxName: string) => ({
+    id: "sb-id",
+    name: sandboxName,
+    image: "nvcr.io/nvidia/nemoclaw:test",
+  }));
+  const grpc: GrpcOpenShellSandboxControl = { close, exec: grpcExec, getSandboxDescriptor };
   const cliExec = vi.fn(async () => cliResult ?? { status: 0, stdout: "cli", stderr: "" });
   const cli: OpenShellSandboxControl = { exec: cliExec };
   const createCli = vi.fn(() => cli);
@@ -37,6 +43,7 @@ function dependencies(grpcResult: SandboxExecResult | Error, cliResult?: Sandbox
     close,
     cli,
     grpcExec,
+    getSandboxDescriptor,
     cliExec,
     createCli,
     createGrpc,
@@ -50,6 +57,49 @@ const request = {
   command: ["openclaw", "sessions", "list"] as const,
   maxOutputBytes: 4096,
 };
+
+describe("OpenShell sandbox descriptor routing", () => {
+  it("reads from the selected gateway and closes without invoking the CLI", async () => {
+    const test = dependencies({ status: 0, stdout: "unused", stderr: "" });
+
+    await expect(
+      getOpenShellSandboxDescriptor("nemoclaw-9090", "alpha", test.deps),
+    ).resolves.toEqual({
+      id: "sb-id",
+      name: "alpha",
+      image: "nvcr.io/nvidia/nemoclaw:test",
+    });
+    expect(test.createGrpc).toHaveBeenCalledWith("nemoclaw-9090");
+    expect(test.getSandboxDescriptor).toHaveBeenCalledWith("alpha");
+    expect(test.createCli).not.toHaveBeenCalled();
+    expect(test.cliExec).not.toHaveBeenCalled();
+    expect(test.close).toHaveBeenCalledOnce();
+  });
+
+  it("propagates read failures, closes, and never falls back to the CLI", async () => {
+    const error = new Error("descriptor unavailable");
+    const test = dependencies({ status: 0, stdout: "unused", stderr: "" });
+    test.getSandboxDescriptor.mockRejectedValue(error);
+
+    await expect(getOpenShellSandboxDescriptor("nemoclaw", "alpha", test.deps)).rejects.toBe(error);
+    expect(test.createCli).not.toHaveBeenCalled();
+    expect(test.cliExec).not.toHaveBeenCalled();
+    expect(test.close).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a gateway endpoint override before creating a client", async () => {
+    const test = dependencies({ status: 0, stdout: "unused", stderr: "" });
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.example.test");
+    try {
+      await expect(getOpenShellSandboxDescriptor("nemoclaw", "alpha", test.deps)).rejects.toThrow(
+        "Unset OPENSHELL_GATEWAY_ENDPOINT",
+      );
+      expect(test.createGrpc).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
 
 describe("read-only OpenShell sandbox control routing", () => {
   it.each([

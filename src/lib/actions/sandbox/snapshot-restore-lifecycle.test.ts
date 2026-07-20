@@ -249,6 +249,49 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
   });
 
+  it("uses the live OpenShell descriptor image for Kubernetes snapshot clones", async () => {
+    let registeredClone: ReturnType<typeof f.getSandboxMock> = null;
+    f.registerSandboxMock.mockImplementation((entry) => (registeredClone = entry as never));
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha"
+        ? {
+            name: "alpha",
+            agent: "openclaw",
+            gatewayName: "nemoclaw-8090",
+            imageTag: "nemoclaw-alpha:stale-registry",
+            openshellDriver: "kubernetes",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+          }
+        : registeredClone,
+    );
+    f.getOpenShellSandboxDescriptorMock.mockResolvedValue({
+      id: "alpha-id",
+      name: "alpha",
+      image: "nemoclaw-alpha:live-descriptor",
+    });
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
+
+    expect(f.getOpenShellSandboxDescriptorMock).toHaveBeenCalledTimes(2);
+    expect(f.getOpenShellSandboxDescriptorMock).toHaveBeenNthCalledWith(
+      1,
+      "nemoclaw-8090",
+      "alpha",
+    );
+    const createArgs = f.streamSandboxCreateMock.mock.calls[0]?.[1] ?? [];
+    expect(createArgs).toContain("nemoclaw-alpha:live-descriptor");
+    expect(createArgs).not.toContain("nemoclaw-alpha:stale-registry");
+  });
+
   it("blocks auto-create before deleting a destination when a gateway peer conflicts", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     f.getSandboxMock.mockImplementation((name) => ({

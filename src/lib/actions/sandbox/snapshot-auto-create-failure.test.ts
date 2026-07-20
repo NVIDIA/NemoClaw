@@ -33,6 +33,9 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
 }));
+vi.mock("../../adapters/openshell/sandbox-control-routing", () => ({
+  getOpenShellSandboxDescriptor: vi.fn(),
+}));
 vi.mock("../../credentials/store", () => ({ prompt: vi.fn() }));
 vi.mock("../../domain/sandbox/destroy", () => ({
   getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),

@@ -24,6 +24,7 @@ import {
   type OpenShellGrpcApi,
   OpenShellGrpcOutputLimitError,
   OpenShellGrpcPreDispatchError,
+  type OpenShellSandboxDescriptor,
 } from "./grpc-sandbox-control";
 import {
   OPENSHELL_EXEC_MAX_OUTPUT_BYTES,
@@ -38,10 +39,22 @@ class FakeStream extends EventEmitter {
   }
 }
 
+type GetSandboxCallback = Parameters<OpenShellGrpcApi["getSandbox"]>[3];
+type FakeGetSandboxResponse = NonNullable<Parameters<GetSandboxCallback>[1]>;
+
 interface FakeApiOptions {
   sandboxId?: string;
+  getResponse?: FakeGetSandboxResponse;
   getError?: ServiceError;
   emit?: (stream: FakeStream) => void;
+}
+
+function descriptorResponse({
+  id = "sb-id",
+  name = "alpha",
+  image = "nvcr.io/nvidia/nemoclaw:test",
+}: Partial<OpenShellSandboxDescriptor> = {}): FakeGetSandboxResponse {
+  return { sandbox: { metadata: { id, name }, spec: { template: { image } } } };
 }
 
 function fakeApi(fixture: FakeApiOptions = {}): {
@@ -67,11 +80,14 @@ function fakeApi(fixture: FakeApiOptions = {}): {
       queueMicrotask(() => {
         fixture.getError
           ? callback(fixture.getError)
-          : callback(null, {
-              sandbox: {
-                metadata: fixture.sandboxId === "" ? {} : { id: fixture.sandboxId ?? "sb-id" },
+          : callback(
+              null,
+              fixture.getResponse ?? {
+                sandbox: {
+                  metadata: fixture.sandboxId === "" ? {} : { id: fixture.sandboxId ?? "sb-id" },
+                },
               },
-            });
+            );
       });
       return request;
     },
@@ -299,13 +315,18 @@ describe("gRPC OpenShell sandbox control", () => {
     };
     const server = new Server();
     const requests: unknown[] = [];
+    const deadlines: Array<Date | number> = [];
     server.addService(loaded.openshell.v1.OpenShell.service, {
       getSandbox(
-        call: ServerUnaryCall<{ name: string }, { sandbox: { metadata: { id: string } } }>,
-        callback: sendUnaryData<{ sandbox: { metadata: { id: string } } }>,
+        call: ServerUnaryCall<{ name: string }, FakeGetSandboxResponse>,
+        callback: sendUnaryData<FakeGetSandboxResponse>,
       ) {
         requests.push(call.request);
-        callback(null, { sandbox: { metadata: { id: "wire-id" } } });
+        deadlines.push(call.getDeadline());
+        callback(
+          null,
+          descriptorResponse({ id: "wire-id", image: "nvcr.io/nvidia/nemoclaw:wire" }),
+        );
       },
       execSandbox(
         call: ServerWritableStream<
@@ -331,6 +352,15 @@ describe("gRPC OpenShell sandbox control", () => {
       endpoint: `http://127.0.0.1:${port}`,
     });
     try {
+      const before = Date.now();
+      await expect(control.getSandboxDescriptor("alpha")).resolves.toEqual({
+        id: "wire-id",
+        name: "alpha",
+        image: "nvcr.io/nvidia/nemoclaw:wire",
+      });
+      const deadline = new Date(deadlines[0]).getTime();
+      expect(deadline).toBeGreaterThanOrEqual(before + 15_000);
+      expect(deadline).toBeLessThanOrEqual(Date.now() + 15_000);
       await expect(
         control.exec({
           sandboxName: "alpha",
@@ -343,6 +373,7 @@ describe("gRPC OpenShell sandbox control", () => {
         stderr: "wire stderr",
       });
       expect(requests).toEqual([
+        { name: "alpha" },
         { name: "alpha" },
         {
           sandboxId: "wire-id",
@@ -454,6 +485,22 @@ describe("gRPC OpenShell sandbox control", () => {
         message: "OpenShell returned sandbox 'alpha' without an id",
       }),
     });
+  });
+
+  it.each([
+    [descriptorResponse({ id: " " }), "without an id"],
+    [descriptorResponse({ name: "" }), "without a name"],
+    [descriptorResponse({ name: "beta" }), "returned sandbox 'beta' for requested sandbox 'alpha'"],
+    [descriptorResponse({ image: " " }), "without an image"],
+  ])("rejects incomplete or mismatched descriptors", async (getResponse, message) => {
+    const fake = fakeApi({ getResponse });
+    const control = createGrpcOpenShellSandboxControl(
+      { endpoint: "http://127.0.0.1:8080" },
+      fake.api,
+    );
+
+    await expect(control.getSandboxDescriptor("alpha")).rejects.toThrow(message);
+    expect(fake.execMetadata).toEqual([]);
   });
 
   it.each([

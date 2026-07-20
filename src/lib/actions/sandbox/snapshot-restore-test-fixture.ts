@@ -114,6 +114,13 @@ export const getCustomPoliciesMock = vi.fn(
   () => [] as Array<{ name: string; content: string; sourcePath?: string }>,
 );
 export const getLatestBackupMock = vi.fn(() => null as Record<string, unknown> | null);
+export const getOpenShellSandboxDescriptorMock = vi.fn(
+  async (_gatewayName: string, sandboxName: string) => ({
+    id: `${sandboxName}-id`,
+    name: sandboxName,
+    image: `nemoclaw-${sandboxName}:live`,
+  }),
+);
 export const applyPresetMock = vi.fn((_sandbox: string, _preset: string) => true);
 export const applyPresetContentMock = vi.fn(
   (_sandbox: string, _name: string, _content: string, _options?: unknown) => true,
@@ -160,6 +167,10 @@ vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: runOpenshellMock,
+}));
+
+vi.mock("../../adapters/openshell/sandbox-control-routing", () => ({
+  getOpenShellSandboxDescriptor: getOpenShellSandboxDescriptorMock,
 }));
 
 vi.mock("../../credentials/store", () => ({
@@ -261,6 +272,11 @@ export function resetSnapshotRestoreMocks(): void {
   getAppliedPresetsMock.mockReturnValue([]);
   getCustomPoliciesMock.mockReturnValue([]);
   getLatestBackupMock.mockReturnValue(null);
+  getOpenShellSandboxDescriptorMock.mockImplementation(async (_gatewayName, sandboxName) => ({
+    id: `${sandboxName}-id`,
+    name: sandboxName,
+    image: `nemoclaw-${sandboxName}:live`,
+  }));
   applyPresetMock.mockReturnValue(true);
   applyPresetContentMock.mockReturnValue(true);
   removePresetMock.mockReturnValue(true);
