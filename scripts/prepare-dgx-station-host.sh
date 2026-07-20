@@ -10,7 +10,7 @@ readonly REBOOT_REQUIRED_EXIT=10
 readonly LOGIN_REQUIRED_EXIT=11
 readonly MIN_FREE_KIB=$((20 * 1024 * 1024))
 readonly GB300_PCI_VENDOR="0x10de"
-readonly GB300_PCI_DEVICE="0x31c2"
+readonly -a GB300_PCI_DEVICES=("0x31c2" "0x31c3")
 readonly GB300_PCI_CLASS_PREFIX="0x03"
 STATION_HOST_PROFILE="generic-ubuntu"
 FORCE_STATION_INSTALL=0
@@ -336,6 +336,22 @@ normalize_nvidia_pci_bus_id() {
   printf '%s:%s' "$domain" "$rest"
 }
 
+gb300_pci_device_is_known() {
+  local candidate=$1 known
+  for known in "${GB300_PCI_DEVICES[@]}"; do
+    [[ "$candidate" == "$known" ]] && return 0
+  done
+  return 1
+}
+
+gb300_pci_device_display() {
+  local rendered="" device
+  for device in "${GB300_PCI_DEVICES[@]}"; do
+    rendered+="${rendered:+/}${device#0x}"
+  done
+  printf '%s' "$rendered"
+}
+
 station_pci_device_is_gb300() {
   local bus_id=$1 pci_root=${2:-/sys/bus/pci/devices} pci_path vendor device class
   bus_id="$(normalize_nvidia_pci_bus_id "$bus_id")" || return 1
@@ -347,9 +363,9 @@ station_pci_device_is_gb300() {
   IFS= read -r vendor <"$pci_path/vendor" || return 1
   IFS= read -r device <"$pci_path/device" || return 1
   IFS= read -r class <"$pci_path/class" || return 1
-  [[ "$vendor" == "$GB300_PCI_VENDOR" &&
-    "$device" == "$GB300_PCI_DEVICE" &&
-    "$class" == "${GB300_PCI_CLASS_PREFIX}"* ]]
+  [[ "$vendor" == "$GB300_PCI_VENDOR" ]] || return 1
+  gb300_pci_device_is_known "$device" || return 1
+  [[ "$class" == "${GB300_PCI_CLASS_PREFIX}"* ]]
 }
 
 station_has_exact_gb300_pci_gpu() {
@@ -521,6 +537,12 @@ is_qualified_factory_failed_unit() {
         *) return 1 ;;
       esac
       ;;
+    forced-factory-runtime)
+      case "${1:-}" in
+        ibacm.service | rtkit-daemon.service) return 0 ;;
+        *) return 1 ;;
+      esac
+      ;;
     *) return 1 ;;
   esac
 }
@@ -669,7 +691,7 @@ check_platform() {
   case "$release_state" in
     generic-ubuntu)
       station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
-        || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:${GB300_PCI_DEVICE#0x}) before generic Ubuntu preparation"
+        || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display)) before generic Ubuntu preparation"
       STATION_HOST_PROFILE="generic-ubuntu"
       ;;
     supported-dgx-os) STATION_HOST_PROFILE="stock-dgx-os" ;;
@@ -678,7 +700,7 @@ check_platform() {
     *)
       if ((FORCE_STATION_INSTALL == 1)); then
         station_has_exact_gb300_pci_gpu "$(station_pci_devices_path)" \
-          || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:${GB300_PCI_DEVICE#0x}) before forced factory-runtime validation"
+          || fatal "Expected an NVIDIA GB300 PCI GPU (${GB300_PCI_VENDOR#0x}:$(gb300_pci_device_display)) before forced factory-runtime validation"
         STATION_HOST_PROFILE="forced-factory-runtime"
         warn "DGX release metadata allowlist bypassed by explicit --force-station-install intent; all hardware and factory-runtime health checks remain required"
       else
