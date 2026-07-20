@@ -262,11 +262,13 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
     if (messagingForward) preservedPorts.add(String(messagingForward.port));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
-    const stopForwardForSandbox = createSandboxForwardStopper({
-      runOpenshell: deps.runOpenshell,
-      runCaptureOpenshell: deps.runCaptureOpenshell,
-      sandboxName,
-    });
+    const makeStopForwardForSandbox = () =>
+      createSandboxForwardStopper({
+        runOpenshell: deps.runOpenshell,
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+        sandboxName,
+      });
+    const stopForwardForSandbox = makeStopForwardForSandbox();
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
@@ -329,7 +331,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       { port: actualPort, sandboxName },
       () => {
         deps.sleep(1);
-        stopForwardForSandbox(actualPort);
+        // The setup stopper intentionally de-duplicates ports. A retry needs
+        // a fresh sandbox-scoped stopper so it can clean the failed attempt
+        // without falling through that one-shot guard.
+        makeStopForwardForSandbox()(actualPort);
       },
       { onProgress: buildForwardStartProgressLogger(actualPort) },
     );

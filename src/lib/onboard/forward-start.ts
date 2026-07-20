@@ -103,6 +103,13 @@ export function looksLikeUntrackedForward(diagnostic: string): boolean {
  * forward diagnostic above, this means another list poll cannot make the
  * terminated attempt appear. A live-port probe must still run first because
  * a ControlMaster mux can own the listener after the child exits (#6099).
+ *
+ * Compatibility boundary: these exact diagnostics are emitted by the pinned
+ * OpenShell 0.0.85 forward-start path tracked in #7266. Reassess this matcher
+ * when NemoClaw's supported OpenShell range moves beyond 0.0.85, and remove it
+ * once OpenShell either keeps the attempt alive until the listener is ready or
+ * exposes a structured retryable outcome. Keep the fragments narrow so an
+ * unrelated SSH or gateway failure cannot enter the cleanup-and-retry path.
  */
 export function looksLikeForwardListenerStartFailure(diagnostic: string): boolean {
   return /ssh exited before local forward listener opened|local forward listener did not open\b/i.test(
