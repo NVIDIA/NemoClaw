@@ -14,6 +14,7 @@ function fixture({
   throwOnInspect = false,
   throwOnPaused = false,
   knownSandboxes = ["my-assistant"],
+  labeledContainers,
 }: {
   driver?: string | null;
   psNames?: string;
@@ -23,13 +24,30 @@ function fixture({
   throwOnInspect?: boolean;
   throwOnPaused?: boolean;
   knownSandboxes?: string[];
+  labeledContainers?: Array<{ name: string; status: string; running: boolean }>;
 } = {}) {
   const sandbox: Partial<SandboxEntry> = { name: "my-assistant", openshellDriver: driver };
+  const runningNames = new Set(
+    psNames
+      .split("\n")
+      .map((name) => name.trim())
+      .filter(Boolean),
+  );
   return {
     getSandbox: () => sandbox as SandboxEntry,
     listSandboxNames: () => knownSandboxes,
     dockerPsNames: () => psNames,
-    dockerPsAllNames: () => psAllNames,
+    findLabeledSandboxContainers: () =>
+      labeledContainers ??
+      psAllNames
+        .split("\n")
+        .map((name) => name.trim())
+        .filter(Boolean)
+        .map((name) => ({
+          name,
+          status: runningNames.has(name) ? "Up 1 minute" : "Exited (0) 1 minute ago",
+          running: runningNames.has(name),
+        })),
     dockerInspectHealth: () => {
       if (throwOnInspect) throw new Error("docker inspect crashed");
       return healthRaw;
@@ -153,6 +171,19 @@ describe("getSandboxDockerHealth", () => {
 });
 
 describe("getSandboxDockerRuntime (#4495)", () => {
+  it("ignores matching container names without OpenShell ownership labels", () => {
+    const deps = fixture({
+      psNames: "openshell-my-assistant-live\n",
+      psAllNames: "openshell-my-assistant-live\n",
+      labeledContainers: [],
+    });
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      containerName: null,
+    });
+  });
+
   it("prefers the live container over an exited exact-name sibling", () => {
     const deps = fixture({
       psNames: "openshell-my-assistant-live\n",
