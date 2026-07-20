@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { InferenceEndpointSource } from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
 import type {
@@ -47,6 +48,7 @@ export interface CoreOnboardFlowPhaseOptions<
     requestedObservabilityEnabled?: boolean | null;
     requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
     authoritativePolicyTier?: string | null;
+    endpointSource?: InferenceEndpointSource | null;
     recreateSandbox: (requested?: boolean) => boolean;
     controlUiPort: number | null;
     rootDir: string;
@@ -127,6 +129,7 @@ export function createCoreOnboardFlowPhases<
       gatewayName: options.gatewayName,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.sandbox.authoritativePolicyTier,
+      endpointSource: options.sandbox.endpointSource,
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
       requestedObservabilityEnabled: options.sandbox.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.sandbox.requestedDcodeAutoApprovalMode,

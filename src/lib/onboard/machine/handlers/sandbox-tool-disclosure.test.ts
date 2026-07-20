@@ -125,6 +125,7 @@ describe("handleSandboxState tool disclosure", () => {
         recreate: true,
         toolDisclosure: requestedMode,
         observabilityEnabled: false,
+        endpointSource: "onboard",
         extraProviders: [],
         reuseRegisteredCredentials: true,
       },

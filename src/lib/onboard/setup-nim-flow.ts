@@ -643,11 +643,18 @@ export function createSetupNim(
       deps,
     );
     const selectedModel = isBackToSelection(model) ? null : model;
+    const endpointSource =
+      recoveredRegistryRoute?.provider === provider &&
+      recoveredRegistryRoute.endpointUrl === endpointUrl &&
+      recoveredRegistryRoute.endpointSource === "onboard"
+        ? "onboard"
+        : null;
     await deps.maybePromptForInferenceInputCapability(selectedModel);
     return {
       model: selectedModel,
       provider,
       endpointUrl,
+      endpointSource,
       credentialEnv,
       hermesAuthMethod,
       hermesToolGateways,

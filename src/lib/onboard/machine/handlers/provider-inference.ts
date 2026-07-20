@@ -4,6 +4,7 @@
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import { resolveAgentProviderInferenceApi } from "../../../inference/config";
 import type { TrustedPrivateEndpointCapability } from "../../../inference/endpoint-ssrf-preflight";
+import type { InferenceEndpointSource } from "../../../inference/selection";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   type CurrentGatewayRouteDiscoveryPreflight,
@@ -35,6 +36,8 @@ export interface ProviderInferenceSetupOptions {
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
+  /** Exact onboarding-provenanced endpoint permitted to skip DNS re-resolution. */
+  onboardEndpointUrl?: string;
   /**
    * Resolved (agent-coerced) inference API for the selection. Lets the
    * remote-provider registration pick the gateway surface that matches the
@@ -58,6 +61,7 @@ export interface ProviderSelectionResult {
   model: string | null;
   provider: string;
   endpointUrl: string | null;
+  endpointSource?: InferenceEndpointSource | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   hermesToolGateways: string[];
@@ -351,6 +355,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let skipHostInferenceSmoke = false;
   let reuseGatewayCredentialWithoutLocalKey = false;
   let endpointPinnedAddresses: string[] | undefined;
+  let endpointSource: InferenceEndpointSource | null = null;
   let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
@@ -546,6 +551,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       recoveredRecordedProvider = selection.recoveredFromSandbox === true;
       forceInferenceSetup ||= recoveredRecordedProvider;
       endpointPinnedAddresses = selection.endpointPinnedAddresses;
+      endpointSource = selection.endpointSource ?? null;
       endpointTrustedPrivateCapability = selection.endpointTrustedPrivateCapability;
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
       vllmModelIdentity = selection.vllmModelIdentity;
@@ -626,6 +632,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               : {}),
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
             ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+            ...(endpointSource === "onboard" && endpointUrl
+              ? { onboardEndpointUrl: endpointUrl }
+              : {}),
             ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
             ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
             reservationSessionId: session?.sessionId,
@@ -816,6 +825,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+        ...(endpointSource === "onboard" && endpointUrl ? { onboardEndpointUrl: endpointUrl } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),
         ...providerRecovery.setupOptions(

@@ -70,6 +70,7 @@ describe("handleSandboxState live DCode selection", () => {
       recreate: false,
       toolDisclosure: "progressive",
       observabilityEnabled: true,
+      endpointSource: "onboard",
       observabilityRequestedExplicitly: true,
       dcodeAutoApprovalMode: "disabled",
       extraProviders: [],
@@ -190,6 +191,7 @@ describe("handleSandboxState live DCode selection", () => {
       recreate: true,
       toolDisclosure: "progressive",
       observabilityEnabled: false,
+      endpointSource: "onboard",
       dcodeAutoApprovalMode: "disabled",
       extraProviders: [],
     });
@@ -212,6 +214,7 @@ describe("handleSandboxState live DCode selection", () => {
       recreate: true,
       toolDisclosure: "progressive",
       observabilityEnabled: false,
+      endpointSource: "onboard",
       dcodeAutoApprovalMode: "disabled",
       extraProviders: [],
     });

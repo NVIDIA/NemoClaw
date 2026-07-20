@@ -39,6 +39,8 @@ $$nemoclaw <name> shields up
 
 For a compatible endpoint, omit `--endpoint-url` when the durable registry entry already contains the endpoint and API-family metadata.
 NemoClaw reuses the recorded route and does not repoint the gateway.
+You can also re-supply the same endpoint URL when the registry records that onboarding established it.
+NemoClaw requires an exact canonical match and does not extend that trust to a different URL or an endpoint recorded by `inference set`.
 If the route metadata is incomplete, NemoClaw stops and tells you to re-run onboarding.
 
 For Hermes, the command also mirrors the selected model into the dashboard profile.

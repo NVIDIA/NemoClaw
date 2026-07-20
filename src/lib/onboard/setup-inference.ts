@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
+import { canonicalEndpoint } from "../core/url-utils";
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
@@ -24,6 +25,17 @@ import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 export { assertNoOpenShellGatewayEndpointOverride };
 
 import type { HermesAuthMethod } from "./hermes-auth";
+
+function matchesOnboardEndpoint(
+  provider: string,
+  endpointUrl: string | null,
+  onboardEndpointUrl: string | undefined,
+): boolean {
+  if (!endpointUrl || !onboardEndpointUrl) return false;
+  const flavor = provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai";
+  const selected = canonicalEndpoint(endpointUrl, flavor);
+  return selected !== null && selected === canonicalEndpoint(onboardEndpointUrl, flavor);
+}
 import type {
   CommonDeps,
   HermesDeps,
@@ -269,10 +281,16 @@ export function createSetupInference(
         // do not apply the custom-origin curl pinning contract here.
         const usesBedrockRuntimeAdapter =
           provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
+        const usesOnboardEndpoint = matchesOnboardEndpoint(
+          provider,
+          endpointUrl,
+          options.onboardEndpointUrl,
+        );
         if (
           (provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint") &&
           endpointUrl &&
           !usesBedrockRuntimeAdapter &&
+          !usesOnboardEndpoint &&
           !endpointPinnedAddresses
         ) {
           const preflight = await assertEndpointResolvesPublic(
@@ -307,6 +325,7 @@ export function createSetupInference(
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
+            endpointSource: "onboard",
             credentialEnv,
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,

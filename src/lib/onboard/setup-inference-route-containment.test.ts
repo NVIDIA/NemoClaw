@@ -434,9 +434,11 @@ describe("onboard shared gateway route containment", () => {
       provider: "router-a",
       model: "model-a",
       endpointUrl: "http://router-a.test/v1",
+      endpointSource: "onboard",
       credentialEnv: "ROUTER_KEY",
       preferredInferenceApi: null,
       gatewayName: "nemoclaw",
+      reservationSessionId: undefined,
     });
     expect(reservations).toHaveLength(2);
     expect(updateSandbox).toHaveBeenCalledTimes(2);

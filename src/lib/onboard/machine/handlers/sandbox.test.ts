@@ -82,6 +82,7 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: "onboard",
         extraProviders: [],
       },
     );
@@ -531,6 +532,7 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: "onboard",
         extraProviders: [],
       },
     );
@@ -792,6 +794,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: "onboard",
         extraProviders: [],
       },
     );
@@ -1010,6 +1013,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: "onboard",
         extraProviders: [],
         reuseRegisteredCredentials: true,
       },
@@ -1131,6 +1135,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: "onboard",
         extraProviders: [],
         reuseRegisteredCredentials: true,
       },
