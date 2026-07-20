@@ -194,7 +194,7 @@ async function printUnknownGatewayLookupStatus({
   process.exit(1);
 }
 
-function printNonReadySandboxPhaseGuidance({
+export function printNonReadySandboxPhaseGuidance({
   sandboxName,
   phase,
   dockerRuntime,
@@ -244,6 +244,9 @@ function printNonReadySandboxPhaseGuidance({
   );
   console.log("");
   console.log(
-    `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
+    `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the crashed container and recover the sandbox with workspace state preserved.`,
+  );
+  console.log(
+    `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead, but its pre-rebuild backup cannot snapshot a stopped container, so start it first.)`,
   );
 }
