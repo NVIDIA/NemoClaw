@@ -16,20 +16,54 @@ const FIXTURE = "test/e2e/support/fixtures/e2e-progress-outcome.fixture.test.ts"
 
 describe("automatic E2E phase outcomes", () => {
   it.each([
-    ["failed", 1, "records-failed-phase-outcome", "raise deterministic assertion", "failed"],
-    ["skipped", 0, "records-skipped-phase-outcome", "request runtime E2E skip", "skipped"],
-    ["cleanup-failed", 1, "records-cleanup-failure-phase-outcome", E2E_TEARDOWN_PHASE, "failed"],
-    ["incomplete", 1, "rejects-incomplete-phase-plan", E2E_TEARDOWN_PHASE, "failed"],
+    [
+      "failed",
+      1,
+      "records-failed-phase-outcome",
+      "raise deterministic assertion",
+      "failed",
+      "passed",
+      0,
+    ],
+    [
+      "skipped",
+      0,
+      "records-skipped-phase-outcome",
+      "request runtime E2E skip",
+      "skipped",
+      "passed",
+      0,
+    ],
+    [
+      "cleanup-failed",
+      1,
+      "records-cleanup-failure-phase-outcome",
+      E2E_TEARDOWN_PHASE,
+      "failed",
+      "failed",
+      20,
+    ],
+    ["incomplete", 1, "rejects-incomplete-phase-plan", E2E_TEARDOWN_PHASE, "failed", "failed", 0],
     [
       "soft-failed",
       1,
       "records-soft-failure-on-its-originating-phase",
       "record a soft assertion failure",
       "failed",
+      "passed",
+      0,
     ],
   ] as const)(
     "records a real Vitest %s result on the originating phase",
-    (mode, status, slug, phaseLabel, expectedOutcome) => {
+    (
+      mode,
+      status,
+      slug,
+      phaseLabel,
+      expectedOutcome,
+      expectedTeardownOutcome,
+      minimumDurationMs,
+    ) => {
       const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-outcome-"));
       try {
         const result = spawnSync(
@@ -57,15 +91,11 @@ describe("automatic E2E phase outcomes", () => {
         expect(`${result.stdout}\n${result.stderr}`).toContain(
           `${phaseLabel} — ${expectedOutcome} in`,
         );
-        if (["failed", "skipped", "soft-failed"].includes(mode)) {
-          expect(summary.phases.at(-1)).toMatchObject({
-            label: E2E_TEARDOWN_PHASE,
-            outcome: "passed",
-          });
-        }
-        if (mode === "cleanup-failed") {
-          expect(phase?.durationMs).toBeGreaterThanOrEqual(20);
-        }
+        expect(summary.phases.at(-1)).toMatchObject({
+          label: E2E_TEARDOWN_PHASE,
+          outcome: expectedTeardownOutcome,
+        });
+        expect(phase?.durationMs).toBeGreaterThanOrEqual(minimumDurationMs);
       } finally {
         fs.rmSync(artifactDir, { recursive: true, force: true });
       }
