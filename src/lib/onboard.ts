@@ -576,15 +576,11 @@ import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
 } from "./messaging-channel-config";
-import { recordCheckpointGatewayOwner } from "./onboard/checkpoint-record";
 import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
 import { bindExternallySupervisedGateway } from "./onboard/gateway-attachment-registration";
 import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
-import {
-  assertGatewayOwnerMatchesCheckpoint,
-  checkpointGatewayOwner,
-} from "./onboard/gateway-ownership";
+import * as gatewayOwnerSession from "./onboard/gateway-owner-session";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
@@ -2147,6 +2143,12 @@ const {
   resolveOpenShellGatewayBinary,
   waitForGatewayHttpReady,
 });
+const gatewayOwnerSessionDeps = {
+  getGatewayOwner,
+  loadSession: onboardSession.loadSession,
+  updateSession: onboardSession.updateSession,
+  resetGatewayOwnerBinding,
+};
 
 async function recoverGatewayRuntime() {
   assertGatewayStartAllowed(false);
@@ -3995,21 +3997,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
-  if (!resume) {
-    resetGatewayOwnerBinding();
-  } else {
-    // Resume owner proof is checked before consent, preflight, provider, or
-    // gateway effects. The gateway phase repeats the assertion at its mutation
-    // boundary to close a declaration check/use gap.
-    const owner = getGatewayOwner();
-    const recordedOwner = onboardSession.loadSession()?.checkpoint?.gatewayOwner;
-    // Sessions from before this field existed can only be adopted when the
-    // current owner is still NemoClaw-managed. External ownership without a
-    // durable proof is ambiguous and must fail closed.
-    if (recordedOwner || owner.mode === "externally-supervised") {
-      assertGatewayOwnerMatchesCheckpoint(owner, recordedOwner);
-    }
-  }
+  gatewayOwnerSession.prepareGatewayOwnerAttempt(resume, gatewayOwnerSessionDeps);
   const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
     fresh,
     initialHint: opts.baseImageResolutionHint,
@@ -4136,15 +4124,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
-    const owner = getGatewayOwner();
-    if (session?.checkpoint?.gatewayOwner) {
-      assertGatewayOwnerMatchesCheckpoint(owner, session.checkpoint.gatewayOwner);
-    } else {
-      session = onboardSession.updateSession((current) => {
-        recordCheckpointGatewayOwner(current, checkpointGatewayOwner(owner));
-        return current;
-      });
-    }
+    session = gatewayOwnerSession.bindGatewayOwnerSession(session, gatewayOwnerSessionDeps);
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     await recordInitialPreflightTransition(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
@@ -4276,10 +4256,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       gatewayDeps: {
         ...machineGatewayOwnerDeps,
         recordGatewayOwner: (owner) =>
-          onboardSession.updateSession((current) => {
-            recordCheckpointGatewayOwner(current, owner);
-            return current;
-          }),
+          gatewayOwnerSession.persistGatewayOwner(owner, onboardSession.updateSession),
         bindGatewayAttachment: (owner) =>
           bindExternallySupervisedGateway(owner, GATEWAY_NAME, {
             runOpenshell,
