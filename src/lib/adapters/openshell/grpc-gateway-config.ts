@@ -38,6 +38,16 @@ export interface ResolvedOpenShellGrpcGateway {
   clientConfig: OpenShellGrpcClientConfig;
 }
 
+/** Direct gRPC cannot traverse OpenShell's CLI-owned Cloudflare edge tunnel. */
+export class OpenShellGrpcEdgeTunnelRequiredError extends Error {
+  constructor() {
+    super(
+      "OpenShell Cloudflare JWT gateways require the OpenShell edge tunnel and are not supported by the direct gRPC client",
+    );
+    this.name = "OpenShellGrpcEdgeTunnelRequiredError";
+  }
+}
+
 function validateGatewayName(name: string): void {
   if (
     !name ||
@@ -234,9 +244,7 @@ export function resolveOpenShellGrpcGateway(
     }
     clientConfig = oidcConfig(metadata.gateway_endpoint, gatewayDir, nowSeconds);
   } else if (authMode === "cloudflare_jwt") {
-    throw new Error(
-      "OpenShell Cloudflare JWT gateways require the OpenShell edge tunnel and are not supported by the direct gRPC client",
-    );
+    throw new OpenShellGrpcEdgeTunnelRequiredError();
   } else {
     throw new Error(`Unsupported OpenShell gateway auth mode '${authMode}'`);
   }

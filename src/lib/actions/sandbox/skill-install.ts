@@ -3,13 +3,16 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { captureSandboxSshConfig } from "../../adapters/openshell/runtime";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import {
+  type OpenShellMutationControlSelection,
+  selectOpenShellSandboxControlForMutation,
+} from "../../adapters/openshell/sandbox-control-routing";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
-import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import * as skillInstall from "../../skill-install";
+import * as registry from "../../state/registry";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 
 export function printSkillInstallUsage(): void {
@@ -80,6 +83,18 @@ export function printPluginInstallHint(): void {
   );
 }
 
+function selectSkillControl(sandboxName: string): OpenShellMutationControlSelection {
+  try {
+    return selectOpenShellSandboxControlForMutation(
+      resolveSandboxGatewayName(registry.getSandbox(sandboxName)),
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`  Failed to configure OpenShell sandbox execution: ${detail}`);
+    process.exit(1);
+  }
+}
+
 /**
  * Remove an installed skill from a live sandbox by name.
  */
@@ -114,21 +129,12 @@ export async function removeSandboxSkill(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const paths = skillInstall.resolveSkillPaths(agent, skillName);
 
-  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (sshConfigResult.status !== 0) {
-    console.error("  Failed to obtain SSH configuration for the sandbox.");
-    process.exit(1);
-  }
-
-  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
+  const selected = selectSkillControl(sandboxName);
 
   try {
-    const ctx = { configFile: tmpSshConfig.file, sandboxName };
+    const ctx = { control: selected.control, sandboxName };
 
-    const existsCheck = skillInstall.checkExisting(ctx, paths);
+    const existsCheck = await skillInstall.checkExisting(ctx, paths);
     if (existsCheck === null) {
       console.error(
         `  Could not check if skill '${skillName}' exists — sandbox may be unreachable.`,
@@ -142,7 +148,7 @@ export async function removeSandboxSkill(
       return;
     }
 
-    const result = skillInstall.removeSkill(ctx, paths);
+    const result = await skillInstall.removeSkill(ctx, paths);
     for (const msg of result.messages) {
       if (msg.startsWith("Warning:")) {
         console.error(`  ${YW}${msg}${R}`);
@@ -151,7 +157,7 @@ export async function removeSandboxSkill(
       }
     }
 
-    const gone = skillInstall.verifyRemove(ctx, paths);
+    const gone = await skillInstall.verifyRemove(ctx, paths);
     if (gone) {
       console.log(`  ${G}✓${R} Skill '${skillName}' removed`);
     } else {
@@ -161,7 +167,7 @@ export async function removeSandboxSkill(
       return;
     }
   } finally {
-    tmpSshConfig.cleanup();
+    selected.close();
   }
 }
 
@@ -273,39 +279,28 @@ export async function installSandboxSkill(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const paths = skillInstall.resolveSkillPaths(agent, frontmatter.name);
 
-  // 4. Get SSH config
-  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
-    ignoreError: true,
-    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-  });
-  if (sshConfigResult.status !== 0) {
-    console.error("  Failed to obtain SSH configuration for the sandbox.");
-    process.exit(1);
-  }
-
-  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
+  // 4. Select one control-plane transport before any mutation.
+  const selected = selectSkillControl(sandboxName);
 
   try {
-    const ctx = { configFile: tmpSshConfig.file, sandboxName };
+    const ctx = { control: selected.control, sandboxName };
 
-    // 5. Check if skill already exists (update vs fresh install). This probe is
-    //    advisory for install only: stale SSH config files and transient remote
-    //    shell startup failures can make the stat probe inconclusive even when a
-    //    subsequent upload succeeds. Upload plus verifyInstall() remain the
-    //    source of truth for install success; remove keeps null fatal because it
-    //    is destructive. Once OpenShell exposes a typed stat API or SSH probe
-    //    failures are reliably distinguishable from absent dirs across supported
-    //    versions, remove this fallback and fail before upload.
-    const existingCheck = skillInstall.checkExisting(ctx, paths);
+    // 5. Check if skill already exists (update vs fresh install). A successful
+    //    sentinel response distinguishes absence from an existing directory;
+    //    an inconclusive control result is an execution failure, not absence.
+    //    Fail closed before upload so a probe failure cannot precede mutation.
+    const existingCheck = await skillInstall.checkExisting(ctx, paths);
     if (existingCheck === null) {
       console.error(
-        `  ${YW}Warning: could not check sandbox for existing skill — treating as fresh install.${R}`,
+        `  Could not check if skill '${frontmatter.name}' exists — sandbox may be unreachable. No files were uploaded.`,
       );
+      process.exitCode = 1;
+      return;
     }
     const isUpdate = existingCheck === true;
 
     // 6. Upload skill directory
-    const { uploaded, failed } = skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
+    const { uploaded, failed } = await skillInstall.uploadDirectory(ctx, skillDir, paths.uploadDir);
     if (failed.length > 0) {
       console.error(`  Failed to upload ${failed.length} file(s): ${failed.join(", ")}`);
       process.exit(1);
@@ -315,7 +310,7 @@ export async function installSandboxSkill(
     // 7. Post-install (OpenClaw mirror + refresh, or restart hint).
     //    OpenClaw caches skill content per session, so always refresh the
     //    session index after an install/update to avoid stale SKILL.md data.
-    const post = skillInstall.postInstall(ctx, paths, skillDir);
+    const post = await skillInstall.postInstall(ctx, paths, skillDir);
     for (const msg of post.messages) {
       if (msg.startsWith("Warning:")) {
         console.error(`  ${YW}${msg}${R}`);
@@ -325,7 +320,7 @@ export async function installSandboxSkill(
     }
 
     // 8. Verify
-    const verified = skillInstall.verifyInstall(ctx, paths);
+    const verified = await skillInstall.verifyInstall(ctx, paths);
     if (verified) {
       const verb = isUpdate ? "updated" : "installed";
       console.log(`  ${G}✓${R} Skill '${frontmatter.name}' ${verb}`);
@@ -337,6 +332,6 @@ export async function installSandboxSkill(
       process.exit(1);
     }
   } finally {
-    tmpSshConfig.cleanup();
+    selected.close();
   }
 }

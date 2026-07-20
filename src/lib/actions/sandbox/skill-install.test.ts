@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const captureSandboxSshConfig = vi.hoisted(() => vi.fn());
+const selectOpenShellSandboxControlForMutation = vi.hoisted(() => vi.fn());
+const closeControl = vi.hoisted(() => vi.fn());
+const control = vi.hoisted(() => ({ exec: vi.fn() }));
+const getSandbox = vi.hoisted(() => vi.fn());
 const getSessionAgent = vi.hoisted(() => vi.fn());
 const ensureLiveSandboxOrExit = vi.hoisted(() => vi.fn());
 const skillInstall = vi.hoisted(() => ({
@@ -22,9 +25,11 @@ const skillInstall = vi.hoisted(() => ({
   verifyInstall: vi.fn(),
 }));
 
-vi.mock("../../adapters/openshell/runtime", () => ({
-  captureSandboxSshConfig,
+vi.mock("../../adapters/openshell/sandbox-control-routing", () => ({
+  selectOpenShellSandboxControlForMutation,
 }));
+
+vi.mock("../../state/registry", () => ({ getSandbox }));
 
 vi.mock("../../agent/runtime", () => ({
   getSessionAgent,
@@ -57,14 +62,6 @@ function restoreExitCode(previousExitCode: typeof process.exitCode): void {
   process.exitCode = previousExitCode;
 }
 
-function expectTempSshConfigCleanedUp(configFile: string): void {
-  const configDir = path.dirname(configFile);
-  expect(configDir).not.toBe(os.tmpdir());
-  expect(path.basename(configDir)).toMatch(/^nemoclaw-ssh-skill-/);
-  expect(path.basename(configFile)).toBe("ssh_config");
-  expect(fs.existsSync(configDir)).toBe(false);
-}
-
 describe("sandbox skill action orchestration", () => {
   let previousExitCode: typeof process.exitCode;
 
@@ -73,34 +70,39 @@ describe("sandbox skill action orchestration", () => {
     process.exitCode = undefined;
     vi.clearAllMocks();
 
-    captureSandboxSshConfig.mockReturnValue({ status: 0, output: "Host openshell-alpha\n" });
+    selectOpenShellSandboxControlForMutation.mockReturnValue({
+      control,
+      transport: "grpc",
+      close: closeControl,
+    });
+    getSandbox.mockReturnValue({ gatewayName: "nemoclaw-9090", gatewayPort: 9090 });
     ensureLiveSandboxOrExit.mockResolvedValue(undefined);
     getSessionAgent.mockReturnValue(agent);
     skillInstall.validateSkillName.mockReturnValue(true);
     skillInstall.resolveSkillPaths.mockReturnValue(paths);
-    skillInstall.checkExisting.mockReturnValue(true);
-    skillInstall.removeSkill.mockReturnValue({
+    skillInstall.checkExisting.mockResolvedValue(true);
+    skillInstall.removeSkill.mockResolvedValue({
       success: true,
       removedUploadDir: true,
       removedMirrorDir: true,
       clearedSessions: true,
       messages: [],
     });
-    skillInstall.verifyRemove.mockReturnValue(true);
+    skillInstall.verifyRemove.mockResolvedValue(true);
     skillInstall.parseFrontmatter.mockReturnValue({ name: "demo-skill" });
     skillInstall.collectFiles.mockReturnValue({
       files: ["SKILL.md"],
       skippedDotfiles: [],
       unsafePaths: [],
     });
-    skillInstall.uploadDirectory.mockReturnValue({
+    skillInstall.uploadDirectory.mockResolvedValue({
       uploaded: 1,
       failed: [],
       skippedDotfiles: [],
       unsafePaths: [],
     });
-    skillInstall.postInstall.mockReturnValue({ success: true, messages: [] });
-    skillInstall.verifyInstall.mockReturnValue(true);
+    skillInstall.postInstall.mockResolvedValue({ success: true, messages: [] });
+    skillInstall.verifyInstall.mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -108,8 +110,10 @@ describe("sandbox skill action orchestration", () => {
     vi.restoreAllMocks();
   });
 
-  it("fails skill remove when SSH config capture fails", async () => {
-    captureSandboxSshConfig.mockReturnValue({ status: 1, output: "" });
+  it("fails skill remove before dispatch when control selection fails", async () => {
+    selectOpenShellSandboxControlForMutation.mockImplementation(() => {
+      throw new Error("invalid mTLS material");
+    });
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
       throw new Error(`process.exit ${code}`);
@@ -120,19 +124,16 @@ describe("sandbox skill action orchestration", () => {
     );
 
     expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha");
-    expect(captureSandboxSshConfig).toHaveBeenCalledWith("alpha", expect.any(Object));
-    expect(error).toHaveBeenCalledWith("  Failed to obtain SSH configuration for the sandbox.");
+    expect(selectOpenShellSandboxControlForMutation).toHaveBeenCalledWith("nemoclaw-9090");
+    expect(error).toHaveBeenCalledWith(
+      "  Failed to configure OpenShell sandbox execution: invalid mTLS material",
+    );
     expect(skillInstall.checkExisting).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledWith(1);
   });
 
-  it("treats unknown skill existence as fatal for remove and deletes the temp SSH config", async () => {
-    let tempConfig = "";
-    skillInstall.checkExisting.mockImplementation((ctx) => {
-      tempConfig = ctx.configFile;
-      expect(fs.existsSync(tempConfig)).toBe(true);
-      return null;
-    });
+  it("treats unknown skill existence as fatal for remove and closes the control", async () => {
+    skillInstall.checkExisting.mockResolvedValue(null);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await removeSandboxSkill("alpha", { name: "demo-skill" });
@@ -143,16 +144,11 @@ describe("sandbox skill action orchestration", () => {
     );
     expect(skillInstall.removeSkill).not.toHaveBeenCalled();
     expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
-    expect(tempConfig).not.toBe("");
-    expect(fs.existsSync(tempConfig)).toBe(false);
+    expect(closeControl).toHaveBeenCalledOnce();
   });
 
-  it("reports an absent skill for remove and deletes the temp SSH config", async () => {
-    let tempConfig = "";
-    skillInstall.checkExisting.mockImplementation((ctx) => {
-      tempConfig = ctx.configFile;
-      return false;
-    });
+  it("reports an absent skill for remove and closes the control", async () => {
+    skillInstall.checkExisting.mockResolvedValue(false);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await removeSandboxSkill("alpha", { name: "demo-skill" });
@@ -161,14 +157,12 @@ describe("sandbox skill action orchestration", () => {
     expect(error).toHaveBeenCalledWith("  Skill 'demo-skill' is not installed in sandbox 'alpha'.");
     expect(skillInstall.removeSkill).not.toHaveBeenCalled();
     expect(skillInstall.verifyRemove).not.toHaveBeenCalled();
-    expect(tempConfig).not.toBe("");
-    expect(fs.existsSync(tempConfig)).toBe(false);
+    expect(closeControl).toHaveBeenCalledOnce();
   });
 
-  it("removes and verifies an existing skill, then deletes the temp SSH config", async () => {
-    let tempConfig = "";
-    skillInstall.checkExisting.mockImplementation((ctx, resolvedPaths) => {
-      tempConfig = ctx.configFile;
+  it("removes and verifies an existing skill, then closes the selected control", async () => {
+    skillInstall.checkExisting.mockImplementation(async (ctx, resolvedPaths) => {
+      expect(ctx.control).toBe(control);
       expect(resolvedPaths).toBe(paths);
       return true;
     });
@@ -179,17 +173,13 @@ describe("sandbox skill action orchestration", () => {
     expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha");
     expect(getSessionAgent).toHaveBeenCalledWith("alpha");
     expect(skillInstall.resolveSkillPaths).toHaveBeenCalledWith(agent, "demo-skill");
-    expect(skillInstall.removeSkill).toHaveBeenCalledWith(
-      expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
-      paths,
-    );
+    expect(skillInstall.removeSkill).toHaveBeenCalledWith({ control, sandboxName: "alpha" }, paths);
     expect(skillInstall.verifyRemove).toHaveBeenCalledWith(
-      expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
+      { control, sandboxName: "alpha" },
       paths,
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' removed"));
-    expect(fs.existsSync(tempConfig)).toBe(false);
-    expectTempSshConfigCleanedUp(tempConfig);
+    expect(closeControl).toHaveBeenCalledOnce();
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -207,19 +197,15 @@ describe("sandbox skill action orchestration", () => {
     }
 
     expect(ensureLiveSandboxOrExit).toHaveBeenCalledWith("alpha");
-    expect(captureSandboxSshConfig).not.toHaveBeenCalled();
+    expect(selectOpenShellSandboxControlForMutation).not.toHaveBeenCalled();
     expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
   });
 
-  it("continues skill install when the existence probe is unknown because upload plus verify are authoritative", async () => {
+  it("fails skill install before upload when the existence probe is inconclusive", async () => {
     const skillDir = makeSkillDir();
-    let tempConfig = "";
-    skillInstall.checkExisting.mockImplementation((ctx) => {
-      tempConfig = ctx.configFile;
-      return null;
-    });
+    skillInstall.checkExisting.mockResolvedValue(null);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     try {
       await installSandboxSkill("alpha", { command: "install", path: skillDir });
@@ -228,22 +214,37 @@ describe("sandbox skill action orchestration", () => {
     }
 
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "Warning: could not check sandbox for existing skill — treating as fresh install.",
-      ),
+      "  Could not check if skill 'demo-skill' exists — sandbox may be unreachable. No files were uploaded.",
     );
+    expect(skillInstall.uploadDirectory).not.toHaveBeenCalled();
+    expect(skillInstall.postInstall).not.toHaveBeenCalled();
+    expect(skillInstall.verifyInstall).not.toHaveBeenCalled();
+    expect(closeControl).toHaveBeenCalledOnce();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("installs when the existence probe confirms the skill is absent", async () => {
+    const skillDir = makeSkillDir();
+    skillInstall.checkExisting.mockResolvedValue(false);
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      await installSandboxSkill("alpha", { command: "install", path: skillDir });
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
     expect(skillInstall.uploadDirectory).toHaveBeenCalledWith(
-      expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
+      { control, sandboxName: "alpha" },
       skillDir,
       paths.uploadDir,
     );
     expect(skillInstall.verifyInstall).toHaveBeenCalledWith(
-      expect.objectContaining({ configFile: tempConfig, sandboxName: "alpha" }),
+      { control, sandboxName: "alpha" },
       paths,
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' installed"));
-    expect(fs.existsSync(tempConfig)).toBe(false);
-    expectTempSshConfigCleanedUp(tempConfig);
+    expect(closeControl).toHaveBeenCalledOnce();
     expect(process.exitCode).toBeUndefined();
   });
 });

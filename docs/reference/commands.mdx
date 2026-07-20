@@ -2068,6 +2068,11 @@ $$nemoclaw my-assistant mcp remove github [--force]
 
 Deploy a skill directory to a running sandbox.
 The command validates the `SKILL.md` frontmatter (a `name` field is required), uploads all non-dot files preserving subdirectory structure, and performs agent-specific post-install steps.
+NemoClaw selects one OpenShell sandbox execution transport before it changes the skill.
+It uses the named gateway's direct gRPC API for plaintext, mTLS, and OIDC gateways.
+It preselects the OpenShell CLI only when Cloudflare edge-tunnel authentication requires the CLI-owned tunnel.
+Any other direct-client configuration error stops the command before dispatch.
+After dispatch starts, NemoClaw never retries the mutation through another transport.
 
 ```bash
 $$nemoclaw my-assistant skill install ./my-skill/
@@ -2111,6 +2116,7 @@ For new installs, the agent session index is refreshed so the agent discovers th
 
 Remove an installed skill from a running sandbox by skill name.
 The command validates the skill name, removes the sandbox upload directory, and refreshes the agent session index so the remaining skills are rediscovered on the next session.
+It uses the same preselected, fail-closed OpenShell control path as `skill install`.
 
 <AgentOnly variant="openclaw">
 

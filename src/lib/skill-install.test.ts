@@ -12,9 +12,17 @@ import {
   postInstall,
   resolveSkillPaths,
   shellQuote,
+  uploadFile,
   validateRelativePath,
   verifyInstall,
 } from "./skill-install";
+
+const controlContext = {
+  control: {
+    exec: async () => ({ status: 0, stdout: "", stderr: "" }),
+  },
+  sandboxName: "alpha",
+};
 
 describe("parseFrontmatter", () => {
   it("extracts name from valid frontmatter", () => {
@@ -251,17 +259,17 @@ describe("resolveSkillPaths", () => {
 });
 
 describe("postInstall", () => {
-  it("refreshes OpenClaw sessions after installing an updated skill", () => {
+  it("refreshes OpenClaw sessions after installing an updated skill", async () => {
     const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-"));
     const commands: string[] = [];
     try {
       writeFileSync(skillDir + "/SKILL.md", "---\nname: weather\n---\n# Weather\n");
-      const result = postInstall(
-        { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
+      const result = await postInstall(
+        controlContext,
         resolveSkillPaths(null, "weather"),
         skillDir,
         {
-          sshExecImpl: (_ctx, command) => {
+          execImpl: async (_ctx, command) => {
             commands.push(command);
             return { status: 0, stdout: "", stderr: "" };
           },
@@ -277,7 +285,7 @@ describe("postInstall", () => {
     }
   });
 
-  it("mirrors the uploaded skill into the OpenClaw home dir so the agent loads it", () => {
+  it("mirrors the uploaded skill into the OpenClaw home dir so the agent loads it", async () => {
     // Regression for #4819: on sandboxes whose agent $HOME differs from the
     // OpenClaw state dir, `skills list` shows the upload dir while the agent
     // loads skills from $HOME/.openclaw/skills. Install must populate that
@@ -287,8 +295,8 @@ describe("postInstall", () => {
     try {
       writeFileSync(skillDir + "/SKILL.md", "---\nname: report-writer\n---\n# Report\n");
       const paths = resolveSkillPaths(null, "report-writer");
-      postInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, skillDir, {
-        sshExecImpl: (_ctx, command) => {
+      await postInstall(controlContext, paths, skillDir, {
+        execImpl: async (_ctx, command) => {
           commands.push(command);
           return { status: 0, stdout: "", stderr: "" };
         },
@@ -307,24 +315,19 @@ describe("postInstall", () => {
     }
   });
 
-  it("warns when the OpenClaw home mirror cannot be created", () => {
+  it("warns when the OpenClaw home mirror cannot be created", async () => {
     const skillDir = mkdtempSync(join(tmpdir(), "skill-postinstall-mirror-fail-"));
     try {
       writeFileSync(skillDir + "/SKILL.md", "---\nname: report-writer\n---\n# Report\n");
       const paths = resolveSkillPaths(null, "report-writer");
-      const result = postInstall(
-        { configFile: "/tmp/ssh-config", sandboxName: "alpha" },
-        paths,
-        skillDir,
-        {
-          sshExecImpl: (_ctx, command) => ({
-            // Fail only the mirror command; session refresh still succeeds.
-            status: command.includes("$HOME/.openclaw/skills") ? 1 : 0,
-            stdout: "",
-            stderr: "",
-          }),
-        },
-      );
+      const result = await postInstall(controlContext, paths, skillDir, {
+        execImpl: async (_ctx, command) => ({
+          // Fail only the mirror command; session refresh still succeeds.
+          status: command.includes("$HOME/.openclaw/skills") ? 1 : 0,
+          stdout: "",
+          stderr: "",
+        }),
+      });
 
       expect(result.success).toBe(true);
       expect(result.messages.some((m) => m.startsWith("Warning:") && m.includes("mirror"))).toBe(
@@ -337,14 +340,14 @@ describe("postInstall", () => {
 });
 
 describe("verifyInstall", () => {
-  it("requires SKILL.md in the OpenClaw home mirror, not only the upload dir (#4819)", () => {
+  it("requires SKILL.md in the OpenClaw home mirror, not only the upload dir (#4819)", async () => {
     // The agent loads skills from the home mirror, so an install whose mirror
     // copy failed must NOT verify as installed — otherwise the CLI reports
     // success while the skill stays invisible to the agent.
     const paths = resolveSkillPaths(null, "report-writer");
     const commands: string[] = [];
-    const ok = verifyInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, {
-      sshExecImpl: (_ctx, command) => {
+    const ok = await verifyInstall(controlContext, paths, {
+      execImpl: async (_ctx, command) => {
         commands.push(command);
         return { status: 0, stdout: "EXISTS", stderr: "" };
       },
@@ -357,14 +360,38 @@ describe("verifyInstall", () => {
     ).toBe(true);
   });
 
-  it("returns false when the upload dir has SKILL.md but the home mirror does not", () => {
+  it("returns false when the upload dir has SKILL.md but the home mirror does not", async () => {
     const paths = resolveSkillPaths(null, "report-writer");
-    const ok = verifyInstall({ configFile: "/tmp/ssh-config", sandboxName: "alpha" }, paths, {
+    const ok = await verifyInstall(controlContext, paths, {
       // A combined `test -f A && test -f B` shell command fails (non-zero,
       // no EXISTS) when the mirror file is absent.
-      sshExecImpl: () => ({ status: 1, stdout: "", stderr: "" }),
+      execImpl: async () => ({ status: 1, stdout: "", stderr: "" }),
     });
 
     expect(ok).toBe(false);
+  });
+});
+
+describe("uploadFile", () => {
+  it("sends file bytes through sandbox exec stdin", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "skill-upload-"));
+    const localPath = join(dir, "binary.dat");
+    const input = Buffer.from([0, 255, 10]);
+    writeFileSync(localPath, input);
+    let observedInput: string | Buffer | undefined;
+    try {
+      const result = await uploadFile(controlContext, localPath, "/sandbox/skill", "binary.dat", {
+        execImpl: async (_ctx, command, options) => {
+          expect(command).toBe("mkdir -p '/sandbox/skill' && cat > '/sandbox/skill/binary.dat'");
+          observedInput = options?.input;
+          return { status: 0, stdout: "", stderr: "" };
+        },
+      });
+
+      expect(result?.status).toBe(0);
+      expect(observedInput).toEqual(input);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

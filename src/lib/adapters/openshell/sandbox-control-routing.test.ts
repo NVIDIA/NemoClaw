@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { OpenShellGrpcEdgeTunnelRequiredError } from "./grpc-gateway-config";
 import {
   type GrpcOpenShellSandboxControl,
   OpenShellGrpcPreDispatchError,
@@ -14,7 +15,10 @@ import {
   openShellExecRequestValidationFailure,
   type SandboxExecResult,
 } from "./sandbox-control";
-import { execSandboxReadOnlyWithGrpcFallback } from "./sandbox-control-routing";
+import {
+  execSandboxReadOnlyWithGrpcFallback,
+  selectOpenShellSandboxControlForMutation,
+} from "./sandbox-control-routing";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "./timeouts";
 
 function dependencies(grpcResult: SandboxExecResult | Error, cliResult?: SandboxExecResult) {
@@ -30,6 +34,7 @@ function dependencies(grpcResult: SandboxExecResult | Error, cliResult?: Sandbox
   const debug = vi.fn();
   return {
     close,
+    cli,
     grpcExec,
     cliExec,
     createCli,
@@ -294,5 +299,76 @@ describe("read-only OpenShell sandbox control routing", () => {
       "OpenShell direct gRPC client close failed",
       closeError,
     );
+  });
+});
+
+describe("mutating OpenShell sandbox control routing", () => {
+  it("selects direct gRPC before a mutation and exposes its close hook", () => {
+    const test = dependencies({ status: 0, stdout: "grpc", stderr: "" });
+
+    const selected = selectOpenShellSandboxControlForMutation("nemoclaw", test.deps);
+
+    expect(selected).toMatchObject({ control: expect.any(Object), transport: "grpc" });
+    expect(selected.control).not.toBe(test.cli);
+    expect(test.createCli).not.toHaveBeenCalled();
+    selected.close();
+    expect(test.close).toHaveBeenCalledOnce();
+  });
+
+  it("preselects the CLI only for the edge-tunnel auth mode", () => {
+    const test = dependencies({ status: 0, stdout: "unused", stderr: "" });
+    test.createGrpc.mockImplementation(() => {
+      throw new OpenShellGrpcEdgeTunnelRequiredError();
+    });
+
+    const selected = selectOpenShellSandboxControlForMutation("edge", test.deps);
+
+    expect(selected).toEqual({
+      control: test.cli,
+      transport: "cli-edge-tunnel",
+      close: expect.any(Function),
+    });
+    expect(test.createCli).toHaveBeenCalledWith("edge");
+    selected.close();
+    expect(test.close).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the mutation CLI factory refuses an endpoint override", () => {
+    const refusal = new Error("Unset OPENSHELL_GATEWAY_ENDPOINT and retry");
+    const test = dependencies({ status: 0, stdout: "unused", stderr: "" });
+    test.createGrpc.mockImplementation(() => {
+      throw new OpenShellGrpcEdgeTunnelRequiredError();
+    });
+    test.createCli.mockImplementation(() => {
+      throw refusal;
+    });
+
+    expect(() => selectOpenShellSandboxControlForMutation("edge", test.deps)).toThrow(refusal);
+
+    expect(test.createCli).toHaveBeenCalledWith("edge");
+    expect(test.cliExec).not.toHaveBeenCalled();
+  });
+
+  it("does not turn a completed mutation into failure when the client cannot close", () => {
+    const test = dependencies({ status: 0, stdout: "grpc", stderr: "" });
+    const error = new Error("close failed");
+    test.close.mockImplementation(() => {
+      throw error;
+    });
+    const selected = selectOpenShellSandboxControlForMutation("nemoclaw", test.deps);
+
+    expect(() => selected.close()).not.toThrow();
+    expect(test.debug).toHaveBeenCalledWith("OpenShell direct gRPC client close failed", error);
+  });
+
+  it("fails before dispatch for every other direct-client configuration error", () => {
+    const test = dependencies({ status: 0, stdout: "unused", stderr: "" });
+    const error = new Error("invalid mTLS material");
+    test.createGrpc.mockImplementation(() => {
+      throw error;
+    });
+
+    expect(() => selectOpenShellSandboxControlForMutation("nemoclaw", test.deps)).toThrow(error);
+    expect(test.cliExec).not.toHaveBeenCalled();
   });
 });

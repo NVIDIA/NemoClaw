@@ -3,7 +3,7 @@
 //
 // Skill install/remove logic for `nemoclaw <sandbox> skill install <path>`
 // and `nemoclaw <sandbox> skill remove <name>`.
-// Validates a local SKILL.md, uploads it to the sandbox via SSH, and
+// Validates a local SKILL.md, uploads it through OpenShell sandbox exec, and
 // performs agent-specific post-install steps (session refresh for
 // OpenClaw). Non-OpenClaw agents get a "restart gateway" hint until a
 // generic refresh contract is defined in the manifest schema.
@@ -16,18 +16,19 @@ import YAML from "yaml";
 
 import { isObjectRecord } from "./core/json-types";
 import { validateSkillName } from "./skill-name";
-import type { SshContext, SshResult } from "./skill-remote";
-import { shellQuote, sshExec } from "./skill-remote";
+import type { SandboxCommandResult, SandboxControlContext, SandboxExecImpl } from "./skill-remote";
+import { sandboxExec, shellQuote } from "./skill-remote";
 
 export { validateSkillName } from "./skill-name";
 export {
   checkExisting,
   type RemoveResult,
   removeSkill,
-  type SshContext,
-  type SshResult,
+  type SandboxCommandResult,
+  type SandboxControlContext,
+  type SandboxExecImpl,
+  sandboxExec,
   shellQuote,
-  sshExec,
   verifyRemove,
 } from "./skill-remote";
 
@@ -146,19 +147,20 @@ export function validateRelativePath(rel: string): boolean {
 // ── Upload helpers ───────────────────────────────────────────────
 
 /**
- * Upload a file to the sandbox by piping its content through SSH stdin.
+ * Upload a file to the sandbox through the selected OpenShell control plane.
  * Creates the target directory and writes the file in a single remote command.
  */
-export function uploadFile(
-  ctx: SshContext,
+export async function uploadFile(
+  ctx: SandboxControlContext,
   localPath: string,
   remoteDir: string,
   remoteFilename: string,
-): SshResult | null {
+  opts: { execImpl?: SandboxExecImpl } = {},
+): Promise<SandboxCommandResult | null> {
   const content = fs.readFileSync(localPath);
   const remotePath = `${remoteDir}/${remoteFilename}`;
   const script = `mkdir -p ${shellQuote(remoteDir)} && cat > ${shellQuote(remotePath)}`;
-  return sshExec(ctx, script, { input: content });
+  return (opts.execImpl ?? sandboxExec)(ctx, script, { input: content });
 }
 
 export interface CollectedFiles {
@@ -171,7 +173,7 @@ export interface CollectedFiles {
  * Collect files under `dir` recursively, returning paths relative to `dir`.
  * Dotfiles (names starting with `.`) are excluded by default and reported
  * separately so the caller can warn. Paths with unsafe characters are
- * rejected to prevent shell injection when interpolated into SSH commands.
+ * rejected to prevent shell injection when interpolated into remote commands.
  */
 export function collectFiles(dir: string): CollectedFiles {
   const files: string[] = [];
@@ -204,11 +206,17 @@ export function collectFiles(dir: string): CollectedFiles {
  * Upload an entire skill directory to the sandbox, preserving subdirectory
  * structure. Rejects files with unsafe path characters and skips dotfiles.
  */
-export function uploadDirectory(
-  ctx: SshContext,
+export async function uploadDirectory(
+  ctx: SandboxControlContext,
   localDir: string,
   remoteDir: string,
-): { uploaded: number; failed: string[]; skippedDotfiles: string[]; unsafePaths: string[] } {
+  opts: { execImpl?: SandboxExecImpl } = {},
+): Promise<{
+  uploaded: number;
+  failed: string[];
+  skippedDotfiles: string[];
+  unsafePaths: string[];
+}> {
   const { files, skippedDotfiles, unsafePaths } = collectFiles(localDir);
   if (unsafePaths.length > 0) {
     return { uploaded: 0, failed: unsafePaths, skippedDotfiles, unsafePaths };
@@ -217,7 +225,7 @@ export function uploadDirectory(
   for (const rel of files) {
     const localFile = path.join(localDir, rel);
     const remoteSubdir = rel.includes("/") ? `${remoteDir}/${path.dirname(rel)}` : remoteDir;
-    const result = uploadFile(ctx, localFile, remoteSubdir, path.basename(rel));
+    const result = await uploadFile(ctx, localFile, remoteSubdir, path.basename(rel), opts);
     if (!result || result.status !== 0) {
       failed.push(rel);
     }
@@ -229,17 +237,17 @@ export function uploadDirectory(
  * Run post-install steps: session refresh for OpenClaw, or
  * non-OpenClaw restart hint.
  */
-export function postInstall(
-  ctx: SshContext,
+export async function postInstall(
+  ctx: SandboxControlContext,
   paths: SkillPaths,
   _localSkillDir: string,
   opts: {
     skipRefresh?: boolean;
-    sshExecImpl?: typeof sshExec;
+    execImpl?: SandboxExecImpl;
   } = {},
-): { success: boolean; messages: string[] } {
+): Promise<{ success: boolean; messages: string[] }> {
   const messages: string[] = [];
-  const runSsh = opts.sshExecImpl ?? sshExec;
+  const run = opts.execImpl ?? sandboxExec;
 
   if (paths.isOpenClaw) {
     // Mirror the uploaded skill into the agent's home dir
@@ -259,7 +267,7 @@ export function postInstall(
       // restricted to [A-Za-z0-9._-] by parseFrontmatter / the name regex.
       const dst = `"${paths.mirrorDir}"`;
       const mirrorParent = `"${paths.mirrorDir.slice(0, paths.mirrorDir.lastIndexOf("/"))}"`;
-      const mirrorResult = runSsh(
+      const mirrorResult = await run(
         ctx,
         `[ ${src} -ef ${dst} ] || { mkdir -p ${mirrorParent} && rm -rf ${dst} && cp -a ${src} ${dst}; }`,
       );
@@ -273,7 +281,7 @@ export function postInstall(
     // Clear sessions.json so OpenClaw re-discovers skills on the next
     // session even after an in-place skill update.
     if (paths.sessionFile && !opts.skipRefresh) {
-      const refreshResult = runSsh(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
+      const refreshResult = await run(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
       if (!refreshResult || refreshResult.status !== 0) {
         messages.push("Warning: failed to clear sessions (agent may need manual restart)");
       }
@@ -294,11 +302,11 @@ export function postInstall(
  * otherwise the CLI reports success while the skill stays invisible to the
  * agent. This mirrors verifyRemove(), which already checks both paths.
  */
-export function verifyInstall(
-  ctx: SshContext,
+export async function verifyInstall(
+  ctx: SandboxControlContext,
   paths: SkillPaths,
-  opts: { sshExecImpl?: typeof sshExec } = {},
-): boolean {
+  opts: { execImpl?: SandboxExecImpl } = {},
+): Promise<boolean> {
   const checks = [`test -f ${shellQuote(`${paths.uploadDir}/SKILL.md`)}`];
   if (paths.isOpenClaw && paths.mirrorDir) {
     // mirrorDir contains $HOME, which must expand on the remote shell, so we
@@ -306,7 +314,6 @@ export function verifyInstall(
     // restricted to [A-Za-z0-9._-].
     checks.push(`test -f "${paths.mirrorDir}/SKILL.md"`);
   }
-  const runSsh = opts.sshExecImpl ?? sshExec;
-  const result = runSsh(ctx, `${checks.join(" && ")} && echo EXISTS`);
+  const result = await (opts.execImpl ?? sandboxExec)(ctx, `${checks.join(" && ")} && echo EXISTS`);
   return result !== null && result.stdout === "EXISTS";
 }
