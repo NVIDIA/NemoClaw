@@ -8,6 +8,7 @@ import { getSandboxDockerHealth, getSandboxDockerRuntime } from "./docker-health
 function fixture({
   driver = "docker",
   psNames = "openshell-cluster-nemoclaw\nopenshell-my-assistant-12ab\nopenshell-other-aa11",
+  psAllNames = psNames,
   healthRaw = "unhealthy\n",
   pausedRaw = "false\n",
   throwOnInspect = false,
@@ -16,6 +17,7 @@ function fixture({
 }: {
   driver?: string | null;
   psNames?: string;
+  psAllNames?: string;
   healthRaw?: string;
   pausedRaw?: string;
   throwOnInspect?: boolean;
@@ -27,6 +29,7 @@ function fixture({
     getSandbox: () => sandbox as SandboxEntry,
     listSandboxNames: () => knownSandboxes,
     dockerPsNames: () => psNames,
+    dockerPsAllNames: () => psAllNames,
     dockerInspectHealth: () => {
       if (throwOnInspect) throw new Error("docker inspect crashed");
       return healthRaw;
@@ -150,6 +153,19 @@ describe("getSandboxDockerHealth", () => {
 });
 
 describe("getSandboxDockerRuntime (#4495)", () => {
+  it("finds an exited container that is absent from the running-only listing (#7222)", () => {
+    const deps = fixture({
+      psNames: "openshell-cluster-nemoclaw\n",
+      psAllNames: "openshell-cluster-nemoclaw\nopenshell-my-assistant-12ab\n",
+      healthRaw: "none",
+    });
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "none",
+      paused: false,
+      containerName: "openshell-my-assistant-12ab",
+    });
+  });
+
   it("reports paused=true when the resolved docker-driver container is paused", () => {
     const deps = fixture({ healthRaw: "healthy\n", pausedRaw: "true\n" });
     expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
