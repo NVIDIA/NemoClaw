@@ -70,7 +70,7 @@ const TOLERATED_DETACH_OUTPUT_RE =
 
 const MISSING_SANDBOX_OUTPUT_RE = /sandbox[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
 
-const ATTACHED_TO_SANDBOX_RE = /attached\s+to\s+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+)/i;
+const ATTACHED_TO_SANDBOX_RE = /attached\s+to(?:\s|│)+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+)/i;
 
 const MAX_WARNING_OUTPUT_CHARS = 500;
 
