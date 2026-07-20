@@ -223,14 +223,15 @@ export default defineConfig({
           // installer that still legitimately owns the onboarding lock.
           retry: 0,
           include: runBranchValidationE2E ? ["test/e2e/brev-e2e.test.ts"] : [],
-          // Branch validation E2E: rsyncs the branch over a Brev instance
-          // provisioned from the published NemoClaw launchable image and
-          // runs the selected test suites. Only run when explicitly enabled:
+          // Branch validation E2E: bootstraps a generic Brev instance, rsyncs
+          // the selected source revision, and runs the selected test suites.
+          // It does not exercise a published NemoClaw Launchable image.
+          // Only run when explicitly enabled:
           //   NEMOCLAW_RUN_BRANCH_VALIDATION_E2E=1 npx vitest run --project e2e-branch-validation
           //
           // The reusable workflow passes `--silent=false --reporter=default`:
           // diagnostic output from createBrevInstance / waitForSsh /
-          // waitForLaunchableReady is essential for debugging provisioning
+          // waitForBootstrapReady is essential for debugging provisioning
           // timing, and the suite has no routine test chatter to suppress.
           // Gate on a workflow-owned sentinel or Brev auth env. Historically
           // this used BREV_API_TOKEN (short-lived refresh token); newer

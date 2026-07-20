@@ -121,7 +121,6 @@ jobs:
       branch: ${{ github.ref_name }}
       pr_number: ${{ inputs.pr_number }}
       test_suite: dashboard-remote-bind
-      use_launchable: true
       keep_alive: ${{ inputs.keep_alive }}
     secrets: inherit
 

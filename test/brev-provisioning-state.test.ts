@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
-import { evaluateBrevProvisioningState } from "../tools/e2e/brev-provisioning.mts";
+import { describe, expect, it, vi } from "vitest";
+import {
+  evaluateBrevProvisioningState,
+  observeBrevProvisioningProgress,
+} from "../tools/e2e/brev-provisioning.mts";
 
 describe("Brev provisioning state", () => {
   it.each([
@@ -39,5 +42,52 @@ describe("Brev provisioning state", () => {
     expect(
       evaluateBrevProvisioningState([{ name: "pr-42", status: "STARTING" }], "pr-42", 2, true),
     ).toEqual({ kind: "continue", consecutiveMissing: 0 });
+  });
+
+  it("inspects on the first and every third SSH failure", () => {
+    const inspect = vi.fn(() => ({
+      instances: [{ name: "pr-42", status: "STARTING" }],
+      authoritative: true,
+    }));
+
+    expect(
+      observeBrevProvisioningProgress({
+        attempt: 1,
+        instanceName: "pr-42",
+        consecutiveMissing: 2,
+        lastSshError: "connection refused",
+        cause: new Error("ssh failed"),
+        inspect,
+      }),
+    ).toBe(0);
+    expect(
+      observeBrevProvisioningProgress({
+        attempt: 2,
+        instanceName: "pr-42",
+        consecutiveMissing: 2,
+        lastSshError: "connection refused",
+        cause: new Error("ssh failed"),
+        inspect,
+      }),
+    ).toBe(2);
+    expect(inspect).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails immediately when a scheduled inspection finds a terminal state", () => {
+    expect(() =>
+      observeBrevProvisioningProgress({
+        attempt: 3,
+        instanceName: "pr-42",
+        consecutiveMissing: 0,
+        lastSshError: "connection refused",
+        cause: new Error("ssh failed"),
+        inspect: () => ({
+          instances: [{ name: "pr-42", status: "FAILED" }],
+          authoritative: true,
+        }),
+      }),
+    ).toThrow(
+      'Brev reports terminal status FAILED for instance "pr-42". Last SSH error: connection refused',
+    );
   });
 });

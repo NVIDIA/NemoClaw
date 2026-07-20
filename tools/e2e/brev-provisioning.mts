@@ -10,6 +10,20 @@ export type BrevProvisioningDecision =
   | { kind: "continue"; consecutiveMissing: number }
   | { kind: "terminal"; consecutiveMissing: number; reason: string };
 
+export interface BrevProvisioningSnapshot {
+  instances: readonly BrevProvisioningInstance[];
+  authoritative: boolean;
+}
+
+interface ObserveBrevProvisioningProgressOptions {
+  attempt: number;
+  instanceName: string;
+  consecutiveMissing: number;
+  lastSshError: string;
+  cause: unknown;
+  inspect: () => BrevProvisioningSnapshot;
+}
+
 const TERMINAL_STATUSES = new Set([
   "DELETED",
   "DELETING",
@@ -52,4 +66,27 @@ export function evaluateBrevProvisioningState(
   }
 
   return { kind: "continue", consecutiveMissing: 0 };
+}
+
+export function observeBrevProvisioningProgress({
+  attempt,
+  instanceName,
+  consecutiveMissing,
+  lastSshError,
+  cause,
+  inspect,
+}: ObserveBrevProvisioningProgressOptions): number {
+  if (attempt !== 1 && attempt % 3 !== 0) return consecutiveMissing;
+
+  const snapshot = inspect();
+  const decision = evaluateBrevProvisioningState(
+    snapshot.instances,
+    instanceName,
+    consecutiveMissing,
+    snapshot.authoritative,
+  );
+  if (decision.kind === "terminal") {
+    throw new Error(`${decision.reason}. Last SSH error: ${lastSshError}`, { cause });
+  }
+  return decision.consecutiveMissing;
 }
