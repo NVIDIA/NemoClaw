@@ -14,6 +14,7 @@ const WORKFLOW_PATH = ".github/workflows/brev-launchable-qualification.yaml";
 const E2E_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const CONTROLLER_PATH = "tools/e2e/exact-image-qualification-controller.mts";
 const RUNTIME_PATH = "tools/e2e/brev-launchable-runtime.sh";
+const FULL_E2E_PATH = "test/e2e/live/full-e2e.test.ts";
 const ACTIVATION_VARIABLE = "NEMOCLAW_BREV_LAUNCHABLE_QUALIFICATION_ENABLED";
 
 type QualificationWorkflow = Workflow & {
@@ -46,6 +47,7 @@ it("keeps exact-image Launchable qualification protected, reusable, and fail-clo
   const source = readRepoText(WORKFLOW_PATH);
   const controller = readRepoText(CONTROLLER_PATH);
   const runtime = readRepoText(RUNTIME_PATH);
+  const fullE2e = readRepoText(FULL_E2E_PATH);
   const preflight = job(workflow, "preflight");
   const qualify = job(workflow, "qualify");
   const caller = job(e2eWorkflow, "staging-brev-launchable");
@@ -164,10 +166,16 @@ it("keeps exact-image Launchable qualification protected, reusable, and fail-clo
   expect(source).toContain("--mode finalize");
   expect(runtime).toContain("brev create");
   expect(runtime).toContain("--launchable");
-  expect(source).toContain("tools/e2e/live-vitest-invocation.mts run");
-  expect(source).toContain("test/e2e/live/exact-staging-launchable.test.ts");
-  expect(source).not.toContain("brev-launchable-runtime.sh qualify");
+  expect(runtime).toContain("test/e2e/live/full-e2e.test.ts");
+  expect(runtime).toContain("NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable");
+  expect(runtime).not.toContain("brev-quickstart");
+  expect(fullE2e).toContain('host.command("brev-quickstart"');
+  expect(fullE2e).toContain('"brev-launchable-cloud-openclaw"');
+  expect(source).not.toContain("test/e2e/live/exact-staging-launchable.test.ts");
+  expect(source).toContain("brev-launchable-runtime.sh deploy");
+  expect(source).toContain("brev-launchable-runtime.sh qualify");
   expect(source).toContain("brev-launchable-runtime.sh cleanup");
+  expect(source).toContain("brev-launchable-cloud-openclaw/");
   expect(source).toContain("brev-cleanup-evidence.json");
   expect(source).toContain("NEMOCLAW_STAGING_LAUNCHABLE_ID");
   expect(source).not.toContain("image_family");

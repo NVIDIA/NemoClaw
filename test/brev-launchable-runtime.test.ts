@@ -19,6 +19,7 @@ type FixtureOptions = {
   lsMode?: "ok" | "fail" | "fail-once" | "malformed";
   provisionSha?: string;
   repoSha?: string;
+  supportsLaunchableMode?: boolean;
   workspaceMode?: "ready" | "pending";
 };
 
@@ -43,6 +44,23 @@ function fixture(options: FixtureOptions = {}) {
   fs.mkdirSync(bin);
   fs.mkdirSync(workDir);
   fs.mkdirSync(path.join(home, "NemoClaw", ".git"), { recursive: true });
+  fs.mkdirSync(path.join(home, "NemoClaw", "test", "e2e", "live"), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, "NemoClaw", "test", "e2e", "live", "full-e2e.test.ts"),
+    options.supportsLaunchableMode === false
+      ? "// legacy full E2E fixture\n"
+      : 'const mode = process.env.NEMOCLAW_E2E_SETUP_MODE; const target = "brev-launchable-cloud-openclaw";\n',
+  );
+  fs.mkdirSync(path.join(home, "NemoClaw", "node_modules", ".bin"), { recursive: true });
+  writeExecutable(
+    path.join(home, "NemoClaw", "node_modules", ".bin", "vitest"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+artifact_dir="$E2E_ARTIFACT_DIR/brev-launchable-cloud-openclaw-onboard-inference-cli-operations-and-cleanup"
+mkdir -p "$artifact_dir"
+jq -n '{id:"brev-launchable-cloud-openclaw",status:"passed",runner:"vitest"}' > "$artifact_dir/target-result.json"
+`,
+  );
   writeExecutable(path.join(bin, "timeout"), '#!/usr/bin/env bash\nshift\nexec "$@"\n');
   writeExecutable(
     path.join(bin, "brev"),
@@ -69,6 +87,11 @@ case "$1" in
   exec)
     shift 3
     bash -c "$*"
+    ;;
+  copy)
+    source_path="\${2#*:}"
+    destination="$3"
+    cp -R "$source_path"/. "$destination"/
     ;;
   delete) [ "$FAKE_BREV_DELETE_MODE" = retain ] || rm -f "$FAKE_BREV_STATE" ;;
   refresh) ;;
@@ -176,7 +199,7 @@ function run(mode: string, env: NodeJS.ProcessEnv) {
 }
 
 describe("exact staging Brev Launchable runtime", () => {
-  it("deploys only the configured Launchable, proves identity, smokes the baked install, and deletes", () => {
+  it("deploys only the configured Launchable, proves identity, runs the existing E2E, and deletes", () => {
     const { env, log, workDir } = fixture();
     expect(run("deploy", env).status).toBe(0);
     const qualification = run("qualify", env);
@@ -191,9 +214,24 @@ describe("exact staging Brev Launchable runtime", () => {
       "create nclaw-e2e-test-1 --launchable env-staging123 --detached --timeout 900",
     );
     expect(commands).not.toMatch(/rsync|install\.sh|npm (?:ci|install)|git clone/u);
-    expect(commands.indexOf("rev-parse HEAD")).toBeLessThan(commands.indexOf("brev-quickstart"));
+    expect(commands).toContain("test/e2e/live/full-e2e.test.ts");
+    expect(commands).toContain("NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable");
+    expect(commands).toContain("E2E_TARGET_ID=brev-launchable-cloud-openclaw");
+    expect(commands.indexOf("rev-parse HEAD")).toBeLessThan(
+      commands.indexOf("test/e2e/live/full-e2e.test.ts"),
+    );
     expect(fs.existsSync(path.join(workDir, "brev-identity-evidence.json"))).toBe(true);
-    expect(fs.existsSync(path.join(workDir, "brev-smoke-evidence.json"))).toBe(true);
+    expect(fs.existsSync(path.join(workDir, "brev-launchable-e2e-evidence.json"))).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(
+          workDir,
+          "brev-launchable-cloud-openclaw",
+          "brev-launchable-cloud-openclaw-onboard-inference-cli-operations-and-cleanup",
+          "target-result.json",
+        ),
+      ),
+    ).toBe(true);
     expect(
       JSON.parse(fs.readFileSync(path.join(workDir, "brev-cleanup-evidence.json"), "utf8")),
     ).toMatchObject({ terminalState: "ABSENT", workspaceName: "nclaw-e2e-test-1" });
@@ -207,7 +245,7 @@ describe("exact staging Brev Launchable runtime", () => {
     expect(
       [qualification.stderr, qualification.stdout, fs.readFileSync(log, "utf8")].join("\n"),
     ).toContain("does not match candidate");
-    expect(fs.readFileSync(log, "utf8")).not.toContain("brev-quickstart");
+    expect(fs.readFileSync(log, "utf8")).not.toContain("test/e2e/live/full-e2e.test.ts");
     expect(run("cleanup", env).status).toBe(0);
   });
 
@@ -217,7 +255,19 @@ describe("exact staging Brev Launchable runtime", () => {
     const qualification = run("qualify", env);
     expect(qualification.status).not.toBe(0);
     expect(qualification.stderr).toContain("workspace boot disk does not match accepted image");
-    expect(fs.readFileSync(log, "utf8")).not.toContain("brev-quickstart");
+    expect(fs.readFileSync(log, "utf8")).not.toContain("test/e2e/live/full-e2e.test.ts");
+    expect(run("cleanup", env).status).toBe(0);
+  });
+
+  it("fails rather than reinstalling when the candidate full E2E lacks Launchable mode", () => {
+    const { env, workDir } = fixture({ supportsLaunchableMode: false });
+    expect(run("deploy", env).status).toBe(0);
+    const qualification = run("qualify", env);
+    expect(qualification.status).not.toBe(0);
+    expect(fs.readFileSync(path.join(workDir, "brev-launchable-e2e.log"), "utf8")).toContain(
+      "does not support preinstalled Launchable setup",
+    );
+    expect(fs.existsSync(path.join(workDir, "brev-launchable-e2e-evidence.json"))).toBe(false);
     expect(run("cleanup", env).status).toBe(0);
   });
 
@@ -274,7 +324,7 @@ describe("exact staging Brev Launchable runtime", () => {
     const qualification = run("qualify", env);
     expect(qualification.status).not.toBe(0);
     expect(qualification.stderr).toContain("provision metadata SHA must be a lowercase Git SHA");
-    expect(fs.readFileSync(log, "utf8")).not.toContain("brev-quickstart");
+    expect(fs.readFileSync(log, "utf8")).not.toContain("test/e2e/live/full-e2e.test.ts");
     expect(run("cleanup", env).status).toBe(0);
   });
 });

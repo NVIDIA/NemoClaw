@@ -112,6 +112,15 @@ Set `NEMOCLAW_BREV_LAUNCHABLE_QUALIFICATION_ENABLED=true` only after those
 conditions are met. Remove the variable, or set it to any value other than
 `true`, to keep routine E2E runs from starting this cost-bearing lane.
 
+The runtime target is `brev-launchable-cloud-openclaw`. After proving the
+workspace booted the accepted image and exact NemoClaw SHA, the lane runs the
+existing `test/e2e/live/full-e2e.test.ts` suite in `preinstalled-launchable`
+setup mode. That mode onboards through the baked `brev-quickstart` entry point
+and reuses the suite's CLI, policy, hosted-inference, `inference.local`, logs,
+and cleanup assertions. It fails if the baked checkout does not already
+contain the pinned Vitest harness; it does not rsync source, run `install.sh`,
+install packages, rebuild, or relink the product under test.
+
 ## PR E2E gate
 
 The controller, coordination check, and required job deliberately use

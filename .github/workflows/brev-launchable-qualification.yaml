@@ -232,19 +232,21 @@ jobs:
           instance_name="nclaw-e2e-${short_sha}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           printf 'instance_name=%s\n' "$instance_name" >> "$GITHUB_OUTPUT"
 
-      - name: Run exact staging Launchable live test
+      - name: Deploy exact staging Brev Launchable
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
+          INSTANCE_NAME: ${{ steps.brev-workspace.outputs.instance_name }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
+        run: tools/e2e/brev-launchable-runtime.sh deploy
+
+      - name: Run existing full E2E suite against the Brev Launchable
+        env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           INSTANCE_NAME: ${{ steps.brev-workspace.outputs.instance_name }}
-          NEMOCLAW_RUN_EXACT_STAGING_LAUNCHABLE: "1"
-          NEMOCLAW_RUN_LIVE_E2E: "1"
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           VALIDATED_MANIFEST: ${{ steps.workspace.outputs.work_dir }}/validated-manifest.v1.json
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
-        run: >-
-          npx tsx tools/e2e/live-vitest-invocation.mts run
-          --test-path test/e2e/live/exact-staging-launchable.test.ts
+        run: tools/e2e/brev-launchable-runtime.sh qualify
 
       - name: Redact runtime evidence
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
@@ -260,7 +262,7 @@ jobs:
           secret = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")
           root = Path(os.environ["WORK_DIR"])
           if secret:
-              for name in ("brev-prerequisites.log", "brev-quickstart.log", "brev-inference-pong.json", "brev-agent-response.log"):
+              for name in ("brev-launchable-e2e.log",):
                   path = root / name
                   if path.is_file():
                       path.write_text(path.read_text(encoding="utf-8", errors="replace").replace(secret, "[REDACTED]"), encoding="utf-8")
@@ -303,11 +305,9 @@ jobs:
             ${{ steps.workspace.outputs.work_dir }}/brev-provision.json
             ${{ steps.workspace.outputs.work_dir }}/brev-boot-image.json
             ${{ steps.workspace.outputs.work_dir }}/brev-identity-evidence.json
-            ${{ steps.workspace.outputs.work_dir }}/brev-prerequisites.log
-            ${{ steps.workspace.outputs.work_dir }}/brev-quickstart.log
-            ${{ steps.workspace.outputs.work_dir }}/brev-inference-pong.json
-            ${{ steps.workspace.outputs.work_dir }}/brev-agent-response.log
-            ${{ steps.workspace.outputs.work_dir }}/brev-smoke-evidence.json
+            ${{ steps.workspace.outputs.work_dir }}/brev-launchable-e2e.log
+            ${{ steps.workspace.outputs.work_dir }}/brev-launchable-e2e-evidence.json
+            ${{ steps.workspace.outputs.work_dir }}/brev-launchable-cloud-openclaw/
             ${{ steps.workspace.outputs.work_dir }}/brev-cleanup-evidence.json
           if-no-files-found: error
           retention-days: 90

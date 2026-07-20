@@ -34,11 +34,20 @@ import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-
 import { extractOpenClawAgentPayloadText } from "./agent-turn-latency-helpers.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
+const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
+const USE_PREINSTALLED_LAUNCHABLE = SETUP_MODE === "preinstalled-launchable";
+const EVIDENCE_TARGET_ID = USE_PREINSTALLED_LAUNCHABLE
+  ? "brev-launchable-cloud-openclaw"
+  : "full-e2e";
+const TEST_NAME = USE_PREINSTALLED_LAUNCHABLE
+  ? "brev-launchable-cloud-openclaw: onboard, inference, cli operations, and cleanup"
+  : "full e2e: install, onboard, inference, cli operations, and cleanup";
 const LIVE_TIMEOUT_MS = 50 * 60_000;
 const FIRST_TURN_TIMEOUT_MS = 240_000;
 const MAX_SILENCE_SECS = 60;
 const EXPECTED_FIRST_REPLY = "NEMOCLAW_E2E_READY_6002";
-const MEASURE_COLD_ONBOARD = process.env.E2E_TARGET_ID === "full-e2e";
+const MEASURE_COLD_ONBOARD =
+  !USE_PREINSTALLED_LAUNCHABLE && process.env.E2E_TARGET_ID === "full-e2e";
 
 interface ColdOnboardCapture {
   outputEvents: ShellProbeOutputEvent[];
@@ -46,7 +55,10 @@ interface ColdOnboardCapture {
   traceFile: string;
 }
 
-process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+if (!new Set(["source-install", "preinstalled-launchable"]).has(SETUP_MODE)) {
+  throw new Error(`unsupported NEMOCLAW_E2E_SETUP_MODE: ${SETUP_MODE}`);
+}
+process.env.NEMOCLAW_CLI_BIN ??= USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : CLI_ENTRYPOINT;
 validateSandboxName(SANDBOX_NAME);
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -70,7 +82,9 @@ async function repoNemoclaw(
   extraEnv: NodeJS.ProcessEnv = {},
   timeoutMs = 120_000,
 ): Promise<ShellProbeResult> {
-  return await host.command(process.execPath, [CLI_ENTRYPOINT, ...args], {
+  const command = USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath;
+  const commandArgs = USE_PREINSTALLED_LAUNCHABLE ? args : [CLI_ENTRYPOINT, ...args];
+  return await host.command(command, commandArgs, {
     artifactName,
     env: env(extraEnv),
     timeoutMs,
@@ -261,19 +275,21 @@ async function assertColdOnboardPerformance(input: {
   ).toBe(true);
 }
 
-test("full e2e: install, onboard, inference, cli operations, and cleanup", {
+test(TEST_NAME, {
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets);
-  const coldOnboardBudget = readFullE2eColdPathBudget();
+  const coldOnboardBudget = USE_PREINSTALLED_LAUNCHABLE ? null : readFullE2eColdPathBudget();
   const redactionValues = [hosted.apiKey];
   await artifacts.target.declare({
-    id: "full-e2e",
+    id: EVIDENCE_TARGET_ID,
     sandboxName: SANDBOX_NAME,
     endpointUrl: hosted.endpointUrl,
     model: hosted.model,
     contracts: [
-      "install.sh --non-interactive completes onboarding",
+      USE_PREINSTALLED_LAUNCHABLE
+        ? "the baked Launchable completes onboarding without installing from source"
+        : "install.sh --non-interactive completes onboarding",
       "nemoclaw and openshell are installed and usable",
       "sandbox appears in list/status and has policy/inference configuration",
       "direct hosted inference and sandbox inference.local both respond",
@@ -322,29 +338,41 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       fs.rmSync(coldOnboard.traceDirectory, { recursive: true, force: true });
     });
 
-  const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
-    artifactName: "phase-1-install-sh",
-    cwd: REPO_ROOT,
-    env: env({
-      ...hosted.env,
-      NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
-      ...(coldOnboard ? { NEMOCLAW_TRACE_FILE: coldOnboard.traceFile } : {}),
-    }),
-    ...(coldOnboard
-      ? { onOutput: (event: ShellProbeOutputEvent) => coldOnboard.outputEvents.push(event) }
-      : {}),
-    redactionValues,
-    timeoutMs: 25 * 60_000,
-  });
-  const installCompletedAtMs = Date.now();
-  expect(install.exitCode, resultText(install)).toBe(0);
+  const preparation = USE_PREINSTALLED_LAUNCHABLE
+    ? await host.command("brev-quickstart", [SANDBOX_NAME], {
+        artifactName: "phase-1-brev-launchable-quickstart",
+        env: env({
+          ...hosted.env,
+          NVIDIA_API_KEY: hosted.apiKey,
+          NEMOCLAW_AGENT: "openclaw",
+          NEMOCLAW_PROVIDER: "build",
+        }),
+        redactionValues,
+        timeoutMs: 25 * 60_000,
+      })
+    : await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
+        artifactName: "phase-1-install-sh",
+        cwd: REPO_ROOT,
+        env: env({
+          ...hosted.env,
+          NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
+          ...(coldOnboard ? { NEMOCLAW_TRACE_FILE: coldOnboard.traceFile } : {}),
+        }),
+        ...(coldOnboard
+          ? { onOutput: (event: ShellProbeOutputEvent) => coldOnboard.outputEvents.push(event) }
+          : {}),
+        redactionValues,
+        timeoutMs: 25 * 60_000,
+      });
+  const preparationCompletedAtMs = Date.now();
+  expect(preparation.exitCode, resultText(preparation)).toBe(0);
   await (coldOnboard
     ? assertColdOnboardPerformance({
         apiKey: hosted.apiKey,
         artifacts,
-        budget: coldOnboardBudget,
-        install,
-        installCompletedAtMs,
+        budget: coldOnboardBudget!,
+        install: preparation,
+        installCompletedAtMs: preparationCompletedAtMs,
         outputEvents: coldOnboard.outputEvents,
         sandbox,
         traceDirectory: coldOnboard.traceDirectory,
@@ -443,7 +471,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(registryText).not.toContain(SANDBOX_NAME);
 
   await artifacts.target.complete({
-    id: "full-e2e",
+    id: EVIDENCE_TARGET_ID,
     securityPosture,
     status: "passed",
   });

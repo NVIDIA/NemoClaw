@@ -162,43 +162,64 @@ verify_identity() {
     >"$WORK_DIR/brev-identity-evidence.json"
 }
 
-run_smoke() {
+run_existing_e2e() {
   require_env NVIDIA_INFERENCE_API_KEY
   local sandbox="${NEMOCLAW_STAGING_SANDBOX_NAME:-e2e-staging}"
   [[ "$sandbox" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "invalid staging sandbox name"
-  local quoted_key quoted_sandbox
+  local remote_artifact_dir="/tmp/nemoclaw-launchable-e2e-$INSTANCE_NAME"
+  local local_artifact_dir="$WORK_DIR/brev-launchable-cloud-openclaw"
+  local quoted_artifact_dir quoted_key quoted_sandbox
+  printf -v quoted_artifact_dir '%q' "$remote_artifact_dir"
   printf -v quoted_key '%q' "$NVIDIA_INFERENCE_API_KEY"
   printf -v quoted_sandbox '%q' "$sandbox"
 
-  host_exec 'set -e; command -v nemoclaw; command -v openshell; command -v docker; command -v brev-quickstart; docker info >/dev/null; openshell --version; nemoclaw --help >/dev/null' \
-    >"$WORK_DIR/brev-prerequisites.log" 2>&1
-  host_exec "set -euo pipefail; export NVIDIA_API_KEY=$quoted_key NEMOCLAW_PROVIDER=build NEMOCLAW_AGENT=openclaw; timeout 1500 brev-quickstart $quoted_sandbox" \
-    >"$WORK_DIR/brev-quickstart.log" 2>&1
-
   host_exec "set -euo pipefail
+    repo=\$HOME/NemoClaw
+    cd \"\$repo\"
+    test -x ./node_modules/.bin/vitest
+    grep -q 'NEMOCLAW_E2E_SETUP_MODE' test/e2e/live/full-e2e.test.ts \
+      || { printf 'candidate full-e2e.test.ts does not support preinstalled Launchable setup\n' >&2; exit 1; }
+    grep -q 'brev-launchable-cloud-openclaw' test/e2e/live/full-e2e.test.ts \
+      || { printf 'candidate full-e2e.test.ts does not declare the Brev Launchable target\n' >&2; exit 1; }
+    rm -rf -- $quoted_artifact_dir
+    install -d -m 700 $quoted_artifact_dir
     model=\$(node /usr/local/lib/nemoclaw/launchable-config.mjs /usr/local/share/nemoclaw/launchable-agents.json openclaw cloudModel)
-    payload=\$(jq -cn --arg model \"\$model\" '{model:\$model,messages:[{role:\"user\",content:\"Reply with exactly one word: PONG\"}],max_tokens:100}')
-    response=\$(openshell sandbox exec --name $quoted_sandbox -- curl -fsS --max-time 90 \
-      https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d \"\$payload\")
-    printf '%s' \"\$response\" | jq -er '[.choices[0].message.content,.choices[0].message.reasoning_content,.choices[0].message.reasoning] | map(select(type == \"string\")) | join(\" \") | test(\"PONG\"; \"i\")' >/dev/null
-    printf '%s\n' \"\$response\"" >"$WORK_DIR/brev-inference-pong.json" 2>&1
+    export CI=true GITHUB_ACTIONS=true
+    export E2E_ARTIFACT_DIR=$quoted_artifact_dir
+    export E2E_TARGET_ID=brev-launchable-cloud-openclaw
+    export NEMOCLAW_CLI_BIN=nemoclaw
+    export NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable
+    export NEMOCLAW_MODEL=\"\$model\"
+    export NEMOCLAW_RUN_LIVE_E2E=1
+    export NEMOCLAW_SANDBOX_NAME=$quoted_sandbox
+    export NVIDIA_INFERENCE_API_KEY=$quoted_key
+    ./node_modules/.bin/vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default" \
+    >"$WORK_DIR/brev-launchable-e2e.log" 2>&1
 
-  host_exec "set -euo pipefail
-    response=\$(openshell sandbox exec --name $quoted_sandbox -- openclaw agent --agent main --json --thinking off \
-      --session-id qualification-$(date +%s) -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.')
-    printf '%s\n' \"\$response\"
-    printf '%s' \"\$response\" | grep -Eq '(^|[^0-9])42([^0-9]|$)'" \
-    >"$WORK_DIR/brev-agent-response.log" 2>&1
+  mkdir -m 700 "$local_artifact_dir"
+  timeout "${BREV_COPY_TIMEOUT_SECONDS:-300}" \
+    brev copy "$INSTANCE_NAME:$remote_artifact_dir/" "$local_artifact_dir/" --host
 
-  jq -n --arg sandbox "$sandbox" --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{schemaVersion:1,sandbox:$sandbox,checks:["baked-tools","onboarding","sandbox-ready","inference-local-pong","openclaw-agent-response"],completedAt:$completedAt}' \
-    >"$WORK_DIR/brev-smoke-evidence.json"
+  local target_result
+  target_result="$(find "$local_artifact_dir" -type f -name target-result.json -print -quit)"
+  [ -n "$target_result" ] || die "the existing full E2E suite did not produce target-result.json"
+  jq -e '.id == "brev-launchable-cloud-openclaw" and .status == "passed" and .runner == "vitest"' \
+    "$target_result" >/dev/null \
+    || die "the existing full E2E suite did not produce passing Launchable evidence"
+
+  jq -n \
+    --arg sandbox "$sandbox" \
+    --arg target "brev-launchable-cloud-openclaw" \
+    --arg testFile "test/e2e/live/full-e2e.test.ts" \
+    --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{schemaVersion:1,target:$target,testFile:$testFile,setupMode:"preinstalled-launchable",sandbox:$sandbox,completedAt:$completedAt}' \
+    >"$WORK_DIR/brev-launchable-e2e-evidence.json"
 }
 
 qualify() {
   validate_common
   verify_identity
-  run_smoke
+  run_existing_e2e
 }
 
 cleanup() {

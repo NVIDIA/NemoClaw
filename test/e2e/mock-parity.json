@@ -3,14 +3,6 @@
   "version": 1,
   "entries": [
     {
-      "live": "test/e2e/live/exact-staging-launchable.test.ts",
-      "fast": [
-        "test/brev-launchable-runtime.test.ts",
-        "test/exact-image-qualification-controller.test.ts",
-        "test/e2e/support/exact-image-qualification-workflow.test.ts"
-      ]
-    },
-    {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
@@ -35,6 +27,8 @@
     {
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": [
+        "test/brev-launchable-runtime.test.ts",
+        "test/e2e/support/exact-image-qualification-workflow.test.ts",
         "test/e2e/support/onboard-performance.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
