@@ -264,23 +264,35 @@ process.exit(0);
 const fs = require("node:fs");
 const a = process.argv.slice(2);
 const provenancePath = ${JSON.stringify(path.join(tmpDir, "docker-base-provenance"))};
+const readProvenance = () => fs.existsSync(provenancePath) ? JSON.parse(fs.readFileSync(provenancePath, "utf8")) : {};
 if (a[0]==="info") {
   process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
   process.exit(0);
 }
 if (a[0]==="build") {
   const labelIndex = a.indexOf("--label");
-  if (labelIndex >= 0) {
+  const tagIndex = a.indexOf("-t");
+  if (labelIndex >= 0 && tagIndex >= 0) {
     const label = a[labelIndex + 1] || "";
-    fs.writeFileSync(provenancePath, label.slice(label.indexOf("=") + 1));
+    const provenance = readProvenance();
+    const value = label.slice(label.indexOf("=") + 1);
+    provenance[a[tagIndex + 1]] = value;
+    provenance["sha256:${"a".repeat(64)}"] = value;
+    fs.writeFileSync(provenancePath, JSON.stringify(provenance));
   }
+  process.exit(0);
+}
+if (a[0]==="tag") {
+  const provenance = readProvenance();
+  if (provenance[a[1]]) provenance[a[2]] = provenance[a[1]];
+  fs.writeFileSync(provenancePath, JSON.stringify(provenance));
   process.exit(0);
 }
 if (a[0]==="image" && a[1]==="inspect" && a[2]==="--format") {
   if (a[3]==="{{.Id}}") process.stdout.write("sha256:${"a".repeat(64)}\\n");
   if (a[3]==="{{json .RepoDigests}}") process.stdout.write("[]\\n");
   if (a[3]==="{{json .}}") {
-    const provenance = fs.existsSync(provenancePath) ? fs.readFileSync(provenancePath, "utf8") : "";
+    const provenance = readProvenance()[a[4]] || "";
     process.stdout.write(JSON.stringify({Id:"sha256:${"a".repeat(64)}", RepoDigests:[], Os:"linux", Architecture:"amd64", Config:{Labels:provenance ? {"com.nvidia.nemoclaw.base-build-provenance":provenance} : {}}}) + "\\n");
   }
   process.exit(0);
