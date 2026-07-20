@@ -267,6 +267,24 @@ describe("LKG production image dispatch", () => {
     expect(summary).not.toContain("actions/runs/");
   });
 
+  it("rejects a downstream run URL that does not match its numeric ID (#6772)", () => {
+    const fixture = createFixture();
+    tag(fixture, "v0.0.1");
+
+    const result = runDispatch(fixture, {
+      GH_OUTPUT: "123456789\thttps://github.com/brevdev/nemoclaw-image/actions/runs/987654321",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "GitHub accepted the dispatch but did not return valid downstream run details",
+    );
+    const summary = fs.readFileSync(fixture.summaryPath, "utf8");
+    expect(summary).toContain("Dispatch result: `rejected (invalid run details)`");
+    expect(summary).toContain("Downstream run: `unavailable`");
+    expect(summary).not.toContain("actions/runs/");
+  });
+
   // source-shape-contract: security -- The secret-bearing LKG trigger must stay canonical, deletion-safe, read-only, and immutable
   it("keeps LKG dispatch inside the trusted secret boundary (#6772)", () => {
     const workflow = readYaml<Workflow>(".github/workflows/release-lkg-brev-image.yaml");
