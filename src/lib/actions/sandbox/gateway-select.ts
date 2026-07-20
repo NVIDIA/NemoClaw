@@ -20,8 +20,10 @@ export function selectSandboxOwningGateway(
   if (!targetGatewayName) return { outcome: "unregistered", gatewayName: null };
   const result = run(["gateway", "select", targetGatewayName], {
     ignoreError: true,
+    stdio: ["inherit", "pipe", "inherit"],
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
+  if (result.stdout) process.stdout.write(result.stdout);
   if (result.error || result.status !== 0) {
     return { outcome: "failed", gatewayName: targetGatewayName };
   }
