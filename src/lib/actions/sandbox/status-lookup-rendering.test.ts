@@ -22,7 +22,11 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
     printNonReadySandboxPhaseGuidance({
       sandboxName: "beta",
       phase: "Error",
-      dockerRuntime: null,
+      dockerRuntime: {
+        health: "none",
+        paused: false,
+        containerName: "openshell-beta-abc",
+      },
     });
     const text = cap.lines();
     cap.restore();
@@ -45,9 +49,10 @@ describe("printNonReadySandboxPhaseGuidance (#7222)", () => {
       sandboxName: "beta",
       phase: "Error",
       dockerRuntime: {
+        health: "none",
         paused: true,
         containerName: "openshell-beta-abc",
-      } as ReturnType<typeof import("./docker-health").getSandboxDockerRuntime>,
+      },
     });
     const text = cap.lines();
     cap.restore();

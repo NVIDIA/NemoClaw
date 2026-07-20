@@ -41,10 +41,12 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
+import { D, R } from "../../cli/terminal-style";
 import {
   type DockerDriverRecoveryResult,
   recoverDockerDriverSandbox,
 } from "../../onboard/docker-driver-sandbox-recovery";
+import { getSandboxDockerRuntime } from "./docker-health";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 
 export type SandboxGatewayState = {
@@ -581,6 +583,20 @@ export async function ensureLiveSandboxOrExit(
       // keep the rebuild guidance so a genuine failure is never masked.
       if (!isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
         printDockerRuntimeDownGuidance(sandboxName);
+        process.exit(1);
+      }
+      const dockerRuntime = phase === "Error" ? getSandboxDockerRuntime(sandboxName) : null;
+      if (dockerRuntime?.paused && dockerRuntime.containerName) {
+        console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
+        console.error("");
+        console.error(
+          `  The Docker-driver container for '${sandboxName}' is paused: ${dockerRuntime.containerName}`,
+        );
+        console.error(
+          "  A paused container can report 'Phase: Error' even though the sandbox is intact.",
+        );
+        console.error("  Resume it to restore the running phase:");
+        console.error(`    ${D}docker unpause ${dockerRuntime.containerName}${R}`);
         process.exit(1);
       }
       console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
