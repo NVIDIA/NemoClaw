@@ -690,9 +690,9 @@ All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_INFERENCE_PROVIDER_ID`
 `NEMOCLAW_INFERENCE_PROVIDER_ID` is a non-secret inference route identifier (for example `inference` for proxied providers, or a provider family such as `openai`), never a credential; provider credentials stay in OpenShell provider storage.
 It replaces the former `NEMOCLAW_PROVIDER_KEY` image argument, whose secret-shaped name triggered a BuildKit `SecretsUsedInArgOrEnv` warning.
 The host-side `NEMOCLAW_PROVIDER_KEY` credential alias is unchanged; this migration only renames the managed image route selector.
-Custom Dockerfiles that declare either `ARG NEMOCLAW_INFERENCE_PROVIDER_ID` or the legacy `ARG NEMOCLAW_PROVIDER_KEY` keep working through v0.0.89.
+Custom Dockerfiles that declare either `ARG NEMOCLAW_INFERENCE_PROVIDER_ID` or the legacy `ARG NEMOCLAW_PROVIDER_KEY` keep working through v0.0.90.
 NemoClaw updates whichever supported declaration is present, and runtime consumers read the legacy name as a fallback.
-Rename the legacy `ARG`/`ENV` declaration to `NEMOCLAW_INFERENCE_PROVIDER_ID` before legacy support is removed in v0.0.90.
+Rename the legacy `ARG`/`ENV` declaration to `NEMOCLAW_INFERENCE_PROVIDER_ID` before legacy support is removed in v0.0.91.
 
 Custom Dockerfiles must declare `ARG NEMOCLAW_TOOL_DISCLOSURE=progressive` exactly once in the final build stage and promote it into that stage's runtime environment.
 The usual runtime contract is:

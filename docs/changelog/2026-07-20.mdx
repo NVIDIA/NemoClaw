@@ -3,6 +3,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */}
 
+## v0.0.90
+
+NemoClaw v0.0.90 keeps managed-image routing identifiers out of secret-shaped build arguments, restores provider-reset recovery, corrects WhatsApp health reporting, and aligns DGX Station guidance with the versioned installer.
+
+- Managed OpenClaw, Hermes, and Deep Agents images now use `NEMOCLAW_INFERENCE_PROVIDER_ID` for the non-secret inference route selector, while provider credentials stay in OpenShell storage and the host-side credential alias remains unchanged.
+  Existing custom images can use the legacy selector through v0.0.90 and should migrate before the fallback is removed in v0.0.91.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- `credentials reset` now recognizes sandbox attachments from wrapped OpenShell diagnostics, validates each sandbox name, detaches affected sandboxes, and retries provider deletion without exposing credential values.
+  For more information, refer to [Credential Rotation](/user-guide/openclaw/security/credential-rotation).
+- OpenClaw WhatsApp status now recognizes the current paired-session path and derives in-process bridge activity from redacted gateway-log evidence.
+  This prevents a working paired channel from being reported as unpaired or inactive while keeping phone numbers and raw log lines out of host output.
+  For more information, refer to [Set Up WhatsApp](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-whatsapp) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- DGX Station coding-agent guidance now delegates qualification, preparation, consent, and resume behavior to the selected versioned installer.
+  Station Express keeps Nemotron 3 Ultra 550B as the default, while `--station-deepseek` selects DeepSeek V4 Flash.
+  Related guidance adds bounded OpenIB repair or disable steps, clarifies legacy recovery state limits, and gives platform-specific setup its own navigation group.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation), the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart), and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+
 ## v0.0.89
 
 NemoClaw v0.0.89 broadens qualified DGX Station installation paths, preserves inference choices through onboarding and rebuilds, strengthens sandbox recovery, discloses messaging policy scope before mutation, and keeps CLI output and background processes contained.
