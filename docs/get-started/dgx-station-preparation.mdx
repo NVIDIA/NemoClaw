@@ -71,6 +71,7 @@ After successful registration, the runtime remains configured until the same acc
 Preparation requires Secure Boot to be disabled, matching headers for the running kernel, at least 20 GiB free on the root filesystem, and no active agent, inference, or Docker workloads.
 It also stops when systemd reports a failed unit unless the unit matches an exact, condition-qualified state from the generic Station image: the pinned OEM `cloud-init` telemetry failure, a network-wait failure while current network health is established, masked `fwupd`, or an SSSD socket on a host without SSSD configuration.
 Any other failed unit blocks preparation for administrator review.
+If `openibd.service` is the failed unit, follow [Resolve a Failed OpenIB Service](#resolve-a-failed-openib-service) before you rerun the installer.
 On the `--force-station-install` path, preparation also tolerates the InfiniBand communication manager (`ibacm`) and the realtime audio scheduler (`rtkit-daemon`) as failed units, because neither affects GPU or container capability; the required GPU, container, and preparation-critical service checks still apply.
 It does not install a host CUDA toolkit or Docker Compose.
 If any other existing prerequisite version differs, preparation stops instead of changing it automatically.
@@ -78,6 +79,35 @@ Before host preparation begins, the installer stores the accepted Station Expres
 If preparation requires a reboot or a new login, run the printed command to restore the exact NemoClaw revision, agent, model, sandbox, policy tier, and gateway, dashboard, and vLLM ports without repeating the Express prompt.
 Recovery receipts created by earlier releases remain compatible.
 After changing pinned packages, the installer exits with status `10`; reboot, sign in, and run that printed command to resume Express setup.
+
+## Resolve a Failed OpenIB Service
+
+Station preparation stops when `openibd.service` is an unqualified failed unit because NemoClaw cannot determine whether your host depends on RDMA networking or storage.
+NemoClaw does not require RDMA and does not change systemd or networking state during this check.
+
+Check which interface owns the default route:
+
+```bash
+ip route get 1.1.1.1
+```
+
+Check for NFS mounts and their options:
+
+```bash
+findmnt -rn -t nfs,nfs4 -o TARGET,OPTIONS
+```
+
+These checks are not exhaustive.
+Confirm that the host has no RDMA-backed networking, storage, or workloads before you disable OpenIB.
+If the host does not use RDMA, disable the unused service and reboot:
+
+```bash
+sudo systemctl disable openibd.service
+sudo reboot
+```
+
+After the host restarts, rerun the NemoClaw installer.
+If the host uses RDMA, repair OpenIB/OFED instead, then rerun the installer after `openibd.service` is healthy.
 
 ## Validate Stock DGX OS
 

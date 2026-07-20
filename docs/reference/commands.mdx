@@ -387,6 +387,12 @@ The confirmation permits those legacy entries to recover onto the current manage
 After successful recovery, the installer skips generic onboarding.
 For a manually prepared upgrade, set `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1` only after preserving every registered sandbox and retiring the old gateway.
 
+<Warning title="Legacy Upgrade Recovery Scope">
+Prepared backup recovery for a legacy sandbox restores only the managed state directory recorded in its validated manifest, such as `/sandbox/.openclaw` or `/sandbox/.hermes`.
+Files outside that recorded path, including `/sandbox/user-data`, are not preserved when the installer recreates the sandbox.
+Back up those paths outside the sandbox before you continue.
+</Warning>
+
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are registered with the OpenShell gateway and never persisted to host disk.
@@ -863,6 +869,8 @@ Use it for health checks and scripted readiness probes.
 Run a single command non-interactively in a running sandbox via the OpenShell exec endpoint.
 The command runs as the sandbox user with `HOME=/sandbox`, so in-sandbox tooling resolves NemoClaw-provisioned config the same way it does for `connect` and `openshell sandbox connect`.
 This is the supported substitute for `docker exec` on the sandbox container; raw `docker exec` runs as root and lands on `HOME=/root`, where the selected agent config is not present.
+For a registered sandbox, NemoClaw selects its recorded owning OpenShell gateway before the workdir probe and command dispatch.
+If gateway selection fails, `exec` stops without running the sandbox command.
 
 <AgentOnly variant="openclaw">
 
@@ -1182,6 +1190,8 @@ If the container was removed entirely, `start` fails and points you to `$$nemocl
 Show sandbox-scoped status, health, and inference configuration for one registered sandbox.
 Use this form when you care about a specific sandbox's live OpenShell state, agent runtime, inference health, GPU proof, permissions, and recovery hints.
 Do not pass a sandbox name to `$$nemoclaw status`; that command is the global all-sandbox/service overview.
+NemoClaw resolves the sandbox's recorded owning OpenShell gateway before querying live state.
+If another gateway is active, it selects the owner and queries again instead of trusting a result from the sibling gateway.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
 The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.

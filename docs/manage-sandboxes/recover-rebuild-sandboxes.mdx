@@ -37,6 +37,7 @@ $$nemoclaw <sandbox-name> recover
 The command repairs a stopped in-sandbox gateway and re-establishes the dashboard port-forward in one step.
 It is idempotent and safe to script.
 If the gateway is already healthy, `recover` exits after the probe and does not restart it.
+If the host forward is already active, recovery accepts it only after OpenShell ownership is reconciled and the local endpoint is reachable.
 
 Use `gateway restart` when you intentionally need a supported OpenClaw gateway to reload runtime configuration or plugins.
 
@@ -59,6 +60,7 @@ $$nemoclaw <sandbox-name> recover
 The command repairs a stopped in-sandbox gateway and re-establishes the dashboard port-forward in one step.
 It is idempotent and safe to script.
 If the gateway is already healthy, `recover` exits after the probe and does not restart it.
+If the host forward is already active, recovery accepts it only after OpenShell ownership is reconciled and the local endpoint is reachable.
 
 Use `gateway restart` when you intentionally need a supported Hermes gateway to reload runtime configuration or plugins.
 
@@ -117,12 +119,22 @@ If you changed the underlying Dockerfile, upgraded Hermes, or want to pick up a 
 If you changed the underlying Dockerfile, upgraded Deep Agents Code, enabled Tavily Search, or want to pick up a new base image without losing manifest-defined Deep Agents state, use `rebuild` instead of destroying and recreating.
 </AgentOnly>
 
+<AgentOnly variant="openclaw,hermes">
+<Warning title="Legacy Upgrade Recovery Scope">
+When the installer offers prepared backup recovery for a legacy sandbox, the recreate restores only the managed state directory recorded in the validated backup manifest, such as `/sandbox/.openclaw` or `/sandbox/.hermes`.
+It does not preserve files outside that recorded path, including `/sandbox/user-data`.
+Back up those paths outside the sandbox before you approve legacy recovery.
+</Warning>
+</AgentOnly>
+
 ```bash
 $$nemoclaw <sandbox-name> rebuild
 ```
 
 <AgentOnly variant="openclaw">
 The rebuild command preserves the mounted workspace and registered policies while recreating the container.
+When no host web-search key is staged, rebuild preflight reuses an existing Brave or Tavily credential only when the provider name, type, and credential key match the sandbox's binding on its recorded OpenShell gateway.
+A missing or mismatched binding stops before recreation and requires the matching host environment variable before you retry.
 After state restoration, NemoClaw clears a session's stale model and provider pin when it still targets the managed `inference` provider but no longer matches the configured default model.
 The session then follows the current default selected through `inference set`, while sessions pinned to another provider remain unchanged.
 </AgentOnly>
