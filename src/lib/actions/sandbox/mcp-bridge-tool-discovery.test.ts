@@ -51,6 +51,8 @@ describe("MCP tool discovery host boundary (#6901)", () => {
       expect(built?.command).not.toContain("node_modules");
       expect(built?.command).not.toContain("--authorization");
       expect(built?.command).not.toContain("openshell:resolve:env:GITHUB_TOKEN");
+      expect(built?.command).toContain("--credential-env");
+      expect(built?.command).toContain("GITHUB_TOKEN");
       expect(built?.command).not.toContain("tools/call");
       expect(built?.command).toContain("rebuild the sandbox");
     }
@@ -78,11 +80,11 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     }
   });
 
-  it("keeps credentials outside command construction and rejects a non-canonical URL", () => {
+  it("passes only the credential key name and rejects missing or non-canonical inputs", () => {
     const authenticated = buildMcpToolDiscoveryCommand(entry, "mcporter");
     expect(authenticated).not.toBeNull();
-    expect(authenticated?.command).not.toContain("GITHUB_TOKEN");
     expect(authenticated?.command).not.toContain("Authorization");
+    expect(buildMcpToolDiscoveryCommand(unauthenticatedEntry, "mcporter")).toBeNull();
     expect(
       buildMcpToolDiscoveryCommand(
         { ...unauthenticatedEntry, url: "https://api.githubcopilot.com:443/mcp/" },

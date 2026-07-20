@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  buildMcpToolDiscoveryAuthorizationPlaceholder,
   createBoundedMcpFetch,
   enumerateMcpToolNames,
   MCP_TOOL_DISCOVERY_LIMITS,
@@ -21,7 +22,7 @@ import {
 } from "./mcp-bridge-tool-discovery";
 
 describe("shared MCP tool discovery runtime", () => {
-  it("rejects every credential-bearing invocation before network access", () => {
+  it("accepts only a credential key name and rejects authorization values", () => {
     expect(() =>
       parseMcpToolDiscoveryArguments([
         "--url",
@@ -30,9 +31,28 @@ describe("shared MCP tool discovery runtime", () => {
         "arbitrary-format-secret-that-the-server-would-echo",
       ]),
     ).toThrow("invalid arguments");
-    expect(parseMcpToolDiscoveryArguments(["--url", "https://example.test/mcp"])).toEqual({
+    expect(
+      parseMcpToolDiscoveryArguments([
+        "--url",
+        "https://example.test/mcp",
+        "--credential-env",
+        "EXAMPLE_MCP_TOKEN",
+      ]),
+    ).toEqual({
       url: new URL("https://example.test/mcp"),
+      credentialEnv: "EXAMPLE_MCP_TOKEN",
     });
+    expect(buildMcpToolDiscoveryAuthorizationPlaceholder("EXAMPLE_MCP_TOKEN")).toBe(
+      "Bearer openshell:resolve:env:EXAMPLE_MCP_TOKEN",
+    );
+    expect(() =>
+      parseMcpToolDiscoveryArguments([
+        "--url",
+        "https://example.test/mcp",
+        "--credential-env",
+        "not-valid",
+      ]),
+    ).toThrow("invalid arguments");
   });
 
   it("enumerates every page and returns deterministic names only", async () => {

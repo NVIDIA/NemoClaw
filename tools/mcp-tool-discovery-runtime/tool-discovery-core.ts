@@ -26,13 +26,31 @@ export interface McpToolPage {
   nextCursor?: string;
 }
 
-export function parseMcpToolDiscoveryArguments(args: string[]): { url: URL } {
-  if (args.length !== 2 || args[0] !== "--url") throw new Error("invalid arguments");
-  const url = new URL(args[1]);
-  if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.hash !== "") {
+export interface McpToolDiscoveryArguments {
+  url: URL;
+  credentialEnv: string;
+}
+
+export function parseMcpToolDiscoveryArguments(args: string[]): McpToolDiscoveryArguments {
+  if (args.length !== 4 || args[0] !== "--url" || args[2] !== "--credential-env") {
     throw new Error("invalid arguments");
   }
-  return { url };
+  const url = new URL(args[1]);
+  const credentialEnv = args[3];
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.hash !== "" ||
+    !/^[A-Z][A-Z0-9_]{0,255}$/u.test(credentialEnv)
+  ) {
+    throw new Error("invalid arguments");
+  }
+  return { url, credentialEnv };
+}
+
+export function buildMcpToolDiscoveryAuthorizationPlaceholder(credentialEnv: string): string {
+  return `Bearer openshell:resolve:env:${credentialEnv}`;
 }
 
 export type McpToolPageLoader = (cursor?: string) => Promise<McpToolPage>;

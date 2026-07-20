@@ -5,6 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import {
+  buildMcpToolDiscoveryAuthorizationPlaceholder,
   createBoundedMcpFetch,
   MCP_TOOL_DISCOVERY_LIMITS,
   MCP_TOOL_DISCOVERY_PROTOCOL,
@@ -19,7 +20,7 @@ function writeResult(result: McpToolDiscoveryResult): void {
 }
 
 async function main(): Promise<void> {
-  let runtimeArguments: { url: URL };
+  let runtimeArguments: { url: URL; credentialEnv: string };
   try {
     runtimeArguments = parseMcpToolDiscoveryArguments(process.argv.slice(2));
   } catch {
@@ -37,7 +38,14 @@ async function main(): Promise<void> {
   const boundedFetch = createBoundedMcpFetch(globalThis.fetch, deadlineSignal);
   const transport = new StreamableHTTPClientTransport(runtimeArguments.url, {
     fetch: boundedFetch,
-    requestInit: { redirect: "manual" },
+    requestInit: {
+      headers: {
+        authorization: buildMcpToolDiscoveryAuthorizationPlaceholder(
+          runtimeArguments.credentialEnv,
+        ),
+      },
+      redirect: "manual",
+    },
     reconnectionOptions: {
       maxReconnectionDelay: 1,
       initialReconnectionDelay: 1,
