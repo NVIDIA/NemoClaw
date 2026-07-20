@@ -12,6 +12,11 @@ export interface ForbiddenLeakPattern {
   allowInSnapshotProbeEnvironment?: boolean;
 }
 
+export interface ForbiddenLeakScan {
+  leaks: string[];
+  snapshotProbeEnvironmentExemptions: Array<{ name: string; location: string }>;
+}
+
 export function frameSnapshotFile(location: string, contents: string): string {
   if (!location || /[\r\n]/u.test(location)) {
     throw new Error("snapshot file location must be a non-empty single line");
@@ -28,19 +33,26 @@ function isSnapshotProbeEnvironment(location: string, probePid: string | undefin
 
 /**
  * Find forbidden values while distinguishing the one-shot snapshot process
- * from the sandbox workloads it observes. OpenShell intentionally projects a
- * provider credential placeholder into each newly executed child, so the
- * probe sees the provider environment-variable name in its own environment.
- * Only patterns explicitly marked for that exact PID/environment location are
- * exempt; raw token values and every match in other files or processes still
- * fail the scan.
+ * from the sandbox workloads it observes. `src/lib/onboard/bedrock-runtime.ts`
+ * registers the adapter credential as an attached generic OpenShell provider.
+ * OpenShell, outside this repository, projects that provider's placeholder
+ * name into an ad-hoc `sandbox exec` child, so the observer sees the name in
+ * its own environment. Only patterns explicitly marked for that exact
+ * PID/environment location are exempt; raw token values and every match in
+ * other files or processes still fail the scan.
+ *
+ * The live test requires this exemption to be observed. Remove the flag, that
+ * assertion, and this exception when OpenShell stops projecting attached
+ * provider placeholders into inspection children or offers provider-free
+ * sandbox inspection.
  */
-export function findForbiddenLeaks(
+export function scanForbiddenLeaks(
   text: string,
   label: string,
   patterns: readonly ForbiddenLeakPattern[],
-): string[] {
+): ForbiddenLeakScan {
   const locations: string[] = [];
+  const exemptions: Array<{ name: string; location: string }> = [];
   let current: string | undefined;
   let probePid: string | undefined;
   let firstNonEmptyLineSeen = false;
@@ -67,10 +79,27 @@ export function findForbiddenLeaks(
         pattern.allowInSnapshotProbeEnvironment &&
         isSnapshotProbeEnvironment(location, probePid)
       ) {
+        exemptions.push({ name: pattern.name, location });
         continue;
       }
       locations.push(`${pattern.name}: ${location}`);
     }
   }
-  return [...new Set(locations)].sort();
+  return {
+    leaks: [...new Set(locations)].sort(),
+    snapshotProbeEnvironmentExemptions: exemptions.filter(
+      (entry, index, entries) =>
+        entries.findIndex(
+          (candidate) => candidate.name === entry.name && candidate.location === entry.location,
+        ) === index,
+    ),
+  };
+}
+
+export function findForbiddenLeaks(
+  text: string,
+  label: string,
+  patterns: readonly ForbiddenLeakPattern[],
+): string[] {
+  return scanForbiddenLeaks(text, label, patterns).leaks;
 }

@@ -9,6 +9,7 @@ import {
   frameSnapshotFile,
   SNAPSHOT_FILE_PREFIX,
   SNAPSHOT_PROBE_PID_PREFIX,
+  scanForbiddenLeaks,
 } from "../live/bedrock-runtime-compatible-anthropic-leaks.ts";
 
 const ADAPTER_ENV_NAME = "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN";
@@ -33,8 +34,10 @@ describe("Bedrock Runtime leak snapshot process identity", () => {
       ...file("/proc/22/environ", `${ADAPTER_ENV_NAME}=openshell-placeholder`),
     );
 
-    expect(findForbiddenLeaks(text, "sandbox snapshot", [ENV_NAME_PATTERN])).toEqual([
-      "adapter token env name: /proc/22/environ",
+    const result = scanForbiddenLeaks(text, "sandbox snapshot", [ENV_NAME_PATTERN]);
+    expect(result.leaks).toEqual(["adapter token env name: /proc/22/environ"]);
+    expect(result.snapshotProbeEnvironmentExemptions).toEqual([
+      { name: "adapter token env name", location: "/proc/1418/environ" },
     ]);
   });
 
