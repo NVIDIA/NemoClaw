@@ -87,6 +87,18 @@ function oktaIdentity(profilePath = "provider-profiles/okta-runtime-v1.yaml") {
   };
 }
 
+function entraIdentity(profilePath = "provider-profiles/entra-graph-runtime-v1.yaml") {
+  return {
+    profile_path: profilePath,
+    provider_type: "entra-graph-runtime-v1",
+    provider_name: "acme-entra-runtime",
+    credential_key: "MS_GRAPH_ACCESS_TOKEN",
+    client_id_env: "ENTRA_CLIENT_ID",
+    refresh_token_env: "ENTRA_REFRESH_TOKEN",
+    client_secret_env: "ENTRA_CLIENT_SECRET",
+  };
+}
+
 describe("blueprint identity wrapper", () => {
   beforeEach(() => {
     store.clear();
@@ -99,6 +111,9 @@ describe("blueprint identity wrapper", () => {
     delete process.env.OKTA_CLIENT_ID;
     delete process.env.OKTA_REFRESH_TOKEN;
     delete process.env.OKTA_CLIENT_SECRET;
+    delete process.env.ENTRA_CLIENT_ID;
+    delete process.env.ENTRA_REFRESH_TOKEN;
+    delete process.env.ENTRA_CLIENT_SECRET;
     vi.restoreAllMocks();
   });
 
@@ -166,6 +181,54 @@ describe("blueprint identity wrapper", () => {
       ["sandbox", "provider", "attach", "test-sandbox", "acme-okta-runtime"],
       expect.objectContaining({ reject: false }),
     );
+  });
+
+  it("configures and attaches the Microsoft Entra reference without an Azure runtime dependency", async () => {
+    process.env.ENTRA_CLIENT_ID = "entra-client-id";
+    process.env.ENTRA_REFRESH_TOKEN = "entra-refresh-secret";
+    process.env.ENTRA_CLIENT_SECRET = "entra-client-secret";
+
+    await actionApply("default", blueprint({ identity: { entra: entraIdentity() } }));
+
+    expect(mockExeca).toHaveBeenCalledWith(
+      "openshell",
+      ["provider", "profile", "import", "--file", "provider-profiles/entra-graph-runtime-v1.yaml"],
+      expect.objectContaining({ reject: false }),
+    );
+    expect(mockExeca).toHaveBeenCalledWith(
+      "openshell",
+      [
+        "provider",
+        "create",
+        "--name",
+        "acme-entra-runtime",
+        "--type",
+        "entra-graph-runtime-v1",
+        "--runtime-credentials",
+      ],
+      expect.objectContaining({ reject: false }),
+    );
+    const refreshCall = mockExeca.mock.calls.find(
+      (call) => Array.isArray(call[1]) && call[1][0] === "provider" && call[1][2] === "configure",
+    );
+    if (!refreshCall) throw new Error("Entra refresh configure call not found");
+    expect(refreshCall[1]).toContain("client_id=entra-client-id");
+    expect(refreshCall[1]).not.toContain("entra-refresh-secret");
+    expect(refreshCall[1]).not.toContain("entra-client-secret");
+    expect(refreshCall[2].env.ENTRA_REFRESH_TOKEN).toBe("entra-refresh-secret");
+    expect(refreshCall[2].env.ENTRA_CLIENT_SECRET).toBe("entra-client-secret");
+    expect(mockExeca).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "provider", "attach", "test-sandbox", "acme-entra-runtime"],
+      expect.objectContaining({ reject: false }),
+    );
+  });
+
+  it("rejects multiple runtime identity references in one blueprint run", () => {
+    const input = blueprint({ identity: { okta: oktaIdentity(), entra: entraIdentity() } });
+    store.set("blueprint.yaml", { type: "file", content: YAML.stringify(input) });
+
+    expect(() => loadBlueprint()).toThrow(/valid nested component shapes/i);
   });
 
   it("composes fail-closed middleware while retaining existing middleware", async () => {

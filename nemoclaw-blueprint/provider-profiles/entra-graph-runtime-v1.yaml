@@ -2,23 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Template profile for the experimental blueprint identity wrapper. Copy this
-# file, replace the example authorization-server URL and API host, and add
-# only tenant-approved API scopes under `refresh.scopes` before use.
-id: okta-runtime-v1
-display_name: Okta Runtime Credentials v1
-description: Gateway-managed Okta access-token refresh for an attached sandbox
+# file and replace `common` with the Entra tenant ID or domain approved for the
+# workload before use. Keep the Graph scope and endpoint least-privileged.
+id: entra-graph-runtime-v1
+display_name: Microsoft Entra Graph Runtime Credentials v1
+description: Gateway-managed Microsoft Graph access-token refresh for an attached sandbox
 category: agent
 credentials:
-  - name: OKTA_ACCESS_TOKEN
-    description: Short-lived Okta API access token
+  - name: MS_GRAPH_ACCESS_TOKEN
+    description: Short-lived delegated Microsoft Graph access token
     env_vars:
-      - OKTA_ACCESS_TOKEN
+      - MS_GRAPH_ACCESS_TOKEN
     required: true
     auth_style: bearer
     header_name: authorization
     refresh:
       strategy: oauth2_refresh_token
-      token_url: https://example.okta.com/oauth2/default/v1/token
+      token_url: https://login.microsoftonline.com/common/oauth2/v2.0/token
+      scopes:
+        - https://graph.microsoft.com/User.Read
       refresh_before_seconds: 300
       max_lifetime_seconds: 3600
       material:
@@ -31,12 +33,12 @@ credentials:
           required: false
           secret: true
 endpoints:
-  - host: api.example.okta.com
+  - host: graph.microsoft.com
     port: 443
     protocol: rest
     enforcement: enforce
     rules:
-      - allow: { method: GET, path: "/**" }
+      - allow: { method: GET, path: "/v1.0/me" }
 binaries:
   - /usr/local/bin/node
   - /usr/bin/node

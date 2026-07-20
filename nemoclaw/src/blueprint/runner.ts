@@ -85,7 +85,7 @@ interface PolicyMiddleware {
   };
 }
 
-interface OktaIdentityConfig {
+interface RuntimeIdentityConfig {
   profile_path: string;
   provider_type: string;
   provider_name: string;
@@ -266,7 +266,7 @@ function isPolicyMiddlewares(value: unknown): value is PolicyMiddlewares {
   return true;
 }
 
-function isOktaIdentityConfig(value: unknown): value is OktaIdentityConfig {
+function isRuntimeIdentityConfig(value: unknown): value is RuntimeIdentityConfig {
   if (
     !isPlainObject(value) ||
     !hasOnlyKeys(value, [
@@ -395,10 +395,16 @@ function isBlueprint(value: unknown): value is Blueprint {
 
   const identity = components.identity;
   if (identity !== undefined) {
-    if (!isPlainObject(identity) || !hasOnlyKeys(identity, ["okta"])) {
+    if (!isPlainObject(identity) || !hasOnlyKeys(identity, ["okta", "entra"])) {
       return false;
     }
-    if (identity.okta !== undefined && !isOktaIdentityConfig(identity.okta)) {
+    const configuredIdentities = [identity.okta, identity.entra].filter(
+      (entry) => entry !== undefined,
+    );
+    if (
+      configuredIdentities.length > 1 ||
+      !configuredIdentities.every((entry) => isRuntimeIdentityConfig(entry))
+    ) {
       return false;
     }
   }
@@ -435,10 +441,12 @@ function resolveBlueprintRelativePath(relativePath: string): string {
   return join(process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".", normalized);
 }
 
-function requiredIdentityEnv(name: string): string {
+function requiredIdentityEnv(identityLabel: string, name: string): string {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`Okta identity requires local environment variable '${name}' to be set`);
+    throw new Error(
+      `${identityLabel} identity requires local environment variable '${name}' to be set`,
+    );
   }
   return value;
 }
@@ -472,7 +480,8 @@ interface Blueprint {
       middlewares?: PolicyMiddlewares;
     };
     identity?: {
-      okta?: OktaIdentityConfig;
+      okta?: RuntimeIdentityConfig;
+      entra?: RuntimeIdentityConfig;
     };
   };
 }
@@ -734,7 +743,7 @@ function buildPersistedRunPlan(args: {
   sandboxName: string;
   policyAdditions: PolicyAdditions;
   inferenceCfg: InferenceProfile;
-  oktaIdentity?: OktaIdentityConfig;
+  runtimeIdentity?: RuntimeIdentity;
   timestamp: string;
 }): PersistedRunPlan {
   const plan: PersistedRunPlan = {
@@ -745,13 +754,115 @@ function buildPersistedRunPlan(args: {
     inference: buildSafeInferencePlan(args.inferenceCfg),
     timestamp: args.timestamp,
   };
-  if (args.oktaIdentity) {
+  if (args.runtimeIdentity) {
     plan.identity = {
-      provider_name: args.oktaIdentity.provider_name,
-      credential_key: args.oktaIdentity.credential_key,
+      provider_name: args.runtimeIdentity.config.provider_name,
+      credential_key: args.runtimeIdentity.config.credential_key,
     };
   }
   return plan;
+}
+
+interface RuntimeIdentity {
+  label: string;
+  config: RuntimeIdentityConfig;
+}
+
+function selectedRuntimeIdentity(blueprint: Blueprint): RuntimeIdentity | undefined {
+  const identity = blueprint.components?.identity;
+  if (identity?.okta) return { label: "Okta", config: identity.okta };
+  if (identity?.entra) return { label: "Microsoft Entra", config: identity.entra };
+  return undefined;
+}
+
+async function configureRuntimeIdentity(identity: RuntimeIdentity): Promise<void> {
+  const { label, config } = identity;
+  const profilePath = resolveBlueprintRelativePath(config.profile_path);
+  const profileImport = await runCmd(
+    ["openshell", "provider", "profile", "import", "--file", profilePath],
+    { reject: false },
+  );
+  if (profileImport.exitCode !== 0 && !/already exists/i.test(profileImport.stderr)) {
+    throw new Error(
+      `Failed to import ${label} provider profile: ${boundedCommandError(profileImport.stderr)}`,
+    );
+  }
+
+  const providerCreate = await runCmd(
+    [
+      "openshell",
+      "provider",
+      "create",
+      "--name",
+      config.provider_name,
+      "--type",
+      config.provider_type,
+      "--runtime-credentials",
+    ],
+    { reject: false },
+  );
+  if (providerCreate.exitCode !== 0 && !/already exists/i.test(providerCreate.stderr)) {
+    throw new Error(
+      `Failed to create ${label} runtime provider '${config.provider_name}': ${boundedCommandError(providerCreate.stderr)}`,
+    );
+  }
+
+  const clientId = requiredIdentityEnv(label, config.client_id_env);
+  const refreshToken = requiredIdentityEnv(label, config.refresh_token_env);
+  const refreshArgs = [
+    "openshell",
+    "provider",
+    "refresh",
+    "configure",
+    config.provider_name,
+    "--credential-key",
+    config.credential_key,
+    "--strategy",
+    "oauth2-refresh-token",
+    "--material",
+    `client_id=${clientId}`,
+    "--secret-material-env",
+    `refresh_token=${config.refresh_token_env}`,
+  ];
+  const refreshEnv: Record<string, string> = {
+    [config.refresh_token_env]: refreshToken,
+  };
+  const clientSecret = config.client_secret_env
+    ? requiredIdentityEnv(label, config.client_secret_env)
+    : undefined;
+  if (config.client_secret_env && clientSecret) {
+    refreshArgs.push("--secret-material-env", `client_secret=${config.client_secret_env}`);
+    refreshEnv[config.client_secret_env] = clientSecret;
+  }
+  const refreshResult = await execa(refreshArgs[0], refreshArgs.slice(1), {
+    reject: false,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: buildSubprocessEnv(refreshEnv),
+  });
+  if (refreshResult.exitCode !== 0) {
+    throw new Error(
+      `Failed to configure ${label} credential refresh: ${boundedCommandError(refreshResult.stderr, [refreshToken, clientSecret ?? ""])}`,
+    );
+  }
+
+  const rotate = await runCmd(
+    [
+      "openshell",
+      "provider",
+      "refresh",
+      "rotate",
+      config.provider_name,
+      "--credential-key",
+      config.credential_key,
+    ],
+    { reject: false },
+  );
+  if (rotate.exitCode !== 0) {
+    throw new Error(
+      `Failed to mint ${label} runtime credential: ${boundedCommandError(rotate.stderr)}`,
+    );
+  }
 }
 
 function buildStatusRunPlan(source: unknown, fallbackRunId: string): StatusRunPlan | null {
@@ -898,98 +1009,13 @@ export async function actionApply(
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
   const policyAdditions = blueprint.components?.policy?.additions ?? {};
   const policyMiddlewares = blueprint.components?.policy?.middlewares ?? {};
-  const oktaIdentity = blueprint.components?.identity?.okta;
+  const runtimeIdentity = selectedRuntimeIdentity(blueprint);
   const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
   mkdirSync(stateDir, { recursive: true });
 
-  if (oktaIdentity) {
-    progress(10, "Configuring Okta runtime identity");
-    const profilePath = resolveBlueprintRelativePath(oktaIdentity.profile_path);
-    const profileImport = await runCmd(
-      ["openshell", "provider", "profile", "import", "--file", profilePath],
-      { reject: false },
-    );
-    if (profileImport.exitCode !== 0 && !/already exists/i.test(profileImport.stderr)) {
-      throw new Error(
-        `Failed to import Okta provider profile: ${boundedCommandError(profileImport.stderr)}`,
-      );
-    }
-
-    const providerCreate = await runCmd(
-      [
-        "openshell",
-        "provider",
-        "create",
-        "--name",
-        oktaIdentity.provider_name,
-        "--type",
-        oktaIdentity.provider_type,
-        "--runtime-credentials",
-      ],
-      { reject: false },
-    );
-    if (providerCreate.exitCode !== 0 && !/already exists/i.test(providerCreate.stderr)) {
-      throw new Error(
-        `Failed to create Okta runtime provider '${oktaIdentity.provider_name}': ${boundedCommandError(providerCreate.stderr)}`,
-      );
-    }
-
-    const clientId = requiredIdentityEnv(oktaIdentity.client_id_env);
-    const refreshToken = requiredIdentityEnv(oktaIdentity.refresh_token_env);
-    const refreshArgs = [
-      "openshell",
-      "provider",
-      "refresh",
-      "configure",
-      oktaIdentity.provider_name,
-      "--credential-key",
-      oktaIdentity.credential_key,
-      "--strategy",
-      "oauth2-refresh-token",
-      "--material",
-      `client_id=${clientId}`,
-      "--secret-material-env",
-      `refresh_token=${oktaIdentity.refresh_token_env}`,
-    ];
-    const refreshEnv: Record<string, string> = {
-      [oktaIdentity.refresh_token_env]: refreshToken,
-    };
-    const clientSecret = oktaIdentity.client_secret_env
-      ? requiredIdentityEnv(oktaIdentity.client_secret_env)
-      : undefined;
-    if (oktaIdentity.client_secret_env && clientSecret) {
-      refreshArgs.push("--secret-material-env", `client_secret=${oktaIdentity.client_secret_env}`);
-      refreshEnv[oktaIdentity.client_secret_env] = clientSecret;
-    }
-    const refreshResult = await execa(refreshArgs[0], refreshArgs.slice(1), {
-      reject: false,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: buildSubprocessEnv(refreshEnv),
-    });
-    if (refreshResult.exitCode !== 0) {
-      throw new Error(
-        `Failed to configure Okta credential refresh: ${boundedCommandError(refreshResult.stderr, [refreshToken, clientSecret ?? ""])}`,
-      );
-    }
-
-    const rotate = await runCmd(
-      [
-        "openshell",
-        "provider",
-        "refresh",
-        "rotate",
-        oktaIdentity.provider_name,
-        "--credential-key",
-        oktaIdentity.credential_key,
-      ],
-      { reject: false },
-    );
-    if (rotate.exitCode !== 0) {
-      throw new Error(
-        `Failed to mint Okta runtime credential: ${boundedCommandError(rotate.stderr)}`,
-      );
-    }
+  if (runtimeIdentity) {
+    progress(10, `Configuring ${runtimeIdentity.label} runtime identity`);
+    await configureRuntimeIdentity(runtimeIdentity);
   }
 
   progress(20, "Creating OpenClaw sandbox");
@@ -1015,14 +1041,21 @@ export async function actionApply(
     }
   }
 
-  if (oktaIdentity) {
+  if (runtimeIdentity) {
     const attach = await runCmd(
-      ["openshell", "sandbox", "provider", "attach", sandboxName, oktaIdentity.provider_name],
+      [
+        "openshell",
+        "sandbox",
+        "provider",
+        "attach",
+        sandboxName,
+        runtimeIdentity.config.provider_name,
+      ],
       { reject: false },
     );
     if (attach.exitCode !== 0 && !/already attached/i.test(attach.stderr)) {
       throw new Error(
-        `Failed to attach Okta runtime provider '${oktaIdentity.provider_name}': ${boundedCommandError(attach.stderr)}`,
+        `Failed to attach ${runtimeIdentity.label} runtime provider '${runtimeIdentity.config.provider_name}': ${boundedCommandError(attach.stderr)}`,
       );
     }
   }
@@ -1144,7 +1177,7 @@ export async function actionApply(
         sandboxName,
         policyAdditions,
         inferenceCfg,
-        oktaIdentity,
+        runtimeIdentity,
         timestamp: new Date().toISOString(),
       }),
       null,
