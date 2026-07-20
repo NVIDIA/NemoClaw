@@ -212,6 +212,34 @@ describe("handlePoliciesState", () => {
     });
   });
 
+  it("does not resume policies when recorded presets are empty (#6042)", async () => {
+    const session = createSession({ policyPresets: [] });
+    const { deps, calls, setSession } = createDeps({
+      arePolicyPresetsApplied: vi.fn(() => true),
+    });
+    setSession(session);
+
+    const result = await handlePoliciesState({ ...baseOptions(deps), resume: true });
+
+    expect(calls.skipped).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+    expect(calls.startStep).toHaveBeenCalledWith("policies", {
+      sandboxName: "my-assistant",
+      provider: "provider",
+      model: "model",
+      policyPresets: [],
+    });
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ selectedPresets: [] }),
+    );
+    expect(calls.complete).toHaveBeenCalledWith(
+      "policies",
+      expect.objectContaining({ policyPresets: ["npm"] }),
+    );
+    expect(result.appliedPolicyPresets).toEqual(["npm"]);
+  });
+
   it("reconciles unsupported recorded presets before interactive setup", async () => {
     const session = createSession({ policyPresets: ["npm", "unsupported"] });
     const { deps, calls, setSession } = createDeps();
