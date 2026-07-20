@@ -26,7 +26,11 @@ const EXPECTED_PACKAGE_SPECS = [
 const DOCKER_CE_SPEC = "docker-ce=5:29.6.1-1~ubuntu.24.04~noble";
 const DKMS_SPEC = "dkms=1:3.4.0-1ubuntu1";
 
-function runSourced(body: string, extraEnv: NodeJS.ProcessEnv = {}) {
+function runSourced(
+  body: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+  scriptUnderTest = STATION_PREPARE,
+) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-package-transaction-"));
   const result = spawnSync(
     "bash",
@@ -37,7 +41,7 @@ function runSourced(body: string, extraEnv: NodeJS.ProcessEnv = {}) {
       env: {
         HOME: home,
         PATH: TEST_SYSTEM_PATH,
-        SCRIPT_UNDER_TEST: STATION_PREPARE,
+        SCRIPT_UNDER_TEST: scriptUnderTest,
         ...extraEnv,
       },
       timeout: 15_000,
@@ -91,6 +95,67 @@ warn_retained_package_version 'dkms=1:3.4.0-1ubuntu1'
     expect(output).toContain(
       "package=dkms status=retained_compatible actual=1:3.4.1-1ubuntu1 validated=1:3.4.0-1ubuntu1 decision=retain",
     );
+  });
+
+  it("rejects an unlisted DKMS revision (#7211)", () => {
+    const { result, output } = runSourced(
+      `
+installed_version() {
+  if [[ "$1" == "dkms" ]]; then printf '%s' "$DKMS_ACTUAL"; fi
+}
+printf 'state='
+package_state 'dkms=1:3.4.0-1ubuntu1'
+if package_is_ready 'dkms=1:3.4.0-1ubuntu1'; then
+  printf 'ready=yes\n'
+else
+  printf 'ready=no\n'
+fi
+`,
+      { DKMS_ACTUAL: "1:3.4.2-1ubuntu1" },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("state=mismatch");
+    expect(output).toContain("ready=no");
+  });
+
+  it("rejects retained DKMS after a companion package pin changes (#7211)", () => {
+    const source = fs.readFileSync(STATION_PREPARE, "utf-8");
+    const qualifiedTuple = `readonly -a RETAINED_DKMS_QUALIFIED_PACKAGE_SPECS=(\n${EXPECTED_PACKAGE_SPECS.map((spec) => `  "${spec}"`).join("\n")}\n)`;
+    const staleQualifiedTuple = qualifiedTuple.replace(
+      DOCKER_CE_SPEC,
+      "docker-ce=5:29.6.0-1~ubuntu.24.04~noble",
+    );
+    const stalePolicySource = source.replace(qualifiedTuple, staleQualifiedTuple);
+    expect(stalePolicySource).not.toBe(source);
+
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-stale-policy-"));
+    const stalePolicyScript = path.join(fixtureDir, "prepare-dgx-station-host.sh");
+    fs.writeFileSync(stalePolicyScript, stalePolicySource);
+    try {
+      const { result, output } = runSourced(
+        `
+installed_version() {
+  if [[ "$1" == "dkms" ]]; then printf '%s' "$DKMS_ACTUAL"; fi
+}
+printf 'state='
+package_state 'dkms=1:3.4.0-1ubuntu1'
+if package_is_ready 'dkms=1:3.4.0-1ubuntu1'; then
+  printf 'ready=yes\n'
+else
+  printf 'ready=no\n'
+fi
+`,
+        { DKMS_ACTUAL: "1:3.4.1-1ubuntu1" },
+        stalePolicyScript,
+      );
+
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("state=mismatch");
+      expect(output).toContain("ready=no");
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
   });
 
   it("retains qualified DKMS without entering package installation (#7211)", () => {
