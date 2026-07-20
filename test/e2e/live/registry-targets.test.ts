@@ -42,7 +42,7 @@ const REGISTRY_TARGET_PHASES = [
   "resolve the target contract and run plan",
   "confirm the target environment is ready",
   "onboard the registry-selected sandbox",
-  "exercise the declared lifecycle profile",
+  "apply the target lifecycle policy",
   "inspect the expected sandbox state",
   "run target-specific cloud checks",
   "record target completion evidence",
@@ -113,8 +113,8 @@ for (const target of listTargets()) {
       // LifecyclePhaseFixture before state validation.
       let lifecycleResult: Awaited<ReturnType<typeof lifecycle.simulate>> | undefined;
       const profile = target.environment.lifecycle;
+      progress.phase("apply the target lifecycle policy");
       if (profile) {
-        progress.phase("exercise the declared lifecycle profile");
         if (!isLifecycleProfile(profile)) {
           throw new Error(
             `target '${target.id}' declares lifecycle '${profile}' which is not ` +

@@ -426,7 +426,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("issue-2478: gateway recovery preserves guard chain and avoids crash loop", {
+test("gateway recovery preserves guard chain and avoids crash loop (#2478)", {
   meta: {
     e2ePhases: [
       "start the compatible endpoint and confirm host readiness",
