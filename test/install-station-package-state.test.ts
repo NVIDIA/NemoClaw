@@ -185,7 +185,6 @@ assert_no_package_mismatches
 
   it.each([
     "unattended-upgr",
-    "packagekitd",
     "apt.systemd.dai",
   ])("detects the Linux package-manager process name %s", (processName) => {
     const { result, output } = runSourced(
@@ -200,6 +199,47 @@ check_package_managers_idle test
 
     expect(result.status, output).not.toBe(0);
     expect(output).toContain(`4242 ${processName}`);
+    expect(output).toMatch(/package-manager process is active/);
+  });
+
+  it("allows an idle PackageKit daemon on generic Ubuntu", () => {
+    const { result, output } = runSourced(
+      `
+STATION_HOST_PROFILE=generic-ubuntu
+ps() { printf '4242 packagekitd\n'; }
+lslocks() { :; }
+check_package_managers_idle test
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("package_manager=idle phase=test");
+  });
+
+  it("rejects PackageKit when it holds an APT lock", () => {
+    const { result, output } = runSourced(`
+STATION_HOST_PROFILE=generic-ubuntu
+MODE='--apply'
+ps() { printf '4242 packagekitd\n'; }
+lslocks() { printf '4242 packagekitd /var/lib/apt/lists/lock\n'; }
+sudo() { if [[ "$1" == "-n" ]]; then shift; fi; "$@"; }
+check_package_managers_idle test
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("4242 packagekitd /var/lib/apt/lists/lock");
+    expect(output).toMatch(/APT or dpkg lock is active/);
+  });
+
+  it("keeps PackageKit process detection fail-closed outside generic Ubuntu", () => {
+    const { result, output } = runSourced(`
+STATION_HOST_PROFILE=colossus-baseos
+ps() { printf '4242 packagekitd\n'; }
+check_package_managers_idle test
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("4242 packagekitd");
     expect(output).toMatch(/package-manager process is active/);
   });
 

@@ -825,8 +825,14 @@ package_manager_lock_inventory() {
 }
 
 check_package_managers_idle() {
-  local phase=${1:-Station preflight} active locks
-  active="$(ps -eo pid=,comm= | awk '$2 ~ /^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|packagekitd|unattended-upgr|unattended-upgrade)$/ {print}')"
+  local phase=${1:-Station preflight} active locks process_pattern
+  process_pattern='^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|unattended-upgr|unattended-upgrade)$'
+  # Ubuntu keeps packagekitd resident after APT refreshes; its tracked lock state
+  # determines whether it is performing package work.
+  if [[ "$STATION_HOST_PROFILE" != "generic-ubuntu" ]]; then
+    process_pattern='^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|packagekitd|unattended-upgr|unattended-upgrade)$'
+  fi
+  active="$(ps -eo pid=,comm= | awk -v pattern="$process_pattern" '$2 ~ pattern {print}')"
   [[ -z "$active" ]] || fatal "A package-manager process is active during ${phase}: ${active}"
   if [[ "$STATION_HOST_PROFILE" == "generic-ubuntu" ]]; then
     locks="$(package_manager_lock_inventory)" \
