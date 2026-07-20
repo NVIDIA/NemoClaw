@@ -32,7 +32,7 @@ root-required WSL contracts run only on shard 1.
 The sandbox image workflow builds the Hermes production image in a dedicated
 30-minute producer job with a runner-OS-and-architecture-scoped GitHub Actions
 Buildx cache. The build loads the image locally without pushing it, validates
-the image boundary, and uploads a one-day image artifact. The 75-minute Hermes
+the image boundary, and uploads a one-day image artifact. The 90-minute Hermes
 test job and the state-directory metadata job consume that same artifact, so
 tests do not rebuild the image. Within the Hermes test job, the secret-boundary
 and root-entrypoint steps have 45- and 30-minute budgets respectively.

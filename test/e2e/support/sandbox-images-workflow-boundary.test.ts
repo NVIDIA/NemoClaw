@@ -249,7 +249,7 @@ describe("sandbox image workflow boundary", () => {
     const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
     const hermes = imageWorkflow.jobs["test-hermes-sandbox-image"];
     producer["timeout-minutes"] = 45;
-    hermes["timeout-minutes"] = 90;
+    hermes["timeout-minutes"] = 75;
     for (const stepName of ["Set up Node", "Install root dependencies"]) {
       hermes.steps!.push({ ...hermes.steps!.find((step) => step.name === stepName)! });
       producer.steps!.push({ ...hermes.steps!.find((step) => step.name === stepName)! });
@@ -263,7 +263,7 @@ describe("sandbox image workflow boundary", () => {
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
         "Hermes image producer must retain its 30-minute budget",
-        "Hermes image test consumer must retain its 75-minute budget",
+        "Hermes image test consumer must retain its 90-minute budget",
         "build-hermes-sandbox-image must not install Node dependencies",
         "test-hermes-sandbox-image must run 'Set up Node' exactly once",
         "test-hermes-sandbox-image must run 'Install root dependencies' exactly once",

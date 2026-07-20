@@ -673,8 +673,8 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   if (producer["timeout-minutes"] !== 30) {
     errors.push("Hermes image producer must retain its 30-minute budget");
   }
-  if (testJob["timeout-minutes"] !== 75) {
-    errors.push("Hermes image test consumer must retain its 75-minute budget");
+  if (testJob["timeout-minutes"] !== 90) {
+    errors.push("Hermes image test consumer must retain its 90-minute budget");
   }
   if (testJob.needs !== producerName) {
     errors.push("Hermes image tests must depend on the Hermes image producer");

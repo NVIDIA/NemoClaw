@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   evaluateBrevProvisioningState,
   observeBrevProvisioningProgress,
+  parseBrevJsonInventory,
+  parseBrevProvisioningAttempts,
 } from "../tools/e2e/brev-provisioning.mts";
 
 describe("Brev provisioning state", () => {
@@ -88,6 +90,40 @@ describe("Brev provisioning state", () => {
       }),
     ).toThrow(
       'Brev reports terminal status FAILED for instance "pr-42". Last SSH error: connection refused',
+    );
+  });
+
+  it.each([
+    undefined,
+    "",
+    "0",
+    "-1",
+    "1.5",
+    "NaN",
+    "Infinity",
+    "invalid",
+  ])("uses two provisioning attempts for invalid value %s", (value) => {
+    expect(parseBrevProvisioningAttempts(value)).toBe(2);
+  });
+
+  it.each([
+    ["1", 1],
+    ["2", 2],
+    ["5", 5],
+  ])("accepts positive integer provisioning attempt value %s", (value, expected) => {
+    expect(parseBrevProvisioningAttempts(value)).toBe(expected);
+  });
+
+  it("parses recognized Brev JSON inventory shapes", () => {
+    expect(parseBrevJsonInventory([{ workspaceName: "pr-42", state: "starting" }])).toEqual([
+      { name: "pr-42", status: "STARTING" },
+    ]);
+    expect(parseBrevJsonInventory({ workspaces: [] })).toEqual([]);
+  });
+
+  it("rejects unrecognized Brev JSON inventory shapes", () => {
+    expect(() => parseBrevJsonInventory({})).toThrow(
+      "Brev JSON inventory has an unrecognized shape",
     );
   });
 });

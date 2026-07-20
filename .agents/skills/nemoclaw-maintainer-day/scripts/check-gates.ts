@@ -391,7 +391,13 @@ function fetchE2eCoordinationEvidence(
   }
 
   const externalId = `nemoclaw-pr-e2e:v2:${exactDiff.number}:${exactDiff.headSha}:${exactDiff.baseSha}`;
-  const exactChecks = checkRuns.filter((check) => check.external_id === externalId);
+  const currentExactChecks = checkRuns.filter(
+    (check) => check.name === "E2E / PR Gate" && check.external_id === externalId,
+  );
+  const formerExactChecks = checkRuns.filter(
+    (check) => check.name === "E2E / PR Gate Coordination" && check.external_id === externalId,
+  );
+  const exactChecks = currentExactChecks.length > 0 ? currentExactChecks : formerExactChecks;
   if (exactChecks.length !== 1) return { valid: false };
   const exact = exactChecks[0];
   const app = exact.app;

@@ -35,6 +35,44 @@ const TERMINAL_STATUSES = new Set([
   "TERMINATED",
 ]);
 
+function normalizeBrevProvisioningInstance(raw: unknown): BrevProvisioningInstance | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const name = record.name ?? record.workspaceName ?? record.instanceName ?? record.Name;
+  if (typeof name !== "string" || !name.trim()) return null;
+  const status = record.status ?? record.state ?? record.lifecycleStatus ?? record.Status;
+  return {
+    name: name.trim(),
+    status: typeof status === "string" ? status.trim().toUpperCase() : undefined,
+  };
+}
+
+/** Parse only documented Brev JSON inventory shapes, rejecting ambiguous objects. */
+export function parseBrevJsonInventory(raw: unknown): BrevProvisioningInstance[] {
+  let rawInstances: unknown[];
+  if (Array.isArray(raw)) {
+    rawInstances = raw;
+  } else if (
+    raw !== null &&
+    typeof raw === "object" &&
+    Array.isArray((raw as Record<string, unknown>).workspaces)
+  ) {
+    rawInstances = (raw as Record<string, unknown>).workspaces as unknown[];
+  } else {
+    throw new Error("Brev JSON inventory has an unrecognized shape");
+  }
+  return rawInstances.flatMap((instance) => {
+    const normalized = normalizeBrevProvisioningInstance(instance);
+    return normalized ? [normalized] : [];
+  });
+}
+
+/** Resolve a bounded retry count from BREV_PROVISION_ATTEMPTS. */
+export function parseBrevProvisioningAttempts(raw: string | undefined, fallback = 2): number {
+  const parsed = Number(raw ?? fallback);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export function evaluateBrevProvisioningState(
   instances: readonly BrevProvisioningInstance[],
   instanceName: string,

@@ -53,7 +53,11 @@ import { execFileSync, execSync, type StdioOptions, spawnSync } from "node:child
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { shellQuote } from "../../src/lib/core/shell-quote";
-import { observeBrevProvisioningProgress } from "../../tools/e2e/brev-provisioning.mts";
+import {
+  observeBrevProvisioningProgress,
+  parseBrevJsonInventory,
+  parseBrevProvisioningAttempts,
+} from "../../tools/e2e/brev-provisioning.mts";
 import {
   BREV_MESSAGING_COMPAT_TIMEOUT_MS,
   BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
@@ -139,18 +143,6 @@ function brev(...args: string[]): string {
 
 type BrevInstance = { name: string; status?: string };
 
-function normalizeBrevInstance(raw: unknown): BrevInstance | null {
-  if (!raw || typeof raw !== "object") return null;
-  const record = raw as Record<string, unknown>;
-  const name = record.name ?? record.workspaceName ?? record.instanceName ?? record.Name;
-  if (typeof name !== "string" || !name.trim()) return null;
-  const status = record.status ?? record.state ?? record.lifecycleStatus ?? record.Status;
-  return {
-    name: name.trim(),
-    status: typeof status === "string" ? status.trim().toUpperCase() : undefined,
-  };
-}
-
 function parseBrevListOutput(output: string): BrevInstance[] {
   const instances: BrevInstance[] = [];
   for (const line of output.split(/\r?\n/)) {
@@ -176,18 +168,9 @@ function inspectBrevInstances(): {
   instances: BrevInstance[];
 } {
   try {
-    const parsed = JSON.parse(brev("ls", "--json"));
-    const rawInstances = Array.isArray(parsed)
-      ? parsed
-      : Array.isArray(parsed?.workspaces)
-        ? parsed.workspaces
-        : [];
     return {
       authoritative: true,
-      instances: rawInstances.flatMap((instance: unknown) => {
-        const normalized = normalizeBrevInstance(instance);
-        return normalized ? [normalized] : [];
-      }),
+      instances: parseBrevJsonInventory(JSON.parse(brev("ls", "--json"))),
     };
   } catch {
     try {
@@ -558,8 +541,7 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
 }
 
 function createBrevInstanceAndWaitForSsh(elapsed: () => string): void {
-  const configuredAttempts = Number(process.env.BREV_PROVISION_ATTEMPTS || 2);
-  const maxAttempts = Math.max(1, Number.isFinite(configuredAttempts) ? configuredAttempts : 2);
+  const maxAttempts = parseBrevProvisioningAttempts(process.env.BREV_PROVISION_ATTEMPTS);
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (attempt > 1) {

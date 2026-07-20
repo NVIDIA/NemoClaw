@@ -171,7 +171,7 @@ test/e2e/
   additional root-required contracts on shard 1 only.
 - `.github/workflows/sandbox-images-and-e2e.yaml` builds the Hermes production
   image once in a 30-minute Buildx producer with a scoped GitHub Actions cache,
-  does not push it, and passes the one-day image artifact to the 75-minute
+  does not push it, and passes the one-day image artifact to the 90-minute
   Hermes test consumer and the state-directory metadata job.
 - `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and
   `e2e-live` for opt-in live target execution. The PR and `main` CLI coverage

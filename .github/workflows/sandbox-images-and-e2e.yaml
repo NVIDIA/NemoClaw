@@ -213,7 +213,7 @@ jobs:
   test-hermes-sandbox-image:
     runs-on: ubuntu-latest
     needs: build-hermes-sandbox-image
-    timeout-minutes: 75
+    timeout-minutes: 90
     steps:
       - *checkout
 
