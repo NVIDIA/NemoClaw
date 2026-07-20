@@ -92,6 +92,8 @@ apt-get() {
 require_docker_restart_quiescence() { printf 'RECHECK_DOCKER_RESTART %s\n' "$1"; }
 package_state() { printf 'missing\n'; }
 package_is_exact() { return 0; }
+assert_package_transaction_ready() { printf 'PACKAGE_TRANSACTION_READY %s\n' "$1"; }
+check_dpkg_database_health() { printf 'DPKG_AUDIT_CLEAN\n'; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
@@ -162,6 +164,8 @@ package_state() {
   if [[ "$1" == '${retainedSpec}' ]]; then printf 'exact\n'; else printf 'missing\n'; fi
 }
 package_is_exact() { return 0; }
+assert_package_transaction_ready() { :; }
+check_dpkg_database_health() { :; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
@@ -215,6 +219,8 @@ package_state() {
 }
 installed_version() { if [[ "$1" == "libc6" ]]; then printf '2.39-0ubuntu8'; fi; }
 package_is_exact() { return 0; }
+assert_package_transaction_ready() { :; }
+check_dpkg_database_health() { :; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
