@@ -35,7 +35,13 @@ readonly DOCKER_VERSION="29.6.1"
 readonly TOOLKIT_VERSION="1.19.1"
 readonly FACTORY_DKMS_VERSION="3.0.11-1ubuntu13"
 readonly TARGET_DKMS_VERSION="1:3.4.0-1ubuntu1"
-readonly RETAINED_DKMS_VERSION="1:3.4.1-1ubuntu1"
+# NemoClaw DGX Station maintainers own this allowlist. The qualified tuple below
+# binds each retained revision to the complete generic-Ubuntu package contract.
+# Update both only after requalification; remove an entry when runtime
+# validation no longer passes. Any PACKAGE_SPECS change invalidates retention.
+readonly -a RETAINED_DKMS_VERSIONS=(
+  "1:3.4.1-1ubuntu1"
+)
 # Keep this as a plain Ubuntu image: NVIDIA Container Toolkit injects the host
 # driver utility when CDI or --gpus is requested. This intentionally exercises
 # the documented runtime contract instead of relying on a CUDA image payload:
@@ -51,6 +57,20 @@ DOCKER_QUERY_USES_SUDO=0
 
 readonly -a PACKAGE_SPECS=(
   "dkms=${TARGET_DKMS_VERSION}"
+  "nvidia-driver-pinning-610=610-2ubuntu1"
+  "nvidia-driver-open=610.43.02-1ubuntu1"
+  "containerd.io=2.2.6-1~ubuntu.24.04~noble"
+  "docker-buildx-plugin=0.35.0-1~ubuntu.24.04~noble"
+  "docker-ce=5:29.6.1-1~ubuntu.24.04~noble"
+  "docker-ce-cli=5:29.6.1-1~ubuntu.24.04~noble"
+  "libnvidia-container-tools=1.19.1-1"
+  "libnvidia-container1=1.19.1-1"
+  "nvidia-container-toolkit=1.19.1-1"
+  "nvidia-container-toolkit-base=1.19.1-1"
+)
+
+readonly -a RETAINED_DKMS_QUALIFIED_PACKAGE_SPECS=(
+  "dkms=1:3.4.0-1ubuntu1"
   "nvidia-driver-pinning-610=610-2ubuntu1"
   "nvidia-driver-open=610.43.02-1ubuntu1"
   "containerd.io=2.2.6-1~ubuntu.24.04~noble"
@@ -557,6 +577,23 @@ package_is_exact() {
   [[ "$actual" == "$expected" ]]
 }
 
+retained_dkms_policy_is_current() {
+  local index
+  ((${#PACKAGE_SPECS[@]} == ${#RETAINED_DKMS_QUALIFIED_PACKAGE_SPECS[@]})) || return 1
+  for index in "${!PACKAGE_SPECS[@]}"; do
+    [[ "${PACKAGE_SPECS[$index]}" == "${RETAINED_DKMS_QUALIFIED_PACKAGE_SPECS[$index]}" ]] || return 1
+  done
+}
+
+dkms_version_is_retained() {
+  local actual=$1 retained
+  retained_dkms_policy_is_current || return 1
+  for retained in "${RETAINED_DKMS_VERSIONS[@]}"; do
+    [[ "$actual" == "$retained" ]] && return 0
+  done
+  return 1
+}
+
 package_state() {
   local spec=$1
   local name expected actual
@@ -567,7 +604,7 @@ package_state() {
     printf 'missing\n'
   elif [[ "$actual" == "$expected" ]]; then
     printf 'exact\n'
-  elif [[ "$name" == "dkms" && "$actual" == "$RETAINED_DKMS_VERSION" && "$expected" == "$TARGET_DKMS_VERSION" ]]; then
+  elif [[ "$name" == "dkms" && "$expected" == "$TARGET_DKMS_VERSION" ]] && dkms_version_is_retained "$actual"; then
     printf 'retained-compatible\n'
   elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" && "$expected" == "$TARGET_DKMS_VERSION" ]]; then
     printf 'approved-transition\n'
@@ -1066,7 +1103,7 @@ print_package_status() {
       info "package=${name} status=missing expected=${expected}"
     elif [[ "$name" == "dkms" && "$actual" == "$FACTORY_DKMS_VERSION" ]]; then
       info "package=${name} status=approved_transition actual=${actual} expected=${expected}"
-    elif [[ "$name" == "dkms" && "$actual" == "$RETAINED_DKMS_VERSION" ]]; then
+    elif [[ "$name" == "dkms" && "$expected" == "$TARGET_DKMS_VERSION" ]] && dkms_version_is_retained "$actual"; then
       warn_retained_package_version "$spec"
     else
       warn "package=${name} status=mismatch actual=${actual} expected=${expected}"

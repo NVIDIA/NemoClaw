@@ -72,7 +72,7 @@ validate_apt_preinstall_plan "$HOME/targets" <<<"$APT_PLAN"
 }
 
 describe("DGX Station package transaction", () => {
-  it("warns and retains the qualified DKMS forward revision (#7211)", () => {
+  it("warns and retains the qualified DKMS forward revision for its package tuple (#7211)", () => {
     const { result, output } = runSourced(
       `
 installed_version() {
