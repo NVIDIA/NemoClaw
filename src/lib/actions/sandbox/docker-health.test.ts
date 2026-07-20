@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SandboxEntry } from "../../state/registry";
 import { getSandboxDockerHealth, getSandboxDockerRuntime } from "./docker-health";
 
@@ -243,12 +243,16 @@ describe("getSandboxDockerRuntime (#4495)", () => {
   });
 
   it("returns health 'none', paused false for non-docker-driver sandboxes", () => {
-    const deps = fixture({ driver: "kubernetes" });
+    const findLabeledSandboxContainers = vi.fn(() => {
+      throw new Error("Docker must not be queried for a non-Docker sandbox");
+    });
+    const deps = { ...fixture({ driver: "kubernetes" }), findLabeledSandboxContainers };
     expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
       health: "none",
       paused: false,
       containerName: null,
     });
+    expect(findLabeledSandboxContainers).not.toHaveBeenCalled();
   });
 
   it("returns health 'none', paused false when no container is found", () => {

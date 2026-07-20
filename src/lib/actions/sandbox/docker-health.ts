@@ -122,6 +122,13 @@ export function getSandboxDockerRuntime(
   depsOverride: Partial<ResolveDeps> = {},
 ): SandboxDockerRuntime {
   const deps: ResolveDeps = { ...defaultDeps, ...depsOverride };
+  try {
+    if (deps.getSandbox(sandboxName)?.openshellDriver !== "docker") {
+      return { health: "none", paused: false, containerName: null };
+    }
+  } catch {
+    return { health: "none", paused: false, containerName: null };
+  }
   let labeledContainers: ReturnType<typeof findLabeledSandboxContainers>;
   try {
     labeledContainers = deps.findLabeledSandboxContainers(sandboxName);
