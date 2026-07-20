@@ -243,6 +243,15 @@ function printNonReadySandboxPhaseGuidance({
     "  This usually happens when a process crash inside the sandbox prevented clean startup.",
   );
   console.log("");
+  if (phase === "Error" && dockerRuntime?.containerName) {
+    console.log(
+      `  Run \`${CLI_NAME} ${sandboxName} start\` to restart the crashed container and recover the sandbox with workspace state preserved.`,
+    );
+    console.log(
+      `  (\`${CLI_NAME} ${sandboxName} rebuild --yes\` recreates the sandbox instead, but its pre-rebuild backup cannot snapshot a stopped container, so start it first.)`,
+    );
+    return;
+  }
   console.log(
     `  Run \`${CLI_NAME} ${sandboxName} rebuild --yes\` to recreate the sandbox (--yes skips the confirmation prompt; workspace state will be preserved).`,
   );

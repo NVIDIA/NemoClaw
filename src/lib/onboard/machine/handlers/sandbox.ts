@@ -7,6 +7,7 @@ import {
   type GatewayRouteCompatibilityResult,
   isAdvisoryGatewayRouteConflict,
 } from "../../../inference/gateway-route-compatibility";
+import type { InferenceEndpointSource } from "../../../inference/selection";
 import {
   parseExplicitWebSearchProvider,
   type WebSearchConfig as SharedWebSearchConfig,
@@ -111,6 +112,8 @@ export interface SandboxStateOptions<
   authoritativeResumeConfig?: boolean;
   /** Internal rebuild tier that must govern create-time and resumed policy selection. */
   authoritativePolicyTier?: string | null;
+  /** Endpoint source to preserve during an authoritative rebuild. */
+  endpointSource?: InferenceEndpointSource | null;
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
@@ -343,6 +346,13 @@ function effectiveHermesToolGatewaysForWebSearch(
 
 function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.NEMOCLAW_RESOURCE_PROFILE || env.NEMOCLAW_CPU || env.NEMOCLAW_RAM);
+}
+
+function endpointSourceForCreateIntent(
+  fresh: boolean,
+  endpointSource: InferenceEndpointSource | null | undefined,
+): InferenceEndpointSource | null {
+  return fresh ? "onboard" : (endpointSource ?? null);
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
@@ -1137,6 +1147,10 @@ class SandboxStateFlow<
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
+      endpointSource: endpointSourceForCreateIntent(
+        this.options.fresh,
+        this.options.endpointSource,
+      ),
       ...(state.session?.observabilityRequestedExplicitly === true
         ? { observabilityRequestedExplicitly: true as const }
         : {}),
@@ -1232,6 +1246,7 @@ class SandboxStateFlow<
         model: this.options.model,
         provider: this.options.provider,
         endpointUrl: this.options.endpointUrl,
+        endpointSource: createIntent.endpointSource ?? null,
         credentialEnv: this.options.credentialEnv,
         nimContainer: this.options.nimContainer,
         preferredInferenceApi: this.options.preferredInferenceApi,
