@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { StdioOptions } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -475,7 +476,11 @@ export type GatewayRecoveryMode = "observe" | "recover";
 
 export async function getReconciledSandboxGatewayState(
   sandboxName: string,
-  opts: { getState?: SandboxGatewayStateLookup; gatewayRecovery?: GatewayRecoveryMode } = {},
+  opts: {
+    getState?: SandboxGatewayStateLookup;
+    gatewayRecovery?: GatewayRecoveryMode;
+    gatewaySelectionStdio?: StdioOptions;
+  } = {},
 ): Promise<SandboxGatewayState> {
   const getState = opts.getState ?? getSandboxGatewayState;
   const gatewayRecovery: GatewayRecoveryMode = opts.gatewayRecovery ?? "recover";
@@ -487,7 +492,11 @@ export async function getReconciledSandboxGatewayState(
     // never trust that process-global state for this lookup: another CLI can
     // change it immediately after selection. The explicit gateway argument
     // below is the per-subprocess authority for the status RPC.
-    const selection = selectSandboxOwningGateway(sandboxName);
+    const selection = selectSandboxOwningGateway(
+      sandboxName,
+      undefined,
+      opts.gatewaySelectionStdio,
+    );
     if (selection.outcome !== "selected") {
       const lifecycle = getNamedGatewayLifecycleState(targetGatewayName);
       return {
@@ -516,7 +525,10 @@ export async function getReconciledSandboxGatewayState(
       return lookup;
     }
     const recoveryGatewayName = targetGatewayName ?? getSandboxTargetGatewayName();
-    const recovery = await recoverNamedGatewayRuntime({ gatewayName: recoveryGatewayName });
+    const recovery = await recoverNamedGatewayRuntime({
+      gatewayName: recoveryGatewayName,
+      gatewaySelectionStdio: opts.gatewaySelectionStdio,
+    });
     if (recovery.recovered) {
       const retried = await getState(sandboxName, recoveryGatewayName);
       if (retried.state === "present" || retried.state === "missing") {

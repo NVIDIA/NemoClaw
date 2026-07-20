@@ -279,6 +279,7 @@ export async function collectSandboxStatusSnapshot(
     ((name: string) =>
       getReconciledSandboxGatewayState(name, {
         getState: getSandboxGatewayStateForStatus,
+        gatewaySelectionStdio: ["ignore", "pipe", "pipe"],
       }));
   const getSandbox = opts.deps?.getSandbox ?? registry.getSandbox;
   const sb = getSandbox(sandboxName);

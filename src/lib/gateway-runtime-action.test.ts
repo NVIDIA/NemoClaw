@@ -146,6 +146,7 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
 
       const result = await gatewayRuntime.recoverNamedGatewayRuntime({
         gatewayName: "nemoclaw-8090",
+        gatewaySelectionStdio: ["ignore", "pipe", "pipe"],
       });
 
       const selectCalls = runSpy.mock.calls
@@ -153,6 +154,10 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
         .filter((args: string[]) => args[0] === "gateway" && args[1] === "select");
       expect(selectCalls).toContainEqual(["gateway", "select", "nemoclaw-8090"]);
       expect(selectCalls.every((args: string[]) => args[2] === "nemoclaw-8090")).toBe(true);
+      expect(runSpy).toHaveBeenCalledWith(
+        ["gateway", "select", "nemoclaw-8090"],
+        expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+      );
       expect(result.recovered).toBe(true);
       expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
     });

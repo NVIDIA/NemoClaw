@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { StdioOptions } from "node:child_process";
+
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { getKnownSandboxTargetGatewayName } from "./gateway-target";
@@ -15,11 +17,13 @@ export type GatewaySelectResult =
 export function selectSandboxOwningGateway(
   sandboxName: string,
   run: GatewaySelectRunner = runOpenshell,
+  stdio?: StdioOptions,
 ): GatewaySelectResult {
   const targetGatewayName = getKnownSandboxTargetGatewayName(sandboxName);
   if (!targetGatewayName) return { outcome: "unregistered", gatewayName: null };
   const result = run(["gateway", "select", targetGatewayName], {
     ignoreError: true,
+    stdio,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   if (result.error || result.status !== 0) {
