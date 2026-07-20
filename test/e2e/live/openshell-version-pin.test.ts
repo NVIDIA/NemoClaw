@@ -380,10 +380,10 @@ async function runVersionPinTarget(
     await artifacts.writeText("install-openshell.stderr", result.stderr ?? "");
     await artifacts.writeText("downloads.log", fs.readFileSync(downloadLog, "utf-8"));
 
-    enterInspectionPhase();
     // Assertion 1: installer-exits-zero — the happy path completes (no
     // "above the maximum" hard-fail before download).
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    enterInspectionPhase();
 
     // Assertion 2: download-log-contains-v0.0.85 — pinned release tag was
     // requested from the release host.
