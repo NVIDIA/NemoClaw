@@ -34,22 +34,18 @@ function createListenerFailureRecoveryHarness(targetPort: number) {
   const foreignPort = targetPort === 18789 ? 19000 : 18789;
   let targetStopCount = 0;
   const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
-    if (args.join(" ") === `forward stop ${targetPort} ${sandboxName}`) {
-      targetStopCount += 1;
-    }
+    targetStopCount += Number(args.join(" ") === `forward stop ${targetPort} ${sandboxName}`);
     return { status: 0 };
   });
-  const runCaptureOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
-    if (args.join(" ") !== "forward list") return "";
-    const forwards = [
-      "SANDBOX BIND PORT PID STATUS",
-      `other-sandbox 127.0.0.1 ${foreignPort} 42000 running`,
-    ];
-    if (targetStopCount >= 2) {
-      forwards.push(`${sandboxName} 127.0.0.1 ${targetPort} 42001 running`);
-    }
-    return forwards.join("\n");
-  });
+  const runCaptureOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) =>
+    args.join(" ") === "forward list"
+      ? [
+          "SANDBOX BIND PORT PID STATUS",
+          `other-sandbox 127.0.0.1 ${foreignPort} 42000 running`,
+          ...(targetStopCount >= 2 ? [`${sandboxName} 127.0.0.1 ${targetPort} 42001 running`] : []),
+        ].join("\n")
+      : "",
+  );
   const sleep = vi.fn();
   const diagnostic = `local forward listener did not open on 127.0.0.1:${targetPort} within 10000ms\n`;
   const helpers = createOnboardDashboardHelpers({
