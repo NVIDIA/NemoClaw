@@ -497,10 +497,11 @@ function validateDockerArgs(args: readonly string[], label: string): string[] {
 }
 
 // Build the `docker run` argv for the long-lived vLLM inference container.
-// Exported for testing. `--restart unless-stopped` makes the container come
-// back after a host reboot or Docker daemon restart (#4886); without a restart
-// policy the container stays down after a reboot and `nemoclaw inference get`
-// fails until a full `nemoclaw onboard --fresh --gpu` recreates it.
+// Exported for testing. `--init` forwards signals and reaps child processes so
+// Docker can stop and restart the long-lived server cleanly. `--restart
+// unless-stopped` brings it back after a host reboot or Docker daemon restart
+// (#4886); without a restart policy the container stays down after a reboot and
+// `nemoclaw inference get` fails until onboarding recreates it.
 export function buildVllmRunArgs(
   profile: VllmProfile,
   model: VllmModelDef,
@@ -513,6 +514,7 @@ export function buildVllmRunArgs(
   const safeRunFlags = validateDockerArgs(runFlags, "vLLM docker run flags");
   return [
     "--pull=never",
+    "--init",
     "--restart",
     "unless-stopped",
     ...safeRunFlags,

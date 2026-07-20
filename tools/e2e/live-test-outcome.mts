@@ -3,7 +3,7 @@
 
 import path from "node:path";
 
-import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
+import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 
 export const LIVE_TEST_OUTCOME_FILE = "live-test-outcome.json";
 const OUTCOME_FILE_MAX_BYTES = 128;

@@ -64,6 +64,8 @@ export interface SandboxCreateIntent {
   readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
   /** Non-secret upstream endpoint metadata for managed image config generation. */
   readonly endpointUrl?: string | null;
+  /** Provenance for the endpoint recorded with the created sandbox. */
+  readonly endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
   /** Internal authoritative rebuild tier used before replacement registration completes. */
   readonly policyTier?: string | null;
   /** Gateway-level extra providers reconciled immediately before sandbox creation. */
@@ -76,6 +78,8 @@ export type OnboardOptions = {
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
   authoritativeResumeConfig?: boolean;
+  /** Internal endpoint provenance preserved across an authoritative rebuild. */
+  endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
   /** Internal authoritative rebuild target; never exposed as a public CLI option. */
   targetGatewayName?: string | null;
   /** Internal authoritative rebuild target; must match targetGatewayName. */

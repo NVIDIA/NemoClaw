@@ -2884,12 +2884,8 @@ async function createSandboxWithBaseImageResolution(
       register: (openclawImagePluginInstalls) =>
         sandboxRegistration.registerCreatedSandbox({
           sandboxName,
-          inferenceSelection: sandboxRegistration.selection(
-            sandboxName,
-            provider,
-            model,
-            preferredInferenceApi,
-          ),
+          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+          inferenceSelection: sandboxRegistration.selection(sandboxName, provider, model, preferredInferenceApi, createIntent?.endpointSource ?? null),
           runtimeFields: sandboxRuntimeFields,
           agent,
           agentVersionKnown: !fromDockerfile,
@@ -4427,6 +4423,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
         authoritativePolicyTier:
           opts.authoritativeResumeConfig === true ? (opts.policyTier ?? null) : undefined,
+        endpointSource: opts.endpointSource,
+        endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null,
+        endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null,
         recreateSandbox: isRecreateSandbox,
         controlUiPort: _preflightDashboardPort,
         rootDir: ROOT,

@@ -20,6 +20,7 @@ const registryRoute: RegistryInferenceRoute = {
   provider: target.provider,
   model: target.model,
   endpointUrl: "https://inference.example.test/v1",
+  endpointSource: null,
   preferredInferenceApi: "openai-completions",
   source: "registry",
 };
