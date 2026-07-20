@@ -35,6 +35,90 @@ describe("mergeOpenClawRestoredConfig", () => {
     );
   });
 
+  it("re-owns the agent primary model from the rebuild after a managed-model switch (#7210)", () => {
+    // #7210: the backup was captured before the switch (nano); the fresh rebuild
+    // reflects the new managed model (qwen). The agent routes on
+    // agents.defaults.model.primary + the main list model, so both must follow
+    // the fresh rebuild, while durable agent config and intentional per-agent
+    // pins stay from the backup.
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: {
+            model: { primary: "inference/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8" },
+            thinkingDefault: "off",
+          },
+          list: [
+            { id: "main", model: "inference/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8", default: true },
+            { id: "researcher", model: "inference/pinned-by-user" },
+          ],
+        },
+        customAgents: { researcher: { prompt: "be thorough" } },
+      },
+      {
+        agents: {
+          defaults: { model: { primary: "inference/Qwen/Qwen3.6-27B-FP8" } },
+        },
+      },
+    ) as {
+      agents: {
+        defaults: { model: Record<string, unknown>; thinkingDefault: unknown };
+        list: Record<string, unknown>[];
+      };
+      customAgents: unknown;
+    };
+
+    // Fresh rebuild owns the primary routing reference and the main agent model.
+    expect(merged.agents.defaults.model).toEqual({ primary: "inference/Qwen/Qwen3.6-27B-FP8" });
+    expect(merged.agents.list[0]).toEqual({
+      id: "main",
+      model: "inference/Qwen/Qwen3.6-27B-FP8",
+      default: true,
+    });
+    // Durable backup agent config is still inherited.
+    expect(merged.agents.defaults.thinkingDefault).toBe("off");
+    expect(merged.customAgents).toEqual({ researcher: { prompt: "be thorough" } });
+    // An intentional non-default per-agent pin is NOT touched.
+    expect(merged.agents.list[1]).toEqual({ id: "researcher", model: "inference/pinned-by-user" });
+  });
+
+  it("leaves backup agent routing untouched when the rebuild carries no agent primary (#7210)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: { model: { primary: "inference/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8" } },
+          list: [{ id: "main", model: "inference/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8" }],
+        },
+      },
+      { gateway: { auth: { token: "fresh" } } },
+    ) as { agents: { defaults: { model: { primary: string } }; list: { model: string }[] } };
+
+    expect(merged.agents.defaults.model.primary).toBe(
+      "inference/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8",
+    );
+    expect(merged.agents.list[0].model).toBe("inference/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8");
+  });
+
+  it("updates the first default agent with a string model when no main agent exists (#7210)", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        agents: {
+          defaults: { model: { primary: "inference/stale" } },
+          list: [
+            { id: "invalid-default", default: true, model: { primary: "inference/stale" } },
+            { id: "valid-default", default: true, model: "inference/stale" },
+          ],
+        },
+      },
+      { agents: { defaults: { model: { primary: "inference/fresh" } } } },
+    ) as { agents: { list: { id: string; model: unknown }[] } };
+
+    expect(merged.agents.list).toEqual([
+      { id: "invalid-default", default: true, model: { primary: "inference/stale" } },
+      { id: "valid-default", default: true, model: "inference/fresh" },
+    ]);
+  });
+
   it("keeps rebuilt runtime-owned config while restoring durable backup-only settings", () => {
     const merged = mergeOpenClawRestoredConfig(
       {
