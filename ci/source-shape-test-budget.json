@@ -132,11 +132,6 @@
       "category": "security"
     },
     {
-      "file": "test/e2e/support/exact-image-qualification-workflow.test.ts",
-      "test": "keeps exact-image Launchable qualification protected, reusable, and fail-closed",
-      "category": "security"
-    },
-    {
       "file": "test/e2e/live/hermes-e2e.test.ts",
       "test": "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
       "category": "security"

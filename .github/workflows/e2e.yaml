@@ -186,15 +186,224 @@ jobs:
           fi
 
   staging-brev-launchable:
-    name: Exact staging Brev Launchable
     needs: generate-matrix
-    # Repository owners enable this only after the protected environment,
-    # producer, standing Launchable, and Brev contract are ready.
-    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_QUALIFICATION_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
-    uses: ./.github/workflows/brev-launchable-qualification.yaml
-    with:
-      candidate_sha: ${{ github.sha }}
-      reason: E2E run ${{ github.run_id }} qualifying the exact checked-out NemoClaw candidate
+    if: ${{ contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,') || contains(format(',{0},', inputs.targets), ',staging-brev-launchable,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    environment:
+      name: approve-brev-launchable-e2e
+      deployment: false
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_TARGET_ID: staging-brev-launchable
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/staging-brev-launchable
+      CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+
+      # Keep only the credential-bearing step anchored. Cleanup mappings stay
+      # explicit because strict YAML decoders reject 100 or more aliases here.
+      - &dockerhub-auth
+        name: Authenticate to Docker Hub
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928
+        with:
+          auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && '1' || '0' }}
+          username: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_USERNAME || '' }}
+          token: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_TOKEN || '' }}
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - id: workspace
+        name: Create evidence workspace
+        run: |
+          set -euo pipefail
+          work_dir="$E2E_ARTIFACT_DIR"
+          mkdir -p "$work_dir"
+          chmod 700 "$work_dir"
+          printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
+
+      - id: image-build
+        name: Build or reuse the exact staging image
+        env:
+          IMAGE_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "::error::candidate SHA must be a lowercase full SHA"; exit 1; }
+          api=https://api.github.com/repos/brevdev/nemoclaw-image
+          producer_sha="$(curl --fail-with-body --silent --show-error --proto '=https' \
+            -H "Authorization: Bearer $IMAGE_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "$api/git/ref/heads/main" | jq -er .object.sha)"
+          response="$({
+            jq -n \
+              --arg ref main \
+              --arg sha "$CANDIDATE_SHA" \
+              '{ref:$ref,inputs:{nemoclaw_ref:$sha},return_run_details:true}'
+          } | curl --fail-with-body --silent --show-error --proto '=https' \
+            -X POST \
+            -H "Authorization: Bearer $IMAGE_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            -H 'Content-Type: application/json' \
+            --data-binary @- \
+            "$api/actions/workflows/build-on-push.yml/dispatches")"
+          run_id="$(jq -er '.workflow_run_id | tostring' <<< "$response")"
+          run_url="$(jq -er .html_url <<< "$response")"
+          jq -n \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg producerSha "$producer_sha" \
+            --arg runId "$run_id" \
+            --arg runUrl "$run_url" \
+            '{candidateSha:$candidateSha,producerSha:$producerSha,runId:$runId,runUrl:$runUrl,status:"dispatched"}' \
+            > "$WORK_DIR/image-build.json"
+          printf 'producer_sha=%s\nrun_id=%s\nrun_url=%s\n' \
+            "$producer_sha" "$run_id" "$run_url" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the exact image build
+        env:
+          IMAGE_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+          PRODUCER_SHA: ${{ steps.image-build.outputs.producer_sha }}
+          RUN_ID: ${{ steps.image-build.outputs.run_id }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
+        run: |
+          set -euo pipefail
+          api=https://api.github.com/repos/brevdev/nemoclaw-image
+          deadline=$((SECONDS + 5400))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            run="$(curl --fail-with-body --silent --show-error --proto '=https' \
+              -H "Authorization: Bearer $IMAGE_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "$api/actions/runs/$RUN_ID")"
+            jq -e \
+              --arg id "$RUN_ID" \
+              --arg sha "$PRODUCER_SHA" '
+                (.id | tostring) == $id
+                and .head_sha == $sha
+                and .event == "workflow_dispatch"
+                and .path == ".github/workflows/build-on-push.yml"
+                and .run_attempt == 1
+              ' <<< "$run" >/dev/null \
+              || { echo "::error::image build identity changed"; exit 1; }
+            status="$(jq -r .status <<< "$run")"
+            if [ "$status" = completed ]; then
+              conclusion="$(jq -r .conclusion <<< "$run")"
+              jq --arg status "$status" --arg conclusion "$conclusion" \
+                '.status=$status | .conclusion=$conclusion' \
+                "$WORK_DIR/image-build.json" > "$WORK_DIR/image-build.tmp"
+              mv "$WORK_DIR/image-build.tmp" "$WORK_DIR/image-build.json"
+              [ "$conclusion" = success ] \
+                || { echo "::error::image build completed with $conclusion"; exit 1; }
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::image build did not complete within 90 minutes"
+          exit 1
+
+      - name: Install pinned Brev CLI
+        env:
+          BREV_CLI_SHA256: 5a6e70374db9be33f85f299161733b4a8409840d47638c781429b96e8d53704f
+          BREV_CLI_VERSION: 0.6.330
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/brev-cli.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$BREV_CLI_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "${RUNNER_TEMP}" brev
+          install -Dm 0755 "${RUNNER_TEMP}/brev" "${RUNNER_TEMP}/bin/brev"
+          printf '%s\n' "${RUNNER_TEMP}/bin" >> "$GITHUB_PATH"
+
+      - name: Authenticate Brev CLI
+        env:
+          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+        run: |
+          set -euo pipefail
+          brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
+          brev ls --json | jq -e '.workspaces | type == "array"' >/dev/null
+
+      - id: brev-workspace
+        name: Choose workspace name
+        run: |
+          set -euo pipefail
+          instance_name="nclaw-e2e-${CANDIDATE_SHA:0:8}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf 'instance_name=%s\n' "$instance_name" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the staging Launchable
+        env:
+          BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
+          INSTANCE_NAME: ${{ steps.brev-workspace.outputs.instance_name }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
+        run: tools/e2e/brev-launchable-runtime.sh deploy
+
+      - name: Run full E2E against the baked image
+        env:
+          INSTANCE_NAME: ${{ steps.brev-workspace.outputs.instance_name }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
+        run: tools/e2e/brev-launchable-runtime.sh run
+
+      - name: Redact the runtime log
+        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
+        run: |
+          set -euo pipefail
+          log="$WORK_DIR/brev-launchable-e2e.log"
+          if [ -f "$log" ] && [ -n "$NVIDIA_INFERENCE_API_KEY" ]; then
+            sed "s|${NVIDIA_INFERENCE_API_KEY//|/\\|}|[REDACTED]|g" "$log" > "$log.redacted"
+            mv "$log.redacted" "$log"
+          fi
+
+      - name: Delete the Brev workspace
+        if: ${{ always() && steps.brev-workspace.outputs.instance_name != '' }}
+        env:
+          INSTANCE_NAME: ${{ steps.brev-workspace.outputs.instance_name }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
+        run: tools/e2e/brev-launchable-runtime.sh cleanup
+
+      - name: Cancel an unfinished image build
+        if: ${{ always() && steps.image-build.outputs.run_id != '' }}
+        continue-on-error: true
+        env:
+          IMAGE_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
+          RUN_ID: ${{ steps.image-build.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          api=https://api.github.com/repos/brevdev/nemoclaw-image
+          status="$(curl --fail-with-body --silent --show-error --proto '=https' \
+            -H "Authorization: Bearer $IMAGE_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "$api/actions/runs/$RUN_ID" | jq -er .status)"
+          [ "$status" = completed ] \
+            || curl --fail-with-body --silent --show-error --proto '=https' \
+              -X POST \
+              -H "Authorization: Bearer $IMAGE_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "$api/actions/runs/$RUN_ID/cancel"
+
+      - name: Upload Brev Launchable E2E evidence
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   live:
     needs: generate-matrix
@@ -216,15 +425,7 @@ jobs:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
-      # Keep only the credential-bearing step anchored. Cleanup mappings stay
-      # explicit because strict YAML decoders reject 100 or more aliases here.
-      - &dockerhub-auth
-        name: Authenticate to Docker Hub
-        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928
-        with:
-          auth-required: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && '1' || '0' }}
-          username: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == '' && secrets.DOCKERHUB_TOKEN || '' }}
+      - *dockerhub-auth
 
       - name: Configure live E2E trace directory
         env:

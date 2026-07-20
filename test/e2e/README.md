@@ -85,50 +85,23 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
-## Exact staging Brev Launchable qualification
+## Brev Launchable E2E
 
-The exact-image staging Launchable lane is inactive by default. Only scheduled
-and manual `e2e.yaml` runs on `main` with an empty `checkout_sha` may call it,
-and only when the repository variable
-`NEMOCLAW_BREV_LAUNCHABLE_QUALIFICATION_ENABLED` is exactly `true`. PR-gate
-runs cannot enter this credentialed lane. A direct dispatch of
-`brev-launchable-qualification.yaml` applies the same repository, ref, and
-activation checks and requires `candidate_sha` to equal the trusted current
-`main` workflow SHA. While inactive, it fails before checkout, environment
-approval, credential access, or external API calls.
-The skipped `staging-brev-launchable` job in a routine E2E run is an inactive
-status, not successful qualification evidence.
+Select `jobs=staging-brev-launchable` in a trusted manual E2E dispatch. The
+`approve-brev-launchable-e2e` environment protects the image-builder, Brev,
+and inference credentials used by this cost-bearing lane. Configure
+`NEMOCLAW_STAGING_LAUNCHABLE_ID` as the standing staging Launchable and provide
+the `NEMOCLAW_IMAGE_DISPATCH_TOKEN`, `BREV_API_KEY`, `BREV_ORG_ID`, and
+`NVIDIA_INFERENCE_API_KEY` repository secrets before approving the run.
 
-Before setting the activation variable, repository owners must:
-
-- create and protect the `approve-brev-launchable-qualification` environment
-  for `main`, with the required reviewers;
-- configure that environment with `NEMOCLAW_IMAGE_DISPATCH_TOKEN`,
-  `BREV_API_KEY`, `BREV_ORG_ID`, and `NVIDIA_INFERENCE_API_KEY`;
-- set the environment or repository variable `NEMOCLAW_STAGING_LAUNCHABLE_ID`
-  to the standing staging Launchable that consumes the staging image family;
-  and
-- verify that the producer workflow and the Brev Launchable contract are ready
-  for automated image builds, provisioning, validation, and cleanup.
-
-Set `NEMOCLAW_BREV_LAUNCHABLE_QUALIFICATION_ENABLED=true` only after those
-conditions are met. Remove the variable, or set it to any value other than
-`true`, to keep routine E2E runs from starting this cost-bearing lane.
-
-The runtime target is `brev-launchable-cloud-openclaw`. After proving the
-workspace booted the accepted image and exact NemoClaw SHA, the lane runs the
-existing `test/e2e/live/full-e2e.test.ts` suite in `preinstalled-launchable`
-setup mode. That mode onboards through the baked `brev-quickstart` entry point
-and reuses the suite's CLI, policy, real first-agent-turn, hosted-inference,
-`inference.local`, security-posture, logs, and cleanup assertions. Before the
-trusted harness runs, the runtime rejects tracked checkout drift and unsafe
-image-derived model IDs. Copied evidence must contain exactly the canonical
-passing target result, stay within fixed file and byte limits, contain no
-symlinks or special files, and produce a recorded SHA-256 digest. Recursive
-redaction must succeed before evidence can be uploaded. The lane fails if the
-baked checkout does not already contain the pinned Vitest harness; it does not
-rsync source, run `install.sh`, install packages, rebuild, or relink the
-product under test.
+The job asks the existing image workflow to build or reuse the staging CPU
+image for the exact selected NemoClaw SHA, deploys the configured standing
+Launchable, and verifies the workspace's baked checkout and actual GCP boot
+image labels before testing. It then runs
+`test/e2e/live/full-e2e.test.ts` in `preinstalled-launchable` mode through the
+baked `brev-quickstart` entry point and always deletes the workspace. The job
+does not rsync source, invoke `install.sh`, install dependencies, rebuild, or
+relink NemoClaw.
 
 ## PR E2E gate
 

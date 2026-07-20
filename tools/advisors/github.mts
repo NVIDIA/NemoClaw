@@ -10,8 +10,6 @@ export type GitHubComment = {
 export type GitHubRequestOptions = {
   method?: string;
   body?: unknown;
-  apiVersion?: string;
-  expectedStatus?: number;
   userAgent?: string;
   signal?: AbortSignal;
 };
@@ -93,17 +91,14 @@ export async function githubApi<T>(
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "X-GitHub-Api-Version": options.apiVersion ?? "2022-11-28",
+      "X-GitHub-Api-Version": "2022-11-28",
       ...(options.userAgent ? { "User-Agent": options.userAgent } : {}),
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
     signal: options.signal,
   });
   const text = await response.text();
-  if (
-    !response.ok ||
-    (options.expectedStatus !== undefined && response.status !== options.expectedStatus)
-  ) {
+  if (!response.ok) {
     throw new Error(`GitHub API ${apiPath} failed: ${response.status} ${text}`);
   }
   return (text ? JSON.parse(text) : undefined) as T;
