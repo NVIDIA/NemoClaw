@@ -21,7 +21,8 @@ Approve a PR only when all hard gates pass. See [PR-REVIEW-PRIORITIES.md](PR-REV
 4. **PR state did not change** — Require the PR to remain open and not draft.
    During evaluation, its title, body, PR SHA, base branch, base SHA, mergeability, and merge state must not change.
    Require `MERGEABLE` and a merge state that the gate permits.
-5. **No major CodeRabbit findings** — Ignore style comments. Block correctness and security defects.
+5. **No major CodeRabbit findings** — Confirm that there is no unresolved correctness or security issue.
+   Ignore style comments. Block correctness and security defects.
 6. **Risky code has tests** — See [RISKY-AREAS.md](RISKY-AREAS.md). Tests can be new or existing.
 
 ## Step 1: Run the gate checker

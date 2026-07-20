@@ -131,6 +131,8 @@ For each judgment, include evidence, the inference, and the score.
 
 ## Limits
 
+Run `nemoclaw-maintainer-cross-issue-sweep` separately when you need related-issue evidence.
+
 This skill does not:
 
 - run PR code against adversarial inputs

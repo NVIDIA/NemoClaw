@@ -83,7 +83,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(release).toContain('--event push --commit "$RELEASE_SHA"');
     expect(release).toContain("Expected exactly one release-latest-tag push run");
     expect(morning).toContain("post-tag housekeeping was interrupted");
-    expect(priorities).toContain("automatically carry stragglers to the next patch");
+    expect(priorities).toContain("Move open items to the next patch label");
     expect(priorities).toContain("delete the released label");
     expect(policy).toContain("automatically move every open straggler to the next patch label");
     expect(policy).toContain("delete the released version label");
@@ -160,7 +160,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain("tag the confirmed release commit with `vX.Y.Z`");
     expect(evening).not.toContain("tag `main`");
     expect(dailyFlow).toContain("freeze the candidate SHA and review every E2E test");
-    expect(priorities).toContain("collect the E2E evidence or itemized maintainer exceptions");
+    expect(priorities).toContain("Record the release SHA and required E2E evidence");
   });
 
   it("runs release-prep docs before generating the final release plan", () => {
@@ -196,7 +196,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(releaseNotes).toContain("does not replace or create that canonical entry");
     expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");
     expect(policy).toContain("The pre-tag release-note docs PR must create or update");
-    expect(priorities).toContain("pre-tag release-note docs PR containing");
+    expect(priorities).toContain("the pre-tag changelog PR contains");
     expect(skillsGuide).toContain("create the canonical `docs/changelog/YYYY-MM-DD.mdx` entry");
     expect(agents).toContain("a PR that updates ordinary pages without the dated changelog entry");
     expect(docsAgents).toContain("Every pre-tag release-note docs PR must create or update");
@@ -208,8 +208,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     const sweep = read(".agents/skills/nemoclaw-maintainer-cross-issue-sweep/SKILL.md");
     const comparator = read(".agents/skills/nemoclaw-maintainer-pr-comparator/SKILL.md");
 
-    expect(sweep).toContain("The comparator does not call it");
-    expect(comparator).toContain("Cross-issue regression sweep (separate skill)");
+    expect(sweep).toContain("The comparator does not run this skill or use its findings");
+    expect(comparator).toContain("Run `nemoclaw-maintainer-cross-issue-sweep` separately");
   });
 
   it("uses the merge gate's unresolved-issue threshold for ready-now PRs", () => {
@@ -239,7 +239,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
       ".agents/skills/nemoclaw-maintainer-pr-comparator/scripts/collect-gates.sh",
     );
 
-    expect(mergeGate).toContain("every PR commit appears as `Verified` in GitHub");
+    expect(mergeGate).toContain("Require every commit to appear as `Verified` in GitHub");
     expect(comparator).toContain("gate_contributor_compliance");
     expect(comparator).toContain(".commit.verification.verified");
   });

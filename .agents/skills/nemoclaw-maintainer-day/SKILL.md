@@ -34,7 +34,8 @@ The first script selects the target version. The second lists shipped and open i
 
 Select the first applicable action for an open item:
 
-1. **PR ready for approval** — CI passes, no conflicts or unresolved defects remain, and tests cover the change. Follow [MERGE-GATE.md](MERGE-GATE.md).
+1. **PR ready for approval** — CI passes, no conflicts remain, and tests cover the change.
+   Confirm that there is no unresolved correctness or security issue. Follow [MERGE-GATE.md](MERGE-GATE.md).
 2. **PR that needs a small fix** — Follow [SALVAGE-PR.md](SALVAGE-PR.md).
 3. **Security item** — The item touches a risky area. Follow [SECURITY-SWEEP.md](SECURITY-SWEEP.md).
 4. **Test gap** — Risky code does not have sufficient tests. Follow [TEST-GAPS.md](TEST-GAPS.md).
