@@ -48,6 +48,9 @@ DOCKER_CONTAINER_BASELINE=""
 DOCKER_CONTAINER_BASELINE_TOTAL=0
 DOCKER_QUERY_OUTPUT=""
 DOCKER_QUERY_USES_SUDO=0
+readonly PACKAGEKIT_UNIT="packagekit.service"
+PACKAGEKIT_RUNTIME_MASK_OWNED=0
+PACKAGEKIT_WAS_ACTIVE=0
 
 readonly -a PACKAGE_SPECS=(
   "dkms=${TARGET_DKMS_VERSION}"
@@ -827,8 +830,8 @@ package_manager_lock_inventory() {
 check_package_managers_idle() {
   local phase=${1:-Station preflight} active locks process_pattern
   process_pattern='^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|unattended-upgr|unattended-upgrade)$'
-  # Ubuntu keeps packagekitd resident after APT refreshes; its tracked lock state
-  # determines whether it is performing package work.
+  # Ubuntu keeps packagekitd resident after APT refreshes. Generic apply mode
+  # quiesces it separately before the repository/package critical section.
   if [[ "$STATION_HOST_PROFILE" != "generic-ubuntu" ]]; then
     process_pattern='^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|packagekitd|unattended-upgr|unattended-upgrade)$'
   fi
@@ -840,6 +843,128 @@ check_package_managers_idle() {
     [[ -z "$locks" ]] || fatal "An APT or dpkg lock is active during ${phase}: ${locks}"
   fi
   info "package_manager=idle phase=${phase// /_}"
+}
+
+packagekit_unit_property() {
+  local property=$1
+  systemctl show "$PACKAGEKIT_UNIT" -p "$property" --value 2>/dev/null
+}
+
+restore_packagekit_after_transaction() {
+  local active_state restored=0
+  if ((PACKAGEKIT_RUNTIME_MASK_OWNED == 1)); then
+    if ! sudo systemctl unmask --runtime "$PACKAGEKIT_UNIT"; then
+      warn "Could not remove NemoClaw's runtime-only PackageKit mask"
+      return 1
+    fi
+    PACKAGEKIT_RUNTIME_MASK_OWNED=0
+    restored=1
+  fi
+
+  if ((PACKAGEKIT_WAS_ACTIVE == 1)); then
+    active_state="$(packagekit_unit_property ActiveState)" || {
+      warn "Could not inspect PackageKit while restoring its prior runtime state"
+      return 1
+    }
+    if [[ "$active_state" != "active" ]]; then
+      if ! sudo systemctl start "$PACKAGEKIT_UNIT"; then
+        warn "Could not restore the previously active PackageKit service"
+        return 1
+      fi
+    fi
+    PACKAGEKIT_WAS_ACTIVE=0
+    restored=1
+  fi
+  ((restored == 0)) || info "packagekit=runtime_state_restored"
+}
+
+quiesce_packagekit_for_transaction() {
+  local load_state unit_file_state active_state transaction_output transaction_type transaction_count transaction_paths
+  local attempt
+
+  [[ "$STATION_HOST_PROFILE" == "generic-ubuntu" && "$MODE" == "--apply" ]] || return 0
+  ((PACKAGEKIT_RUNTIME_MASK_OWNED == 0)) || fatal "PackageKit is already under NemoClaw transaction control"
+
+  load_state="$(packagekit_unit_property LoadState)" \
+    || fatal "Unable to inspect the PackageKit service before Station package preparation"
+  if [[ "$load_state" == "not-found" ]]; then
+    info "packagekit=not_installed"
+    return 0
+  fi
+  [[ "$load_state" == "loaded" ]] \
+    || fatal "PackageKit service has an unexpected load state: ${load_state}"
+
+  unit_file_state="$(packagekit_unit_property UnitFileState)" \
+    || fatal "Unable to inspect the PackageKit unit-file state"
+  active_state="$(packagekit_unit_property ActiveState)" \
+    || fatal "Unable to inspect the PackageKit runtime state"
+  case "$unit_file_state" in
+    masked | masked-runtime)
+      [[ "$active_state" == "inactive" ]] \
+        || fatal "PackageKit is ${active_state} despite its ${unit_file_state} unit state"
+      info "packagekit=already_quiesced state=${unit_file_state}"
+      return 0
+      ;;
+  esac
+
+  # A runtime-only mask prevents D-Bus from reactivating PackageKit after its
+  # idle daemon exits. It does not stop or cancel an existing transaction.
+  PACKAGEKIT_RUNTIME_MASK_OWNED=1
+  sudo systemctl mask --runtime "$PACKAGEKIT_UNIT" \
+    || fatal "Could not establish the runtime-only PackageKit exclusion boundary"
+  unit_file_state="$(packagekit_unit_property UnitFileState)" \
+    || fatal "Unable to verify the runtime-only PackageKit mask"
+  [[ "$unit_file_state" == "masked-runtime" ]] \
+    || fatal "PackageKit runtime mask did not take effect: ${unit_file_state}"
+
+  active_state="$(packagekit_unit_property ActiveState)" \
+    || fatal "Unable to inspect PackageKit after establishing its runtime mask"
+  case "$active_state" in
+    inactive) ;;
+    active)
+      PACKAGEKIT_WAS_ACTIVE=1
+      require_command busctl
+      if ! transaction_output="$(busctl --system call \
+        org.freedesktop.PackageKit /org/freedesktop/PackageKit \
+        org.freedesktop.PackageKit GetTransactionList 2>/dev/null)"; then
+        active_state="$(packagekit_unit_property ActiveState)" \
+          || fatal "Unable to inspect PackageKit after its transaction query failed"
+        [[ "$active_state" == "inactive" ]] \
+          || fatal "Unable to query active PackageKit transactions"
+      else
+        read -r transaction_type transaction_count transaction_paths <<<"$transaction_output"
+        [[ "$transaction_type" == "ao" && "$transaction_count" =~ ^[0-9]+$ ]] \
+          || fatal "PackageKit returned malformed transaction state: ${transaction_output}"
+        ((transaction_count == 0)) \
+          || fatal "An active PackageKit transaction blocks Station package preparation: ${transaction_output}"
+        [[ -z "$transaction_paths" ]] \
+          || fatal "PackageKit returned inconsistent empty transaction state: ${transaction_output}"
+
+        if ! busctl --system call \
+          org.freedesktop.PackageKit /org/freedesktop/PackageKit \
+          org.freedesktop.PackageKit SuggestDaemonQuit >/dev/null 2>&1; then
+          active_state="$(packagekit_unit_property ActiveState)" \
+            || fatal "Unable to inspect PackageKit after its idle-quit request failed"
+          [[ "$active_state" == "inactive" ]] \
+            || fatal "Could not ask the idle PackageKit daemon to exit"
+        fi
+      fi
+
+      for ((attempt = 0; attempt < 50; attempt++)); do
+        active_state="$(packagekit_unit_property ActiveState)" \
+          || fatal "Unable to verify PackageKit quiescence"
+        [[ "$active_state" != "inactive" ]] || break
+        [[ "$active_state" == "active" || "$active_state" == "deactivating" ]] \
+          || fatal "PackageKit entered an unexpected state while quiescing: ${active_state}"
+        sleep 0.1
+      done
+      [[ "$active_state" == "inactive" ]] \
+        || fatal "PackageKit did not become inactive before the Station package critical section"
+      ;;
+    *) fatal "PackageKit is not in a safe state for Station package preparation: ${active_state}" ;;
+  esac
+
+  info "packagekit=quiesced scope=station_package_transaction mask=runtime_only"
 }
 
 assert_package_transaction_ready() {
@@ -1550,6 +1675,19 @@ cleanup_apt_transaction_guard() {
     || warn "could not remove APT transaction guard directory: ${guard_dir}"
 }
 
+cleanup_station_prepare() {
+  local rc=$?
+  trap - EXIT
+  cleanup_apt_transaction_guard || true
+  if ! restore_packagekit_after_transaction; then
+    warn "PackageKit runtime state requires manual verification after interrupted Station preparation"
+    if ((rc == 0)); then
+      rc=1
+    fi
+  fi
+  exit "$rc"
+}
+
 create_apt_transaction_guard() {
   local spec state name expected allowed_old native_arch targets="" hook_path targets_path
   native_arch="$(sudo dpkg --print-architecture)"
@@ -1661,6 +1799,7 @@ simulate_install() {
 }
 
 install_packages() {
+  quiesce_packagekit_for_transaction
   assert_package_transaction_ready "Station repository configuration"
   configure_repositories
   assert_package_transaction_ready "APT metadata refresh"
@@ -1686,6 +1825,8 @@ install_packages() {
   for spec in "${PACKAGE_SPECS[@]}"; do
     package_is_exact "$spec" || fatal "Installed package does not match ${spec}"
   done
+  restore_packagekit_after_transaction \
+    || fatal "Could not restore PackageKit after Station package preparation"
   info "pinned_packages=installed"
 }
 
@@ -2232,7 +2373,7 @@ main() {
     info "version=${SCRIPT_VERSION} mode=${MODE} log=disabled_read_only"
   fi
   trap 'on_error "$LINENO"' ERR
-  trap 'cleanup_apt_transaction_guard' EXIT
+  trap 'cleanup_station_prepare' EXIT
   case "$MODE" in
     --check) run_check ;;
     --apply) run_apply ;;
