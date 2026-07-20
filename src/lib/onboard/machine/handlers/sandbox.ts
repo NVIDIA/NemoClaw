@@ -349,10 +349,10 @@ function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
 }
 
 function endpointSourceForCreateIntent(
-  authoritativeResumeConfig: boolean | undefined,
+  fresh: boolean,
   endpointSource: InferenceEndpointSource | null | undefined,
 ): InferenceEndpointSource | null {
-  return authoritativeResumeConfig === true ? (endpointSource ?? null) : "onboard";
+  return fresh ? "onboard" : (endpointSource ?? null);
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
@@ -1148,7 +1148,7 @@ class SandboxStateFlow<
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
       endpointSource: endpointSourceForCreateIntent(
-        this.options.authoritativeResumeConfig,
+        this.options.fresh,
         this.options.endpointSource,
       ),
       ...(state.session?.observabilityRequestedExplicitly === true

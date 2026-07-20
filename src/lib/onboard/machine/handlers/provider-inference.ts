@@ -47,6 +47,8 @@ export interface ProviderInferenceSetupOptions {
   preferredInferenceApi?: string | null;
   /** Public addresses approved for custom endpoint host probes. */
   endpointPinnedAddresses?: readonly string[];
+  /** Durable route provenance to preserve when reserving a refreshed route. */
+  endpointSource?: InferenceEndpointSource | null;
   /** Non-forgeable proof of the exact private subset admitted by the custom preflight. */
   endpointTrustedPrivateCapability?: TrustedPrivateEndpointCapability;
   /** One-shot host capability cache carried only through this onboarding run. */
@@ -99,6 +101,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     model: string | null;
     provider: string | null;
     endpointUrl: string | null;
+    endpointSource?: InferenceEndpointSource | null;
     credentialEnv: string | null;
     hermesAuthMethod: HermesAuthMethod | null;
     hermesToolGateways: string[];
@@ -355,7 +358,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let skipHostInferenceSmoke = false;
   let reuseGatewayCredentialWithoutLocalKey = false;
   let endpointPinnedAddresses: string[] | undefined;
-  let endpointSource: InferenceEndpointSource | null = null;
+  let endpointSource: InferenceEndpointSource | null = initial.endpointSource ?? null;
   let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
@@ -632,6 +635,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
               : {}),
             ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
             ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+            endpointSource,
             ...(endpointSource === "onboard" && endpointUrl
               ? { onboardEndpointUrl: endpointUrl }
               : {}),
@@ -825,6 +829,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
         ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+        endpointSource,
         ...(endpointSource === "onboard" && endpointUrl ? { onboardEndpointUrl: endpointUrl } : {}),
         ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         ...(inferenceCapabilityCache ? { inferenceCapabilityCache } : {}),

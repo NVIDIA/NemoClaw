@@ -325,9 +325,12 @@ describe("provider route containment", () => {
     const { calls, deps } = createDeps();
     reportDifferentRoute(calls, "compatible-endpoint", "custom/model");
 
-    await expect(
-      handleProviderInferenceState(resumeOptions(deps, session, ["telegram"])),
-    ).resolves.toMatchObject({ provider: "compatible-endpoint", model: "custom/model" });
+    const options = resumeOptions(deps, session, ["telegram"]);
+    options.initial.endpointSource = "inference-set";
+    await expect(handleProviderInferenceState(options)).resolves.toMatchObject({
+      provider: "compatible-endpoint",
+      model: "custom/model",
+    });
 
     expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
@@ -341,6 +344,10 @@ describe("provider route containment", () => {
       },
     });
     expect(calls.setupInference).toHaveBeenCalledOnce();
+    expect(calls.setupInference.mock.calls[0]?.at(-1)).toMatchObject({
+      endpointSource: "inference-set",
+    });
+    expect(calls.setupInference.mock.calls[0]?.at(-1)).not.toHaveProperty("onboardEndpointUrl");
     expect(calls.surfaceReady).toHaveBeenCalledOnce();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(calls.error).not.toHaveBeenCalled();

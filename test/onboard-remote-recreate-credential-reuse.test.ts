@@ -127,6 +127,7 @@ const { setupNim, setupInference } = require(${onboardPath});
         process.env.NEMOCLAW_TEST_OMIT_REUSE_AUTHORIZATION === "1"
           ? undefined
           : selected.reuseGatewayCredentialWithoutLocalKey,
+      endpointSource: selected.endpointSource,
       onboardEndpointUrl:
         selected.endpointSource === "onboard" ? selected.endpointUrl : undefined,
     },

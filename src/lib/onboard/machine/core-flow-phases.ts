@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { InferenceEndpointSource } from "../../inference/selection";
+import {
+  type InferenceEndpointSource,
+  normalizeInferenceEndpointSource,
+} from "../../inference/selection";
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../dcode-auto-approval";
 import type {
@@ -63,6 +66,18 @@ export interface CoreOnboardFlowPhaseOptions<
   >["deps"];
 }
 
+function endpointSourceForPhase(
+  context: Pick<OnboardFlowContext, "fresh" | "sandboxName">,
+  configuredSource: InferenceEndpointSource | null | undefined,
+  getSandboxRegistryEntry: (name: string) => { endpointSource?: unknown } | null,
+): InferenceEndpointSource | null {
+  if (context.fresh) return "onboard";
+  if (configuredSource !== undefined) return normalizeInferenceEndpointSource(configuredSource);
+  return context.sandboxName
+    ? normalizeInferenceEndpointSource(getSandboxRegistryEntry(context.sandboxName)?.endpointSource)
+    : null;
+}
+
 export function createCoreOnboardFlowPhases<
   Context extends OnboardFlowContext,
   Host = unknown,
@@ -89,6 +104,11 @@ export function createCoreOnboardFlowPhases<
         model: context.model,
         provider: context.provider,
         endpointUrl: context.endpointUrl,
+        endpointSource: endpointSourceForPhase(
+          context,
+          options.sandbox.endpointSource,
+          options.sandboxDeps.getSandboxRegistryEntry,
+        ),
         credentialEnv: context.credentialEnv,
         hermesAuthMethod: context.hermesAuthMethod,
         hermesToolGateways: context.hermesToolGateways,
@@ -129,7 +149,11 @@ export function createCoreOnboardFlowPhases<
       gatewayName: options.gatewayName,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.sandbox.authoritativePolicyTier,
-      endpointSource: options.sandbox.endpointSource,
+      endpointSource: endpointSourceForPhase(
+        context,
+        options.sandbox.endpointSource,
+        options.sandboxDeps.getSandboxRegistryEntry,
+      ),
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
       requestedObservabilityEnabled: options.sandbox.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.sandbox.requestedDcodeAutoApprovalMode,

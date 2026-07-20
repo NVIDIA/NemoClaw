@@ -643,10 +643,12 @@ export function createSetupNim(
       deps,
     );
     const selectedModel = isBackToSelection(model) ? null : model;
-    const endpointSource =
+    const recoveredRegistryRouteMatches =
       recoveredRegistryRoute?.provider === provider &&
-      recoveredRegistryRoute.endpointUrl === endpointUrl &&
-      recoveredRegistryRoute.endpointSource === "onboard"
+      recoveredRegistryRoute.endpointUrl === endpointUrl;
+    const endpointSource = recoveredRegistryRouteMatches
+      ? (recoveredRegistryRoute.endpointSource ?? null)
+      : endpointPinnedAddresses || endpointTrustedPrivateCapability
         ? "onboard"
         : null;
     await deps.maybePromptForInferenceInputCapability(selectedModel);

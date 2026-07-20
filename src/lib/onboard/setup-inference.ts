@@ -243,6 +243,8 @@ export function createSetupInference(
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
+    const endpointSource =
+      options.endpointSource === undefined ? "onboard" : options.endpointSource;
     const mutateGatewayRoute = (): Promise<SetupInferenceResult> =>
       deps.withGatewayRouteMutationLock(gatewayName, async () => {
         if (
@@ -325,7 +327,7 @@ export function createSetupInference(
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
-            endpointSource: "onboard",
+            endpointSource,
             credentialEnv,
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,
