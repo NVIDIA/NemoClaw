@@ -198,6 +198,8 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 - Use existing repository vocabulary and name what a thing does.
 - Remove modifiers that do not distinguish a real current case.
 - Use one name for one concept across issues, code, workflows, checks, logs, tests, and docs.
+- Apply [NemoClaw Technical English](CONTRIBUTING.md#nemoclaw-technical-english) to changed comments, test titles, PR text, changelog entries, Announcements, and agent guidance.
+- During the 30-day changed-text pilot, treat language findings as suggestions unless ambiguity can change behavior, security, data safety, test meaning, or release meaning. Do not request unrelated language cleanup.
 - Do not turn one case into a system of categories or a new abstraction.
 - Do not add configuration, fallback, migration, compatibility, or extension layers without a current requirement. Name the current consumer and the test that protects the contract.
 - Report conclusions and evidence, not an analysis transcript.

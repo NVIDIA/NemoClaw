@@ -44,7 +44,7 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: PR head commit selected by the controller.
+        description: PR SHA selected by the controller.
         required: false
         default: ""
         type: string
@@ -155,7 +155,7 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open"; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$GITHUB_REPOSITORY" ]] || { echo "::error::pull request must originate from this repository"; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head commit"; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR SHA"; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base commit"; exit 1; }
 
       - name: Prepare E2E workspace

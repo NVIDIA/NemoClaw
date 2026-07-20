@@ -197,7 +197,7 @@ Use these details when your first-run path needs more control.
     DGX Station express install explicitly selects `nemotron-3-ultra-550b-a55b` instead of the Station managed-vLLM profile default, `deepseek-v4-flash`, and discloses the approximately `352 GB` model download before confirmation.
     If the host does not meet the [Station prerequisites](additional-setup/dgx-station-preparation), the installer stops before host preparation.
     Before Station host preparation begins, the installer stores the accepted Express recipe in owner-only local state.
-    If preparation requires a reboot or a new login, run the printed command to restore the exact revision, agent, model, sandbox, policy tier, and gateway, dashboard, and vLLM ports without repeating the Express prompt.
+    If preparation requires a reboot or a new login, run the printed command to restore the recorded revision, agent, model, sandbox, policy tier, and gateway, dashboard, and vLLM ports without repeating the Express prompt.
     Generic Ubuntu preparation can change pinned packages and then exits with status `10`; reboot, sign in, and run that printed command to resume.
     Stock DGX OS validation checks the factory stack in place without installing packages, restarting services, or rewriting the Docker runtime.
     One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.

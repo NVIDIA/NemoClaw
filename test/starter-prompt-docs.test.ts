@@ -28,9 +28,9 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
-// CI resolves this exact Git commit and byte-compares its prompt-asset blobs with
+// CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "f814db4f7708ecf9ab054fcee449f11c95076dfd";
+const promptAssetRevision = "c718a78c5794574a98fdd885d94466c3b6794153";
 
 type PromptAsset = {
   path: string;
@@ -53,7 +53,7 @@ const promptAssets = {
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
-    "783a3f5973e1471178c78ead1952b904f3888dc603f5e079ad31d82cd2037f9a", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "f0c61cef93da203cecda2424eb1fc5680d56ffd679a518bfc98d26b2e82be381", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   windowsWsl: definePromptAsset(
     "docs/resources/prompt-assets/windows-wsl.md",
@@ -657,7 +657,7 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("Existing vLLM: `NEMOCLAW_PROVIDER=vllm`");
   });
 
-  it("keeps local prompt assets byte-aligned with their exact immutable revision blobs (#6990)", () => {
+  it("keeps local prompt assets byte-aligned with their pinned revision blobs (#6990)", () => {
     resolvePromptAssetRevision(promptAssetRevision, runGit);
     for (const asset of Object.values(promptAssets)) {
       const localBytes = fs.readFileSync(path.join(repoRoot, asset.path));
