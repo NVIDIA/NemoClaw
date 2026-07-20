@@ -124,7 +124,14 @@ verify_identity() {
 
   # HOME and repo are intentionally expanded by the remote host shell.
   # shellcheck disable=SC2016
-  repo_sha="$(host_exec 'set -e; repo="$HOME/NemoClaw"; test -d "$repo/.git"; git -C "$repo" rev-parse HEAD' | tail -n 1)"
+  repo_sha="$(host_exec 'set -e
+    repo="$HOME/NemoClaw"
+    test -d "$repo/.git"
+    git -C "$repo" diff --quiet --no-ext-diff HEAD -- \
+      || { printf "baked NemoClaw checkout has tracked worktree changes\n" >&2; exit 1; }
+    git -C "$repo" diff --cached --quiet --no-ext-diff HEAD -- \
+      || { printf "baked NemoClaw checkout has staged changes\n" >&2; exit 1; }
+    git -C "$repo" rev-parse HEAD' | tail -n 1)"
   [ "$repo_sha" = "$CANDIDATE_SHA" ] \
     || die "baked NemoClaw SHA $repo_sha does not match candidate $CANDIDATE_SHA"
   [[ "$CANDIDATE_SHA" == "$provision_sha"* ]] \
@@ -162,17 +169,126 @@ verify_identity() {
     >"$WORK_DIR/brev-identity-evidence.json"
 }
 
+validate_copied_artifact_tree() {
+  local root="$1"
+  local canonical_result="$2"
+  python3 - "$root" "$canonical_result" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+from pathlib import Path
+
+MAX_ENTRIES = 2_000
+MAX_FILES = 1_000
+MAX_TOTAL_BYTES = 100 * 1024 * 1024
+
+root = Path(sys.argv[1])
+expected_result = sys.argv[2]
+if root.is_symlink() or not root.is_dir():
+    raise SystemExit("copied E2E artifact root must be a real directory")
+
+entries = 0
+files = 0
+total_bytes = 0
+target_results = []
+stack = [root]
+while stack:
+    directory = stack.pop()
+    with os.scandir(directory) as children:
+        for child in children:
+            entries += 1
+            if entries > MAX_ENTRIES:
+                raise SystemExit(f"copied E2E artifact tree exceeds {MAX_ENTRIES} entries")
+            path = Path(child.path)
+            relative = path.relative_to(root).as_posix()
+            if child.is_symlink():
+                raise SystemExit(f"copied E2E artifacts must not contain symlinks: {relative}")
+            if child.is_dir(follow_symlinks=False):
+                stack.append(path)
+                continue
+            if not child.is_file(follow_symlinks=False):
+                raise SystemExit(f"copied E2E artifacts must contain only directories and regular files: {relative}")
+            metadata = child.stat(follow_symlinks=False)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise SystemExit(f"copied E2E artifact is not a regular file: {relative}")
+            files += 1
+            total_bytes += metadata.st_size
+            if files > MAX_FILES:
+                raise SystemExit(f"copied E2E artifact tree exceeds {MAX_FILES} files")
+            if total_bytes > MAX_TOTAL_BYTES:
+                raise SystemExit(f"copied E2E artifact tree exceeds {MAX_TOTAL_BYTES} bytes")
+            if child.name == "target-result.json":
+                target_results.append(relative)
+
+target_results.sort()
+if target_results != [expected_result]:
+    raise SystemExit(
+        "copied E2E artifacts must contain exactly the canonical target-result.json; "
+        f"found {target_results}"
+    )
+
+target_result = root / expected_result
+raw_result = target_result.read_bytes()
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+try:
+    result = json.loads(raw_result, object_pairs_hook=unique_object)
+except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+    raise SystemExit(f"canonical target-result.json is invalid: {error}") from error
+
+expected_keys = {"firstAgentTurn", "id", "runner", "securityPosture", "status"}
+if not isinstance(result, dict) or set(result) != expected_keys:
+    raise SystemExit("canonical target-result.json has an unexpected schema")
+if result["id"] != "brev-launchable-cloud-openclaw" or result["runner"] != "vitest" or result["status"] != "passed":
+    raise SystemExit("canonical target-result.json does not report a passing Launchable target")
+first_turn = result["firstAgentTurn"]
+if not isinstance(first_turn, dict) or set(first_turn) != {"commandMs", "responseChars", "status"}:
+    raise SystemExit("canonical target-result.json has invalid first-agent-turn evidence")
+if first_turn["status"] != "passed" or type(first_turn["commandMs"]) is not int or first_turn["commandMs"] < 0:
+    raise SystemExit("canonical target-result.json does not report a passing first agent turn")
+if type(first_turn["responseChars"]) is not int or first_turn["responseChars"] <= 0:
+    raise SystemExit("canonical target-result.json has invalid first-agent-turn response evidence")
+posture = result["securityPosture"]
+if not isinstance(posture, dict) or not isinstance(posture.get("entrypoint"), dict):
+    raise SystemExit("canonical target-result.json has invalid security-posture evidence")
+for field in ("configureGuard", "hostNonRoot", "rcFilesLocked", "runtimeProxyEnvLocked", "startupLogClean"):
+    if posture.get(field) is not True:
+        raise SystemExit(f"canonical target-result.json security posture did not pass {field}")
+
+digest = hashlib.sha256(raw_result).hexdigest()
+print(json.dumps({
+    "fileCount": files,
+    "totalBytes": total_bytes,
+    "targetResultPath": expected_result,
+    "targetResultSha256": digest,
+}, separators=(",", ":")))
+PY
+}
+
 run_existing_e2e() {
   require_env NVIDIA_INFERENCE_API_KEY
+  require_tools python3
   local sandbox="${NEMOCLAW_STAGING_SANDBOX_NAME:-e2e-staging}"
   [[ "$sandbox" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || die "invalid staging sandbox name"
   local remote_artifact_dir="/tmp/nemoclaw-launchable-e2e-$INSTANCE_NAME"
   local local_artifact_dir="$WORK_DIR/brev-launchable-cloud-openclaw"
+  local canonical_result_relative="brev-launchable-cloud-openclaw-onboard-inference-cli-operations-and-cleanup/target-result.json"
   local quoted_artifact_dir quoted_key quoted_sandbox
   printf -v quoted_artifact_dir '%q' "$remote_artifact_dir"
   printf -v quoted_key '%q' "$NVIDIA_INFERENCE_API_KEY"
   printf -v quoted_sandbox '%q' "$sandbox"
 
+  # The escaped model expansions and case patterns are evaluated by the remote host shell.
+  # shellcheck disable=SC1083,SC2140
   host_exec "set -euo pipefail
     repo=\$HOME/NemoClaw
     cd \"\$repo\"
@@ -184,10 +300,20 @@ run_existing_e2e() {
     rm -rf -- $quoted_artifact_dir
     install -d -m 700 $quoted_artifact_dir
     model=\$(node /usr/local/lib/nemoclaw/launchable-config.mjs /usr/local/share/nemoclaw/launchable-agents.json openclaw cloudModel)
+    [ "\${#model}" -le 256 ] \
+      || { printf 'Launchable cloud model is not a safe model ID\n' >&2; exit 1; }
+    case "\$model" in
+      [A-Za-z0-9]*) ;;
+      *) printf 'Launchable cloud model is not a safe model ID\n' >&2; exit 1 ;;
+    esac
+    case "\$model" in
+      *[!A-Za-z0-9._:/-]*) printf 'Launchable cloud model is not a safe model ID\n' >&2; exit 1 ;;
+    esac
     export CI=true GITHUB_ACTIONS=true
     export E2E_ARTIFACT_DIR=$quoted_artifact_dir
     export E2E_TARGET_ID=brev-launchable-cloud-openclaw
     export NEMOCLAW_CLI_BIN=nemoclaw
+    export NEMOCLAW_E2E_SECURITY_POSTURE=1
     export NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable
     export NEMOCLAW_MODEL=\"\$model\"
     export NEMOCLAW_RUN_LIVE_E2E=1
@@ -200,19 +326,17 @@ run_existing_e2e() {
   timeout "${BREV_COPY_TIMEOUT_SECONDS:-300}" \
     brev copy "$INSTANCE_NAME:$remote_artifact_dir/" "$local_artifact_dir/" --host
 
-  local target_result
-  target_result="$(find "$local_artifact_dir" -type f -name target-result.json -print -quit)"
-  [ -n "$target_result" ] || die "the existing full E2E suite did not produce target-result.json"
-  jq -e '.id == "brev-launchable-cloud-openclaw" and .status == "passed" and .runner == "vitest"' \
-    "$target_result" >/dev/null \
-    || die "the existing full E2E suite did not produce passing Launchable evidence"
+  local artifact_summary
+  artifact_summary="$(validate_copied_artifact_tree "$local_artifact_dir" "$canonical_result_relative")" \
+    || die "copied full E2E artifacts failed validation"
 
   jq -n \
+    --argjson artifacts "$artifact_summary" \
     --arg sandbox "$sandbox" \
     --arg target "brev-launchable-cloud-openclaw" \
     --arg testFile "test/e2e/live/full-e2e.test.ts" \
     --arg completedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{schemaVersion:1,target:$target,testFile:$testFile,setupMode:"preinstalled-launchable",sandbox:$sandbox,completedAt:$completedAt}' \
+    '{schemaVersion:1,target:$target,testFile:$testFile,setupMode:"preinstalled-launchable",sandbox:$sandbox,artifacts:$artifacts,completedAt:$completedAt}' \
     >"$WORK_DIR/brev-launchable-e2e-evidence.json"
 }
 

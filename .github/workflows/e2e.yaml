@@ -190,10 +190,10 @@ jobs:
     needs: generate-matrix
     # Repository owners enable this only after the protected environment,
     # producer, standing Launchable, and Brev contract are ready.
-    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_QUALIFICATION_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_QUALIFICATION_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/brev-launchable-qualification.yaml
     with:
-      candidate_sha: ${{ inputs.checkout_sha || github.sha }}
+      candidate_sha: ${{ github.sha }}
       reason: E2E run ${{ github.run_id }} qualifying the exact checked-out NemoClaw candidate
 
   live:

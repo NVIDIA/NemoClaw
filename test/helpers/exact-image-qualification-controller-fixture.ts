@@ -20,8 +20,8 @@ import {
   startExactImageQualification,
 } from "../../tools/e2e/exact-image-qualification-controller.mts";
 
-export const CANDIDATE_SHA = "a".repeat(40);
 export const WORKFLOW_SHA = "c".repeat(40);
+export const CANDIDATE_SHA = WORKFLOW_SHA;
 export const PRODUCER_SHA = "b".repeat(40);
 export const CORRELATION_ID = "123e4567-e89b-42d3-a456-426614174000";
 export const RUN_ID = "24680";

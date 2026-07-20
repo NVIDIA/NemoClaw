@@ -419,6 +419,9 @@ export function validateExactImageQualificationRequest(
   if (!FULL_SHA_PATTERN.test(request.workflowSha)) {
     fail("REQUEST_INVALID", "workflow SHA must be a lowercase full commit SHA");
   }
+  if (request.candidateSha !== request.workflowSha) {
+    fail("REQUEST_INVALID", "candidate SHA must equal the trusted main workflow SHA");
+  }
   if (!DECIMAL_ID_PATTERN.test(request.requesterRunId)) {
     fail("REQUEST_INVALID", "requester run ID must be a positive decimal string");
   }
@@ -465,10 +468,7 @@ async function authorizeRequest(
   api: GitHubApiClient,
 ): Promise<void> {
   validateExactImageQualificationRequest(request);
-  const branch = await api<unknown>(
-    `repos/${REQUESTER_REPOSITORY}/git/ref/heads/main`,
-    token,
-  );
+  const branch = await api<unknown>(`repos/${REQUESTER_REPOSITORY}/git/ref/heads/main`, token);
   if (validateMainRef(branch, REQUESTER_REPOSITORY) !== request.workflowSha) {
     fail("DISPATCH_FORBIDDEN", "workflow SHA is no longer the trusted main branch head");
   }

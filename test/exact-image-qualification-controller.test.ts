@@ -66,7 +66,7 @@ afterEach(() => {
 });
 
 describe("exact image qualification request", () => {
-  it("accepts trusted manual and scheduled candidates while rejecting malformed boundaries", () => {
+  it("accepts the current trusted main candidate while rejecting malformed boundaries", () => {
     expect(validateExactImageQualificationRequest(REQUEST)).toEqual(REQUEST);
     expect(
       validateExactImageQualificationRequest({
@@ -89,6 +89,9 @@ describe("exact image qualification request", () => {
     expect(() =>
       validateExactImageQualificationRequest({ ...REQUEST, ref: "refs/heads/feature" }),
     ).toThrow(/trusted main branch/u);
+    expect(() =>
+      validateExactImageQualificationRequest({ ...REQUEST, candidateSha: "d".repeat(40) }),
+    ).toThrow(/must equal the trusted main workflow SHA/u);
     expect(() => validateExactImageQualificationRequest({ ...REQUEST, reason: " bad " })).toThrow(
       /reason/u,
     );
@@ -99,6 +102,17 @@ describe("exact image qualification request", () => {
 
     await expect(
       preflightExactImageQualification({ ...REQUEST, ref: "refs/heads/feature" }, "core-token", {
+        api: api as QualificationDependencies["api"],
+      }),
+    ).rejects.toMatchObject({ code: "REQUEST_INVALID" });
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it("rejects a candidate other than the trusted workflow SHA before authorization API access", async () => {
+    const api = vi.fn();
+
+    await expect(
+      preflightExactImageQualification({ ...REQUEST, candidateSha: "d".repeat(40) }, "core-token", {
         api: api as QualificationDependencies["api"],
       }),
     ).rejects.toMatchObject({ code: "REQUEST_INVALID" });
@@ -142,8 +156,8 @@ describe("exact image qualification request", () => {
 });
 
 describe("exact producer dispatch binding", () => {
-  it("preserves a selected candidate distinct from the trusted workflow SHA", async () => {
-    expect(REQUEST.candidateSha).not.toBe(REQUEST.workflowSha);
+  it("binds the selected candidate to the trusted main workflow SHA", async () => {
+    expect(REQUEST.candidateSha).toBe(REQUEST.workflowSha);
     const { state, workDir } = await startedState();
     try {
       expect(readExactImageQualificationState(workDir).request).toMatchObject({

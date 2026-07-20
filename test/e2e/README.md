@@ -87,12 +87,15 @@ map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
 ## Exact staging Brev Launchable qualification
 
-The exact-image staging Launchable lane is inactive by default. The scheduled
-and manual `e2e.yaml` paths call it only from `main` when the repository
-variable `NEMOCLAW_BREV_LAUNCHABLE_QUALIFICATION_ENABLED` is exactly `true`.
-A direct dispatch of `brev-launchable-qualification.yaml` applies the same
-repository, ref, and activation checks; while inactive, it fails before
-checkout, environment approval, credential access, or external API calls.
+The exact-image staging Launchable lane is inactive by default. Only scheduled
+and manual `e2e.yaml` runs on `main` with an empty `checkout_sha` may call it,
+and only when the repository variable
+`NEMOCLAW_BREV_LAUNCHABLE_QUALIFICATION_ENABLED` is exactly `true`. PR-gate
+runs cannot enter this credentialed lane. A direct dispatch of
+`brev-launchable-qualification.yaml` applies the same repository, ref, and
+activation checks and requires `candidate_sha` to equal the trusted current
+`main` workflow SHA. While inactive, it fails before checkout, environment
+approval, credential access, or external API calls.
 The skipped `staging-brev-launchable` job in a routine E2E run is an inactive
 status, not successful qualification evidence.
 
@@ -116,10 +119,16 @@ The runtime target is `brev-launchable-cloud-openclaw`. After proving the
 workspace booted the accepted image and exact NemoClaw SHA, the lane runs the
 existing `test/e2e/live/full-e2e.test.ts` suite in `preinstalled-launchable`
 setup mode. That mode onboards through the baked `brev-quickstart` entry point
-and reuses the suite's CLI, policy, hosted-inference, `inference.local`, logs,
-and cleanup assertions. It fails if the baked checkout does not already
-contain the pinned Vitest harness; it does not rsync source, run `install.sh`,
-install packages, rebuild, or relink the product under test.
+and reuses the suite's CLI, policy, real first-agent-turn, hosted-inference,
+`inference.local`, security-posture, logs, and cleanup assertions. Before the
+trusted harness runs, the runtime rejects tracked checkout drift and unsafe
+image-derived model IDs. Copied evidence must contain exactly the canonical
+passing target result, stay within fixed file and byte limits, contain no
+symlinks or special files, and produce a recorded SHA-256 digest. Recursive
+redaction must succeed before evidence can be uploaded. The lane fails if the
+baked checkout does not already contain the pinned Vitest harness; it does not
+rsync source, run `install.sh`, install packages, rebuild, or relink the
+product under test.
 
 ## PR E2E gate
 

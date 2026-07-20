@@ -16,10 +16,21 @@ type FixtureOptions = {
   bootImageId?: string;
   bootImageSelfLink?: string;
   deleteMode?: "remove" | "retain";
+  evidenceMode?:
+    | "duplicate"
+    | "failed-turn"
+    | "fifo"
+    | "malformed"
+    | "oversized"
+    | "symlink"
+    | "valid"
+    | "wrong-path";
   lsMode?: "ok" | "fail" | "fail-once" | "malformed";
+  model?: string;
   provisionSha?: string;
   repoSha?: string;
   supportsLaunchableMode?: boolean;
+  trackedDrift?: "index" | "none" | "worktree";
   workspaceMode?: "ready" | "pending";
 };
 
@@ -40,6 +51,7 @@ function fixture(options: FixtureOptions = {}) {
   const state = path.join(root, "state.json");
   const lsCount = path.join(root, "ls-count");
   const log = path.join(root, "brev.log");
+  const e2eExecuted = path.join(root, "e2e-executed");
   const manifest = path.join(workDir, "validated-manifest.v1.json");
   fs.mkdirSync(bin);
   fs.mkdirSync(workDir);
@@ -57,8 +69,52 @@ function fixture(options: FixtureOptions = {}) {
     `#!/usr/bin/env bash
 set -euo pipefail
 artifact_dir="$E2E_ARTIFACT_DIR/brev-launchable-cloud-openclaw-onboard-inference-cli-operations-and-cleanup"
-mkdir -p "$artifact_dir"
-jq -n '{id:"brev-launchable-cloud-openclaw",status:"passed",runner:"vitest"}' > "$artifact_dir/target-result.json"
+: > "$FAKE_E2E_EXECUTED"
+write_result() {
+  mkdir -p "$(dirname "$1")"
+  jq -n '{
+    firstAgentTurn:{commandMs:125,responseChars:24,status:"passed"},
+    id:"brev-launchable-cloud-openclaw",
+    runner:"vitest",
+    securityPosture:{
+      configureGuard:true,
+      entrypoint:{capBnd:"0",capEff:"0",dangerousBoundingCapabilities:[],dangerousEffectiveCapabilities:[],noNewPrivs:"1",uid:"1000"},
+      hostNonRoot:true,
+      rcFilesLocked:true,
+      runtimeProxyEnvLocked:true,
+      startupLogClean:true
+    },
+    status:"passed"
+  }' > "$1"
+}
+case "$FAKE_EVIDENCE_MODE" in
+  valid) write_result "$artifact_dir/target-result.json" ;;
+  duplicate)
+    write_result "$artifact_dir/target-result.json"
+    write_result "$E2E_ARTIFACT_DIR/duplicate/target-result.json"
+    ;;
+  malformed)
+    mkdir -p "$artifact_dir"
+    jq -n '{id:"brev-launchable-cloud-openclaw",runner:"vitest",status:"passed"}' > "$artifact_dir/target-result.json"
+    ;;
+  failed-turn)
+    write_result "$artifact_dir/target-result.json"
+    jq '.firstAgentTurn.status = "failed"' "$artifact_dir/target-result.json" > "$artifact_dir/result.tmp"
+    mv "$artifact_dir/result.tmp" "$artifact_dir/target-result.json"
+    ;;
+  fifo) write_result "$artifact_dir/target-result.json" ;;
+  oversized)
+    write_result "$artifact_dir/target-result.json"
+    dd if=/dev/null of="$artifact_dir/oversized.bin" bs=1 seek=104857601 2>/dev/null
+    ;;
+  symlink)
+    mkdir -p "$artifact_dir"
+    write_result "$artifact_dir/real-result.json"
+    ln -s real-result.json "$artifact_dir/target-result.json"
+    ;;
+  wrong-path) write_result "$E2E_ARTIFACT_DIR/wrong/target-result.json" ;;
+  *) exit 2 ;;
+esac
 `,
   );
   writeExecutable(path.join(bin, "timeout"), '#!/usr/bin/env bash\nshift\nexec "$@"\n');
@@ -92,6 +148,7 @@ case "$1" in
     source_path="\${2#*:}"
     destination="$3"
     cp -R "$source_path"/. "$destination"/
+    [ "$FAKE_EVIDENCE_MODE" != fifo ] || mkfifo "$destination/untrusted.fifo"
     ;;
   delete) [ "$FAKE_BREV_DELETE_MODE" = retain ] || rm -f "$FAKE_BREV_STATE" ;;
   refresh) ;;
@@ -115,8 +172,12 @@ exec "$@"
     path.join(bin, "git"),
     `#!/usr/bin/env bash
 set -euo pipefail
-if [[ "$*" == *'rev-parse HEAD'* ]]; then printf '%s\\n' "$FAKE_REPO_SHA"; exit 0; fi
-exit 2
+case "$*" in
+  *'diff --cached --quiet --no-ext-diff HEAD --'*) [ "$FAKE_TRACKED_DRIFT" != index ] ;;
+  *'diff --quiet --no-ext-diff HEAD --'*) [ "$FAKE_TRACKED_DRIFT" != worktree ] ;;
+  *'rev-parse HEAD'*) printf '%s\\n' "$FAKE_REPO_SHA" ;;
+  *) exit 2 ;;
+esac
 `,
   );
   writeExecutable(
@@ -153,7 +214,7 @@ exec "$@"
     ["brev-quickstart", "printf 'Ready!\\n'"],
     ["docker", "exit 0"],
     ["nemoclaw", "exit 0"],
-    ["node", "printf 'nvidia/test-model\\n'"],
+    ["node", "printf '%s\\n' \"$FAKE_MODEL\""],
     ["openclaw", 'printf \'{"payloads":[{"text":"42"}]}\\n\''],
   ] as const) {
     writeExecutable(path.join(bin, name), `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`);
@@ -181,8 +242,12 @@ exec "$@"
     FAKE_BREV_LOG: log,
     FAKE_BREV_LS_COUNT: lsCount,
     FAKE_BREV_STATE: state,
+    FAKE_E2E_EXECUTED: e2eExecuted,
+    FAKE_EVIDENCE_MODE: options.evidenceMode ?? "valid",
+    FAKE_MODEL: options.model ?? "nvidia/test-model",
     FAKE_PROVISION_SHA: options.provisionSha ?? candidateSha.slice(0, 7),
     FAKE_REPO_SHA: options.repoSha ?? candidateSha,
+    FAKE_TRACKED_DRIFT: options.trackedDrift ?? "none",
     FAKE_BREV_WORKSPACE_MODE: options.workspaceMode ?? "ready",
     HOME: home,
     INSTANCE_NAME: "nclaw-e2e-test-1",
@@ -191,7 +256,7 @@ exec "$@"
     WORK_DIR: workDir,
     BREV_POLL_SECONDS: "0",
   };
-  return { env, log, workDir };
+  return { e2eExecuted, env, log, workDir };
 }
 
 function run(mode: string, env: NodeJS.ProcessEnv) {
@@ -216,12 +281,25 @@ describe("exact staging Brev Launchable runtime", () => {
     expect(commands).not.toMatch(/rsync|install\.sh|npm (?:ci|install)|git clone/u);
     expect(commands).toContain("test/e2e/live/full-e2e.test.ts");
     expect(commands).toContain("NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable");
+    expect(commands).toContain("NEMOCLAW_E2E_SECURITY_POSTURE=1");
     expect(commands).toContain("E2E_TARGET_ID=brev-launchable-cloud-openclaw");
     expect(commands.indexOf("rev-parse HEAD")).toBeLessThan(
       commands.indexOf("test/e2e/live/full-e2e.test.ts"),
     );
     expect(fs.existsSync(path.join(workDir, "brev-identity-evidence.json"))).toBe(true);
     expect(fs.existsSync(path.join(workDir, "brev-launchable-e2e-evidence.json"))).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(workDir, "brev-launchable-e2e-evidence.json"), "utf8")),
+    ).toMatchObject({
+      artifacts: {
+        fileCount: expect.any(Number),
+        targetResultPath:
+          "brev-launchable-cloud-openclaw-onboard-inference-cli-operations-and-cleanup/target-result.json",
+        targetResultSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        totalBytes: expect.any(Number),
+      },
+      setupMode: "preinstalled-launchable",
+    });
     expect(
       fs.existsSync(
         path.join(
@@ -249,6 +327,20 @@ describe("exact staging Brev Launchable runtime", () => {
     expect(run("cleanup", env).status).toBe(0);
   });
 
+  it.each([
+    "index",
+    "worktree",
+  ] as const)("fails closed on tracked %s drift before executing the E2E harness", (trackedDrift) => {
+    const { e2eExecuted, env } = fixture({ trackedDrift });
+    const qualification = run("qualify", env);
+
+    expect(qualification.status).not.toBe(0);
+    expect([qualification.stderr, qualification.stdout].join("\n")).toContain(
+      trackedDrift === "index" ? "staged changes" : "tracked worktree changes",
+    );
+    expect(fs.existsSync(e2eExecuted)).toBe(false);
+  });
+
   it("fails closed on a boot-image mismatch before onboarding", () => {
     const { env, log } = fixture({ bootImageId: "987654321" });
     expect(run("deploy", env).status).toBe(0);
@@ -269,6 +361,37 @@ describe("exact staging Brev Launchable runtime", () => {
     );
     expect(fs.existsSync(path.join(workDir, "brev-launchable-e2e-evidence.json"))).toBe(false);
     expect(run("cleanup", env).status).toBe(0);
+  });
+
+  it("rejects an unsafe image-derived model before executing the E2E harness", () => {
+    const { e2eExecuted, env, workDir } = fixture();
+    const injectionMarker = `${e2eExecuted}-model-injection`;
+    env.FAKE_MODEL = `nvidia/model'; touch ${injectionMarker}; #`;
+    const qualification = run("qualify", env);
+
+    expect(qualification.status).not.toBe(0);
+    expect(fs.readFileSync(path.join(workDir, "brev-launchable-e2e.log"), "utf8")).toContain(
+      "Launchable cloud model is not a safe model ID",
+    );
+    expect(fs.existsSync(e2eExecuted)).toBe(false);
+    expect(fs.existsSync(injectionMarker)).toBe(false);
+  });
+
+  it.each([
+    "duplicate",
+    "failed-turn",
+    "fifo",
+    "malformed",
+    "oversized",
+    "symlink",
+    "wrong-path",
+  ] as const)("rejects %s copied E2E evidence", (evidenceMode) => {
+    const { e2eExecuted, env, workDir } = fixture({ evidenceMode });
+    const qualification = run("qualify", env);
+
+    expect(qualification.status).not.toBe(0);
+    expect(fs.existsSync(e2eExecuted)).toBe(true);
+    expect(fs.existsSync(path.join(workDir, "brev-launchable-e2e-evidence.json"))).toBe(false);
   });
 
   it("fails when workspace readiness does not reach its deadline", () => {

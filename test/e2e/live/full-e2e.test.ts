@@ -46,6 +46,7 @@ const LIVE_TIMEOUT_MS = 50 * 60_000;
 const FIRST_TURN_TIMEOUT_MS = 240_000;
 const MAX_SILENCE_SECS = 60;
 const EXPECTED_FIRST_REPLY = "NEMOCLAW_E2E_READY_6002";
+const SAFE_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
 const MEASURE_COLD_ONBOARD =
   !USE_PREINSTALLED_LAUNCHABLE && process.env.E2E_TARGET_ID === "full-e2e";
 
@@ -53,6 +54,12 @@ interface ColdOnboardCapture {
   outputEvents: ShellProbeOutputEvent[];
   traceDirectory: string;
   traceFile: string;
+}
+
+interface FirstAgentTurnResult {
+  completedAtMs: number;
+  commandMs: number;
+  responseChars: number;
 }
 
 expect(
@@ -170,6 +177,39 @@ function readFullE2eColdPathBudget() {
   }
 }
 
+async function assertFirstAgentTurn(input: {
+  apiKey: string;
+  sandbox: SandboxClient;
+}): Promise<FirstAgentTurnResult> {
+  const startedAtMs = Date.now();
+  const turn = await input.sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      "openclaw agent --agent main --json --thinking off --session-id e2e-6002 " +
+        `-m 'Reply with exactly: ${EXPECTED_FIRST_REPLY}'`,
+    ),
+    {
+      artifactName: "phase-1-first-agent-turn",
+      env: env(),
+      redactionValues: [input.apiKey],
+      timeoutMs: FIRST_TURN_TIMEOUT_MS,
+    },
+  );
+  const completedAtMs = Date.now();
+  const turnText = resultText(turn);
+  const assistantReply = extractOpenClawAgentPayloadText(turnText).trim();
+
+  expect(turn.exitCode, turnText).toBe(0);
+  expect(assistantReply, `expected the sentinel first agent reply, got: ${turnText}`).toBe(
+    EXPECTED_FIRST_REPLY,
+  );
+  return {
+    completedAtMs,
+    commandMs: completedAtMs - startedAtMs,
+    responseChars: assistantReply.length,
+  };
+}
+
 async function assertColdOnboardPerformance(input: {
   apiKey: string;
   artifacts: ArtifactSink;
@@ -180,7 +220,7 @@ async function assertColdOnboardPerformance(input: {
   sandbox: SandboxClient;
   traceDirectory: string;
   traceFile: string;
-}): Promise<void> {
+}): Promise<FirstAgentTurnResult> {
   const traceWindow = readAndDeleteTraceWindow(input.traceFile, input.traceDirectory);
   expect(
     input.installCompletedAtMs,
@@ -199,45 +239,25 @@ async function assertColdOnboardPerformance(input: {
   const maxSilenceSecs = Math.ceil(maxSilenceMs / 1_000);
   const rootEndToInstallCompletionMs = input.installCompletedAtMs - traceWindow.finishedAtMs;
 
-  const firstTurnStartedAtMs = Date.now();
-  const turn = await input.sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(
-      "openclaw agent --agent main --json --thinking off --session-id e2e-6002 " +
-        `-m 'Reply with exactly: ${EXPECTED_FIRST_REPLY}'`,
-    ),
-    {
-      artifactName: "phase-1-first-agent-turn",
-      env: env(),
-      redactionValues: [input.apiKey],
-      timeoutMs: FIRST_TURN_TIMEOUT_MS,
-    },
-  );
-  const firstTurnCompletedAtMs = Date.now();
-  const firstTurnCommandMs = firstTurnCompletedAtMs - firstTurnStartedAtMs;
+  const firstTurn = await assertFirstAgentTurn(input);
   const performanceEvaluation = evaluateColdOnboardPerformance(
     traceWindow,
-    firstTurnCompletedAtMs,
+    firstTurn.completedAtMs,
     input.budget,
   );
   const rootStartToFirstTurnCompletionSecs = Math.ceil(
     performanceEvaluation.rootStartToFirstTurnCompletionMs / 1_000,
   );
-  const turnText = resultText(turn);
-  const assistantReply = extractOpenClawAgentPayloadText(turnText).trim();
-  const compactAssistantReply = assistantReply.replace(/\s+/gu, "");
-  const responseChars = assistantReply.length;
-
   await input.artifacts.writeJson("onboard-progress-budget.json", {
     schemaVersion: "nemoclaw.full_e2e_cold_performance.v2",
     sandbox: SANDBOX_NAME,
     installExitCode: input.install.exitCode,
-    firstTurnExitCode: turn.exitCode,
+    firstTurnExitCode: 0,
     phaseMeasurements: {
       onboardRootMs: traceWindow.durationMs,
       rootStartToFirstTurnCompletionMs: performanceEvaluation.rootStartToFirstTurnCompletionMs,
       rootEndToInstallCompletionMs,
-      firstTurnCommandMs,
+      firstTurnCommandMs: firstTurn.commandMs,
       rootEndToFirstTurnCompletionMs: performanceEvaluation.rootEndToFirstTurnCompletionMs,
       tracePhasesMs: traceWindow.phaseDurationsMs,
     },
@@ -254,7 +274,7 @@ async function assertColdOnboardPerformance(input: {
     buildKitFallback,
     usedBuildKitPrebuild,
     classicBuildSteps,
-    responseChars,
+    responseChars: firstTurn.responseChars,
   });
 
   expect(plain, "expected literal wizard step [1/8] in installer output").toContain("[1/8]");
@@ -265,21 +285,18 @@ async function assertColdOnboardPerformance(input: {
     maxSilenceSecs,
     `longest silent gap ${maxSilenceSecs}s exceeds the ${MAX_SILENCE_SECS}s guarantee`,
   ).toBeLessThanOrEqual(MAX_SILENCE_SECS);
-  expect(turn.exitCode, turnText).toBe(0);
-  expect(
-    compactAssistantReply,
-    `expected the sentinel first agent reply, got: ${turnText}`,
-  ).toContain(EXPECTED_FIRST_REPLY);
   expect(
     performanceEvaluation.passed,
     `onboard-root-start-to-first-turn-completion took ${rootStartToFirstTurnCompletionSecs}s; ${performanceEvaluation.violations.join("; ")}`,
   ).toBe(true);
+  return firstTurn;
 }
 
 test(TEST_NAME, {
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets);
+  expect(hosted.model, "hosted model must be a shell-safe model ID").toMatch(SAFE_MODEL_ID_PATTERN);
   const coldOnboardBudget = USE_PREINSTALLED_LAUNCHABLE ? null : readFullE2eColdPathBudget();
   const redactionValues = [hosted.apiKey];
   await artifacts.target.declare({
@@ -367,7 +384,7 @@ test(TEST_NAME, {
       });
   const preparationCompletedAtMs = Date.now();
   expect(preparation.exitCode, resultText(preparation)).toBe(0);
-  await (coldOnboard
+  const firstAgentTurn = await (coldOnboard
     ? assertColdOnboardPerformance({
         apiKey: hosted.apiKey,
         artifacts,
@@ -379,7 +396,7 @@ test(TEST_NAME, {
         traceDirectory: coldOnboard.traceDirectory,
         traceFile: coldOnboard.traceFile,
       })
-    : Promise.resolve());
+    : assertFirstAgentTurn({ apiKey: hosted.apiKey, sandbox }));
 
   const pathProbe = await host.command(
     "bash",
@@ -472,6 +489,11 @@ test(TEST_NAME, {
   expect(registryText).not.toContain(SANDBOX_NAME);
 
   await artifacts.target.complete({
+    firstAgentTurn: {
+      commandMs: firstAgentTurn.commandMs,
+      responseChars: firstAgentTurn.responseChars,
+      status: "passed",
+    },
     id: EVIDENCE_TARGET_ID,
     securityPosture,
     status: "passed",

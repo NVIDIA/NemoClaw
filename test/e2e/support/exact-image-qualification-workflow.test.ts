@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { expect, it } from "vitest";
 
 import {
@@ -52,6 +57,33 @@ it("keeps exact-image Launchable qualification protected, reusable, and fail-clo
   const qualify = job(workflow, "qualify");
   const caller = job(e2eWorkflow, "staging-brev-launchable");
   const workflowStrings = strings(workflow);
+  const steps = qualify.steps ?? [];
+  const redactIndex = steps.findIndex((step) => step.name === "Redact runtime evidence");
+  const uploadIndex = steps.findIndex(
+    (step) => step.name === "Upload exact staging Launchable evidence",
+  );
+
+  expect(redactIndex).toBeGreaterThanOrEqual(0);
+  expect(uploadIndex).toBeGreaterThan(redactIndex);
+  const redact = steps[redactIndex]!;
+  const upload = steps[uploadIndex]!;
+  expect(redact.if).toBe("${{ always() && steps.workspace.outputs.work_dir != '' }}");
+  expect(redact.env).toEqual({
+    NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
+    WORK_DIR: "${{ steps.workspace.outputs.work_dir }}",
+  });
+  expect(redact.run).toContain('content.replace(secret, b"[REDACTED]")');
+  expect(redact.run).toContain("os.scandir(directory)");
+  expect(redact.run).toContain("child.is_symlink()");
+  expect(redact.run).toContain("MAX_TOTAL_BYTES");
+  expect(upload.if).toBe(
+    "${{ always() && steps.workspace.outputs.work_dir != '' && steps.redact-runtime-evidence.outcome == 'success' }}",
+  );
+  for (const path of ["brev-launchable-e2e.log", "brev-launchable-cloud-openclaw"]) {
+    expect(String(upload.with?.path), `retained evidence must include ${path}`).toContain(
+      `/${path}`,
+    );
+  }
 
   expect(workflow.name).toBe("E2E / Exact Staging Brev Launchable");
   expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch", "workflow_call"]);
@@ -69,8 +101,9 @@ it("keeps exact-image Launchable qualification protected, reusable, and fail-clo
   expect(workflow.permissions).toEqual({});
   expect(caller.secrets).toBeUndefined();
   expect(caller.if).toBe(
-    `\${{ vars.${ACTIVATION_VARIABLE} == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}`,
+    `\${{ vars.${ACTIVATION_VARIABLE} == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}`,
   );
+  expect(caller.with?.candidate_sha).toBe("${{ github.sha }}");
   expect(workflow.concurrency).toEqual({
     group: "brev-launchable-qualification-staging-cpu",
     "cancel-in-progress": false,
@@ -138,6 +171,7 @@ it("keeps exact-image Launchable qualification protected, reusable, and fail-clo
   );
   expect(controller).toContain('export const PRODUCER_REF = "main"');
   expect(controller).toContain('request.ref !== "refs/heads/main"');
+  expect(controller).toContain("request.candidateSha !== request.workflowSha");
   expect(controller).toContain('export const GITHUB_API_VERSION = "2026-03-10"');
   expect(controller).toContain("return_run_details: true");
   expect(controller).toContain("fs.renameSync(temporary, file)");
@@ -168,9 +202,19 @@ it("keeps exact-image Launchable qualification protected, reusable, and fail-clo
   expect(runtime).toContain("--launchable");
   expect(runtime).toContain("test/e2e/live/full-e2e.test.ts");
   expect(runtime).toContain("NEMOCLAW_E2E_SETUP_MODE=preinstalled-launchable");
+  expect(runtime).toContain("NEMOCLAW_E2E_SECURITY_POSTURE=1");
+  expect(runtime).toContain("diff --quiet --no-ext-diff HEAD --");
+  expect(runtime).toContain("validate_copied_artifact_tree");
+  expect(runtime).toContain("targetResultSha256");
+  expect(runtime).toContain("firstAgentTurn");
   expect(runtime).not.toContain("brev-quickstart");
   expect(fullE2e).toContain('host.command("brev-quickstart"');
   expect(fullE2e).toContain('"brev-launchable-cloud-openclaw"');
+  expect(fullE2e).toContain("assertFirstAgentTurn({ apiKey: hosted.apiKey, sandbox })");
+  expect(fullE2e).toMatch(
+    /expect\(assistantReply,[\s\S]{0,200}\)\.toBe\(\s*EXPECTED_FIRST_REPLY,\s*\);/u,
+  );
+  expect(fullE2e).toContain("firstAgentTurn:");
   expect(source).not.toContain("test/e2e/live/exact-staging-launchable.test.ts");
   expect(source).toContain("brev-launchable-runtime.sh deploy");
   expect(source).toContain("brev-launchable-runtime.sh qualify");
@@ -179,4 +223,36 @@ it("keeps exact-image Launchable qualification protected, reusable, and fail-clo
   expect(source).toContain("brev-cleanup-evidence.json");
   expect(source).toContain("NEMOCLAW_STAGING_LAUNCHABLE_ID");
   expect(source).not.toContain("image_family");
+});
+
+it("recursively redacts nested runtime evidence and rejects symlinks before upload", () => {
+  const workflow = readYaml<QualificationWorkflow>(WORKFLOW_PATH);
+  const redact = job(workflow, "qualify").steps?.find(
+    (step) => step.id === "redact-runtime-evidence",
+  );
+  const script = redact?.run as string;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-evidence-redaction-"));
+  const secret = "nvapi-nested-secret";
+
+  try {
+    const nested = path.join(root, "brev-launchable-cloud-openclaw", "target", "raw.log");
+    fs.mkdirSync(path.dirname(nested), { recursive: true });
+    fs.writeFileSync(nested, `before ${secret} after\n`);
+    const redacted = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: { ...process.env, NVIDIA_INFERENCE_API_KEY: secret, WORK_DIR: root },
+    });
+    expect(redacted.status, redacted.stderr).toBe(0);
+    expect(fs.readFileSync(nested, "utf8")).toBe("before [REDACTED] after\n");
+
+    fs.symlinkSync(nested, path.join(root, "untrusted-link"));
+    const rejected = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: { ...process.env, NVIDIA_INFERENCE_API_KEY: secret, WORK_DIR: root },
+    });
+    expect(rejected.status).not.toBe(0);
+    expect(rejected.stderr).toContain("must not contain symlinks");
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
 });

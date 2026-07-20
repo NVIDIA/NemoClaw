@@ -248,7 +248,8 @@ jobs:
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: tools/e2e/brev-launchable-runtime.sh qualify
 
-      - name: Redact runtime evidence
+      - id: redact-runtime-evidence
+        name: Redact runtime evidence
         if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
@@ -257,15 +258,52 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import os
+          import stat
           from pathlib import Path
 
-          secret = os.environ.get("NVIDIA_INFERENCE_API_KEY", "")
+          MAX_ENTRIES = 2_500
+          MAX_FILES = 1_250
+          MAX_TOTAL_BYTES = 128 * 1024 * 1024
+
+          secret = os.environ.get("NVIDIA_INFERENCE_API_KEY", "").encode()
           root = Path(os.environ["WORK_DIR"])
-          if secret:
-              for name in ("brev-launchable-e2e.log",):
-                  path = root / name
-                  if path.is_file():
-                      path.write_text(path.read_text(encoding="utf-8", errors="replace").replace(secret, "[REDACTED]"), encoding="utf-8")
+          if root.is_symlink() or not root.is_dir():
+              raise SystemExit("runtime evidence root must be a real directory")
+
+          entries = 0
+          total_bytes = 0
+          paths = []
+          stack = [root]
+          while stack:
+              directory = stack.pop()
+              with os.scandir(directory) as children:
+                  for child in children:
+                      entries += 1
+                      if entries > MAX_ENTRIES:
+                          raise SystemExit(f"runtime evidence exceeds {MAX_ENTRIES} entries")
+                      path = Path(child.path)
+                      if child.is_symlink():
+                          raise SystemExit(f"runtime evidence must not contain symlinks: {path}")
+                      if child.is_dir(follow_symlinks=False):
+                          stack.append(path)
+                          continue
+                      if not child.is_file(follow_symlinks=False):
+                          raise SystemExit(f"runtime evidence contains a non-regular file: {path}")
+                      metadata = child.stat(follow_symlinks=False)
+                      if not stat.S_ISREG(metadata.st_mode):
+                          raise SystemExit(f"runtime evidence contains a non-regular file: {path}")
+                      paths.append(path)
+                      total_bytes += metadata.st_size
+                      if len(paths) > MAX_FILES:
+                          raise SystemExit(f"runtime evidence exceeds {MAX_FILES} files")
+                      if total_bytes > MAX_TOTAL_BYTES:
+                          raise SystemExit(f"runtime evidence exceeds {MAX_TOTAL_BYTES} bytes")
+
+          for path in paths:
+              if secret:
+                  content = path.read_bytes()
+                  if secret in content:
+                      path.write_bytes(content.replace(secret, b"[REDACTED]"))
           PY
 
       - name: Delete staging workspace and verify absence
@@ -287,7 +325,7 @@ jobs:
           --work-dir "${{ steps.workspace.outputs.work_dir }}"
 
       - name: Upload exact staging Launchable evidence
-        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
+        if: ${{ always() && steps.workspace.outputs.work_dir != '' && steps.redact-runtime-evidence.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: brev-launchable-qualification-${{ inputs.candidate_sha }}-${{ github.run_id }}
