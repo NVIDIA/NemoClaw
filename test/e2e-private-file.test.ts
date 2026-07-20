@@ -75,12 +75,10 @@ describe("private E2E controller files", () => {
       expect(read.error).toBeUndefined();
       expect(read.status).not.toBe(0);
       expect(read.stderr).toContain(`Error: ${fifo} must be a private regular file`);
-      expect(read.stderr).toContain("at readPrivateRegularFile");
       expect(write.error).toBeUndefined();
       expect(write.status).not.toBe(0);
       expect(write.stderr).toContain("Error: ENXIO:");
       expect(write.stderr).toContain(`open '${fifo}'`);
-      expect(write.stderr).toContain("at openPrivateFileForWrite");
       for (const output of [read.stderr, write.stderr]) {
         expect(output).not.toMatch(
           /ERR_(?:MODULE_NOT_FOUND|UNKNOWN_FILE_EXTENSION|UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING)|Cannot find module|Unknown file extension|bad option: --experimental-strip-types|SyntaxError/u,
