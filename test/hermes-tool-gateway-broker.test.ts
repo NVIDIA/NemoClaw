@@ -460,31 +460,23 @@ describe("Hermes managed-tool gateway broker", () => {
       { mode: 0o600 },
     );
 
-    const tokenRequests: Array<{ body: string; refreshHeader?: string }> = [];
-    const agentKeyRequests: Array<{ body: string; authorization?: string }> = [];
-    const portalResponses: Record<
-      string,
-      (body: string, req: http.IncomingMessage) => Record<string, unknown>
-    > = {
-      "/api/oauth/token": (body, req) => {
-        tokenRequests.push({
-          body,
-          refreshHeader: req.headers["x-nous-refresh-token"] as string | undefined,
-        });
-        return {
-          access_token: rejectedAccessToken,
-          refresh_token: newRefreshToken,
-          expires_in: 900,
-          token_type: "Bearer",
-        };
+    const portalRequests: Array<{
+      url: string;
+      body: string;
+      authorization?: string;
+      refreshHeader?: string;
+    }> = [];
+    const portalResponses: Record<string, Record<string, unknown>> = {
+      "/api/oauth/token": {
+        access_token: rejectedAccessToken,
+        refresh_token: newRefreshToken,
+        expires_in: 900,
+        token_type: "Bearer",
       },
-      "/api/oauth/agent-key": (body, req) => {
-        agentKeyRequests.push({ body, authorization: req.headers.authorization });
-        return {
-          api_key: agentKey,
-          expires_in: 1800,
-          inference_base_url: "https://untrusted.example/v1",
-        };
+      "/api/oauth/agent-key": {
+        api_key: agentKey,
+        expires_in: 1800,
+        inference_base_url: "https://untrusted.example/v1",
       },
     };
     const portal = resources.ownServer(
@@ -493,8 +485,15 @@ describe("Hermes managed-tool gateway broker", () => {
         req.on("data", (chunk) => chunks.push(chunk));
         req.on("end", () => {
           const body = Buffer.concat(chunks).toString("utf8");
+          const requestUrl = req.url || "";
+          portalRequests.push({
+            url: requestUrl,
+            body,
+            authorization: req.headers.authorization,
+            refreshHeader: req.headers["x-nous-refresh-token"] as string | undefined,
+          });
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(portalResponses[req.url || ""]?.(body, req) ?? {}));
+          res.end(JSON.stringify(portalResponses[requestUrl] ?? {}));
         });
       }),
     );
@@ -542,6 +541,8 @@ describe("Hermes managed-tool gateway broker", () => {
       }
     });
 
+    const tokenRequests = portalRequests.filter(({ url }) => url === "/api/oauth/token");
+    const agentKeyRequests = portalRequests.filter(({ url }) => url === "/api/oauth/agent-key");
     expect(tokenRequests).toHaveLength(1);
     expect(tokenRequests[0]?.refreshHeader).toBe(oldRefreshToken);
     expect(new URLSearchParams(tokenRequests[0]?.body).get("refresh_token")).toBeNull();
