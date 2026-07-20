@@ -194,7 +194,7 @@ async function printUnknownGatewayLookupStatus({
   process.exit(1);
 }
 
-export function printNonReadySandboxPhaseGuidance({
+function printNonReadySandboxPhaseGuidance({
   sandboxName,
   phase,
   dockerRuntime,
