@@ -120,7 +120,7 @@ wechat_spec="${package_identity[0]}"
 wechat_tarball="${package_identity[1]}"
 wechat_integrity="${package_identity[2]}"
 
-# Materialize the exact PR-provided graph without executing dependency scripts.
+# Materialize the PR-provided dependency graph without executing dependency scripts.
 npm --prefix "$runtime_dir" ci \
   --userconfig "$trusted_npmrc" \
   --registry "$npm_registry" \

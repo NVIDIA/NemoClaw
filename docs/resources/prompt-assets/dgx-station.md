@@ -27,7 +27,7 @@ Treat the host as prepared only when both modes succeed and confirm the exact St
 If either readiness mode fails, reports a mismatch, is unavailable, or has an inconclusive outcome:
 
 - Do not set `NEMOCLAW_PROVIDER`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_MODEL`, `NEMOCLAW_NON_INTERACTIVE`, `NEMOCLAW_YES`, or `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE`.
-- Explain that the only supported next step is the official installer with `--station-deepseek`, which owns pinned Station preparation and exact-revision reboot resume, then ask permission to start it.
+- Explain that the only supported next step is the official installer with `--station-deepseek`, which owns pinned Station preparation and reboot resume, then ask permission to start it.
 - Let the official installer present its third-party-software notice and complete confirmation summary.
 - Keep the official confirmation visible as the single active question, wait for the user's response, and do not pre-answer or suppress it.
 - If a secure interactive terminal is unavailable, stop instead of falling back to the provider-preseeded path.

@@ -4,6 +4,9 @@ description: "Start here. Introduces what NemoClaw is, what agent skills are ava
 license: "Apache-2.0"
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # NemoClaw Skills Guide
 
 NVIDIA NemoClaw runs OpenClaw always-on assistants inside hardened OpenShell sandboxes with NVIDIA inference (Nemotron).
@@ -49,18 +52,18 @@ documentation updates, and onboarding new messaging channels.
 | Skill | Summary |
 |-------|---------|
 | `nemoclaw-maintainer-morning` | Morning standup: triage the backlog, determine the day's target version, label selected items, surface stragglers, and output the daily plan. |
-| `nemoclaw-maintainer-triage` | Suggest and optionally apply labels for issues and PRs using the live NemoClaw triage instructions. |
-| `nemoclaw-maintainer-policies` | Read-only maintainer workflow policy reference for Issue Type, labels, Project fields, daily release labels, the pre-tag changelog gate, triage, duplicates, blocked items, and workflow decisions. |
-| `nemoclaw-maintainer-cross-issue-sweep` | Scan open issues for adjacent fixes or contradiction risks when reviewing a PR. |
-| `nemoclaw-maintainer-day` | Daytime loop: pick the highest-value version-targeted item and execute the right workflow (merge gate, salvage, security sweep, test gaps, hotspot cooling, or sequencing). Designed for `/loop`. |
+| `nemoclaw-maintainer-triage` | Propose Issue Type, Project fields, and approved labels for issues and PRs. Apply only changes that the maintainer accepts. |
+| `nemoclaw-maintainer-policies` | Answer maintainer workflow questions from the read-only policy references. |
+| `nemoclaw-maintainer-cross-issue-sweep` | Find open issues that a PR can also fix or conflict with. Report file and line evidence. |
+| `nemoclaw-maintainer-day` | Run one daytime maintainer pass for the release version. Select a merge, salvage, security, test, conflict, or sequencing workflow. Designed for `/loop`. |
 | `nemoclaw-maintainer-evening` | End-of-day handoff: require the pre-tag dated changelog PR, check version progress, identify stragglers, generate a QA handoff summary, cut the release tag, carry stragglers forward, retire the released label, and hand off the Announcement. |
 | `nemoclaw-maintainer-cut-release-tag` | Verify the dated changelog entry, cut an annotated semver tag on a maintainer-confirmed `origin/main` commit, wait for workflow-managed `latest`, carry remaining open items forward, and delete the released label; `lkg` stays manual. |
 | `nemoclaw-maintainer-release-notes` | Draft the post-tag Announcement from live tag/compare data, with the three-paragraph narrative, categorized change list, and external-only contributor thanks. |
-| `nemoclaw-maintainer-find-review-pr` | Find open security PRs with Urgent or High Project Priority, link each to its issue, detect duplicates, and present a review summary. |
-| `nemoclaw-maintainer-pr-comparator` | Compare competing PRs for the same issue and recommend which one to merge. |
+| `nemoclaw-maintainer-find-review-pr` | Find open security PRs with Urgent or High Project Priority. Link each PR to its issue and identify competing PRs. |
+| `nemoclaw-maintainer-pr-comparator` | Compare open PRs for the same issue. Apply gates and score the eligible PRs before you recommend one to merge. |
 | `nemoclaw-maintainer-normalize-title-tags` | Preview and remove bracketed `NemoClaw` title tags from issues and PRs case-insensitively, even when the tag appears later in the title. |
 | `nemoclaw-maintainer-refactor-docs` | Split oversized Fern docs into focused topics with journey-based navigation, canonical ownership, route-safe redirects, variant checks, and deduplication. |
-| `nemoclaw-maintainer-security-code-review` | Perform a 9-category security review of a PR or issue, producing per-category PASS/WARNING/FAIL verdicts. |
+| `nemoclaw-maintainer-security-code-review` | Review PR or issue changes in nine security categories. Report PASS, WARNING, or FAIL for each category. |
 | `nemoclaw-maintainer-verify-stale` | Verify whether old issues with native Issue Type `Bug` still reproduce on latest. Reuses or provisions a Brev box, scores confidence, and proposes evidence-backed Project/comment writes for approval; never auto-closes. |
 
 ### Contributor Skills
@@ -68,7 +71,7 @@ documentation updates, and onboarding new messaging channels.
 | Skill | Summary |
 |-------|---------|
 | `nemoclaw-contributor-onboard` | Set up, repair, or verify a trusted source checkout, with explicit opt-ins for host-visible CLI exposure, the pinned agent, and runtime onboarding. |
-| `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, DCO sign-off, post-push CI monitoring, and CodeRabbit/PR Review Advisor follow-up. |
+| `nemoclaw-contributor-create-pr` | Create a PR with the NemoClaw template, required checks, DCO declaration, and verified commits. Then, monitor CI and automated reviews. |
 | `nemoclaw-contributor-update-dependencies` | Audit dependency upgrades release by release, trace upstream source and test changes into downstream contracts, resolve migration concerns, and verify immutable artifacts separately. |
 | `nemoclaw-contributor-onboard-messaging-channel` | Add or review a new messaging channel with manifest-first implementation, upstream source analysis, plugin install confirmation, reachability checks, policies, docs, and tests. |
 | `nemoclaw-contributor-update-docs` | Scan recent git commits, update user-facing documentation, and create the canonical `docs/changelog/YYYY-MM-DD.mdx` entry in the pre-tag release-note docs PR. |
