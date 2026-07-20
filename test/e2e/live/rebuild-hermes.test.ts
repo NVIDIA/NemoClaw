@@ -164,12 +164,13 @@ async function hermesApiTokenDigest(
   apiKey: string | undefined,
   artifactName: string,
 ): Promise<string> {
+  const cli = JSON.stringify(host.commandPath);
   const result = await host.command(
     "bash",
     [
       "-lc",
       [
-        'token="$(nemoclaw "$SANDBOX_NAME" gateway-token --quiet)"',
+        `token="$(${cli} "$SANDBOX_NAME" gateway-token --quiet)"`,
         'case "$token" in ""|*[!0-9a-f]*) exit 2 ;; esac',
         '[ "${#token}" -eq 64 ] || exit 2',
         "printf '%s' \"$token\" | sha256sum | cut -d' ' -f1",
