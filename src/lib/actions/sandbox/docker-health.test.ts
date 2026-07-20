@@ -153,6 +153,19 @@ describe("getSandboxDockerHealth", () => {
 });
 
 describe("getSandboxDockerRuntime (#4495)", () => {
+  it("prefers the live container over an exited exact-name sibling", () => {
+    const deps = fixture({
+      psNames: "openshell-my-assistant-live\n",
+      psAllNames: "openshell-my-assistant\nopenshell-my-assistant-live\n",
+      pausedRaw: "true",
+    });
+    expect(getSandboxDockerRuntime("my-assistant", deps)).toEqual({
+      health: "unhealthy",
+      paused: true,
+      containerName: "openshell-my-assistant-live",
+    });
+  });
+
   it("finds an exited container that is absent from the running-only listing (#7222)", () => {
     const deps = fixture({
       psNames: "openshell-cluster-nemoclaw\n",

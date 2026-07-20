@@ -120,10 +120,12 @@ export function getSandboxDockerRuntime(
   depsOverride: Partial<ResolveDeps> = {},
 ): SandboxDockerRuntime {
   const deps: ResolveDeps = { ...defaultDeps, ...depsOverride };
-  const containerName = resolveDockerDriverSandboxContainer(sandboxName, {
-    ...deps,
-    dockerPsNames: deps.dockerPsAllNames,
-  });
+  const containerName =
+    resolveDockerDriverSandboxContainer(sandboxName, deps) ??
+    resolveDockerDriverSandboxContainer(sandboxName, {
+      ...deps,
+      dockerPsNames: deps.dockerPsAllNames,
+    });
   if (!containerName) return { health: "none", paused: false, containerName: null };
   let health: DockerHealthState;
   try {
