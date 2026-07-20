@@ -17,6 +17,8 @@ const NONCE = "a".repeat(64);
 
 const PROCESS_HARNESS = String.raw`
 import importlib.util
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -39,12 +41,18 @@ def write_process(
     cmdline,
     environ=b"PATH=/usr/bin\0",
     listener_inode=None,
+    state="S",
+    thread_count=1,
 ):
     process_root = os.path.join(proc_root, str(pid))
     os.makedirs(os.path.join(process_root, "ns"))
     os.makedirs(os.path.join(process_root, "fd"))
     os.symlink("../net", os.path.join(process_root, "net"))
-    fields = ["S", str(parent_pid)] + (["0"] * 17) + [str(start_time)]
+    fields = (
+        [state, str(parent_pid)]
+        + (["0"] * 15)
+        + [str(thread_count), "0", str(start_time)]
+    )
     with open(os.path.join(process_root, "stat"), "w", encoding="ascii") as stream:
         stream.write(f"{pid} (managed) {' '.join(fields)}\n")
     with open(os.path.join(process_root, "status"), "w", encoding="ascii") as stream:
@@ -88,6 +96,16 @@ with tempfile.TemporaryDirectory() as root:
         0,
         0,
         b"/opt/openshell/bin/openshell-sandbox\0--managed\0",
+    )
+    write_process(
+        proc_root,
+        namespace_path,
+        39,
+        200,
+        1,
+        1000,
+        b"",
+        state="Z",
     )
     write_process(
         proc_root,
@@ -141,14 +159,33 @@ with tempfile.TemporaryDirectory() as root:
     os.chmod(boundary_path, 0o755)
 
     with control.ProcReader(proc_root) as reader:
+        zombie = reader.capture(39)
         supervisor = control._discover_supervisor(reader)
         hermes = control._agent_spec("hermes", reader, supervisor)
         candidates = control._gateway_candidates(reader, supervisor, hermes)
         initial_proof = {
+            "stable_zombie": [zombie.state, len(zombie.cmdline)],
             "supervisor": [supervisor.pid, supervisor.start_time, supervisor.parent_pid],
             "gateway": [candidates[0].pid, candidates[0].start_time, candidates[0].parent_pid],
             "healthy": control._gateway_healthy(reader, candidates[0], hermes),
         }
+        write_process(
+            proc_root,
+            namespace_path,
+            38,
+            199,
+            1,
+            1000,
+            b"",
+            state="Z",
+            thread_count=2,
+        )
+        try:
+            control._discover_supervisor(reader)
+            zombie_leader_with_live_sibling = "accepted"
+        except control.ControlError as error:
+            zombie_leader_with_live_sibling = error.code
+        remove_process(proc_root, 38)
         state_key_behavior = [
             replace(candidates[0], state="R").stable_key()
             == candidates[0].stable_key(),
@@ -158,6 +195,64 @@ with tempfile.TemporaryDirectory() as root:
         mixed_namespace_rejected = not control._gateway_matches(
             candidates[0], replace(supervisor, namespace_inode=None), hermes
         )
+
+        real_supervisor_candidates = control._supervisor_candidates
+        transient_scan_calls = []
+        def transient_unrelated_process_churn(reader, pid1, sandbox_uid):
+            matches, inconclusive = real_supervisor_candidates(reader, pid1, sandbox_uid)
+            transient_scan_calls.append(len(matches))
+            return matches, len(transient_scan_calls) <= 5 or inconclusive
+        control._supervisor_candidates = transient_unrelated_process_churn
+        try:
+            transient_supervisor = control._discover_supervisor(reader)
+            transient_supervisor_retry = [
+                transient_supervisor.pid,
+                len(transient_scan_calls),
+            ]
+        finally:
+            control._supervisor_candidates = real_supervisor_candidates
+
+        persistent_scan_calls = []
+        fake_clock = [0.0]
+        real_monotonic = control.time.monotonic
+        real_sleep = control.time.sleep
+        def persistent_unrelated_process_churn(reader, pid1, sandbox_uid):
+            matches, _inconclusive = real_supervisor_candidates(reader, pid1, sandbox_uid)
+            persistent_scan_calls.append(len(matches))
+            return matches, True
+        control._supervisor_candidates = persistent_unrelated_process_churn
+        control.time.monotonic = lambda: fake_clock[0]
+        control.time.sleep = lambda seconds: fake_clock.__setitem__(0, fake_clock[0] + seconds)
+        try:
+            control._discover_supervisor(reader)
+            persistent_supervisor_churn = ["accepted", len(persistent_scan_calls), fake_clock[0]]
+        except control.ControlError as error:
+            persistent_supervisor_churn = [
+                error.code,
+                len(persistent_scan_calls),
+                round(fake_clock[0], 3),
+            ]
+        finally:
+            control._supervisor_candidates = real_supervisor_candidates
+            control.time.monotonic = real_monotonic
+            control.time.sleep = real_sleep
+
+        transient_recapture_calls = []
+        real_capture = reader.capture
+        def capture_with_transient_supervisor_read(pid):
+            if pid == supervisor.pid:
+                transient_recapture_calls.append(pid)
+                if len(transient_recapture_calls) <= 4:
+                    raise control.ControlError("SUPERVISOR_UNAVAILABLE")
+            return real_capture(pid)
+        reader.capture = capture_with_transient_supervisor_read
+        try:
+            transient_gateway_candidates = [
+                control._gateway_candidates(reader, supervisor, hermes)[0].pid,
+                len(transient_recapture_calls),
+            ]
+        finally:
+            reader.capture = real_capture
 
         real_namespace_inode = control._namespace_inode
         control._namespace_inode = lambda _pid_fd: None
@@ -224,6 +319,21 @@ with tempfile.TemporaryDirectory() as root:
             unreadable_process = error.code
         finally:
             reader.capture = real_capture
+        remove_process(proc_root, 46)
+        write_process(
+            proc_root,
+            namespace_path,
+            46,
+            667,
+            1,
+            1000,
+            b"",
+        )
+        try:
+            control._discover_supervisor(reader)
+            empty_live_process = "accepted"
+        except control.ControlError as error:
+            empty_live_process = error.code
         remove_process(proc_root, 46)
         write_process(
             proc_root,
@@ -323,20 +433,101 @@ with tempfile.TemporaryDirectory() as root:
         read_fd, write_fd = os.pipe()
         try:
             control._pidfd_open = lambda _pid: os.dup(read_fd)
-            exit_checks = iter((False, True))
-            control._pidfd_exited = lambda _pidfd, _timeout: next(exit_checks)
-            control._send_pidfd = lambda _pidfd, signum: sent.append(int(signum))
+            exit_checks = [False, True, False]
+            control._pidfd_exited = lambda _pidfd, _timeout: exit_checks.pop(0)
+            def record_signal(_pidfd, signum):
+                sent.append(int(signum))
+                return True
+            control._send_pidfd = record_signal
+            real_capture = reader.capture
+            termination_capture_calls = []
+            def reject_post_signal_recapture(pid):
+                if pid == expected_gateway.pid:
+                    termination_capture_calls.append(pid)
+                    if len(termination_capture_calls) > 1:
+                        raise control.ControlError("SUPERVISOR_UNAVAILABLE")
+                return real_capture(pid)
+            reader.capture = reject_post_signal_recapture
             control._terminate_gateway(reader, expected_gateway)
+            reader.capture = real_capture
+            termination_proof_reads = len(termination_capture_calls)
 
             with open(os.path.join(proc_root, "41", "stat"), "w", encoding="ascii") as stream:
-                fields = ["S", "40"] + (["0"] * 17) + ["999"]
+                fields = ["S", "40"] + (["0"] * 15) + ["1", "0", "999"]
                 stream.write(f"41 (managed) {' '.join(fields)}\n")
             try:
                 control._terminate_gateway(reader, expected_gateway)
                 reused = "signalled"
             except control.ControlError as error:
                 reused = error.code
+
+            with open(os.path.join(proc_root, "41", "stat"), "w", encoding="ascii") as stream:
+                fields = ["S", "40"] + (["0"] * 15) + ["1", "0", "333"]
+                stream.write(f"41 (managed) {' '.join(fields)}\n")
+
+            control._pidfd_open = lambda _pid: os.dup(read_fd)
+            control._pidfd_exited = lambda _pidfd, _timeout: True
+            def reject_recapture_after_pidfd_open(pid):
+                if pid == expected_gateway.pid:
+                    raise control.ControlError("SUPERVISOR_UNAVAILABLE")
+                return real_capture(pid)
+            reader.capture = reject_recapture_after_pidfd_open
+            try:
+                control._terminate_gateway(reader, expected_gateway)
+                pidfd_recapture_exit = "accepted"
+            finally:
+                reader.capture = real_capture
+
+            control._pidfd_open = lambda _pid: None
+            control._terminate_gateway(reader, expected_gateway)
+            pidfd_open_exit = "accepted"
+
+            control._pidfd_open = lambda _pid: os.dup(read_fd)
+            control._send_pidfd = lambda _pidfd, _signum: False
+            control._terminate_gateway(reader, expected_gateway)
+            pidfd_signal_exit = "accepted"
+
+            timeout_signals = []
+            control._send_pidfd = lambda _pidfd, signum: (
+                timeout_signals.append(int(signum)) or True
+            )
+            control._pidfd_exited = lambda _pidfd, _timeout: False
+            try:
+                control._terminate_gateway(reader, expected_gateway)
+                kill_timeout = "accepted"
+            except control.ControlError as error:
+                kill_timeout = [error.code, timeout_signals]
+
+            real_os_pidfd_open = getattr(control.os, "pidfd_open", None)
+            real_signal_pidfd_send = getattr(control.signal, "pidfd_send_signal", None)
+            def pidfd_open_esrch(_pid, _flags):
+                raise OSError(control.errno.ESRCH, "gone")
+            def pidfd_send_esrch(_pidfd, _signum, _siginfo, _flags):
+                raise OSError(control.errno.ESRCH, "gone")
+            def pidfd_send_eperm(_pidfd, _signum, _siginfo, _flags):
+                raise OSError(control.errno.EPERM, "denied")
+            control.os.pidfd_open = pidfd_open_esrch
+            control.signal.pidfd_send_signal = pidfd_send_esrch
+            try:
+                helper_pidfd_open_esrch = real_pidfd_open(expected_gateway.pid)
+                helper_pidfd_send_esrch = real_send(read_fd, control.signal.SIGTERM)
+                control.signal.pidfd_send_signal = pidfd_send_eperm
+                try:
+                    real_send(read_fd, control.signal.SIGTERM)
+                    helper_pidfd_send_eperm = "accepted"
+                except control.ControlError as error:
+                    helper_pidfd_send_eperm = error.code
+            finally:
+                if real_os_pidfd_open is None:
+                    del control.os.pidfd_open
+                else:
+                    control.os.pidfd_open = real_os_pidfd_open
+                if real_signal_pidfd_send is None:
+                    del control.signal.pidfd_send_signal
+                else:
+                    control.signal.pidfd_send_signal = real_signal_pidfd_send
         finally:
+            reader.capture = real_capture
             control._pidfd_open = real_pidfd_open
             control._pidfd_exited = real_pidfd_exited
             control._send_pidfd = real_send
@@ -498,23 +689,21 @@ with tempfile.TemporaryDirectory() as root:
         real_agent_spec = control._agent_spec
         real_gateway_candidates = control._gateway_candidates
         real_wait_for_healthy = control._wait_for_healthy_gateway
-        real_publish_lease = control._publish_expected_exit_lease
         control._detect_agent = lambda: "openclaw"
         control._agent_spec = lambda *_args: control.AgentSpec("openclaw", 18642)
         control._gateway_candidates = lambda reader, *_args: [reader.capture(43)]
         control._wait_for_healthy_gateway = lambda reader, *_args: reader.capture(43)
-        control._terminate_gateway = lambda *_args: None
-        control._publish_expected_exit_lease = lambda *_args: (_ for _ in ()).throw(
-            AssertionError("OpenClaw must not publish a Hermes crash-budget lease")
+        control._terminate_gateway = lambda _reader, identity: observe_expected_exit_lease(
+            identity, "openclaw-restart"
         )
         try:
             openclaw_restart = control._control("restart", "f" * 64)
+            openclaw_lease_cleared = not os.path.exists(lease_path)
         finally:
             control._detect_agent = real_detect_agent
             control._agent_spec = real_agent_spec
             control._gateway_candidates = real_gateway_candidates
             control._wait_for_healthy_gateway = real_wait_for_healthy
-            control._publish_expected_exit_lease = real_publish_lease
             control._terminate_gateway = replace_gateway
 
         real_wait_for_healthy = control._wait_for_healthy_gateway
@@ -686,19 +875,50 @@ with tempfile.TemporaryDirectory() as root:
     installed_proc = control._proc_root()
     installed_system = control._system_root()
 
+    control.__file__ = sys.argv[1]
+    os.environ["NEMOCLAW_MANAGED_CONTROL_ALLOW_NONROOT_TEST"] = "1"
+    real_control = control._control
+    control._control = lambda *_args: (_ for _ in ()).throw(
+        control.ControlError("SUPERVISOR_UNAVAILABLE", stage="await-replacement")
+    )
+    staged_stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(staged_stderr):
+            staged_status = control.main(["restart", "f" * 64])
+    finally:
+        control._control = real_control
+    staged_diagnostic = [staged_status, staged_stderr.getvalue().splitlines()]
+
     print(json.dumps({
         "initial": initial_proof,
+        "zombie_leader_with_live_sibling": zombie_leader_with_live_sibling,
         "state_key_behavior": state_key_behavior,
         "mixed_namespace_rejected": mixed_namespace_rejected,
+        "transient_supervisor_retry": transient_supervisor_retry,
+        "persistent_supervisor_churn": persistent_supervisor_churn,
+        "transient_gateway_candidates": transient_gateway_candidates,
         "namespace_denied": namespace_denied,
         "preflight": preflight_steps,
         "runtime_validation": runtime_validation,
         "missing_supervisor": missing_supervisor,
         "appearing_supervisor": appearing_supervisor,
         "unreadable_process": unreadable_process,
+        "empty_live_process": empty_live_process,
         "duplicate_supervisor": duplicate_supervisor,
         "duplicate": duplicate,
         "signals": sent,
+        "termination_proof_reads": termination_proof_reads,
+        "pidfd_exit_races": [
+            pidfd_recapture_exit,
+            pidfd_open_exit,
+            pidfd_signal_exit,
+        ],
+        "pidfd_helper_errors": [
+            helper_pidfd_open_esrch,
+            helper_pidfd_send_esrch,
+            helper_pidfd_send_eperm,
+            kill_timeout,
+        ],
         "reused": reused,
         "restarted": restarted,
         "recovered": recovered,
@@ -714,6 +934,7 @@ with tempfile.TemporaryDirectory() as root:
             lease_observations,
             restart_lease_cleared,
             timeout_lease_cleared,
+            openclaw_lease_cleared,
         ],
         "timeout_refresh": [
             timeout_refresh,
@@ -727,6 +948,7 @@ with tempfile.TemporaryDirectory() as root:
         "source_seams": [source_proc, source_system],
         "disabled_source_seams": [disabled_source_proc, disabled_source_system],
         "installed_seams": [installed_proc, installed_system],
+        "staged_diagnostic": staged_diagnostic,
     }))
 `;
 
@@ -740,12 +962,17 @@ describe("managed gateway root control", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       initial: {
+        stable_zombie: ["Z", 0],
         supervisor: [40, "222", 1],
         gateway: [41, "333", 40],
         healthy: true,
       },
+      zombie_leader_with_live_sibling: "SUPERVISOR_UNAVAILABLE",
       state_key_behavior: [true, false],
       mixed_namespace_rejected: true,
+      transient_supervisor_retry: [40, 6],
+      persistent_supervisor_churn: ["SUPERVISOR_UNAVAILABLE", expect.any(Number), 1],
+      transient_gateway_candidates: [41, 5],
       namespace_denied: true,
       preflight: [
         {
@@ -767,9 +994,13 @@ describe("managed gateway root control", () => {
       missing_supervisor: "SUPERVISOR_NOT_RUNNING",
       appearing_supervisor: "SUPERVISOR_UNAVAILABLE",
       unreadable_process: "SUPERVISOR_UNAVAILABLE",
+      empty_live_process: "SUPERVISOR_UNAVAILABLE",
       duplicate_supervisor: "SUPERVISOR_UNAVAILABLE",
       duplicate: "SUPERVISOR_UNAVAILABLE",
       signals: [15, 9],
+      termination_proof_reads: 1,
+      pidfd_exit_races: ["accepted", "accepted", "accepted"],
+      pidfd_helper_errors: [null, false, "GATEWAY_FAILED", ["GATEWAY_FAILED", [15, 9]]],
       reused: "SUPERVISOR_UNAVAILABLE",
       restarted: ["ok", 41, 43],
       recovered: ["already-running", 43, 43],
@@ -784,11 +1015,17 @@ describe("managed gateway root control", () => {
             secure: true,
           },
           {
+            label: "openclaw-restart",
+            identity: ["v1", 43, "555", expect.any(Number), "777"],
+            secure: true,
+          },
+          {
             label: "unhealthy-recover",
             identity: ["v1", 44, "666", expect.any(Number), "777"],
             secure: true,
           },
         ],
+        true,
         true,
         true,
       ],
@@ -808,6 +1045,10 @@ describe("managed gateway root control", () => {
       source_seams: ["/attacker/proc", "/attacker/root"],
       disabled_source_seams: ["/proc", "/"],
       installed_seams: ["/proc", "/"],
+      staged_diagnostic: [
+        1,
+        ["SUPERVISOR_UNAVAILABLE", "NEMOCLAW_CONTROL_STAGE=await-replacement"],
+      ],
     });
   });
 

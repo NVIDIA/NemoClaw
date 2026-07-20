@@ -50,8 +50,14 @@ export function normalizeSandboxLogsOptions(
   };
 }
 
-export function buildEnableSandboxAuditLogsArgs(sandboxName: string): string[] {
-  return ["settings", "set", sandboxName, "--key", "ocsf_json_enabled", "--value", "true"];
+export function buildEnableSandboxAuditLogsArgs(
+  sandboxName: string,
+  gatewayName?: string,
+): string[] {
+  const args = ["settings", "set"];
+  if (gatewayName) args.push("-g", gatewayName);
+  args.push(sandboxName, "--key", "ocsf_json_enabled", "--value", "true");
+  return args;
 }
 
 export function buildSandboxOpenclawGatewayLogsArgs(
@@ -66,8 +72,14 @@ export function buildSandboxOpenclawGatewayLogsArgs(
   return args;
 }
 
-export function buildSandboxLogsArgs(sandboxName: string, options: SandboxLogsOptions): string[] {
-  const args = ["logs", sandboxName, "-n", options.lines, "--source", "all"];
+export function buildSandboxLogsArgs(
+  sandboxName: string,
+  options: SandboxLogsOptions,
+  gatewayName?: string,
+): string[] {
+  const args = ["logs"];
+  if (gatewayName) args.push("-g", gatewayName);
+  args.push(sandboxName, "-n", options.lines, "--source", "all");
   if (options.since) {
     args.push("--since", options.since);
   }

@@ -6,7 +6,9 @@ import {
   resolveAgentDefaultCloudModel,
   resolveAgentProviderInferenceApi,
 } from "../inference/config";
+import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
+import { getOllamaContextWindowFloorForAgent } from "../inference/ollama-runtime-context";
 import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
@@ -220,6 +222,7 @@ function applyGatewayRouteDiscoveryConstraints(
   }
 }
 
+/** Create the provider-selection flow and seed agent-specific Ollama defaults. */
 export function createSetupNim(
   defaults: SetupNimFlowDeps,
   overrides: Partial<SetupNimFlowDeps> = {},
@@ -253,6 +256,8 @@ export function createSetupNim(
     let allowToolsIncompatible = false;
     let reuseGatewayCredential = false;
     let endpointPinnedAddresses: string[] | undefined;
+    let endpointTrustedPrivateCapability: TrustedPrivateEndpointCapability | undefined;
+    let vllmModelIdentity: string | undefined;
     const inferenceCapabilityCache = new OnboardInferenceCapabilityCache();
     const nvidiaFeaturedModels = deps.createNvidiaFeaturedModelSession({
       defaultModel: resolveAgentDefaultCloudModel(agent),
@@ -271,7 +276,9 @@ export function createSetupNim(
         compatibleEndpointReasoning,
         nimContainer,
         allowToolsIncompatible,
+        ollamaContextWindowFloor: getOllamaContextWindowFloorForAgent(agent?.name ?? null),
         ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+        ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
         inferenceCapabilityCache,
         nvidiaFeaturedModels,
         openRouterFeaturedModels,
@@ -462,6 +469,7 @@ export function createSetupNim(
             preferredInferenceApi,
             allowToolsIncompatible,
             endpointPinnedAddresses,
+            endpointTrustedPrivateCapability,
           } = state);
           compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
           reuseGatewayCredential = state.reuseGatewayCredentialWithoutLocalKey === true;
@@ -608,6 +616,7 @@ export function createSetupNim(
             nimContainer,
             allowToolsIncompatible,
           } = state);
+          vllmModelIdentity = state.vllmModelIdentity;
           if (result === "retry-selection") continue selectionLoop;
           break;
         } else if (selected.key === "routed") {
@@ -634,11 +643,20 @@ export function createSetupNim(
       deps,
     );
     const selectedModel = isBackToSelection(model) ? null : model;
+    const recoveredRegistryRouteMatches =
+      recoveredRegistryRoute?.provider === provider &&
+      recoveredRegistryRoute.endpointUrl === endpointUrl;
+    const endpointSource = recoveredRegistryRouteMatches
+      ? (recoveredRegistryRoute.endpointSource ?? null)
+      : endpointPinnedAddresses || endpointTrustedPrivateCapability
+        ? "onboard"
+        : null;
     await deps.maybePromptForInferenceInputCapability(selectedModel);
     return {
       model: selectedModel,
       provider,
       endpointUrl,
+      endpointSource,
       credentialEnv,
       hermesAuthMethod,
       hermesToolGateways,
@@ -654,6 +672,8 @@ export function createSetupNim(
       reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,
       ...(recoveredFromSandbox ? { recoveredFromSandbox: true } : {}),
       ...(endpointPinnedAddresses ? { endpointPinnedAddresses } : {}),
+      ...(endpointTrustedPrivateCapability ? { endpointTrustedPrivateCapability } : {}),
+      ...(provider === "vllm-local" && vllmModelIdentity ? { vllmModelIdentity } : {}),
       inferenceCapabilityCache,
     };
   };

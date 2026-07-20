@@ -73,4 +73,21 @@ describe("ensureOpenshellForOnboard", () => {
       "  \u2717 openshell is missing provider credential rewrite or MCP L7 policy support.",
     );
   });
+
+  it("applies the 0.0.85 floor during final validation when the blueprint omits a minimum", () => {
+    const deps = makeDeps({
+      isOpenshellInstalled: () => false,
+      getInstalledOpenshellVersion: () => "0.0.81",
+      getBlueprintMinOpenshellVersion: () => null,
+      getBlueprintMaxOpenshellVersion: () => null,
+      runCaptureOpenshell: () => "openshell 0.0.81",
+    });
+
+    expect(() => ensureOpenshellForOnboard(deps)).toThrow("exit 1");
+    expect(deps.installOpenshell).toHaveBeenCalledTimes(1);
+    expect(deps.error).toHaveBeenCalledWith(
+      "  \u2717 openshell 0.0.81 is below the minimum required by this NemoClaw release.",
+    );
+    expect(deps.error).toHaveBeenCalledWith("    blueprint.yaml min_openshell_version: 0.0.85");
+  });
 });

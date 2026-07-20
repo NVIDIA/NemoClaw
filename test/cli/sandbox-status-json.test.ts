@@ -133,6 +133,10 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
+        "  printf \"\\033[32m✓ Active gateway set to 'nemoclaw'\\033[0m\\n\"",
+        "  exit 0",
+        "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
         "  echo 'Gateway inference:'",
         "  echo",
@@ -168,6 +172,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(r.out.trim().endsWith("}")).toBe(true);
     expect(r.out).not.toContain("Sandbox: ");
     expect(r.out).not.toContain("Nonexistent flag: --json");
+    expect(r.out).not.toContain("Active gateway set");
 
     const parsed = JSON.parse(r.out);
     expect(parsed).toMatchObject({
@@ -246,7 +251,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     ]);
   });
 
-  it("sandbox status --json ignores failed upstream diagnostics when inference.local is healthy (#6192)", () => {
+  it("sandbox status --json reports a missing upstream credential as not probed when inference.local is reachable (#6192)", () => {
     const { home, localBin, sandboxName } = createInferenceRouteStatusSetup({
       routeOutput: "OK 200",
       upstreamHttpStatus: "000",
@@ -266,7 +271,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       endpoint: "https://inference.local/v1/models",
     });
     expect(parsed.inferenceHealth.subprobes).toEqual([
-      expect.objectContaining({ ok: false, probeLabel: "upstream" }),
+      expect.objectContaining({ ok: true, probed: false, probeLabel: "upstream" }),
     ]);
   });
 
@@ -568,7 +573,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Error'",
@@ -621,7 +626,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo '  Name: alpha'",
         "  echo '  Phase: Ready'",
@@ -710,7 +715,7 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
         path.join(localBin, "openshell"),
         [
           "#!/usr/bin/env bash",
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo '  Name: alpha'",
           "  echo '  Phase: Error'",

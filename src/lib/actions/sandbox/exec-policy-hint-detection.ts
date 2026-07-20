@@ -93,7 +93,7 @@ function isStructuredProxyPolicyDenialDetail(detail: string): boolean {
 // - Removal condition: delete this fallback when OpenShell provides a typed
 //   exec-denial result. Until then, require both the exact error code and the
 //   complete safely bounded CONNECT or forward-HTTP detail so unrelated JSON
-//   cannot match. The forward forms mirror OpenShell v0.0.72's endpoint, path,
+//   cannot match. The forward forms mirror OpenShell v0.0.85's endpoint, path,
 //   and L7 policy denial messages.
 function firstJsonObject(line: string): string | null {
   const start = line.indexOf("{");

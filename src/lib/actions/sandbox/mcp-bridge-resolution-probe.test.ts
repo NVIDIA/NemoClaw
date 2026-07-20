@@ -228,6 +228,20 @@ describe("MCP credential-resolution probe classification", () => {
     expect(probe.detail).toContain("CONNECT 403");
   });
 
+  it("classifies a CONNECT-level proxy 503 as unavailable TLS termination (#6379)", () => {
+    const probe = classifyCredentialResolutionProbe(
+      {
+        status: 0,
+        stdout: probeStdout({ curlExit: 56 }),
+        stderr: "curl: (56) CONNECT tunnel failed, response 503",
+      },
+      baseEntry,
+    );
+    expect(probe.ok).toBeNull();
+    expect(probe.detail).toContain("CONNECT 503");
+    expect(probe.detail).toContain("ephemeral CA initialization");
+  });
+
   it("classifies curl exit 28 as an indeterminate probe timeout (#6379)", () => {
     const probe = classifyCredentialResolutionProbe(
       { status: 0, stdout: probeStdout({ curlExit: 28 }), stderr: "" },

@@ -5,6 +5,7 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -17,7 +18,10 @@ import {
   dockerStop,
 } from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import { warnLine } from "../cli/terminal-style";
+import { markPhaseActivity } from "../core/phase-activity";
 import { VLLM_PORT } from "../core/ports";
+import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
 import { runCapture } from "../runner";
 import { isSafeModelId } from "../validation";
@@ -25,6 +29,7 @@ import { getGpuIndicesByName } from "./nim";
 import { buildVllmDockerEnv } from "./vllm-docker-env";
 import {
   buildVllmServeCommand,
+  NEMOTRON_ULTRA_STATION_IMAGE,
   parseVllmExtraServeArgs,
   VLLM_EXTRA_ARGS_ENV,
   VLLM_MODELS,
@@ -33,11 +38,16 @@ import {
 } from "./vllm-models";
 import { resolveVllmInstallModel } from "./vllm-prompt";
 import {
+  findUnwritableModelCachePath,
   formatStorageBytes,
+  formatStorageDecimalBytes,
   imageStorageRequirementBytes,
+  managedVllmStorageEstimateBytes,
+  measureDirectorySizeBytes,
   probeDockerStorage,
+  probeHostStorage,
+  type StorageCapacity,
   type StorageProbeResult,
-  VLLM_STORAGE_OVERRIDE_ENV,
 } from "./vllm-storage";
 
 // Per-platform install recipe. Add new platforms by appending an entry to
@@ -53,6 +63,8 @@ export interface VllmProfile {
   // Compressed size of that exact platform manifest. The storage preflight
   // adds unpacking and pull-staging headroom.
   imageDownloadSizeBytes: number;
+  // Pre-calculated unpacked layer size for this exact digest when available.
+  imageUnpackedSizeBytes?: number;
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
   // because Spark/Station can host larger recipes, but generic discrete-GPU
   // Linux falls back to the small Nemotron-Nano-4B that fits on consumer
@@ -72,12 +84,26 @@ export interface VllmProfile {
   pullTimeoutSec: number;
   // Wall-clock budget for the load phase (after pull, before ready).
   loadTimeoutSec: number;
+  // Optional pinned model snapshot size. Model-specific runtime overrides use
+  // this to guard the host Hugging Face cache before a cold download.
+  modelDownloadSizeBytes?: number;
 }
+
+interface VllmImageCatalogEntry {
+  downloadSizeBytes: number;
+  ref: string;
+  unpackedSizeBytes?: number;
+}
+
+const VLLM_WRITABLE_ALLOWANCE_BYTES = 816_000_000;
 
 // Platform manifests and decimal compressed sizes published by NGC for the
 // named release tags. Pinning the digest makes a cache hit authoritative: an
-// explicit pull cannot begin downloading different same-tag layers.
+// explicit pull cannot begin downloading different same-tag layers. Unpacked
+// sizes are digest-catalog values measured ahead of time because OCI metadata
+// does not publish exact uncompressed byte counts.
 export const VLLM_IMAGES = {
+  vllm022: NEMOTRON_ULTRA_STATION_IMAGE,
   ngc2603Post1: {
     tag: "nvcr.io/nvidia/vllm:26.03.post1-py3",
     amd64: {
@@ -94,6 +120,7 @@ export const VLLM_IMAGES = {
     arm64: {
       ref: "nvcr.io/nvidia/vllm@sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2",
       downloadSizeBytes: 9_603_085_145,
+      unpackedSizeBytes: 27_658_526_720,
     },
   },
 } as const;
@@ -120,6 +147,8 @@ const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
 const HF_CACHE_CONTAINER_DIR = "/root/.cache/huggingface";
+const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
+const HF_CACHE_COMPONENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const NEMOCLAW_VLLM_CONTAINER_NAME = "nemoclaw-vllm";
 export const NEMOCLAW_VLLM_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm";
 const DOCKER_CONTAINER_ID_PATTERN = /^[a-f0-9]{12,64}$/;
@@ -130,6 +159,43 @@ function hostHfCacheDir(): string {
 
 function hfCacheMount(): string {
   return `${hostHfCacheDir()}:${HF_CACHE_CONTAINER_DIR}`;
+}
+
+function hfDownloadCacheMount(): string {
+  return `${hostHfCacheDir()}:${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`;
+}
+
+function hfModelCacheKey(model: VllmModelDef): string | null {
+  const modelParts = model.id.split("/");
+  if (modelParts.some((part) => !HF_CACHE_COMPONENT_PATTERN.test(part))) return null;
+  return `models--${modelParts.join("--")}`;
+}
+
+function hfModelSnapshotDir(model: VllmModelDef): string | null {
+  const revision = model.revision;
+  const modelCacheKey = hfModelCacheKey(model);
+  if (!revision || !modelCacheKey || !HF_CACHE_COMPONENT_PATTERN.test(revision)) {
+    return null;
+  }
+  return path.join(hostHfCacheDir(), "hub", modelCacheKey, "snapshots", revision);
+}
+
+function hfModelCacheDir(model: VllmModelDef): string | null {
+  const modelParts = model.id.split("/");
+  if (modelParts.some((part) => !HF_CACHE_COMPONENT_PATTERN.test(part))) {
+    return null;
+  }
+  return path.join(hostHfCacheDir(), "hub", `models--${modelParts.join("--")}`);
+}
+
+function hostUserIdentity(): string | null {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") return null;
+  return `${String(process.getuid())}:${String(process.getgid())}`;
+}
+
+function hostUserDockerArgs(): string[] {
+  const identity = hostUserIdentity();
+  return identity ? ["--user", identity] : [];
 }
 
 function vllmDockerRunFlags(gpuFlag = "all"): string[] {
@@ -155,16 +221,15 @@ function pickHfTokenEntry(
 }
 
 /**
- * Forward a Hugging Face token from the host into the vLLM/hf container so
- * `hf download` and `vllm serve` can pull weights for gated models.
+ * Forward a Hugging Face token from the host into the one-shot `hf download`
+ * container so gated model weights can be fetched.
  *
  * Returns the bare `-e KEY` form (no `=value`) so the token never lands in
  * the host process list. Docker reads the actual value from its own
  * environment, which the caller is responsible for populating via
  * `buildHfTokenForwardEnv` when spawning through the runner allowlist.
- * The `hf download` container can live for several minutes during a cold
- * pull and `vllm serve` runs for the lifetime of the sandbox; argv-embedded
- * secrets would be visible via `ps` for that whole window.
+ * The download container can live for several minutes during a cold pull;
+ * argv-embedded secrets would be visible via `ps` for that whole window.
  */
 export function buildHfTokenDockerArgs(env: NodeJS.ProcessEnv = process.env): string[] {
   const entry = pickHfTokenEntry(env);
@@ -190,6 +255,7 @@ const SPARK_PROFILE: VllmProfile = {
   platform: "spark",
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
+  imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
   defaultModel: qwen35bNvfp4Model(),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: vllmDockerRunFlags(),
@@ -203,19 +269,20 @@ const STATION_PROFILE: VllmProfile = {
   platform: "station",
   image: VLLM_IMAGES.ngc2605Post1.arm64.ref,
   imageDownloadSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.downloadSizeBytes,
+  imageUnpackedSizeBytes: VLLM_IMAGES.ngc2605Post1.arm64.unpackedSizeBytes,
   defaultModel: deepseekV4FlashModel(),
   containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {
     const indices = getGpuIndicesByName(/GB300/i);
+    if (indices.length === 0) {
+      throw new Error(
+        "DGX Station managed vLLM requires an NVIDIA GB300 GPU, but none was detected",
+      );
+    }
     // Docker parses --gpus as CSV, so multi-device values must retain
     // double quotes inside the argv token to keep the comma in one field.
-    const gpuFlag =
-      indices.length === 0
-        ? "all"
-        : indices.length === 1
-          ? `device=${indices[0]}`
-          : `"device=${indices.join(",")}"`;
+    const gpuFlag = indices.length === 1 ? `device=${indices[0]}` : `"device=${indices.join(",")}"`;
     return vllmDockerRunFlags(gpuFlag);
   },
   pullTimeoutSec: SPARK_PROFILE.pullTimeoutSec,
@@ -224,7 +291,7 @@ const STATION_PROFILE: VllmProfile = {
 
 // Generic discrete-GPU Linux. Uses a small nemotron model that fits on
 // most GPUs.
-const genericLinuxImage =
+const genericLinuxImage: VllmImageCatalogEntry | null =
   process.arch === "arm64"
     ? VLLM_IMAGES.ngc2603Post1.arm64
     : process.arch === "x64"
@@ -237,6 +304,7 @@ const GENERIC_LINUX_PROFILE: VllmProfile | null = genericLinuxImage
       platform: "linux",
       image: genericLinuxImage.ref,
       imageDownloadSizeBytes: genericLinuxImage.downloadSizeBytes,
+      imageUnpackedSizeBytes: genericLinuxImage.unpackedSizeBytes,
       defaultModel: nemotronNanoModel(),
       containerName: NEMOCLAW_VLLM_CONTAINER_NAME,
       dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
@@ -288,6 +356,11 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
 }
 
 export async function pullImage(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
+  try {
+    assertVllmRegistryDigestRef(profile.image);
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
   emit(`Pulling vLLM image: ${profile.image}`);
   // Docker can be quiet while finalizing large layers on every supported vLLM
   // profile, so all profiles intentionally share the 15-minute stall default.
@@ -325,16 +398,18 @@ function downloadModel(
         "-t",
         "--rm",
         "--pull=never",
+        ...hostUserDockerArgs(),
         "--entrypoint",
         "hf",
         "-v",
-        hfCacheMount(),
+        hfDownloadCacheMount(),
         "-e",
-        `HF_HOME=${HF_CACHE_CONTAINER_DIR}`,
+        `HF_HOME=${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`,
         ...buildHfTokenDockerArgs(),
         profile.image,
         "download",
         model.id,
+        ...(model.revision ? ["--revision", model.revision] : []),
       ],
       {
         env: buildVllmDockerEnv(buildHfTokenForwardEnv()),
@@ -422,24 +497,24 @@ function validateDockerArgs(args: readonly string[], label: string): string[] {
 }
 
 // Build the `docker run` argv for the long-lived vLLM inference container.
-// Exported for testing. `--restart unless-stopped` makes the container come
-// back after a host reboot or Docker daemon restart (#4886); without a restart
-// policy the container stays down after a reboot and `nemoclaw inference get`
-// fails until a full `nemoclaw onboard --fresh --gpu` recreates it.
+// Exported for testing. `--init` forwards signals and reaps child processes so
+// Docker can stop and restart the long-lived server cleanly. `--restart
+// unless-stopped` brings it back after a host reboot or Docker daemon restart
+// (#4886); without a restart policy the container stays down after a reboot and
+// `nemoclaw inference get` fails until onboarding recreates it.
 export function buildVllmRunArgs(
   profile: VllmProfile,
   model: VllmModelDef,
   runFlags: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
+  assertVllmRegistryDigestRef(profile.image);
   const image = validateDockerArg(profile.image, "vLLM image");
   const containerName = validateDockerArg(profile.containerName, "vLLM container name");
-  const safeRunFlags = validateDockerArgs(
-    [...runFlags, ...buildHfTokenDockerArgs(env)],
-    "vLLM docker run flags",
-  );
+  const safeRunFlags = validateDockerArgs(runFlags, "vLLM docker run flags");
   return [
     "--pull=never",
+    "--init",
     "--restart",
     "unless-stopped",
     ...safeRunFlags,
@@ -455,6 +530,65 @@ export function buildVllmRunArgs(
     "-lc",
     buildVllmServeCommand(model, env),
   ];
+}
+
+export function resolveVllmRuntimeProfile(profile: VllmProfile, model: VllmModelDef): VllmProfile {
+  const runtime = model.runtime;
+  let resolved = profile;
+  if (runtime) {
+    const extraRunArgs = [...(runtime.dockerRunArgs ?? [])];
+    resolved = {
+      ...profile,
+      image: runtime.image,
+      imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
+      imageUnpackedSizeBytes: undefined,
+      modelDownloadSizeBytes: runtime.modelDownloadSizeBytes ?? profile.modelDownloadSizeBytes,
+      loadTimeoutSec: runtime.loadTimeoutSec ?? profile.loadTimeoutSec,
+      dockerRunFlags: [...profile.dockerRunFlags, ...extraRunArgs],
+      buildDockerRunFlags: profile.buildDockerRunFlags
+        ? () => [...profile.buildDockerRunFlags!(), ...extraRunArgs]
+        : undefined,
+    };
+  }
+  assertVllmRegistryDigestRef(resolved.image);
+  return resolved;
+}
+
+const SHA256_IMAGE_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const IMAGE_REPOSITORY_COMPONENT_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+
+/**
+ * Managed vLLM is a product install path, so every effective runtime must be
+ * downloadable by immutable registry digest. A bare Docker image/config ID
+ * only identifies bytes already present in one daemon and is never a valid
+ * product dependency.
+ */
+export function assertVllmRegistryDigestRef(image: string): void {
+  const separator = image.lastIndexOf("@");
+  const repository = separator > 0 ? image.slice(0, separator) : "";
+  const digest = separator > 0 ? image.slice(separator + 1) : "";
+  const components = repository.split("/");
+  const firstComponent = components[0] ?? "";
+  const portSeparator = firstComponent.lastIndexOf(":");
+  const registryOrNamespace =
+    portSeparator > 0 && /^\d+$/.test(firstComponent.slice(portSeparator + 1))
+      ? firstComponent.slice(0, portSeparator)
+      : firstComponent;
+  const hasInvalidPort = firstComponent.includes(":") && registryOrNamespace === firstComponent;
+  const validRepository =
+    separator === image.indexOf("@") &&
+    components.length >= 2 &&
+    !hasInvalidPort &&
+    IMAGE_REPOSITORY_COMPONENT_PATTERN.test(registryOrNamespace) &&
+    components.slice(1).every((component) => IMAGE_REPOSITORY_COMPONENT_PATTERN.test(component));
+
+  if (!validRepository || !SHA256_IMAGE_DIGEST_PATTERN.test(digest)) {
+    throw new Error(
+      "vLLM image must be a pullable immutable registry reference in " +
+        `repository@sha256:<64 lowercase hex> form; got '${image}'. ` +
+        "Local image IDs and mutable tags are not supported.",
+    );
+  }
 }
 
 type VllmContainerOwnership =
@@ -527,17 +661,13 @@ function startContainer(
   model: VllmModelDef,
 ): { ok: boolean; reason?: string } {
   emit(`Starting vLLM container (${profile.containerName})`);
-  const resolvedFlags = profile.buildDockerRunFlags
-    ? profile.buildDockerRunFlags()
-    : profile.dockerRunFlags;
-  // Forward HF_TOKEN/HUGGING_FACE_HUB_TOKEN so the long-lived `vllm serve`
-  // pull can authenticate against gated repos when the model weights are
-  // not already in the mounted cache. The runner allowlist strips the
-  // token from the docker subprocess env by default, so we have to put it
-  // back via the `env:` option; the docker argv only carries `-e KEY` so
-  // the value stays out of /proc/<pid>/cmdline.
+  // The explicit download completed before this long-lived container starts,
+  // so do not retain the host Hugging Face token in the serving process.
   let runArgs: string[];
   try {
+    const resolvedFlags = profile.buildDockerRunFlags
+      ? profile.buildDockerRunFlags()
+      : profile.dockerRunFlags;
     runArgs = buildVllmRunArgs(profile, model, resolvedFlags);
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
@@ -554,7 +684,7 @@ function startContainer(
     });
   }
   const result = dockerRunDetached(runArgs, {
-    env: buildVllmDockerEnv(buildHfTokenForwardEnv()),
+    env: buildVllmDockerEnv(),
     ignoreError: true,
     suppressOutput: true,
   });
@@ -668,62 +798,321 @@ function containerStillRunning(profile: VllmProfile): boolean {
   return out === profile.containerName;
 }
 
-function printImageStorageWarning(
-  profile: VllmProfile,
-  probe: StorageProbeResult,
-  requiredBytes: bigint,
-): void {
-  const insufficient = probe.ok && probe.capacity.availableBytes < requiredBytes;
+function printStorageProbeDetails(label: string, probe: StorageProbeResult, indent = "  "): void {
+  console.error(`${indent}${label}: ${storageProbeAvailability(probe)}`);
+}
+
+function storageProbeAvailability(probe: StorageProbeResult): string {
+  if (probe.ok) {
+    return `${formatStorageBytes(probe.capacity.availableBytes)} available at ${probe.capacity.source} (${probe.capacity.path})`;
+  }
+  return `unknown (${probe.reason})`;
+}
+
+interface ManagedStorageRequirement {
+  label: string;
+  probe: StorageProbeResult;
+  requiredBytes: bigint;
+}
+
+interface ManagedStorageCheck {
+  label: string;
+  probe: Extract<StorageProbeResult, { ok: true }>;
+  requiredBytes: bigint;
+  requirements: ManagedStorageRequirement[];
+}
+
+type ManagedStorageProblem =
+  | { check: ManagedStorageCheck; kind: "insufficient" }
+  | { check: ManagedStorageRequirement; kind: "unknown" };
+
+function managedImageUnpackedRequirementBytes(profile: VllmProfile): number {
+  if (profile.imageUnpackedSizeBytes !== undefined) return profile.imageUnpackedSizeBytes;
+  return Number(
+    imageStorageRequirementBytes(profile.imageDownloadSizeBytes) -
+      BigInt(profile.imageDownloadSizeBytes),
+  );
+}
+
+function managedStorageRequirements({
+  dockerProbe,
+  estimate,
+  includeImage,
+  modelProbe,
+}: {
+  dockerProbe: StorageProbeResult | null;
+  estimate: ReturnType<typeof managedVllmStorageEstimateBytes>;
+  includeImage: boolean;
+  modelProbe: StorageProbeResult | null;
+}): ManagedStorageRequirement[] {
+  const requirements: ManagedStorageRequirement[] = [];
+  if (includeImage && dockerProbe) {
+    requirements.push({
+      label: "Docker image storage",
+      probe: dockerProbe,
+      requiredBytes: estimate.imageCompressedBytes + estimate.imageUnpackedBytes,
+    });
+  }
+  if (modelProbe) {
+    requirements.push({
+      label: "Model cache storage",
+      probe: modelProbe,
+      requiredBytes:
+        estimate.modelBytes + estimate.modelStagingBytes + estimate.writableAllowanceBytes,
+    });
+  }
+  return requirements;
+}
+
+function storageCapacityKey(capacity: StorageCapacity): string {
+  if (capacity.filesystemId) return `filesystem:${capacity.filesystemId}`;
+  return `path:${path.resolve(capacity.path)}`;
+}
+
+function managedStorageCheckLabel(requirements: readonly ManagedStorageRequirement[]): string {
+  return requirements.map((requirement) => requirement.label).join(" + ");
+}
+
+function managedStorageChecks(
+  requirements: readonly ManagedStorageRequirement[],
+): ManagedStorageCheck[] {
+  const aggregateSuccessfulRequirements = requirements.some(
+    (requirement) => requirement.probe.ok && !requirement.probe.capacity.filesystemId,
+  );
+  const checks = new Map<string, ManagedStorageCheck>();
+  for (const requirement of requirements) {
+    if (!requirement.probe.ok) continue;
+    const key = aggregateSuccessfulRequirements
+      ? "all-successful-requirements"
+      : storageCapacityKey(requirement.probe.capacity);
+    const existing = checks.get(key);
+    if (existing) {
+      existing.requiredBytes += requirement.requiredBytes;
+      existing.requirements.push(requirement);
+      existing.label = managedStorageCheckLabel(existing.requirements);
+      if (requirement.probe.capacity.availableBytes < existing.probe.capacity.availableBytes) {
+        existing.probe = requirement.probe;
+      }
+      continue;
+    }
+    checks.set(key, {
+      label: requirement.label,
+      probe: requirement.probe,
+      requiredBytes: requirement.requiredBytes,
+      requirements: [requirement],
+    });
+  }
+  return Array.from(checks.values());
+}
+
+function managedStorageProblem(
+  requirements: readonly ManagedStorageRequirement[],
+): ManagedStorageProblem | null {
+  let insufficient: { check: ManagedStorageCheck; availableBytes: bigint } | null = null;
+  for (const check of managedStorageChecks(requirements)) {
+    const availableBytes = check.probe.capacity.availableBytes;
+    if (availableBytes >= check.requiredBytes) continue;
+    if (!insufficient || availableBytes < insufficient.availableBytes) {
+      insufficient = { check, availableBytes };
+    }
+  }
+  if (insufficient) return { check: insufficient.check, kind: "insufficient" };
+  const unknown =
+    requirements.find(
+      (requirement) => requirement.label === "Model cache storage" && !requirement.probe.ok,
+    ) ?? requirements.find((requirement) => !requirement.probe.ok);
+  if (unknown) return { check: unknown, kind: "unknown" };
+  return null;
+}
+
+function printManagedStorageWarning({
+  estimate,
+  includeImage,
+  model,
+  problem,
+  profile,
+  requirements,
+}: {
+  estimate: ReturnType<typeof managedVllmStorageEstimateBytes>;
+  includeImage: boolean;
+  model: VllmModelDef;
+  problem: ManagedStorageProblem;
+  profile: VllmProfile;
+  requirements: readonly ManagedStorageRequirement[];
+}): void {
+  const insufficient = problem.kind === "insufficient";
+  const { check } = problem;
+  const subject = includeImage ? "managed vLLM cold install" : "managed vLLM model download";
   console.error("");
   console.error(
-    `  ${insufficient ? "Insufficient" : "Unable to verify"} Docker storage for the managed vLLM image.`,
+    warnLine(`${insufficient ? "Insufficient" : "Unable to verify"} storage for ${subject}.`),
   );
   console.error("");
   console.error(`  Image:     ${profile.image}`);
+  if (includeImage) {
+    console.error(
+      `  Image compressed: ${formatStorageDecimalBytes(estimate.imageCompressedBytes)}`,
+    );
+    console.error(`  Image unpacked:   ${formatStorageDecimalBytes(estimate.imageUnpackedBytes)}`);
+  } else {
+    console.error("  Image status:      already cached locally");
+  }
+  console.error(`  Model:     ${model.id}`);
+  console.error(`  Model files:       ${formatStorageDecimalBytes(estimate.modelBytes)}`);
+  console.error(`  Model staging:     ${formatStorageDecimalBytes(estimate.modelStagingBytes)}`);
   console.error(
-    `  Available: ${
-      probe.ok ? formatStorageBytes(probe.capacity.availableBytes) : `unknown (${probe.reason})`
-    }`,
+    `  Writable allowance: ${formatStorageDecimalBytes(estimate.writableAllowanceBytes)}`,
   );
-  console.error(`  Required:  approximately ${formatStorageBytes(requiredBytes)}`);
-  if (probe.ok) {
-    console.error(`  Storage:   ${probe.capacity.source} (${probe.capacity.path})`);
-  } else if (probe.path) {
-    console.error(`  Storage:   ${probe.source ?? "filesystem"} (${probe.path})`);
+  console.error(
+    `  Required:  approximately ${formatStorageDecimalBytes(check.requiredBytes)} (${formatStorageBytes(check.requiredBytes)}) for ${check.label}`,
+  );
+  console.error(
+    `  Total estimate: approximately ${formatStorageDecimalBytes(estimate.totalBytes)} (${formatStorageBytes(estimate.totalBytes)})`,
+  );
+  console.error(`  Available: ${storageProbeAvailability(check.probe)}`);
+  if (check.probe.ok) {
+    console.error(`  Storage:   ${check.probe.capacity.source} (${check.probe.capacity.path})`);
+  } else if (check.probe.path) {
+    console.error(`  Storage:   ${check.probe.source ?? "filesystem"} (${check.probe.path})`);
   }
   console.error("");
-  if (insufficient) console.error("  Free or expand Docker storage before continuing.");
+  for (const storageRequirement of requirements) {
+    printStorageProbeDetails(storageRequirement.label, storageRequirement.probe);
+    console.error(
+      `    Required here: approximately ${formatStorageDecimalBytes(storageRequirement.requiredBytes)} (${formatStorageBytes(storageRequirement.requiredBytes)})`,
+    );
+  }
+  console.error("");
+  if (insufficient) {
+    console.error("  Free or expand local storage before continuing.");
+  }
   console.error("  Useful diagnostics:");
-  console.error("    docker system df");
-  console.error("    docker info --format '{{.DockerRootDir}}'");
+  if (includeImage) {
+    console.error("    docker system df");
+    console.error("    docker info --format '{{.DockerRootDir}}'");
+  }
+  console.error('    df -h "$HOME/.cache/huggingface"');
 }
 
-async function imageStorageAccepted(
+async function managedStorageAccepted(
   profile: VllmProfile,
+  model: VllmModelDef,
+  hasImage: boolean,
   opts: InstallVllmOptions,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
-  const probe = probeDockerStorage();
-  const requiredBytes = imageStorageRequirementBytes(profile.imageDownloadSizeBytes);
-  if (probe.ok && probe.capacity.availableBytes >= requiredBytes) {
-    return true;
+  const includeImage = !hasImage;
+  const modelDownloadSizeBytes = profile.modelDownloadSizeBytes ?? model.downloadSizeBytes;
+  if (!Number.isFinite(modelDownloadSizeBytes) || modelDownloadSizeBytes <= 0) {
+    throw new Error("vLLM model download size must be a positive finite byte count");
   }
-  printImageStorageWarning(profile, probe, requiredBytes);
-  if (!probe.ok) {
-    console.error("  Continuing because Docker storage capacity could not be verified.");
-    return true;
-  }
-  if (env[VLLM_STORAGE_OVERRIDE_ENV] === "1") {
-    console.error(`  Continuing because ${VLLM_STORAGE_OVERRIDE_ENV}=1.`);
-    return true;
+  const snapshotBytes = BigInt(Math.ceil(modelDownloadSizeBytes));
+  const snapshotDir = hfModelSnapshotDir(model);
+  const cachedBytes = snapshotDir ? measureDirectorySizeBytes(snapshotDir) : 0n;
+  const remainingModelBytes = cachedBytes >= snapshotBytes ? 0n : snapshotBytes - cachedBytes;
+  const includeModel = remainingModelBytes > 0n;
+  const estimate = managedVllmStorageEstimateBytes({
+    imageCompressedBytes: profile.imageDownloadSizeBytes,
+    imageUnpackedBytes: managedImageUnpackedRequirementBytes(profile),
+    includeImage,
+    includeModel,
+    modelBytes: includeModel ? Number(remainingModelBytes) : modelDownloadSizeBytes,
+    writableAllowanceBytes: VLLM_WRITABLE_ALLOWANCE_BYTES,
+  });
+  const dockerProbe = includeImage ? probeDockerStorage() : null;
+  const modelProbe = includeModel ? probeHostStorage(hostHfCacheDir(), "Hugging Face cache") : null;
+  const requirements = managedStorageRequirements({
+    dockerProbe,
+    estimate,
+    includeImage,
+    modelProbe,
+  });
+  const problem = managedStorageProblem(requirements);
+  if (!problem) return true;
+  printManagedStorageWarning({
+    estimate,
+    includeImage,
+    model,
+    problem,
+    profile,
+    requirements,
+  });
+  const unknownModelRequirement = requirements.find(
+    (requirement) => requirement.label === "Model cache storage" && !requirement.probe.ok,
+  );
+  if (problem.kind === "unknown") {
+    if (problem.check.label === "Docker image storage") {
+      console.error("  Continuing because Docker storage capacity could not be verified.");
+      return true;
+    }
+    if (opts.nonInteractive) {
+      console.error(
+        "  Non-interactive setup stops because model-cache capacity could not be verified. Re-run interactively to review the warning.",
+      );
+      return false;
+    }
+    return isAffirmativeAnswer(
+      await opts.promptFn("  Continue with the model download anyway? [y/N]: "),
+    );
   }
   if (opts.nonInteractive) {
+    if (unknownModelRequirement) {
+      printManagedStorageWarning({
+        estimate,
+        includeImage,
+        model,
+        problem: { check: unknownModelRequirement, kind: "unknown" },
+        profile,
+        requirements,
+      });
+      console.error(
+        "  Non-interactive setup stops because model-cache capacity could not be verified. Re-run interactively to review the warning.",
+      );
+      return false;
+    }
     console.error(
-      `  Non-interactive setup stops before the guarded download. Set ${VLLM_STORAGE_OVERRIDE_ENV}=1 to override.`,
+      "  Continuing because managed vLLM storage estimates are advisory in non-interactive setup.",
     );
+    return true;
+  }
+  if (!isAffirmativeAnswer(await opts.promptFn("  Continue with the download anyway? [y/N]: "))) {
     return false;
   }
-  return isAffirmativeAnswer(await opts.promptFn("  Continue with the pull anyway? [y/N]: "));
+  if (!unknownModelRequirement) return true;
+  printManagedStorageWarning({
+    estimate,
+    includeImage,
+    model,
+    problem: { check: unknownModelRequirement, kind: "unknown" },
+    profile,
+    requirements,
+  });
+  return isAffirmativeAnswer(
+    await opts.promptFn("  Continue with the model download anyway? [y/N]: "),
+  );
+}
+
+function ensureHfCacheDir(model: VllmModelDef): { ok: true } | { ok: false; reason: string } {
+  const cacheDir = hostHfCacheDir();
+  try {
+    fs.mkdirSync(cacheDir, { recursive: true });
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `could not create Hugging Face cache directory ${cacheDir}: ${(err as Error).message}`,
+    };
+  }
+  const unwritablePath = findUnwritableModelCachePath(cacheDir, hfModelCacheDir(model));
+  if (unwritablePath) {
+    const identity = hostUserIdentity() ?? "$(id -u):$(id -g)";
+    return {
+      ok: false,
+      reason:
+        `Hugging Face cache path ${unwritablePath} is not writable by host user ${identity}. ` +
+        "It may have been created by an earlier root-run downloader; NemoClaw did not modify it. " +
+        `Repair ownership, then retry: sudo chown -R ${identity} ${shellQuote(unwritablePath)}`,
+    };
+  }
+  return { ok: true };
 }
 
 interface InstallVllmOptions {
@@ -771,6 +1160,20 @@ export async function installVllm(
   profile: VllmProfile,
   opts: InstallVllmOptions,
 ): Promise<{ ok: boolean }> {
+  // The whole managed install can run inside the provider-selection machine
+  // state, so name the real sub-stage for the onboarding heartbeat. (#7156)
+  const releasePhaseActivity = markPhaseActivity("vLLM install");
+  try {
+    return await runVllmInstall(profile, opts);
+  } finally {
+    releasePhaseActivity();
+  }
+}
+
+async function runVllmInstall(
+  profile: VllmProfile,
+  opts: InstallVllmOptions,
+): Promise<{ ok: boolean }> {
   // Model selection lives in `resolveVllmInstallModel` so this entry point
   // stays focused on the docker side effects. Gated-model access is checked
   // there before any docker work happens.
@@ -780,12 +1183,23 @@ export async function installVllm(
   });
   if (!resolved) return { ok: false };
   const { model, source: modelSource } = resolved;
+  if (model.runtime && !model.platforms.includes(profile.platform)) {
+    console.error(`  vLLM install failed: ${model.label} is not supported on ${profile.name}`);
+    return { ok: false };
+  }
+  let runtimeProfile: VllmProfile;
+  try {
+    runtimeProfile = resolveVllmRuntimeProfile(profile, model);
+  } catch (err) {
+    console.error(`  vLLM install failed: ${(err as Error).message}`);
+    return { ok: false };
+  }
 
   let extraServeArgs: string[];
   let servedModelId: string;
   try {
     extraServeArgs = parseVllmExtraServeArgs();
-    servedModelId = resolveVllmServedModelId(model.id, extraServeArgs);
+    servedModelId = resolveVllmServedModelId(model.servedModelId ?? model.id, extraServeArgs);
   } catch (err) {
     console.error(`  vLLM install failed: ${(err as Error).message}`);
     return { ok: false };
@@ -793,8 +1207,8 @@ export async function installVllm(
   opts.beforeInstall?.(servedModelId);
 
   console.log("");
-  console.log(`  vLLM (${profile.name}):`);
-  console.log(`    Image: ${profile.image}`);
+  console.log(`  vLLM (${runtimeProfile.name}):`);
+  console.log(`    Image: ${runtimeProfile.image}`);
   console.log(
     `    Model: ${model.id}${modelSource === "env" ? " (NEMOCLAW_VLLM_MODEL override)" : ""}`,
   );
@@ -823,42 +1237,60 @@ export async function installVllm(
 
   // Fail before large downloads when the fixed name belongs to another
   // operator. startContainer repeats this check to close the teardown race.
-  const replacement = vllmContainerReplacementTarget(profile.containerName);
+  const replacement = vllmContainerReplacementTarget(runtimeProfile.containerName);
   if (!replacement.ok) {
     console.error(`  vLLM install failed: ${replacement.reason}`);
     return { ok: false };
   }
 
-  const hasImage = imageIsCached(profile);
-  if (!hasImage && !(await imageStorageAccepted(profile, opts))) {
+  // Guard the host filesystem before an image pull or model-download
+  // container can start. The cache path itself is created only after both
+  // storage decisions pass, so Docker never creates it as root.
+  const hasImage = imageIsCached(runtimeProfile);
+  if (!(await managedStorageAccepted(runtimeProfile, model, hasImage, opts))) {
     return { ok: false };
   }
 
-  const pull = await pullImage(profile);
+  const cacheDir = ensureHfCacheDir(model);
+  if (!cacheDir.ok) {
+    console.error(`  vLLM install failed: ${cacheDir.reason}`);
+    return { ok: false };
+  }
+
+  const pull = await pullImage(runtimeProfile);
   if (!pull.ok) {
     console.error(`  vLLM install failed: ${String(pull.reason)}`);
     return { ok: false };
   }
 
-  const modelDownload = await downloadModel(profile, model);
+  // A cold image pull can consume the same host filesystem that backs the
+  // Hugging Face cache. Re-probe the model destination after the pull before
+  // `hf download` starts.
+  if (!hasImage && !(await managedStorageAccepted(runtimeProfile, model, true, opts))) {
+    return { ok: false };
+  }
+
+  const modelDownload = await downloadModel(runtimeProfile, model);
   if (!modelDownload.ok) {
     console.error(`  vLLM install failed: ${String(modelDownload.reason)}`);
     return { ok: false };
   }
 
-  const start = startContainer(profile, model);
+  const start = startContainer(runtimeProfile, model);
   if (!start.ok) {
     console.error(`  vLLM install failed: ${String(start.reason)}`);
     return { ok: false };
   }
 
   emit("Launching vLLM");
-  emit(`Launch can take 5 minutes to ${String(Math.ceil(profile.loadTimeoutSec / 60))} minutes`);
+  emit(
+    `Launch can take 5 minutes to ${String(Math.ceil(runtimeProfile.loadTimeoutSec / 60))} minutes`,
+  );
 
-  const ready = await waitForVllmReady(profile);
+  const ready = await waitForVllmReady(runtimeProfile);
   if (!ready.ok) {
-    printContainerLogTail(profile);
-    dockerStop(profile.containerName, {
+    printContainerLogTail(runtimeProfile);
+    dockerStop(runtimeProfile.containerName, {
       env: buildVllmDockerEnv(),
       ignoreError: true,
       suppressOutput: true,
@@ -867,7 +1299,7 @@ export async function installVllm(
     return { ok: false };
   }
 
-  if (!containerStillRunning(profile)) {
+  if (!containerStillRunning(runtimeProfile)) {
     console.error("  vLLM container exited unexpectedly after readiness");
     return { ok: false };
   }

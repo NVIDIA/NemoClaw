@@ -16,6 +16,7 @@ const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
 const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
+const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
@@ -183,15 +184,19 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
   for (const fragment of [
     '"$WORKFLOW_EVENT" == "workflow_dispatch"',
     '"$WORKFLOW_REF" == "refs/heads/main"',
+    '"$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
     '"$BASE_SHA" =~ ^[a-f0-9]{40}$',
     '"$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA"',
     '"$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA"',
+    '"$PLAN_HASH" =~ ^[a-f0-9]{64}$',
+    '"$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$',
     '"$PR_NUMBER" =~ ^[1-9][0-9]*$',
-    '[[ -n "$JOBS" && -z "$TARGETS" ]]',
+    '[[ -n "$JOBS" || -n "$TARGETS" ]]',
+    '[[ -z "$TARGETS" || "$TARGETS" == "ubuntu-repo-cloud-langchain-deepagents-code" ]]',
     "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}",
     "'.state'",
     "'.head.repo.full_name // \"\"'",
-    "'.head.sha'",
+    `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
     `[[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]]`,
   ]) {
     if (!validationScript.includes(fragment)) {
@@ -206,10 +211,15 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
         step.name === "Checkout trusted Hermes GPU runtime fixture" &&
         step.with?.repository === "NVIDIA/NemoClaw" &&
         step.with?.ref === "${{ github.workflow_sha }}";
+      const trustedReportHelperCheckout =
+        jobName === "report-to-pr" &&
+        step.name === "Check out the trusted E2E reporting helper" &&
+        step.with?.ref === "${{ github.workflow_sha }}";
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
-        !trustedHermesFixtureCheckout
+        !trustedHermesFixtureCheckout &&
+        !trustedReportHelperCheckout
       ) {
         errors.push(`${jobName} checkout must use the selected PR commit`);
       }
@@ -231,12 +241,16 @@ function validatePrGateEvidenceProducers(errors: string[], workflow: OperationsW
     if (typeof job.env?.E2E_ARTIFACT_DIR !== "string" || !job.env.E2E_ARTIFACT_DIR) {
       errors.push(`${jobId} must expose an evidence artifact directory`);
     }
-    const vitestSteps = (job.steps ?? []).filter((step) =>
-      String(step.run ?? "").includes("npx vitest"),
-    );
+    const vitestSteps = (job.steps ?? []).filter((step) => {
+      const run = String(step.run ?? "");
+      return run.includes("npx vitest") || run.includes(LIVE_VITEST_HELPER);
+    });
     if (
       vitestSteps.length === 0 ||
-      vitestSteps.some((step) => !String(step.run).includes(PR_GATE_REPORTER))
+      vitestSteps.some((step) => {
+        const run = String(step.run);
+        return !run.includes(LIVE_VITEST_HELPER) && !run.includes(PR_GATE_REPORTER);
+      })
     ) {
       errors.push(`${jobId} must attach the risk-signal reporter to every Vitest invocation`);
     }
@@ -290,10 +304,13 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       if (
         job.permissions === "write-all" ||
         permissions.actions !== "read" ||
+        permissions.contents !== "read" ||
         permissions["pull-requests"] !== "write" ||
-        Object.keys(permissions).length !== 2
+        Object.keys(permissions).length !== 3
       ) {
-        errors.push("report-to-pr must hold only actions: read and pull-requests: write");
+        errors.push(
+          "report-to-pr must hold only actions: read, contents: read, and pull-requests: write",
+        );
       }
       if (
         job.if !==
@@ -302,19 +319,35 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
         errors.push("report-to-pr must run only for manual workflow dispatches");
       }
       const report = findStep(job, "Post E2E target results to PR");
-      if (job.steps?.length !== 1) {
-        errors.push("report-to-pr must contain only its PR-comment step");
+      const steps = job.steps ?? [];
+      const reportCheckout = steps.find((step) => step.uses?.startsWith("actions/checkout@"));
+      if (
+        steps.length !== 2 ||
+        !reportCheckout ||
+        steps.indexOf(reportCheckout) !== 0 ||
+        reportCheckout.with?.ref !== "${{ github.workflow_sha }}" ||
+        reportCheckout.with?.["persist-credentials"] !== false
+      ) {
+        errors.push(
+          "report-to-pr must first check out the trusted workflow revision, then post its PR comment",
+        );
       }
       requireNode24GithubScript(errors, report, "report-to-pr");
       const reportScript = String(report.with?.script ?? "");
       const commentCalls = jobSource.match(/github\.rest\.issues\.createComment\s*\(/gu);
       const issueNamespaceReferences = reportScript.match(/github\.rest\.issues\b/gu);
       const prScopedComment =
-        /await\s+github\.rest\.issues\.createComment\(\{\s*owner:\s*context\.repo\.owner,\s*repo:\s*context\.repo\.repo,\s*issue_number:\s*prNumber,\s*body:\s*lines\.join\('\\n'\),?\s*\}\);/u;
+        /await\s+github\.rest\.issues\.createComment\(\{\s*owner:\s*context\.repo\.owner,\s*repo:\s*context\.repo\.repo,\s*issue_number:\s*prNumber,\s*body:\s*report\.body,?\s*\}\);/u;
       if (commentCalls?.length !== 1 || !prScopedComment.test(reportScript)) {
         errors.push(
           "report-to-pr must limit issue mutation to one validated PR-scoped createComment call",
         );
+      }
+      if (!/\bconst\s+prNumber\s*=\s*await\s+resolveReportPr\(/u.test(reportScript)) {
+        errors.push("report-to-pr must derive prNumber from the trusted resolveReportPr call");
+      }
+      if (!/\bconst\s+report\s*=\s*renderE2eReport\(/u.test(reportScript)) {
+        errors.push("report-to-pr must derive report from the trusted renderE2eReport call");
       }
       if (
         issueNamespaceReferences?.length !== 1 ||
@@ -398,17 +431,15 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   requireNode24GithubScript(errors, generate, "scorecard generator");
   const generateScript = String(generate.with?.script ?? "");
   for (const fragment of [
-    "scripts/scorecard/analyze-trace-timing.ts",
+    "scripts/scorecard/coordinate-scorecard.mts",
+    "buildScorecard",
+    "scripts/scorecard/analyze-trace-timing.mts",
     "traceTiming.buildTraceTimingResult",
     "buildTraceTimingResult({ github, context, core })",
-    "budgetWarningMessage",
-    "core.warning(budgetWarningMessage)",
-    "scripts/scorecard/summarize-jobs.ts",
-    "scorecardJobs.isSelectiveDispatch",
+    "trace.budgetWarningMessage",
+    "core.warning(trace.budgetWarningMessage)",
+    "scripts/scorecard/summarize-jobs.mts",
     "scorecardJobs.loadWorkflowRunJobs",
-    "scorecardJobs.summarizeJobs",
-    "scripts/scorecard/build-slack-blocks.ts",
-    "slackBlocks.buildBlocks",
     "core.summary",
     "scorecardData",
     "slackData",

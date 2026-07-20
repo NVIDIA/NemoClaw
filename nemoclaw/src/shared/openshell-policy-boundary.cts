@@ -100,7 +100,7 @@ export function parseOpenShellPolicy(raw: string): ParsedOpenShellPolicy {
 // regressionTest: the root policy round-trip and plugin runner policy tests.
 // removalCondition: OpenShell's supported base-policy contract guarantees that
 // provider-composed entries are absent from every mutation read.
-// tracking: revalidate this guard at every stable OpenShell pin after 0.0.72.
+// tracking: revalidated for stable OpenShell 0.0.85; revalidate after 0.0.85.
 export function withoutProviderComposedPolicies<T>(policies: Record<string, T>): Record<string, T> {
   return Object.fromEntries(
     Object.entries(policies).filter(([name]) => !name.startsWith("_provider_")),

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getCredential } from "../../../credentials/store";
 import {
   createBuiltInChannelManifestRegistry,
   listSupportedMessagingChannelIdsForAgent,
@@ -8,9 +9,16 @@ import {
 } from "../../../messaging";
 import type { MessagingAgentId, SandboxMessagingPlan } from "../../../messaging/manifest";
 import { hashCredential } from "../../../security/credential-hash";
+import { isDecisionSelected, isDecisionUnset } from "../../../state/onboard-checkpoint-decision";
 import type { Session } from "../../../state/onboard-session";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
+
+function sameChannelSet(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const seen = new Set(a);
+  return b.every((channel) => seen.has(channel));
+}
 
 type MessagingAgentLike = {
   readonly name?: string;
@@ -18,6 +26,7 @@ type MessagingAgentLike = {
 
 export interface SandboxMessagingDeps<Agent> {
   note(message: string): void;
+  showMessagingStage?(): void;
   getRecordedMessagingChannelsForResume(
     resume: boolean,
     session: Session | null,
@@ -27,11 +36,13 @@ export interface SandboxMessagingDeps<Agent> {
     agent: Agent,
     existingChannels: string[] | null,
     sandboxName: string,
+    options?: { readonly selectionCompleted?: boolean },
   ): Promise<string[]>;
   readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
   writePlanToEnv(plan: SandboxMessagingPlan): void;
   clearPlanEnv(): void;
   getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
+  providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
 }
 
 export interface SandboxMessagingSelection {
@@ -157,12 +168,21 @@ function selectionFromReusablePlan<Agent>(
 async function selectionFromMessagingSetup<Agent>(
   existingChannels: string[] | null,
   options: ReconcileSandboxMessagingOptions<Agent>,
+  selectionCompleted = false,
 ): Promise<SandboxMessagingSelection> {
   const existing = existingChannels
     ? filterChannelNamesForCurrentAgent(existingChannels, options.agent)
     : existingChannels;
+  const setupOptions = selectionCompleted ? { selectionCompleted: true } : undefined;
   const selected = filterChannelNamesForCurrentAgent(
-    await options.deps.setupMessagingChannels(options.agent, existing, options.sandboxName),
+    setupOptions
+      ? await options.deps.setupMessagingChannels(
+          options.agent,
+          existing,
+          options.sandboxName,
+          setupOptions,
+        )
+      : await options.deps.setupMessagingChannels(options.agent, existing, options.sandboxName),
     options.agent,
   );
   const plan = options.deps.readMessagingPlanFromEnv();
@@ -250,6 +270,102 @@ export function reconcileReusedSandboxMessaging<Agent>(
   };
 }
 
+function divergedCheckpointChannels(
+  session: Session | null | undefined,
+  durablePlan: SandboxMessagingPlan | null,
+): readonly string[] | null {
+  const checkpoint = session?.checkpoint;
+  if (!checkpoint) return null;
+  const checkpointedChannels = isDecisionSelected(checkpoint.messaging)
+    ? checkpoint.messaging.value.selectedChannels
+    : [];
+  const durableChannels = durablePlan ? getActiveChannelsFromPlan(durablePlan) : [];
+  return sameChannelSet(checkpointedChannels, durableChannels) ? null : checkpointedChannels;
+}
+
+async function selectionFromDivergedMessagingCheckpoint<Agent>(
+  checkpointedChannels: readonly string[],
+  options: ReconcileSandboxMessagingOptions<Agent>,
+): Promise<SandboxMessagingSelection> {
+  if (checkpointedChannels.length === 0) {
+    options.deps.clearPlanEnv();
+    options.deps.showMessagingStage?.();
+    options.deps.note("  [resume] Reusing messaging selection: no channels.");
+    return { plan: null, selectedChannels: [] };
+  }
+  options.deps.note("  [resume] Reconciling messaging selection with the recorded checkpoint.");
+  return selectionFromMessagingSetup([...checkpointedChannels], options, true);
+}
+
+async function selectionFromCompletedMessagingCheckpoint<Agent>(
+  envPlan: SandboxMessagingPlan | null,
+  options: ReconcileSandboxMessagingOptions<Agent>,
+): Promise<SandboxMessagingSelection> {
+  // A completed checkpoint makes the session copy authoritative. The process
+  // plan may already have refreshed hashes, so it cannot prove that a newly
+  // exported credential passed the channel's validation hooks.
+  const durablePlan = options.session?.messagingPlan ?? null;
+  const diverged = divergedCheckpointChannels(options.session, durablePlan);
+  if (diverged) {
+    return selectionFromDivergedMessagingCheckpoint(diverged, options);
+  }
+  if (!durablePlan) {
+    options.deps.clearPlanEnv();
+    options.deps.showMessagingStage?.();
+    options.deps.note("  [resume] Reusing messaging selection: no channels.");
+    return { plan: null, selectedChannels: [] };
+  }
+
+  const filteredPlan = filterMessagingPlanForCurrentAgent(durablePlan, options.agent);
+  if (!filteredPlan) {
+    options.deps.clearPlanEnv();
+    options.deps.showMessagingStage?.();
+    options.deps.note("  [resume] Reusing messaging selection: no active channels.");
+    return { plan: null, selectedChannels: [] };
+  }
+  const selectedChannels = getActiveChannelsFromPlan(filteredPlan);
+  if (selectedChannels.length === 0) {
+    const selection = selectionFromReusablePlan(
+      durablePlan,
+      options.agent,
+      envPlan !== durablePlan,
+      options.deps,
+    );
+    options.deps.showMessagingStage?.();
+    options.deps.note("  [resume] Reusing messaging selection: no active channels.");
+    return selection;
+  }
+
+  const activeChannels = new Set(selectedChannels);
+  const credentialNeedsValidation = filteredPlan.credentialBindings.some((binding) => {
+    if (!activeChannels.has(binding.channelId)) return false;
+    const credentialHash = hashCredential(getCredential(binding.providerEnvKey));
+    if (credentialHash) return credentialHash !== binding.credentialHash;
+    if (!options.session?.stagedCredentialProviders.includes(binding.providerName)) return true;
+    return !options.deps.providerMatchesGatewayCredential(
+      binding.providerName,
+      "generic",
+      binding.providerEnvKey,
+    );
+  });
+  if (credentialNeedsValidation) {
+    options.deps.writePlanToEnv(durablePlan);
+    return selectionFromMessagingSetup(selectedChannels, options, true);
+  }
+
+  const selection = selectionFromReusablePlan(
+    durablePlan,
+    options.agent,
+    envPlan !== durablePlan,
+    options.deps,
+  );
+  options.deps.showMessagingStage?.();
+  options.deps.note(
+    `  [resume] Reusing messaging channels: ${selection.selectedChannels.join(", ")}.`,
+  );
+  return selection;
+}
+
 export async function reconcileSandboxMessaging<Agent>(
   options: ReconcileSandboxMessagingOptions<Agent>,
 ): Promise<SandboxMessagingSelection> {
@@ -259,6 +375,13 @@ export async function reconcileSandboxMessaging<Agent>(
     options.sandboxName,
   );
   const envPlan = options.deps.readMessagingPlanFromEnv();
+  const agentName = (options.agent as MessagingAgentLike | null)?.name;
+  const messagingDecisionCompleted = options.session?.checkpoint
+    ? !isDecisionUnset(options.session.checkpoint.messaging)
+    : options.session?.sandboxPromptProgress?.messaging === true;
+  if ((!agentName || agentName === "openclaw") && options.resume && messagingDecisionCompleted) {
+    return selectionFromCompletedMessagingCheckpoint(envPlan, options);
+  }
   const registryPlan = options.deps.getRegistrySandboxMessagingPlan(options.sandboxName);
   if (recordedChannels) {
     return selectionFromRecordedChannels(recordedChannels, envPlan, registryPlan, options);

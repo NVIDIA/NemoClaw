@@ -3,7 +3,13 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 3 as const;
+export const RISK_PLAN_VERSION = 4 as const;
+
+export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
+
+const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
+const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
+  "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -23,6 +29,11 @@ export type TrustedFocusedE2eJob = {
   matchedFiles: readonly string[];
 };
 
+export type TrustedFocusedE2eTarget = {
+  id: string;
+  matchedFiles: readonly string[];
+};
+
 export type RiskPlanFamily = {
   id: RiskFamilyId;
   summary: string;
@@ -30,6 +41,7 @@ export type RiskPlanFamily = {
   matchedFiles: string[];
   invariants: string[];
   requiredJobs: string[];
+  requiredTargets: string[];
 };
 
 export type RiskPlanJob = {
@@ -40,6 +52,8 @@ export type RiskPlanJob = {
   matchedFiles: string[];
 };
 
+export type RiskPlanTarget = RiskPlanJob;
+
 export type RiskPlan = {
   version: typeof RISK_PLAN_VERSION;
   headSha: string;
@@ -48,9 +62,10 @@ export type RiskPlan = {
   tier: RiskTier;
   families: RiskPlanFamily[];
   requiredJobs: RiskPlanJob[];
+  requiredTargets: RiskPlanTarget[];
 };
 
-type RiskRule = Omit<RiskPlanFamily, "matchedFiles"> & {
+type RiskRule = Omit<RiskPlanFamily, "matchedFiles" | "requiredTargets"> & {
   matches(file: string): boolean;
 };
 
@@ -66,14 +81,16 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   ".github/workflows/pr.yaml",
   "package-lock.json",
   "package.json",
+  "scripts/scorecard/coordinate-scorecard.mts",
   "tools/advisors/github.mts",
   "tools/advisors/io.mts",
   "tools/advisors/risk-plan.mts",
   "vitest.config.ts",
 ]);
-const CONTROLLER_ONLY_E2E_FILES = new Set([
+const TRUSTED_CONTROL_PLANE_ONLY_FILES = new Set([
   ".github/workflows/pr-e2e-gate.yaml",
   "tools/e2e/pr-e2e-gate.mts",
+  "tools/e2e/pr-e2e-required.mts",
 ]);
 // These checked-in paths and directories are the source boundary for private-network,
 // policy, and shields enforcement but are not all covered by the token heuristics above.
@@ -90,11 +107,28 @@ const RISK_RELEVANT_TEST_FILES = new Set([
   "test/e2e/risk-signal-reporter.ts",
 ]);
 const FOCUSED_E2E_SUMMARY =
-  "Changed workflow-wired E2E tests must execute through their trusted canonical jobs.";
+  "Changed workflow-wired E2E tests must execute through their trusted canonical jobs or typed targets.";
 const FOCUSED_E2E_INVARIANTS = [
-  "the changed test remains wired to a selector declared by the trusted workflow",
-  "the canonical job executes the changed test rather than treating it as advisory coverage",
+  "the changed test remains wired to a job or typed-target selector declared by the trusted workflow",
+  "the canonical execution path runs the changed test rather than treating it as advisory coverage",
 ] as const;
+
+export function isPrE2eTypedTargetId(value: string): boolean {
+  return PR_E2E_TYPED_TARGET_ID_SET.has(value);
+}
+
+export function focusedPrE2eTargetsForChangedFiles(
+  changedFiles: readonly string[],
+): TrustedFocusedE2eTarget[] {
+  return changedFiles.includes(DEEPAGENTS_HEADLESS_INFERENCE_CHECK)
+    ? [
+        {
+          id: PR_E2E_TYPED_TARGET_IDS[0],
+          matchedFiles: [DEEPAGENTS_HEADLESS_INFERENCE_CHECK],
+        },
+      ]
+    : [];
+}
 
 export const RISK_RULES: readonly RiskRule[] = [
   {
@@ -203,7 +237,7 @@ export const RISK_RULES: readonly RiskRule[] = [
       file === ".github/workflows/e2e.yaml" ||
       file.startsWith(".github/actions/prepare-e2e/") ||
       file === "src/lib/trace.ts" ||
-      file === "scripts/scorecard/analyze-trace-timing.ts" ||
+      file === "scripts/scorecard/analyze-trace-timing.mts" ||
       file === "scripts/e2e/sanitize-trace-timing.py" ||
       file === "ci/onboard-performance-budget.json" ||
       RISK_RELEVANT_TEST_FILES.has(file),
@@ -331,21 +365,31 @@ export function buildRiskPlan(options: {
         matchedFiles,
         invariants: [...rule.invariants],
         requiredJobs: [...rule.requiredJobs],
+        requiredTargets: [],
       },
     ];
   });
   const focusedE2eJobs = normalizeFocusedE2eJobs(options.focusedE2eJobs ?? [], changedFiles);
+  const focusedE2eTargets = normalizeFocusedE2eJobs(
+    focusedPrE2eTargetsForChangedFiles(changedFiles),
+    changedFiles,
+  );
   const focusedFamilies: RiskPlanFamily[] =
-    focusedE2eJobs.length === 0
+    focusedE2eJobs.length === 0 && focusedE2eTargets.length === 0
       ? []
       : [
           {
             id: "focused-e2e",
             summary: FOCUSED_E2E_SUMMARY,
             tier: 2,
-            matchedFiles: stableUnique(focusedE2eJobs.flatMap((job) => job.matchedFiles)),
+            matchedFiles: stableUnique(
+              [...focusedE2eJobs, ...focusedE2eTargets].flatMap(
+                (selection) => selection.matchedFiles,
+              ),
+            ),
             invariants: [...FOCUSED_E2E_INVARIANTS],
             requiredJobs: focusedE2eJobs.map((job) => job.id),
+            requiredTargets: focusedE2eTargets.map((target) => target.id),
           },
         ];
   const families = [...staticFamilies, ...focusedFamilies];
@@ -382,7 +426,21 @@ export function buildRiskPlan(options: {
     jobs.set(selection.id, existing);
   }
 
+  const targets = new Map<string, RiskPlanTarget>();
+  for (const selection of focusedE2eTargets) {
+    targets.set(selection.id, {
+      id: selection.id,
+      tier: 2,
+      families: ["focused-e2e"],
+      reasons: [FOCUSED_E2E_SUMMARY],
+      matchedFiles: [...selection.matchedFiles],
+    });
+  }
+
   const requiredJobs = [...jobs.values()].sort(
+    (left, right) => right.tier - left.tier || left.id.localeCompare(right.id),
+  );
+  const requiredTargets = [...targets.values()].sort(
     (left, right) => right.tier - left.tier || left.id.localeCompare(right.id),
   );
   const tier = families.reduce<RiskTier>(
@@ -396,6 +454,7 @@ export function buildRiskPlan(options: {
     tier,
     families,
     requiredJobs,
+    requiredTargets,
   };
 
   return { ...withoutHash, planHash: planDigest(withoutHash) };
@@ -405,7 +464,13 @@ export function riskPlanRequiredJobIds(plan: RiskPlan): string[] {
   return plan.requiredJobs.map((job) => job.id);
 }
 
+export function riskPlanRequiredTargetIds(plan: RiskPlan): string[] {
+  return plan.requiredTargets.map((target) => target.id);
+}
+
 export function requiresCredentialedE2eAuthorization(plan: RiskPlan): boolean {
   const controlPlane = plan.families.find((family) => family.id === "e2e-control-plane");
-  return controlPlane?.matchedFiles.some((file) => !CONTROLLER_ONLY_E2E_FILES.has(file)) ?? false;
+  return (
+    controlPlane?.matchedFiles.some((file) => !TRUSTED_CONTROL_PLANE_ONLY_FILES.has(file)) ?? false
+  );
 }

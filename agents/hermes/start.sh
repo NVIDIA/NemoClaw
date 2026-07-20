@@ -3062,7 +3062,7 @@ fi
 # while Hermes actually runs in the legacy root-separated topology.
 # sourceBoundary: OpenShell owns workload topology; NemoClaw owns the immutable
 # root-lifecycle marker and stamps it before starting the root-separated gateway.
-# whyNotSourceFix: OpenShell 0.0.72 supports both topologies but exposes no
+# whyNotSourceFix: OpenShell 0.0.85 supports both topologies but exposes no
 # attested same-UID capability that this packaged entrypoint can query.
 # regressionTest: hermes-mcp-config-transaction.test.ts rejects both probe and
 # add when the root-lifecycle marker identifies the legacy topology.

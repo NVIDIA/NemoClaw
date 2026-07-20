@@ -57,6 +57,8 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 
@@ -78,6 +80,8 @@ KILL_GRACE_SECONDS = 5.0
 RECOVERY_TIMEOUT_SECONDS = 150.0
 RECOVER_EXISTING_GRACE_SECONDS = 10.0
 POLL_SECONDS = 0.2
+PROCESS_PROOF_GRACE_SECONDS = 1.0
+PROCESS_PROOF_RETRY_SECONDS = 0.05
 NEMOCLAW_RUNTIME_DIR = "/run/nemoclaw"
 NEMOCLAW_RUNTIME_DIR_MODE = 0o711
 EXPECTED_EXIT_MARKER_NAME = "managed-gateway-expected-exit"
@@ -85,14 +89,42 @@ EXPECTED_EXIT_LOCK_NAME = "managed-gateway-expected-exit.lock"
 NONCE_RE = re.compile(r"[0-9a-f]{64}\Z")
 ENV_KEY_RE = re.compile(rb"[A-Za-z_][A-Za-z0-9_]*\Z")
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+CONTROL_STAGES = frozenset(
+    {
+        "detect-agent",
+        "discover-supervisor",
+        "initial-gateway-proof",
+        "preflight",
+        "await-existing-gateway",
+        "publish-expected-exit",
+        "terminate-gateway",
+        "await-replacement",
+        "cleanup-expected-exit",
+    }
+)
 
 
 class ControlError(RuntimeError):
     """A failure whose code is part of the existing host marker contract."""
 
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, stage: str | None = None):
         super().__init__(code)
         self.code = code
+        self.stage = stage
+
+
+@contextmanager
+def _control_stage(stage: str) -> Iterator[None]:
+    """Attach one fixed, non-sensitive lifecycle stage to generic failures."""
+
+    if stage not in CONTROL_STAGES:
+        raise AssertionError(f"unknown managed-control stage: {stage}")
+    try:
+        yield
+    except ControlError as error:
+        if error.code == "SUPERVISOR_UNAVAILABLE" and error.stage is None:
+            raise ControlError(error.code, stage=stage) from error
+        raise
 
 
 @dataclass(frozen=True)
@@ -579,18 +611,24 @@ def _namespace_inode(pid_fd: int) -> int | None:
         os.close(fd)
 
 
-def _parse_stat(raw: bytes) -> tuple[str, int, str]:
+def _parse_stat(raw: bytes) -> tuple[str, int, str, int]:
     try:
         text = raw.decode("ascii")
         suffix = text.rsplit(") ", 1)[1].split()
         state = suffix[0]
         parent_pid = int(suffix[1], 10)
+        thread_count = int(suffix[17], 10)
         start_time = suffix[19]
     except (IndexError, UnicodeDecodeError, ValueError) as exc:
         raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
-    if not start_time.isascii() or not start_time.isdigit() or len(state) != 1:
+    if (
+        not start_time.isascii()
+        or not start_time.isdigit()
+        or len(state) != 1
+        or thread_count < 1
+    ):
         raise ControlError("SUPERVISOR_UNAVAILABLE")
-    return state, parent_pid, start_time
+    return state, parent_pid, start_time, thread_count
 
 
 def _parse_status(raw: bytes, pid: int) -> tuple[tuple[int, int, int, int], int]:
@@ -612,9 +650,20 @@ def _parse_status(raw: bytes, pid: int) -> tuple[tuple[int, int, int, int], int]
     return uid_values, namespace_values[-1]
 
 
-def _parse_cmdline(raw: bytes) -> tuple[bytes, ...]:
+def _parse_cmdline(
+    raw: bytes, state: str, thread_count: int
+) -> tuple[bytes, ...]:
     values = tuple(value for value in raw.split(b"\0") if value)
-    if not values or sum(len(value) for value in values) > MAX_PROC_FILE_BYTES:
+    if sum(len(value) for value in values) > MAX_PROC_FILE_BYTES:
+        raise ControlError("SUPERVISOR_UNAVAILABLE")
+    if not values:
+        # Linux exposes an empty cmdline after a process becomes a zombie, but
+        # a zombie thread-group leader can retain live sibling threads. Accept
+        # only a single-thread zombie; all candidate matchers exclude state=Z
+        # while safely handling empty argv. Keep every other empty cmdline
+        # terminal so discovery remains fail closed.
+        if state == "Z" and thread_count == 1:
+            return ()
         raise ControlError("SUPERVISOR_UNAVAILABLE")
     return values
 
@@ -654,15 +703,19 @@ class ProcReader:
             before = os.fstat(pid_fd)
             first_stat = _parse_stat(_read_at(pid_fd, "stat"))
             first_status = _parse_status(_read_at(pid_fd, "status"), pid)
-            first_cmdline = _parse_cmdline(_read_at(pid_fd, "cmdline"))
+            first_cmdline = _parse_cmdline(
+                _read_at(pid_fd, "cmdline"), first_stat[0], first_stat[3]
+            )
             first_namespace = _namespace_inode(pid_fd)
             second_stat = _parse_stat(_read_at(pid_fd, "stat"))
             second_status = _parse_status(_read_at(pid_fd, "status"), pid)
-            second_cmdline = _parse_cmdline(_read_at(pid_fd, "cmdline"))
+            second_cmdline = _parse_cmdline(
+                _read_at(pid_fd, "cmdline"), second_stat[0], second_stat[3]
+            )
             second_namespace = _namespace_inode(pid_fd)
             after = os.fstat(pid_fd)
             if (
-                first_stat[1:] != second_stat[1:]
+                first_stat[1:3] != second_stat[1:3]
                 or (first_stat[0] == "Z") != (second_stat[0] == "Z")
                 or first_status != second_status
                 or first_cmdline != second_cmdline
@@ -671,7 +724,7 @@ class ProcReader:
                 or before.st_ino != after.st_ino
             ):
                 raise ControlError("SUPERVISOR_UNAVAILABLE")
-            state, parent_pid, start_time = second_stat
+            state, parent_pid, start_time, _thread_count = second_stat
             uids, namespace_pid = second_status
             return ProcessIdentity(
                 pid=pid,
@@ -707,6 +760,39 @@ class ProcReader:
             return first
         finally:
             os.close(pid_fd)
+
+
+def _recapture_exact_identity(
+    reader: ProcReader,
+    expected: ProcessIdentity,
+    *,
+    deadline: float | None = None,
+) -> ProcessIdentity:
+    """Retry only an internally inconsistent read of one already-pinned process."""
+
+    proof_deadline = (
+        time.monotonic() + PROCESS_PROOF_GRACE_SECONDS
+        if deadline is None
+        else deadline
+    )
+    while True:
+        try:
+            current = reader.capture(expected.pid)
+        except (FileNotFoundError, ProcessLookupError, PermissionError) as exc:
+            # A missing or unreadable pinned process is a conclusive loss of the
+            # proof. Only ProcReader's double-read inconsistency is retryable.
+            raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
+        except ControlError as error:
+            if error.code != "SUPERVISOR_UNAVAILABLE":
+                raise
+            remaining = proof_deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(PROCESS_PROOF_RETRY_SECONDS, remaining))
+            continue
+        if current.stable_key() != expected.stable_key():
+            raise ControlError("SUPERVISOR_UNAVAILABLE")
+        return current
 
 
 def _basename(value: bytes) -> bytes:
@@ -783,7 +869,23 @@ def _discover_supervisor(reader: ProcReader) -> ProcessIdentity:
     sandbox_uid = _sandbox_uid()
     matches, inconclusive = _supervisor_candidates(reader, pid1, sandbox_uid)
     if inconclusive:
-        raise ControlError("SUPERVISOR_UNAVAILABLE")
+        # Busy agents can create or reap an unrelated short-lived process while
+        # /proc is being read. Retry only when one exact supervisor was already
+        # proven, and require that same pinned identity on every scan. A missing,
+        # changing, or duplicate supervisor still fails closed immediately.
+        if len(matches) != 1:
+            raise ControlError("SUPERVISOR_UNAVAILABLE")
+        expected = matches[0].stable_key()
+        deadline = time.monotonic() + PROCESS_PROOF_GRACE_SECONDS
+        while inconclusive:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ControlError("SUPERVISOR_UNAVAILABLE")
+            time.sleep(min(PROCESS_PROOF_RETRY_SECONDS, remaining))
+            _recapture_exact_identity(reader, pid1, deadline=deadline)
+            matches, inconclusive = _supervisor_candidates(reader, pid1, sandbox_uid)
+            if len(matches) != 1 or matches[0].stable_key() != expected:
+                raise ControlError("SUPERVISOR_UNAVAILABLE")
     if len(matches) == 0:
         # A zero-match scan is the only absence signal that may authorize the
         # host to recreate a legacy Docker container with its managed startup
@@ -806,14 +908,9 @@ def _discover_supervisor(reader: ProcReader) -> ProcessIdentity:
         raise ControlError("SUPERVISOR_UNAVAILABLE")
     if len(matches) != 1:
         raise ControlError("SUPERVISOR_UNAVAILABLE")
-    current_pid1 = reader.capture(1)
-    current_supervisor = reader.capture(matches[0].pid)
-    if (
-        current_pid1.stable_key() != pid1.stable_key()
-        or current_supervisor.stable_key() != matches[0].stable_key()
-    ):
-        raise ControlError("SUPERVISOR_UNAVAILABLE")
-    return current_supervisor
+    deadline = time.monotonic() + PROCESS_PROOF_GRACE_SECONDS
+    _recapture_exact_identity(reader, pid1, deadline=deadline)
+    return _recapture_exact_identity(reader, matches[0], deadline=deadline)
 
 
 def _is_hermes_gateway(identity: ProcessIdentity) -> bool:
@@ -930,9 +1027,7 @@ def _gateway_candidates(
             matches.append(identity)
             if len(matches) > 1:
                 break
-    current_supervisor = reader.capture(supervisor.pid)
-    if current_supervisor.stable_key() != supervisor.stable_key():
-        raise ControlError("SUPERVISOR_UNAVAILABLE")
+    _recapture_exact_identity(reader, supervisor)
     if len(matches) > 1:
         raise ControlError("SUPERVISOR_UNAVAILABLE")
     return matches
@@ -1254,7 +1349,7 @@ def _preflight(
         _openclaw_preflight()
 
 
-def _pidfd_open(pid: int) -> int:
+def _pidfd_open(pid: int) -> int | None:
     opener = getattr(os, "pidfd_open", None)
     sender = getattr(signal, "pidfd_send_signal", None)
     if opener is None or sender is None:
@@ -1262,6 +1357,8 @@ def _pidfd_open(pid: int) -> int:
     try:
         return opener(pid, 0)
     except OSError as exc:
+        if exc.errno == errno.ESRCH:
+            return None
         raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
 
 
@@ -1271,29 +1368,41 @@ def _pidfd_exited(pidfd: int, timeout_seconds: float) -> bool:
     return bool(poller.poll(max(0, int(timeout_seconds * 1000))))
 
 
-def _send_pidfd(pidfd: int, signum: signal.Signals) -> None:
+def _send_pidfd(pidfd: int, signum: signal.Signals) -> bool:
     sender = getattr(signal, "pidfd_send_signal", None)
     if sender is None:
         raise ControlError("PRIVILEGED_CONTROL_UNAVAILABLE")
     try:
         sender(pidfd, signum, None, 0)
     except OSError as exc:
+        if exc.errno == errno.ESRCH:
+            return False
         raise ControlError("GATEWAY_FAILED") from exc
+    return True
 
 
 def _terminate_gateway(reader: ProcReader, identity: ProcessIdentity) -> None:
     pidfd = _pidfd_open(identity.pid)
+    if pidfd is None:
+        return
     try:
-        current = reader.capture(identity.pid)
-        if current.stable_key() != identity.stable_key():
-            raise ControlError("SUPERVISOR_UNAVAILABLE")
-        _send_pidfd(pidfd, signal.SIGTERM)
+        try:
+            _recapture_exact_identity(reader, identity)
+        except ControlError:
+            # The pidfd is readable only when the exact process opened above has
+            # exited. Accept that race without ever falling back to a PID signal.
+            if _pidfd_exited(pidfd, 0):
+                return
+            raise
+        if not _send_pidfd(pidfd, signal.SIGTERM):
+            return
         if _pidfd_exited(pidfd, STOP_GRACE_SECONDS):
             return
-        current = reader.capture(identity.pid)
-        if current.stable_key() != identity.stable_key():
-            raise ControlError("SUPERVISOR_UNAVAILABLE")
-        _send_pidfd(pidfd, signal.SIGKILL)
+        # The pidfd already pins the proven gateway across exit and PID reuse.
+        # Re-reading /proc here races with the normal live-to-zombie transition
+        # and adds no signal-target safety.
+        if not _send_pidfd(pidfd, signal.SIGKILL):
+            return
         if not _pidfd_exited(pidfd, KILL_GRACE_SECONDS):
             raise ControlError("GATEWAY_FAILED")
     finally:
@@ -1370,14 +1479,18 @@ def _wait_for_recovery_candidate(
 
 
 def _control(action: str, nonce: str) -> tuple[str, int, int]:
-    agent = _detect_agent()
+    with _control_stage("detect-agent"):
+        agent = _detect_agent()
     with ProcReader() as reader:
-        supervisor = _discover_supervisor(reader)
-        spec = _agent_spec(agent, reader, supervisor)
-        candidates = _gateway_candidates(reader, supervisor, spec)
-        old_identity = candidates[0] if candidates else None
+        with _control_stage("discover-supervisor"):
+            supervisor = _discover_supervisor(reader)
+        with _control_stage("initial-gateway-proof"):
+            spec = _agent_spec(agent, reader, supervisor)
+            candidates = _gateway_candidates(reader, supervisor, spec)
+            old_identity = candidates[0] if candidates else None
 
-        _preflight(spec, reader, supervisor)
+        with _control_stage("preflight"):
+            _preflight(spec, reader, supervisor)
 
         if action == "probe":
             if old_identity is None:
@@ -1399,51 +1512,62 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
             # grace, give the one successor its own bounded grace before any
             # signal so recovery cannot churn a newly launched replacement.
             original_identity = old_identity
-            existing, old_identity = _wait_for_recovery_candidate(
-                reader,
-                supervisor,
-                spec,
-                original_identity,
-            )
-            if existing is not None:
-                completed = _wait_for_healthy_gateway(
+            with _control_stage("await-existing-gateway"):
+                existing, old_identity = _wait_for_recovery_candidate(
                     reader,
                     supervisor,
                     spec,
-                    None,
-                    RECOVERY_TIMEOUT_SECONDS,
-                    True,
+                    original_identity,
                 )
+            if existing is not None:
+                with _control_stage("await-existing-gateway"):
+                    completed = _wait_for_healthy_gateway(
+                        reader,
+                        supervisor,
+                        spec,
+                        None,
+                        RECOVERY_TIMEOUT_SECONDS,
+                        True,
+                    )
                 return "already-running", original_identity.pid, completed.pid
 
         expected_exit_lease = None
         try:
-            if old_identity is not None and spec.name == "hermes":
-                # The nonroot entrypoint owns the child and its crash budget.
-                # Publish an exact root-owned authorization before the pidfd
-                # signal. The marker names this live root controller so a
-                # delayed reap remains authorized without trusting wall time,
-                # while an orphaned marker fails closed as an ordinary crash.
-                controller_identity = _controller_process_identity(reader)
-                expected_exit_lease = _publish_expected_exit_lease(
-                    old_identity,
-                    controller_identity,
-                )
             if old_identity is not None:
-                _terminate_gateway(reader, old_identity)
+                # The nonroot entrypoint owns the child and its crash budget,
+                # and SIGTERM is indistinguishable from a self-requested
+                # shutdown once the child has exited: openclaw exits 0 on
+                # SIGTERM, which nemoclaw-start reads as an intentional stop
+                # and therefore does not respawn. Publish an exact root-owned
+                # authorization before the pidfd signal so the entrypoint
+                # relaunches the gateway this controller is about to wait for.
+                # The marker names this live root controller so a delayed reap
+                # remains authorized without trusting wall time, while an
+                # orphaned marker fails closed as an ordinary crash.
+                with _control_stage("publish-expected-exit"):
+                    controller_identity = _controller_process_identity(reader)
+                    expected_exit_lease = _publish_expected_exit_lease(
+                        old_identity,
+                        controller_identity,
+                    )
+            if old_identity is not None:
+                with _control_stage("terminate-gateway"):
+                    _terminate_gateway(reader, old_identity)
 
-            replacement = _wait_for_healthy_gateway(
-                reader,
-                supervisor,
-                spec,
-                old_identity,
-                RECOVERY_TIMEOUT_SECONDS,
-                True,
-            )
+            with _control_stage("await-replacement"):
+                replacement = _wait_for_healthy_gateway(
+                    reader,
+                    supervisor,
+                    spec,
+                    old_identity,
+                    RECOVERY_TIMEOUT_SECONDS,
+                    True,
+                )
             return "ok", old_identity.pid if old_identity else 0, replacement.pid
         finally:
             if expected_exit_lease is not None:
-                _clear_expected_exit_lease(expected_exit_lease)
+                with _control_stage("cleanup-expected-exit"):
+                    _clear_expected_exit_lease(expected_exit_lease)
 
 
 def _validate_request(argv: list[str]) -> tuple[str, str]:
@@ -1468,6 +1592,8 @@ def main(argv: list[str]) -> int:
         return 0
     except ControlError as error:
         print(error.code, file=sys.stderr)
+        if error.code == "SUPERVISOR_UNAVAILABLE" and error.stage is not None:
+            print(f"NEMOCLAW_CONTROL_STAGE={error.stage}", file=sys.stderr)
         return 1
     except (OSError, subprocess.SubprocessError):
         print("GATEWAY_FAILED", file=sys.stderr)

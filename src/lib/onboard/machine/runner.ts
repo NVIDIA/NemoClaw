@@ -263,6 +263,9 @@ export async function runOnboardMachine<Context>({
       context = updateContext
         ? await updateContext({ context, state: resultState, result, session })
         : context;
+      if (result.type === "pause") {
+        return { context, session };
+      }
       if (
         isTerminalOnboardMachineState(session.machine.state) ||
         stopStates.includes(session.machine.state)

@@ -83,6 +83,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -100,7 +103,7 @@ jobs:
       - name: Install macOS test dependencies
         run: |
           set -euo pipefail
-          brew install bash coreutils gawk ripgrep
+          brew install bash coreutils fd gawk ripgrep
           printf '%s\n' \
             "$(brew --prefix bash)/bin" \
             "$(brew --prefix coreutils)/libexec/gnubin" \
@@ -155,6 +158,9 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve workspace paths for WSL
         shell: powershell

@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPublishedRouteIndex,
   resolvePageLinksByText,
-} from "../scripts/check-docs-published-routes.ts";
+} from "../scripts/check-docs-published-routes.mts";
 import { loadAgent, resolveAgentNameAlias } from "../src/lib/agent/defs";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-platform-docs.py");
@@ -159,6 +159,36 @@ print("OK")
     expect(output.trim()).toBe("OK");
   });
 
+  it("rejects unmatched backticks in prerequisite-specific platform notes", () => {
+    const output = runPython(`
+${loadGeneratorAs("g")}
+
+def matrix_with(note):
+    return {
+      "statuses": {"deferred": "Roadmap-only."},
+      "owners": {"engineering": "@NVIDIA/nemoclaw-maintainer"},
+      "project_status": {"stage":"a","label":"b","since":"c","notes":"d"},
+      "platforms": [{
+        "name": "Station", "runtimes": ["Docker"], "status": "deferred",
+        "notes": "full notes", "prerequisites_notes": note
+      }],
+      "providers": [], "agents": [], "integrations": [],
+      "deployment_paths": [], "capabilities": [], "out_of_scope": []
+    }
+
+for label, note in [("unmatched", "unclosed \`code"), ("balanced", "closed \`code\`")]:
+    try:
+        module._validate_matrix(matrix_with(note))
+        print(f"{label}:OK")
+    except ValueError as exc:
+        print(f"{label}:{exc}")
+`);
+    expect(output).toContain(
+      "unmatched:ci/platform-matrix.json: platforms[0].prerequisites_notes has an odd number of backticks",
+    );
+    expect(output).toContain("balanced:OK");
+  });
+
   // PRA-2 on #5712: matrix.get(section, []) used to silently accept a missing
   // top-level section and render an empty table. _validate_matrix now requires
   // each generator-backed section to be present and list-typed before render.
@@ -255,13 +285,14 @@ print(module.generate_provider_table(providers))
     expect(output).not.toContain("Deferred\\|Provider");
   });
 
-  it("full platform table includes deferred rows; partial table excludes them", () => {
+  it("prerequisites table includes deferred rows only when they have setup guidance", () => {
     const output = runPython(`
 ${loadGeneratorAs("g")}
 
 platforms = [
+  {"name": "Station", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "prerequisites_notes": "evaluation setup", "notes": "full Station notes"},
   {"name": "Linux", "runtimes": ["Docker"], "status": "tested", "ci_tested": True, "notes": "n"},
-  {"name": "WSL", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "notes": "later"}
+  {"name": "RTX", "runtimes": ["Docker"], "status": "deferred", "ci_tested": False, "notes": "later"}
 ]
 print("PARTIAL:")
 print(module.generate_platform_table(platforms))
@@ -270,9 +301,37 @@ print(module.generate_platform_table_full(platforms))
 `);
     const [partial, full] = output.split("FULL:");
     expect(partial).toContain("Linux");
-    expect(partial).not.toContain("WSL");
+    expect(partial).toContain("Station");
+    expect(partial).toContain("evaluation setup");
+    expect(partial).not.toContain("full Station notes");
+    expect(partial).not.toContain("RTX");
+    expect(partial.indexOf("Linux")).toBeLessThan(partial.indexOf("Station"));
     expect(full).toContain("Linux");
-    expect(full).toContain("WSL");
+    expect(full).toContain("Station");
+    expect(full).toContain("full Station notes");
+    expect(full).toContain("RTX");
+    expect(full.indexOf("Linux")).toBeLessThan(full.indexOf("RTX"));
+    expect(full.indexOf("RTX")).toBeLessThan(full.indexOf("Station"));
+  });
+
+  it("prerequisites platform block includes documented deferred setup and links to the complete matrix", () => {
+    const output = runPython(`
+${loadGeneratorAs("g")}
+
+platforms = [
+  {"name": "Linux", "runtimes": ["Docker"], "status": "tested", "notes": "ready"},
+  {"name": "Station", "runtimes": ["Docker"], "status": "deferred", "prerequisites_notes": "evaluation setup", "notes": "later"},
+  {"name": "RTX", "runtimes": ["Docker"], "status": "deferred", "notes": "later"}
+]
+print(module.generate_platform_prerequisites_block(platforms))
+`);
+    expect(output).toContain("Linux");
+    expect(output).toContain("Station");
+    expect(output).toContain("evaluation setup");
+    expect(output).not.toContain("RTX");
+    expect(output).toContain(
+      "For the complete platform support matrix, including all deferred platforms and CI coverage, refer to [Platform Support](../reference/platform-support).",
+    );
   });
 
   it("exits non-zero for --check on a placeholder owner in the real matrix", () => {

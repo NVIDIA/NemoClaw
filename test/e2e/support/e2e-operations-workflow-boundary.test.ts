@@ -102,12 +102,44 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("binds controller dispatch to the exact checkout, plan, and correlation identity (#6955)", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const validation = workflow.jobs["generate-matrix"].steps!.find(
+      (step) => step.name === "Validate controller dispatch",
+    )!;
+    validation.run = validation
+      .run!.replace('[[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ ]]', '[[ -n "$CHECKOUT_SHA" ]]')
+      .replace('[[ "$PLAN_HASH" =~ ^[a-f0-9]{64}$ ]]', '[[ -n "$PLAN_HASH" ]]')
+      .replace(
+        '[[ "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$ ]]',
+        '[[ -n "$CORRELATION_ID" ]]',
+      )
+      .replace(
+        `[[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
+        `[[ -n "$(jq -r '.head.sha' <<< "$pull_json")" ]]`,
+      );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        'Controller validation must retain "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$',
+        'Controller validation must retain "$PLAN_HASH" =~ ^[a-f0-9]{64}$',
+        'Controller validation must retain "$CORRELATION_ID" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$',
+        `Controller validation must retain [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]]`,
+      ]),
+    );
+  });
+
   it("keeps every planned job wired to bound evidence", () => {
     const workflow = readE2eOperationsWorkflow();
     const job = workflow.jobs["cloud-onboard"];
     job.env!.E2E_TARGET_ID = "different-job";
-    const run = job.steps!.find((step) => String(step.run ?? "").includes("npx vitest"))!;
-    run.run = run.run!.replace("test/e2e/risk-signal-reporter.ts", "default");
+    const run = job.steps!.find((step) =>
+      String(step.run ?? "").includes("tools/e2e/live-vitest-invocation.mts run --test-path"),
+    )!;
+    run.run = run.run!.replace(
+      "tools/e2e/live-vitest-invocation.mts run --test-path",
+      "tools/e2e/live-vitest-invocation.mts runx --test-path",
+    );
     const upload = job.steps!.find((step) =>
       step.uses?.startsWith("NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@"),
     )!;
@@ -152,9 +184,9 @@ describe("E2E operations workflow boundary", () => {
         "cloud-onboard must not hold issues: write",
         "cloud-onboard must not hold pull-requests: write",
         "report-to-pr must not hold issues: write",
-        "report-to-pr must hold only actions: read and pull-requests: write",
+        "report-to-pr must hold only actions: read, contents: read, and pull-requests: write",
         "report-to-pr must run only for manual workflow dispatches",
-        "report-to-pr must contain only its PR-comment step",
+        "report-to-pr must first check out the trusted workflow revision, then post its PR comment",
         "report-to-pr must not use issue mutations or generic GitHub write surfaces",
       ]),
     );
@@ -179,6 +211,29 @@ describe("E2E operations workflow boundary", () => {
       expect.arrayContaining([
         "report-to-pr must limit issue mutation to one validated PR-scoped createComment call",
         "report-to-pr must not use issue mutations or generic GitHub write surfaces",
+      ]),
+    );
+  });
+
+  it("requires prNumber and report to originate from the trusted resolveReportPr and renderE2eReport calls", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    report.with!.script = String(report.with!.script)
+      .replace(
+        "const prNumber = await resolveReportPr({ github, context, core, env: process.env });",
+        "const prNumber = 5093;",
+      )
+      .replace(
+        /const report = renderE2eReport\([^;]*\);/,
+        "const report = { body: 'fake', warnings: [] };",
+      );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "report-to-pr must derive prNumber from the trusted resolveReportPr call",
+        "report-to-pr must derive report from the trusted renderE2eReport call",
       ]),
     );
   });
@@ -311,29 +366,20 @@ describe("E2E operations workflow boundary", () => {
       }),
     };
     const scorecardJobs = {
-      isSelectiveDispatch: vi.fn().mockReturnValue(false),
       loadWorkflowRunJobs: vi.fn().mockResolvedValue([]),
-      summarizeJobs: vi.fn().mockReturnValue({
-        cancelled: 0,
-        failedJobs: [],
-        failure: 0,
-        ran: 1,
-        skipped: 0,
-        success: 1,
-        total: 1,
-      }),
     };
-    const slackBlocks = {
-      buildBlocks: vi.fn().mockReturnValue([]),
-      buildFallbackText: vi.fn().mockReturnValue("scorecard fallback"),
-      getSlackChannel: vi.fn().mockReturnValue("daily"),
-      getStatusColor: vi.fn().mockReturnValue("good"),
+    const coordinator = {
+      buildScorecard: vi.fn().mockReturnValue({
+        scorecardData: { ran: 0, runMode: "Scheduled E2E", total: 0 },
+        slackData: { channel: "daily", payload: { attachments: [], text: "scorecard fallback" } },
+        summaryMarkdown: "## 🌅 NemoClaw E2E Scorecard\n\n### Onboard Performance Budget",
+      }),
     };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
-      ["/workspace/scripts/scorecard/analyze-trace-timing.ts", traceTiming],
-      ["/workspace/scripts/scorecard/summarize-jobs.ts", scorecardJobs],
-      ["/workspace/scripts/scorecard/build-slack-blocks.ts", slackBlocks],
+      ["/workspace/scripts/scorecard/coordinate-scorecard.mts", coordinator],
+      ["/workspace/scripts/scorecard/analyze-trace-timing.mts", traceTiming],
+      ["/workspace/scripts/scorecard/summarize-jobs.mts", scorecardJobs],
     ]);
     const runtimeRequire = (specifier: string) => {
       const runtimeModule = runtimeModules.get(specifier);
@@ -367,6 +413,19 @@ describe("E2E operations workflow boundary", () => {
 
     expect(traceTiming.buildTraceTimingResult).toHaveBeenCalledWith({ github: {}, context, core });
     expect(warning).toHaveBeenCalledWith("Cloud onboard advisory performance budget exceeded");
+    expect(coordinator.buildScorecard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiJobs: [],
+        eventName: "schedule",
+        needs: { "generate-matrix": { result: "success" } },
+        rawExplicitOnly: "",
+        rawJobs: "",
+        rawTargets: "",
+        trace: expect.objectContaining({
+          traceSummaryLines: expect.arrayContaining(["### Onboard Performance Budget"]),
+        }),
+      }),
+    );
     expect(summary.addRaw).toHaveBeenCalledWith(
       expect.stringContaining("### Onboard Performance Budget"),
     );
@@ -381,7 +440,13 @@ describe("E2E operations workflow boundary", () => {
     const fetchMock = vi.fn();
     vi.stubEnv(
       "SLACK_DATA",
-      JSON.stringify({ channel: "preview", payload: { text: "safe precomputed payload" } }),
+      JSON.stringify({
+        channel: "preview",
+        payload: {
+          text: "safe precomputed payload",
+          attachments: [{ color: "#76b900", blocks: [] }],
+        },
+      }),
     );
     vi.stubEnv("POST_TO_SLACK", "false");
     try {
@@ -391,6 +456,36 @@ describe("E2E operations workflow boundary", () => {
         fetchMock,
       );
       expect(info).toHaveBeenCalledWith("Selective dispatch without post_to_slack — skipping");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    ["empty payload", { channel: "daily", payload: {} }],
+    [
+      "missing text",
+      { channel: "daily", payload: { attachments: [{ color: "#76b900", blocks: [] }] } },
+    ],
+    ["non-array attachments", { channel: "daily", payload: { text: "hi", attachments: {} } }],
+    [
+      "malformed attachment",
+      { channel: "daily", payload: { text: "hi", attachments: [{ blocks: [] }] } },
+    ],
+  ])("rejects a precomputed Slack payload with %s before calling fetch", async (_label, data) => {
+    const script = workflowScript("scorecard", "Post scorecard to Slack");
+    const setFailed = vi.fn();
+    const fetchMock = vi.fn();
+    vi.stubEnv("SLACK_DATA", JSON.stringify(data));
+    vi.stubEnv("POST_TO_SLACK", "true");
+    try {
+      await new AsyncFunction("process", "core", "fetch", script)(
+        process,
+        { info: vi.fn(), setFailed },
+        fetchMock,
+      );
+      expect(setFailed).toHaveBeenCalledWith("Invalid precomputed Slack payload");
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllEnvs();

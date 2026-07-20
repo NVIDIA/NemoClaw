@@ -175,7 +175,8 @@ describe("CLI connect recovery process contracts", () => {
           `marker_file=${JSON.stringify(markerFile)}`,
           `state_file=${JSON.stringify(stateFile)}`,
           'printf \'%s\\n\' "$*" >> "$marker_file"',
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then echo "alpha  Ready"; exit 0; fi',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo",
           "  echo '  Id: abc'",
@@ -214,7 +215,7 @@ describe("CLI connect recovery process contracts", () => {
         expect(result.code).toBe(0);
         expect(result.out).toContain("Probe complete: recovered OpenClaw gateway");
         const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
-        expect(calls).toContain("sandbox get alpha");
+        expect(calls).toContain("sandbox get -g nemoclaw alpha");
         expect(calls.some((call) => call.startsWith("sandbox exec --name alpha -- sh -c"))).toBe(
           true,
         );
@@ -248,7 +249,8 @@ describe("CLI connect recovery process contracts", () => {
           `calls=${JSON.stringify(openshellCalls)}`,
           `state_file=${JSON.stringify(stateFile)}`,
           'printf \'%s\\n\' "$*" >> "$calls"',
-          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then echo "alpha  Ready"; exit 0; fi',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
           "  echo 'Sandbox:'",
           "  echo",
           "  echo '  Id: abc'",
@@ -317,7 +319,8 @@ describe("CLI connect recovery process contracts", () => {
         `calls=${JSON.stringify(openshellCalls)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'%s\\n\' "$*" >> "$calls"',
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then echo "alpha  Ready"; exit 0; fi',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",
@@ -442,7 +445,7 @@ describe("CLI connect recovery process contracts", () => {
         "  echo 'alpha          Ready      2m ago'",
         "  exit 0",
         "fi",
-        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && { [ "$3" = "alpha" ] || [ "$5" = "alpha" ]; }; then',
         "  echo 'Sandbox:'",
         "  echo",
         "  echo '  Id: abc'",

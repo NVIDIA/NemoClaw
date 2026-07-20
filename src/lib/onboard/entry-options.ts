@@ -1,6 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  requireStationExpressResumeIntent,
+  type StationExpressSessionLike,
+  wrapOnboard as wrapStationExpressOnboard,
+} from "./station-express-resume";
+
 export interface OnboardEntryOptionsInput {
   opts: {
     resume?: boolean;
@@ -44,6 +50,11 @@ export interface ResolvedOnboardEntryOptions {
 }
 
 type NonInteractiveEntryOptions = { nonInteractive?: boolean };
+type ResumableEntryOptions = NonInteractiveEntryOptions & { resume?: boolean; fresh?: boolean };
+interface StationExpressSessionLifecycle {
+  loadSession(): StationExpressSessionLike | null;
+  reconcileStationExpressReceiptRetirement(generation: string): void;
+}
 
 /** Scope the CLI flag to helpers that still read the compatibility environment variable. */
 export function withNonInteractiveEnvironment<Options extends NonInteractiveEntryOptions>(
@@ -61,6 +72,30 @@ export function withNonInteractiveEnvironment<Options extends NonInteractiveEntr
       if (previous === undefined) delete env.NEMOCLAW_NON_INTERACTIVE;
       else env.NEMOCLAW_NON_INTERACTIVE = previous;
     }
+  };
+}
+
+export function wrapOnboard<Options extends ResumableEntryOptions>(
+  run: (options?: Options) => Promise<void>,
+  session: StationExpressSessionLifecycle,
+): (options?: Options) => Promise<void> {
+  return wrapStationExpressOnboard(
+    withNonInteractiveEnvironment(run),
+    session.loadSession,
+    session.reconcileStationExpressReceiptRetirement,
+  );
+}
+
+export function prepareSessionInput<RuntimeControlRequests extends object>(
+  runtimeControlRequests: RuntimeControlRequests,
+  sandboxName: string | null,
+  resume: boolean,
+  preflight: () => void,
+) {
+  preflight();
+  return {
+    ...runtimeControlRequests,
+    stationExpressIntent: requireStationExpressResumeIntent(process.env, sandboxName, resume),
   };
 }
 

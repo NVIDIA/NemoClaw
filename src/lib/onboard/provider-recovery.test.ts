@@ -237,6 +237,7 @@ describe("provider recovery persisted routing state", () => {
       provider: "compatible-endpoint",
       model: "model-a",
       endpointUrl: "https://registry.example/v1",
+      endpointSource: null,
       preferredInferenceApi: "openai-completions",
       source: "registry",
     });
@@ -244,6 +245,7 @@ describe("provider recovery persisted routing state", () => {
       provider: "compatible-endpoint",
       model: "model-b",
       endpointUrl: "https://session.example/v1",
+      endpointSource: null,
       preferredInferenceApi: "openai-responses",
       source: "session",
     });
@@ -262,6 +264,7 @@ describe("provider recovery persisted routing state", () => {
       provider: "compatible-endpoint",
       model: "registry-model",
       endpointUrl: "https://registry.example/v1",
+      endpointSource: null,
       preferredInferenceApi: "openai-completions",
       nimContainer: "registry-container",
     });
@@ -303,6 +306,7 @@ describe("provider recovery persisted routing state", () => {
       provider: "compatible-endpoint",
       model: "registry-model",
       endpointUrl: "https://registry.example/v1",
+      endpointSource: null,
       preferredInferenceApi: "openai-completions",
       source: "registry",
     });

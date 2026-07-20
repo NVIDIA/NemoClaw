@@ -11,8 +11,6 @@ content:
 skill:
   priority: 10
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 Use these commands to inspect registered sandboxes and collect evidence before changing a sandbox.
 
 <AgentOnly variant="openclaw">
@@ -53,6 +51,9 @@ For messaging agents, the command also reports messaging-channel overlap warning
 ```bash
 $$nemoclaw my-assistant status
 ```
+
+For local Ollama and vLLM routes, sandbox status and doctor compare the selected model with the provider inventory without issuing a completion or consuming tokens.
+An invalid or empty inventory, or an inventory that does not contain the configured model, reports unhealthy provider status.
 
 Use the host-level status command when you want the sandbox inventory plus host auxiliary service state, such as cloudflared:
 

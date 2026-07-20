@@ -43,6 +43,10 @@ describe("Docker GPU recreate orchestration", () => {
 
     expect(result.newContainerId).toBe("new-container-id");
     expect(result.mode.kind).toBe("gpus");
+    expect(dockerStop).toHaveBeenCalledWith(
+      "old-container-id",
+      expect.objectContaining({ timeout: 90_000 }),
+    );
     expect(dockerRunDetached).toHaveBeenCalledWith(
       expect.arrayContaining([
         "--name",

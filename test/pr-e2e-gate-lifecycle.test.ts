@@ -11,6 +11,7 @@ import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import {
   abandonPrGate,
   cancelPrGate,
+  e2eFailureReport,
   findSignalFiles,
   finishPrGate,
   type PrGateState,
@@ -39,6 +40,66 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+describe("PR E2E runner-loss retry policy (#7146)", () => {
+  const cancelledJobs = [
+    {
+      id: 77,
+      name: "Hermes rebuild",
+      conclusion: "cancelled",
+      steps: [{ name: "Run Hermes rebuild live test", conclusion: "cancelled" }],
+    },
+  ];
+
+  it("leaves cancellation without a positive runner-loss marker non-retryable", () => {
+    const cancelled = e2eFailureReport({
+      repository: "NVIDIA/NemoClaw",
+      runId: 23,
+      workflowConclusion: "cancelled",
+      jobs: cancelledJobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: true,
+      runnerLossAttempt: 1,
+      runnerLossEvidence: null,
+    });
+
+    expect(cancelled.retryableFailureReason).toBeUndefined();
+    expect(cancelled.summary).toContain("no verified hosted-runner-loss marker");
+  });
+
+  it("marks only the first positively classified runner-loss attempt retryable", () => {
+    const evidence = {
+      terminalClassificationPresent: false,
+      jobConclusion: "cancelled" as const,
+      runnerLostMarkerCount: 1,
+    };
+    const first = e2eFailureReport({
+      repository: "NVIDIA/NemoClaw",
+      runId: 23,
+      workflowConclusion: "cancelled",
+      jobs: cancelledJobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: true,
+      runnerLossAttempt: 1,
+      runnerLossEvidence: evidence,
+    });
+    const second = e2eFailureReport({
+      repository: "NVIDIA/NemoClaw",
+      runId: 24,
+      workflowConclusion: "cancelled",
+      jobs: cancelledJobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: true,
+      runnerLossAttempt: 2,
+      runnerLossEvidence: evidence,
+    });
+
+    expect(first.retryableFailureReason).toBe("child-cancelled");
+    expect(first.summary).toContain("single permitted retry");
+    expect(second.retryableFailureReason).toBeUndefined();
+    expect(second.summary).toContain("already consumed");
+  });
+});
+
 function githubResponse(value?: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -58,7 +119,7 @@ function emptyPrGateCheckRunsRoute() {
 function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
   return {
     id: 17,
-    name: "E2E / PR Gate",
+    name: "E2E / PR Gate Coordination",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
@@ -72,6 +133,15 @@ function existingPrGateCheckRunsRoute(overrides: Record<string, unknown> = {}) {
   return githubFetchRoute(
     ({ url, method }) => url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
     () => githubResponse({ total_count: 1, check_runs: [exactPrGateCheck(overrides)] }),
+  );
+}
+
+function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Response {
+  return githubResponse(
+    exactPrGateCheck({
+      id,
+      ...(request.body as Record<string, unknown> | undefined),
+    }),
   );
 }
 
@@ -104,7 +174,7 @@ function pullRequestListItem(pull = pullRequest()): Omit<PullRequest, "changed_f
 function state(): PrGateState {
   const plan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: ["src/lib/onboard.ts"] });
   return {
-    version: 2,
+    version: 3,
     commitSha: HEAD_SHA,
     baseSha: BASE_SHA,
     workflowSha: WORKFLOW_SHA,
@@ -112,6 +182,7 @@ function state(): PrGateState {
     correlationId: CORRELATION_ID,
     prNumber: 42,
     expectedJobs: ["onboard-repair", "onboard-resume"],
+    expectedTargets: [],
     expectedShards: {
       "onboard-repair": ["default"],
       "onboard-resume": ["default"],
@@ -175,7 +246,7 @@ function signal(
 }
 
 function writePassingEvidence(evidencePath: string, gate: PrGateState): void {
-  for (const job of gate.expectedJobs) {
+  for (const job of [...gate.expectedJobs, ...gate.expectedTargets]) {
     for (const shard of gate.expectedShards[job]!) {
       const directory = path.join(evidencePath, `${job}-${shard}`);
       fs.mkdirSync(directory, { recursive: true });
@@ -236,6 +307,84 @@ function workflowRun(gate: PrGateState, overrides: Record<string, unknown> = {})
 }
 
 describe("PR E2E controller lifecycle", () => {
+  it("links the original runner-loss run when its single retry passes", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-lineage-"));
+    const outputPath = path.join(workDir, "github-output");
+    const statePath = path.join(workDir, "controller-state.json");
+    const evidencePath = path.join(workDir, "evidence");
+    const gate = state();
+    const serializedState = `${JSON.stringify(gate, null, 2)}\n`;
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    fs.writeFileSync(statePath, serializedState, { mode: 0o600 });
+    fs.mkdirSync(evidencePath);
+    writePassingEvidence(evidencePath, gate);
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    const prior = exactPrGateCheck({
+      id: 16,
+      status: "completed",
+      conclusion: "failure",
+      details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/22",
+      output: {
+        title: "Selected E2E did not pass",
+        summary: "The child was cancelled.\n\n<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->",
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => githubResponse(workflowRun(gate)),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 2, check_runs: [prior, exactPrGateCheck()] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => prGateMutationResponse(request),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(
+        finishPrGate({
+          statePath,
+          stateHash: sha256(serializedState),
+          evidencePath,
+          checkRunId: 17,
+          childRunId: 23,
+          evidenceOutcome: "success",
+        }),
+      ).resolves.toBeUndefined();
+      const completion = requests.find(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(completion?.body).toMatchObject({
+        status: "completed",
+        conclusion: "success",
+        output: {
+          summary: expect.stringContaining(
+            "[attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/22) → [attempt 2](https://github.com/NVIDIA/NemoClaw/actions/runs/23)",
+          ),
+        },
+      });
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("cancels the child and closes the check when startup fails after dispatch", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-start-"));
     const outputPath = path.join(workDir, "github-output");
@@ -251,7 +400,7 @@ describe("PR E2E controller lifecycle", () => {
           emptyPrGateCheckRunsRoute(),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
-            () => githubResponse({ id: 17 }),
+            (request) => prGateMutationResponse(request),
           ),
           githubFetchRoute(
             ({ url }) => url.includes("/pulls?state=open&head="),
@@ -288,11 +437,11 @@ describe("PR E2E controller lifecycle", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => {
+            (request) => {
               checkPatches += 1;
               return checkPatches === 2
                 ? githubResponse({ message: "simulated update failure" }, 500)
-                : githubResponse({});
+                : prGateMutationResponse(request);
             },
           ),
         ],
@@ -404,7 +553,7 @@ describe("PR E2E controller lifecycle", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -458,6 +607,7 @@ describe("PR E2E controller lifecycle", () => {
       expectCancellation: false,
       expectedTitle: "Evidence is missing",
       expectedSummary: "Missing signals: onboard-repair:default, onboard-resume:default",
+      expectedRetryReason: undefined,
     },
     {
       label: "an unfinished child",
@@ -470,6 +620,7 @@ describe("PR E2E controller lifecycle", () => {
       expectCancellation: true,
       expectedTitle: "Selected E2E did not pass",
       expectedSummary: "concluded `unfinished (in_progress)`",
+      expectedRetryReason: undefined,
     },
     {
       label: "a failed child job",
@@ -490,6 +641,140 @@ describe("PR E2E controller lifecycle", () => {
       expectedTitle: "Hermes security-posture failed",
       expectedSummary:
         "[Hermes security-posture](https://github.com/NVIDIA/NemoClaw/actions/runs/23/job/77) — failed step: `Run security posture live Vitest test`",
+      expectedRetryReason: undefined,
+    },
+    {
+      label: "a GitHub-hosted runner disappears with its live step still active",
+      status: "completed",
+      conclusion: "failure",
+      jobs: [
+        {
+          id: 77,
+          name: "rebuild-hermes",
+          status: "completed",
+          conclusion: "failure",
+          runner_id: 1_020_705_058,
+          runner_name: "GitHub Actions 1020705058",
+          labels: ["ubuntu-latest"],
+          steps: [
+            { name: "Set up job", status: "completed", conclusion: "success" },
+            {
+              name: "Run Hermes rebuild live test",
+              status: "in_progress",
+              conclusion: null,
+            },
+            {
+              name: "Upload Hermes rebuild artifacts",
+              status: "pending",
+              conclusion: null,
+            },
+          ],
+        },
+      ],
+      evidenceOutcome: "success" as const,
+      assertFinalization: expectHandledFinalization,
+      assertCompletionLink: expectSelectedRunLink,
+      expectCancellation: false,
+      expectedTitle: "rebuild-hermes failed",
+      expectedSummary: "confirmed hosted-runner loss on attempt 1",
+      expectedRetryReason: "child-cancelled",
+    },
+    {
+      label: "runner-loss metadata coexists with an ordinary failed child",
+      status: "completed",
+      conclusion: "failure",
+      jobs: [
+        {
+          id: 77,
+          name: "rebuild-hermes",
+          status: "completed",
+          conclusion: "failure",
+          runner_id: 1_020_705_058,
+          runner_name: "GitHub Actions 1020705058",
+          labels: ["ubuntu-latest"],
+          steps: [
+            { name: "Set up job", status: "completed", conclusion: "success" },
+            {
+              name: "Run Hermes rebuild live test",
+              status: "in_progress",
+              conclusion: null,
+            },
+          ],
+        },
+        {
+          id: 78,
+          name: "security-posture",
+          status: "completed",
+          conclusion: "failure",
+          runner_id: 1_020_705_059,
+          runner_name: "GitHub Actions 1020705059",
+          labels: ["ubuntu-latest"],
+          steps: [
+            {
+              name: "Run security posture live test",
+              status: "completed",
+              conclusion: "failure",
+            },
+          ],
+        },
+      ],
+      evidenceOutcome: "success" as const,
+      assertFinalization: expectHandledFinalization,
+      assertCompletionLink: expectSelectedRunLink,
+      expectCancellation: false,
+      expectedTitle: "Selected E2E did not pass",
+      expectedSummary:
+        "an unclassified failure is never retried; only a confirmed hosted-runner loss is",
+      expectedRetryReason: undefined,
+    },
+    {
+      label: "every non-passing child job is cancelled",
+      status: "completed",
+      conclusion: "failure",
+      jobs: [
+        {
+          id: 77,
+          name: "network-policy",
+          conclusion: "cancelled",
+          steps: [{ name: "Run network-policy live test", conclusion: "success" }],
+        },
+        {
+          id: 78,
+          name: "Hermes security-posture",
+          conclusion: "cancelled",
+          steps: [{ name: "Run security posture live Vitest test", conclusion: "cancelled" }],
+        },
+      ],
+      evidenceOutcome: "success" as const,
+      assertFinalization: expectHandledFinalization,
+      assertCompletionLink: expectSelectedRunLink,
+      expectCancellation: false,
+      expectedTitle: "Selected E2E did not pass",
+      expectedSummary: "concluded `cancelled`",
+      expectedRetryReason: undefined,
+    },
+    {
+      label: "a failed child follows ten cancelled jobs in a complete listing",
+      status: "completed",
+      conclusion: "failure",
+      jobs: Array.from({ length: 11 }, (_, index) => ({
+        id: 77 + index,
+        name: `selected-job-${index + 1}`,
+        conclusion: index === 10 ? "failure" : "cancelled",
+        steps: [
+          {
+            name: `Run selected job ${index + 1}`,
+            conclusion: index === 10 ? "failure" : "cancelled",
+          },
+        ],
+      })),
+      evidenceOutcome: "success" as const,
+      assertFinalization: expectHandledFinalization,
+      assertCompletionLink: expectSelectedRunLink,
+      expectCancellation: false,
+      expectedTitle: "Selected E2E did not pass",
+      expectedSummary: "1 more; open the E2E run for details",
+      expectedRetryReason: undefined,
     },
     {
       label: "a failed child whose job details are unavailable",
@@ -502,6 +787,7 @@ describe("PR E2E controller lifecycle", () => {
       expectCancellation: false,
       expectedTitle: "Selected E2E did not pass",
       expectedSummary: "Job details could not be loaded",
+      expectedRetryReason: undefined,
     },
     {
       label: "the evidence download fails after a successful child",
@@ -514,6 +800,7 @@ describe("PR E2E controller lifecycle", () => {
       expectCancellation: false,
       expectedTitle: "Evidence could not be verified",
       expectedSummary: "Evidence download did not complete (outcome: failure)",
+      expectedRetryReason: "evidence-download",
     },
     {
       label: "the evidence download is cancelled after a successful child",
@@ -526,6 +813,7 @@ describe("PR E2E controller lifecycle", () => {
       expectCancellation: false,
       expectedTitle: "Evidence could not be verified",
       expectedSummary: "Evidence download did not complete (outcome: cancelled)",
+      expectedRetryReason: "evidence-download",
     },
     {
       label: "the evidence download is skipped after a successful child",
@@ -538,6 +826,7 @@ describe("PR E2E controller lifecycle", () => {
       expectCancellation: false,
       expectedTitle: "Evidence could not be verified",
       expectedSummary: "Evidence download did not complete (outcome: skipped)",
+      expectedRetryReason: "evidence-download",
     },
   ])("records the expected check and controller outcomes when $label", async ({
     status,
@@ -549,6 +838,7 @@ describe("PR E2E controller lifecycle", () => {
     expectCancellation,
     expectedTitle,
     expectedSummary,
+    expectedRetryReason,
   }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-finish-"));
     const outputPath = path.join(workDir, "github-output");
@@ -588,7 +878,7 @@ describe("PR E2E controller lifecycle", () => {
           existingPrGateCheckRunsRoute(),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse({}),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,
@@ -617,8 +907,140 @@ describe("PR E2E controller lifecycle", () => {
           summary: expect.stringContaining(expectedSummary),
         },
       });
+      const completionSummary = (completion?.body as { output?: { summary?: string } } | undefined)
+        ?.output?.summary;
+      const expectedMarker = expectedRetryReason
+        ? `<!-- nemoclaw-pr-e2e-retry:v1:${expectedRetryReason} -->`
+        : "<!-- nemoclaw-pr-e2e-retry:v1:";
+      expect(completionSummary?.includes(expectedMarker)).toBe(expectedRetryReason !== undefined);
       assertCompletionLink(completion?.body);
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the evidence-download retry marker when completion falls back (#7052)", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-fallback-"));
+    const outputPath = path.join(workDir, "github-output");
+    const statePath = path.join(workDir, "controller-state.json");
+    const evidencePath = path.join(workDir, "evidence");
+    const gate = state();
+    const serializedState = `${JSON.stringify(gate, null, 2)}\n`;
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    fs.writeFileSync(statePath, serializedState, { mode: 0o600 });
+    fs.mkdirSync(evidencePath);
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    let completionAttempt = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => githubResponse(workflowRun(gate)),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          existingPrGateCheckRunsRoute(),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => {
+              completionAttempt += 1;
+              return completionAttempt === 1
+                ? githubResponse({ message: "simulated completion failure" }, 503)
+                : prGateMutationResponse(request);
+            },
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(
+        finishPrGate({
+          statePath,
+          stateHash: sha256(serializedState),
+          evidencePath,
+          checkRunId: 17,
+          childRunId: 23,
+          evidenceOutcome: "failure",
+        }),
+      ).rejects.toThrow(/Evidence download did not complete/u);
+      const completions = requests.filter(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(completions).toHaveLength(2);
+      const marker = "<!-- nemoclaw-pr-e2e-retry:v1:evidence-download -->";
+      expect(JSON.stringify(completions[0]?.body)).toContain(marker);
+      expect(JSON.stringify(completions[1]?.body)).toContain(marker);
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps malformed evidence terminal without an infrastructure retry marker", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-malformed-"));
+    const outputPath = path.join(workDir, "github-output");
+    const statePath = path.join(workDir, "controller-state.json");
+    const evidencePath = path.join(workDir, "evidence");
+    const gate = state();
+    const serializedState = `${JSON.stringify(gate, null, 2)}\n`;
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    fs.writeFileSync(statePath, serializedState, { mode: 0o600 });
+    fs.mkdirSync(evidencePath);
+    writeMalformedEvidence(evidencePath, gate);
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => githubResponse(workflowRun(gate)),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          existingPrGateCheckRunsRoute(),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => prGateMutationResponse(request),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(
+        finishPrGate({
+          statePath,
+          stateHash: sha256(serializedState),
+          evidencePath,
+          checkRunId: 17,
+          childRunId: 23,
+          evidenceOutcome: "success",
+        }),
+      ).rejects.toThrow();
+      const completion = requests.find(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(completion?.body).toMatchObject({
+        status: "completed",
+        conclusion: "failure",
+        output: { title: "Evidence could not be verified" },
+      });
+      expect(JSON.stringify(completion?.body)).not.toContain("nemoclaw-pr-e2e-retry:v1:");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }
@@ -779,7 +1201,7 @@ describe("PR E2E controller lifecycle", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
-            () => githubResponse(undefined),
+            (request) => prGateMutationResponse(request),
           ),
         ],
         requests,

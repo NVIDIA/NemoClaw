@@ -7,10 +7,10 @@ import {
   extractCredentialPattern,
   extractEmbeddedFormDigest,
   extractProcessControlRules,
-  extractStarterPrompt,
   extractStringSet,
+  immutableRawArtifactUrlPattern,
   verifyFieldSafetySourceParity,
-} from "../scripts/checks/local-credential-helper-pin";
+} from "../scripts/checks/local-credential-helper-pin.mts";
 
 const FUNCTION_NAME = "isBlocked";
 const SET_NAME = "BLOCKED_NAMES";
@@ -121,6 +121,17 @@ function fieldSafetySources(
 }
 
 describe("local credential helper pin predicate parity", () => {
+  it("accepts only a complete immutable artifact URL path (#5048)", () => {
+    const commit = "a".repeat(40);
+    const relativePath = "scripts/local-credential-helper.mts";
+    const url = `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${commit}/${relativePath}`;
+
+    expect(`${url}\``.match(immutableRawArtifactUrlPattern(relativePath))?.[1]).toBe(commit);
+    expect(`${url}.bak\``.match(immutableRawArtifactUrlPattern(relativePath))).toBeNull();
+    expect(`${url}?download=1\``.match(immutableRawArtifactUrlPattern(relativePath))).toBeNull();
+    expect(`${url}#fragment\``.match(immutableRawArtifactUrlPattern(relativePath))).toBeNull();
+  });
+
   it("accepts exact canonical helper and form field-safety parity (#5048)", () => {
     expect(verifyFieldSafetySourceParity(fieldSafetySources())).toEqual([]);
   });
@@ -300,20 +311,5 @@ describe("local credential helper pin predicate parity", () => {
     const source = `${decoy}\nconst EXPECTED_LOCAL_CREDENTIAL_FORM_SHA256 = "${currentDigest}";`;
 
     expect(extractEmbeddedFormDigest(source, "fixture.ts")).toBe(currentDigest);
-  });
-
-  it.each([
-    {
-      decoy: "/* export const STARTER_PROMPT = `stale prompt`; */",
-      label: "block-commented prompt",
-    },
-    {
-      decoy: `const decoy = ${JSON.stringify("export const STARTER_PROMPT = `stale prompt`;")};`,
-      label: "string-embedded prompt",
-    },
-  ])("ignores a $label before the executable starter prompt (#5048)", ({ decoy }) => {
-    const source = `${decoy}\nexport const STARTER_PROMPT = \`current prompt\`;`;
-
-    expect(extractStarterPrompt(source, "fixture.tsx")).toBe("current prompt");
   });
 });
