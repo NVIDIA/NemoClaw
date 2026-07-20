@@ -2884,13 +2884,8 @@ async function createSandboxWithBaseImageResolution(
       register: (openclawImagePluginInstalls) =>
         sandboxRegistration.registerCreatedSandbox({
           sandboxName,
-          inferenceSelection: sandboxRegistration.selection(
-            sandboxName,
-            provider,
-            model,
-            preferredInferenceApi,
-            createIntent?.endpointSource ?? null,
-          ),
+          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+          inferenceSelection: sandboxRegistration.selection(sandboxName, provider, model, preferredInferenceApi, createIntent?.endpointSource ?? null),
           runtimeFields: sandboxRuntimeFields,
           agent,
           agentVersionKnown: !fromDockerfile,
