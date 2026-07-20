@@ -192,7 +192,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment:
-      name: brev-launchable-e2e
+      name: approve-brev-launchable-e2e
       deployment: false
     permissions:
       contents: read
