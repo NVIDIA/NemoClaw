@@ -522,16 +522,6 @@
       "category": "compatibility"
     },
     {
-      "file": "test/station-hardware-evidence-gate.test.ts",
-      "test": "exposes the same contract to contributor and reviewer agents (#7191)",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/station-hardware-evidence-gate.test.ts",
-      "test": "runs from a trusted pull_request_target revision with read-only permissions (#7191)",
-      "category": "security"
-    },
-    {
       "file": "test/validate-blueprint.test.ts",
       "test": "pins the sandbox image by digest instead of a mutable tag (#1438)",
       "category": "security"
