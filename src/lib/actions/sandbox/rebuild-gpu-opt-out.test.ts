@@ -203,6 +203,24 @@ describe("buildRebuildRecreateOnboardOpts", () => {
     expect(opts.toolDisclosure).toBe("direct");
   });
 
+  it("preserves only recognized endpoint provenance across authoritative rebuild", () => {
+    const onboard = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { ...dashboard, endpointSource: "onboard" },
+    });
+    const legacy = buildRebuildRecreateOnboardOpts({ ...baseArgs, sb: dashboard });
+    const malformed = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { ...dashboard, endpointSource: "forged" } as typeof dashboard & {
+        endpointSource: never;
+      },
+    });
+
+    expect(onboard.endpointSource).toBe("onboard");
+    expect(legacy.endpointSource).toBeNull();
+    expect(malformed.endpointSource).toBeNull();
+  });
+
   it("carries durable observability intent into inner onboard", () => {
     const enabled = buildRebuildRecreateOnboardOpts({
       ...baseArgs,

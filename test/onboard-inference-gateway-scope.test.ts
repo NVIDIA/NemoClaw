@@ -92,14 +92,18 @@ describe("onboarding inference gateway scope", () => {
           endpointUrl,
           credentialEnv: "COMPATIBLE_API_KEY",
           pinnedAddresses: [],
+          trustedPrivateCapability: undefined,
+          capabilityCache: undefined,
         });
         expect(harness.updateSandbox).toHaveBeenCalledWith("dcode-vllm-local", {
           provider: "compatible-endpoint",
           model,
           endpointUrl,
+          endpointSource: "onboard",
           credentialEnv: "COMPATIBLE_API_KEY",
           preferredInferenceApi: null,
           gatewayName: GATEWAY,
+          reservationSessionId: undefined,
         });
         expectCommandsTargetOnly(harness.commands);
       },
