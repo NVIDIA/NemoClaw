@@ -123,6 +123,7 @@ Ask required model, endpoint, credential, and download questions one at a time.
 - Use non-interactive environment variables whenever supported.
 - Never leave a command waiting at `Choose [1]:`.
 - If a choice cannot be supplied non-interactively, stop before starting and explain the supported alternative.
+- The DGX Station asset is the exception for the official third-party-software notice and Express confirmation. Keep those installer prompts visible, wait for the user's response, and do not pre-answer them.
 
 ## Handle Tokens Securely and Visually
 
@@ -220,7 +221,8 @@ Use `channels add` and rebuild only for channels omitted from initial onboarding
 - Explain that messaging and web-search selections add required endpoints.
 - Before installation outside an accepted platform-asset path, summarize platform, administrator access, agent, provider, exact model, validation warning, downloads, storage, sandbox, web search, messaging, policy, credential names without their values, and system changes.
 - Ask for final permission before installation outside an accepted platform-asset path.
-- For an accepted platform-asset install path, treat the asset's confirmation as final permission and do not ask again.
+- When a platform asset delegates consent to the official installer, let the installer present its notice and final Express confirmation instead of pre-accepting them.
+- For other accepted platform-asset install paths, treat the asset's confirmation as final permission and do not ask again.
 - Set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` and `NEMOCLAW_YES=1` only after their approvals.
 - Keep credentials in the approved environment and never display them.
 - Verify the command and version, sandbox status, provider, model, `inference.local`, GPU access when applicable, messaging bridges when configured, and dashboard route when available.
