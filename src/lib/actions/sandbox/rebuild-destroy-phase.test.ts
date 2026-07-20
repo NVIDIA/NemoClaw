@@ -51,7 +51,12 @@ describe("rebuild destroy validation diagnostics", () => {
           baselineExclusionTransition: {
             id: "tx-1",
             operation: "restore",
-            exclusion: { key: "nous_research", digest: "approved-digest" },
+            exclusion: {
+              version: 1,
+              agent: "openclaw",
+              key: "nous_research",
+              digest: "approved-digest",
+            },
             targetLiveDigest: "current-digest",
             startedAt: "2026-07-19T00:00:00.000Z",
           },

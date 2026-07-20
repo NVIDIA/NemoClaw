@@ -53,6 +53,8 @@ describe("sandbox create baseline exclusion locking (#7194)", () => {
               id: "00000000-0000-4000-8000-000000000001",
               operation: "exclude",
               exclusion: {
+                version: 1,
+                agent: "openclaw",
                 key: "nous_research",
                 digest: "a".repeat(64),
                 acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -88,6 +90,8 @@ describe("sandbox create baseline exclusion locking (#7194)", () => {
 
   it("rejects exclusion intent that changes before the destructive create edge", async () => {
     const original = {
+      version: 1 as const,
+      agent: "openclaw",
       key: "nous_research",
       digest: "a".repeat(64),
       acknowledgedAt: "2026-07-19T00:00:00.000Z",

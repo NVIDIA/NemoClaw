@@ -12,6 +12,7 @@ import type {
   ServingProcessHealth,
 } from "../../src/lib/actions/sandbox/status-snapshot";
 import type { ProviderHealthStatus } from "../../src/lib/inference/health";
+import type { BaselineExclusionRuntimeStatus } from "../../src/lib/policy/baseline-exclusion";
 import type { BaselineExclusionTransition } from "../../src/lib/state/registry";
 
 type ShowSandboxStatus = typeof import("../../src/lib/actions/sandbox/status")["showSandboxStatus"];
@@ -61,6 +62,7 @@ export type StatusFlowHarnessOptions = {
   routeDrift?: SandboxStatusRouteDrift | null;
   inferenceHealth?: ProviderHealthStatus | null;
   servingProcessHealth?: ServingProcessHealth | null;
+  baselineExclusionStatus?: BaselineExclusionRuntimeStatus;
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
   preflight?: SandboxStatusPreflightResult;
@@ -68,7 +70,7 @@ export type StatusFlowHarnessOptions = {
     agent?: string | null;
     agentVersion?: string | null;
     dcodeAutoApprovalMode?: "disabled" | "thread-opt-in";
-    baselineExclusions?: Array<{ key: string; digest: string }>;
+    baselineExclusions?: Array<{ version: 1; agent: string; key: string; digest: string }>;
     baselineExclusionTransition?: BaselineExclusionTransition;
   };
   shieldsPosture?: {
@@ -102,6 +104,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
   const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
   const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
   const nim = requireDist("../../src/lib/inference/nim.js");
+  const policy = requireDist("../../src/lib/policy/index.js");
   const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
   const shields = requireDist("../../src/lib/shields/index.js");
   const registry = requireDist("../../src/lib/state/registry.js");
@@ -206,6 +209,9 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
     container: null,
   });
   vi.spyOn(nim, "shouldShowNimLine").mockReturnValue(true);
+  vi.spyOn(policy, "getBaselineExclusionRuntimeStatus").mockReturnValue(
+    options.baselineExclusionStatus ?? "excluded",
+  );
   const checkAgentVersionSpy = vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue(
     options.versionCheck ?? {
       sandboxVersion: "0.1.0",

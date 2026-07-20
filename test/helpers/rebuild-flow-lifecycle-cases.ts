@@ -130,6 +130,8 @@ export function registerRebuildFlowLifecycleTests(): void {
         sandboxEntry: {
           baselineExclusions: [
             {
+              version: 1,
+              agent: "openclaw",
               key: "openclaw_docs",
               digest: "baseline-digest",
               acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -170,6 +172,8 @@ network_policies:
           agent: "hermes",
           baselineExclusions: [
             {
+              version: 1,
+              agent: "hermes",
               key: "nous_research",
               digest: "baseline-digest",
               acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -202,6 +206,8 @@ network_policies:
         sandboxEntry: {
           baselineExclusions: [
             {
+              version: 1,
+              agent: "openclaw",
               key: "openclaw_docs",
               digest: "baseline-digest",
               acknowledgedAt: "2026-07-19T00:00:00.000Z",

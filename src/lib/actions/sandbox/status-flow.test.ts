@@ -133,7 +133,9 @@ describe("showSandboxStatus flow", () => {
   it("reports active baseline exclusions and their support impact (#7178)", async () => {
     const harness = createStatusFlowHarness({
       sandboxEntry: {
-        baselineExclusions: [{ key: "nous_research", digest: "digest" }],
+        baselineExclusions: [
+          { version: 1, agent: "openclaw", key: "nous_research", digest: "digest" },
+        ],
       },
     });
 
@@ -146,13 +148,32 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("policy restore <key>");
   });
 
+  it("warns when a recorded exclusion is still present in the live policy (#7194)", async () => {
+    const harness = createStatusFlowHarness({
+      baselineExclusionStatus: "live-policy-mismatch",
+      sandboxEntry: {
+        baselineExclusions: [{ version: 1, agent: "openclaw", key: "pypi", digest: "digest" }],
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("pypi: excluded key is present in live policy");
+  });
+
   it("reports interrupted baseline policy repair and the exact reconciliation command (#7178)", async () => {
     const harness = createStatusFlowHarness({
       sandboxEntry: {
         baselineExclusionTransition: {
           id: "tx-1",
           operation: "restore",
-          exclusion: { key: "nous_research", digest: "digest" },
+          exclusion: {
+            version: 1,
+            agent: "openclaw",
+            key: "nous_research",
+            digest: "digest",
+          },
           targetLiveDigest: "current-digest",
           startedAt: "2026-07-19T00:00:00.000Z",
         },

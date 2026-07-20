@@ -122,56 +122,62 @@ describe("sandbox registry normalization", () => {
 });
 
 describe("baseline exclusion normalization (#7178)", () => {
-  it("keeps well-formed entries and trims key/digest", () => {
+  const digest = "a".repeat(64);
+  const entry = {
+    version: 1 as const,
+    agent: "hermes",
+    key: "nous_research",
+    digest,
+    acknowledgedAt: "2026-07-19T00:00:00.000Z",
+  };
+
+  it("keeps an exact versioned, agent-bound entry", () => {
     expect(
       normalizeBaselineExclusions([
         {
-          key: "  nous_research  ",
-          digest: "  abc  ",
-          acknowledgedAt: "t",
+          ...entry,
           appliedAgentVersion: "1",
         },
       ]),
-    ).toEqual([
-      { key: "nous_research", digest: "abc", acknowledgedAt: "t", appliedAgentVersion: "1" },
-    ]);
+    ).toEqual([{ ...entry, appliedAgentVersion: "1" }]);
   });
 
   it("preserves an explicitly unknown applied agent version", () => {
-    expect(
-      normalizeBaselineExclusions([
-        { key: "nous_research", digest: "abc", appliedAgentVersion: null },
-      ]),
-    ).toEqual([{ key: "nous_research", digest: "abc", appliedAgentVersion: null }]);
+    expect(normalizeBaselineExclusions([{ ...entry, appliedAgentVersion: null }])).toEqual([
+      { ...entry, appliedAgentVersion: null },
+    ]);
   });
 
   it("fails closed when any persisted record is malformed", () => {
-    expect(() =>
-      normalizeBaselineExclusions([
-        { key: "good", digest: "def" },
-        { key: "", digest: "abc" },
-      ]),
-    ).toThrow(/without a key or digest.*before rebuilding/i);
+    expect(() => normalizeBaselineExclusions([entry, { ...entry, key: "" }])).toThrow(
+      /invalid versioned baseline exclusion.*before rebuilding/i,
+    );
     expect(() => normalizeBaselineExclusions(["not-an-object"])).toThrow(
       /malformed baseline exclusion.*before rebuilding/i,
+    );
+  });
+
+  it("rejects an unversioned record so its baseline source is never guessed (#7194)", () => {
+    expect(() => normalizeBaselineExclusions([{ key: entry.key, digest }])).toThrow(
+      /invalid versioned baseline exclusion.*before rebuilding/i,
     );
   });
 
   it("collapses duplicate keys, last wins", () => {
     expect(
       normalizeBaselineExclusions([
-        { key: "dup", digest: "first" },
-        { key: "dup", digest: "second" },
+        { ...entry, key: "dup", digest: "b".repeat(64) },
+        { ...entry, key: "dup", digest: "c".repeat(64) },
       ]),
-    ).toEqual([{ key: "dup", digest: "second" }]);
+    ).toEqual([{ ...entry, key: "dup", digest: "c".repeat(64) }]);
   });
 
   it("returns undefined only for a legacy registry without the field", () => {
     expect(normalizeBaselineExclusions(undefined)).toBeUndefined();
     expect(normalizeBaselineExclusions([])).toBeUndefined();
     expect(() => normalizeBaselineExclusions("nope")).toThrow(/must be an array/i);
-    expect(() => normalizeBaselineExclusions([{ key: "", digest: "" }])).toThrow(
-      /without a key or digest/i,
+    expect(() => normalizeBaselineExclusions([{ ...entry, key: "" }])).toThrow(
+      /invalid versioned baseline exclusion/i,
     );
   });
 });
@@ -182,7 +188,7 @@ describe("baseline exclusion transition normalization (#7178)", () => {
   const restoreTransition = {
     id: "123e4567-e89b-42d3-a456-426614174000",
     operation: "restore" as const,
-    exclusion: { key: "nous_research", digest: sourceDigest },
+    exclusion: { version: 1 as const, agent: "hermes", key: "nous_research", digest: sourceDigest },
     targetLiveDigest: targetDigest,
     startedAt: "2026-07-19T00:00:00.000Z",
   };
@@ -211,13 +217,21 @@ describe("baseline exclusion transition normalization (#7178)", () => {
   it.each([
     ["non-UUID id", { id: "tx-1" }],
     ["non-canonical timestamp", { startedAt: "yesterday" }],
-    ["unsafe key", { exclusion: { key: "bad key\nnext", digest: sourceDigest } }],
-    ["non-SHA source digest", { exclusion: { key: "nous_research", digest: "short" } }],
+    [
+      "unsafe key",
+      { exclusion: { version: 1, agent: "hermes", key: "bad key\nnext", digest: sourceDigest } },
+    ],
+    [
+      "non-SHA source digest",
+      { exclusion: { version: 1, agent: "hermes", key: "nous_research", digest: "short" } },
+    ],
     ["non-SHA target digest", { targetLiveDigest: "short" }],
   ])("rejects a journal with %s (#7178)", (_label, override) => {
     expect(() =>
       normalizeBaselineExclusionTransition({ ...restoreTransition, ...override }),
-    ).toThrow(/baseline exclusion transition.*before rebuilding/i);
+    ).toThrow(
+      /(?:baseline exclusion transition|invalid versioned baseline exclusion).*before rebuilding/i,
+    );
   });
 });
 
@@ -230,8 +244,10 @@ describe("baseline exclusion registry helpers (#7178)", () => {
 
     expect(
       registry.addBaselineExclusion("alpha", {
+        version: 1,
+        agent: "hermes",
         key: "nous_research",
-        digest: "d1",
+        digest: "d".repeat(64),
         appliedAgentVersion: null,
       }),
     ).toBe(true);
@@ -239,7 +255,7 @@ describe("baseline exclusion registry helpers (#7178)", () => {
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({
       key: "nous_research",
-      digest: "d1",
+      digest: "d".repeat(64),
       appliedAgentVersion: null,
     });
     expect(typeof stored[0].acknowledgedAt).toBe("string");
@@ -254,7 +270,12 @@ describe("baseline exclusion registry helpers (#7178)", () => {
     registry.registerSandbox({ name: "alpha", agent: "hermes" });
 
     registry.addCustomPolicy("alpha", { name: "brave", content: "version: 1\n" });
-    registry.addBaselineExclusion("alpha", { key: "brave", digest: "d1" });
+    registry.addBaselineExclusion("alpha", {
+      version: 1,
+      agent: "hermes",
+      key: "brave",
+      digest: "d".repeat(64),
+    });
 
     expect(registry.getCustomPolicies("alpha").map((p) => p.name)).toEqual(["brave"]);
     expect(registry.getBaselineExclusions("alpha").map((e) => e.key)).toEqual(["brave"]);
@@ -271,6 +292,8 @@ describe("baseline exclusion registry helpers (#7178)", () => {
       id: "123e4567-e89b-42d3-a456-426614174001",
       operation: "exclude" as const,
       exclusion: {
+        version: 1,
+        agent: "hermes",
         key: "nous_research",
         digest: "a".repeat(64),
         acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -310,27 +333,38 @@ describe("baseline exclusion registry helpers (#7178)", () => {
     const registry = await loadRegistryWith({});
     registry.registerSandbox({
       name: "alpha",
-      baselineExclusions: [{ key: "nous_research", digest: "d1" }],
+      baselineExclusions: [
+        { version: 1, agent: "hermes", key: "nous_research", digest: "d".repeat(64) },
+      ],
     });
     const transition = {
       id: "123e4567-e89b-42d3-a456-426614174004",
       operation: "restore" as const,
-      exclusion: { key: "nous_research", digest: "a".repeat(64) },
+      exclusion: { version: 1, agent: "hermes", key: "nous_research", digest: "a".repeat(64) },
       targetLiveDigest: "b".repeat(64),
       startedAt: "2026-07-19T00:00:02.000Z",
     };
     expect(registry.beginBaselineExclusionTransition("alpha", transition)).toBe(true);
-    expect(registry.addBaselineExclusion("alpha", { key: "other", digest: "d2" })).toBe(false);
+    expect(
+      registry.addBaselineExclusion("alpha", {
+        version: 1,
+        agent: "hermes",
+        key: "other",
+        digest: "e".repeat(64),
+      }),
+    ).toBe(false);
     expect(registry.removeBaselineExclusion("alpha", "nous_research")).toBe(false);
     expect(registry.clearBaselineExclusionTransition("alpha", "wrong-id")).toBe(false);
     expect(registry.clearBaselineExclusionTransition("alpha", transition.id)).toBe(true);
     expect(registry.getBaselineExclusions("alpha")).toEqual([
-      expect.objectContaining({ key: "nous_research", digest: "d1" }),
+      expect.objectContaining({ key: "nous_research", digest: "d".repeat(64) }),
     ]);
   });
 
   it("preserves a restore journal when the committed exclusion changed (#7178)", async () => {
     const source = {
+      version: 1 as const,
+      agent: "hermes",
       key: "nous_research",
       digest: "a".repeat(64),
       acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -362,12 +396,14 @@ describe("baseline exclusion registry helpers (#7178)", () => {
       alpha: {
         name: "alpha",
         baselineExclusions: [
-          { key: "good", digest: "d1" },
-          { key: "", digest: "d2" },
+          { version: 1, agent: "hermes", key: "good", digest: "d".repeat(64) },
+          { version: 1, agent: "hermes", key: "", digest: "e".repeat(64) },
         ],
       },
     });
 
-    expect(() => registry.listSandboxes()).toThrow(/without a key or digest.*before rebuilding/i);
+    expect(() => registry.listSandboxes()).toThrow(
+      /invalid versioned baseline exclusion.*before rebuilding/i,
+    );
   });
 });

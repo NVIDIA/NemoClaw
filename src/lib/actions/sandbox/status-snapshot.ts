@@ -24,6 +24,8 @@ import {
   normalizeDcodeAutoApprovalMode,
 } from "../../onboard/dcode-auto-approval";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { getBaselineExclusionRuntimeStatus } from "../../policy";
+import type { BaselineExclusionRuntimeStatus } from "../../policy/baseline-exclusion";
 import { redact } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
@@ -167,6 +169,8 @@ export interface SandboxStatusReport {
   policies: string[];
   /** Baseline network policy keys the operator has excluded, replayed on rebuild. */
   baselineExclusions: string[];
+  /** Observed enforcement state for each recorded baseline exclusion. */
+  baselineExclusionStates: Array<{ key: string; status: BaselineExclusionRuntimeStatus }>;
   /** Interrupted cross-system policy mutation that must be reconciled before rebuild. */
   baselineExclusionTransition: {
     operation: registry.BaselineExclusionTransitionOperation;
@@ -261,6 +265,7 @@ interface CollectSandboxStatusSnapshotDeps {
   reportInferenceProbeError?: (message: string) => void;
   probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
   reconcile?: ReconcileSandboxGatewayState;
+  getBaselineExclusionRuntimeStatus?: typeof getBaselineExclusionRuntimeStatus;
 }
 
 function reportInferenceProbeError(error: unknown, writer: (message: string) => void): void {
@@ -473,6 +478,14 @@ async function buildSandboxStatusReport(
       ? sb.policies.filter((policy): policy is string => typeof policy === "string")
       : [];
   const baselineExclusions = sb?.baselineExclusions?.map((exclusion) => exclusion.key) ?? [];
+  const baselineExclusionStates =
+    sb?.baselineExclusions?.map((exclusion) => ({
+      key: exclusion.key,
+      status: (deps.getBaselineExclusionRuntimeStatus ?? getBaselineExclusionRuntimeStatus)(
+        sandboxName,
+        exclusion,
+      ),
+    })) ?? [];
   const baselineExclusionTransition = sb?.baselineExclusionTransition
     ? {
         operation: sb.baselineExclusionTransition.operation,
@@ -511,6 +524,7 @@ async function buildSandboxStatusReport(
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
     baselineExclusions,
+    baselineExclusionStates,
     baselineExclusionTransition,
     failureLayer: effectivePreflight.failureLayer,
     terminalRuntimeHealth,

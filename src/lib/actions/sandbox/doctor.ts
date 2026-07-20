@@ -18,8 +18,11 @@ import {
 import { parseGatewayInference } from "../../inference/config";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
-import { getSandboxBaselineEntryDigest } from "../../policy";
-import { BASELINE_EXCLUSION_SUPPORT_IMPACT } from "../../policy/baseline-exclusion";
+import { getBaselineExclusionRuntimeStatus } from "../../policy";
+import {
+  BASELINE_EXCLUSION_SUPPORT_IMPACT,
+  type BaselineExclusionRuntimeStatus,
+} from "../../policy/baseline-exclusion";
 import { ROOT } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
@@ -355,34 +358,52 @@ function shieldsDoctorCheck(sandboxName: string): DoctorCheck {
   };
 }
 
-type BaselineExclusionDriftState = "excluded" | "content-changed" | "no-longer-in-baseline";
-
-function baselineExclusionDriftState(
-  currentDigest: string | null,
-  exclusionDigest: string,
-): BaselineExclusionDriftState {
-  if (currentDigest === null) return "no-longer-in-baseline";
-  return currentDigest === exclusionDigest ? "excluded" : "content-changed";
-}
-
 function baselineExclusionCheckFields(
   sandboxName: string,
   key: string,
-  driftState: BaselineExclusionDriftState,
+  runtimeStatus: BaselineExclusionRuntimeStatus,
 ): Pick<DoctorCheck, "status" | "detail" | "hint"> {
   const restoreCommand = `${CLI_NAME} ${sandboxName} policy restore ${key}`;
-  if (driftState === "excluded") {
+  if (runtimeStatus === "excluded") {
     return {
       status: "info",
       detail: `Baseline entry '${key}' excluded. ${BASELINE_EXCLUSION_SUPPORT_IMPACT}`,
       hint: `restore with \`${restoreCommand}\``,
     };
   }
-  if (driftState === "no-longer-in-baseline") {
+  if (runtimeStatus === "no-longer-in-baseline") {
     return {
       status: "warn",
       detail: `Baseline entry '${key}' no longer exists; rebuild fails closed until the stale exclusion is cleared.`,
       hint: `key no longer exists in the baseline; run \`${restoreCommand}\` to clear the stale record`,
+    };
+  }
+  if (runtimeStatus === "agent-changed") {
+    return {
+      status: "warn",
+      detail: `Baseline exclusion '${key}' belongs to a different agent; rebuild fails closed until the stale approval is cleared.`,
+      hint: `run \`${restoreCommand}\`, then review and approve the current agent baseline if needed`,
+    };
+  }
+  if (runtimeStatus === "baseline-unreadable") {
+    return {
+      status: "warn",
+      detail: "Current agent baseline is unreadable; exclusion scope could not be verified.",
+      hint: `inspect \`${CLI_NAME} ${sandboxName} policy list\` before rebuilding`,
+    };
+  }
+  if (runtimeStatus === "live-policy-unreadable") {
+    return {
+      status: "warn",
+      detail: `Live policy for '${key}' is unreadable; exclusion enforcement could not be verified.`,
+      hint: `restore gateway access, then rerun \`${CLI_NAME} ${sandboxName} doctor\``,
+    };
+  }
+  if (runtimeStatus === "live-policy-mismatch") {
+    return {
+      status: "fail",
+      detail: `Live policy still contains excluded baseline entry '${key}'; the recorded exclusion is not enforced.`,
+      hint: `inspect \`${CLI_NAME} ${sandboxName} policy list\`, remove the colliding source, then re-run the exclusion`,
     };
   }
   return {
@@ -397,24 +418,11 @@ function baselineExclusionDoctorChecks(sandboxName: string): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
   for (const exclusion of registry.getBaselineExclusions(sandboxName)) {
     if (transition?.exclusion.key === exclusion.key) continue;
-    let currentDigest: string | null;
-    try {
-      currentDigest = getSandboxBaselineEntryDigest(sandboxName, exclusion.key);
-    } catch {
-      checks.push({
-        group: "Sandbox",
-        label: `Baseline exclusion: ${exclusion.key}`,
-        status: "warn",
-        detail: "Current release baseline is unreadable; exclusion scope could not be verified.",
-        hint: `inspect \`${CLI_NAME} ${sandboxName} policy list\` before rebuilding`,
-      });
-      continue;
-    }
-    const driftState = baselineExclusionDriftState(currentDigest, exclusion.digest);
+    const runtimeStatus = getBaselineExclusionRuntimeStatus(sandboxName, exclusion);
     checks.push({
       group: "Sandbox",
       label: `Baseline exclusion: ${exclusion.key}`,
-      ...baselineExclusionCheckFields(sandboxName, exclusion.key, driftState),
+      ...baselineExclusionCheckFields(sandboxName, exclusion.key, runtimeStatus),
     });
   }
   if (transition) {

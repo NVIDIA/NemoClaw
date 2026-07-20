@@ -292,6 +292,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
               id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
               operation: "restore",
               exclusion: {
+                version: 1,
+                agent: "openclaw",
                 key: "agents.openclaw.default",
                 digest: "a".repeat(64),
               },
@@ -334,6 +336,8 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
       id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
       operation: "restore" as const,
       exclusion: {
+        version: 1,
+        agent: "openclaw",
         key: "agents.openclaw.default",
         digest: "a".repeat(64),
       },

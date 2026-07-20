@@ -113,7 +113,12 @@ describe("listSandboxPolicies provenance", () => {
     moduleMocks.getBaselineExclusionTransition.mockReturnValue({
       id: "tx-1",
       operation: "exclude",
-      exclusion: { key: "nous_research", digest: "approved" },
+      exclusion: {
+        version: 1,
+        agent: "hermes",
+        key: "nous_research",
+        digest: "approved",
+      },
       targetLiveDigest: null,
       startedAt: "2026-07-19T00:00:00.000Z",
     });
@@ -137,11 +142,15 @@ describe("listSandboxPolicies provenance", () => {
     });
     moduleMocks.getBaselineExclusions.mockReturnValue([
       {
+        version: 1,
+        agent: "hermes",
         key: "another_entry",
         digest: "c".repeat(64),
         acknowledgedAt: "2026-07-18T00:00:00.000Z",
       },
       {
+        version: 1,
+        agent: "hermes",
         key: "nous_research",
         digest: "a".repeat(64),
         acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -151,6 +160,8 @@ describe("listSandboxPolicies provenance", () => {
       id: "00000000-0000-4000-8000-000000000001",
       operation,
       exclusion: {
+        version: 1,
+        agent: "hermes",
         key: "nous_research",
         digest: "a".repeat(64),
         acknowledgedAt: "2026-07-19T00:00:00.000Z",

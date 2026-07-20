@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveTestAgentBaselinePolicy } from "../../../../test/support/snapshot-policy-test-fixture";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
@@ -169,13 +170,15 @@ vi.mock("../../inference/nim", () => ({
   stopNimContainerByName: vi.fn(),
 }));
 
-vi.mock("../../policy", () => ({
+vi.mock("../../policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../policy")>()),
   applyPreset: applyPresetMock,
   applyPresetContent: applyPresetContentMock,
   getAppliedPresets: getAppliedPresetsMock,
   getPresetContentGatewayState: getPresetContentGatewayStateMock,
   loadPresetForSandbox: loadPresetForSandboxMock,
   removePreset: removePresetMock,
+  resolveAgentBaselinePolicy: resolveTestAgentBaselinePolicy,
 }));
 
 vi.mock("../../runner", () => ({

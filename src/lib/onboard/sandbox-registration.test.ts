@@ -31,7 +31,12 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     const transitionSpy = vi.spyOn(registry, "getBaselineExclusionTransition").mockReturnValue({
       id: "tx-1",
       operation: "exclude",
-      exclusion: { key: "nous_research", digest: "approved" },
+      exclusion: {
+        version: 1,
+        agent: "openclaw",
+        key: "nous_research",
+        digest: "approved",
+      },
       targetLiveDigest: null,
       startedAt: "2026-07-19T00:00:00.000Z",
     });
@@ -50,6 +55,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       .mockReturnValue(null);
     const exclusionsSpy = vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([
       {
+        version: 1,
+        agent: "openclaw",
         key: "nous_research",
         digest: "b".repeat(64),
         acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -59,6 +66,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       expect(() =>
         assertBaselineExclusionsMatchCreateIntent("alpha", [
           {
+            version: 1,
+            agent: "openclaw",
             key: "nous_research",
             digest: "a".repeat(64),
             acknowledgedAt: "2026-07-19T00:00:00.000Z",

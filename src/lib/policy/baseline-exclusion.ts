@@ -25,8 +25,34 @@ export function isProtectedBaselineExclusionKey(key: string): boolean {
 }
 
 export interface BaselineExclusionRequest {
+  readonly version: 1;
+  readonly agent: string;
   readonly key: string;
   readonly digest: string;
+}
+
+export type BaselineExclusionRuntimeStatus =
+  | "excluded"
+  | "agent-changed"
+  | "baseline-unreadable"
+  | "content-changed"
+  | "no-longer-in-baseline"
+  | "live-policy-unreadable"
+  | "live-policy-mismatch";
+
+/** Compare reviewed intent with both the release baseline and observed live policy. */
+export function evaluateBaselineExclusionRuntimeStatus(
+  exclusion: BaselineExclusionRequest,
+  currentAgent: string,
+  currentBaselineDigest: string | null | undefined,
+  liveDigest: string | null | undefined,
+): BaselineExclusionRuntimeStatus {
+  if (exclusion.agent !== currentAgent) return "agent-changed";
+  if (currentBaselineDigest === undefined) return "baseline-unreadable";
+  if (currentBaselineDigest === null) return "no-longer-in-baseline";
+  if (currentBaselineDigest !== exclusion.digest) return "content-changed";
+  if (liveDigest === undefined) return "live-policy-unreadable";
+  return liveDigest === null ? "excluded" : "live-policy-mismatch";
 }
 
 export type BaselineDriftReason = "missing" | "changed";
@@ -132,6 +158,23 @@ export class ProtectedBaselineExclusionError extends Error {
   }
 }
 
+/** Raised when durable approval belongs to a different agent baseline contract. */
+export class BaselineExclusionSourceError extends Error {
+  readonly key: string;
+  readonly approvedAgent: string;
+  readonly currentAgent: string;
+
+  constructor(key: string, approvedAgent: string, currentAgent: string) {
+    super(
+      `Baseline exclusion '${key}' was approved for agent '${approvedAgent}', not '${currentAgent}'. Restore or re-approve it for the current agent before rebuilding.`,
+    );
+    this.name = "BaselineExclusionSourceError";
+    this.key = key;
+    this.approvedAgent = approvedAgent;
+    this.currentAgent = currentAgent;
+  }
+}
+
 /**
  * Apply recorded exclusions to a base policy for create/rebuild. Verifies each
  * approval's digest against the current baseline and drops the matching entry;
@@ -141,10 +184,14 @@ export class ProtectedBaselineExclusionError extends Error {
 export function applyBaselineExclusions(
   basePolicyContent: string,
   requests: readonly BaselineExclusionRequest[],
+  currentAgent: string,
 ): { content: string; excludedKeys: string[] } {
   let content = basePolicyContent;
   const excludedKeys: string[] = [];
   for (const request of requests) {
+    if (request.agent !== currentAgent) {
+      throw new BaselineExclusionSourceError(request.key, request.agent, currentAgent);
+    }
     if (isProtectedBaselineExclusionKey(request.key)) {
       throw new ProtectedBaselineExclusionError(request.key);
     }

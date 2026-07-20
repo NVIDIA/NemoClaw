@@ -171,6 +171,8 @@ describe("resolveSandboxCreateIntent", () => {
       policyTier: "balanced",
       baselineExclusions: [
         {
+          version: 1,
+          agent: "hermes",
           key: "nous_research",
           digest: "abc",
           acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -203,6 +205,8 @@ describe("resolveSandboxCreateIntent", () => {
         policyTier: "balanced",
         baselineExclusions: [
           {
+            version: 1,
+            agent: "hermes",
             key: "nous_research",
             digest: "abc",
             acknowledgedAt: "2026-07-19T00:00:00.000Z",

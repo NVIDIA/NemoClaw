@@ -27,8 +27,10 @@ import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
 import { ROOT, run, runCapture } from "../runner";
 import * as registry from "../state/registry";
+import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
 import {
   digestBaselineEntry,
+  evaluateBaselineExclusionRuntimeStatus,
   getBaselineEntry,
   mergeBaselineEntryIntoPolicy,
   removeBaselineEntryFromPolicy,
@@ -82,6 +84,7 @@ type PresetListOptions = {
 
 type MergePresetNamesOptions = {
   agent?: string | null;
+  excludedBaselineKeys?: readonly string[];
 };
 
 type SetupPolicyPresetSupportOptions = {
@@ -195,6 +198,30 @@ function parsePresetPolicyKeys(presetContent: string | null | undefined): string
 function parsePresetPolicyKeysForOwnership(presetContent: string): string[] | null {
   const networkPolicies = parseNetworkPolicies(presetContent);
   return networkPolicies === null ? null : Object.keys(networkPolicies);
+}
+
+function findExcludedBaselineKeyForPolicy(
+  sandboxName: string,
+  presetContent: string,
+): string | null {
+  const excludedKeys = new Set(
+    registry.getBaselineExclusions(sandboxName).map((exclusion) => exclusion.key),
+  );
+  const transition = registry.getBaselineExclusionTransition(sandboxName);
+  if (transition?.operation === "exclude") excludedKeys.add(transition.exclusion.key);
+  return parsePresetPolicyKeys(presetContent).find((key) => excludedKeys.has(key)) ?? null;
+}
+
+function findAppliedPolicyOwnerForKey(sandboxName: string, key: string): string | null {
+  const sandbox = registry.getSandbox(sandboxName);
+  for (const presetName of sandbox?.policies ?? []) {
+    const content = loadPresetForSandbox(sandboxName, presetName);
+    if (content && parsePresetPolicyKeys(content).includes(key)) return presetName;
+  }
+  for (const custom of registry.getCustomPolicies(sandboxName)) {
+    if (parsePresetPolicyKeys(custom.content).includes(key)) return custom.name;
+  }
+  return null;
 }
 
 const AGENT_PRESET_KEY_ALIASES: Readonly<Record<string, readonly string[]>> =
@@ -650,6 +677,14 @@ function mergePresetNamesIntoPolicy(
       continue;
     }
 
+    const excludedKeys = new Set(options.excludedBaselineKeys ?? []);
+    const collision = parsePresetPolicyKeys(presetContent).find((key) => excludedKeys.has(key));
+    if (collision) {
+      throw new Error(
+        `Cannot compose policy preset '${presetName}': network policy key '${collision}' is reserved by a baseline exclusion. Restore that baseline key before applying the preset.`,
+      );
+    }
+
     merged = mergePresetIntoPolicy(merged, presetEntries);
     appliedPresets.push(presetName);
   }
@@ -886,31 +921,35 @@ function readCurrentSandboxPolicy(sandboxName: string, gatewayName?: string): st
   return parseCurrentPolicyOrEmpty(rawPolicy) || null;
 }
 
-/**
- * Resolve the reviewed baseline policy source for a sandbox: the active agent's
- * `policy-additions.yaml`, or the default OpenClaw sandbox base policy.
- */
-function resolveSandboxBaselinePolicy(
-  sandboxName: string,
-): { policyPath: string; content: string } | null {
-  const agentName = registry.getSandbox(sandboxName)?.agent ?? null;
+/** Resolve and validate one agent's reviewed baseline policy source. */
+function resolveAgentBaselinePolicy(
+  agentName: string | null | undefined,
+): { agent: string; policyPath: string; content: string } | null {
+  const resolvedAgent = agentName || "openclaw";
   const usesOpenClawBaseline = !agentName || agentName === "openclaw";
   const policyPath = usesOpenClawBaseline
     ? path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml")
-    : requireAgentPolicyAdditionsPath(loadAgent(agentName));
+    : requireAgentPolicyAdditionsPath(loadAgent(resolvedAgent));
   let content: string;
   try {
     content = fs.readFileSync(policyPath, "utf-8");
   } catch {
     if (!usesOpenClawBaseline) {
       throw new Error(
-        `Agent '${agentName}' baseline policy became unreadable. Refusing to substitute the OpenClaw baseline.`,
+        `Agent '${resolvedAgent}' baseline policy became unreadable. Refusing to substitute the OpenClaw baseline.`,
       );
     }
     return null;
   }
   parseAndValidateSandboxPolicy(content);
-  return { policyPath, content };
+  return { agent: resolvedAgent, policyPath, content };
+}
+
+/** Resolve the reviewed baseline policy source recorded for a sandbox. */
+function resolveSandboxBaselinePolicy(
+  sandboxName: string,
+): { agent: string; policyPath: string; content: string } | null {
+  return resolveAgentBaselinePolicy(registry.getSandbox(sandboxName)?.agent);
 }
 
 /** The current baseline entry for a key, or null when the baseline omits it. */
@@ -923,6 +962,54 @@ function getSandboxBaselineEntry(sandboxName: string, key: string): PolicyObject
 function getSandboxBaselineEntryDigest(sandboxName: string, key: string): string | null {
   const entry = getSandboxBaselineEntry(sandboxName, key);
   return entry ? digestBaselineEntry(entry) : null;
+}
+
+/** Digest of an observed live policy key, null when absent, or throw when unreadable. */
+function getLiveSandboxPolicyEntryDigest(sandboxName: string, key: string): string | null {
+  assertNoOpenShellGatewayEndpointOverride();
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) throw new Error(`Sandbox '${sandboxName}' is not registered.`);
+  const gatewayName = resolveSandboxGatewayName(sandbox);
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+  if (!currentPolicy) throw new Error(`Live policy for '${sandboxName}' is unreadable.`);
+  const live = inspectLiveBaselineEntry(currentPolicy, key);
+  if (live.state === "invalid") {
+    throw new Error(`Live policy key '${key}' for '${sandboxName}' is malformed.`);
+  }
+  return live.digest;
+}
+
+/** Three-way status across agent source, reviewed baseline, and observed live policy. */
+function getBaselineExclusionRuntimeStatus(
+  sandboxName: string,
+  exclusion: registry.BaselineExclusionEntry,
+): BaselineExclusionRuntimeStatus {
+  const currentAgent = registry.getSandbox(sandboxName)?.agent || "openclaw";
+  if (exclusion.agent !== currentAgent) return "agent-changed";
+  let currentBaselineDigest: string | null;
+  try {
+    currentBaselineDigest = getSandboxBaselineEntryDigest(sandboxName, exclusion.key);
+  } catch {
+    return "baseline-unreadable";
+  }
+  const baselineStatus = evaluateBaselineExclusionRuntimeStatus(
+    exclusion,
+    currentAgent,
+    currentBaselineDigest,
+    undefined,
+  );
+  if (baselineStatus !== "live-policy-unreadable") return baselineStatus;
+  try {
+    const liveDigest = getLiveSandboxPolicyEntryDigest(sandboxName, exclusion.key);
+    return evaluateBaselineExclusionRuntimeStatus(
+      exclusion,
+      currentAgent,
+      currentBaselineDigest,
+      liveDigest,
+    );
+  } catch {
+    return "live-policy-unreadable";
+  }
 }
 
 /** Run one baseline transaction against the sandbox's durable gateway binding. */
@@ -1223,6 +1310,13 @@ function excludeBaselineEntryOnGateway(
     console.error(`  Finish the pending baseline restore for '${key}' before excluding it again.`);
     return false;
   }
+  const appliedOwner = findAppliedPolicyOwnerForKey(sandboxName, key);
+  if (appliedOwner) {
+    console.error(
+      `  Baseline entry '${key}' is also owned by applied policy '${appliedOwner}'. Remove that policy before excluding the baseline key; no policy changes were made.`,
+    );
+    return false;
+  }
   const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
   if (!currentPolicy) {
     console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
@@ -1245,8 +1339,11 @@ function excludeBaselineEntryOnGateway(
   const previousExclusion = registry
     .getBaselineExclusions(sandboxName)
     .find((entry) => entry.key === key);
-  const appliedAgentVersion = registry.getSandbox(sandboxName)?.agentVersion ?? null;
+  const sandbox = registry.getSandbox(sandboxName);
+  const appliedAgentVersion = sandbox?.agentVersion ?? null;
   const exclusion: registry.BaselineExclusionEntry = {
+    version: 1,
+    agent: sandbox?.agent || "openclaw",
     key,
     digest,
     acknowledgedAt: new Date().toISOString(),
@@ -1312,15 +1409,6 @@ function restoreBaselineEntryOnGateway(
     console.error(`  Finish the pending baseline exclusion for '${key}' before restoring it.`);
     return false;
   }
-  // Resolve the current agent baseline before changing either durable or live
-  // state. A missing non-OpenClaw baseline must not be mistaken for a release
-  // that intentionally removed this key.
-  const entry = getSandboxBaselineEntry(sandboxName, key);
-  const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
-  if (!currentPolicy) {
-    console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
-    return false;
-  }
   const recordedExclusion = registry
     .getBaselineExclusions(sandboxName)
     .find((entry) => entry.key === key);
@@ -1328,6 +1416,22 @@ function restoreBaselineEntryOnGateway(
     console.error(
       `  The exclusion for '${key}' is not recorded; no live policy changes were made.`,
     );
+    return false;
+  }
+  const currentAgent = registry.getSandbox(sandboxName)?.agent || "openclaw";
+  if (recordedExclusion.agent !== currentAgent) {
+    return registryTransitionStep(
+      () => registry.removeBaselineExclusion(sandboxName, key),
+      `The stale exclusion for agent '${recordedExclusion.agent}' could not be cleared; no live policy changes were made.`,
+    );
+  }
+  // Resolve the current agent baseline before changing either durable or live
+  // state. A missing non-OpenClaw baseline must not be mistaken for a release
+  // that intentionally removed this key.
+  const entry = getSandboxBaselineEntry(sandboxName, key);
+  const currentPolicy = readCurrentSandboxPolicy(sandboxName, gatewayName);
+  if (!currentPolicy) {
+    console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
     return false;
   }
   if (!entry) {
@@ -1499,6 +1603,13 @@ function applyPresetContent(
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) {
     console.error(`  Preset ${presetName} has no network_policies section.`);
+    return false;
+  }
+  const excludedCollision = findExcludedBaselineKeyForPolicy(sandboxName, presetContent);
+  if (excludedCollision) {
+    console.error(
+      `  Network policy key '${excludedCollision}' is reserved by a baseline exclusion. Restore that baseline key before applying '${presetName}'.`,
+    );
     return false;
   }
 
@@ -1702,6 +1813,13 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
       console.error(`  Preset ${presetName} has no network_policies section.`);
+      return false;
+    }
+    const excludedCollision = findExcludedBaselineKeyForPolicy(sandboxName, presetContent);
+    if (excludedCollision) {
+      console.error(
+        `  Network policy key '${excludedCollision}' is reserved by a baseline exclusion. Restore that baseline key before applying '${presetName}'.`,
+      );
       return false;
     }
 
@@ -2159,7 +2277,9 @@ export {
   extractPresetEntries,
   filterSetupPolicyPresets,
   getAppliedPresets,
+  getBaselineExclusionRuntimeStatus,
   getGatewayPresets,
+  getLiveSandboxPolicyEntryDigest,
   getPresetContentGatewayState,
   getPresetEndpoints,
   getPresetValidationWarning,
@@ -2187,6 +2307,7 @@ export {
   removePreset,
   removePresetFromPolicy,
   renderPresetScope,
+  resolveAgentBaselinePolicy,
   resolvePermissivePolicyPath,
   resolveSandboxBaselinePolicy,
   restoreBaselineEntry,

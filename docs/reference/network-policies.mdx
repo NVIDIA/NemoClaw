@@ -305,7 +305,8 @@ $$nemoclaw <sandbox-name> policy exclude <key> --force
 ```
 
 The command prints every endpoint, method/path rule, and binary the exclusion removes, and requires explicit acknowledgement (`--force` in non-interactive use).
-The exclusion is bound to the reviewed entry content, recorded in the sandbox registry, and replayed on rebuild.
+The versioned exclusion record is bound to the reviewed entry content and active agent, recorded in the sandbox registry, and replayed on rebuild.
+If the sandbox's active agent changes, NemoClaw requires you to clear or review the exclusion again instead of applying an approval from another agent baseline.
 NemoClaw journals the cross-system update before changing the live OpenShell policy and verifies the exact live result before publishing the durable intent.
 If the process or persistence layer fails between those steps, `policy list`, `policy explain`, and `status` report `repair required`.
 Sandbox creation or recreation, rebuild, and cross-sandbox snapshot cloning stop before destructive work, and rerunning the same `policy exclude` or `policy restore` command reconciles only an exact source or target state.
@@ -313,6 +314,11 @@ An unreadable or third live state remains fail-closed for manual inspection inst
 An interrupted restore finalizes only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled target; if either changes or becomes unreadable, the journal remains pending for inspection and re-review.
 If a later release changes that entry, create and rebuild fail closed until re-review; if the release removes it, they fail closed until the stale record is cleared.
 The critical `managed_inference` entry cannot be excluded because it carries the required managed inference route. NemoClaw enforces this both when the command runs and whenever durable exclusion state is replayed.
+
+An excluded baseline key remains reserved while the exclusion is active.
+NemoClaw refuses onboarding, rebuild, built-in and custom presets, messaging channel policies, and generated MCP policies that would define the same key and silently restore its egress.
+It also refuses to exclude a key that an applied preset already owns.
+Restore the baseline entry before applying a preset that intentionally owns the key, or rename a custom entry whose key represents different access.
 
 To recover from baseline drift, first check whether the release changed the entry's content or removed it entirely (`$$nemoclaw <sandbox-name> policy explain` or `doctor` reports which).
 
@@ -332,6 +338,8 @@ $$nemoclaw <sandbox-name> policy restore <key>
 
 List active exclusions with `policy list`.
 `policy explain`, `status`, `doctor`, and snapshot and rebuild summaries also disclose active exclusions and their reduced-support impact.
+Status and doctor compare each approval with the active agent baseline and verify that the excluded key is absent from the live OpenShell policy.
+An unreadable live policy is unverified, while a live policy that contains the key is a mismatch that requires repair before you rely on the exclusion.
 Restore an entry against the current baseline and clear its exclusion:
 
 ```bash

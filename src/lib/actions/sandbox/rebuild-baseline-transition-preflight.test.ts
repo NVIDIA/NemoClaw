@@ -52,6 +52,8 @@ describe("rebuild baseline transition preflight (#7194)", () => {
         id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
         operation: "restore",
         exclusion: {
+          version: 1,
+          agent: "openclaw",
           key: "agents.openclaw.default",
           digest: "a".repeat(64),
         },

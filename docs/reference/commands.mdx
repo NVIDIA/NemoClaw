@@ -1201,8 +1201,11 @@ NemoClaw resolves the sandbox's recorded owning OpenShell gateway before queryin
 If another gateway is active, it selects the owner and queries again instead of trusting a result from the sibling gateway.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
-The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `agent`, `agentDisplayName`, `agentRuntime`, `dcodeAutoApprovalMode`, `model`, `provider`, `recordedRoute`, `liveRoute`, `routeDrift`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `baselineExclusions`, `baselineExclusionStates`, `baselineExclusionTransition`, `failureLayer`, `terminalRuntimeHealth`, `servingProcessHealth`, and `dockerPaused`.
 `baselineExclusions` is an array of exact baseline keys recorded for durable replay and is empty when the sandbox has none.
+`baselineExclusionStates` reports each recorded key with its current verification state.
+The `excluded` state means the reviewed entry still matches the active agent baseline and the key is absent from the live OpenShell policy.
+Other states identify agent drift, changed or removed baseline content, an unreadable baseline or live policy, or a live policy that contains the excluded key.
 `baselineExclusionTransition` is `null` when policy state is settled; otherwise it identifies the interrupted `exclude` or `restore` key that must be reconciled before sandbox creation or recreation, rebuild, or cross-sandbox snapshot cloning.
 The schema-version `1` `model` and `provider` fields keep their established live-route meaning when the gateway route is readable.
 Use `recordedRoute` for the sandbox's durable provider and model and `liveRoute` for the gateway-global route.
@@ -1384,6 +1387,10 @@ Direct provider and upstream probes use the same authenticated model-invocation 
 For gateway runtimes, `doctor` also reports an informational `Serving process: not checked` result because its fresh sandbox probes do not attest the long-running gateway process.
 This result does not fail the readiness check.
 Terminal runtimes omit it because they have no long-running gateway process.
+
+For each recorded baseline exclusion, `doctor` compares the approval with the active agent baseline and verifies that the excluded key is absent from the live OpenShell policy.
+An unreadable live policy produces a warning because NemoClaw cannot verify enforcement.
+A live policy that contains the excluded key fails the check and requires policy repair before you rely on the exclusion.
 
 Warnings do not make the command fail.
 Failed checks, including a failed or unavailable authoritative inference route, exit non-zero so scripts can use `doctor` as a readiness gate.
@@ -1678,6 +1685,8 @@ Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavio
 If the preset name is unknown or already applied, the command exits non-zero with a clear error.
 Built-in preset choices are scoped to the sandbox's active agent.
 Messaging channel presets appear only when NemoClaw has a matching channel policy for that agent; unavailable channel presets use the standard unknown-preset error before endpoint preview or confirmation.
+When a baseline key is durably excluded, NemoClaw reserves that key and refuses built-in, custom, channel, and MCP policy additions that would define it again.
+Restore the baseline entry before applying a preset that intentionally owns the same key, or rename a custom preset entry whose key represents different access.
 Custom preset files are tracked with the sandbox that applied them.
 `policy list`, `policy add`, and `policy remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
 Before `policy add` writes a merged policy, it reads and parses the round-trippable base policy from OpenShell.
@@ -1722,7 +1731,9 @@ The command cross-references the local registry against the live gateway state (
 This catches desync caused by external edits to the gateway policy or stale registry entries after a manual rollback.
 Preset summaries come only from the YAML `preset.description` field.
 NemoClaw does not render network-policy rule bodies as prose in `policy list` output.
-Recorded baseline exclusions appear in a separate section: `active` means the reviewed digest still matches, `baseline changed — re-review required` means the current entry differs, and `baseline entry removed — restore to clear` means the current release no longer defines the key.
+Recorded baseline exclusions appear in a separate section.
+`active` means the reviewed digest still matches the current baseline, `baseline changed — re-review required` means the current entry differs, and `baseline entry removed — restore to clear` means the current release no longer defines the key.
+Use `status` or `doctor` to additionally verify that the approval belongs to the active agent and the excluded key is absent from the live policy.
 `repair required — interrupted exclude/restore; rebuild blocked` means NemoClaw preserved a durable transaction journal after a crash or persistence failure; rerun the displayed exact policy command to reconcile it before sandbox creation or recreation, rebuild, or cross-sandbox snapshot cloning.
 
 Each active preset is annotated with its provenance so you can tell why it is applied:
@@ -1770,7 +1781,9 @@ Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox
 ### `$$nemoclaw <name> policy exclude`
 
 Persistently exclude one exact entry from the agent baseline policy after previewing the egress and support impact that the change removes.
-The exclusion is bound to the reviewed baseline content and replayed during rebuild; if a release changes the entry, rebuild fails closed until you review it again.
+The versioned exclusion record is bound to the reviewed baseline content and active agent, then replayed during rebuild.
+If the active agent or entry changes, rebuild fails closed until you clear or review the exclusion again.
+The command refuses to exclude a key that an applied preset already owns, because removing that live key would also remove the preset's access.
 The critical `managed_inference` entry cannot currently be excluded pending product direction.
 Use `--force` or `--yes` for explicit non-interactive acknowledgement, or `--dry-run` to preview without changing the sandbox.
 

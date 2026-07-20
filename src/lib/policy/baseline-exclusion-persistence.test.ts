@@ -39,7 +39,13 @@ vi.mock("../state/registry", async (importOriginal) => ({
 
 import * as openshellResolveModule from "../adapters/openshell/resolve";
 import { digestBaselineEntry, getBaselineEntry } from "./baseline-exclusion";
-import { excludeBaselineEntry, restoreBaselineEntry } from "./index";
+import {
+  applyPresetContent,
+  excludeBaselineEntry,
+  getBaselineExclusionRuntimeStatus,
+  loadPresetForSandbox,
+  restoreBaselineEntry,
+} from "./index";
 
 const LIVE_POLICY = `version: 1
 network_policies:
@@ -97,6 +103,8 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
       expect.objectContaining({
         operation: "exclude",
         exclusion: expect.objectContaining({
+          version: 1,
+          agent: "hermes",
           key: "nous_research",
           digest: LIVE_DIGEST,
           appliedAgentVersion: "1.2.3",
@@ -261,7 +269,7 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
     mocks.getBaselineExclusionTransition.mockReturnValue({
       id: "tx-exclude",
       operation: "exclude",
-      exclusion: { key: "nous_research", digest: LIVE_DIGEST },
+      exclusion: { version: 1, agent: "hermes", key: "nous_research", digest: LIVE_DIGEST },
       targetLiveDigest: null,
       startedAt: "2026-07-19T00:00:00.000Z",
     });
@@ -278,7 +286,7 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
     mocks.getBaselineExclusionTransition.mockReturnValue({
       id: "tx-exclude",
       operation: "exclude",
-      exclusion: { key: "nous_research", digest: LIVE_DIGEST },
+      exclusion: { version: 1, agent: "hermes", key: "nous_research", digest: LIVE_DIGEST },
       targetLiveDigest: null,
       startedAt: "2026-07-19T00:00:00.000Z",
     });
@@ -299,7 +307,7 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
     mocks.getBaselineExclusionTransition.mockReturnValue({
       id: "tx-exclude",
       operation: "exclude",
-      exclusion: { key: "nous_research", digest: LIVE_DIGEST },
+      exclusion: { version: 1, agent: "hermes", key: "nous_research", digest: LIVE_DIGEST },
       targetLiveDigest: null,
       startedAt: "2026-07-19T00:00:00.000Z",
     });
@@ -330,6 +338,8 @@ describe("excludeBaselineEntry persistence boundary (#7178)", () => {
 
 describe("restoreBaselineEntry persistence boundary (#7178)", () => {
   const RECORDED = {
+    version: 1 as const,
+    agent: "hermes",
     key: "nous_research",
     digest: LIVE_DIGEST,
     acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -452,6 +462,8 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
       network_policies: { legacy_entry: LIVE_ENTRY },
     });
     const legacyExclusion = {
+      version: 1 as const,
+      agent: "hermes",
       key: "legacy_entry",
       digest: "a".repeat(64),
       acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -516,6 +528,49 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
     expect(mocks.clearBaselineExclusionTransition).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("durable exclusion for 'nous_research' changed"),
+    );
+  });
+});
+
+describe("baseline exclusion live verification boundary (#7194)", () => {
+  const exclusion = {
+    version: 1 as const,
+    agent: "hermes",
+    key: "nous_research",
+    digest: HERMES_BASELINE_DIGEST,
+  };
+
+  beforeEach(() => {
+    mocks.getSandbox.mockReturnValue({ name: "alpha", agent: "hermes" });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const mock of Object.values(mocks)) mock.mockReset();
+  });
+
+  it("reports a mismatch when the excluded key remains in the observed live policy", () => {
+    mocks.runCapture.mockReturnValue(HERMES_RESTORED_POLICY);
+
+    expect(getBaselineExclusionRuntimeStatus("alpha", exclusion)).toBe("live-policy-mismatch");
+  });
+
+  it("reports excluded only when the observed live policy omits the reviewed key", () => {
+    mocks.runCapture.mockReturnValue("version: 1\nnetwork_policies: {}\n");
+
+    expect(getBaselineExclusionRuntimeStatus("alpha", exclusion)).toBe("excluded");
+  });
+
+  it("refuses to reintroduce an excluded Hermes pypi key through a live preset (#7194)", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const pypiPreset = loadPresetForSandbox("alpha", "pypi");
+    expect(pypiPreset).not.toBeNull();
+    mocks.getBaselineExclusions.mockReturnValue([{ ...exclusion, key: "pypi" }]);
+
+    expect(applyPresetContent("alpha", "pypi", pypiPreset!, { nonFatal: true })).toBe(false);
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("reserved by a baseline exclusion"),
     );
   });
 });

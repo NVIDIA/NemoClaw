@@ -20,20 +20,26 @@ function normalizeBaselineExclusionEntry(item: unknown): BaselineExclusionEntry 
       "Sandbox registry contains a malformed baseline exclusion; repair the registry before rebuilding",
     );
   }
+  const version = item.version;
+  const agent = typeof item.agent === "string" ? item.agent.trim() : "";
   const key = typeof item.key === "string" ? item.key.trim() : "";
   const digest = typeof item.digest === "string" ? item.digest.trim() : "";
-  if (!key || !digest) {
+  const acknowledgedAt =
+    typeof item.acknowledgedAt === "string" ? item.acknowledgedAt.trim() : item.acknowledgedAt;
+  if (
+    version !== 1 ||
+    !BASELINE_TRANSITION_KEY_PATTERN.test(agent) ||
+    !BASELINE_TRANSITION_KEY_PATTERN.test(key) ||
+    !SHA256_DIGEST_PATTERN.test(digest) ||
+    (acknowledgedAt !== undefined &&
+      (typeof acknowledgedAt !== "string" || !isCanonicalIsoTimestamp(acknowledgedAt)))
+  ) {
     throw new Error(
-      "Sandbox registry contains a baseline exclusion without a key or digest; repair the registry before rebuilding",
+      "Sandbox registry contains an invalid versioned baseline exclusion; repair the registry before rebuilding",
     );
   }
-  const entry: BaselineExclusionEntry = { key, digest };
-  if (item.acknowledgedAt !== undefined && typeof item.acknowledgedAt !== "string") {
-    throw new Error(
-      `Sandbox registry baseline exclusion '${key}' has an invalid acknowledgement timestamp; repair the registry before rebuilding`,
-    );
-  }
-  if (typeof item.acknowledgedAt === "string") entry.acknowledgedAt = item.acknowledgedAt;
+  const entry: BaselineExclusionEntry = { version, agent, key, digest };
+  if (typeof acknowledgedAt === "string") entry.acknowledgedAt = acknowledgedAt;
   if (item.appliedAgentVersion === null) {
     entry.appliedAgentVersion = null;
   } else if (typeof item.appliedAgentVersion === "string") {

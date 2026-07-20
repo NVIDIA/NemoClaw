@@ -10,9 +10,9 @@ vi.mock("../state/registry", () => ({
 }));
 
 vi.mock(".", () => ({
+  getBaselineExclusionRuntimeStatus: vi.fn(() => "excluded"),
   getPresetEndpoints: vi.fn(),
   getGatewayPresets: vi.fn(() => null),
-  getSandboxBaselineEntryDigest: vi.fn(() => null),
   listCustomPresets: vi.fn(),
   listPresets: vi.fn(),
   loadPreset: vi.fn(),
@@ -105,8 +105,8 @@ function resetMocks() {
   vi.mocked(policies.getGatewayPresets).mockReturnValue(null);
   vi.mocked(registry.getBaselineExclusions).mockReset();
   vi.mocked(registry.getBaselineExclusions).mockReturnValue([]);
-  vi.mocked(policies.getSandboxBaselineEntryDigest).mockReset();
-  vi.mocked(policies.getSandboxBaselineEntryDigest).mockReturnValue(null);
+  vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReset();
+  vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReturnValue("excluded");
   vi.mocked(getTier).mockReset();
 }
 
@@ -259,16 +259,35 @@ describe("buildPolicyContext", () => {
     vi.mocked(getTier).mockReturnValue(null);
     stubRegistry({ policies: [], policyTier: undefined });
     vi.mocked(registry.getBaselineExclusions).mockReturnValue([
-      { key: "nous_research", digest: "digest-1", acknowledgedAt: "2026-07-19T00:00:00.000Z" },
-      { key: "changed_entry", digest: "digest-stale", acknowledgedAt: "2026-07-18T00:00:00.000Z" },
-      { key: "dropped_entry", digest: "digest-2", acknowledgedAt: "2026-07-17T00:00:00.000Z" },
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "nous_research",
+        digest: "digest-1",
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "changed_entry",
+        digest: "digest-stale",
+        acknowledgedAt: "2026-07-18T00:00:00.000Z",
+      },
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "dropped_entry",
+        digest: "digest-2",
+        acknowledgedAt: "2026-07-17T00:00:00.000Z",
+      },
     ]);
-    const currentDigests: Record<string, string> = {
-      nous_research: "digest-1",
-      changed_entry: "digest-current",
+    const statuses: Record<string, "excluded" | "content-changed" | "no-longer-in-baseline"> = {
+      nous_research: "excluded",
+      changed_entry: "content-changed",
+      dropped_entry: "no-longer-in-baseline",
     };
-    vi.mocked(policies.getSandboxBaselineEntryDigest).mockImplementation(
-      (_sandbox, key) => currentDigests[key] ?? null,
+    vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockImplementation(
+      (_sandbox, entry) => statuses[entry.key],
     );
 
     const ctx = buildPolicyContext(SANDBOX);
@@ -312,6 +331,8 @@ describe("buildPolicyContext", () => {
         id: "tx-1",
         operation: "exclude",
         exclusion: {
+          version: 1,
+          agent: "openclaw",
           key: "nous_research",
           digest: "digest-1",
           acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -344,11 +365,15 @@ describe("buildPolicyContext", () => {
     vi.mocked(getTier).mockReturnValue(null);
     vi.mocked(registry.getBaselineExclusions).mockReturnValue([
       {
+        version: 1,
+        agent: "openclaw",
         key: "another_entry",
         digest: "c".repeat(64),
         acknowledgedAt: "2026-07-18T00:00:00.000Z",
       },
       {
+        version: 1,
+        agent: "openclaw",
         key: "nous_research",
         digest: "a".repeat(64),
         acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -361,6 +386,8 @@ describe("buildPolicyContext", () => {
         id: "00000000-0000-4000-8000-000000000001",
         operation,
         exclusion: {
+          version: 1,
+          agent: "openclaw",
           key: "nous_research",
           digest: "a".repeat(64),
           acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -369,9 +396,7 @@ describe("buildPolicyContext", () => {
         startedAt: "2026-07-19T00:00:00.000Z",
       },
     });
-    vi.mocked(policies.getSandboxBaselineEntryDigest).mockImplementation(() => {
-      throw new Error("release baseline unavailable");
-    });
+    vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReturnValue("baseline-unreadable");
 
     const ctx = buildPolicyContext(SANDBOX);
 
@@ -385,8 +410,11 @@ describe("buildPolicyContext", () => {
       ]),
     );
     expect(ctx.baselineExclusions).toHaveLength(2);
-    expect(policies.getSandboxBaselineEntryDigest).toHaveBeenCalledOnce();
-    expect(policies.getSandboxBaselineEntryDigest).toHaveBeenCalledWith(SANDBOX, "another_entry");
+    expect(policies.getBaselineExclusionRuntimeStatus).toHaveBeenCalledOnce();
+    expect(policies.getBaselineExclusionRuntimeStatus).toHaveBeenCalledWith(
+      SANDBOX,
+      expect.objectContaining({ key: "another_entry" }),
+    );
   });
 });
 
@@ -427,9 +455,15 @@ describe("renderPolicyContextMarkdown", () => {
     stubTier();
     stubRegistry({ policies: ["slack"], policyTier: "balanced" });
     vi.mocked(registry.getBaselineExclusions).mockReturnValue([
-      { key: "nous_research", digest: "digest-1", acknowledgedAt: "2026-07-19T00:00:00.000Z" },
+      {
+        version: 1,
+        agent: "openclaw",
+        key: "nous_research",
+        digest: "digest-1",
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
     ]);
-    vi.mocked(policies.getSandboxBaselineEntryDigest).mockReturnValue("digest-1");
+    vi.mocked(policies.getBaselineExclusionRuntimeStatus).mockReturnValue("excluded");
 
     const md = renderPolicyContextMarkdown(buildPolicyContext(SANDBOX));
 

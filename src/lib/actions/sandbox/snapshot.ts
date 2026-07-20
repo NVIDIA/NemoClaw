@@ -10,7 +10,6 @@ import {
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import { loadAgent } from "../../agent/defs";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { formatFailedBackupItems } from "../../domain/backup-failure";
@@ -284,23 +283,20 @@ async function prepareSnapshotClonePolicy(srcEntry: SandboxEntry): Promise<{
       `Cannot clone baseline policy while '${transition.operation} ${transition.exclusion.key}' needs repair. Re-run that policy command on '${srcEntry.name}' first.`,
     );
   }
-  const defaultPolicyPath = path.join(
-    ROOT,
-    "nemoclaw-blueprint",
-    "policies",
-    "openclaw-sandbox.yaml",
-  );
-  const baselineExclusions = srcEntry.baselineExclusions ?? [];
-  if (baselineExclusions.length === 0) return { policyPath: defaultPolicyPath };
-
   const agentName = srcEntry.agent || "openclaw";
-  const basePolicyPath = loadAgent(agentName).policyAdditionsPath || defaultPolicyPath;
+  const baseline = policies.resolveAgentBaselinePolicy(agentName);
+  if (!baseline) {
+    throw new Error(`Cannot resolve the '${agentName}' baseline policy for snapshot restore.`);
+  }
+  const baselineExclusions = srcEntry.baselineExclusions ?? [];
+  if (baselineExclusions.length === 0) return { policyPath: baseline.policyPath };
+
   const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(srcEntry));
   const activeMessagingChannels = registry
     .getConfiguredMessagingChannelsFromEntry(srcEntry)
     .filter((channel) => !disabledChannels.has(channel));
   const { prepareInitialSandboxCreatePolicy } = await import("../../onboard/initial-policy");
-  return prepareInitialSandboxCreatePolicy(basePolicyPath, activeMessagingChannels, {
+  return prepareInitialSandboxCreatePolicy(baseline.policyPath, activeMessagingChannels, {
     agentName,
     baselineExclusions,
   });

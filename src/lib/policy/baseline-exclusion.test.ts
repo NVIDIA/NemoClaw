@@ -7,7 +7,9 @@ import YAML from "yaml";
 import {
   applyBaselineExclusions,
   BaselineExclusionDriftError,
+  BaselineExclusionSourceError,
   digestBaselineEntry,
+  evaluateBaselineExclusionRuntimeStatus,
   getBaselineEntry,
   listBaselineEntryKeys,
   mergeBaselineEntryIntoPolicy,
@@ -44,6 +46,10 @@ function digestOf(key: string, policy = BASE_POLICY): string {
   const entry = getBaselineEntry(policy, key);
   expect(entry).not.toBeNull();
   return digestBaselineEntry(entry!);
+}
+
+function exclusion(key: string, digest: string) {
+  return { version: 1 as const, agent: "hermes", key, digest };
 }
 
 describe("baseline-exclusion digest (#7178)", () => {
@@ -86,6 +92,8 @@ describe("baseline-exclusion enumeration (#7178)", () => {
 describe("baseline-exclusion drift resolution (#7178)", () => {
   it("reports no drift when the digest matches", () => {
     const resolution = resolveBaselineExclusion(BASE_POLICY, {
+      version: 1,
+      agent: "hermes",
       key: "nous_research",
       digest: digestOf("nous_research"),
     });
@@ -95,6 +103,8 @@ describe("baseline-exclusion drift resolution (#7178)", () => {
 
   it("reports 'changed' when the entry content no longer matches", () => {
     const resolution = resolveBaselineExclusion(BASE_POLICY, {
+      version: 1,
+      agent: "hermes",
       key: "nous_research",
       digest: "stale-digest",
     });
@@ -103,6 +113,8 @@ describe("baseline-exclusion drift resolution (#7178)", () => {
 
   it("reports 'missing' when the release dropped the entry", () => {
     const resolution = resolveBaselineExclusion(BASE_POLICY, {
+      version: 1,
+      agent: "hermes",
       key: "absent",
       digest: "any",
     });
@@ -151,23 +163,25 @@ describe("baseline-exclusion policy edits (#7178)", () => {
 
 describe("applyBaselineExclusions fail-closed (#7178)", () => {
   it("drops matching entries and reports the excluded keys", () => {
-    const { content, excludedKeys } = applyBaselineExclusions(BASE_POLICY, [
-      { key: "nous_research", digest: digestOf("nous_research") },
-    ]);
+    const { content, excludedKeys } = applyBaselineExclusions(
+      BASE_POLICY,
+      [exclusion("nous_research", digestOf("nous_research"))],
+      "hermes",
+    );
     expect(excludedKeys).toEqual(["nous_research"]);
     expect(Object.keys(YAML.parse(content).network_policies)).toEqual(["managed_inference"]);
   });
 
   it("throws on changed content instead of replaying a stale approval", () => {
     expect(() =>
-      applyBaselineExclusions(BASE_POLICY, [{ key: "nous_research", digest: "stale" }]),
+      applyBaselineExclusions(BASE_POLICY, [exclusion("nous_research", "stale")], "hermes"),
     ).toThrowError(BaselineExclusionDriftError);
   });
 
   it("throws when the release removed the entry", () => {
     let error: unknown;
     try {
-      applyBaselineExclusions(BASE_POLICY, [{ key: "absent", digest: "any" }]);
+      applyBaselineExclusions(BASE_POLICY, [exclusion("absent", "any")], "hermes");
     } catch (caught) {
       error = caught;
     }
@@ -179,9 +193,43 @@ describe("applyBaselineExclusions fail-closed (#7178)", () => {
 
   it("rejects protected entries even when imported state has a matching digest", () => {
     expect(() =>
-      applyBaselineExclusions(BASE_POLICY, [
-        { key: "managed_inference", digest: digestOf("managed_inference") },
-      ]),
+      applyBaselineExclusions(
+        BASE_POLICY,
+        [exclusion("managed_inference", digestOf("managed_inference"))],
+        "hermes",
+      ),
     ).toThrowError(ProtectedBaselineExclusionError);
+  });
+
+  it("rejects an approval recorded for a different agent baseline (#7194)", () => {
+    expect(() =>
+      applyBaselineExclusions(
+        BASE_POLICY,
+        [exclusion("nous_research", digestOf("nous_research"))],
+        "openclaw",
+      ),
+    ).toThrowError(BaselineExclusionSourceError);
+  });
+});
+
+describe("baseline exclusion runtime verification (#7194)", () => {
+  const recorded = exclusion("nous_research", "digest");
+
+  it("reports excluded only when the matching baseline key is absent live", () => {
+    expect(evaluateBaselineExclusionRuntimeStatus(recorded, "hermes", "digest", null)).toBe(
+      "excluded",
+    );
+  });
+
+  it("reports a live mismatch when any value remains under the excluded key", () => {
+    expect(evaluateBaselineExclusionRuntimeStatus(recorded, "hermes", "digest", "other")).toBe(
+      "live-policy-mismatch",
+    );
+  });
+
+  it("checks the approved agent before baseline and live digests", () => {
+    expect(evaluateBaselineExclusionRuntimeStatus(recorded, "openclaw", undefined, undefined)).toBe(
+      "agent-changed",
+    );
   });
 });

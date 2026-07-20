@@ -3,14 +3,17 @@
 
 import * as registry from "../state/registry";
 import {
+  getBaselineExclusionRuntimeStatus,
   getGatewayPresets,
   getPresetEndpoints,
-  getSandboxBaselineEntryDigest,
   listCustomPresets,
   listPresets,
   loadPresetForSandbox,
 } from ".";
-import { BASELINE_EXCLUSION_SUPPORT_IMPACT } from "./baseline-exclusion";
+import {
+  BASELINE_EXCLUSION_SUPPORT_IMPACT,
+  type BaselineExclusionRuntimeStatus,
+} from "./baseline-exclusion";
 import { hostStemsFromEndpoints } from "./host-redaction";
 import { getTier } from "./tiers";
 
@@ -68,10 +71,7 @@ export interface PolicyContextApprovalPath {
 }
 
 export type PolicyContextExclusionStatus =
-  | "excluded"
-  | "content-changed"
-  | "no-longer-in-baseline"
-  | "baseline-unreadable"
+  | BaselineExclusionRuntimeStatus
   | "pending-exclude-repair"
   | "pending-restore-repair";
 
@@ -81,12 +81,15 @@ export interface PolicyContextExclusion {
   acknowledgedAt: string | null;
   /**
    * `excluded` — the current baseline still defines this key at the reviewed
-   * digest, so the exclusion applies as recorded.
+   * digest and the observed live policy omits it.
    * `content-changed` — a release redefined this key's content since
    * approval; rebuild fails closed and requires re-approval before the
    * exclusion applies again.
    * `no-longer-in-baseline` — the current baseline no longer defines this
    * key; the exclusion record is inert until restored or replaced.
+   * `live-policy-*` — live enforcement is unreadable or still contains the
+   * excluded key, so registry intent must not be treated as enforcement.
+   * `agent-changed` — the approval belongs to a different agent baseline.
    * `pending-*-repair` — the live mutation was interrupted; its durable
    * journal blocks rebuild until the exact policy command reconciles it.
    */
@@ -205,30 +208,12 @@ function buildBaselineExclusions(
   const pendingKey = transition?.exclusion.key ?? null;
   const byKey = new Map<string, PolicyContextExclusion>(
     registry.getBaselineExclusions(sandboxName).map((exclusion) => {
-      // Pending repair state is self-describing and must survive an unreadable
-      // release baseline. The explicit retry performs baseline validation.
-      let currentDigest: string | null | undefined;
-      if (exclusion.key === pendingKey) {
-        currentDigest = null;
-      } else {
-        try {
-          currentDigest = getSandboxBaselineEntryDigest(sandboxName, exclusion.key);
-        } catch {
-          currentDigest = undefined;
-        }
-      }
       const status: PolicyContextExclusionStatus =
         exclusion.key === pendingKey
           ? transition?.operation === "exclude"
             ? "pending-exclude-repair"
             : "pending-restore-repair"
-          : currentDigest === undefined
-            ? "baseline-unreadable"
-            : currentDigest === null
-              ? "no-longer-in-baseline"
-              : currentDigest === exclusion.digest
-                ? "excluded"
-                : "content-changed";
+          : getBaselineExclusionRuntimeStatus(sandboxName, exclusion);
       return [
         exclusion.key,
         {
@@ -414,6 +399,12 @@ function exclusionStatusTag(status: PolicyContextExclusionStatus): string {
       return "no-longer-in-baseline (record is inert)";
     case "baseline-unreadable":
       return "baseline-unreadable (current release scope could not be inspected)";
+    case "agent-changed":
+      return "agent-changed (approval belongs to a different agent baseline)";
+    case "live-policy-unreadable":
+      return "live-policy-unreadable (enforcement could not be inspected)";
+    case "live-policy-mismatch":
+      return "live-policy-mismatch (excluded key remains in the live policy)";
     case "pending-exclude-repair":
       return "repair-required (exclude transaction was interrupted; rebuild blocked)";
     case "pending-restore-repair":

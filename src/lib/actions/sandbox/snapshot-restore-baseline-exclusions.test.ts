@@ -11,6 +11,8 @@ afterEach(f.cleanupSnapshotRestoreMocks);
 describe("runSandboxSnapshot restore: baseline exclusions", () => {
   it("creates a clone with the source exclusions applied to its live policy (#7178)", async () => {
     const exclusion = {
+      version: 1 as const,
+      agent: "hermes",
       key: "nous_research",
       digest: "a".repeat(64),
       acknowledgedAt: "2026-07-19T00:00:00.000Z",
@@ -49,6 +51,7 @@ describe("runSandboxSnapshot restore: baseline exclusions", () => {
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore", to: "beta" });
 
+    expect(f.resolveAgentBaselinePolicyMock).toHaveBeenCalledWith("hermes");
     expect(f.prepareInitialSandboxCreatePolicyMock).toHaveBeenCalledWith(
       "/repo/agents/hermes/policy-additions.yaml",
       [],

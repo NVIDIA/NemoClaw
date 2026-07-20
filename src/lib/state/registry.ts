@@ -77,6 +77,10 @@ export interface CustomPolicyEntry {
 }
 
 export interface BaselineExclusionEntry {
+  /** Persistence schema version for this reviewed exclusion intent. */
+  version: 1;
+  /** Agent baseline that supplied the reviewed entry. */
+  agent: string;
   /** Exact baseline network policy key excluded, e.g. "nous_research". */
   key: string;
   /** Digest of the reviewed baseline entry content the approval was bound to. */

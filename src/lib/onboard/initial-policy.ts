@@ -407,7 +407,11 @@ export function prepareInitialSandboxCreatePolicy(
     // matches the current baseline, so a changed release forces re-review.
     const baselineExclusions = options.baselineExclusions ?? [];
     if (baselineExclusions.length > 0) {
-      const excluded = applyBaselineExclusions(basePolicy, baselineExclusions);
+      const excluded = applyBaselineExclusions(
+        basePolicy,
+        baselineExclusions,
+        policyAgent ?? "openclaw",
+      );
       if (excluded.excludedKeys.length > 0) {
         const policyPath = secureTempFile("nemoclaw-agent-policy", ".yaml");
         cleanupFns.push(createPolicyTempCleanup(policyPath, "nemoclaw-agent-policy"));
@@ -453,6 +457,7 @@ export function prepareInitialSandboxCreatePolicy(
 
     const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
       agent: policyAgent,
+      excludedBaselineKeys: baselineExclusions.map((exclusion) => exclusion.key),
     });
     if (mergedPolicy.missingPresets.length > 0) {
       throw new Error(

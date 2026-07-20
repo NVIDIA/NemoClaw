@@ -21,7 +21,7 @@ function createDoctorHarness(): {
   executeSandboxCommandForVerificationSpy: MockInstance;
   getBaselineExclusionsSpy: MockInstance;
   getBaselineExclusionTransitionSpy: MockInstance;
-  getSandboxBaselineEntryDigestSpy: MockInstance;
+  getBaselineExclusionRuntimeStatusSpy: MockInstance;
   getSandboxSpy: MockInstance;
   getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
@@ -77,9 +77,9 @@ function createDoctorHarness(): {
   const getBaselineExclusionTransitionSpy = vi
     .spyOn(registry, "getBaselineExclusionTransition")
     .mockReturnValue(null);
-  const getSandboxBaselineEntryDigestSpy = vi
-    .spyOn(policy, "getSandboxBaselineEntryDigest")
-    .mockReturnValue(null);
+  const getBaselineExclusionRuntimeStatusSpy = vi
+    .spyOn(policy, "getBaselineExclusionRuntimeStatus")
+    .mockReturnValue("excluded");
   const resolveOpenShellSpy = vi
     .spyOn(resolve, "resolveOpenshell")
     .mockReturnValue("/usr/bin/openshell");
@@ -210,7 +210,7 @@ function createDoctorHarness(): {
     executeSandboxCommandForVerificationSpy,
     getBaselineExclusionsSpy,
     getBaselineExclusionTransitionSpy,
-    getSandboxBaselineEntryDigestSpy,
+    getBaselineExclusionRuntimeStatusSpy,
     getSandboxSpy,
     getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
@@ -287,24 +287,35 @@ describe("runSandboxDoctor flow", () => {
     async () => {
       const harness = createDoctorHarness();
       harness.getBaselineExclusionsSpy.mockReturnValue([
-        { key: "nous_research", digest: "digest-1", acknowledgedAt: "2026-07-19T00:00:00.000Z" },
         {
+          version: 1,
+          agent: "openclaw",
+          key: "nous_research",
+          digest: "digest-1",
+          acknowledgedAt: "2026-07-19T00:00:00.000Z",
+        },
+        {
+          version: 1,
+          agent: "openclaw",
           key: "changed_entry",
           digest: "digest-stale",
           acknowledgedAt: "2026-07-18T00:00:00.000Z",
         },
         {
+          version: 1,
+          agent: "openclaw",
           key: "dropped_entry",
           digest: "digest-2",
           acknowledgedAt: "2026-07-17T00:00:00.000Z",
         },
       ]);
-      const currentDigests: Record<string, string> = {
-        nous_research: "digest-1",
-        changed_entry: "digest-current",
+      const statuses: Record<string, "excluded" | "content-changed" | "no-longer-in-baseline"> = {
+        nous_research: "excluded",
+        changed_entry: "content-changed",
+        dropped_entry: "no-longer-in-baseline",
       };
-      harness.getSandboxBaselineEntryDigestSpy.mockImplementation(
-        (_sandbox, key) => currentDigests[key] ?? null,
+      harness.getBaselineExclusionRuntimeStatusSpy.mockImplementation(
+        (_sandbox, entry) => statuses[entry.key],
       );
 
       const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
@@ -335,12 +346,35 @@ describe("runSandboxDoctor flow", () => {
     },
   );
 
+  it("fails when registry intent is not enforced by the live policy (#7194)", async () => {
+    const harness = createDoctorHarness();
+    harness.getBaselineExclusionsSpy.mockReturnValue([
+      {
+        version: 1,
+        agent: "hermes",
+        key: "pypi",
+        digest: "a".repeat(64),
+      },
+    ]);
+    harness.getBaselineExclusionRuntimeStatusSpy.mockReturnValue("live-policy-mismatch");
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        label: "Baseline exclusion: pypi",
+        status: "fail",
+        detail: expect.stringContaining("not enforced"),
+      }),
+    );
+  });
+
   it("flags an interrupted baseline transaction as a rebuild-blocking repair (#7178)", async () => {
     const harness = createDoctorHarness();
     harness.getBaselineExclusionTransitionSpy.mockReturnValue({
       id: "tx-1",
       operation: "restore",
-      exclusion: { key: "nous_research", digest: "approved" },
+      exclusion: { version: 1, agent: "openclaw", key: "nous_research", digest: "approved" },
       targetLiveDigest: "current",
       startedAt: "2026-07-19T00:00:00.000Z",
     });
@@ -363,19 +397,17 @@ describe("runSandboxDoctor flow", () => {
   it("keeps repair guidance visible when another exclusion baseline is unreadable (#7194)", async () => {
     const harness = createDoctorHarness();
     harness.getBaselineExclusionsSpy.mockReturnValue([
-      { key: "another_entry", digest: "c".repeat(64) },
-      { key: "nous_research", digest: "a".repeat(64) },
+      { version: 1, agent: "openclaw", key: "another_entry", digest: "c".repeat(64) },
+      { version: 1, agent: "openclaw", key: "nous_research", digest: "a".repeat(64) },
     ]);
     harness.getBaselineExclusionTransitionSpy.mockReturnValue({
       id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
       operation: "restore",
-      exclusion: { key: "nous_research", digest: "a".repeat(64) },
+      exclusion: { version: 1, agent: "openclaw", key: "nous_research", digest: "a".repeat(64) },
       targetLiveDigest: "b".repeat(64),
       startedAt: "2026-07-19T00:00:00.000Z",
     });
-    harness.getSandboxBaselineEntryDigestSpy.mockImplementation(() => {
-      throw new Error("release baseline unavailable");
-    });
+    harness.getBaselineExclusionRuntimeStatusSpy.mockReturnValue("baseline-unreadable");
 
     const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 

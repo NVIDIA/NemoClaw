@@ -35,7 +35,12 @@ describe("handleSandboxState destructive resume rollback (#7194)", () => {
       ),
     });
     const removalReceipt = {
-      entry: { name: "saved", baselineExclusions: [{ key: "nous_research", digest: "abc" }] },
+      entry: {
+        name: "saved",
+        baselineExclusions: [
+          { version: 1, agent: "openclaw", key: "nous_research", digest: "abc" },
+        ],
+      },
       wasDefault: false,
       fallbackDefault: null,
       postRemovalDefaultSelectionRevision: 1,
@@ -76,7 +81,12 @@ describe("handleSandboxState destructive resume rollback (#7194)", () => {
       ),
     });
     const removalReceipt = {
-      entry: { name: "saved", baselineExclusions: [{ key: "nous_research", digest: "abc" }] },
+      entry: {
+        name: "saved",
+        baselineExclusions: [
+          { version: 1, agent: "openclaw", key: "nous_research", digest: "abc" },
+        ],
+      },
       wasDefault: false,
       fallbackDefault: null,
       postRemovalDefaultSelectionRevision: 1,
