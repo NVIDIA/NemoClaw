@@ -1938,12 +1938,13 @@ $$nemoclaw my-assistant channels start telegram
 
 Run messaging channel status checks.
 Without `--channel`, the command prints a compact summary for every configured channel, including registration, policy coverage, and non-secret rendered config comparisons.
-For channels that support a live health probe (WhatsApp, Telegram), the summary adds a `Runtime health: not checked in summary view` pointer instead of running the probe, so it never reads as healthy without an explicit check.
+For channel and agent combinations that support a live health probe (WhatsApp or Telegram on OpenClaw), the summary adds a `Runtime health: not checked in summary view` pointer instead of running the probe, so it never reads as healthy without an explicit check.
 With `--channel`, it prints the detailed status for that channel.
 
-For WhatsApp, `--channel whatsapp` also probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy coverage.
+For an OpenClaw WhatsApp sandbox, `--channel whatsapp` also probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy coverage.
 A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
 The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
+A Hermes WhatsApp sandbox uses the basic registration, policy, and config report because NemoClaw does not treat the Hermes session file as a live-health signal.
 
 For Telegram, `--channel telegram` probes the sandbox to report the gateway process, Bot API reachability, and inbound delivery alongside the config comparison, and classifies the current state into a verdict such as `healthy`, `idle`, `unreachable` (network or egress), `token_rejected`, or `not_started`.
 It reads the gateway's own startup and poll log breadcrumbs rather than issuing its own Bot API request, so the resolved bot token never leaves the gateway.
@@ -1964,9 +1965,11 @@ $$nemoclaw my-assistant channels status --channel telegram
 | Flag | Description |
 |------|-------------|
 | `--channel <channel>` | Channel to inspect in detail |
-| `--json` | Emit the status report as JSON (for the detailed WhatsApp and Telegram probes, exit non-zero when the verdict is not `healthy` or `unknown`) |
+| `--json` | Emit the status report as JSON (for an available detailed WhatsApp or Telegram probe on OpenClaw, exit non-zero when the verdict is not `healthy` or `unknown`) |
 
-Each probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout and returns only matched bridge/gateway log lines (e.g. `connection.open`, `401 unauthorized`, `qr expired`, or `[telegram]` startup breadcrumbs) to the host, where NemoClaw reduces them to fixed classifications; the raw lines are never rendered, so the diagnostic output carries only those classifications, never message bodies or tokens.
+Each live probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout.
+The WhatsApp probe returns strict OpenClaw status JSON to the host, where NemoClaw allowlists pairing, liveness, connection-state, and timestamp fields before rendering the report and discards phone-number and free-text error fields.
+The Telegram probe returns only matched gateway log lines to the host, where NemoClaw reduces them to fixed classifications without rendering the raw lines, message bodies, or tokens.
 
 </AgentOnly>
 
