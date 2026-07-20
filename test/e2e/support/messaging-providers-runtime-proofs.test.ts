@@ -12,6 +12,7 @@ import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import {
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
+  isNvidiaEndpointRateLimitFailure,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
 } from "../live/messaging-providers-helpers.ts";
@@ -140,6 +141,33 @@ describe("messaging provider installed-runtime proofs", () => {
     "abc",
   ])("rejects invalid runtime-proof port %j", (rawPort) => {
     expect(() => parseRuntimeProofPort(rawPort)).toThrow(/runtime proof port/u);
+  });
+
+  it("classifies only rate-limited NVIDIA endpoint validation failures", () => {
+    expect(
+      isNvidiaEndpointRateLimitFailure(
+        "NVIDIA Endpoints endpoint validation failed.\nChat Completions API validation returned HTTP 429",
+      ),
+    ).toBe(true);
+    expect(
+      isNvidiaEndpointRateLimitFailure(
+        "NVIDIA Endpoints endpoint validation failed: too many requests",
+      ),
+    ).toBe(true);
+    expect(
+      isNvidiaEndpointRateLimitFailure(
+        [
+          "Using Other OpenAI-compatible endpoint with model: nvidia/nvidia/nemotron-3-ultra",
+          "No GITHUB_TOKEN (60 req/hr rate limit — set it for better rates)",
+          "Docker GPU patch failed: spawnSync docker ETIMEDOUT",
+        ].join("\n"),
+      ),
+    ).toBe(false);
+    expect(
+      isNvidiaEndpointRateLimitFailure(
+        "NVIDIA Endpoints endpoint validation failed: invalid credential",
+      ),
+    ).toBe(false);
   });
 
   it("keeps the Slack allow, deny, feedback, and send contract on installed exports", () => {

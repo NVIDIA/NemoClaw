@@ -5,24 +5,23 @@
  * Pure helpers that translate raw probe evidence collected from inside a
  * sandbox into a structured WhatsApp channel diagnostic.
  *
- * The probes themselves live in `actions/sandbox/channel-status.ts`; this
- * module never touches the filesystem, child processes, or the clock so the
- * evaluation can be exercised hermetically from fixtures. Issue #4386 reported
- * a paired-looking WhatsApp channel where the Noise WebSocket was alive but no
- * inbound events arrived, and the existing CLI surface silently rendered
- * "healthy". The diagnostic below separates QR/session state, WebSocket state,
- * inbound-event delivery, and policy/config coverage so a paired-but-idle
- * channel cannot be mistaken for working.
+ * Consumed by the `whatsapp.statusHealth` status hook (see `status-health.ts`);
+ * this module never touches the filesystem, child processes, or the clock so
+ * the evaluation can be exercised hermetically from fixtures. Issue #4386
+ * reported a paired-looking WhatsApp channel where the Noise WebSocket was
+ * alive but no inbound events arrived, and the existing CLI surface silently
+ * rendered "healthy". The diagnostic below separates QR/session state,
+ * WebSocket state, inbound-event delivery, and policy/config coverage so a
+ * paired-but-idle channel cannot be mistaken for working.
  */
 
-export type DiagnosticSeverity = "ok" | "warn" | "fail" | "info";
+import type {
+  ChannelHealthReport,
+  DiagnosticSeverity,
+  DiagnosticSignal,
+} from "../../channel-health";
 
-export type DiagnosticSignal = {
-  label: string;
-  severity: DiagnosticSeverity;
-  detail: string;
-  hint?: string;
-};
+export type { DiagnosticSeverity, DiagnosticSignal } from "../../channel-health";
 
 export type WhatsappVerdict =
   | "healthy"
@@ -58,13 +57,10 @@ export type WhatsappHeartbeat = {
 export type WhatsappProbeInput = {
   // Agent owning the sandbox: "openclaw", "hermes", etc. Used for hint text.
   agent: string;
-  // State directories inspected inside the sandbox. Discovered from the agent
-  // manifest in the orchestrator.
-  stateDirs: readonly string[];
-  // True when the bridge state directory exists inside the sandbox and is
-  // non-empty. False when the directory is missing or empty. Null when the
-  // probe could not run (sandbox stopped, exec failed, etc.).
-  stateDirPopulated: boolean | null;
+  // Pairing state reported by the channel runtime. True when the runtime
+  // reports a linked account, false when it reports no link, and null when
+  // the probe could not determine pairing state.
+  paired: boolean | null;
   // Parsed heartbeat — null when no heartbeat file was found or it failed
   // to parse. parseError records the reason a present file failed.
   heartbeat: WhatsappHeartbeat | null;
@@ -91,21 +87,22 @@ export type WhatsappProbeInput = {
   channelEnabledInRegistry: boolean;
 };
 
-export type WhatsappDiagnosticReport = {
-  schemaVersion: 1;
+/**
+ * WhatsApp extends the generic {@link ChannelHealthReport} with a `heartbeat`
+ * field so the renderer can still surface the parsed heartbeat block that
+ * predates the generic status-hook contract. The base guard used by
+ * `readChannelHealthOutputs` only checks the base fields, so this extra
+ * property survives round-tripping through the status-runner.
+ */
+export type WhatsappDiagnosticReport = ChannelHealthReport & {
   channel: "whatsapp";
-  agent: string;
   verdict: WhatsappVerdict;
-  probedAt: string;
-  signals: DiagnosticSignal[];
   heartbeat: WhatsappHeartbeat | null;
-  hints: string[];
 };
 
-// Bridges flush their session blob immediately after a successful QR pair;
-// treat "missing or empty state dir" as the strongest no-pair signal. An
-// existing dir with no heartbeat is treated as "paired, status unknown"
-// rather than "unpaired" because some builds defer the heartbeat file.
+// Treat the runtime's explicit unlinked state as the strongest no-pair signal.
+// A linked runtime with no heartbeat is treated as "paired, status unknown"
+// rather than "unpaired" because some builds defer heartbeat evidence.
 const NO_INBOUND_WARN_MINUTES = 5;
 
 function minutesSince(iso: string | null, probedAt: string): number | null {
@@ -134,14 +131,14 @@ function pairingSignal(input: WhatsappProbeInput): DiagnosticSignal {
       hint: "start the sandbox before re-running channels status",
     };
   }
-  if (input.stateDirPopulated === null) {
+  if (input.paired === null) {
     return {
       label: "Pairing / session",
       severity: "info",
-      detail: "session state directory probe did not complete",
+      detail: "pairing status probe did not complete",
     };
   }
-  if (input.stateDirPopulated === false) {
+  if (input.paired === false) {
     const loginHint =
       input.agent === "hermes"
         ? "run `hermes whatsapp` inside the sandbox to display a QR code"
@@ -149,14 +146,14 @@ function pairingSignal(input: WhatsappProbeInput): DiagnosticSignal {
     return {
       label: "Pairing / session",
       severity: "warn",
-      detail: "no WhatsApp session state in the sandbox — never paired or session cleared",
+      detail: "channel runtime reports WhatsApp is not paired",
       hint: loginHint,
     };
   }
   return {
     label: "Pairing / session",
     severity: "ok",
-    detail: `paired (session state present at ${input.stateDirs.join(", ") || "agent state dir"})`,
+    detail: "paired (reported by channel runtime)",
   };
 }
 
@@ -212,7 +209,7 @@ function websocketSignal(input: WhatsappProbeInput): DiagnosticSignal {
 function inboundSignal(input: WhatsappProbeInput): DiagnosticSignal {
   const hb = input.heartbeat;
   if (!hb) {
-    if (input.stateDirPopulated === true && input.bridgeProcessAlive !== false) {
+    if (input.paired === true && input.bridgeProcessAlive !== false) {
       return {
         label: "Inbound delivery",
         severity: "warn",
@@ -365,7 +362,7 @@ function pickVerdict(signals: DiagnosticSignal[], input: WhatsappProbeInput): Wh
   if (signals.some((s) => s.label === "Policy coverage" && s.severity === "fail")) {
     return "policy_gap";
   }
-  if (input.stateDirPopulated === false) return "unpaired";
+  if (input.paired === false) return "unpaired";
   const hb = input.heartbeat;
   const hasInboundEvidence =
     !!hb &&
@@ -373,7 +370,7 @@ function pickVerdict(signals: DiagnosticSignal[], input: WhatsappProbeInput): Wh
       (hb.messagesHandled !== null && hb.messagesHandled > 0));
   if (hb && !hasInboundEvidence) return "idle";
   if (!hb) {
-    return input.stateDirPopulated === true ? "idle" : "unknown";
+    return input.paired === true ? "idle" : "unknown";
   }
   if (signals.some((s) => s.label === "Noise WebSocket" && s.severity === "fail")) {
     return "idle";

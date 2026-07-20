@@ -628,7 +628,12 @@ export function registerSandbox(entry: SandboxEntry): void {
 
 type SandboxInferenceRouteReservation = Pick<
   InferenceSelection,
-  "provider" | "model" | "endpointUrl" | "credentialEnv" | "preferredInferenceApi"
+  | "provider"
+  | "model"
+  | "endpointUrl"
+  | "endpointSource"
+  | "credentialEnv"
+  | "preferredInferenceApi"
 > & {
   gatewayName: string;
   reservationSessionId?: string;
@@ -654,6 +659,7 @@ export function reserveSandboxInferenceRoute(
       provider: normalized.provider,
       model: normalized.model,
       endpointUrl: normalized.endpointUrl,
+      endpointSource: normalized.endpointSource,
       credentialEnv: normalized.credentialEnv,
       preferredInferenceApi: normalized.preferredInferenceApi,
       gatewayName: route.gatewayName,

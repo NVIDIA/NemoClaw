@@ -74,6 +74,68 @@ describe("E2E workflow plan", () => {
     );
   });
 
+  it("maps the trusted-main bootstrap job during a PR controller checkout", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
+    const output = path.join(directory, "github-output");
+    const summary = path.join(directory, "summary.md");
+    const plan = buildE2eWorkflowPlan({ jobs: "bootstrap-install-smoke" });
+    try {
+      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: summary,
+          INFERENCE_MODE: "mock",
+          JOBS: "launchable-smoke",
+          TARGETS: "",
+          NEMOCLAW_E2E_EXPECTED_SHA: "a".repeat(40),
+        },
+        timeout: 30_000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(output, "utf8")).toBe(
+        [
+          `matrix=${JSON.stringify(plan.matrix)}`,
+          `test_matrix=${JSON.stringify(plan.testMatrix)}`,
+          `hermes_selected=${plan.hermesSelected}`,
+          `explicit_only_jobs=${plan.explicitOnlyJobs.join(",")}`,
+          "",
+        ].join("\n"),
+      );
+      expect(readFileSync(summary, "utf8")).toBe(renderE2eWorkflowPlanSummary(plan));
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects the retired bootstrap job outside a PR controller checkout", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-workflow-plan-cli-"));
+    try {
+      const result = spawnSync(TSX, [PLANNER_CLI, "--ci-output"], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_OUTPUT: path.join(directory, "github-output"),
+          GITHUB_STEP_SUMMARY: path.join(directory, "summary.md"),
+          INFERENCE_MODE: "mock",
+          JOBS: "launchable-smoke",
+          TARGETS: "",
+          NEMOCLAW_E2E_EXPECTED_SHA: "",
+        },
+        timeout: 30_000,
+      });
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("::error::Unknown E2E test ID: launchable-smoke");
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects an unknown target that belongs to neither inventory nor registry", () => {
     expect(() => buildE2eWorkflowPlan({ targets: "definitely-unknown-e2e-target" })).toThrow(
       "Unknown target 'definitely-unknown-e2e-target'",

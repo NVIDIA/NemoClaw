@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import type { AgentDefinition } from "../agent/defs";
-import type { InferenceSelection } from "../inference/selection";
+import type { InferenceEndpointSource, InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
@@ -133,6 +133,7 @@ export function selection(
   provider: string,
   model: string,
   preferredInferenceApi: string | null,
+  endpointSource: InferenceEndpointSource | null,
 ): InferenceSelection {
   const session = onboardSession.loadSession();
   const sessionMatches =
@@ -143,6 +144,7 @@ export function selection(
     provider,
     model,
     endpointUrl: sessionMatches ? (session.endpointUrl ?? null) : null,
+    endpointSource: sessionMatches ? endpointSource : null,
     credentialEnv: sessionMatches ? (session.credentialEnv ?? null) : null,
     preferredInferenceApi,
     compatibleEndpointReasoning: sessionMatches
