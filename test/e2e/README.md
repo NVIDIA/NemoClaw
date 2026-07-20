@@ -51,6 +51,42 @@ discovery command locally to inspect the generated test matrix:
 npx tsx tools/e2e/credential-free-tests.mts
 ```
 
+## Larger-runner routing
+
+The larger-runner experiment is inactive while the configuration variable
+`E2E_LARGER_RUNNER_LABEL` is unset. In that state, every eligible lane continues
+to use `ubuntu-latest`. The trusted `generate-matrix` job builds one runner map
+before checking out test code, and it consumes the variable only when the
+workflow repository is `NVIDIA/NemoClaw` and the ref is `refs/heads/main`.
+
+The initial eligible set is limited to the measured heavy lanes:
+
+- `common-egress-agent`;
+- `rebuild-hermes`;
+- `rebuild-hermes-stale-base`;
+- the `hermes` and `deepagents` shards of `mcp-bridge`.
+
+The `openclaw` MCP shard and `mcp-bridge-dev` remain on `ubuntu-latest`;
+unrelated jobs retain their existing runner assignments. Before setting the
+variable, an organization owner must:
+
+1. Create a GitHub-hosted Ubuntu x64 larger runner with 8 vCPU, 32 GB RAM, and
+   300 GB SSD in a dedicated runner group.
+2. Set the group maximum concurrency to 4 and restrict repository access to
+   `NVIDIA/NemoClaw` and workflow access to
+   `NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main`.
+3. Record at least five standard-runner samples for each eligible lane,
+   including queue time, execution time, peak CPU, memory and disk use,
+   infrastructure failures, and estimated cost.
+4. Copy the larger runner's workflow label into the repository variable, then
+   repeat the same measurements for at least five representative executions
+   per migrated lane.
+
+Clearing `E2E_LARGER_RUNNER_LABEL` is the rollback. It sends the eligible lanes
+back to `ubuntu-latest` without changing selectors, test setup, or test
+semantics. Do not replace this experiment with a persistent self-hosted runner;
+that requires a separate decision.
+
 ## Scheduled operations
 
 The consolidated workflow keeps its operational reporting in the same job

@@ -91,6 +91,7 @@ jobs:
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
+      runner_routing: ${{ steps.runner_routing.outputs.runner_routing }}
     steps:
       - id: controller_matrix
         name: Build trusted controller target matrix
@@ -113,6 +114,26 @@ jobs:
               ;;
           esac
           printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
+
+      - id: runner_routing
+        name: Build trusted larger-runner routing
+        env:
+          LARGER_RUNNER_LABEL: ${{ vars.E2E_LARGER_RUNNER_LABEL }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          larger_runner="ubuntu-latest"
+          if [[ "${REPOSITORY}" == "NVIDIA/NemoClaw" && "${REF}" == "refs/heads/main" && -n "${LARGER_RUNNER_LABEL}" ]]; then
+            if [[ ! "${LARGER_RUNNER_LABEL}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+              echo "::error::E2E_LARGER_RUNNER_LABEL must be a 1-64 character workflow label using letters, digits, dots, underscores, or hyphens" >&2
+              exit 1
+            fi
+            larger_runner="${LARGER_RUNNER_LABEL}"
+          fi
+          runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"common-egress-agent":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger}')"
+          printf 'runner_routing=%s\n' "${runner_routing}" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -480,7 +501,7 @@ jobs:
   mcp-bridge:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',mcp-bridge,') || contains(format(',{0},', inputs.targets), ',mcp-bridge,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('mcp-bridge-{0}', matrix.agent)] }}
     permissions:
       contents: read
     # Keep each destructive agent lifecycle on a fresh runner. This bounds the
@@ -2043,7 +2064,7 @@ jobs:
   common-egress-agent:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',common-egress-agent,') || contains(format(',{0},', inputs.targets), ',common-egress-agent,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}
     timeout-minutes: 120
     env:
       E2E_JOB: "1"
@@ -2265,7 +2286,7 @@ jobs:
   rebuild-hermes:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',rebuild-hermes,') || contains(format(',{0},', inputs.targets), ',rebuild-hermes,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes'] }}
     timeout-minutes: 90
     env:
       E2E_JOB: "1"
@@ -2366,7 +2387,7 @@ jobs:
   rebuild-hermes-stale-base:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',rebuild-hermes-stale-base,') || contains(format(',{0},', inputs.targets), ',rebuild-hermes-stale-base,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes-stale-base'] }}
     timeout-minutes: 90
     env:
       E2E_JOB: "1"
