@@ -68,7 +68,10 @@ Any other failed unit blocks preparation for administrator review.
 On the `--force-station-install` path, preparation also tolerates the InfiniBand communication manager (`ibacm`) and the realtime audio scheduler (`rtkit-daemon`) as failed units, because neither affects GPU or container capability; the required GPU, container, and preparation-critical service checks still apply.
 It does not install a host CUDA toolkit or Docker Compose.
 If any other existing prerequisite version differs, preparation stops instead of changing it automatically.
-After changing pinned packages, the installer exits with status `10`; reboot, sign in, and run the printed command, which pins the exact accepted NemoClaw commit before resuming express setup.
+Before host preparation begins, the installer stores the accepted Station Express recipe in owner-only local state.
+If preparation requires a reboot or a new login, run the printed command to restore the exact NemoClaw revision, agent, model, sandbox, policy tier, and gateway, dashboard, and vLLM ports without repeating the Express prompt.
+Recovery receipts created by earlier releases remain compatible.
+After changing pinned packages, the installer exits with status `10`; reboot, sign in, and run that printed command to resume Express setup.
 
 ## Validate Stock DGX OS
 
