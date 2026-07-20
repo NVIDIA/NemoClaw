@@ -257,9 +257,15 @@ if (JSON.parse(process.env.CONFIG_MODEL_JSON) !== "openai:" + process.env.MODEL_
 ' || fail "keyed config get did not return model B after re-onboard"
 pass "keyed config get reports model B after re-onboard"
 
-status_json="$("$CLI" "$SANDBOX_NAME" status --json 2>&1)" || fail "nemoclaw status failed after re-onboard"
-STATUS_JSON="$status_json" SANDBOX_NAME="$SANDBOX_NAME" MODEL_B="$model_b" node -e '
-const status = JSON.parse(process.env.STATUS_JSON);
+status_output="$("$CLI" "$SANDBOX_NAME" status --json 2>&1)" || fail "nemoclaw status failed after re-onboard: $status_output"
+# gateway-select.ts invokes OpenShell with inherited stdio. Remove this exception when owning-gateway
+# selection is quiet for machine-readable status output.
+STATUS_OUTPUT="$status_output" SANDBOX_NAME="$SANDBOX_NAME" MODEL_B="$model_b" node -e '
+const lines = process.env.STATUS_OUTPUT.split(/\r?\n/);
+const banner = "✓ Active gateway set to '\''nemoclaw'\''";
+const plainFirstLine = lines[0].replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+if (plainFirstLine === banner) lines.shift();
+const status = JSON.parse(lines.join("\n"));
 if (status.name !== process.env.SANDBOX_NAME ||
     status.model !== process.env.MODEL_B ||
     status.provider !== "compatible-endpoint") process.exit(1);
