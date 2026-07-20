@@ -42,7 +42,7 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     };
 
     for (const adapter of Object.keys(expectedAncestor) as AgentMcpAdapter[]) {
-      const built = buildMcpToolDiscoveryCommand(unauthenticatedEntry, adapter);
+      const built = buildMcpToolDiscoveryCommand(entry, adapter);
       expect(built).not.toBeNull();
       expect(built?.command).toContain(expectedAncestor[adapter]);
       expect(built?.command).toContain(MCP_TOOL_DISCOVERY_RUNTIME_PATH);
@@ -78,20 +78,11 @@ describe("MCP tool discovery host boundary (#6901)", () => {
     }
   });
 
-  it("refuses authenticated command construction or a non-canonical URL", () => {
-    expect(buildMcpToolDiscoveryCommand(entry, "mcporter")).toBeNull();
-    expect(
-      discoverMcpTools("must-not-connect", entry, "mcporter", {
-        policyGatewayPresent: true,
-      }),
-    ).toEqual({
-      ok: false,
-      count: 0,
-      tools: [],
-      truncated: false,
-      detail:
-        "tool discovery skipped: authenticated MCP discovery is disabled because a remote server could echo credential-bearing input in advertised tool names",
-    });
+  it("keeps credentials outside command construction and rejects a non-canonical URL", () => {
+    const authenticated = buildMcpToolDiscoveryCommand(entry, "mcporter");
+    expect(authenticated).not.toBeNull();
+    expect(authenticated?.command).not.toContain("GITHUB_TOKEN");
+    expect(authenticated?.command).not.toContain("Authorization");
     expect(
       buildMcpToolDiscoveryCommand(
         { ...unauthenticatedEntry, url: "https://api.githubcopilot.com:443/mcp/" },

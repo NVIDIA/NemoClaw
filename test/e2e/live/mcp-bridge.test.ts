@@ -46,7 +46,7 @@ import {
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "./mcp-bridge-servers.ts";
-import { assertAuthenticatedMcpToolDiscoveryBlocked } from "./mcp-bridge-tool-discovery.ts";
+import { assertAuthenticatedMcpToolDiscovery } from "./mcp-bridge-tool-discovery.ts";
 import { MCP_PROVIDER_REWRITE_PROBE_SOURCE } from "./mcp-provider-rewrite-probe.ts";
 import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import { prepareExactMainMcpProof } from "./openshell-exact-main-mcp-proof.ts";
@@ -408,7 +408,7 @@ async function addBridgeAndReadStatus(
     new RegExp(`^${options.sandboxName}-mcp-${SERVER_NAME}-[a-f0-9]{16}$`),
   );
 
-  await assertAuthenticatedMcpToolDiscoveryBlocked(host, options.fakeMcp, {
+  await assertAuthenticatedMcpToolDiscovery(host, options.fakeMcp, {
     sandboxName: options.sandboxName,
     artifactPrefix: options.artifactPrefix,
     hostSecret: HOST_SECRET,

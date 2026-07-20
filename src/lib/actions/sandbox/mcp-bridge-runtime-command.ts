@@ -6,9 +6,9 @@ import { shellQuote } from "../../core/shell-quote";
 
 /**
  * Variables sourced for sandbox proxy access that must not leak into a child
- * diagnostic process. The discovery runtime does not accept a managed MCP
- * credential or Authorization header; authenticated discovery fails closed
- * before this command is built.
+ * diagnostic process. OpenShell injects the managed MCP credential at the
+ * policy boundary; the discovery runtime never accepts a credential or
+ * Authorization header as input.
  */
 export const MCP_RUNTIME_SANITIZED_ENV_VARS = [
   "OPENCLAW_GATEWAY_URL",

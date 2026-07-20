@@ -4,7 +4,6 @@
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { shellQuote } from "../../core/shell-quote";
 import type { McpBridgeEntry } from "../../state/registry";
-import { authorizationValue } from "./mcp-bridge-adapter-status";
 import type { McpBridgeStatus } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import {
@@ -26,8 +25,6 @@ export const MCP_TOOL_DISCOVERY_RESULT_PROTOCOL = 1;
 export const MCP_TOOL_DISCOVERY_MAX_TOOLS = 500;
 export const MCP_TOOL_DISCOVERY_MAX_NAME_BYTES = 256;
 const MCP_TOOL_DISCOVERY_MAX_DETAIL_BYTES = 512;
-const AUTHENTICATED_TOOL_DISCOVERY_DISABLED_DETAIL =
-  "tool discovery skipped: authenticated MCP discovery is disabled because a remote server could echo credential-bearing input in advertised tool names";
 // The compact runtime result may JSON-escape every byte in 500 valid 256-byte
 // tool names. Keep that worst case inside the host boundary while retaining a
 // strict cap on sandbox output.
@@ -63,12 +60,10 @@ export function buildMcpToolDiscoveryCommand(
   entry: Pick<McpBridgeEntry, "server" | "url" | "env">,
   adapter: AgentMcpAdapter,
 ): McpToolDiscoveryCommand | null {
-  const authorization = authorizationValue(entry);
-  // The real credential is injected by OpenShell after this process boundary,
-  // so the runtime cannot recognize an arbitrary credential echoed by a
-  // malicious endpoint. Do not let any authenticated response reach the
-  // names-only output channel until that information flow can be isolated.
-  if (authorization) return null;
+  // OpenShell injects the provider credential below this command boundary.
+  // Under the approved trusted-configured-endpoint contract, advertised names
+  // remain untrusted and bounded display text, but may be credential-derived;
+  // parser validation is not a confidentiality proof for a malicious server.
   try {
     if (normalizeMcpServerUrl(entry.url) !== entry.url) return null;
   } catch {
@@ -214,12 +209,11 @@ export function discoverMcpTools(
 ): NonNullable<McpBridgeStatus["toolDiscovery"]> {
   if (!adapter) return failure("tool discovery skipped: MCP adapter is not declared");
   if (entry.addState) return failure("tool discovery skipped: add transaction is incomplete");
-  if (authorizationValue(entry)) return failure(AUTHENTICATED_TOOL_DISCOVERY_DISABLED_DETAIL);
   const readinessSkipDetail = toolDiscoveryReadinessSkipDetail(readiness);
   if (readinessSkipDetail) return failure(readinessSkipDetail);
   const discoveryCommand = buildMcpToolDiscoveryCommand(entry, adapter);
   if (!discoveryCommand) {
-    return failure("tool discovery skipped: no safe unauthenticated endpoint is available");
+    return failure("tool discovery skipped: no valid managed endpoint is available");
   }
   return classifyMcpToolDiscoveryResult(
     executeSandboxCommand(sandboxName, discoveryCommand.command),

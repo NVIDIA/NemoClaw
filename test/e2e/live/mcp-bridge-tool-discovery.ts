@@ -8,7 +8,7 @@ import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { FakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
 
-export async function assertAuthenticatedMcpToolDiscoveryBlocked(
+export async function assertAuthenticatedMcpToolDiscovery(
   host: HostCliClient,
   fakeMcp: FakeMcpHttpsServer,
   options: { sandboxName: string; artifactPrefix: string; hostSecret: string },
@@ -41,15 +41,18 @@ export async function assertAuthenticatedMcpToolDiscoveryBlocked(
   };
   expect(statusJson.provider.credentialResolution).toBeUndefined();
   expect(statusJson.toolDiscovery).toMatchObject({
-    ok: false,
-    count: 0,
-    tools: [],
+    ok: true,
+    count: 2,
+    tools: ["fake_echo", "fake_status"],
     truncated: false,
-    detail: expect.stringContaining("authenticated MCP discovery is disabled"),
   });
   expect(status.stdout).not.toContain(options.hostSecret);
-  expect(fakeMcp.requests.filter((request) => request.rpcMethod === "tools/list").length).toBe(
-    toolListRequestsBefore,
-  );
+  const toolListRequests = fakeMcp.requests.filter((request) => request.rpcMethod === "tools/list");
+  expect(toolListRequests).toHaveLength(toolListRequestsBefore + 2);
+  expect(
+    toolListRequests
+      .slice(toolListRequestsBefore)
+      .every((request) => request.auth === `Bearer ${options.hostSecret}`),
+  ).toBe(true);
   expect(fakeMcp.requests.some((request) => request.rpcMethod === "tools/call")).toBe(false);
 }
