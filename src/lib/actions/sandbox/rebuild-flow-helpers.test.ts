@@ -270,6 +270,34 @@ describe("rebuild agent base image preflight", () => {
     expect(env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:image-caller");
   });
 
+  it("leases a local-build proof only for the recreation scope", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const trustedLocalOverride = {
+      ref: `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`,
+      provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
+    };
+    const restoreTrust = vi.fn();
+    const pinTrust = vi
+      .spyOn(agentOnboard, "pinTrustedAgentBaseImageOverrideForOperation")
+      .mockReturnValue(restoreTrust);
+
+    const restore = pinRebuildAgentBaseImageForRecreate(
+      {
+        ok: true,
+        imageRef: trustedLocalOverride.ref,
+        overrideEnvVar,
+        trustedLocalOverride,
+      },
+      env,
+    );
+
+    expect(pinTrust).toHaveBeenCalledWith(overrideEnvVar, trustedLocalOverride);
+    expect(env[overrideEnvVar]).toBe(trustedLocalOverride.ref);
+    restore();
+    expect(restoreTrust).toHaveBeenCalledOnce();
+    expect(Object.hasOwn(env, overrideEnvVar)).toBe(false);
+  });
+
   it("removes a scoped recreation pin when the caller had no override", () => {
     const env: NodeJS.ProcessEnv = {};
     const restore = pinRebuildAgentBaseImageForRecreate(

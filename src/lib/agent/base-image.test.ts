@@ -6,7 +6,10 @@ import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeAgent, withMockedDocker } from "../../../test/helpers/base-image-test-harness";
-import type { SandboxBaseImageResolutionMetadata } from "../sandbox-base-image";
+import {
+  createSandboxBaseImageBuildProvenanceKey,
+  type SandboxBaseImageResolutionMetadata,
+} from "../sandbox-base-image";
 
 function makeResolutionMetadata(
   overrides: Partial<SandboxBaseImageResolutionMetadata> = {},
@@ -385,9 +388,23 @@ describe("agent base image provisioning", () => {
         );
 
         const result = ensureAgentBaseImage(makeAgent(), { forceBaseImageRebuild: true });
+        const buildOptions = dockerBuildMock.mock.calls[0]?.[3] as {
+          labels?: Record<string, string>;
+        };
+        const provenance = buildOptions.labels?.["com.nvidia.nemoclaw.base-build-provenance"];
+        const expectedProvenanceKey = createSandboxBaseImageBuildProvenanceKey({
+          imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+          dockerfilePath: "/test/root/agents/hermes/Dockerfile.base",
+          localTag: "unused-by-build-provenance",
+          rootDir: root,
+        });
 
         expect(result.imageTag).toBe(`nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`);
         expect(result.built).toBe(true);
+        expect(result.trustedLocalOverride).toEqual({
+          ref: result.imageTag,
+          provenance,
+        });
         expect(result.resolutionMetadata).toEqual(
           expect.objectContaining({
             ref: result.imageTag,
@@ -404,6 +421,7 @@ describe("agent base image provisioning", () => {
             }),
             validateImage: expect.any(Function),
             validationDescription: "the required MCP Streamable HTTP runtime",
+            trustedLocalOverride: { ref: result.imageTag, provenance },
           }),
         );
         expect(dockerImageInspectMock).not.toHaveBeenCalled();
@@ -411,7 +429,15 @@ describe("agent base image provisioning", () => {
           "/test/root/agents/hermes/Dockerfile.base",
           expect.stringMatching(/^nemoclaw-hermes-sandbox-base-local:build-\d+-[0-9a-f]{16}$/),
           root,
-          { ignoreError: true, stdio: ["ignore", "inherit", "inherit"] },
+          {
+            ignoreError: true,
+            labels: {
+              "com.nvidia.nemoclaw.base-build-provenance": expect.stringMatching(
+                new RegExp(`^${expectedProvenanceKey}\\.[0-9a-f]{64}$`),
+              ),
+            },
+            stdio: ["ignore", "inherit", "inherit"],
+          },
         );
         expect(dockerImageInspectFormatMock).toHaveBeenCalledWith(
           "{{.Id}}",

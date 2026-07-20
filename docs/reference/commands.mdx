@@ -3506,21 +3506,22 @@ Set them before running `$$nemoclaw onboard`.
 <AgentOnly variant="openclaw">
 
 Set `NEMOCLAW_SANDBOX_BASE_IMAGE_REF` to an OpenClaw sandbox-base tag or digest to override base-image resolution during onboarding.
-Use a release-matched tag or immutable digest for a source-based custom image; NemoClaw resolves the reference and pins a repository digest into a stock-style `ARG BASE_IMAGE` declaration when possible.
+Remote overrides must use the official NVIDIA sandbox-base repository and resolve to an immutable repository digest.
+Local bases are accepted only when NemoClaw builds and pins them during the current operation; a local image reference supplied through this environment variable is rejected because it has no trusted build capability.
 
 </AgentOnly>
 
 <AgentOnly variant="deepagents">
 
 Set `NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF` to a LangChain Deep Agents Code sandbox-base tag or digest to override base-image resolution during onboarding.
-NemoClaw validates the requested image against the manifest-required `deepagents-code` package version before using it.
+NemoClaw requires the official remote repository for environment overrides, then validates the requested image against the manifest-required `deepagents-code` package version before using it. Local bases are accepted only when NemoClaw builds and pins them during the current operation.
 
 </AgentOnly>
 
 <AgentOnly variant="hermes">
 
 Set `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` to a Hermes sandbox-base tag or digest to override base-image resolution during onboarding.
-NemoClaw validates the requested image for the required MCP runtime, and the final Hermes image still accepts only the tracked official digest or a repository-built local base.
+NemoClaw requires the official remote repository for environment overrides, validates the requested image for the required MCP runtime, and keeps the final image bound to that trusted base. Local bases are accepted only when NemoClaw builds and pins them during the current operation.
 
 </AgentOnly>
 

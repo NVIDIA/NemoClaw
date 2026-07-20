@@ -11,8 +11,8 @@ import type { AgentDefinition } from "../../src/lib/agent/defs";
 type AgentOnboardModule = typeof import("../../src/lib/agent/onboard");
 type DockerRunModule = typeof import("../../src/lib/adapters/docker/run");
 type DockerImageModule = typeof import("../../src/lib/adapters/docker/image");
-type DockerInspectModule = typeof import("../../src/lib/adapters/docker/inspect");
 type DockerInfoModule = typeof import("../../src/lib/adapters/docker/info");
+type DockerInspectModule = typeof import("../../src/lib/adapters/docker/inspect");
 type SandboxBaseImageModule = typeof import("../../src/lib/sandbox-base-image");
 type SourceIdentityModule = typeof import("../../src/lib/sandbox-base-image/source-identity");
 
@@ -85,9 +85,13 @@ export function withMockedDocker<T>(
   }) => T,
 ): T {
   const dockerRunModule = requireSource("../adapters/docker/run.js") as DockerRunModule;
+  const originalDockerCapture = dockerRunModule.dockerCapture;
+  const dockerCaptureMock = vi.fn().mockReturnValue("nemoclaw-hermes-mcp-runtime-ok");
+  dockerRunModule.dockerCapture = dockerCaptureMock as DockerRunModule["dockerCapture"];
+
   const dockerImageModule = requireSource("../adapters/docker/image.js") as DockerImageModule;
-  const dockerInspectModule = requireSource("../adapters/docker/inspect.js") as DockerInspectModule;
   const dockerInfoModule = requireSource("../adapters/docker/info.js") as DockerInfoModule;
+  const dockerInspectModule = requireSource("../adapters/docker/inspect.js") as DockerInspectModule;
   const sandboxBaseImageModule = requireSource(
     "../sandbox-base-image.js",
   ) as SandboxBaseImageModule;
@@ -95,7 +99,6 @@ export function withMockedDocker<T>(
     "../sandbox-base-image/source-identity.js",
   ) as SourceIdentityModule;
   const runnerModule = requireSource("../runner.js") as { ROOT: string };
-  const originalDockerCapture = dockerRunModule.dockerCapture;
   const originalDockerBuild = dockerImageModule.dockerBuild;
   const originalDockerRmi = dockerImageModule.dockerRmi;
   const originalDockerTag = dockerImageModule.dockerTag;
@@ -110,13 +113,12 @@ export function withMockedDocker<T>(
   const agentOnboardModulePath = requireSource.resolve("./onboard.js");
   delete require.cache[agentOnboardModulePath];
 
-  const dockerCaptureMock = vi.fn().mockReturnValue("nemoclaw-hermes-mcp-runtime-ok");
   const dockerBuildMock = vi.fn().mockReturnValue({ status: 0 });
   const dockerRmiMock = vi.fn().mockReturnValue({ status: 0 });
   const dockerTagMock = vi.fn().mockReturnValue({ status: 0 });
   const dockerImageInspectMock = vi.fn();
   const dockerImageInspectFormatMock = vi.fn().mockReturnValue(`sha256:${"a".repeat(64)}`);
-  const dockerInfoFormatMock = vi.fn().mockReturnValue("linux/amd64");
+  const dockerInfoFormatMock = vi.fn().mockReturnValue("linux/amd64\n");
   const resolveSandboxBaseImageMock = vi.fn().mockImplementation((options) => {
     const override = options.env?.[options.envVar];
     return {
@@ -126,7 +128,6 @@ export function withMockedDocker<T>(
       glibcVersion: process.platform === "linux" ? "2.41" : null,
     };
   });
-  dockerRunModule.dockerCapture = dockerCaptureMock as DockerRunModule["dockerCapture"];
   dockerImageModule.dockerBuild = dockerBuildMock as DockerImageModule["dockerBuild"];
   dockerImageModule.dockerRmi = dockerRmiMock as DockerImageModule["dockerRmi"];
   dockerImageModule.dockerTag = dockerTagMock as DockerImageModule["dockerTag"];

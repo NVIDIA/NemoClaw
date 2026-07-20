@@ -54,6 +54,31 @@ export function getSourceShortShaTags(
   };
 
   push(env.GITHUB_SHA);
+  if (!fs.existsSync(path.join(rootDir, ".git"))) return Array.from(new Set(values));
+  const git = spawnSync("git", ["-C", rootDir, "rev-parse", "HEAD"], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
+  });
+  if (git.status === 0) push(git.stdout);
+
+  return Array.from(new Set(values));
+}
+
+export function getSourceRevisionIds(
+  rootDir = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const values: string[] = [];
+  const push = (value: string | null | undefined) => {
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase();
+    if (/^[0-9a-f]{40,64}$/.test(normalized)) values.push(normalized);
+  };
+
+  push(env.GITHUB_SHA);
+  if (!fs.existsSync(path.join(rootDir, ".git"))) return Array.from(new Set(values));
   const git = spawnSync("git", ["-C", rootDir, "rev-parse", "HEAD"], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "ignore"],

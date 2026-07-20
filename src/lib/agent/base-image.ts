@@ -18,6 +18,7 @@ import { ROOT } from "../runner";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
   buildLocalBaseTag,
+  createSandboxBaseImageBuildProvenance,
   createSandboxBaseImageResolutionKey,
   createSandboxBaseImageResolutionMetadata,
   getImageGlibcVersion,
@@ -25,10 +26,12 @@ import {
   OPENSHELL_SANDBOX_MIN_GLIBC,
   type ResolveBaseImageOptions,
   resolveSandboxBaseImage,
+  SandboxBaseImageResolutionError,
+  SANDBOX_BASE_BUILD_PROVENANCE_LABEL,
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolution,
-  SandboxBaseImageResolutionError,
   type SandboxBaseImageResolutionMetadata,
+  type TrustedLocalBaseImageOverride,
   versionGte,
 } from "../sandbox-base-image";
 import { createDeepAgentsCodeBaseImageResolutionOptions } from "./deep-agents-code-base-image";
@@ -50,12 +53,30 @@ export interface EnsureAgentBaseImageResult {
   imageTag: string | null;
   built: boolean;
   resolutionMetadata?: SandboxBaseImageResolutionMetadata;
+  trustedLocalOverride?: TrustedLocalBaseImageOverride;
 }
 
 export interface CreateAgentSandboxResult {
   buildCtx: string;
   stagedDockerfile: string;
   baseImageResolutionMetadata: SandboxBaseImageResolutionMetadata | null;
+}
+
+const trustedLocalOverrideLeases = new Map<string, TrustedLocalBaseImageOverride>();
+
+export function pinTrustedAgentBaseImageOverrideForOperation(
+  overrideEnvVar: string,
+  override: TrustedLocalBaseImageOverride,
+): () => void {
+  const previous = trustedLocalOverrideLeases.get(overrideEnvVar);
+  trustedLocalOverrideLeases.set(overrideEnvVar, override);
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    if (previous) trustedLocalOverrideLeases.set(overrideEnvVar, previous);
+    else trustedLocalOverrideLeases.delete(overrideEnvVar);
+  };
 }
 
 export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
@@ -322,6 +343,17 @@ function createLocalResolutionMetadata(
   );
 }
 
+function localBaseImageBuildProvenance(options: ResolveBaseImageOptions): {
+  labels: Record<string, string>;
+  provenance: string;
+} {
+  const provenance = createSandboxBaseImageBuildProvenance(options);
+  return {
+    labels: { [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: provenance },
+    provenance,
+  };
+}
+
 /**
  * Ensure the agent-specific sandbox base image exists locally.
  * Rebuild callers can force this so local Dockerfile.base edits are applied.
@@ -340,7 +372,10 @@ export function ensureAgentBaseImage(
   const baseImageName = resolutionOptions.imageName;
   const baseImageTag = `${baseImageName}:${SANDBOX_BASE_TAG}`;
   const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agent.name);
-  const resolveExactImage = (imageRef: string) =>
+  const resolveExactImage = (
+    imageRef: string,
+    trustedLocalOverride?: TrustedLocalBaseImageOverride,
+  ) =>
     resolveSandboxBaseImage({
       ...resolutionOptions,
       localTag: imageRef,
@@ -349,13 +384,16 @@ export function ensureAgentBaseImage(
         [overrideEnvVar]: imageRef,
         NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
       },
+      trustedLocalOverride,
     });
 
   if (options.forceBaseImageRebuild === true) {
     const forceBuildTag = `nemoclaw-${agent.name}-sandbox-base-local:build-${process.pid}-${crypto.randomBytes(8).toString("hex")}`;
+    const buildProvenance = localBaseImageBuildProvenance(resolutionOptions);
     console.log(`  Rebuilding ${agent.displayName} base image...`);
     const buildResult = dockerBuild(baseDockerfile, forceBuildTag, ROOT, {
       ignoreError: true,
+      labels: buildProvenance.labels,
       stdio: ["ignore", "inherit", "inherit"],
     });
     if (buildResult.error || buildResult.status !== 0) {
@@ -369,7 +407,10 @@ export function ensureAgentBaseImage(
       const pinnedBaseImageTag = pinAgentSandboxBaseImageRef(agent.name, forceBuildTag);
       let resolved: SandboxBaseImageResolution | null = null;
       try {
-        resolved = resolveExactImage(pinnedBaseImageTag);
+        resolved = resolveExactImage(pinnedBaseImageTag, {
+          ref: pinnedBaseImageTag,
+          provenance: buildProvenance.provenance,
+        });
       } catch (error) {
         if (!(error instanceof SandboxBaseImageResolutionError)) throw error;
       }
@@ -392,6 +433,10 @@ export function ensureAgentBaseImage(
       return {
         imageTag: pinnedBaseImageTag,
         built: true,
+        trustedLocalOverride: {
+          ref: pinnedBaseImageTag,
+          provenance: buildProvenance.provenance,
+        },
         ...(resolutionMetadata ? { resolutionMetadata } : {}),
       };
     } finally {
@@ -401,7 +446,7 @@ export function ensureAgentBaseImage(
 
   const explicitOverride = process.env[overrideEnvVar]?.trim();
   const resolved = explicitOverride
-    ? resolveExactImage(explicitOverride)
+    ? resolveExactImage(explicitOverride, trustedLocalOverrideLeases.get(overrideEnvVar))
     : resolveSandboxBaseImage(resolutionOptions);
   if (resolved) {
     if (!hermesFinalDockerfileAcceptsBase(agent, resolved)) {
@@ -428,8 +473,10 @@ export function ensureAgentBaseImage(
   });
   if (inspectResult?.status !== 0) {
     console.log(`  Building ${agent.displayName} base image (first time only)...`);
+    const buildProvenance = localBaseImageBuildProvenance(resolutionOptions);
     const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
       ignoreError: true,
+      labels: buildProvenance.labels,
       stdio: ["ignore", "inherit", "inherit"],
     });
     if (buildResult.error || buildResult.status !== 0) {

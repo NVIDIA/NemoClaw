@@ -14,6 +14,7 @@ import {
   buildLocalBaseTag,
   getNearestVersionedBaseImageTags,
   getSourceShortShaTags,
+  getSourceRevisionIds,
   getVersionedBaseImageTags,
   normalizeBaseImageInputPaths,
 } from "./source-identity";
@@ -164,6 +165,15 @@ describe("sandbox base-image source identity", () => {
       GITHUB_SHA: "1E94F2E207C5456EBC35E2BD5BB380D4430292C6",
     } as NodeJS.ProcessEnv);
     expect(tags).toEqual(["1e94f2e2", "1e94f2e"]);
+  });
+
+  it("retains the full source revision for build provenance", () => {
+    const revision = "1E94F2E207C5456EBC35E2BD5BB380D4430292C6";
+    expect(
+      getSourceRevisionIds("/definitely/not/a/git/repo", {
+        GITHUB_SHA: revision,
+      } as NodeJS.ProcessEnv),
+    ).toEqual([revision.toLowerCase()]);
   });
 
   it("derives versioned sandbox-base tags from pinned install refs", () => {

@@ -122,6 +122,27 @@ describe("ensureRebuildAgentBaseImage", () => {
     });
   });
 
+  it("carries the current local-build proof into the recreate preflight", () => {
+    const { ensureAgentBaseImage } = setup();
+    const trustedLocalOverride = {
+      ref: `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`,
+      provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
+    };
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: trustedLocalOverride.ref,
+      built: true,
+      trustedLocalOverride,
+    });
+    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
+
+    expect(ensureRebuildAgentBaseImage("hermes", makeBail())).toEqual({
+      ok: true,
+      imageRef: trustedLocalOverride.ref,
+      overrideEnvVar,
+      trustedLocalOverride,
+    });
+  });
+
   it("reports a forced Hermes base-image failure before rebuild can continue", () => {
     const { ensureAgentBaseImage } = setup();
     ensureAgentBaseImage.mockImplementation(() => {

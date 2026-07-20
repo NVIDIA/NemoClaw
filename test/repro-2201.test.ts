@@ -261,15 +261,28 @@ process.exit(0);
   fs.writeFileSync(
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const a = process.argv.slice(2);
+const provenancePath = ${JSON.stringify(path.join(tmpDir, "docker-base-provenance"))};
 if (a[0]==="info") {
   process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
   process.exit(0);
 }
-if (a[0]==="build") { process.exit(0); }
+if (a[0]==="build") {
+  const labelIndex = a.indexOf("--label");
+  if (labelIndex >= 0) {
+    const label = a[labelIndex + 1] || "";
+    fs.writeFileSync(provenancePath, label.slice(label.indexOf("=") + 1));
+  }
+  process.exit(0);
+}
 if (a[0]==="image" && a[1]==="inspect" && a[2]==="--format") {
   if (a[3]==="{{.Id}}") process.stdout.write("sha256:${"a".repeat(64)}\\n");
   if (a[3]==="{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  if (a[3]==="{{json .}}") {
+    const provenance = fs.existsSync(provenancePath) ? fs.readFileSync(provenancePath, "utf8") : "";
+    process.stdout.write(JSON.stringify({Id:"sha256:${"a".repeat(64)}", RepoDigests:[], Os:"linux", Architecture:"amd64", Config:{Labels:provenance ? {"com.nvidia.nemoclaw.base-build-provenance":provenance} : {}}}) + "\\n");
+  }
   process.exit(0);
 }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }

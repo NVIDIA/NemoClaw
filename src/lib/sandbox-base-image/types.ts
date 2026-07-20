@@ -6,6 +6,7 @@ export const SANDBOX_BASE_TAG = "latest";
 export const OPENSHELL_SANDBOX_MIN_GLIBC = "2.39";
 export const SANDBOX_BASE_RESOLUTION_LABEL = "com.nvidia.nemoclaw.base-resolution";
 export const SANDBOX_BASE_RESOLUTION_KEY_LABEL = "com.nvidia.nemoclaw.base-resolution-key";
+export const SANDBOX_BASE_BUILD_PROVENANCE_LABEL = "com.nvidia.nemoclaw.base-build-provenance";
 export const SANDBOX_BASE_RESOLUTION_SCHEMA = 1;
 export const SANDBOX_BASE_IMAGE_RESOLUTION_SOURCES = [
   "override",
@@ -52,6 +53,12 @@ export type ResolveBaseImageOptions = {
   validationDescription?: string;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   forceRefresh?: boolean;
+  trustedLocalOverride?: TrustedLocalBaseImageOverride;
+};
+
+export type TrustedLocalBaseImageOverride = {
+  ref: string;
+  provenance: string;
 };
 
 export type SandboxBaseImageResolution = {
