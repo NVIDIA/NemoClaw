@@ -110,7 +110,13 @@ describe("e2e workflow boundary", () => {
     const workflow = readWorkflow() as {
       jobs: Record<
         string,
-        { steps?: Array<{ env?: Record<string, string>; name?: string; run?: string }> }
+        {
+          steps?: Array<{
+            env?: Record<string, string>;
+            name?: string;
+            run?: string;
+          }>;
+        }
       >;
     };
     const generate = workflow.jobs["generate-matrix"]?.steps?.find(
@@ -136,7 +142,12 @@ describe("e2e workflow boundary", () => {
         string,
         {
           outputs: Record<string, string>;
-          steps: Array<{ id?: string; name?: string; run?: string; uses?: string }>;
+          steps: Array<{
+            id?: string;
+            name?: string;
+            run?: string;
+            uses?: string;
+          }>;
         }
       >;
     };
@@ -841,7 +852,10 @@ jobs:
     snapshotJob.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE = "1";
     for (const step of snapshotJob.steps) {
       if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
-        step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
+        step.with = {
+          ...(step.with as Record<string, unknown>),
+          "persist-credentials": true,
+        };
       }
       if (step.name === "Run snapshot commands live test") {
         step.env = {

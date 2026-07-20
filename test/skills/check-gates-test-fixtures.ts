@@ -20,7 +20,7 @@ const CUSTOM_RUN_URL = "https://github.com/NVIDIA/NemoClaw/runs/123";
 const INCOMPLETE_E2E = ["E2E / PR Gate: latest attempt evidence incomplete"];
 const HEAD_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const BASE_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-const E2E_COORDINATION_NAME = "E2E / PR Gate Coordination";
+const E2E_COORDINATION_NAME = "E2E / PR Gate";
 const E2E_COORDINATION_EXTERNAL_ID = `nemoclaw-pr-e2e:v2:42:${HEAD_SHA}:${BASE_SHA}`;
 const PR_WORKFLOW_JOB_NAMES = [
   "changes",
@@ -39,10 +39,18 @@ const REQUIRED_CHECK_RUNS: Record<string, { runId: number; jobId: number; workfl
   {
     checks: { runId: 90, jobId: 1, workflowName: "CI / Pull Request" },
     changes: { runId: 90, jobId: 2, workflowName: "CI / Pull Request" },
-    "check-hash": { runId: 91, jobId: 1, workflowName: "Security / Installer Hash Check" },
+    "check-hash": {
+      runId: 91,
+      jobId: 1,
+      workflowName: "Security / Installer Hash Check",
+    },
     "commit-lint": { runId: 92, jobId: 1, workflowName: "CI / Commit Lint" },
     "dco-check": { runId: 93, jobId: 1, workflowName: "CI / DCO Check" },
-    "E2E / PR Gate": { runId: 94, jobId: 1, workflowName: "E2E / PR Gate Controller" },
+    "E2E / PR Gate": {
+      runId: 94,
+      jobId: 1,
+      workflowName: "E2E / PR Gate Controller",
+    },
   };
 
 interface ActionJobFixture {
@@ -121,7 +129,7 @@ interface ComplianceFixture {
   actionRunAttempts?: Record<string, ActionRunFixture>;
   issueEventPages?: unknown[];
   coordinationCheckPages?: unknown[];
-  legacyCoordinationCheckPages?: unknown[];
+  formerCoordinationCheckPages?: unknown[];
   finalPr?: Record<string, unknown>;
   finalPrAfterCurrentBase?: Record<string, unknown>;
 }
@@ -147,6 +155,16 @@ function successfulRequiredChecks() {
 }
 
 function requiredCheck(name: string, conclusion = "SUCCESS") {
+  if (name === "E2E / PR Gate") {
+    return {
+      __typename: "CheckRun",
+      name,
+      detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8000",
+      startedAt: "2026-01-01T00:01:30Z",
+      status: "COMPLETED",
+      conclusion,
+    };
+  }
   const { runId, jobId, workflowName } = REQUIRED_CHECK_RUNS[name];
   return e2eGateCheck([runId, jobId, conclusion, undefined, undefined, workflowName, name]);
 }
@@ -277,7 +295,10 @@ function runGate(fixture: ComplianceFixture) {
     author: { login: fixture.prAuthorLogin ?? "contributor" },
   };
   const finalPr = { ...pr, ...fixture.finalPr };
-  const finalPrAfterCurrentBase = { ...finalPr, ...fixture.finalPrAfterCurrentBase };
+  const finalPrAfterCurrentBase = {
+    ...finalPr,
+    ...fixture.finalPrAfterCurrentBase,
+  };
   const contributorCommitPages = (
     fixture.contributorCommitPages ?? [
       [
@@ -344,7 +365,7 @@ function runGate(fixture: ComplianceFixture) {
       check_runs: [coordinationCheck()],
     },
   ];
-  const legacyCoordinationCheckPages = fixture.legacyCoordinationCheckPages ?? [
+  const formerCoordinationCheckPages = fixture.formerCoordinationCheckPages ?? [
     { total_count: 0, check_runs: [] },
   ];
   const actionRunCases = Object.entries({
@@ -401,7 +422,9 @@ function runGate(fixture: ComplianceFixture) {
                   ? [
                       {
                         number: 42,
-                        head: { sha: value.pullRequestHeadSha ?? value.headSha },
+                        head: {
+                          sha: value.pullRequestHeadSha ?? value.headSha,
+                        },
                         base: { sha: value.baseSha },
                       },
                     ]
@@ -446,8 +469,8 @@ case "$*" in
   "api repos/NVIDIA/NemoClaw/issues/42/comments"*) printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
   "api repos/NVIDIA/NemoClaw/pulls/42/commits"*) printf '%s' ${shellSingleQuote(commitOutput)} ;;
   "api --paginate --slurp repos/NVIDIA/NemoClaw/issues/42/events?per_page=100") printf '%s' ${shellSingleQuote(JSON.stringify(issueEventPages))} ;;
-  "api --paginate --slurp repos/NVIDIA/NemoClaw/commits/${HEAD_SHA}/check-runs?check_name=E2E%20%2F%20PR%20Gate%20Coordination&filter=all&per_page=100") printf '%s' ${shellSingleQuote(JSON.stringify(coordinationCheckPages))} ;;
-  "api --paginate --slurp repos/NVIDIA/NemoClaw/commits/${HEAD_SHA}/check-runs?check_name=E2E%20%2F%20PR%20Gate&filter=all&per_page=100") printf '%s' ${shellSingleQuote(JSON.stringify(legacyCoordinationCheckPages))} ;;
+  "api --paginate --slurp repos/NVIDIA/NemoClaw/commits/${HEAD_SHA}/check-runs?check_name=E2E%20%2F%20PR%20Gate&filter=all&per_page=100") printf '%s' ${shellSingleQuote(JSON.stringify(coordinationCheckPages))} ;;
+  "api --paginate --slurp repos/NVIDIA/NemoClaw/commits/${HEAD_SHA}/check-runs?check_name=E2E%20%2F%20PR%20Gate%20Coordination&filter=all&per_page=100") printf '%s' ${shellSingleQuote(JSON.stringify(formerCoordinationCheckPages))} ;;
 ${actionRunCases}
   *) echo "unexpected gh args: $*" >&2; exit 9 ;;
 esac
@@ -467,7 +490,10 @@ esac
       {
         cwd: process.cwd(),
         encoding: "utf-8",
-        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
+        env: {
+          ...process.env,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
       },
     );
   } finally {
@@ -528,7 +554,10 @@ esac
       {
         cwd: process.cwd(),
         encoding: "utf-8",
-        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
+        env: {
+          ...process.env,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
       },
     );
   } finally {

@@ -70,6 +70,10 @@ function runRootContainerHarness(source: string) {
   );
 }
 
+const dockerAvailable =
+  process.platform === "linux" &&
+  spawnSync("docker", ["info"], { encoding: "utf-8", timeout: 10_000 }).status === 0;
+
 const loadGuardModule = String.raw`
 import importlib.util
 import sys
@@ -506,7 +510,7 @@ print(json.dumps({
   });
 
   // source-shape-contract: security -- Executes the shipped guard as root to prove real Linux repair and rollback metadata
-  it.skipIf(process.platform !== "linux")(
+  it.skipIf(!dockerAvailable)(
     "restores exact locked posture after root-separated repair and later failure (#7033)",
     () => {
       const result = runRootContainerHarness(`${loadGuardModule}

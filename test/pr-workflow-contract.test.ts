@@ -1375,6 +1375,7 @@ describe("pull request and main workflow contracts", () => {
       PLUGIN_TESTS_RESULT: "success",
       REVIEWED_NPM_AUDIT_RESULT: "success",
       REAL_OPENCLAW_DIST_HARNESS_RESULT: "success",
+      SANDBOX_IMAGES_E2E_RESULT: "success",
       STATIC_RESULT: "success",
       WECHAT_RUNTIME_AUDIT_RESULT: "success",
     };

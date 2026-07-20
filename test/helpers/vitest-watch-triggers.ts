@@ -94,7 +94,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-e2e-gate\.yaml$/,
-    testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts", "test/pr-e2e-required.test.ts"),
+    testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts"),
   },
   {
     pattern:

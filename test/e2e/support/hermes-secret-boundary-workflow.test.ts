@@ -23,11 +23,14 @@ describe("Hermes image workflow secret boundary", () => {
 
   it("rejects broad Hermes job and test-step secret scope", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
-    const job = imageWorkflow.jobs["build-hermes-sandbox-image"];
-    job.env = {
-      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
+    const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    const job = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    producer.env = {
       DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
       DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
+    };
+    job.env = {
+      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     };
     const secretBoundary = job.steps?.find(
       (step) => step.name === "Run Hermes sandbox secret boundary test",
@@ -41,11 +44,11 @@ describe("Hermes image workflow secret boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
-        "build-hermes-sandbox-image must not expose NVIDIA_INFERENCE_API_KEY at job scope",
         "build-hermes-sandbox-image must not expose DOCKERHUB_USERNAME at job scope",
         "build-hermes-sandbox-image must not expose DOCKERHUB_TOKEN at job scope",
-        "build-hermes-sandbox-image step 'Run Hermes sandbox secret boundary test' must not receive NVIDIA_INFERENCE_API_KEY",
-        "build-hermes-sandbox-image step 'Run Hermes sandbox secret boundary test' must not receive DOCKERHUB_TOKEN",
+        "test-hermes-sandbox-image must not expose NVIDIA_INFERENCE_API_KEY at job scope",
+        "test-hermes-sandbox-image step 'Run Hermes sandbox secret boundary test' must not receive NVIDIA_INFERENCE_API_KEY",
+        "test-hermes-sandbox-image step 'Run Hermes sandbox secret boundary test' must not receive DOCKERHUB_TOKEN",
       ]),
     );
   });

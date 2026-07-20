@@ -38,6 +38,7 @@
  *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 20)
  *   BREV_CREATE_TIMEOUT_SECONDS — Brev create timeout, seconds (default: 1200 for GPU)
  *   BREV_SSH_READY_TIMEOUT_SECONDS — SSH readiness timeout, seconds (default: 900 CPU, 1800 GPU)
+ *   BREV_PROVISION_ATTEMPTS  — bounded create/SSH attempts (default: 2)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
  *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
  *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
@@ -63,6 +64,7 @@ import {
   brevWorkflowOwnsInstance,
   buildBrevRemoteVitestCommand,
 } from "../../tools/e2e/brev-remote-vitest.mts";
+import { evaluateBrevProvisioningState } from "../../tools/e2e/brev-provisioning.mts";
 
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
@@ -170,7 +172,10 @@ function parseBrevListOutput(output: string): BrevInstance[] {
   return instances;
 }
 
-function listBrevInstances(): BrevInstance[] {
+function inspectBrevInstances(): {
+  authoritative: boolean;
+  instances: BrevInstance[];
+} {
   try {
     const parsed = JSON.parse(brev("ls", "--json"));
     const rawInstances = Array.isArray(parsed)
@@ -178,17 +183,27 @@ function listBrevInstances(): BrevInstance[] {
       : Array.isArray(parsed?.workspaces)
         ? parsed.workspaces
         : [];
-    return rawInstances.flatMap((instance: unknown) => {
-      const normalized = normalizeBrevInstance(instance);
-      return normalized ? [normalized] : [];
-    });
+    return {
+      authoritative: true,
+      instances: rawInstances.flatMap((instance: unknown) => {
+        const normalized = normalizeBrevInstance(instance);
+        return normalized ? [normalized] : [];
+      }),
+    };
   } catch {
     try {
-      return parseBrevListOutput(brev("ls"));
+      return {
+        authoritative: true,
+        instances: parseBrevListOutput(brev("ls")),
+      };
     } catch {
-      return [];
+      return { authoritative: false, instances: [] };
     }
   }
+}
+
+function listBrevInstances(): BrevInstance[] {
+  return inspectBrevInstances().instances;
 }
 
 function hasBrevInstance(instanceName: string): boolean {
@@ -313,6 +328,7 @@ function waitForSsh(maxWaitMs = BREV_SSH_READY_TIMEOUT_MS, intervalMs = 5_000): 
   const deadline = Date.now() + maxWaitMs;
   let attempts = 0;
   let dnsFailures = 0;
+  let consecutiveMissing = 0;
   let lastError = "";
   while (Date.now() < deadline) {
     attempts += 1;
@@ -329,6 +345,21 @@ function waitForSsh(maxWaitMs = BREV_SSH_READY_TIMEOUT_MS, intervalMs = 5_000): 
         dnsFailures += 1;
       } else {
         dnsFailures = 0;
+      }
+      if (attempts === 1 || attempts % 3 === 0) {
+        const snapshot = inspectBrevInstances();
+        const decision = evaluateBrevProvisioningState(
+          snapshot.instances,
+          requireInstanceName(),
+          consecutiveMissing,
+          snapshot.authoritative,
+        );
+        consecutiveMissing = decision.consecutiveMissing;
+        if (decision.kind === "terminal") {
+          throw new Error(`${decision.reason}. Last SSH error: ${lastError}`, {
+            cause: error,
+          });
+        }
       }
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) break;
@@ -536,9 +567,7 @@ function refreshAndWaitForSsh(elapsed: () => string): void {
 
 function createBrevInstanceAndWaitForSsh(elapsed: () => string): void {
   const configuredAttempts = Number(process.env.BREV_PROVISION_ATTEMPTS || 2);
-  const maxAttempts = GPU_TEST_SUITE
-    ? Math.max(1, Number.isFinite(configuredAttempts) ? configuredAttempts : 2)
-    : 1;
+  const maxAttempts = Math.max(1, Number.isFinite(configuredAttempts) ? configuredAttempts : 2);
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (attempt > 1) {
@@ -570,7 +599,11 @@ function createBrevInstanceAndWaitForSsh(elapsed: () => string): void {
 }
 
 function commandErrorOutput(error: unknown): string {
-  const err = error as { message?: string; stdout?: Buffer | string; stderr?: Buffer | string };
+  const err = error as {
+    message?: string;
+    stdout?: Buffer | string;
+    stderr?: Buffer | string;
+  };
   return [err.message, err.stdout?.toString(), err.stderr?.toString()]
     .filter((part): part is string => Boolean(part?.trim()))
     .join("\n")
@@ -659,7 +692,9 @@ function createBrevInstance(elapsed: () => string): void {
         } catch (searchErr) {
           throw new Error(
             `brev GPU search failed before provisioning. ${commandErrorOutput(searchErr)}`,
-            { cause: searchErr },
+            {
+              cause: searchErr,
+            },
           );
         }
         if (!gpuCandidates.trim()) {
@@ -714,7 +749,10 @@ function createBrevInstance(elapsed: () => string): void {
     } catch {
       /* ignore */
     }
-    const lsOutput = execSync(`brev ls 2>&1 || true`, { encoding: "utf-8", timeout: 30_000 });
+    const lsOutput = execSync(`brev ls 2>&1 || true`, {
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
     const instanceName = requireInstanceName();
     if (!lsOutput.includes(instanceName)) {
       const createMessage = createErr instanceof Error ? createErr.message : String(createErr);
@@ -762,7 +800,10 @@ function gpuDockerRuntimeSetupCommands(): string[] {
 
 function prepareGpuDockerRuntime(elapsed: () => string): void {
   console.log(`[${elapsed()}] Preparing NVIDIA Docker runtime on Brev GPU instance...`);
-  ssh(gpuDockerRuntimeSetupCommands().join(" && "), { timeout: 900_000, stream: true });
+  ssh(gpuDockerRuntimeSetupCommands().join(" && "), {
+    timeout: 900_000,
+    stream: true,
+  });
   console.log(`[${elapsed()}] NVIDIA Docker runtime ready`);
 }
 
@@ -773,7 +814,10 @@ function prepareGpuDockerRuntime(elapsed: () => string): void {
  * Returns { remoteDir, needsOnboard } so the caller can see what was
  * resolved without relying on hidden side-effects.
  */
-function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsOnboard: boolean } {
+function bootstrapLaunchable(elapsed: () => string): {
+  remoteDir: string;
+  needsOnboard: boolean;
+} {
   // The launchable clones NemoClaw to ~/NemoClaw
   const remoteHome = ssh("echo $HOME");
   const resolvedRemoteDir = `${remoteHome}/NemoClaw`;
@@ -979,7 +1023,9 @@ function pollForSandboxReady(elapsed: () => string): void {
   }
 
   // Verify sandbox is actually ready
-  const finalList = ssh(`openshell sandbox list 2>/dev/null`, { timeout: 15_000 });
+  const finalList = ssh(`openshell sandbox list 2>/dev/null`, {
+    timeout: 15_000,
+  });
   if (!finalList.includes("e2e-test") || !finalList.includes("Ready")) {
     const failLog = ssh("cat /tmp/nemoclaw-onboard.log 2>/dev/null || echo 'no log'", {
       timeout: 10_000,
@@ -1047,7 +1093,9 @@ function writeManualRegistry(elapsed: () => string): void {
   try {
     ssh(
       `pkill -f "nemoclaw onboard" 2>/dev/null; pkill -f "openshell sandbox create" 2>/dev/null; sleep 1; true`,
-      { timeout: 15_000 },
+      {
+        timeout: 15_000,
+      },
     );
   } catch {
     // SSH exit 255 is expected — pkill may terminate the connection
@@ -1077,7 +1125,9 @@ function writeManualRegistry(elapsed: () => string): void {
   );
   ssh(
     `mkdir -p ~/.nemoclaw && printf '%s' '${shellEscape(registryJson)}' > ~/.nemoclaw/sandboxes.json`,
-    { timeout: 15_000 },
+    {
+      timeout: 15_000,
+    },
   );
   console.log(`[${elapsed()}] Registry written, onboard workaround complete`);
 }
@@ -1265,7 +1315,9 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     () => {
       const sandboxList = ssh(
         "export PATH=$HOME/.local/bin:$PATH && openshell sandbox list 2>/dev/null",
-        { timeout: 30_000 },
+        {
+          timeout: 30_000,
+        },
       );
       expect(sandboxList).toContain("e2e-test");
       expect(sandboxList).toContain("Ready");

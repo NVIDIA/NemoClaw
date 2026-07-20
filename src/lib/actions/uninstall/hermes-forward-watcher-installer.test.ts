@@ -62,7 +62,7 @@ exec ${JSON.stringify(process.execPath)} "$@"
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(fs.readFileSync(watcherLog, "utf-8").trim()).toBe(openshell);
+      expect(fs.readFileSync(watcherLog, "utf-8").trim()).toBe(fs.realpathSync(openshell));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

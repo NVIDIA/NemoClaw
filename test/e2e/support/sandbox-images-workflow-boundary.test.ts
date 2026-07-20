@@ -24,6 +24,14 @@ describe("sandbox image workflow boundary", () => {
 
   it("rejects auth ordering drift, incomplete cleanup, and registry writes", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
+    mainWorkflow.jobs["sandbox-images-and-e2e"].needs = "checks";
+    mainWorkflow.jobs.checks.needs = (mainWorkflow.jobs.checks.needs as string[]).filter(
+      (dependency) => dependency !== "sandbox-images-and-e2e",
+    );
+    const mainGate = mainWorkflow.jobs.checks.steps!.find(
+      (step) => step.name === "Verify required main checks",
+    )!;
+    delete mainGate.env!.SANDBOX_IMAGES_E2E_RESULT;
     const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
     const cleanup = hermes.steps!.pop()!;
     hermes.steps!.splice(2, 0, cleanup);
@@ -37,6 +45,9 @@ describe("sandbox image workflow boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
+        "main sandbox image workflow must start after the cheap preflight jobs",
+        "main checks must wait for the sandbox image workflow",
+        "main checks must require the sandbox image workflow result",
         "build-hermes-sandbox-image Docker Hub cleanup must be the final step",
         "build-sandbox-images-arm64 Docker Hub auth must run immediately after checkout",
         "build-sandbox-images step 'Build production image' must not write images to a registry",
@@ -67,9 +78,8 @@ describe("sandbox image workflow boundary", () => {
       },
       {
         jobName: "build-hermes-sandbox-image",
-        stepName: "Build Hermes production image",
-        error:
-          "Hermes production image must use the guarded build_args shape under nemoclaw-hermes-production",
+        stepName: "Validate Hermes production build args",
+        error: "Hermes production image must validate the guarded build_args shape",
       },
       {
         jobName: "build-sandbox-images-arm64",
@@ -99,11 +109,6 @@ describe("sandbox image workflow boundary", () => {
         error: "OpenClaw production image must have exactly one source build",
       },
       {
-        jobName: "build-hermes-sandbox-image",
-        stepName: "Build Hermes production image",
-        error: "Hermes production image must have exactly one source build",
-      },
-      {
         jobName: "build-sandbox-images-arm64",
         stepName: "Build production image on arm64",
         error: "OpenClaw arm64 production image must have exactly one source build",
@@ -117,6 +122,22 @@ describe("sandbox image workflow boundary", () => {
 
       expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(error);
     }
+  });
+
+  it("rejects a Hermes Buildx action that can publish or bypass the shared cache", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const build = imageWorkflow.jobs["build-hermes-sandbox-image"].steps!.find(
+      (step) => step.name === "Build Hermes production image",
+    )!;
+    build.with!.push = true;
+    build.with!["cache-to"] = "type=registry,ref=registry.example.invalid/cache";
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "build-hermes-sandbox-image step 'Build Hermes production image' must not write images to a registry",
+        "Hermes production image must use a pinned local-load Buildx action with GHA cache",
+      ]),
+    );
   });
 
   it("keeps messaging plan image probes isolated, guarded, local, and verified", () => {
@@ -225,10 +246,13 @@ describe("sandbox image workflow boundary", () => {
 
   it("rejects duplicate setup, rebuilding, or failing to reuse the Hermes image", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
-    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
-    hermes["timeout-minutes"] = 30;
+    const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    const hermes = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    producer["timeout-minutes"] = 45;
+    hermes["timeout-minutes"] = 90;
     for (const stepName of ["Set up Node", "Install root dependencies"]) {
       hermes.steps!.push({ ...hermes.steps!.find((step) => step.name === stepName)! });
+      producer.steps!.push({ ...hermes.steps!.find((step) => step.name === stepName)! });
     }
     const rootEntrypoint = hermes.steps!.find(
       (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
@@ -238,10 +262,11 @@ describe("sandbox image workflow boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
-        "Hermes image job timeout must cover both inherited probe budgets",
-        "build-hermes-sandbox-image must run 'Set up Node' exactly once",
-        "build-hermes-sandbox-image must run 'Install root dependencies' exactly once",
-        "Hermes production image must have exactly one source build",
+        "Hermes image producer must retain its 30-minute budget",
+        "Hermes image test consumer must retain its 75-minute budget",
+        "build-hermes-sandbox-image must not install Node dependencies",
+        "test-hermes-sandbox-image must run 'Set up Node' exactly once",
+        "test-hermes-sandbox-image must run 'Install root dependencies' exactly once",
         "Hermes root entrypoint must consume the prebuilt Hermes production image",
         "Hermes root entrypoint step must not rebuild the prebuilt image",
       ]),
@@ -250,24 +275,24 @@ describe("sandbox image workflow boundary", () => {
 
   it("keeps Hermes probes failure-isolated with their inherited budgets", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
-    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    const hermes = imageWorkflow.jobs["test-hermes-sandbox-image"];
     const secretBoundary = hermes.steps!.find(
       (step) => step.name === "Run Hermes sandbox secret boundary test",
     )!;
     delete secretBoundary.id;
-    secretBoundary["timeout-minutes"] = 45;
+    secretBoundary["timeout-minutes"] = 44;
     const rootEntrypoint = hermes.steps!.find(
       (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
     )!;
     delete rootEntrypoint.if;
-    rootEntrypoint["timeout-minutes"] = 30;
+    rootEntrypoint["timeout-minutes"] = 29;
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
         "Hermes secret boundary step must expose its outcome to the next probe",
-        "Hermes secret boundary must retain its 60-minute probe budget",
+        "Hermes secret boundary must retain its 45-minute probe budget",
         "Hermes root entrypoint must run after either secret-boundary outcome",
-        "Hermes root entrypoint must retain its 45-minute probe budget",
+        "Hermes root entrypoint must retain its 30-minute probe budget",
       ]),
     );
   });

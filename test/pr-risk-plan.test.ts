@@ -232,7 +232,6 @@ describe("deterministic PR risk plan", () => {
     "tools/advisors/io.mts",
     "tools/advisors/risk-plan.mts",
     "tools/e2e/pr-e2e-gate.mts",
-    "tools/e2e/pr-e2e-required.mts",
     "tools/e2e/risk-signal.ts",
     "tools/e2e/private-file.mts",
     "tools/e2e/workflow-plan.mts",
@@ -266,11 +265,7 @@ describe("deterministic PR risk plan", () => {
   });
 
   it("runs controller-only changes without credentialed E2E authorization", () => {
-    const result = plan(
-      ".github/workflows/pr-e2e-gate.yaml",
-      "tools/e2e/pr-e2e-gate.mts",
-      "tools/e2e/pr-e2e-required.mts",
-    );
+    const result = plan(".github/workflows/pr-e2e-gate.yaml", "tools/e2e/pr-e2e-gate.mts");
 
     expect(result.families.map((family) => family.id)).toContain("e2e-control-plane");
     expect(requiresCredentialedE2eAuthorization(result)).toBe(false);

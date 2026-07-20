@@ -86,6 +86,7 @@ env:
 jobs:
   generate-matrix:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       matrix: ${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
@@ -780,7 +781,7 @@ jobs:
             e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt
             e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt
 
-  # Direct OpenClaw skills CLI contract.
+      # Direct OpenClaw skills CLI contract.
 
       - name: Clean up Docker auth
         if: always()
@@ -3626,7 +3627,7 @@ jobs:
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
-  # Provider-routed Model Router inference contract.
+      # Provider-routed Model Router inference contract.
 
       - name: Clean up Docker auth
         if: always()
@@ -4002,15 +4003,15 @@ jobs:
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
-  # ── Free-standing recovery targets (#2701) ─────────────────────────
-  # Recovery / disruption targets don't fit the steady-state expected-state
-  # registry that drives `live` above. They run as free-standing
-  # Vitest test files using the same `e2e-live` project, framework
-  # fixtures, and live-project gate — just outside the matrix.
-  #
-  # First failing-test-first guard for #2701 (gateway recovery does not
-  # restore the /tmp guard chain after pod recreate). Will fail on `main`
-  # until the #2701 fix lands; flips green afterwards.
+      # ── Free-standing recovery targets (#2701) ─────────────────────────
+      # Recovery / disruption targets don't fit the steady-state expected-state
+      # registry that drives `live` above. They run as free-standing
+      # Vitest test files using the same `e2e-live` project, framework
+      # fixtures, and live-project gate — just outside the matrix.
+      #
+      # First failing-test-first guard for #2701 (gateway recovery does not
+      # restore the /tmp guard chain after pod recreate). Will fail on `main`
+      # until the #2701 fix lands; flips green afterwards.
 
       - name: Clean up Docker auth
         if: always()
@@ -4851,11 +4852,12 @@ jobs:
   # comment.
   report-to-pr:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # This entire workflow is dispatch-only. Keeping selective jobs in `needs`
     # makes the report wait for and record any requested job without adding
     # skipped checks to the normal pull_request workflow.
-    needs: &e2e-result-jobs
-      [
+    needs:
+      &e2e-result-jobs [
         generate-matrix,
         live,
         shared-e2e,
@@ -4987,6 +4989,7 @@ jobs:
   # ── Scheduled/manual scorecard ────────────────────────────────────────────
   scorecard:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: *e2e-result-jobs
     if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '')) }}
     permissions:

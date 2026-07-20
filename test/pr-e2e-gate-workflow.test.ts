@@ -244,7 +244,9 @@ function runChildValidation(
   fs.writeFileSync(
     path.join(binDir, "curl"),
     "#!/usr/bin/env bash\nset -euo pipefail\nprintf '{}\\n'\n",
-    { mode: 0o755 },
+    {
+      mode: 0o755,
+    },
   );
   fs.writeFileSync(
     path.join(binDir, "jq"),
@@ -299,7 +301,6 @@ describe("PR E2E gate workflow", () => {
     const ciVerification = step(ciWorkflow.jobs.checks, "Verify required PR checks");
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const initialize = workflow.jobs.initialize;
-    const required = workflow.jobs.required;
     const cancel = workflow.jobs["cancel-superseded"];
     const coordinate = workflow.jobs.coordinate;
     const approveForkSkip = workflow.jobs["approve-fork-e2e-skip"];
@@ -389,36 +390,9 @@ describe("PR E2E gate workflow", () => {
     expect(initialize.concurrency?.group).toBe(
       "pr-e2e-gate-${{ github.event.pull_request.head.repo.full_name }}-${{ github.event.pull_request.head.ref }}",
     );
-    expect(required.name).toBe("E2E / PR Gate");
-    expect(required.if).toContain("github.event_name == 'pull_request_target'");
-    expect(required.if).toContain("github.event.action != 'closed'");
-    expect(required.if).toContain("github.event.action != 'edited'");
-    expect(required.if).toContain("github.event.changes.base != null");
-    expect(required.permissions).toEqual({
-      checks: "read",
-      contents: "read",
-      "pull-requests": "read",
-    });
-    expect(required.concurrency).toEqual({
-      group: "pr-e2e-required-${{ github.event.pull_request.number }}",
-      "cancel-in-progress": true,
-    });
-    expect(required["timeout-minutes"]).toBe(170);
-    expect(required.secrets).toBeUndefined();
-    expect(step(required, "Checkout observer").with).toEqual({
-      ref: "${{ github.workflow_sha }}",
-      "persist-credentials": false,
-    });
-    const observer = step(required, "Wait for trusted exact-diff verdict");
-    expect(observer.env).toEqual({
-      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
-      GITHUB_TOKEN: "${{ github.token }}",
-      HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
-      PR_NUMBER: "${{ github.event.pull_request.number }}",
-    });
-    expect(observer.run).toContain("tools/e2e/pr-e2e-required.mts");
-    expect(observer.run).toContain('--head "$HEAD_SHA"');
-    expect(observer.run).toContain('--base "$BASE_SHA"');
+    expect(workflow.jobs.required).toBeUndefined();
+    expect(workflow.jobs.coordinate["timeout-minutes"]).toBe(120);
+    expect(collectStrings(initialize).some((value) => value.includes("--mode seed"))).toBe(true);
     expect(cancel.if).toContain("github.event_name == 'pull_request_target'");
     expect(cancel.if).toContain(
       "github.event.pull_request.head.repo.full_name == github.repository",
@@ -559,7 +533,7 @@ describe("PR E2E gate workflow", () => {
       (candidate) => candidate.name === "Install controller dependencies",
     );
 
-    expect(checkouts).toHaveLength(6);
+    expect(checkouts).toHaveLength(5);
     expect(
       checkouts.every(
         (checkout) =>
@@ -567,7 +541,7 @@ describe("PR E2E gate workflow", () => {
           checkout.with?.["persist-credentials"] === false,
       ),
     ).toBe(true);
-    expect(nodeSetups).toHaveLength(6);
+    expect(nodeSetups).toHaveLength(5);
     expect(nodeSetups.every((setup) => setup.with?.["node-version"] === "22")).toBe(true);
     expect(nodeSetups.every((setup) => !("cache" in (setup.with ?? {})))).toBe(true);
     expect(installs).toHaveLength(5);

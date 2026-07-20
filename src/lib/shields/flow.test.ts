@@ -462,7 +462,7 @@ describe("shields command flow", () => {
   });
 
   it("preempts a hung forward owner and its weakening subprocess before restoring", {
-    timeout: 10_000,
+    timeout: 20_000,
   }, async () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });

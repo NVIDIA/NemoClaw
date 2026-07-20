@@ -316,7 +316,7 @@ interface E2eCoordinationEvidence {
   valid: boolean | null;
   startedAt?: number;
   completedAt?: number;
-  trustedLegacyCheckId?: number;
+  trustedCustomCheckId?: number;
 }
 
 function parseGitHubTimestamp(value: string | undefined): number {
@@ -339,7 +339,7 @@ function fetchE2eCoordinationEvidence(
   repo: string,
   exactDiff: ExactDiffIdentity,
 ): E2eCoordinationEvidence {
-  const checkNames = ["E2E / PR Gate Coordination", "E2E / PR Gate"];
+  const checkNames = ["E2E / PR Gate", "E2E / PR Gate Coordination"];
   const checkRuns: Array<Record<string, unknown>> = [];
   const ids = new Set<number>();
   for (const checkName of checkNames) {
@@ -416,7 +416,7 @@ function fetchE2eCoordinationEvidence(
     valid,
     ...(valid ? { startedAt, completedAt } : {}),
     ...(valid && exact.name === "E2E / PR Gate"
-      ? { trustedLegacyCheckId: exact.id as number }
+      ? { trustedCustomCheckId: exact.id as number }
       : {}),
   };
 }
@@ -939,11 +939,11 @@ function currentCheckRollup(
   const actionRunId = (check: StatusCheck): string | undefined =>
     check.detailsUrl?.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
 
-  const isTrustedLegacyE2eCheck = (check: StatusCheck): boolean =>
-    e2eCoordinationEvidence.trustedLegacyCheckId !== undefined &&
+  const isTrustedCustomE2eCheck = (check: StatusCheck): boolean =>
+    e2eCoordinationEvidence.trustedCustomCheckId !== undefined &&
     check.name === "E2E / PR Gate" &&
     check.detailsUrl?.match(/\/runs\/(\d+)(?:[/?#]|$)/u)?.[1] ===
-      String(e2eCoordinationEvidence.trustedLegacyCheckId);
+      String(e2eCoordinationEvidence.trustedCustomCheckId);
 
   function runIdentityEvidence(
     runId: string,
@@ -1038,7 +1038,7 @@ function currentCheckRollup(
     );
     if (
       (requiredCheck || expectsActionEvidence) &&
-      group.some((check) => !actionRunId(check) && !isTrustedLegacyE2eCheck(check))
+      group.some((check) => !actionRunId(check) && !isTrustedCustomE2eCheck(check))
     ) {
       incompleteAttemptEvidence.add(groupName);
     }
@@ -1194,14 +1194,21 @@ function currentCheckRollup(
     incompleteAttemptEvidence.add("checks");
     incompleteAttemptEvidence.add("changes");
   }
-  return { checks: current, incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort() };
+  return {
+    checks: current,
+    incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort(),
+  };
 }
 
 function checkCi(
   statusCheckRollup: StatusCheck[] | null,
   repo: string,
   exactDiff: ExactDiffIdentity,
-): GateResult & { failingChecks?: string[]; pendingChecks?: string[]; missingChecks?: string[] } {
+): GateResult & {
+  failingChecks?: string[];
+  pendingChecks?: string[];
+  missingChecks?: string[];
+} {
   if (!statusCheckRollup || statusCheckRollup.length === 0) {
     return { pass: false, details: "No status checks found" };
   }
@@ -1266,7 +1273,11 @@ function checkCi(
     };
   }
   if (pending.length > 0) {
-    return { pass: false, details: `${pending.length} pending check(s)`, pendingChecks: pending };
+    return {
+      pass: false,
+      details: `${pending.length} pending check(s)`,
+      pendingChecks: pending,
+    };
   }
   if (incompleteAttemptEvidence.size > 0) {
     const incompleteNames = [...incompleteAttemptEvidence].sort();
@@ -1276,7 +1287,10 @@ function checkCi(
       failingChecks: incompleteNames.map((name) => `${name}: latest attempt evidence incomplete`),
     };
   }
-  return { pass: true, details: `All ${currentChecks.length} current checks green` };
+  return {
+    pass: true,
+    details: `All ${currentChecks.length} current checks green`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1360,7 +1374,11 @@ function fetchCurrentBaseSha(repo: string, number: number): string | null {
       }
     }`,
   ]) as {
-    data?: { repository?: { pullRequest?: { baseRef?: { target?: { oid?: unknown } } } } };
+    data?: {
+      repository?: {
+        pullRequest?: { baseRef?: { target?: { oid?: unknown } } };
+      };
+    };
   } | null;
   const oid = response?.data?.repository?.pullRequest?.baseRef?.target?.oid;
   return typeof oid === "string" && /^[0-9a-f]{40}$/i.test(oid) ? oid : null;
@@ -1430,7 +1448,10 @@ function checkCodeRabbit(
 
   // Fail-closed: if we cannot reach the API, do not assume clean
   if (!out) {
-    return { pass: false, details: "Could not fetch review threads (API error — fail-closed)" };
+    return {
+      pass: false,
+      details: "Could not fetch review threads (API error — fail-closed)",
+    };
   }
 
   let data: {
@@ -1440,7 +1461,13 @@ function checkCodeRabbit(
           reviewThreads?: {
             nodes?: Array<{
               isResolved: boolean;
-              comments: { nodes: Array<{ author: { login: string }; body: string; path: string }> };
+              comments: {
+                nodes: Array<{
+                  author: { login: string };
+                  body: string;
+                  path: string;
+                }>;
+              };
             }>;
           };
         };
@@ -1450,7 +1477,10 @@ function checkCodeRabbit(
   try {
     data = JSON.parse(out);
   } catch {
-    return { pass: false, details: "Could not parse review threads (invalid JSON — fail-closed)" };
+    return {
+      pass: false,
+      details: "Could not parse review threads (invalid JSON — fail-closed)",
+    };
   }
 
   const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
@@ -1479,7 +1509,10 @@ function checkCodeRabbit(
   }
 
   if (unresolved.length === 0) {
-    return { pass: true, details: "No unresolved major/critical CodeRabbit findings" };
+    return {
+      pass: true,
+      details: "No unresolved major/critical CodeRabbit findings",
+    };
   }
   return {
     pass: false,
@@ -1533,7 +1566,11 @@ interface CommitVerificationRecord {
 
 function normalizeCommitVerification(value: unknown): CommitVerificationRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { sha: "(unknown)", verified: false, reason: "malformed_commit_verification_data" };
+    return {
+      sha: "(unknown)",
+      verified: false,
+      reason: "malformed_commit_verification_data",
+    };
   }
 
   const record = value as Record<string, unknown>;
@@ -1848,7 +1885,13 @@ function main(): void {
       coderabbit.pass &&
       riskyCodeTested.pass &&
       contributorCompliance.pass,
-    gates: { ci, conflicts, coderabbit, riskyCodeTested, contributorCompliance },
+    gates: {
+      ci,
+      conflicts,
+      coderabbit,
+      riskyCodeTested,
+      contributorCompliance,
+    },
     advisories: { contributorApprovalOverlap },
   };
 

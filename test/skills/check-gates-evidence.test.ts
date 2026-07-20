@@ -311,7 +311,10 @@ describe("maintainer merge-gate contributor compliance", () => {
       }).stdout,
     );
 
-    expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
+    expect(output).toMatchObject({
+      allPass: true,
+      gates: { ci: { pass: true } },
+    });
   });
 
   it.each(["SKIPPED", "NEUTRAL"])("rejects a required Actions run concluded %s", (conclusion) => {
@@ -425,30 +428,25 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
 
-  it("accepts the legacy exact-diff E2E coordination check name", () => {
-    const legacyCheck = coordinationCheck({ id: 8001, name: "E2E / PR Gate" });
+  it("accepts the former exact-diff E2E coordination check name during rollout", () => {
+    const formerCheck = coordinationCheck({
+      id: 8001,
+      name: "E2E / PR Gate Coordination",
+    });
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
-        statusChecks: [
-          ...successfulRequiredChecksWithoutE2e(),
-          {
-            __typename: "CheckRun",
-            name: "E2E / PR Gate",
-            workflowName: "Automation / Request NVSkills CI",
-            detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8001",
-            startedAt: "2026-01-01T00:00:00Z",
-            status: "COMPLETED",
-            conclusion: "SUCCESS",
-          },
-        ],
+        statusChecks: [...successfulRequiredChecksWithoutE2e(), e2eGateCheck([94, 1, "SUCCESS"])],
         coordinationCheckPages: [{ total_count: 0, check_runs: [] }],
-        legacyCoordinationCheckPages: [{ total_count: 1, check_runs: [legacyCheck] }],
+        formerCoordinationCheckPages: [{ total_count: 1, check_runs: [formerCheck] }],
       }).stdout,
     );
 
-    expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
+    expect(output).toMatchObject({
+      allPass: true,
+      gates: { ci: { pass: true } },
+    });
   });
 
   it("finds the exact E2E coordination check on a later page", () => {
@@ -456,6 +454,11 @@ describe("maintainer merge-gate contributor compliance", () => {
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
+        statusChecks: successfulRequiredChecks().map((check) =>
+          check.name === "E2E / PR Gate"
+            ? { ...check, detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8002" }
+            : check,
+        ),
         coordinationCheckPages: [
           {
             total_count: 2,
@@ -466,7 +469,10 @@ describe("maintainer merge-gate contributor compliance", () => {
       }).stdout,
     );
 
-    expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
+    expect(output).toMatchObject({
+      allPass: true,
+      gates: { ci: { pass: true } },
+    });
   });
 
   it.each([
@@ -476,17 +482,31 @@ describe("maintainer merge-gate contributor compliance", () => {
       [
         {
           total_count: 1,
-          check_runs: [coordinationCheck({ external_id: `${E2E_COORDINATION_EXTERNAL_ID}-stale` })],
+          check_runs: [
+            coordinationCheck({
+              external_id: `${E2E_COORDINATION_EXTERNAL_ID}-stale`,
+            }),
+          ],
         },
       ],
     ],
     [
       "reported on another head SHA",
-      [{ total_count: 1, check_runs: [coordinationCheck({ head_sha: "c".repeat(40) })] }],
+      [
+        {
+          total_count: 1,
+          check_runs: [coordinationCheck({ head_sha: "c".repeat(40) })],
+        },
+      ],
     ],
     [
       "claimed by another GitHub App",
-      [{ total_count: 1, check_runs: [coordinationCheck({ app: { id: 1234 } })] }],
+      [
+        {
+          total_count: 1,
+          check_runs: [coordinationCheck({ app: { id: 1234 } })],
+        },
+      ],
     ],
     [
       "still running",
@@ -508,7 +528,12 @@ describe("maintainer merge-gate contributor compliance", () => {
     ],
     [
       "reported with malformed timing",
-      [{ total_count: 1, check_runs: [coordinationCheck({ started_at: "not-a-time" })] }],
+      [
+        {
+          total_count: 1,
+          check_runs: [coordinationCheck({ started_at: "not-a-time" })],
+        },
+      ],
     ],
     [
       "reported with inverted timing",
@@ -848,7 +873,9 @@ describe("maintainer merge-gate contributor compliance", () => {
     fixture.statusChecks?.push(
       e2eGateCheck([875, 1, "SUCCESS", undefined, undefined, "CodeQL", "optional-check"]),
     );
-    expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({ pass: true });
+    expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({
+      pass: true,
+    });
   });
   it("rejects required checks represented only by a status context", () => {
     const fixture = e2eRunFixture([], {});
@@ -871,7 +898,9 @@ describe("maintainer merge-gate contributor compliance", () => {
       ],
       { "874": exactDiffGateRun("success", e2eJobs(2)) },
     );
-    expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({ pass: true });
+    expect(JSON.parse(runGate(fixture).stdout).gates.ci).toMatchObject({
+      pass: true,
+    });
   });
   it("uses the latest attempt when GitHub reuses an Actions run ID", () => {
     const fixture = {
@@ -1095,9 +1124,9 @@ describe("maintainer merge-gate contributor compliance", () => {
         "810": prWorkflowRun("success", prWorkflowJobs("success", {}), true),
         "811": prWorkflowRun(
           "success",
-          prWorkflowJobs("skipped", { checks: { conclusion: "success" } }).filter(
-            (job) => job.name !== "plugin-tests",
-          ),
+          prWorkflowJobs("skipped", {
+            checks: { conclusion: "success" },
+          }).filter((job) => job.name !== "plugin-tests"),
           false,
         ),
       },

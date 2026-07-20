@@ -84,6 +84,13 @@ storage-exhaustion, or ownership noise. A target may retry a transient operation
 only inside its own cleanup boundary.
 Retry a full target by starting a fresh workflow run and runner.
 
+Brev branch validation uses that narrow fixture-level exception for
+provisioning only. It allows two create-and-SSH attempts by default, cleans up
+between attempts, and abandons an attempt early when authoritative Brev
+inventory reports a terminal state or omits the instance for three consecutive
+successful queries. Once live test execution starts, the no-retry rule above
+still applies.
+
 The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 
 When adding or changing a live test, update `test/e2e/mock-parity.json` with
@@ -115,26 +122,27 @@ test/e2e/
   ledger. The advisor uses it as recommendation context, while the controller
   applies it independently without model output.
 
-- `.github/workflows/pr-e2e-gate.yaml` reserves the internal
-  `E2E / PR Gate Coordination` check on every exact PR head, including forks,
-  before `CI / Pull Request` completes. Its default-branch
-  `pull_request_target` path also publishes the native GitHub Actions job named
-  `E2E / PR Gate`. The read-only observer runs from `github.workflow_sha`,
-  validates the live PR head and base, waits for the matching trusted
-  coordination identity, and mirrors the terminal verdict into the required
-  job. Its summary is static, while the job log includes the validated trusted
-  controller-run link. Authorization states remain pending while the maintainer
-  decision is recorded. During rollout, the observer also accepts the former
-  `E2E / PR Gate` custom-check name for the same exact-diff identity. The
-  controller builds the risk plan from GitHub's complete file list. Internal
+- `.github/workflows/pr-e2e-gate.yaml` reserves the internal custom check named
+  `E2E / PR Gate` on every exact PR head, including forks, before
+  `CI / Pull Request` completes. Its default-branch `pull_request_target` path
+  validates the live PR head and base and seeds the in-progress check. The
+  trusted completed-CI or authorized-dispatch path validates the exact diff and
+  records the terminal verdict directly in that same required check.
+  There is no separate polling Actions job. The coordinator has a 120-minute
+  job budget and allows a selected E2E child 105 minutes. Authorization states
+  remain pending while the maintainer decision is recorded. During rollout,
+  maintainer gate inspection also accepts the former
+  `E2E / PR Gate Coordination` custom-check name for the same exact-diff
+  identity. The controller builds the risk plan from GitHub's complete file
+  list. Internal
   revisions normally dispatch every selected job and verify each expected
   `risk-signal.json`; this remains automatic when their `e2e-control-plane`
   matches are drawn only from the trusted controller workflow and scripts.
   Other or mixed internal
   control-plane revisions require a maintainer-authorized exact-SHA run; only
-  its verified evidence can pass coordination. Risky forks retain the audited
-  credentialed-E2E skip approval. See [NemoClaw E2E CI](../README.md) for the
-  full lifecycle.
+  its verified evidence can pass the required check. Risky forks retain the
+  audited credentialed-E2E skip approval. See
+  [NemoClaw E2E CI](../README.md) for the full lifecycle.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
@@ -151,10 +159,20 @@ test/e2e/
   preparation, attach `test/e2e/risk-signal-reporter.ts` to live Vitest
   invocations, and suppress PR reporting and scorecards. The workflow boundary
   requires every selected job shard to upload its evidence artifact.
-- `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
-  `wsl-e2e.yaml`, and `regression-e2e.yaml` call focused E2E targets directly
-  for their E2E coverage. Individual repository-hosted targets, including
-  `ollama-auth-proxy`, are selected through `.github/workflows/e2e.yaml`.
+- `.github/workflows/e2e-branch-validation.yaml` provisions Brev with two
+  bounded create-and-SSH attempts by default. Authoritative terminal or
+  repeatedly missing instance state ends an attempt early, and cleanup runs
+  before a retry. `macos-e2e.yaml`, `wsl-e2e.yaml`, and `regression-e2e.yaml`
+  call focused E2E targets directly for their E2E coverage. Individual
+  repository-hosted targets, including `ollama-auth-proxy`, are selected
+  through `.github/workflows/e2e.yaml`.
+- `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
+  four independent 30-minute shards on each of macOS and WSL. WSL runs its
+  additional root-required contracts on shard 1 only.
+- `.github/workflows/sandbox-images-and-e2e.yaml` builds the Hermes production
+  image once in a 30-minute Buildx producer with a scoped GitHub Actions cache,
+  does not push it, and passes the one-day image artifact to the 75-minute
+  Hermes test consumer and the state-directory metadata job.
 - `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and
   `e2e-live` for opt-in live target execution. The PR and `main` CLI coverage
   shards include `e2e-support` for code changes; they never opt into live

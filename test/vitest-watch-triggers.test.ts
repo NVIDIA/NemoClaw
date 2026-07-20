@@ -109,7 +109,6 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/pr-e2e-gate.yaml")).toEqual([
       "test/pr-e2e-gate-workflow.test.ts",
-      "test/pr-e2e-required.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/platform-vitest-main.yaml")).toEqual([
       "test/platform-vitest-main-workflow.test.ts",
