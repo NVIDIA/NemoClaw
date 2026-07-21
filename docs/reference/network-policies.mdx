@@ -310,10 +310,10 @@ If the sandbox's active agent changes, NemoClaw requires you to clear or review 
 NemoClaw journals the cross-system update before changing the live OpenShell policy and verifies the exact live result before publishing the durable intent.
 If the process or persistence layer fails between those steps, `policy list`, `policy explain`, and `status` report `repair required`.
 Sandbox creation or recreation, rebuild, and cross-sandbox snapshot cloning stop before destructive work, and rerunning the same `policy exclude` or `policy restore` command reconciles only an exact source or target state.
-An unreadable or third live state remains fail-closed for manual inspection instead of being guessed or overwritten.
+An unreadable live policy, or one that matches neither the pre-mutation source nor the intended target, remains fail-closed for manual inspection instead of being guessed or overwritten.
 An interrupted restore finalizes only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled target; if either changes or becomes unreadable, the journal remains pending for inspection and re-review.
 If a later release changes that entry, create and rebuild fail closed until re-review; if the release removes it, they fail closed until the stale record is cleared.
-The critical `managed_inference` entry cannot be excluded because it carries the required managed inference route. NemoClaw enforces this both when the command runs and whenever durable exclusion state is replayed.
+The critical `managed_inference` entry cannot be excluded because it carries the required route to managed inference. NemoClaw enforces this both when the command runs and whenever durable exclusion state is replayed.
 
 An excluded baseline key remains reserved while the exclusion is active.
 NemoClaw refuses onboarding, rebuild, built-in and custom presets, messaging channel policies, and generated MCP policies that would define the same key and silently restore its egress.

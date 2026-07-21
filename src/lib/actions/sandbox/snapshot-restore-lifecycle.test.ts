@@ -198,7 +198,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
-  it("holds the source and destination mutation locks until a cross-sandbox restore finishes (#7194)", async () => {
+  it("holds the source and destination mutation locks until a cross-sandbox restore finishes (#7178)", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-locks-"));
     tempHomes.push(tempHome);
     vi.stubEnv("HOME", tempHome);
@@ -275,7 +275,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     ]);
   });
 
-  it("blocks a cross-sandbox clone before deleting the target when source policy repair is pending (#7194)", async () => {
+  it("blocks a cross-sandbox clone before deleting the target when source policy repair is pending (#7178)", async () => {
     const common = {
       agent: "openclaw",
       openshellDriver: "docker",
@@ -331,7 +331,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
   });
 
-  it("blocks a forced clone before deleting a destination whose policy repair is pending (#7194)", async () => {
+  it("blocks a forced clone before deleting a destination whose policy repair is pending (#7178)", async () => {
     const pendingTransition = {
       id: "0b2f3297-a9ab-4c2f-80da-bf1760a1afbf",
       operation: "restore" as const,

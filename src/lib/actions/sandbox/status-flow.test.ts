@@ -148,7 +148,7 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("policy restore <key>");
   });
 
-  it("warns when a recorded exclusion is still present in the live policy (#7194)", async () => {
+  it("warns when a recorded exclusion is still present in the live policy (#7178)", async () => {
     const harness = createStatusFlowHarness({
       baselineExclusionStatus: "live-policy-mismatch",
       sandboxEntry: {
