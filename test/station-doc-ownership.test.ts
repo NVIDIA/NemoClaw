@@ -64,6 +64,7 @@ describe("DGX Station documentation ownership", () => {
     expect(vllmSetup).toContain("explicit temporary metadata override");
     expect(stationPreparation).toContain("DGX Station is Tested with limitations");
     expect(stationPreparation).toContain("Dual-Station configurations are not yet validated");
+    expect(stationPreparation).toContain("dedicated CI coverage is not available");
     expect(stationPreparation).toContain(
       "Physical validation on one DGX Station GB300 covers generic Ubuntu 24.04 ARM64",
     );
@@ -86,6 +87,7 @@ describe("DGX Station documentation ownership", () => {
     expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
     expect(quickstart).toContain("DGX Station is Tested with limitations");
     expect(quickstart).toContain("Dual-Station configurations are not yet validated");
+    expect(quickstart).toContain("dedicated CI coverage is not available");
     expect(quickstart).toContain("unmatched no-OTA factory images");
     expect(quickstart).toContain("April 2026 NVIDIA Colossus BaseOS");
     expect(quickstart).toContain("June 2026 NVIDIA AI Developer Tools");
