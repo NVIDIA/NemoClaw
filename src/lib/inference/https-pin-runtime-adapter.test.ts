@@ -605,12 +605,10 @@ describe("createHttpsPinRuntimeAdapterServer per-route credential isolation (#69
       headers: { Authorization: `Bearer ${ROUTE_TOKEN_A}`, "Content-Type": "application/json" },
       body: JSON.stringify({ hello: "cross" }),
     });
-    expect([401, 404]).toContain(crossRoute.status);
+    expect(crossRoute.status).toBe(401);
     expect(upstreamBRequests).toHaveLength(0);
-    if (crossRoute.status === 401) {
-      const body = (await crossRoute.json()) as { error: { code: string } };
-      expect(body.error.code).toBe("unauthorized");
-    }
+    const crossRouteBody = (await crossRoute.json()) as { error: { code: string } };
+    expect(crossRouteBody.error.code).toBe("unauthorized");
 
     // Route B's own token against route B still succeeds and reaches
     // upstream B, proving the rejection above was scoping, not breakage.
