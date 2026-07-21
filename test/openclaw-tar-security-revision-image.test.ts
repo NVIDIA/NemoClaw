@@ -10,6 +10,13 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const runImageTests = process.env.NEMOCLAW_RUN_OPENCLAW_TAR_REVISION_IMAGE_TESTS === "1";
 const cases = [
   {
+    name: "old lock-bearing dependency graph",
+    baseImage:
+      "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:6d123b7c53c3281d3bd1e374225ef5ad631f8f2bb81c61f41679f2e6a92ea324",
+    openClawVersion: "2026.5.22",
+    shrinkwrap: "present",
+  },
+  {
     name: "oldest nested layout without a shrinkwrap",
     baseImage:
       "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3d9391e6c27c986f4ded2e36c874b5f16f59001cdda3415daa48a43ccb5a2ed3",
@@ -76,6 +83,8 @@ describe.runIf(runImageTests)(
               "find /usr/local/lib/node_modules/openclaw -path '*/node_modules/tar/package.json' -exec node -p 'require(process.argv[1]).version' {} \\;",
               "test -r /usr/local/share/nemoclaw/openclaw-tar-cve-2026-59873-v1",
               "test -r /usr/local/share/nemoclaw/openclaw-plugin-axios-security-revision-v1",
+              "test -r /usr/local/share/nemoclaw/openclaw-plugin-core-security-revision-v1",
+              "test -r /usr/local/share/nemoclaw/openclaw-core-security-revision-v1",
               "test -x /usr/local/bin/openclaw.nemoclaw-original",
               "test -x /usr/local/bin/openclaw",
               'test "$(node -p "require(\'/usr/local/share/nemoclaw/openclaw-plugin-axios-1.18.0/package.json\').version")" = 1.18.0',

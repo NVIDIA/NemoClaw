@@ -9,6 +9,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -20,6 +21,21 @@ import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive } from "./lib/reviewed-npm-archive.mts";
 
 type JsonObject = Record<string, any>;
+
+type InstallInvocation = Readonly<{
+  stateDirectory: string;
+  targetIndex: number;
+}>;
+
+type RollbackSnapshot = Readonly<{
+  backupDirectory: string;
+  pluginRoot: string;
+}>;
+
+type RollbackManifest = Readonly<{
+  snapshots: readonly RollbackSnapshot[];
+  stateDirectory: string;
+}>;
 
 const AXIOS_VERSION = "1.18.0";
 const AXIOS_INTEGRITY =
@@ -171,14 +187,13 @@ function validateReplacementTree(replacementRoot: string): void {
   }
 }
 
-function installedPluginCandidates(homeDirectory: string): string[] {
-  const openClawRoot = path.join(homeDirectory, ".openclaw");
-  const candidates = [
-    path.join(openClawRoot, "extensions", "slack"),
-    path.join(openClawRoot, "extensions", "msteams"),
-    path.join(openClawRoot, "npm", "node_modules", "@openclaw", "slack"),
-    path.join(openClawRoot, "npm", "node_modules", "@openclaw", "msteams"),
-  ];
+function pluginCandidatePaths(stateDirectory: string): string[] {
+  const openClawRoot = path.resolve(stateDirectory);
+  const pluginNames = ["slack", "msteams", "diagnostics-otel", "whatsapp", "discord"];
+  const candidates = pluginNames.flatMap((pluginName) => [
+    path.join(openClawRoot, "extensions", pluginName),
+    path.join(openClawRoot, "npm", "node_modules", "@openclaw", pluginName),
+  ]);
   const projectsRoot = path.join(openClawRoot, "npm", "projects");
   if (existsSync(projectsRoot)) {
     requireRealDirectory(projectsRoot, "OpenClaw npm projects root");
@@ -186,12 +201,143 @@ function installedPluginCandidates(homeDirectory: string): string[] {
       if (!project.isDirectory() || project.isSymbolicLink()) {
         throw new Error(`OpenClaw npm projects root contains an unsafe entry: ${project.name}`);
       }
-      for (const plugin of ["slack", "msteams"]) {
+      for (const plugin of pluginNames) {
         candidates.push(path.join(projectsRoot, project.name, "node_modules", "@openclaw", plugin));
       }
     }
   }
-  return candidates.filter((candidate) => existsSync(path.join(candidate, "package.json")));
+  return candidates;
+}
+
+function installedPluginCandidates(stateDirectory: string): string[] {
+  return pluginCandidatePaths(stateDirectory).filter((candidate) =>
+    existsSync(path.join(candidate, "package.json")),
+  );
+}
+
+function requiredHomeDirectory(homeDirectory: string): string {
+  if (!homeDirectory.trim()) throw new Error("HOME is required for OpenClaw plugin installation");
+  const resolved = path.resolve(homeDirectory);
+  if (resolved.includes("\n") || resolved.includes("\r")) {
+    throw new Error("HOME contains a line break");
+  }
+  return resolved;
+}
+
+export function parseOpenClawPluginInstallInvocation(
+  args: readonly string[],
+  options: { homeDirectory: string; stateDirectory?: string },
+): InstallInvocation | null {
+  let targetIndex = -1;
+  let profile: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] as string;
+    if (arg === "--profile") {
+      const value = args[index + 1];
+      if (value !== undefined) {
+        profile = value;
+        index += 1;
+      }
+      continue;
+    }
+    if (arg.startsWith("--profile=")) {
+      profile = arg.slice("--profile=".length);
+      continue;
+    }
+    if (arg === "--dev") {
+      profile = "dev";
+      continue;
+    }
+    if (
+      arg === "plugins" &&
+      args[index + 1] === "install" &&
+      typeof args[index + 2] === "string" &&
+      (args[index + 2] as string).length > 0
+    ) {
+      targetIndex = index + 2;
+    }
+  }
+  if (targetIndex < 0) return null;
+
+  const homeDirectory = requiredHomeDirectory(options.homeDirectory);
+  const configuredStateDirectory = options.stateDirectory?.trim();
+  const stateDirectory = configuredStateDirectory
+    ? path.resolve(configuredStateDirectory)
+    : profile && profile.toLowerCase() !== "default"
+      ? path.join(homeDirectory, `.openclaw-${profile}`)
+      : path.join(homeDirectory, ".openclaw");
+  if (stateDirectory.includes("\n") || stateDirectory.includes("\r")) {
+    throw new Error("OpenClaw state directory contains a line break");
+  }
+  return { stateDirectory, targetIndex };
+}
+
+function requirePathWithin(root: string, candidate: string, label: string): void {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+    throw new Error(`${label} escapes its expected root`);
+  }
+}
+
+export function preparePluginInstallRollback(options: {
+  stateDirectory: string;
+  workingDirectory: string;
+}): string {
+  const stateDirectory = path.resolve(options.stateDirectory);
+  const rollbackRoot = mkdtempSync(
+    path.join(path.resolve(options.workingDirectory), "plugin-install-rollback-"),
+  );
+  const snapshots = installedPluginCandidates(stateDirectory).map((pluginRoot, index) => {
+    requirePathWithin(stateDirectory, pluginRoot, "installed OpenClaw plugin");
+    requireRealDirectory(pluginRoot, "installed OpenClaw plugin");
+    const backupDirectory = path.join(rollbackRoot, `plugin-${index}`);
+    cpSync(pluginRoot, backupDirectory, { recursive: true, dereference: false });
+    rejectUnsafeTree(backupDirectory, "OpenClaw plugin rollback snapshot");
+    return { backupDirectory, pluginRoot };
+  });
+  const manifestPath = path.join(rollbackRoot, "manifest.json");
+  writeFileSync(
+    manifestPath,
+    `${JSON.stringify({ snapshots, stateDirectory } satisfies RollbackManifest, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  return manifestPath;
+}
+
+export function rollbackPluginInstall(options: {
+  manifestPath: string;
+  stateDirectory: string;
+}): void {
+  const manifestPath = path.resolve(options.manifestPath);
+  const manifest = readJson(manifestPath) as RollbackManifest;
+  const stateDirectory = path.resolve(options.stateDirectory);
+  if (manifest.stateDirectory !== stateDirectory || !Array.isArray(manifest.snapshots)) {
+    throw new Error(
+      "OpenClaw plugin rollback manifest does not match the effective state directory",
+    );
+  }
+  const rollbackRoot = path.dirname(manifestPath);
+  for (const pluginRoot of installedPluginCandidates(stateDirectory)) {
+    requirePathWithin(stateDirectory, pluginRoot, "installed OpenClaw plugin");
+    rmSync(pluginRoot, { recursive: true, force: true });
+  }
+  for (const snapshot of manifest.snapshots) {
+    if (
+      !snapshot ||
+      typeof snapshot.pluginRoot !== "string" ||
+      typeof snapshot.backupDirectory !== "string"
+    ) {
+      throw new Error("OpenClaw plugin rollback manifest contains an invalid snapshot");
+    }
+    requirePathWithin(stateDirectory, snapshot.pluginRoot, "OpenClaw plugin rollback target");
+    requirePathWithin(rollbackRoot, snapshot.backupDirectory, "OpenClaw plugin rollback snapshot");
+    rejectUnsafeTree(snapshot.backupDirectory, "OpenClaw plugin rollback snapshot");
+    mkdirSync(path.dirname(snapshot.pluginRoot), { recursive: true, mode: 0o700 });
+    cpSync(snapshot.backupDirectory, snapshot.pluginRoot, {
+      recursive: true,
+      dereference: false,
+    });
+  }
 }
 
 function updatePluginMetadata(pluginRoot: string, manifest: JsonObject): void {
@@ -276,7 +422,10 @@ function verifyPatchedPlugin(pluginRoot: string, expectedSpec: string): void {
   }
 }
 
-function patchPlugin(pluginRoot: string, replacementRoot: string): string | null {
+export function patchReviewedOpenClawPluginAxiosRoot(
+  pluginRoot: string,
+  replacementRoot: string,
+): string | null {
   requireRealDirectory(pluginRoot, "installed OpenClaw plugin");
   const manifest = readJson(path.join(pluginRoot, "package.json"));
   const spec = packageSpec(manifest);
@@ -299,14 +448,18 @@ function patchPlugin(pluginRoot: string, replacementRoot: string): string | null
 }
 
 export function patchInstalledOpenClawPlugins(options: {
-  homeDirectory: string;
+  homeDirectory?: string;
   replacementRoot: string;
   expectedPackageSpec?: string;
+  stateDirectory?: string;
 }): string[] {
   const replacementRoot = path.resolve(options.replacementRoot);
   validateReplacementTree(replacementRoot);
-  const patched = installedPluginCandidates(path.resolve(options.homeDirectory))
-    .map((candidate) => patchPlugin(candidate, replacementRoot))
+  const stateDirectory = options.stateDirectory
+    ? path.resolve(options.stateDirectory)
+    : path.join(requiredHomeDirectory(options.homeDirectory ?? ""), ".openclaw");
+  const patched = installedPluginCandidates(stateDirectory)
+    .map((candidate) => patchReviewedOpenClawPluginAxiosRoot(candidate, replacementRoot))
     .filter((spec): spec is string => spec !== null);
   if (options.expectedPackageSpec && !patched.includes(options.expectedPackageSpec)) {
     throw new Error(
@@ -402,7 +555,34 @@ if (isMainModule()) {
     return result;
   };
   try {
-    if (args.includes("--classify-install-target")) {
+    if (args.includes("--resolve-install-invocation")) {
+      const separator = args.indexOf("--");
+      if (separator < 0) throw new Error("Missing -- before the OpenClaw arguments");
+      const invocation = parseOpenClawPluginInstallInvocation(args.slice(separator + 1), {
+        homeDirectory: value("--home"),
+        stateDirectory: process.env.OPENCLAW_STATE_DIR,
+      });
+      if (invocation) {
+        process.stdout.write(`${invocation.targetIndex}\n${invocation.stateDirectory}\n`);
+      }
+    } else if (args.includes("--prepare-install-rollback")) {
+      process.stdout.write(
+        preparePluginInstallRollback({
+          stateDirectory: value("--state-directory"),
+          workingDirectory: value("--working-directory"),
+        }),
+      );
+    } else if (args.includes("--rollback-install")) {
+      rollbackPluginInstall({
+        manifestPath: value("--manifest"),
+        stateDirectory: value("--state-directory"),
+      });
+    } else if (args.includes("--patch-plugin-root")) {
+      patchReviewedOpenClawPluginAxiosRoot(
+        value("--patch-plugin-root"),
+        value("--replacement-root"),
+      );
+    } else if (args.includes("--classify-install-target")) {
       process.stdout.write(classifyReviewedInstallTarget(value("--classify-install-target")));
     } else if (args.includes("--materialize-install-target")) {
       process.stdout.write(
@@ -416,7 +596,8 @@ if (isMainModule()) {
         ? value("--expected-package-spec")
         : undefined;
       patchInstalledOpenClawPlugins({
-        homeDirectory: value("--home"),
+        stateDirectory: args.includes("--state-directory") ? value("--state-directory") : undefined,
+        homeDirectory: args.includes("--home") ? value("--home") : undefined,
         replacementRoot: value("--replacement-root"),
         expectedPackageSpec,
       });
