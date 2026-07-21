@@ -3769,7 +3769,7 @@ describe_express_install() {
           ;;
         *)
           if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-            printf "  Explicit --force-station-install intent bypasses only DGX release-metadata qualification. Active agent, inference, and Docker workloads still block Station preparation. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
+            printf "  Explicit --force-station-install intent bypasses only DGX release-metadata qualification. Active agent and unrelated Docker workloads still block Station preparation; an existing vLLM workload receives explicit handling choices. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
           else
             printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
           fi

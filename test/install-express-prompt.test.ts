@@ -1049,6 +1049,9 @@ main "$@"
     expect(output).toMatch(
       /Explicit --force-station-install intent bypasses only DGX release-metadata qualification/,
     );
+    expect(output).toMatch(
+      /Active agent and unrelated Docker workloads still block Station preparation; an existing vLLM workload receives explicit handling choices/,
+    );
     expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(/PROVIDER=install-vllm/);

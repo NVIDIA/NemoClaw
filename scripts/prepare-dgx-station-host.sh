@@ -1283,8 +1283,8 @@ check_agent_and_inference_conflicts() {
 }
 
 check_initial_workload_quiescence() {
-  check_vllm_container_conflicts
   check_agent_and_inference_conflicts
+  check_vllm_container_conflicts
   require_no_running_docker_containers "initial Station host preparation"
 }
 

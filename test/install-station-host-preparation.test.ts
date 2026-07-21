@@ -495,6 +495,26 @@ check_vllm_container_conflicts
     expect(active.output).not.toContain("hidden-model-name");
   });
 
+  it("blocks an active agent before offering a vLLM container handoff (#7287)", () => {
+    const active = runSourced(
+      STATION_PREPARE,
+      `
+MODE=--check
+ps() { printf '999 1 openshell openshell gateway\n'; }
+ss() { :; }
+docker() {
+  printf '1234567890abcdef|nvcr.io/nvidia/vllm:station|vllm serve hidden-model-name\n'
+}
+check_initial_workload_quiescence
+`,
+    );
+
+    expect(active.result.status, active.output).toBe(1);
+    expect(active.output).toContain("Agent workload is active: pid=999 process=openshell");
+    expect(active.output).not.toContain("container_id=1234567890ab");
+    expect(active.output).not.toContain("hidden-model-name");
+  });
+
   it("refuses an installed CUDA keyring version that differs from the pin", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
