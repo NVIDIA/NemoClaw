@@ -20,17 +20,22 @@ ARG AGENT_BASE_INTEGRITY=sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jG
 ARG AGENT_BASE_TARBALL=https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/lib/staged-replacement-transaction.mts /scripts/lib/staged-replacement-transaction.mts
 COPY scripts/openclaw-tar-security-revision.mts /scripts/openclaw-tar-security-revision.mts
-COPY scripts/openclaw-core-security-revision.mts /scripts/openclaw-core-security-revision.mts
+COPY scripts/npm-tar-security-revision.mts /scripts/npm-tar-security-revision.mts
 COPY scripts/lib/reviewed-npm-archive.mts /usr/local/lib/nemoclaw/lib/reviewed-npm-archive.mts
+COPY scripts/lib/staged-replacement-transaction.mts /usr/local/lib/nemoclaw/lib/staged-replacement-transaction.mts
 COPY scripts/openclaw-plugin-axios-security-revision.mts /usr/local/lib/nemoclaw/openclaw-plugin-axios-security-revision.mts
-COPY scripts/openclaw-plugin-core-security-revision.mts /usr/local/lib/nemoclaw/openclaw-plugin-core-security-revision.mts
+COPY scripts/openclaw-security-revision-invocation.mts /usr/local/lib/nemoclaw/openclaw-security-revision-invocation.mts
+COPY scripts/npm-tar-security-revision.mts /usr/local/lib/nemoclaw/npm-tar-security-revision.mts
 COPY scripts/openclaw-security-revision-wrapper.sh /usr/local/bin/openclaw.security-wrapper
+COPY scripts/npm-security-revision-wrapper.sh /usr/local/bin/npm.security-wrapper
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# The audit must execute in each dynamically materialized reviewed package root.
-# hadolint ignore=DL3003
+# The npm viability probe changes directory only inside a disposable tree and
+# installs one exact local tarball produced by the same probe.
+# hadolint ignore=DL3003,DL3016
 RUN set -euo pipefail; \
     test -n "$BASE_IMAGE"; \
     test -n "$EXPECTED_OPENCLAW_VERSION"; \
@@ -46,21 +51,30 @@ RUN set -euo pipefail; \
         case "/$member/" in */../*) echo "ERROR: Parent traversal in tar archive: $member" >&2; exit 1 ;; esac; \
     done < <(tar -tzf "$TAR_PACK_PATH"); \
     tar -tvzf "$TAR_PACK_PATH" | awk 'substr($0, 1, 1) != "-" && substr($0, 1, 1) != "d" { exit 1 }'; \
-    REPLACEMENT_ROOT="$(mktemp -d)"; \
-    tar -xzf "$TAR_PACK_PATH" --no-same-owner --no-same-permissions --strip-components=1 -C "$REPLACEMENT_ROOT"; \
+    TAR_REPLACEMENT_ROOT=/usr/local/share/nemoclaw/tar-7.5.19; \
+    rm -rf "$TAR_REPLACEMENT_ROOT"; \
+    mkdir -p "$TAR_REPLACEMENT_ROOT"; \
+    tar -xzf "$TAR_PACK_PATH" --no-same-owner --no-same-permissions --strip-components=1 -C "$TAR_REPLACEMENT_ROOT"; \
     node --experimental-strip-types /scripts/openclaw-tar-security-revision.mts \
         --openclaw-root /usr/local/lib/node_modules/openclaw \
-        --replacement-root "$REPLACEMENT_ROOT" \
+        --replacement-root "$TAR_REPLACEMENT_ROOT" \
         --expected-openclaw-version "$EXPECTED_OPENCLAW_VERSION"; \
-    rm -rf "$(dirname "$TAR_PACK_PATH")" "$REPLACEMENT_ROOT"; \
-    _stage_reviewed_package() { \
-        local package_spec="$1" integrity="$2" tarball_url="$3" destination="$4" archive member npm_cache; \
-        npm_cache="$(mktemp -d)"; \
-        archive="$(NPM_CONFIG_CACHE="$npm_cache" node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+    node --experimental-strip-types /scripts/npm-tar-security-revision.mts \
+        --patch-bundled-npm \
+        --npm-root /usr/local/lib/node_modules/npm \
+        --replacement-root "$TAR_REPLACEMENT_ROOT"; \
+    node --experimental-strip-types /scripts/npm-tar-security-revision.mts \
+        --verify-bundled-npm \
+        --npm-root /usr/local/lib/node_modules/npm; \
+    rm -rf "$(dirname "$TAR_PACK_PATH")"; \
+    chmod -R a-w "$TAR_REPLACEMENT_ROOT"; \
+    stage_reviewed_package() { \
+        local package_spec="$1" integrity="$2" tarball_url="$3" destination="$4" archive member; \
+        archive="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
             --package-spec "$package_spec" \
             --integrity "$integrity" \
             --tarball-url "$tarball_url" \
-            --label "historical OpenClaw remediation dependency ${package_spec}")"; \
+            --label "historical OpenClaw plugin remediation dependency ${package_spec}")"; \
         while IFS= read -r member; do \
             case "$member" in package|package/*) ;; *) echo "ERROR: Unexpected npm archive member: $member" >&2; exit 1 ;; esac; \
             case "/$member/" in */../*) echo "ERROR: Parent traversal in npm archive: $member" >&2; exit 1 ;; esac; \
@@ -68,115 +82,48 @@ RUN set -euo pipefail; \
         tar -tvzf "$archive" | awk 'substr($0, 1, 1) != "-" && substr($0, 1, 1) != "d" { exit 1 }'; \
         mkdir -p "$destination"; \
         tar -xzf "$archive" --no-same-owner --no-same-permissions --strip-components=1 -C "$destination"; \
-        rm -rf "$(dirname "$archive")" "$npm_cache"; \
+        rm -rf "$(dirname "$archive")"; \
     }; \
-    STAGE_PIDS=(); \
-    stage_reviewed_package() { \
-        _stage_reviewed_package "$@" & \
-        STAGE_PIDS+=("$!"); \
-        if (( ${#STAGE_PIDS[@]} >= 4 )); then \
-            wait "${STAGE_PIDS[0]}"; \
-            STAGE_PIDS=("${STAGE_PIDS[@]:1}"); \
-        fi; \
-    }; \
-    CORE_REPLACEMENTS="$(mktemp -d)"; \
-    stage_reviewed_package "@earendil-works/pi-agent-core@0.79.0" "sha512-jQOtYjRGZ7+XC/olw9euLd2V03vkAPO8u0sSnQoLbyOQZz66dEBZrklTESk34Sf3AaeBSua28wjZR48ch1aXJQ==" "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.79.0.tgz" "$CORE_REPLACEMENTS/pi-agent-core"; \
-    stage_reviewed_package "@earendil-works/pi-ai@0.79.0" "sha512-D/2aDoe9vcCbqAztALQcKkdqXGuaQcqAzLm8LfUhNaorwoIHkwnaAuDVlo+OkF5clpEwS8Z1bk2o8NiSrwEdsA==" "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.79.0.tgz" "$CORE_REPLACEMENTS/pi-ai"; \
-    stage_reviewed_package "@earendil-works/pi-coding-agent@0.79.0" "sha512-pZoXk65vFR3dAzzmPNWEX61aHnT6+BaVhTyFDQAs1DyumaMeWpvzRV9ZrGxqlbVLwhrq+0LnXbaqDAFkhe2+MQ==" "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/pi-coding-agent-0.79.0.tgz" "$CORE_REPLACEMENTS/pi-coding-agent"; \
-    stage_reviewed_package "@earendil-works/pi-tui@0.79.0" "sha512-qAQWMruW7YKbk2hPcTD4INtXfvIySXifbPQ+mFY5j3J8yf2tfElkh+gGPuBvgPKPT0z9WiAkd7iySCuQq0txuQ==" "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.79.0.tgz" "$CORE_REPLACEMENTS/pi-tui"; \
-    stage_reviewed_package "body-parser@2.3.0" "sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==" "https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz" "$CORE_REPLACEMENTS/body-parser"; \
-    stage_reviewed_package "content-type@2.0.0" "sha512-j/O/d7GcZCyNl7/hwZAb606rzqkyvaDctLmckbxLzHvFBzTJHuGEdodATcP3yIRoDrLHkIATJuvzbFlp/ki2cQ==" "https://registry.npmjs.org/content-type/-/content-type-2.0.0.tgz" "$CORE_REPLACEMENTS/content-type"; \
-    stage_reviewed_package "brace-expansion@5.0.7" "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==" "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz" "$CORE_REPLACEMENTS/brace-expansion"; \
-    stage_reviewed_package "hono@4.12.30" "sha512-emn+JoJjrN9YTpRDS5it/UI2SO9BAE37T6I3d963RxcZ81G9A4pr2SZTEiiaiKbzx+NKRg5BZ89fCL7gCJCUog==" "https://registry.npmjs.org/hono/-/hono-4.12.30.tgz" "$CORE_REPLACEMENTS/hono"; \
-    stage_reviewed_package "form-data@2.5.6" "sha512-Ogz/E85h9tlfJzpI6TuFpGcHZFhLrb9Gw8wq9v40CxSCPnv7ahKr6Xgtkn0KYCDQJ8DNn5VoMO8EXr9V5PadyA==" "https://registry.npmjs.org/form-data/-/form-data-2.5.6.tgz" "$CORE_REPLACEMENTS/form-data"; \
-    stage_reviewed_package "linkify-it@5.0.2" "sha512-ONTm2jCMAVZjgQa/Fy1kScXsuOoF5NPTsoFBdE1KVIZ2vAh/r9+Bqo+0jINCBYnavTPQZz38QzFTme79ENoN3Q==" "https://registry.npmjs.org/linkify-it/-/linkify-it-5.0.2.tgz" "$CORE_REPLACEMENTS/linkify-it"; \
-    stage_reviewed_package "markdown-it@14.3.0" "sha512-RCEsPjR+sr0x+AuYp601tKTkgFG4YEPLCzHST3cQ/fhlJkqAkz1L2/Qbp1j9qw5SBwQHFBoW8+hoN5xssOF0Tw==" "https://registry.npmjs.org/markdown-it/-/markdown-it-14.3.0.tgz" "$CORE_REPLACEMENTS/markdown-it"; \
-    stage_reviewed_package "protobufjs@7.6.5" "sha512-/FPD0nUc9jH6rfFjji9IBqOz4pcSE3CsT1m7Ep6Mdb0LxSUMj8hgl6GomOvZzpNpAqqGaXA0P3VSrZLFzIhQrw==" "https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.5.tgz" "$CORE_REPLACEMENTS/protobufjs-7"; \
-    stage_reviewed_package "protobufjs@8.7.1" "sha512-agdGHrXNTv0IrYscJPDou/PlEJk1c/hBZ9o/B5NH2i/nSPtPqacNxzgwf1CebXxFMjMrZH5sqv9uQuw96aGt/A==" "https://registry.npmjs.org/protobufjs/-/protobufjs-8.7.1.tgz" "$CORE_REPLACEMENTS/protobufjs-8"; \
-    stage_reviewed_package "qs@6.15.3" "sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==" "https://registry.npmjs.org/qs/-/qs-6.15.3.tgz" "$CORE_REPLACEMENTS/qs"; \
-    stage_reviewed_package "undici@8.5.0" "sha512-xamtWoB1EshgjpmlXd7GGm2VfdDtw1+rD8uhry8pSNW3If6S8E0m2T2+orSKeZXEn/aPJMviCpDBA65WJt8zhg==" "https://registry.npmjs.org/undici/-/undici-8.5.0.tgz" "$CORE_REPLACEMENTS/undici"; \
-    stage_reviewed_package "ws@8.21.1" "sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==" "https://registry.npmjs.org/ws/-/ws-8.21.1.tgz" "$CORE_REPLACEMENTS/ws"; \
-    for stage_pid in "${STAGE_PIDS[@]}"; do wait "$stage_pid"; done; \
-    node --experimental-strip-types /scripts/openclaw-core-security-revision.mts \
-        --openclaw-root /usr/local/lib/node_modules/openclaw \
-        --replacement-root "$CORE_REPLACEMENTS" \
-        --expected-openclaw-version "$EXPECTED_OPENCLAW_VERSION"; \
-    PLUGIN_CORE_REPLACEMENTS=/usr/local/share/nemoclaw/openclaw-plugin-core-security-replacements-v1; \
-    rm -rf "$PLUGIN_CORE_REPLACEMENTS"; \
-    mkdir -p "$PLUGIN_CORE_REPLACEMENTS"; \
-    for replacement in body-parser content-type form-data qs protobufjs-7 protobufjs-8 undici ws; do \
-        cp -a "$CORE_REPLACEMENTS/$replacement" "$PLUGIN_CORE_REPLACEMENTS/$replacement"; \
-    done; \
-    rm -rf "$CORE_REPLACEMENTS"; \
-    OPENCLAW_ROOT=/usr/local/lib/node_modules/openclaw; \
-    GENERATED_SHRINKWRAP=0; \
-    if [[ ! -f "$OPENCLAW_ROOT/npm-shrinkwrap.json" ]]; then \
-        (cd "$OPENCLAW_ROOT" && npm shrinkwrap --ignore-scripts --omit=dev); \
-        GENERATED_SHRINKWRAP=1; \
-    fi; \
-    AUDIT_RESULT="$(mktemp)"; \
-    if ! (cd "$OPENCLAW_ROOT" && npm audit --omit=dev --ignore-scripts --audit-level=low --json > "$AUDIT_RESULT"); then \
-        cat "$AUDIT_RESULT" >&2; \
-        exit 1; \
-    fi; \
-    node -e 'const fs=require("fs"); const audit=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if (audit.metadata?.vulnerabilities?.total !== 0) { console.error(JSON.stringify(audit,null,2)); process.exit(1); }' "$AUDIT_RESULT"; \
-    rm -f "$AUDIT_RESULT"; \
-    if [[ "$GENERATED_SHRINKWRAP" = 1 ]]; then rm -f "$OPENCLAW_ROOT/npm-shrinkwrap.json"; fi; \
-    node --experimental-strip-types /scripts/openclaw-core-security-revision.mts \
-        --verify \
-        --openclaw-root "$OPENCLAW_ROOT" \
-        --expected-openclaw-version "$EXPECTED_OPENCLAW_VERSION"; \
     AXIOS_REPLACEMENT=/usr/local/share/nemoclaw/openclaw-plugin-axios-1.18.0; \
     rm -rf "$AXIOS_REPLACEMENT"; \
-    _stage_reviewed_package "axios@${AXIOS_VERSION}" "$AXIOS_INTEGRITY" "$AXIOS_TARBALL" "$AXIOS_REPLACEMENT"; \
-    _stage_reviewed_package "https-proxy-agent@${HTTPS_PROXY_AGENT_VERSION}" "$HTTPS_PROXY_AGENT_INTEGRITY" "$HTTPS_PROXY_AGENT_TARBALL" "$AXIOS_REPLACEMENT/node_modules/https-proxy-agent"; \
-    _stage_reviewed_package "agent-base@${AGENT_BASE_VERSION}" "$AGENT_BASE_INTEGRITY" "$AGENT_BASE_TARBALL" "$AXIOS_REPLACEMENT/node_modules/https-proxy-agent/node_modules/agent-base"; \
+    stage_reviewed_package "axios@${AXIOS_VERSION}" "$AXIOS_INTEGRITY" "$AXIOS_TARBALL" "$AXIOS_REPLACEMENT"; \
+    stage_reviewed_package "https-proxy-agent@${HTTPS_PROXY_AGENT_VERSION}" "$HTTPS_PROXY_AGENT_INTEGRITY" "$HTTPS_PROXY_AGENT_TARBALL" "$AXIOS_REPLACEMENT/node_modules/https-proxy-agent"; \
+    stage_reviewed_package "agent-base@${AGENT_BASE_VERSION}" "$AGENT_BASE_INTEGRITY" "$AGENT_BASE_TARBALL" "$AXIOS_REPLACEMENT/node_modules/https-proxy-agent/node_modules/agent-base"; \
     test "$(node -p "require('${AXIOS_REPLACEMENT}/package.json').version")" = "$AXIOS_VERSION"; \
     test "$(node -p "require('${AXIOS_REPLACEMENT}/node_modules/https-proxy-agent/package.json').version")" = "$HTTPS_PROXY_AGENT_VERSION"; \
     test "$(node -p "require('${AXIOS_REPLACEMENT}/node_modules/https-proxy-agent/node_modules/agent-base/package.json').version")" = "$AGENT_BASE_VERSION"; \
-    PLUGIN_AUDIT_ROOT="$(mktemp -d)"; \
-    for plugin_spec in \
-        @openclaw/slack@2026.5.22 @openclaw/msteams@2026.5.22 \
-        @openclaw/discord@2026.5.22 @openclaw/diagnostics-otel@2026.5.22 @openclaw/whatsapp@2026.5.22 \
-        @openclaw/slack@2026.5.27 @openclaw/msteams@2026.5.27 \
-        @openclaw/discord@2026.5.27 @openclaw/diagnostics-otel@2026.5.27 @openclaw/whatsapp@2026.5.27 \
-        @openclaw/slack@2026.6.10 @openclaw/msteams@2026.6.10 \
-        @openclaw/discord@2026.6.10 @openclaw/diagnostics-otel@2026.6.10 @openclaw/whatsapp@2026.6.10; do \
-        plugin_work="$(mktemp -d "$PLUGIN_AUDIT_ROOT/plugin.XXXXXX")"; \
-        plugin_target="$(NPM_CONFIG_CACHE="$plugin_work/npm-cache" node --experimental-strip-types /usr/local/lib/nemoclaw/openclaw-plugin-core-security-revision.mts \
-            --materialize-install-target "npm:${plugin_spec}" \
-            --working-directory "$plugin_work")"; \
-        plugin_archive="${plugin_target#npm-pack:}"; \
-        test "$plugin_archive" != "$plugin_target"; \
-        while IFS= read -r member; do \
-            case "$member" in package|package/*) ;; *) echo "ERROR: Unexpected historical plugin archive member: $member" >&2; exit 1 ;; esac; \
-            case "/$member/" in */../*) echo "ERROR: Parent traversal in historical plugin archive: $member" >&2; exit 1 ;; esac; \
-        done < <(tar -tzf "$plugin_archive"); \
-        tar -tvzf "$plugin_archive" | awk 'substr($0, 1, 1) != "-" && substr($0, 1, 1) != "d" { exit 1 }'; \
-        mkdir "$plugin_work/package"; \
-        tar -xzf "$plugin_archive" --no-same-owner --no-same-permissions --strip-components=1 -C "$plugin_work/package"; \
-        node --experimental-strip-types /usr/local/lib/nemoclaw/openclaw-plugin-axios-security-revision.mts \
-            --patch-plugin-root "$plugin_work/package" \
-            --replacement-root "$AXIOS_REPLACEMENT"; \
-        node --experimental-strip-types /usr/local/lib/nemoclaw/openclaw-plugin-core-security-revision.mts \
-            --patch-plugin-root "$plugin_work/package" \
-            --replacement-root "$PLUGIN_CORE_REPLACEMENTS"; \
-        plugin_audit="$plugin_work/npm-audit.json"; \
-        if ! (cd "$plugin_work/package" && NPM_CONFIG_CACHE="$plugin_work/npm-cache" npm audit --omit=dev --ignore-scripts --audit-level=high --json > "$plugin_audit"); then \
-            cat "$plugin_audit" >&2; \
-            exit 1; \
-        fi; \
-        node -e 'const fs=require("fs"); const audit=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); const v=audit.metadata?.vulnerabilities ?? {}; if ((v.high ?? 0) + (v.critical ?? 0) !== 0) { console.error(JSON.stringify(audit,null,2)); process.exit(1); }' "$plugin_audit"; \
-        rm -rf "$plugin_work"; \
-    done; \
-    rm -rf "$PLUGIN_AUDIT_ROOT"; \
     test -L /usr/local/bin/openclaw; \
     test "$(readlink -f /usr/local/bin/openclaw)" = /usr/local/lib/node_modules/openclaw/openclaw.mjs; \
+    test -L /usr/local/bin/npm; \
+    test "$(readlink -f /usr/local/bin/npm)" = /usr/local/lib/node_modules/npm/bin/npm-cli.js; \
     mv /usr/local/bin/openclaw /usr/local/bin/openclaw.nemoclaw-original; \
-    chmod 0555 /usr/local/lib/nemoclaw/openclaw-plugin-axios-security-revision.mts /usr/local/lib/nemoclaw/openclaw-plugin-core-security-revision.mts /usr/local/bin/openclaw.security-wrapper; \
+    mv /usr/local/bin/npm /usr/local/bin/npm.nemoclaw-original; \
+    chmod 0555 \
+        /usr/local/lib/nemoclaw/npm-tar-security-revision.mts \
+        /usr/local/lib/nemoclaw/openclaw-plugin-axios-security-revision.mts \
+        /usr/local/lib/nemoclaw/openclaw-security-revision-invocation.mts \
+        /usr/local/bin/npm.security-wrapper \
+        /usr/local/bin/openclaw.security-wrapper; \
     mv /usr/local/bin/openclaw.security-wrapper /usr/local/bin/openclaw; \
+    mv /usr/local/bin/npm.security-wrapper /usr/local/bin/npm; \
     test "$(openclaw --version 2>/dev/null | awk '{print $2}')" = "$EXPECTED_OPENCLAW_VERSION"; \
+    test "$(npm --version)" = 10.9.7; \
+    test "$(npx --version)" = 10.9.7; \
     test "$(node -p "require('/usr/local/lib/node_modules/openclaw/node_modules/tar/package.json').version")" = "$TAR_VERSION"; \
+    test "$(node -p "require('/usr/local/lib/node_modules/npm/node_modules/tar/package.json').version")" = "$TAR_VERSION"; \
+    NPM_PROBE_ROOT="$(mktemp -d)"; \
+    printf '%s\n' '{"name":"nemoclaw-npm-security-probe","version":"1.0.0","private":true}' > "$NPM_PROBE_ROOT/package.json"; \
+    printf '%s\n' 'module.exports = true;' > "$NPM_PROBE_ROOT/index.js"; \
+    (cd "$NPM_PROBE_ROOT" && npm pack --dry-run --ignore-scripts --json > pack-dry-run.json); \
+    node -e 'const report = require(process.argv[1]); if (!Array.isArray(report) || report.length !== 1) process.exit(1)' "$NPM_PROBE_ROOT/pack-dry-run.json"; \
+    npm pack --ignore-scripts --json --pack-destination "$NPM_PROBE_ROOT" "$NPM_PROBE_ROOT" > "$NPM_PROBE_ROOT/probe-pack.json"; \
+    test -f "$NPM_PROBE_ROOT/nemoclaw-npm-security-probe-1.0.0.tgz"; \
+    mkdir -p "$NPM_PROBE_ROOT/install"; \
+    printf '%s\n' '{"name":"nemoclaw-npm-install-probe","version":"1.0.0","private":true}' > "$NPM_PROBE_ROOT/install/package.json"; \
+    npm install --prefix "$NPM_PROBE_ROOT/install" --ignore-scripts --no-audit --no-fund "$NPM_PROBE_ROOT/nemoclaw-npm-security-probe-1.0.0.tgz"; \
+    npm ls --prefix "$NPM_PROBE_ROOT/install" --depth=0 nemoclaw-npm-security-probe; \
+    test "$(node -p "require('${NPM_PROBE_ROOT}/install/node_modules/nemoclaw-npm-security-probe/package.json').version")" = 1.0.0; \
+    rm -rf "$NPM_PROBE_ROOT"; \
     PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-tar-cve-2026-59873-v1; \
     mkdir -p "$(dirname "$PROVENANCE_PATH")"; \
     PROVENANCE_TMP="$(mktemp "${PROVENANCE_PATH}.tmp.XXXXXX")"; \
@@ -187,6 +134,9 @@ RUN set -euo pipefail; \
         "package=tar@${TAR_VERSION}" \
         "integrity=${TAR_INTEGRITY}" \
         "tarball=${TAR_TARBALL}" \
+        'npm=10.9.7' \
+        "npm-package=tar@${TAR_VERSION}" \
+        'scope=openclaw,npm-bundle,historical-nemoclaw' \
         'advisory=CVE-2026-59873' \
         > "$PROVENANCE_TMP"; \
     chmod 0444 "$PROVENANCE_TMP"; \
@@ -204,28 +154,4 @@ RUN set -euo pipefail; \
         'versions=2026.5.22,2026.5.27,2026.6.10' \
         > "$PLUGIN_PROVENANCE_TMP"; \
     chmod 0444 "$PLUGIN_PROVENANCE_TMP"; \
-    mv "$PLUGIN_PROVENANCE_TMP" "$PLUGIN_PROVENANCE_PATH"; \
-    PLUGIN_CORE_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-plugin-core-security-revision-v1; \
-    PLUGIN_CORE_PROVENANCE_TMP="$(mktemp "${PLUGIN_CORE_PROVENANCE_PATH}.tmp.XXXXXX")"; \
-    printf '%s\n' \
-        'schema=1' \
-        "source=${BASE_IMAGE}" \
-        "openclaw=${EXPECTED_OPENCLAW_VERSION}" \
-        'packages=body-parser@2.3.0,content-type@2.0.0,form-data@2.5.6,qs@6.15.3,protobufjs@7.6.5|8.7.1,undici@8.5.0,ws@8.21.1' \
-        'scope=@openclaw/slack,@openclaw/msteams,@openclaw/diagnostics-otel,@openclaw/whatsapp,@openclaw/discord' \
-        'versions=2026.5.22,2026.5.27,2026.6.10' \
-        > "$PLUGIN_CORE_PROVENANCE_TMP"; \
-    chmod 0444 "$PLUGIN_CORE_PROVENANCE_TMP"; \
-    mv "$PLUGIN_CORE_PROVENANCE_TMP" "$PLUGIN_CORE_PROVENANCE_PATH"; \
-    CORE_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-core-security-revision-v1; \
-    CORE_PROVENANCE_TMP="$(mktemp "${CORE_PROVENANCE_PATH}.tmp.XXXXXX")"; \
-    printf '%s\n' \
-        'schema=1' \
-        "source=${BASE_IMAGE}" \
-        "openclaw=${EXPECTED_OPENCLAW_VERSION}" \
-        'packages=@earendil-works/pi-*@0.79.0,body-parser@2.3.0,brace-expansion@5.0.7,hono@4.12.30,linkify-it@5.0.2,markdown-it@14.3.0,protobufjs@7.6.5|8.7.1,qs@6.15.3,undici@8.5.0,ws@8.21.1' \
-        'metadata-override=@earendil-works/pi-coding-agent:undici@8.5.0' \
-        'validation=npm-audit-production-zero' \
-        > "$CORE_PROVENANCE_TMP"; \
-    chmod 0444 "$CORE_PROVENANCE_TMP"; \
-    mv "$CORE_PROVENANCE_TMP" "$CORE_PROVENANCE_PATH"
+    mv "$PLUGIN_PROVENANCE_TMP" "$PLUGIN_PROVENANCE_PATH"
