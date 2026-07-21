@@ -185,12 +185,11 @@ follows:
 Installed-base coverage is the `v0.0.89-x86_64` row in the
 `openshell-gateway-upgrade` E2E matrix. It installs the immutable v0.0.89
 release with OpenClaw `2026.6.10`, seeds its legacy Memory Core SQLite and
-update-check state plus a marker in the global database initialized by the
-legacy gateway, then upgrades through the current installer. The row proves
-the global database survives intact, the `2026.7.1` startup checkpoint and
-per-agent database migration complete, and the restored `apiKey: "unused"`
-config still receives its gateway-held credential only at the OpenShell
-boundary.
+update-check state plus a durable marker in the per-agent database materialized
+by the legacy CLI, then upgrades through the current installer. The row proves
+the global and per-agent databases survive intact, the legacy sidecar migration
+and `2026.7.1` startup checkpoint complete, and the restored `apiKey: "unused"`
+config still receives its gateway-held credential only at the OpenShell boundary.
 This custom route supplies `COMPATIBLE_API_KEY`, so the frozen v0.0.89
 runtime intentionally creates no NVIDIA auth-profile key reference; the E2E
 preserves any references that do exist without inventing one for this route.
