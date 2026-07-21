@@ -271,23 +271,22 @@ export function ensureRebuildAgentBaseImage(
   if (!rebuildAgent) return { ok: true, imageRef: null, overrideEnvVar: null };
   const agentDef = loadAgent(rebuildAgent);
   const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentDef.name);
-  const explicitOverride = process.env[overrideEnvVar]?.trim() ?? "";
-  const hasExplicitOverride = explicitOverride !== "";
+  const explicitOverride = process.env[overrideEnvVar]?.trim();
+  const hasExplicitOverride = Boolean(explicitOverride);
   try {
-    // A rebuild test or maintainer workflow may retain the tracked official
-    // image under a local alias so a later CLI process can reuse the cache.
-    // Prove that identity before the resolver sees the otherwise-untrusted
-    // alias, and lease the proof only for this resolution call. Arbitrary local
-    // overrides still fail closed in resolveSandboxBaseImage.
-    const explicitOverrideMetadata = hasExplicitOverride
+    // Prove that a retained local alias names the tracked official image before
+    // the resolver sees it, and lease that proof only for this resolution call.
+    // Arbitrary local overrides still fail closed in resolveSandboxBaseImage.
+    const explicitOverrideResolution = explicitOverride
       ? bindLocalAgentBaseImageToPinnedProvenance(agentDef, explicitOverride)
       : null;
-    const restoreExplicitOverrideTrust = explicitOverrideMetadata
-      ? pinTrustedAgentRemoteBaseImageOverrideForOperation(overrideEnvVar, {
-          ref: explicitOverride,
-          resolutionMetadata: explicitOverrideMetadata,
-        })
-      : () => undefined;
+    const restoreExplicitOverrideTrust =
+      explicitOverride && explicitOverrideResolution
+        ? pinTrustedAgentRemoteBaseImageOverrideForOperation(overrideEnvVar, {
+            ref: explicitOverride,
+            resolutionMetadata: explicitOverrideResolution,
+          })
+        : () => undefined;
     let result: ReturnType<typeof ensureAgentBaseImage>;
     try {
       result = ensureAgentBaseImage(agentDef, {
@@ -317,6 +316,7 @@ export function ensureRebuildAgentBaseImage(
         : undefined;
     const resolutionMetadata =
       result.resolutionMetadata ??
+      explicitOverrideResolution ??
       (hasExplicitOverride && imageRef
         ? bindLocalAgentBaseImageToPinnedProvenance(agentDef, imageRef)
         : null);
