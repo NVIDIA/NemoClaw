@@ -40,50 +40,57 @@ function docker(args: string[]) {
   });
 }
 
-describe.runIf(runImageTests)("OpenClaw tar security revision image integration (#7272)", () => {
-  it.each(cases)(
-    "builds and executes the $name",
-    ({ baseImage, openClawVersion, shrinkwrap }) => {
-      const image = `nemoclaw-openclaw-tar-revision-test:${openClawVersion}-${process.pid}`;
-      try {
-        const build = docker([
-          "build",
-          "-f",
-          "Dockerfile.openclaw-tar-security-revision",
-          "--build-arg",
-          `BASE_IMAGE=${baseImage}`,
-          "--build-arg",
-          `EXPECTED_OPENCLAW_VERSION=${openClawVersion}`,
-          "-t",
-          image,
-          ".",
-        ]);
-        expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
+describe.runIf(runImageTests)(
+  "historical OpenClaw security revision image integration (#7272)",
+  () => {
+    it.each(cases)(
+      "builds and executes the $name",
+      ({ baseImage, openClawVersion, shrinkwrap }) => {
+        const image = `nemoclaw-openclaw-tar-revision-test:${openClawVersion}-${process.pid}`;
+        try {
+          const build = docker([
+            "build",
+            "-f",
+            "Dockerfile.openclaw-tar-security-revision",
+            "--build-arg",
+            `BASE_IMAGE=${baseImage}`,
+            "--build-arg",
+            `EXPECTED_OPENCLAW_VERSION=${openClawVersion}`,
+            "-t",
+            image,
+            ".",
+          ]);
+          expect(build.status, `${build.stdout}\n${build.stderr}`).toBe(0);
 
-        const probe = docker([
-          "run",
-          "--rm",
-          "--entrypoint",
-          "bash",
-          image,
-          "-lc",
-          [
-            "set -euo pipefail",
-            "openclaw --version | awk '{print $2}'",
-            "test -e /usr/local/lib/node_modules/openclaw/npm-shrinkwrap.json && echo present || echo absent",
-            "find /usr/local/lib/node_modules/openclaw -path '*/node_modules/tar/package.json' -exec node -p 'require(process.argv[1]).version' {} \\;",
-            "test -r /usr/local/share/nemoclaw/openclaw-tar-cve-2026-59873-v1",
-          ].join("; "),
-        ]);
-        expect(probe.status, `${probe.stdout}\n${probe.stderr}`).toBe(0);
-        const versions = probe.stdout.trim().split("\n");
-        expect(versions[0]).toBe(openClawVersion);
-        expect(versions[1]).toBe(shrinkwrap);
-        expect(new Set(versions.slice(2))).toEqual(new Set(["7.5.19"]));
-      } finally {
-        docker(["image", "rm", "--force", image]);
-      }
-    },
-    10 * 60 * 1000,
-  );
-});
+          const probe = docker([
+            "run",
+            "--rm",
+            "--entrypoint",
+            "bash",
+            image,
+            "-lc",
+            [
+              "set -euo pipefail",
+              "openclaw --version | awk '{print $2}'",
+              "test -e /usr/local/lib/node_modules/openclaw/npm-shrinkwrap.json && echo present || echo absent",
+              "find /usr/local/lib/node_modules/openclaw -path '*/node_modules/tar/package.json' -exec node -p 'require(process.argv[1]).version' {} \\;",
+              "test -r /usr/local/share/nemoclaw/openclaw-tar-cve-2026-59873-v1",
+              "test -r /usr/local/share/nemoclaw/openclaw-plugin-axios-security-revision-v1",
+              "test -x /usr/local/bin/openclaw.nemoclaw-original",
+              "test -x /usr/local/bin/openclaw",
+              'test "$(node -p "require(\'/usr/local/share/nemoclaw/openclaw-plugin-axios-1.18.0/package.json\').version")" = 1.18.0',
+            ].join("; "),
+          ]);
+          expect(probe.status, `${probe.stdout}\n${probe.stderr}`).toBe(0);
+          const versions = probe.stdout.trim().split("\n");
+          expect(versions[0]).toBe(openClawVersion);
+          expect(versions[1]).toBe(shrinkwrap);
+          expect(new Set(versions.slice(2))).toEqual(new Set(["7.5.19"]));
+        } finally {
+          docker(["image", "rm", "--force", image]);
+        }
+      },
+      10 * 60 * 1000,
+    );
+  },
+);
