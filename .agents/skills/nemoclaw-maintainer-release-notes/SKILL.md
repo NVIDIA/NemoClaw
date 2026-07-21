@@ -17,9 +17,9 @@ Draft the post-tag NemoClaw Announcement from GitHub tag and compare data. The h
 - external-only contributor thanks,
 - visible `#NNNN` GitHub links.
 
-Apply [NemoClaw Technical English](../../../CONTRIBUTING.md#nemoclaw-technical-english) to new or modified Announcement text.
+Follow the [NemoClaw Writing Guide](../../../WRITING.md) for new or modified Announcement text.
 State the changed behavior, affected users, and required action when one exists.
-During the changed-text pilot, do not rewrite unrelated historical release text.
+Do not rewrite unrelated historical release text.
 
 Create a local Markdown draft. Do not create or update a GitHub Discussion; the maintainer posts the announcement manually.
 

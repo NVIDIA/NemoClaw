@@ -23,6 +23,7 @@ Treat `docs/` as the source of truth for published content and AI-agent Markdown
 
 ## Writing Rules
 
+- Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
 - Use active voice, second person, present tense, and direct language.
 - Keep one sentence per line in Markdown and MDX source files.
 - End every sentence with a period.

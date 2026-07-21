@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 ## Summary
-<!-- 1-3 plain sentences: what changes and why. Describe before-and-after behavior when it applies. Use the NemoClaw Technical English profile: https://github.com/NVIDIA/NemoClaw/blob/main/CONTRIBUTING.md#nemoclaw-technical-english. During the changed-text pilot, do not expand this PR to clean up unrelated prose. -->
+<!-- 1-3 plain sentences: what changes and why. Describe before-and-after behavior when it applies. Follow the NemoClaw Writing Guide: https://github.com/NVIDIA/NemoClaw/blob/main/WRITING.md. Do not add unrelated prose cleanup. -->
 
 ## Related Issue
 <!-- Fixes #NNN or Closes #NNN. Remove this section if none. -->

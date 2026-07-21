@@ -148,8 +148,7 @@ Identify where the new content should go. Follow the page's existing structure.
 
 Before writing, verify that the commit was not excluded in Step 1. Do not draft content for commits matched by the skip list or for agent integrations not in the tested agent support matrix. After drafting, scan the content for any `skip-terms` from `docs/.docs-skip`. Remove any sentence or section that contains a skip-term. If in doubt, skip the commit and report it.
 
-Apply [NemoClaw Technical English](../../../CONTRIBUTING.md#nemoclaw-technical-english) to changed documentation and changelog text.
-During the changed-text pilot, do not rewrite unrelated prose.
+Follow the [NemoClaw Writing Guide](../../../WRITING.md) for changed documentation and changelog text.
 
 Write the doc update following these conventions:
 
