@@ -15,6 +15,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -40,6 +41,7 @@ type PluginReview = Readonly<{
   archiveTarball: string;
   dependencyOverrides: DependencyOverrides;
   replacements: readonly string[];
+  rootOverrides: readonly string[];
 }>;
 
 const PINS: Readonly<Record<string, Pin>> = Object.freeze({
@@ -63,6 +65,21 @@ const PINS: Readonly<Record<string, Pin>> = Object.freeze({
     integrity:
       "sha512-Ogz/E85h9tlfJzpI6TuFpGcHZFhLrb9Gw8wq9v40CxSCPnv7ahKr6Xgtkn0KYCDQJ8DNn5VoMO8EXr9V5PadyA==",
     tarball: "https://registry.npmjs.org/form-data/-/form-data-2.5.6.tgz",
+  },
+  "opentelemetry-core": {
+    name: "@opentelemetry/core",
+    version: "2.9.0",
+    integrity:
+      "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==",
+    tarball: "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz",
+  },
+  "opentelemetry-propagator-jaeger": {
+    name: "@opentelemetry/propagator-jaeger",
+    version: "2.9.0",
+    integrity:
+      "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==",
+    tarball:
+      "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz",
   },
   qs: {
     name: "qs",
@@ -109,8 +126,9 @@ function pluginReview(
   archiveTarball: string,
   replacements: readonly string[],
   dependencyOverrides: DependencyOverrides = {},
+  rootOverrides: readonly string[] = [],
 ): PluginReview {
-  return { archiveIntegrity, archiveTarball, dependencyOverrides, replacements };
+  return { archiveIntegrity, archiveTarball, dependencyOverrides, replacements, rootOverrides };
 }
 
 function httpDependencyOverrides(hasownVersion: "2.0.3" | "2.0.4"): DependencyOverrides {
@@ -183,17 +201,23 @@ const REVIEWED_PLUGINS: Readonly<Record<string, PluginReview>> = Object.freeze({
   "@openclaw/diagnostics-otel@2026.5.22": pluginReview(
     "sha512-MZAdSDjHhkAjGGzpI5mL6+LB0o9ZIDaSO+gXgudL6X5DzHFMkKocjghxOkHU1NThBbqGzSBLzBzTM3K1ekq+Cg==",
     "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.5.22.tgz",
-    ["protobufjs-8"],
+    ["protobufjs-8", "opentelemetry-core", "opentelemetry-propagator-jaeger"],
+    {},
+    ["opentelemetry-core", "opentelemetry-propagator-jaeger"],
   ),
   "@openclaw/diagnostics-otel@2026.5.27": pluginReview(
     "sha512-YvucuB5qVGrY0rDQEHVNR8LJWXROhu+AUWqTcWcIVTrbOo834KFWtBmxXxuYvQH7Dbhm66cgbBOHZ3TyOHldWA==",
     "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.5.27.tgz",
-    ["protobufjs-8"],
+    ["protobufjs-8", "opentelemetry-core", "opentelemetry-propagator-jaeger"],
+    {},
+    ["opentelemetry-core", "opentelemetry-propagator-jaeger"],
   ),
   "@openclaw/diagnostics-otel@2026.6.10": pluginReview(
     "sha512-EJt0fjk4bcR3N/9u00f1pL0BJYG5yfC09DV3l6rWDmytpE2vUeBZWpx4pOmFDreGV+7DKxhCbQDgDAmvZGjLag==",
     "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.10.tgz",
-    ["protobufjs-7"],
+    ["protobufjs-7", "opentelemetry-core", "opentelemetry-propagator-jaeger"],
+    {},
+    ["opentelemetry-core", "opentelemetry-propagator-jaeger"],
   ),
   "@openclaw/whatsapp@2026.5.22": pluginReview(
     "sha512-hCga/55Iq1NwJ5dka7RQtvI3bPylXZ76/k3ngE9sNswA/GRUuhhYfr4u1YYPtzfx8aMo6JL5ccf5YA633w0bUg==",
@@ -252,12 +276,20 @@ const REVIEWED_TREE_PROBLEMS: Readonly<Record<string, readonly string[]>> = Obje
     "missing: @emnapi/runtime@^1.7.1, required by @napi-rs/wasm-runtime@1.1.4",
   ],
   "@openclaw/diagnostics-otel@2026.5.22": [
+    "invalid: @opentelemetry/core@2.9.0 <plugin-root>/node_modules/@opentelemetry/core",
+    "invalid: @opentelemetry/propagator-jaeger@2.9.0 <plugin-root>/node_modules/@opentelemetry/propagator-jaeger",
     "invalid: protobufjs@8.7.1 <plugin-root>/node_modules/protobufjs",
   ],
   "@openclaw/diagnostics-otel@2026.5.27": [
+    "invalid: @opentelemetry/core@2.9.0 <plugin-root>/node_modules/@opentelemetry/core",
+    "invalid: @opentelemetry/propagator-jaeger@2.9.0 <plugin-root>/node_modules/@opentelemetry/propagator-jaeger",
     "invalid: protobufjs@8.7.1 <plugin-root>/node_modules/protobufjs",
   ],
-  "@openclaw/diagnostics-otel@2026.6.10": [],
+  "@openclaw/diagnostics-otel@2026.6.10": [
+    "extraneous: @protobufjs/inquire@1.1.2 <plugin-root>/node_modules/@protobufjs/inquire",
+    "invalid: @opentelemetry/core@2.9.0 <plugin-root>/node_modules/@opentelemetry/core",
+    "invalid: @opentelemetry/propagator-jaeger@2.9.0 <plugin-root>/node_modules/@opentelemetry/propagator-jaeger",
+  ],
   "@openclaw/whatsapp@2026.5.22": [
     "invalid: protobufjs@8.7.1 <plugin-root>/node_modules/protobufjs",
     "missing: sharp@*, required by baileys@7.0.0-rc13",
@@ -282,13 +314,34 @@ function dependencies(manifest: JsonObject, label: string): JsonObject {
   return value;
 }
 
+function reviewedRootOverrides(spec: string, review: PluginReview): JsonObject {
+  const replacements = new Set(review.replacements);
+  return Object.fromEntries(
+    review.rootOverrides.map((replacementKey) => {
+      const pin = PINS[replacementKey];
+      if (!pin || !replacements.has(replacementKey)) {
+        throw new Error(`${spec} root override ${replacementKey} has no reviewed replacement`);
+      }
+      return [pin.name, pin.version];
+    }),
+  );
+}
+
 function normalizedTreeProblems(pluginRoot: string, problems: unknown): string[] {
   if (!Array.isArray(problems) || problems.some((problem) => typeof problem !== "string")) {
     throw new Error("OpenClaw plugin npm tree problems must be a string array");
   }
   const resolvedRoot = path.resolve(pluginRoot);
+  const observedRoots = [...new Set([realpathSync(resolvedRoot), resolvedRoot])].sort(
+    (left, right) => right.length - left.length,
+  );
   return (problems as string[])
-    .map((problem) => problem.replaceAll(resolvedRoot, "<plugin-root>"))
+    .map((problem) =>
+      observedRoots.reduce(
+        (normalized, observedRoot) => normalized.replaceAll(observedRoot, "<plugin-root>"),
+        problem,
+      ),
+    )
     .sort();
 }
 
@@ -303,6 +356,14 @@ export function assertReviewedOpenClawPluginTreeReport(options: {
   const manifest = readJson(path.join(path.resolve(options.pluginRoot), "package.json"));
   if (packageSpec(manifest) !== options.expectedSpec) {
     throw new Error(`${options.expectedSpec} npm tree package identity changed`);
+  }
+  const review = REVIEWED_PLUGINS[options.expectedSpec];
+  if (
+    review.rootOverrides.length > 0 &&
+    JSON.stringify(manifest.overrides) !==
+      JSON.stringify(reviewedRootOverrides(options.expectedSpec, review))
+  ) {
+    throw new Error(`${options.expectedSpec} root dependency overrides differ from the review`);
   }
   const problems = normalizedTreeProblems(options.pluginRoot, options.report.problems ?? []);
   const reviewed = [...expected].sort();
@@ -487,6 +548,10 @@ function observedVersions(replacementKey: string): readonly string[] {
   if (replacementKey === "body-parser") return ["2.2.2", "2.3.0"];
   if (replacementKey === "content-type") return ["1.0.5", "2.0.0"];
   if (replacementKey === "form-data") return ["2.5.4", "2.5.6"];
+  if (replacementKey === "opentelemetry-core") return ["2.7.1", "2.8.0", "2.9.0"];
+  if (replacementKey === "opentelemetry-propagator-jaeger") {
+    return ["2.7.1", "2.8.0", "2.9.0"];
+  }
   if (replacementKey === "qs") return ["6.14.2", "6.15.2", "6.15.3"];
   if (replacementKey === "undici") return ["8.3.0", "8.5.0"];
   if (replacementKey === "protobufjs-7") return ["7.6.3", "7.6.5"];
@@ -560,6 +625,17 @@ export function patchReviewedOpenClawPluginRoot(
     manifestPath: string;
     ownerName: string;
   }> = [];
+
+  if (review.rootOverrides.length > 0) {
+    const rootOverrides = reviewedRootOverrides(spec, review);
+    if (
+      manifest.overrides !== undefined &&
+      JSON.stringify(manifest.overrides) !== JSON.stringify(rootOverrides)
+    ) {
+      throw new Error(`${spec} root dependency overrides do not match the review`);
+    }
+    manifest.overrides = rootOverrides;
+  }
 
   for (const [ownerName, overrides] of Object.entries(review.dependencyOverrides)) {
     const plannedOwner = plannedByName.get(ownerName);
