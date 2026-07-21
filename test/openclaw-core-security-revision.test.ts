@@ -299,8 +299,8 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
     expect(dockerfile).toContain("npm audit --omit=dev --ignore-scripts --audit-level=low");
     expect(dockerfile).toContain("audit.metadata?.vulnerabilities?.total !== 0");
     expect(dockerfile).toContain("npm ls --omit=dev --all");
-    expect(dockerfile).toContain('plugin_tree="$plugin_work/npm-tree.json"');
-    expect(dockerfile).toContain('npm ls --omit=dev --all --json > "$plugin_tree"');
+    expect(dockerfile).toContain("--verify-plugin-tree");
+    expect(dockerfile).toContain('--expected-package-spec "$plugin_spec"');
   });
 
   it.each(

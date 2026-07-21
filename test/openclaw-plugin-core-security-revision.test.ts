@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  assertReviewedOpenClawPluginTreeReport,
   classifyReviewedPluginCoreInstallTarget,
   patchInstalledOpenClawPluginCore,
   patchReviewedOpenClawPluginRoot,
@@ -59,8 +60,8 @@ function replacementFixture(root: string): string {
   for (const [key, name, version, dependencies] of [
     ["body-parser", "body-parser", "2.3.0", { "content-type": "^2.0.0", qs: "^6.15.0" }],
     ["content-type", "content-type", "2.0.0", {}],
-    ["form-data", "form-data", "2.5.6", {}],
-    ["qs", "qs", "6.15.3", {}],
+    ["form-data", "form-data", "2.5.6", { hasown: "^2.0.4", "mime-types": "^2.1.35" }],
+    ["qs", "qs", "6.15.3", { "side-channel": "^1.1.1" }],
     ["protobufjs-7", "protobufjs", "7.6.5", {}],
     ["protobufjs-8", "protobufjs", "8.7.1", {}],
     ["undici", "undici", "8.5.0", {}],
@@ -98,8 +99,12 @@ function pluginFixture(spec: string) {
     ? {
         "body-parser": "2.2.2",
         "content-type": "1.0.5",
-        "form-data": "2.5.4",
+        express: "5.2.1",
+        "form-data": version === "2026.6.10" ? "2.5.6" : "2.5.4",
+        hasown: version === "2026.6.10" ? "2.0.4" : "2.0.3",
+        "mime-types": "3.0.2",
         qs: "6.15.2",
+        "side-channel": "1.1.0",
         ...(name === "@openclaw/slack" ? { ws: "8.21.0" } : {}),
       }
     : name === "@openclaw/discord"
@@ -118,11 +123,13 @@ function pluginFixture(spec: string) {
     "": { dependencies: { existing: "1.0.0" }, bundleDependencies: ["existing"] },
   };
   for (const [dependency, observedVersion] of Object.entries(dependencyVersions)) {
-    writePackage(path.join(pluginRoot, "node_modules", dependency), {
+    const dependencyManifest = {
       name: dependency,
       version: observedVersion,
-    });
-    packages[`node_modules/${dependency}`] = { version: observedVersion };
+      ...(dependency === "express" ? { dependencies: { "content-type": "^1.0.5" } } : {}),
+    };
+    writePackage(path.join(pluginRoot, "node_modules", dependency), dependencyManifest);
+    packages[`node_modules/${dependency}`] = dependencyManifest;
   }
   fs.writeFileSync(
     path.join(pluginRoot, "npm-shrinkwrap.json"),
@@ -184,6 +191,75 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
     });
   });
 
+  it.each([
+    ["@openclaw/slack@2026.5.22", "2.0.3"],
+    ["@openclaw/msteams@2026.6.10", "2.0.4"],
+  ] as const)("retains the reviewed HTTP compatibility graph for %s", (spec, hasownVersion) => {
+    const target = pluginFixture(spec);
+    patchReviewedOpenClawPluginRoot(target.pluginRoot, target.replacements);
+    const readManifest = (name: string) =>
+      JSON.parse(
+        fs.readFileSync(path.join(target.pluginRoot, "node_modules", name, "package.json"), "utf8"),
+      );
+    expect(readManifest("form-data").dependencies).toMatchObject({
+      hasown: hasownVersion,
+      "mime-types": "3.0.2",
+    });
+    expect(readManifest("qs").dependencies["side-channel"]).toBe("1.1.0");
+    expect(readManifest("express").dependencies["content-type"]).toBe("2.0.0");
+
+    const shrinkwrap = JSON.parse(
+      fs.readFileSync(path.join(target.pluginRoot, "npm-shrinkwrap.json"), "utf8"),
+    );
+    expect(shrinkwrap.packages["node_modules/form-data"].dependencies).toMatchObject({
+      hasown: hasownVersion,
+      "mime-types": "3.0.2",
+    });
+    expect(shrinkwrap.packages["node_modules/qs"].dependencies["side-channel"]).toBe("1.1.0");
+    expect(shrinkwrap.packages["node_modules/express"].dependencies["content-type"]).toBe("2.0.0");
+  });
+
+  it("accepts only the exact reviewed post-remediation npm tree", () => {
+    const target = pluginFixture("@openclaw/slack@2026.5.22");
+    const problems = [
+      "missing: @types/express@^5.0.0, required by @slack/bolt@4.7.2",
+      `invalid: form-data@2.5.6 ${target.pluginRoot}/node_modules/form-data`,
+    ];
+    expect(() =>
+      assertReviewedOpenClawPluginTreeReport({
+        expectedSpec: "@openclaw/slack@2026.5.22",
+        pluginRoot: target.pluginRoot,
+        report: { problems },
+        status: 1,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertReviewedOpenClawPluginTreeReport({
+        expectedSpec: "@openclaw/slack@2026.5.22",
+        pluginRoot: target.pluginRoot,
+        report: {
+          problems: [
+            ...problems,
+            `invalid: side-channel@1.1.0 ${target.pluginRoot}/node_modules/side-channel`,
+          ],
+        },
+        status: 1,
+      }),
+    ).toThrow("npm tree differs from the reviewed baseline");
+  });
+
+  it("accepts a reviewed plugin whose original and remediated trees are clean", () => {
+    const target = pluginFixture("@openclaw/diagnostics-otel@2026.6.10");
+    expect(() =>
+      assertReviewedOpenClawPluginTreeReport({
+        expectedSpec: "@openclaw/diagnostics-otel@2026.6.10",
+        pluginRoot: target.pluginRoot,
+        report: {},
+        status: 0,
+      }),
+    ).not.toThrow();
+  });
+
   it("classifies all reviewed plugin families and rejects unknown revisions", () => {
     expect(classifyReviewedPluginCoreInstallTarget("npm:@openclaw/whatsapp@2026.5.22")).toBe(
       "@openclaw/whatsapp@2026.5.22",
@@ -196,7 +272,7 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
     tempDirectories.push(root);
     const source = path.join(root, "source");
     const staging = path.join(root, "staging", "package");
-    writePackage(source, { name: "packed-plugin", version: "1.0.0" });
+    writePackage(source, { name: "@openclaw/diagnostics-otel", version: "2026.6.10" });
     fs.writeFileSync(path.join(source, "payload.js"), "module.exports = true;\n");
     fs.cpSync(source, staging, { recursive: true });
     const archive = path.join(root, "packed-plugin.tgz");
@@ -204,7 +280,9 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
       encoding: "utf8",
     });
     expect(packed.status, packed.stderr).toBe(0);
-    expect(() => verifyRemediatedArchiveContents(source, archive)).not.toThrow();
+    expect(() =>
+      verifyRemediatedArchiveContents(source, archive, "@openclaw/diagnostics-otel@2026.6.10"),
+    ).not.toThrow();
     fs.writeFileSync(path.join(source, "payload.js"), "module.exports = false;\n");
     expect(() => verifyRemediatedArchiveContents(source, archive)).toThrow(
       "payload.js: contents changed during packing",
@@ -285,6 +363,19 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
         ),
       ).version,
     ).toBe("2.2.2");
+  });
+
+  it("fails closed before changing a plugin when replacement compatibility metadata drifts", () => {
+    const target = pluginFixture("@openclaw/slack@2026.5.22");
+    const before = treeSnapshot(target.pluginRoot);
+    const replacementManifest = path.join(target.replacements, "form-data", "package.json");
+    const replacement = JSON.parse(fs.readFileSync(replacementManifest, "utf8"));
+    replacement.dependencies.hasown = "^2.1.0";
+    fs.writeFileSync(replacementManifest, JSON.stringify(replacement));
+    expect(() => patchReviewedOpenClawPluginRoot(target.pluginRoot, target.replacements)).toThrow(
+      "form-data hasown dependency does not match the review",
+    );
+    expect(treeSnapshot(target.pluginRoot)).toEqual(before);
   });
 
   it("restores every dependency and metadata file after a mid-transaction failure", () => {

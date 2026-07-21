@@ -16,6 +16,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -32,9 +33,12 @@ import { patchReviewedOpenClawPluginAxiosRoot } from "./openclaw-plugin-axios-se
 
 type JsonObject = Record<string, any>;
 type Pin = Readonly<{ integrity: string; name: string; tarball: string; version: string }>;
+type DependencyOverride = Readonly<{ observed: string; published: string; target: string }>;
+type DependencyOverrides = Readonly<Record<string, Readonly<Record<string, DependencyOverride>>>>;
 type PluginReview = Readonly<{
   archiveIntegrity: string;
   archiveTarball: string;
+  dependencyOverrides: DependencyOverrides;
   replacements: readonly string[];
 }>;
 
@@ -104,8 +108,24 @@ function pluginReview(
   archiveIntegrity: string,
   archiveTarball: string,
   replacements: readonly string[],
+  dependencyOverrides: DependencyOverrides = {},
 ): PluginReview {
-  return { archiveIntegrity, archiveTarball, replacements };
+  return { archiveIntegrity, archiveTarball, dependencyOverrides, replacements };
+}
+
+function httpDependencyOverrides(hasownVersion: "2.0.3" | "2.0.4"): DependencyOverrides {
+  return {
+    express: {
+      "content-type": { observed: "1.0.5", published: "^1.0.5", target: "2.0.0" },
+    },
+    "form-data": {
+      hasown: { observed: hasownVersion, published: "^2.0.4", target: hasownVersion },
+      "mime-types": { observed: "3.0.2", published: "^2.1.35", target: "3.0.2" },
+    },
+    qs: {
+      "side-channel": { observed: "1.1.0", published: "^1.1.1", target: "1.1.0" },
+    },
+  };
 }
 
 const REVIEWED_PLUGINS: Readonly<Record<string, PluginReview>> = Object.freeze({
@@ -113,31 +133,37 @@ const REVIEWED_PLUGINS: Readonly<Record<string, PluginReview>> = Object.freeze({
     "sha512-KEy2Ct9ydjV1gFE7GWaOexnYsRWnOTtBqhYuKSE/sTnbu3guyz67L7yJxIXD8t9qh8m+ChdPpNZ1Lz+1iMpPjg==",
     "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.5.22.tgz",
     SLACK_REPLACEMENTS,
+    httpDependencyOverrides("2.0.3"),
   ),
   "@openclaw/msteams@2026.5.22": pluginReview(
     "sha512-yiO8SXS77RSgKV8cG66TZS7m9ZneabN9toYN+EqmqJUf3NlADNVzLVEZTwFKDovg6eP7E8ihj2b0bJjOrb+ovA==",
     "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.5.22.tgz",
     HTTP_REPLACEMENTS,
+    httpDependencyOverrides("2.0.3"),
   ),
   "@openclaw/slack@2026.5.27": pluginReview(
     "sha512-A4SGrW52uLEVDEFqxXyLQGY+q0yc2I6IQ992HdumVGu3Cw1yc6g2P4D612paMORjOKe+TSk7/5KMUGqRbtCzpA==",
     "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.5.27.tgz",
     SLACK_REPLACEMENTS,
+    httpDependencyOverrides("2.0.3"),
   ),
   "@openclaw/msteams@2026.5.27": pluginReview(
     "sha512-zKMIt/7Y0JmuYOFIgG1uzXw24Y+jWoRntS7v7WnOArbT7jp5v3ld1/bfuzd195viHd5ViJZ7SftR6VUG/HvVzQ==",
     "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.5.27.tgz",
     HTTP_REPLACEMENTS,
+    httpDependencyOverrides("2.0.3"),
   ),
   "@openclaw/slack@2026.6.10": pluginReview(
     "sha512-OOsMLjPcbWhQRM5XDwfdrACjJmKqavFtpuIlhHAXWrLrd/p7SyIVE9AoKS0yxOx6bqGDIMJ9+knzdViHMLgBdA==",
     "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.6.10.tgz",
     SLACK_REPLACEMENTS,
+    httpDependencyOverrides("2.0.4"),
   ),
   "@openclaw/msteams@2026.6.10": pluginReview(
     "sha512-GjHnCPvjbnI0C7mEFcdT2uKDH4/WwOe2dZBfQiWxBtkE76m6TNG0J9dJjD4mc8/pk8rXSO0cWw+KV9jzWtF9VA==",
     "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.6.10.tgz",
     HTTP_REPLACEMENTS,
+    httpDependencyOverrides("2.0.4"),
   ),
   "@openclaw/discord@2026.5.22": pluginReview(
     "sha512-Kgvnx/jcNmgKmULO7IonCX/IiXGkYbtf8EYcthVi/TeV7iT7OS08y3Jauv+PvWY+vtrfUZ+79fPMSgIKLisdkw==",
@@ -185,6 +211,140 @@ const REVIEWED_PLUGINS: Readonly<Record<string, PluginReview>> = Object.freeze({
     ["protobufjs-7"],
   ),
 });
+
+const REVIEWED_TREE_PROBLEMS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "@openclaw/slack@2026.5.22": [
+    "missing: @types/express@^5.0.0, required by @slack/bolt@4.7.2",
+    "invalid: form-data@2.5.6 <plugin-root>/node_modules/form-data",
+  ],
+  "@openclaw/msteams@2026.5.22": [
+    "invalid: uuid@14.0.0 <plugin-root>/node_modules/uuid",
+    "invalid: form-data@2.5.6 <plugin-root>/node_modules/form-data",
+  ],
+  "@openclaw/slack@2026.5.27": [
+    "missing: @types/express@^5.0.0, required by @slack/bolt@4.7.2",
+    "invalid: form-data@2.5.6 <plugin-root>/node_modules/form-data",
+  ],
+  "@openclaw/msteams@2026.5.27": [
+    "invalid: uuid@14.0.0 <plugin-root>/node_modules/uuid",
+    "invalid: form-data@2.5.6 <plugin-root>/node_modules/form-data",
+  ],
+  "@openclaw/slack@2026.6.10": [
+    "missing: @types/express@^5.0.0, required by @slack/bolt@4.7.3",
+    "invalid: @types/retry@0.12.5 <plugin-root>/node_modules/@types/retry",
+    "invalid: form-data@2.5.6 <plugin-root>/node_modules/form-data",
+  ],
+  "@openclaw/msteams@2026.6.10": [
+    "invalid: uuid@14.0.0 <plugin-root>/node_modules/uuid",
+    "invalid: form-data@2.5.6 <plugin-root>/node_modules/form-data",
+  ],
+  "@openclaw/discord@2026.5.22": [
+    "invalid: opusscript@0.1.1 <plugin-root>/node_modules/opusscript",
+    "missing: @emnapi/core@^1.7.1, required by @napi-rs/wasm-runtime@1.1.4",
+    "missing: @emnapi/runtime@^1.7.1, required by @napi-rs/wasm-runtime@1.1.4",
+  ],
+  "@openclaw/discord@2026.5.27": [
+    "missing: @emnapi/core@^1.7.1, required by @napi-rs/wasm-runtime@1.1.4",
+    "missing: @emnapi/runtime@^1.7.1, required by @napi-rs/wasm-runtime@1.1.4",
+  ],
+  "@openclaw/discord@2026.6.10": [
+    "missing: @emnapi/core@^1.7.1, required by @napi-rs/wasm-runtime@1.1.4",
+    "missing: @emnapi/runtime@^1.7.1, required by @napi-rs/wasm-runtime@1.1.4",
+  ],
+  "@openclaw/diagnostics-otel@2026.5.22": [
+    "invalid: protobufjs@8.7.1 <plugin-root>/node_modules/protobufjs",
+  ],
+  "@openclaw/diagnostics-otel@2026.5.27": [
+    "invalid: protobufjs@8.7.1 <plugin-root>/node_modules/protobufjs",
+  ],
+  "@openclaw/diagnostics-otel@2026.6.10": [],
+  "@openclaw/whatsapp@2026.5.22": [
+    "invalid: protobufjs@8.7.1 <plugin-root>/node_modules/protobufjs",
+    "missing: sharp@*, required by baileys@7.0.0-rc13",
+    "invalid: file-type@22.0.1 <plugin-root>/node_modules/file-type",
+  ],
+  "@openclaw/whatsapp@2026.5.27": [
+    "invalid: protobufjs@8.7.1 <plugin-root>/node_modules/protobufjs",
+    "missing: sharp@*, required by baileys@7.0.0-rc13",
+    "invalid: file-type@22.0.1 <plugin-root>/node_modules/file-type",
+  ],
+  "@openclaw/whatsapp@2026.6.10": [
+    "missing: sharp@*, required by baileys@7.0.0-rc13",
+    "invalid: file-type@22.0.1 <plugin-root>/node_modules/file-type",
+  ],
+});
+
+function dependencies(manifest: JsonObject, label: string): JsonObject {
+  const value = manifest.dependencies;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must declare dependencies`);
+  }
+  return value;
+}
+
+function normalizedTreeProblems(pluginRoot: string, problems: unknown): string[] {
+  if (!Array.isArray(problems) || problems.some((problem) => typeof problem !== "string")) {
+    throw new Error("OpenClaw plugin npm tree problems must be a string array");
+  }
+  const resolvedRoot = path.resolve(pluginRoot);
+  return (problems as string[])
+    .map((problem) => problem.replaceAll(resolvedRoot, "<plugin-root>"))
+    .sort();
+}
+
+export function assertReviewedOpenClawPluginTreeReport(options: {
+  expectedSpec: string;
+  pluginRoot: string;
+  report: JsonObject;
+  status: number;
+}): void {
+  const expected = REVIEWED_TREE_PROBLEMS[options.expectedSpec];
+  if (!expected) throw new Error(`${options.expectedSpec} has no reviewed npm tree baseline`);
+  const manifest = readJson(path.join(path.resolve(options.pluginRoot), "package.json"));
+  if (packageSpec(manifest) !== options.expectedSpec) {
+    throw new Error(`${options.expectedSpec} npm tree package identity changed`);
+  }
+  const problems = normalizedTreeProblems(options.pluginRoot, options.report.problems ?? []);
+  const reviewed = [...expected].sort();
+  if (
+    !Number.isInteger(options.status) ||
+    options.status < 0 ||
+    options.status > 1 ||
+    (options.status === 0) !== (problems.length === 0) ||
+    JSON.stringify(problems) !== JSON.stringify(reviewed)
+  ) {
+    throw new Error(
+      `${options.expectedSpec} npm tree differs from the reviewed baseline: ${JSON.stringify({
+        status: options.status,
+        problems,
+        reviewed,
+      })}`,
+    );
+  }
+}
+
+export function verifyReviewedOpenClawPluginTree(pluginRoot: string, expectedSpec: string): void {
+  const resolvedRoot = path.resolve(pluginRoot);
+  requireRealDirectory(resolvedRoot, `${expectedSpec} npm tree root`);
+  const result = spawnSync("npm", ["ls", "--omit=dev", "--all", "--json"], {
+    cwd: resolvedRoot,
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  let report: JsonObject;
+  try {
+    report = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`${expectedSpec} npm tree output was not JSON: ${String(error)}`);
+  }
+  assertReviewedOpenClawPluginTreeReport({
+    expectedSpec,
+    pluginRoot: resolvedRoot,
+    report,
+    status: result.status ?? 2,
+  });
+}
 
 function readJson(file: string): JsonObject {
   const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -361,6 +521,7 @@ export function patchReviewedOpenClawPluginRoot(
     ...(Array.isArray(root.bundleDependencies) ? root.bundleDependencies : []),
   ]);
 
+  const packages = shrinkwrap.packages as JsonObject;
   const planned = review.replacements.map((replacementKey) => {
     const pin = PINS[replacementKey];
     if (!pin) throw new Error(`${spec} uses an unknown reviewed replacement: ${replacementKey}`);
@@ -374,17 +535,79 @@ export function patchReviewedOpenClawPluginRoot(
       throw new Error(`${spec} has unexpected installed ${pin.name}@${String(installed.version)}`);
     }
     const replacement = replacementDirectory(replacementRoot, replacementKey);
-    return { installedRoot, pin, replacement };
+    const replacementManifest = readJson(path.join(replacement, "package.json"));
+    return { installedRoot, pin, replacement, replacementKey, replacementManifest };
   });
+  const plannedByName = new Map(planned.map((replacement) => [replacement.pin.name, replacement]));
+  const installedOwnerReplacements: Array<{
+    contents: string;
+    manifestPath: string;
+    ownerName: string;
+  }> = [];
 
-  for (const { pin, replacement } of planned) {
+  for (const [ownerName, overrides] of Object.entries(review.dependencyOverrides)) {
+    const plannedOwner = plannedByName.get(ownerName);
+    const ownerRoot = plannedOwner
+      ? plannedOwner.replacement
+      : path.join(pluginRoot, "node_modules", ownerName);
+    requireRealDirectory(ownerRoot, `${spec} compatibility owner ${ownerName}`);
+    const ownerManifestPath = path.join(ownerRoot, "package.json");
+    const ownerManifest = plannedOwner
+      ? plannedOwner.replacementManifest
+      : readJson(ownerManifestPath);
+    const ownerDependencies = dependencies(ownerManifest, `${spec} ${ownerName} manifest`);
+    const ownerLock = packages[`node_modules/${ownerName}`] as JsonObject | undefined;
+    if (!ownerLock || typeof ownerLock !== "object" || Array.isArray(ownerLock)) {
+      throw new Error(`${spec} shrinkwrap is missing ${ownerName}`);
+    }
+    const ownerLockDependencies = plannedOwner
+      ? undefined
+      : dependencies(ownerLock, `${spec} ${ownerName} shrinkwrap entry`);
+    for (const [dependencyName, override] of Object.entries(overrides)) {
+      if (ownerDependencies[dependencyName] !== override.published) {
+        throw new Error(
+          `${spec} ${ownerName} ${dependencyName} dependency does not match the review`,
+        );
+      }
+      if (ownerLockDependencies && ownerLockDependencies[dependencyName] !== override.published) {
+        throw new Error(
+          `${spec} ${ownerName} ${dependencyName} shrinkwrap dependency does not match the review`,
+        );
+      }
+      const installedDependencyRoot = path.join(pluginRoot, "node_modules", dependencyName);
+      requireRealDirectory(
+        installedDependencyRoot,
+        `${spec} compatibility dependency ${dependencyName}`,
+      );
+      const installedDependency = readJson(path.join(installedDependencyRoot, "package.json"));
+      if (
+        installedDependency.name !== dependencyName ||
+        installedDependency.version !== override.observed
+      ) {
+        throw new Error(`${spec} ${dependencyName} compatibility state does not match the review`);
+      }
+      const replacementDependency = plannedByName.get(dependencyName);
+      const retainedVersion = replacementDependency?.pin.version ?? override.observed;
+      if (override.target !== retainedVersion) {
+        throw new Error(`${spec} ${dependencyName} compatibility target is inconsistent`);
+      }
+      ownerDependencies[dependencyName] = override.target;
+      if (ownerLockDependencies) ownerLockDependencies[dependencyName] = override.target;
+    }
+    if (!plannedOwner) {
+      installedOwnerReplacements.push({
+        contents: jsonContents(ownerManifest),
+        manifestPath: ownerManifestPath,
+        ownerName,
+      });
+    }
+  }
+
+  for (const { pin, replacementManifest } of planned) {
     manifest.dependencies = { ...manifest.dependencies, [pin.name]: pin.version };
     root.dependencies = { ...root.dependencies, [pin.name]: pin.version };
     bundled.add(pin.name);
-    shrinkwrap.packages[`node_modules/${pin.name}`] = lockEntry(
-      pin,
-      readJson(path.join(replacement, "package.json")),
-    );
+    packages[`node_modules/${pin.name}`] = lockEntry(pin, replacementManifest);
   }
   manifest.bundledDependencies = [...bundled].sort();
   root.bundleDependencies = [...bundled].sort();
@@ -392,12 +615,24 @@ export function patchReviewedOpenClawPluginRoot(
   const shrinkwrapReplacement = jsonContents(shrinkwrap);
   const staged: StagedReplacement[] = [];
   try {
-    for (const { installedRoot, pin, replacement } of planned) {
+    for (const { installedRoot, pin, replacement, replacementManifest } of planned) {
+      const stagedDependency = stageDirectoryReplacement({
+        label: `${spec} ${pin.name} dependency`,
+        livePath: installedRoot,
+        sourcePath: replacement,
+      });
+      writeFileSync(
+        path.join(stagedDependency.stagedPath, "package.json"),
+        jsonContents(replacementManifest),
+      );
+      staged.push(stagedDependency);
+    }
+    for (const owner of installedOwnerReplacements) {
       staged.push(
-        stageDirectoryReplacement({
-          label: `${spec} ${pin.name} dependency`,
-          livePath: installedRoot,
-          sourcePath: replacement,
+        stageFileReplacement({
+          contents: owner.contents,
+          label: `${spec} ${owner.ownerName} compatibility manifest`,
+          livePath: owner.manifestPath,
         }),
       );
     }
@@ -428,6 +663,39 @@ export function patchReviewedOpenClawPluginRoot(
           const installed = readJson(path.join(installedRoot, "package.json"));
           if (installed.name !== pin.name || installed.version !== pin.version) {
             throw new Error(`${spec} did not retain the reviewed ${pin.name} remediation`);
+          }
+        }
+        const committedShrinkwrap = readJson(shrinkwrapPath);
+        for (const [ownerName, overrides] of Object.entries(review.dependencyOverrides)) {
+          const ownerManifest = readJson(
+            path.join(pluginRoot, "node_modules", ownerName, "package.json"),
+          );
+          const ownerDependencies = dependencies(
+            ownerManifest,
+            `${spec} committed ${ownerName} manifest`,
+          );
+          const ownerLock = committedShrinkwrap.packages?.[`node_modules/${ownerName}`];
+          const ownerLockDependencies = dependencies(
+            ownerLock,
+            `${spec} committed ${ownerName} shrinkwrap entry`,
+          );
+          for (const [dependencyName, override] of Object.entries(overrides)) {
+            if (
+              ownerDependencies[dependencyName] !== override.target ||
+              ownerLockDependencies[dependencyName] !== override.target
+            ) {
+              throw new Error(
+                `${spec} did not retain the reviewed ${ownerName} ${dependencyName} compatibility metadata`,
+              );
+            }
+            const dependency = readJson(
+              path.join(pluginRoot, "node_modules", dependencyName, "package.json"),
+            );
+            if (dependency.version !== override.target) {
+              throw new Error(
+                `${spec} did not retain the reviewed ${dependencyName} compatibility package`,
+              );
+            }
           }
         }
       },
@@ -513,7 +781,11 @@ function safeArchiveMembers(archivePath: string): string[] {
   return members;
 }
 
-export function verifyRemediatedArchiveContents(packageRoot: string, archivePath: string): void {
+export function verifyRemediatedArchiveContents(
+  packageRoot: string,
+  archivePath: string,
+  expectedSpec?: string,
+): void {
   const resolvedPackageRoot = path.resolve(packageRoot);
   const resolvedArchive = path.resolve(archivePath);
   const source = contentSnapshot(resolvedPackageRoot, "remediated plugin source tree");
@@ -537,6 +809,7 @@ export function verifyRemediatedArchiveContents(packageRoot: string, archivePath
         `remediated plugin archive contents changed during packing: ${changes.join("; ")}`,
       );
     }
+    if (expectedSpec) verifyReviewedOpenClawPluginTree(unpackedRoot, expectedSpec);
   } finally {
     rmSync(unpackedRoot, { recursive: true, force: true });
   }
@@ -616,7 +889,6 @@ export function materializeReviewedPluginSecurityRevision(options: {
   if (patchReviewedOpenClawPluginRoot(packageRoot, options.replacementRoot) !== expectedSpec) {
     throw new Error(`${expectedSpec} remediated package identity changed`);
   }
-
   const pack = spawnSync(
     "npm",
     [
@@ -650,7 +922,7 @@ export function materializeReviewedPluginSecurityRevision(options: {
     if (report[0].integrity !== observedIntegrity) {
       throw new Error(`${expectedSpec} npm pack integrity report changed`);
     }
-    verifyRemediatedArchiveContents(packageRoot, remediatedArchive);
+    verifyRemediatedArchiveContents(packageRoot, remediatedArchive, expectedSpec);
     const remediatedSpec = JSON.parse(runTar(["-xOzf", remediatedArchive, "package/package.json"]));
     if (packageSpec(remediatedSpec) !== expectedSpec) {
       throw new Error(`${expectedSpec} remediated archive identity changed`);
@@ -678,6 +950,8 @@ if (isMainModule()) {
   try {
     if (args.includes("--patch-plugin-root")) {
       patchReviewedOpenClawPluginRoot(value("--patch-plugin-root"), value("--replacement-root"));
+    } else if (args.includes("--verify-plugin-tree")) {
+      verifyReviewedOpenClawPluginTree(value("--plugin-root"), value("--expected-package-spec"));
     } else if (args.includes("--classify-install-target")) {
       process.stdout.write(
         classifyReviewedPluginCoreInstallTarget(value("--classify-install-target")),
