@@ -27,6 +27,15 @@ const FS_SAFE_INTEGRITY =
   "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==";
 const FS_SAFE_TARBALL = "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz";
 const RUN_TIMEOUT_MS = 5 * 60_000;
+const NPM_LS_ARGS = [
+  "ls",
+  "--global",
+  "--depth=1",
+  "openclaw",
+  "@openclaw/fs-safe",
+  "tar",
+  "jszip",
+] as const;
 
 type LockedPackage = Readonly<{
   hasOptionalDependencies: boolean;
@@ -43,6 +52,7 @@ type ProbeEvidence = Readonly<{
     target: string | null;
   }>;
   npmLs: Readonly<{
+    args: readonly string[];
     exitCode: number;
     output: string;
   }>;
@@ -188,10 +198,8 @@ const command = spawnSync(entrypoint, ["--version"], {
   env: { ...process.env, HOME: "/tmp/openclaw-security-revision-home" },
   stdio: ["ignore", "pipe", "pipe"],
 });
-const npmLs = spawnSync(
-  "npm",
-  ["ls", "--global", "--all", "openclaw", "@openclaw/fs-safe", "tar", "jszip"],
-  {
+const npmLsArgs = ${JSON.stringify(NPM_LS_ARGS)};
+const npmLs = spawnSync("npm", npmLsArgs, {
     encoding: "utf8",
     env: {
       ...process.env,
@@ -200,8 +208,7 @@ const npmLs = spawnSync(
     },
     maxBuffer: 4 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
-  },
-);
+});
 
 let commandTarget = null;
 try {
@@ -220,6 +227,7 @@ const evidence = {
   ),
   fsSafeOptionalDependencies: fsSafePackage.optionalDependencies ?? null,
   npmLs: {
+    args: npmLsArgs,
     exitCode: npmLs.status ?? -1,
     output: String(npmLs.stderr || npmLs.stdout || "").trim().slice(-4000),
   },
@@ -307,6 +315,7 @@ function exactEvidence(): ProbeEvidence {
     fsSafeHasOptionalDependencies: false,
     fsSafeOptionalDependencies: null,
     npmLs: {
+      args: [...NPM_LS_ARGS],
       exitCode: 0,
       output: "",
     },
@@ -364,6 +373,7 @@ function requireExactRemediation(evidence: ProbeEvidence): void {
   expect(evidence.command.exitCode).toBe(0);
   expect(evidence.command.output).toMatch(/\b2026\.6\.10\b/u);
   expect(evidence.command.target).toBe(`${OPENCLAW_ROOT}/openclaw.mjs`);
+  expect(evidence.npmLs.args).toEqual(NPM_LS_ARGS);
   expect(evidence.npmLs.exitCode).toBe(0);
   expect(evidence.openClaw.name).toBe("openclaw");
   expect(evidence.openClaw.version).toBe("2026.6.10");
@@ -462,7 +472,10 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
       }),
     ).toThrow();
     expect(() =>
-      requireExactRemediation({ ...good, npmLs: { exitCode: 1, output: "invalid graph" } }),
+      requireExactRemediation({
+        ...good,
+        npmLs: { ...good.npmLs, exitCode: 1, output: "invalid graph" },
+      }),
     ).toThrow();
   });
 });
