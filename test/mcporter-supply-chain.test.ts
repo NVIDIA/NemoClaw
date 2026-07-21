@@ -30,12 +30,12 @@ type DependencyNode = {
 };
 
 function findDependency(root: DependencyNode, name: string): DependencyNode | undefined {
-  if (root.dependencies?.[name]) return root.dependencies[name];
-  for (const dependency of Object.values(root.dependencies ?? {})) {
-    const nested = findDependency(dependency, name);
-    if (nested) return nested;
-  }
-  return undefined;
+  return (
+    root.dependencies?.[name] ??
+    Object.values(root.dependencies ?? {})
+      .map((dependency) => findDependency(dependency, name))
+      .find((dependency) => dependency !== undefined)
+  );
 }
 
 function extractIntegrityGate(contents: string): string {
