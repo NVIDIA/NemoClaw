@@ -131,6 +131,7 @@ RUN set -euo pipefail; \
         (cd "$OPENCLAW_ROOT" && npm shrinkwrap --ignore-scripts --omit=dev); \
         GENERATED_SHRINKWRAP=1; \
     fi; \
+    (cd "$OPENCLAW_ROOT" && npm ls --omit=dev --all); \
     AUDIT_RESULT="$(mktemp)"; \
     if ! (cd "$OPENCLAW_ROOT" && npm audit --omit=dev --ignore-scripts --audit-level=low --json > "$AUDIT_RESULT"); then \
         cat "$AUDIT_RESULT" >&2; \
