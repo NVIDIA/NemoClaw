@@ -68,6 +68,7 @@ function runAuditProbe(
     ["--experimental-strip-types", "--input-type=module", "--eval", AUDIT_PROBE_SOURCE],
     {
       encoding: "utf8",
+      timeout: 30_000,
       input: JSON.stringify({
         expected: CONFIG.archiveReview.expectedFindings,
         operation: options.operation ?? "assert",
