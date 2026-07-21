@@ -66,6 +66,11 @@ export type PackageInventory = Readonly<{
   version: string;
 }>;
 
+export type InstalledPackageResolution = PackageInventory &
+  Readonly<{
+    resolvedNode: string;
+  }>;
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG_PATH = path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json");
 const SEVERITIES: readonly Severity[] = ["info", "low", "moderate", "high", "critical"];
@@ -334,6 +339,71 @@ export function installedPackageInventory(
   return inventory.sort((left, right) => left.node.localeCompare(right.node));
 }
 
+export function installedPackageResolutionInventory(
+  directory: string,
+  expectedInventory: readonly PackageInventory[],
+): InstalledPackageResolution[] {
+  const root = path.resolve(directory);
+  return expectedInventory
+    .map((expected) => {
+      const directNode = `node_modules/${expected.packageName}`;
+      const nestedSuffix = `/node_modules/${expected.packageName}`;
+      if (expected.node !== directNode && !expected.node.endsWith(nestedSuffix)) {
+        throw new Error(
+          `reviewed installed package node has an unsupported layout: ${expected.node}`,
+        );
+      }
+      const parentNode =
+        expected.node === directNode ? "" : expected.node.slice(0, -nestedSuffix.length);
+      const parentDirectory = path.resolve(root, parentNode);
+      const parentRelative = path.relative(root, parentDirectory);
+      if (parentRelative.startsWith("..") || path.isAbsolute(parentRelative)) {
+        throw new Error(`reviewed installed package parent escapes the graph: ${expected.node}`);
+      }
+      const parentManifest = object(
+        JSON.parse(fs.readFileSync(path.join(parentDirectory, "package.json"), "utf8")),
+        `installed package parent ${parentDirectory}`,
+      );
+      const parentDependencies = object(
+        parentManifest.dependencies,
+        `installed package parent dependencies ${parentDirectory}`,
+      );
+      if (typeof parentDependencies[expected.packageName] !== "string") {
+        throw new Error(
+          `installed package parent no longer declares ${expected.packageName}: ${expected.node}`,
+        );
+      }
+
+      let current = parentDirectory;
+      while (true) {
+        const packageRoot = path.join(current, "node_modules", expected.packageName);
+        const manifestPath = path.join(packageRoot, "package.json");
+        if (fs.existsSync(manifestPath)) {
+          const manifest = object(
+            JSON.parse(fs.readFileSync(manifestPath, "utf8")),
+            `resolved installed package ${packageRoot}`,
+          );
+          if (manifest.name !== expected.packageName || manifest.version !== expected.version) {
+            throw new Error(
+              `installed package resolution changed for ${expected.node}; expected ${expected.packageName}@${expected.version}`,
+            );
+          }
+          return {
+            ...expected,
+            resolvedNode: path.relative(root, packageRoot).split(path.sep).join("/"),
+          };
+        }
+        if (current === root) break;
+        const parent = path.dirname(current);
+        const relative = path.relative(root, parent);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) break;
+        current = parent;
+      }
+      throw new Error(`installed package cannot resolve ${expected.packageName}: ${expected.node}`);
+    })
+    .sort((left, right) => left.node.localeCompare(right.node));
+}
+
 function expectedInventory(
   packages: readonly RemediatedPackage[],
   version: "vulnerable" | "remediated",
@@ -591,9 +661,25 @@ function materializeRemediatedInstalledGraph(
     destination,
     historicalReview.remediatedPackages.map((entry) => entry.name),
   );
-  if (JSON.stringify(installedInventory) !== JSON.stringify(remediated.inventory)) {
+  const installedResolutions = installedPackageResolutionInventory(
+    destination,
+    remediated.inventory,
+  );
+  const expectedPhysicalInventory = [
+    ...new Map(
+      installedResolutions.map((entry) => [
+        entry.resolvedNode,
+        {
+          node: entry.resolvedNode,
+          packageName: entry.packageName,
+          version: entry.version,
+        },
+      ]),
+    ).values(),
+  ].sort((left, right) => left.node.localeCompare(right.node));
+  if (JSON.stringify(installedInventory) !== JSON.stringify(expectedPhysicalInventory)) {
     throw new Error(
-      `installed remediated npm package inventory is inconsistent\nExpected: ${JSON.stringify(remediated.inventory)}\nActual:   ${JSON.stringify(installedInventory)}`,
+      `installed remediated npm package inventory is inconsistent\nExpected: ${JSON.stringify(expectedPhysicalInventory)}\nActual:   ${JSON.stringify(installedInventory)}`,
     );
   }
   fs.writeFileSync(
@@ -602,7 +688,8 @@ function materializeRemediatedInstalledGraph(
       {
         graph: historicalReview.graphLabel,
         packages: installedInventory,
-        schemaVersion: 1,
+        resolutions: installedResolutions,
+        schemaVersion: 2,
       },
       null,
       2,
