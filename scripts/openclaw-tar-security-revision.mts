@@ -107,7 +107,7 @@ export function planHistoricalRelease(releaseTag: string): HistoricalReleasePlan
     releaseTag,
     openClawVersion,
     vulnerableTarVersion: OPENCLAW_TAR_LAYOUTS.get(openClawVersion)?.direct as string,
-    revisionTag: `${releaseTag}-cve-2026-59873.1`,
+    revisionTag: `${releaseTag}-security-2026-07-20.1`,
   };
 }
 

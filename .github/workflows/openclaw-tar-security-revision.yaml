@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Images / OpenClaw tar security revision
+name: Images / Historical OpenClaw security revision
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: openclaw-tar-security-revision
+  group: historical-openclaw-security-revision
   cancel-in-progress: false
 
 jobs:

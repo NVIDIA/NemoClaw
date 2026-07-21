@@ -23,7 +23,7 @@ const workflow = YAML.parse(
   ),
 ) as Workflow;
 
-describe("OpenClaw tar security revision publication (#7272)", () => {
+describe("historical OpenClaw security revision publication (#7272)", () => {
   it("keeps publication inside the immutable historical-image boundary", () => {
     expect(Object.keys(workflow.on ?? {})).toEqual(["workflow_dispatch"]);
     expect(workflow.permissions).toEqual({ contents: "read", packages: "write" });

@@ -98,23 +98,23 @@ afterEach(() => {
   }
 });
 
-describe("historical OpenClaw tar security revisions (#7272)", () => {
+describe("historical OpenClaw security revisions (#7272)", () => {
   it("maps only reviewed historical release tags to new immutable revision tags", () => {
     expect(planHistoricalRelease("v0.0.50")).toMatchObject({
       openClawVersion: "2026.5.18",
       vulnerableTarVersion: "7.5.15",
-      revisionTag: "v0.0.50-cve-2026-59873.1",
+      revisionTag: "v0.0.50-security-2026-07-20.1",
     });
     expect(planHistoricalRelease("v0.0.52")).toMatchObject({
       openClawVersion: "2026.5.22",
       vulnerableTarVersion: "7.5.15",
-      revisionTag: "v0.0.52-cve-2026-59873.1",
+      revisionTag: "v0.0.52-security-2026-07-20.1",
     });
     expect(planHistoricalRelease("v0.0.74").openClawVersion).toBe("2026.5.27");
     expect(planHistoricalRelease("v0.0.89")).toMatchObject({
       openClawVersion: "2026.6.10",
       vulnerableTarVersion: "7.5.16",
-      revisionTag: "v0.0.89-cve-2026-59873.1",
+      revisionTag: "v0.0.89-security-2026-07-20.1",
     });
     expect(() => planHistoricalRelease("v0.0.49")).toThrow("outside the reviewed");
     expect(() => planHistoricalRelease("latest")).toThrow("v0.0.N");
