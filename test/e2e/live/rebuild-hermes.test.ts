@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { resolveDirectSandboxContainer } from "../../../src/lib/sandbox/privileged-exec";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
@@ -90,6 +91,14 @@ const LIVE_TIMEOUT_MS = 100 * 60_000;
 // generous diagnostic tail without letting a stuck child exhaust the hosted
 // runner by growing the fixture's in-memory stdout/stderr buffers forever.
 const LONG_COMMAND_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
+
+function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[] {
+  // `openshell sandbox exec` intentionally runs inside Landlock, which cannot
+  // read the immutable `/opt/hermes` runtime. The rebuild contract needs to
+  // seed and inspect that runtime in the managed Docker container itself.
+  const containerId = resolveDirectSandboxContainer(sandboxName, "docker");
+  return ["exec", "--user", "sandbox", "--env", "HOME=/sandbox", containerId, ...command];
+}
 
 interface RegistryData {
   sandboxes?: Record<string, Record<string, unknown>>;
@@ -718,22 +727,17 @@ test(STALE_BASE_REBUILD
   expectExitZero(writeMarker, "write Hermes marker");
 
   const seedKanban = await host.command(
-    "openshell",
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      SANDBOX_NAME,
-      "--",
+    "docker",
+    hermesRuntimeExecArgs(SANDBOX_NAME, [
       "sh",
       "-lc",
       [
         "hermes kanban init",
-        `hermes kanban create ${shellQuote(KANBAN_TASK_TITLE)} --initial-status blocked --json`,
+        `hermes kanban create ${shellQuote(KANBAN_TASK_TITLE)} --json`,
         `mkdir -p ${shellQuote(path.dirname(EXCLUDED_KANBAN_FILE))}`,
         `printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(EXCLUDED_KANBAN_FILE)}`,
       ].join(" && "),
-    ],
+    ]),
     {
       artifactName: "phase-4-seed-hermes-kanban",
       env: testEnv(apiKey),
@@ -856,8 +860,8 @@ test(STALE_BASE_REBUILD
   expect(restoredMarker.stdout).toBe(MARKER_CONTENT);
 
   const hermesVersion = await host.command(
-    "openshell",
-    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "hermes", "--version"],
+    "docker",
+    hermesRuntimeExecArgs(SANDBOX_NAME, ["hermes", "--version"]),
     {
       artifactName: "phase-7-hermes-version-after-rebuild",
       env: testEnv(apiKey),
@@ -876,8 +880,8 @@ test(STALE_BASE_REBUILD
   );
 
   const restoredKanban = await host.command(
-    "openshell",
-    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "hermes", "kanban", "list", "--json"],
+    "docker",
+    hermesRuntimeExecArgs(SANDBOX_NAME, ["hermes", "kanban", "list", "--json"]),
     {
       artifactName: "phase-7-list-kanban-after-rebuild",
       env: testEnv(apiKey),
