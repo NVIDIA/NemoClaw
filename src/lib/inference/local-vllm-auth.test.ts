@@ -62,7 +62,7 @@ function productionManagedBaseUrlResolver(
     BASE_URL,
     "b".repeat(64),
     "GPU-12345678",
-    "1",
+    "2",
     "c".repeat(64),
     apiKeyFingerprint,
     "d".repeat(32),

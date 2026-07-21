@@ -166,6 +166,7 @@ Setting `NEMOCLAW_VLLM_MODEL` remains authoritative; setting `NEMOCLAW_DGX_STATI
 Pass `--station-deepseek` to select the existing `deepseek-v4-flash` recipe explicitly while retaining the same one-confirmation express flow.
 The flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
 Without terminal access, the installer stops before it installs Docker or build dependencies instead of silently continuing with another configuration.
+The registered single-Station Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
 Configure the physical rails and SSH host-key and authentication trust before installation.
 NemoClaw does not modify rail configuration, enroll SSH trust, or reboot either host automatically.
 If either host requires a reboot after pinned prerequisite changes, the installer stops with status `10` and resumes only after the manual reboot with owner-only state tied to the printed exact revision and reciprocal identity.
