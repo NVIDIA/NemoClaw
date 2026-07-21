@@ -19,6 +19,14 @@ type InvocationEnvironment = Readonly<{
 }>;
 
 const PROFILE_NAME = /^[A-Za-z0-9_-]+$/u;
+const PLUGIN_INSTALL_BOOLEAN_OPTIONS = new Set([
+  "-l",
+  "--link",
+  "--force",
+  "--pin",
+  "--dangerously-force-unsafe-install",
+]);
+const PLUGIN_INSTALL_VALUE_OPTIONS = new Set(["--marketplace"]);
 
 export function validateOpenClawStateDirectory(options: {
   effectiveUid?: number;
@@ -131,6 +139,22 @@ export function parseOpenClawPluginInstallInvocation(options: {
       profile = candidate;
       sawProfile = true;
       if (inline === null) index += 1;
+      continue;
+    }
+    const parsingInstallOptions =
+      positional[0]?.value === "plugins" && positional[1]?.value === "install";
+    if (parsingInstallOptions && PLUGIN_INSTALL_BOOLEAN_OPTIONS.has(value)) continue;
+    if (parsingInstallOptions && PLUGIN_INSTALL_VALUE_OPTIONS.has(value)) {
+      const candidate = options.args[index + 1];
+      if (!candidate || candidate.startsWith("-")) return null;
+      index += 1;
+      continue;
+    }
+    if (
+      parsingInstallOptions &&
+      [...PLUGIN_INSTALL_VALUE_OPTIONS].some((option) => value.startsWith(`${option}=`))
+    ) {
+      if (value.endsWith("=")) return null;
       continue;
     }
     positional.push({ index, value });

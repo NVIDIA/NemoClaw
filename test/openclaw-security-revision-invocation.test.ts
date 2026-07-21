@@ -36,6 +36,16 @@ describe("historical OpenClaw security revision invocation", () => {
       stateDirectory: "/home/sandbox/.openclaw-dev",
       targetIndex: 2,
     },
+    {
+      args: ["plugins", "install", "--force", "--pin", "/opt/nemoclaw"],
+      stateDirectory: "/home/sandbox/.openclaw",
+      targetIndex: 4,
+    },
+    {
+      args: ["plugins", "install", "--marketplace", "reviewed", "/opt/nemoclaw"],
+      stateDirectory: "/home/sandbox/.openclaw",
+      targetIndex: 4,
+    },
   ])("mirrors profile selection for $args", ({ args, stateDirectory, targetIndex }) => {
     expect(parseOpenClawPluginInstallInvocation({ args, environment })).toEqual({
       stateDirectory,
@@ -130,6 +140,7 @@ describe("historical OpenClaw security revision invocation", () => {
   it.each([
     ["an option value is not a command", ["--label", "plugins", "install", "/opt/nemoclaw"]],
     ["the install target is absent", ["plugins", "install"]],
+    ["an install option value is absent", ["plugins", "install", "--marketplace"]],
     ["the command follows the option terminator", ["--", "plugins", "install", "/opt/nemoclaw"]],
     [
       "--dev is combined with --profile",
