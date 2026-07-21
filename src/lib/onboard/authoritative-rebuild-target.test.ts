@@ -107,6 +107,7 @@ describe("prepared provider reconfiguration handoff", () => {
     onboardLockAlreadyHeld: true,
     targetGatewayName: "nemoclaw-8081",
     targetGatewayPort: 8081,
+    endpointSource: "onboard" as const,
     rebuildProviderReconfigure: providerTarget,
   };
 
