@@ -140,6 +140,22 @@ describe("historical OpenClaw plugin Axios security revisions", () => {
     expect(classifyReviewedInstallTarget("/opt/nemoclaw")).toBe("");
   });
 
+  it("rejects package metadata replaced by a symbolic link", () => {
+    const target = fixture();
+    const manifest = path.join(target.pluginRoot, "package.json");
+    const movedManifest = path.join(path.dirname(target.pluginRoot), "plugin-package.json");
+    fs.renameSync(manifest, movedManifest);
+    fs.symlinkSync(movedManifest, manifest);
+
+    expect(() =>
+      patchInstalledOpenClawPlugins({
+        homeDirectory: target.homeDirectory,
+        replacementRoot: target.replacementRoot,
+        expectedPackageSpec: "@openclaw/slack@2026.6.10",
+      }),
+    ).toThrow();
+  });
+
   it.each([
     {
       args: ["--profile", "qa", "plugins", "install", "npm:@openclaw/slack@2026.6.10"],

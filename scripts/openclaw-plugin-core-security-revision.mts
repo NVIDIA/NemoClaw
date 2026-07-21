@@ -6,10 +6,13 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  closeSync,
+  constants,
   cpSync,
   existsSync,
+  fstatSync,
   lstatSync,
-  mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -177,14 +180,19 @@ const REVIEWED_PLUGINS: Readonly<Record<string, PluginReview>> = Object.freeze({
 });
 
 function readJson(file: string): JsonObject {
-  const metadata = lstatSync(file);
-  if (!metadata.isFile() || metadata.isSymbolicLink())
-    throw new Error(`${file} must be a regular file`);
-  const parsed = JSON.parse(readFileSync(file, "utf8"));
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${file} must contain a JSON object`);
+  const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    if (!fstatSync(descriptor).isFile()) {
+      throw new Error(`${file} must be a regular file`);
+    }
+    const parsed = JSON.parse(readFileSync(descriptor, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`${file} must contain a JSON object`);
+    }
+    return parsed as JsonObject;
+  } finally {
+    closeSync(descriptor);
   }
-  return parsed as JsonObject;
 }
 
 function writeJson(file: string, value: JsonObject): void {
