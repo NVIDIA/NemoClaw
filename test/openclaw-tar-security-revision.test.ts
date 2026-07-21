@@ -105,6 +105,11 @@ describe("historical OpenClaw tar security revisions (#7272)", () => {
       vulnerableTarVersion: "7.5.15",
       revisionTag: "v0.0.50-cve-2026-59873.1",
     });
+    expect(planHistoricalRelease("v0.0.52")).toMatchObject({
+      openClawVersion: "2026.5.22",
+      vulnerableTarVersion: "7.5.15",
+      revisionTag: "v0.0.52-cve-2026-59873.1",
+    });
     expect(planHistoricalRelease("v0.0.74").openClawVersion).toBe("2026.5.27");
     expect(planHistoricalRelease("v0.0.89")).toMatchObject({
       openClawVersion: "2026.6.10",
@@ -159,6 +164,17 @@ describe("historical OpenClaw tar security revisions (#7272)", () => {
       verifyOpenClawTarRevision({
         openClawRoot: target.openClawRoot,
         expectedOpenClawVersion: "2026.5.27",
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts the reviewed 2026.5.22 direct tar layout with a shrinkwrap", () => {
+    const target = fixture("2026.5.22", "7.5.15", null);
+    patchOpenClawTar({ ...target, expectedOpenClawVersion: "2026.5.22" });
+    expect(() =>
+      verifyOpenClawTarRevision({
+        openClawRoot: target.openClawRoot,
+        expectedOpenClawVersion: "2026.5.22",
       }),
     ).not.toThrow();
   });
