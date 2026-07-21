@@ -96,7 +96,7 @@ if (process.env.FAKE_NPM_INSTALL === "1") {
 if (process.env.FAKE_MCPORTER_INSTALL === "1") {
   const target = path.join(process.env.FAKE_MCPORTER_ROOT, "node_modules", "@hono", "node-server");
   fs.mkdirSync(target, { recursive: true });
-  fs.writeFileSync(path.join(target, "package.json"), JSON.stringify({ name: "@hono/node-server", version: "2.0.5" }));
+  fs.writeFileSync(path.join(target, "package.json"), JSON.stringify({ name: "@hono/node-server", version: "2.0.10" }));
 }
 process.exit(Number(process.env.FAKE_NPM_EXIT || 0));
 `,
@@ -208,11 +208,11 @@ describe("npm security revision wrapper (#7272)", () => {
     ]);
     expect(
       JSON.parse(fs.readFileSync(path.join(target.mcporterRoot, "package.json"), "utf8")).overrides,
-    ).toEqual({ "@hono/node-server": "2.0.5" });
+    ).toEqual({ "@hono/node-server": "2.0.10" });
     expect(
       JSON.parse(fs.readFileSync(path.join(target.mcporterRoot, "package-lock.json"), "utf8"))
         .packages["node_modules/@hono/node-server"].version,
-    ).toBe("2.0.5");
+    ).toBe("2.0.10");
   });
 
   it("restores historical mcporter metadata when its npm ci fails", () => {
