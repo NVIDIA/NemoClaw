@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -11,9 +11,10 @@ const START_SCRIPT = path.join(process.cwd(), "scripts", "nemoclaw-start.sh");
 function sourceBlock(source: string, startMarker: string, endMarker: string): string {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error(`Expected ${startMarker} before ${endMarker} in nemoclaw-start.sh`);
-  }
+  expect(start, `Expected ${startMarker} in nemoclaw-start.sh`).toBeGreaterThanOrEqual(0);
+  expect(end, `Expected ${endMarker} after ${startMarker} in nemoclaw-start.sh`).toBeGreaterThan(
+    start,
+  );
   return source.slice(start, end);
 }
 
