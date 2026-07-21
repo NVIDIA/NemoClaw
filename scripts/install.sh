@@ -4486,10 +4486,14 @@ main() {
   fi
 
   finalize_install
-  if [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]]; then
-    clear_station_dual_pair_resume
-    clear_station_express_resume
-  fi
+  clear_station_resume_after_completed_onboarding
+}
+
+clear_station_resume_after_completed_onboarding() {
+  [[ "${_SELECTED_EXPRESS_PLATFORM:-}" == "DGX Station" ]] || return 0
+  [[ "${ONBOARD_RAN:-false}" == true ]] || return 0
+  clear_station_dual_pair_resume
+  clear_station_express_resume
 }
 
 # Print the completion summary, then propagate a fatal/non-zero result when the

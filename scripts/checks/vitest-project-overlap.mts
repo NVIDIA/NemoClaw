@@ -48,6 +48,7 @@ const INSTALLER_INTEGRATION_TESTS = new Set([
   "test/install-preflight.test.ts",
   "test/install-station-controller-binding.test.ts",
   "test/install-station-pair-preparation.test.ts",
+  "test/install-station-resume-cleanup.test.ts",
   "test/install-station-dgx-os.test.ts",
   "test/install-station-docker-repository.test.ts",
   "test/install-station-host-preparation.test.ts",

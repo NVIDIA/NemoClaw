@@ -755,6 +755,7 @@ describe("Vitest project membership boundary", () => {
       ["test/install-preflight.test.ts", "installer-integration"],
       ["test/install-station-controller-binding.test.ts", "installer-integration"],
       ["test/install-station-pair-preparation.test.ts", "installer-integration"],
+      ["test/install-station-resume-cleanup.test.ts", "installer-integration"],
       ["test/install-station-dgx-os.test.ts", "installer-integration"],
       ["test/install-station-docker-repository.test.ts", "installer-integration"],
       ["test/install-station-host-preparation.test.ts", "installer-integration"],
