@@ -61,6 +61,13 @@ function replacementFixture(root: string): string {
     ["body-parser", "body-parser", "2.3.0", { "content-type": "^2.0.0", qs: "^6.15.0" }],
     ["content-type", "content-type", "2.0.0", {}],
     ["form-data", "form-data", "2.5.6", { hasown: "^2.0.4", "mime-types": "^2.1.35" }],
+    ["opentelemetry-core", "@opentelemetry/core", "2.9.0", {}],
+    [
+      "opentelemetry-propagator-jaeger",
+      "@opentelemetry/propagator-jaeger",
+      "2.9.0",
+      { "@opentelemetry/core": "2.9.0" },
+    ],
     ["qs", "qs", "6.15.3", { "side-channel": "^1.1.1" }],
     ["protobufjs-7", "protobufjs", "7.6.5", {}],
     ["protobufjs-8", "protobufjs", "8.7.1", {}],
@@ -111,6 +118,12 @@ function pluginFixture(spec: string) {
       ? { undici: version === "2026.6.10" ? "8.5.0" : "8.3.0", ws: "8.21.0" }
       : {
           protobufjs: version === "2026.6.10" ? "7.6.3" : "8.4.0",
+          ...(name === "@openclaw/diagnostics-otel"
+            ? {
+                "@opentelemetry/core": version === "2026.6.10" ? "2.8.0" : "2.7.1",
+                "@opentelemetry/propagator-jaeger": version === "2026.6.10" ? "2.8.0" : "2.7.1",
+              }
+            : {}),
           ...(name === "@openclaw/whatsapp" && version === "2026.5.22" ? { ws: "8.20.1" } : {}),
         };
   writePackage(pluginRoot, {
@@ -157,7 +170,14 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
       },
     ],
     ["@openclaw/discord@2026.5.22", { undici: "8.5.0", ws: "8.21.1" }],
-    ["@openclaw/diagnostics-otel@2026.5.27", { protobufjs: "8.7.1" }],
+    [
+      "@openclaw/diagnostics-otel@2026.5.27",
+      {
+        "@opentelemetry/core": "2.9.0",
+        "@opentelemetry/propagator-jaeger": "2.9.0",
+        protobufjs: "8.7.1",
+      },
+    ],
     ["@openclaw/whatsapp@2026.5.22", { protobufjs: "8.7.1", ws: "8.21.1" }],
     ["@openclaw/whatsapp@2026.6.10", { protobufjs: "7.6.5" }],
   ] as const)("patches and synchronizes %s", (spec, expected) => {
@@ -248,16 +268,39 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
     ).toThrow("npm tree differs from the reviewed baseline");
   });
 
-  it("accepts a reviewed plugin whose original and remediated trees are clean", () => {
+  it("accepts the exact reviewed OpenTelemetry override tree", () => {
     const target = pluginFixture("@openclaw/diagnostics-otel@2026.6.10");
+    patchReviewedOpenClawPluginRoot(target.pluginRoot, target.replacements);
+    const aliasedPluginRoot = path.join(path.dirname(target.pluginRoot), "plugin-alias");
+    fs.symlinkSync(target.pluginRoot, aliasedPluginRoot, "dir");
+    const reportedPluginRoot = fs.realpathSync(target.pluginRoot);
+    const report = {
+      problems: [
+        `extraneous: @protobufjs/inquire@1.1.2 ${reportedPluginRoot}/node_modules/@protobufjs/inquire`,
+        `invalid: @opentelemetry/core@2.9.0 ${reportedPluginRoot}/node_modules/@opentelemetry/core`,
+        `invalid: @opentelemetry/propagator-jaeger@2.9.0 ${reportedPluginRoot}/node_modules/@opentelemetry/propagator-jaeger`,
+      ],
+    };
     expect(() =>
       assertReviewedOpenClawPluginTreeReport({
         expectedSpec: "@openclaw/diagnostics-otel@2026.6.10",
-        pluginRoot: target.pluginRoot,
-        report: {},
-        status: 0,
+        pluginRoot: aliasedPluginRoot,
+        report,
+        status: 1,
       }),
     ).not.toThrow();
+    const manifestPath = path.join(target.pluginRoot, "package.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    delete manifest.overrides;
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    expect(() =>
+      assertReviewedOpenClawPluginTreeReport({
+        expectedSpec: "@openclaw/diagnostics-otel@2026.6.10",
+        pluginRoot: aliasedPluginRoot,
+        report,
+        status: 1,
+      }),
+    ).toThrow("root dependency overrides differ from the review");
   });
 
   it("classifies all reviewed plugin families and rejects unknown revisions", () => {
@@ -272,7 +315,30 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
     tempDirectories.push(root);
     const source = path.join(root, "source");
     const staging = path.join(root, "staging", "package");
-    writePackage(source, { name: "@openclaw/diagnostics-otel", version: "2026.6.10" });
+    writePackage(source, {
+      name: "@openclaw/diagnostics-otel",
+      version: "2026.6.10",
+      dependencies: {
+        "@opentelemetry/core": "2.8.0",
+        "@opentelemetry/propagator-jaeger": "2.8.0",
+      },
+      overrides: {
+        "@opentelemetry/core": "2.9.0",
+        "@opentelemetry/propagator-jaeger": "2.9.0",
+      },
+    });
+    writePackage(path.join(source, "node_modules", "@opentelemetry", "core"), {
+      name: "@opentelemetry/core",
+      version: "2.9.0",
+    });
+    writePackage(path.join(source, "node_modules", "@opentelemetry", "propagator-jaeger"), {
+      name: "@opentelemetry/propagator-jaeger",
+      version: "2.9.0",
+    });
+    writePackage(path.join(source, "node_modules", "@protobufjs", "inquire"), {
+      name: "@protobufjs/inquire",
+      version: "1.1.2",
+    });
     fs.writeFileSync(path.join(source, "payload.js"), "module.exports = true;\n");
     fs.cpSync(source, staging, { recursive: true });
     const archive = path.join(root, "packed-plugin.tgz");
@@ -280,9 +346,7 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
       encoding: "utf8",
     });
     expect(packed.status, packed.stderr).toBe(0);
-    expect(() =>
-      verifyRemediatedArchiveContents(source, archive, "@openclaw/diagnostics-otel@2026.6.10"),
-    ).not.toThrow();
+    expect(() => verifyRemediatedArchiveContents(source, archive)).not.toThrow();
     fs.writeFileSync(path.join(source, "payload.js"), "module.exports = false;\n");
     expect(() => verifyRemediatedArchiveContents(source, archive)).toThrow(
       "payload.js: contents changed during packing",

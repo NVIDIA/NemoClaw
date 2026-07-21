@@ -117,6 +117,8 @@ RUN set -euo pipefail; \
     stage_reviewed_package "hono@4.12.30" "sha512-emn+JoJjrN9YTpRDS5it/UI2SO9BAE37T6I3d963RxcZ81G9A4pr2SZTEiiaiKbzx+NKRg5BZ89fCL7gCJCUog==" "https://registry.npmjs.org/hono/-/hono-4.12.30.tgz" "$CORE_REPLACEMENTS/hono"; \
     stage_reviewed_package "@hono/node-server@2.0.5" "sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz" "$CORE_REPLACEMENTS/hono-node-server"; \
     stage_reviewed_package "form-data@2.5.6" "sha512-Ogz/E85h9tlfJzpI6TuFpGcHZFhLrb9Gw8wq9v40CxSCPnv7ahKr6Xgtkn0KYCDQJ8DNn5VoMO8EXr9V5PadyA==" "https://registry.npmjs.org/form-data/-/form-data-2.5.6.tgz" "$CORE_REPLACEMENTS/form-data"; \
+    stage_reviewed_package "@opentelemetry/core@2.9.0" "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==" "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz" "$CORE_REPLACEMENTS/opentelemetry-core"; \
+    stage_reviewed_package "@opentelemetry/propagator-jaeger@2.9.0" "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==" "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz" "$CORE_REPLACEMENTS/opentelemetry-propagator-jaeger"; \
     stage_reviewed_package "linkify-it@5.0.2" "sha512-ONTm2jCMAVZjgQa/Fy1kScXsuOoF5NPTsoFBdE1KVIZ2vAh/r9+Bqo+0jINCBYnavTPQZz38QzFTme79ENoN3Q==" "https://registry.npmjs.org/linkify-it/-/linkify-it-5.0.2.tgz" "$CORE_REPLACEMENTS/linkify-it"; \
     stage_reviewed_package "markdown-it@14.3.0" "sha512-RCEsPjR+sr0x+AuYp601tKTkgFG4YEPLCzHST3cQ/fhlJkqAkz1L2/Qbp1j9qw5SBwQHFBoW8+hoN5xssOF0Tw==" "https://registry.npmjs.org/markdown-it/-/markdown-it-14.3.0.tgz" "$CORE_REPLACEMENTS/markdown-it"; \
     stage_reviewed_package "@modelcontextprotocol/sdk@1.29.0" "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==" "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz" "$CORE_REPLACEMENTS/modelcontextprotocol-sdk"; \
@@ -133,7 +135,7 @@ RUN set -euo pipefail; \
     PLUGIN_CORE_REPLACEMENTS=/usr/local/share/nemoclaw/openclaw-plugin-core-security-replacements-v1; \
     rm -rf "$PLUGIN_CORE_REPLACEMENTS"; \
     mkdir -p "$PLUGIN_CORE_REPLACEMENTS"; \
-    for replacement in body-parser content-type form-data qs protobufjs-7 protobufjs-8 undici ws; do \
+    for replacement in body-parser content-type form-data opentelemetry-core opentelemetry-propagator-jaeger qs protobufjs-7 protobufjs-8 undici ws; do \
         cp -a "$CORE_REPLACEMENTS/$replacement" "$PLUGIN_CORE_REPLACEMENTS/$replacement"; \
     done; \
     rm -rf "$CORE_REPLACEMENTS"; \
@@ -274,7 +276,7 @@ RUN set -euo pipefail; \
         'schema=1' \
         "source=${BASE_IMAGE}" \
         "openclaw=${EXPECTED_OPENCLAW_VERSION}" \
-        'packages=body-parser@2.3.0,content-type@2.0.0,form-data@2.5.6,qs@6.15.3,protobufjs@7.6.5|8.7.1,undici@8.5.0,ws@8.21.1' \
+        'packages=@opentelemetry/core@2.9.0,@opentelemetry/propagator-jaeger@2.9.0,body-parser@2.3.0,content-type@2.0.0,form-data@2.5.6,qs@6.15.3,protobufjs@7.6.5|8.7.1,undici@8.5.0,ws@8.21.1' \
         'scope=@openclaw/slack,@openclaw/msteams,@openclaw/diagnostics-otel,@openclaw/whatsapp,@openclaw/discord' \
         'versions=2026.5.22,2026.5.27,2026.6.10' \
         > "$PLUGIN_CORE_PROVENANCE_TMP"; \
