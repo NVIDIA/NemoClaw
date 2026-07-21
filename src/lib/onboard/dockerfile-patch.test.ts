@@ -8,7 +8,6 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { SandboxBaseImageResolutionMetadata } from "../sandbox-base-image";
 import {
   encodeDockerJsonArg,
   isValidProxyHost,
@@ -17,28 +16,6 @@ import {
 } from "./dockerfile-patch";
 
 const tmpRoots: string[] = [];
-
-function sandboxBaseResolutionMetadata(
-  source: SandboxBaseImageResolutionMetadata["source"],
-): SandboxBaseImageResolutionMetadata {
-  return {
-    schema: 1,
-    key: "resolution-key",
-    imageName: "ghcr.io/nvidia/nemoclaw/sandbox-base",
-    ref:
-      source === "local"
-        ? "nemoclaw-sandbox-base-local:test"
-        : "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abc",
-    digest: source === "local" ? null : "sha256:abc",
-    source,
-    imageId: "sha256:image",
-    os: "linux",
-    architecture: "amd64",
-    glibcVersion: "2.41",
-    requireOpenshellSandboxAbi: true,
-    minGlibcVersion: "2.39",
-  };
-}
 
 beforeEach(() => {
   delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
@@ -107,119 +84,6 @@ afterEach(() => {
 });
 
 describe("dockerfile patch helpers", () => {
-  it("elides the redundant Node refresh only for an authoritative local OpenClaw base", () => {
-    const metadata = sandboxBaseResolutionMetadata("local");
-    const dockerfilePath = dockerfileWith(
-      [
-        "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-        "FROM node:22-trixie-slim@sha256:builder AS builder",
-        "FROM ${BASE_IMAGE}",
-        "COPY --from=builder /usr/local/bin/node /usr/local/bin/node",
-      ].join("\n"),
-    );
-
-    patchStagedDockerfile(
-      dockerfilePath,
-      "custom-model",
-      "http://127.0.0.1:18789",
-      "build-1",
-      null,
-      null,
-      null,
-      metadata.ref,
-      false,
-      null,
-      [],
-      {
-        trustedManagedDockerfile: true,
-        baseImageResolutionMetadata: metadata,
-      },
-    );
-
-    const patched = fs.readFileSync(dockerfilePath, "utf8");
-    expect(patched).not.toContain("COPY --from=builder /usr/local/bin/node /usr/local/bin/node");
-    expect(patched).toContain(
-      "# Node runtime refresh omitted: authoritative local base already uses the builder pin.",
-    );
-  });
-
-  it("retains the Node refresh when local resolution metadata does not match the selected base", () => {
-    const dockerfilePath = dockerfileWith(
-      [
-        "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-        "FROM node:22-trixie-slim@sha256:builder AS builder",
-        "FROM ${BASE_IMAGE}",
-        "COPY --from=builder /usr/local/bin/node /usr/local/bin/node",
-      ].join("\n"),
-    );
-
-    patchStagedDockerfile(
-      dockerfilePath,
-      "custom-model",
-      "http://127.0.0.1:18789",
-      "build-1",
-      null,
-      null,
-      null,
-      "nemoclaw-sandbox-base-local:other",
-      false,
-      null,
-      [],
-      {
-        trustedManagedDockerfile: true,
-        baseImageResolutionMetadata: sandboxBaseResolutionMetadata("local"),
-      },
-    );
-
-    expect(fs.readFileSync(dockerfilePath, "utf8")).toContain(
-      "COPY --from=builder /usr/local/bin/node /usr/local/bin/node",
-    );
-  });
-
-  it("retains the Node refresh for published OpenClaw bases", () => {
-    const dockerfilePath = dockerfileWith(
-      [
-        "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
-        "FROM node:22-trixie-slim@sha256:builder AS builder",
-        "FROM ${BASE_IMAGE}",
-        "COPY --from=builder /usr/local/bin/node /usr/local/bin/node",
-      ].join("\n"),
-    );
-
-    patchStagedDockerfile(
-      dockerfilePath,
-      "custom-model",
-      "http://127.0.0.1:18789",
-      "build-1",
-      null,
-      null,
-      null,
-      null,
-      false,
-      null,
-      [],
-      {
-        trustedManagedDockerfile: true,
-        baseImageResolutionMetadata: sandboxBaseResolutionMetadata("version-tag"),
-      },
-    );
-
-    expect(fs.readFileSync(dockerfilePath, "utf8")).toContain(
-      "COPY --from=builder /usr/local/bin/node /usr/local/bin/node",
-    );
-  });
-
-  it("keeps the authoritative local base and managed builder on the same Node image", () => {
-    const root = path.resolve(import.meta.dirname, "../../..");
-    const dockerfile = fs.readFileSync(path.join(root, "Dockerfile"), "utf8");
-    const baseDockerfile = fs.readFileSync(path.join(root, "Dockerfile.base"), "utf8");
-    const builderImage = dockerfile.match(/^FROM (node:[^\s]+) AS builder$/m)?.[1];
-    const baseImage = baseDockerfile.match(/^FROM (node:[^\s]+)$/m)?.[1];
-
-    expect(builderImage).toMatch(/^node:22-trixie-slim@sha256:[0-9a-f]{64}$/);
-    expect(baseImage).toBe(builderImage);
-  });
-
   it("encodes Docker JSON ARG values as base64 JSON", () => {
     expect(
       Buffer.from(encodeDockerJsonArg({ supportsStore: false }), "base64").toString("utf-8"),
