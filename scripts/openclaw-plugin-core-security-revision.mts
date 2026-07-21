@@ -286,7 +286,6 @@ const REVIEWED_TREE_PROBLEMS: Readonly<Record<string, readonly string[]>> = Obje
     "invalid: protobufjs@8.7.1 <plugin-root>/node_modules/protobufjs",
   ],
   "@openclaw/diagnostics-otel@2026.6.10": [
-    "extraneous: @protobufjs/inquire@1.1.2 <plugin-root>/node_modules/@protobufjs/inquire",
     "invalid: @opentelemetry/core@2.9.0 <plugin-root>/node_modules/@opentelemetry/core",
     "invalid: @opentelemetry/propagator-jaeger@2.9.0 <plugin-root>/node_modules/@opentelemetry/propagator-jaeger",
   ],
