@@ -125,6 +125,16 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
     expect(classifyReviewedPluginCoreInstallTarget("npm:@openclaw/whatsapp@2026.7.1")).toBe("");
   });
 
+  it("rejects package metadata replaced by a symbolic link", () => {
+    const target = pluginFixture("@openclaw/slack@2026.6.10");
+    const manifest = path.join(target.pluginRoot, "package.json");
+    const movedManifest = path.join(path.dirname(target.pluginRoot), "plugin-package.json");
+    fs.renameSync(manifest, movedManifest);
+    fs.symlinkSync(movedManifest, manifest);
+
+    expect(() => patchReviewedOpenClawPluginRoot(target.pluginRoot, target.replacements)).toThrow();
+  });
+
   it("fails closed before replacing any drifted bundled dependency", () => {
     const target = pluginFixture("@openclaw/slack@2026.6.10");
     writePackage(path.join(target.pluginRoot, "node_modules", "qs"), {
