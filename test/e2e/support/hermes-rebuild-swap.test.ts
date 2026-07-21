@@ -15,6 +15,22 @@ describe("Hermes rebuild swap", () => {
     expect(parseActiveSwapBytes("17179869184\n17179869184\n")).toBe(HERMES_REBUILD_SWAP_BYTES);
   });
 
+  it("adds active swap sizes from GitHub Actions runner rows", () => {
+    const output = [
+      "/swapfile file 3221221376 0 -2",
+      "/mnt/nemoclaw-hermes-rebuild.swap file 34359734272 0 -3",
+    ].join("\n");
+
+    expect(parseActiveSwapBytes(output)).toBe(37_580_955_648);
+  });
+
+  it("ignores unrelated five-field output", () => {
+    const activeSwapBytes = parseActiveSwapBytes("notice ignored 34359738368 text text");
+
+    expect(activeSwapBytes).toBe(0);
+    expect(needsHermesRebuildSwap({ activeSwapBytes, githubActions: true })).toBe(true);
+  });
+
   it("provisions swap only on GitHub Actions runners below the rebuild floor", () => {
     expect(needsHermesRebuildSwap({ activeSwapBytes: 0, githubActions: true })).toBe(true);
     expect(

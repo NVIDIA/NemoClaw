@@ -9,8 +9,16 @@ export function parseActiveSwapBytes(output: string): number {
     .map((line) => line.trim())
     .filter(Boolean)
     .reduce((total, line) => {
-      if (!/^\d+$/u.test(line)) return total;
-      return total + Number.parseInt(line, 10);
+      const fields = line.split(/\s+/u);
+      const isSwapRow =
+        fields.length === 5 &&
+        (fields[1] === "file" || fields[1] === "partition") &&
+        /^\d+$/u.test(fields[2] ?? "") &&
+        /^\d+$/u.test(fields[3] ?? "") &&
+        /^-?\d+$/u.test(fields[4] ?? "");
+      const size = fields.length === 1 ? fields[0] : isSwapRow ? fields[2] : undefined;
+      if (!size || !/^\d+$/u.test(size)) return total;
+      return total + Number.parseInt(size, 10);
     }, 0);
 }
 
