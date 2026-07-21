@@ -10,6 +10,7 @@ readonly AXIOS_REMEDIATION=/usr/local/lib/nemoclaw/openclaw-plugin-axios-securit
 readonly NPM_REMEDIATION=/usr/local/lib/nemoclaw/npm-tar-security-revision.mts
 readonly REPLACEMENT_ROOT=/usr/local/share/nemoclaw/openclaw-plugin-axios-1.18.0
 readonly NEMOCLAW_ROOT=/opt/nemoclaw
+readonly OPENCLAW_STATE_ROOT=/sandbox
 
 invocation_file="$(mktemp /tmp/nemoclaw-openclaw-security-invocation.XXXXXX)"
 node --experimental-strip-types "$INVOCATION_PARSER" \
@@ -39,11 +40,6 @@ case "$target_index" in
     exit 64
     ;;
 esac
-if [[ "$state_directory" != /* || "$state_directory" == / ]]; then
-  echo "ERROR: OpenClaw state directory must be a non-root absolute path" >&2
-  exit 64
-fi
-
 resolved_target="$(
   node -e \
     'const path = require("node:path"); process.stdout.write(path.resolve(process.argv[1]));' \
@@ -61,6 +57,15 @@ else
   if [[ -z "$expected_package_spec" ]]; then
     exec "$ORIGINAL_OPENCLAW" "$@"
   fi
+fi
+if [[ "$state_directory" != /* || "$state_directory" == / ]]; then
+  echo "ERROR: OpenClaw state directory must be a non-root absolute path" >&2
+  exit 64
+fi
+if ! node --experimental-strip-types "$INVOCATION_PARSER" \
+  --validate-state-directory "$state_directory" \
+  --trusted-root "$OPENCLAW_STATE_ROOT"; then
+  exit 64
 fi
 
 remediation_working_directory="$(mktemp -d /tmp/nemoclaw-openclaw-plugin-remediation.XXXXXX)"

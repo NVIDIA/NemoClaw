@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import {
   isHistoricalNemoClawInstallTarget,
   parseOpenClawPluginInstallInvocation,
+  validateOpenClawStateDirectory,
 } from "../scripts/openclaw-security-revision-invocation.mts";
 
 const environment = { HOME: "/home/sandbox" };
@@ -75,6 +78,53 @@ describe("historical OpenClaw security revision invocation", () => {
         environment: { HOME: "/home/sandbox", OPENCLAW_PROFILE: "qa" },
       })?.stateDirectory,
     ).toBe("/home/sandbox/.openclaw-qa");
+  });
+
+  it("accepts only an owned direct child of the trusted sandbox root", () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-state-root-")));
+    const state = path.join(root, ".openclaw");
+    const outside = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-state-outside-")),
+    );
+    const link = path.join(root, "linked-state");
+    fs.mkdirSync(state);
+    fs.symlinkSync(outside, link);
+    try {
+      expect(validateOpenClawStateDirectory({ stateDirectory: state, trustedRoot: root })).toBe(
+        state,
+      );
+      expect(() =>
+        validateOpenClawStateDirectory({
+          stateDirectory: path.join(root, "new-profile"),
+          trustedRoot: root,
+        }),
+      ).not.toThrow();
+      expect(() =>
+        validateOpenClawStateDirectory({ stateDirectory: root, trustedRoot: root }),
+      ).toThrow(/direct child/u);
+      expect(() =>
+        validateOpenClawStateDirectory({ stateDirectory: outside, trustedRoot: root }),
+      ).toThrow(/direct child/u);
+      expect(() =>
+        validateOpenClawStateDirectory({
+          stateDirectory: path.join(root, ".openclaw", "nested"),
+          trustedRoot: root,
+        }),
+      ).toThrow(/direct child/u);
+      expect(() =>
+        validateOpenClawStateDirectory({ stateDirectory: link, trustedRoot: root }),
+      ).toThrow(/real directory/u);
+      expect(() =>
+        validateOpenClawStateDirectory({
+          effectiveUid: fs.statSync(root).uid + 1,
+          stateDirectory: state,
+          trustedRoot: root,
+        }),
+      ).toThrow(/owned by the current user/u);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+      fs.rmSync(outside, { force: true, recursive: true });
+    }
   });
 
   it.each([
