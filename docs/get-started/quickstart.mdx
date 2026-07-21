@@ -201,12 +201,15 @@ Use these details when your first-run path needs more control.
     Generic Ubuntu preparation can change pinned packages and then exits with status `10`; reboot, sign in, and run that printed command to resume.
     Stock DGX OS validation checks the factory stack in place without installing packages, restarting services, or rewriting the Docker runtime.
     One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
+    When an existing vLLM conflicts with the selected managed Express recipe, the installer shows the requested model and the running model when available, then offers two choices.
+    The default keeps Express, leaves the host unchanged, and prints the manual stop and exact resume steps.
+    The second choice leaves vLLM untouched and continues seamlessly through advanced manual Local vLLM setup.
+    Without an interactive terminal or a choice, the installer safely selects the default.
     To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
     The `--station-deepseek` flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
-    The temporary `--force-station-install` flag has the same terminal requirement and bypasses DGX release-metadata qualification plus the initial active-workload block on genuine Station GB300 hardware.
-    This lets forced factory-runtime validation continue and use an existing healthy vLLM server.
+    The temporary `--force-station-install` flag has the same terminal requirement and bypasses only DGX release-metadata qualification on genuine Station GB300 hardware.
+    Active agent and unrelated Docker workloads still block Station preparation.
     Hardware, GPU, ECC, Docker, Buildx, NVIDIA Container Toolkit, CDI, container GPU-visibility, service, and container-inventory preservation checks still apply.
-    Active workloads still block any required CDI, Docker runtime, service, or reboot mutation.
     Without terminal access, the installer stops before it installs Docker or build dependencies instead of ignoring the flag.
     For a headless or CI install on a qualifying DGX Station GB300 after host preparation, omit the flag and select the same managed-vLLM recipe explicitly.
 

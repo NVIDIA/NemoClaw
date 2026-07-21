@@ -311,6 +311,11 @@ fatal() {
   exit 1
 }
 
+existing_vllm_conflict() {
+  printf '[station-prepare] %s ERROR: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
+  exit 12
+}
+
 on_error() {
   local rc=$?
   local line=${1:-unknown}
@@ -327,15 +332,16 @@ Usage: prepare-dgx-station-host.sh --check|--apply|--verify [--force-station-ins
   --apply   Install exact prerequisites or finish post-reboot runtime setup.
   --verify  Read-only host verification plus ephemeral GPU container tests.
   --force-station-install
-            Bypass the DGX release-metadata allowlist and permit active workloads
-            during forced factory-runtime validation. ARM64 Ubuntu 24.04,
-            Station GB300 hardware, and all factory-runtime health checks still
-            apply. The existing driver and container runtime are preserved.
+            Bypass only the DGX release-metadata allowlist. ARM64 Ubuntu 24.04,
+            Station GB300 hardware, workload quiescence, and all factory-runtime
+            health checks still apply. The existing driver and container runtime
+            are preserved.
 
 Exit 10 from --apply means an operator-controlled reboot is required. After
 the reboot, run --apply once more, followed by --verify.
 Exit 11 means Docker-group membership was added. Start a new login session and
 run --apply again; a reboot is not required.
+Exit 12 means an existing vLLM workload requires an installer ownership choice.
 EOF
 }
 
@@ -1146,7 +1152,7 @@ require_no_running_docker_containers() {
   command -v docker >/dev/null 2>&1 || return 0
   query_host_docker ps --format '{{.ID}} {{.Names}}'
   [[ -z "$DOCKER_QUERY_OUTPUT" ]] \
-    || fatal "Running Docker containers block ${action}: ${DOCKER_QUERY_OUTPUT}"
+    || fatal "Running Docker containers block ${action}: ${DOCKER_QUERY_OUTPUT}. Stop the listed containers before Station Express. Then rerun the installer."
   info "running_docker_containers=none action=${action}"
 }
 
@@ -1218,10 +1224,24 @@ check_failed_units() {
   ((blocking == 0)) || fatal "Unqualified failed system units block Station preparation"
 }
 
+check_vllm_container_conflicts() {
+  local vllm_containers=""
+  if command -v docker >/dev/null 2>&1; then
+    query_host_docker ps --no-trunc --format '{{.ID}}|{{.Image}}|{{.Command}}'
+    vllm_containers="$(awk -F '|' '
+      tolower($2 " " $3) ~ /(^|[^[:alnum:]_])vllm([^[:alnum:]_]|$)/ {
+        print "container_id=" substr($1, 1, 12) " stop_command=\047docker stop -- " substr($1, 1, 12) "\047"
+      }
+    ' <<<"$DOCKER_QUERY_OUTPUT")"
+  fi
+  [[ -z "$vllm_containers" ]] \
+    || existing_vllm_conflict "vLLM inference workload is active: ${vllm_containers}. NemoClaw did not stop or modify it."
+}
+
 check_agent_and_inference_conflicts() {
-  local processes matches listeners
+  local processes agent_matches inference_matches listeners
   processes="$(ps -eo pid=,ppid=,comm=,args=)"
-  matches="$(awk -v self="$$" -v parent="$PPID" '
+  agent_matches="$(awk -v self="$$" -v parent="$PPID" '
     {
       pid=$1
       ppid=$2
@@ -1229,23 +1249,41 @@ check_agent_and_inference_conflicts() {
       $1=$2=$3=""
       args=tolower($0)
       if (pid == self || pid == parent) next
-      if (comm ~ /^(vllm|nemoclaw|openshell)$/ ||
-          args ~ /(^|[[:space:]\/])(vllm|nemoclaw|openshell)([[:space:]:]|\.js([[:space:]]|$)|$)/) print
+      if (comm ~ /^(nemoclaw|openshell)$/ ||
+          args ~ /(^|[[:space:]\/])(nemoclaw|openshell)([[:space:]:]|\.js([[:space:]]|$)|$)/) {
+        print "pid=" pid " process=" comm
+      }
     }
   ' <<<"$processes")"
-  [[ -z "$matches" ]] || fatal "Agent or inference workload is active: ${matches}"
+  [[ -z "$agent_matches" ]] \
+    || fatal "Agent workload is active: ${agent_matches}. Stop the listed agent process before Station Express. Then rerun the installer."
+
+  inference_matches="$(awk -v self="$$" -v parent="$PPID" '
+    {
+      pid=$1
+      ppid=$2
+      comm=tolower($3)
+      $1=$2=$3=""
+      args=tolower($0)
+      if (pid == self || pid == parent) next
+      if (comm == "vllm" ||
+          args ~ /(^|[[:space:]\/])vllm([[:space:]:]|\.js([[:space:]]|$)|$)/) {
+        print "pid=" pid " process=" comm " stop_command=\047kill -- " pid "\047"
+      }
+    }
+  ' <<<"$processes")"
+  [[ -z "$inference_matches" ]] \
+    || existing_vllm_conflict "vLLM inference workload is active: ${inference_matches}. NemoClaw did not stop or modify it."
 
   listeners="$(ss -H -ltn 2>/dev/null | awk '$4 ~ /:8000$/ {print}')"
-  [[ -z "$listeners" ]] || fatal "Port 8000 is already listening: ${listeners}"
+  [[ -z "$listeners" ]] \
+    || fatal "Port 8000 is already listening: ${listeners}. Stop the service that owns port 8000 before Station Express. Then rerun the installer."
 
   info "agent_inference_workloads=none port_8000=free"
 }
 
 check_initial_workload_quiescence() {
-  if [[ "$STATION_HOST_PROFILE" == "forced-factory-runtime" ]]; then
-    warn "Active agent, inference, and Docker workloads are permitted by explicit --force-station-install intent"
-    return 0
-  fi
+  check_vllm_container_conflicts
   check_agent_and_inference_conflicts
   require_no_running_docker_containers "initial Station host preparation"
 }

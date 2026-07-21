@@ -758,7 +758,7 @@ usage() {
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
-  printf "    --force-station-install Bypass DGX release metadata and permit active workloads during initial Station GB300 validation; host mutations still require workload quiescence\n"
+  printf "    --force-station-install Bypass only the DGX release-metadata allowlist for Station GB300 express install\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -3534,6 +3534,14 @@ station_express_resume_command() {
   fi
 }
 
+load_station_vllm_conflict_helpers() {
+  declare -F handle_station_vllm_conflict >/dev/null 2>&1 && return 0
+  local helper="${SCRIPT_DIR}/lib/station-vllm-conflict.sh"
+  [[ -f "$helper" ]] || error "Station vLLM conflict helper is missing: ${helper}"
+  # shellcheck source=lib/station-vllm-conflict.sh
+  . "$helper"
+}
+
 clear_station_express_resume() {
   local state_file state_dir claim claim_name claim_mode entry entry_mode unexpected_entry
   state_file="$(station_express_resume_file)" || return 0
@@ -3664,7 +3672,7 @@ ensure_station_express_host() {
       ;;
     *)
       if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-        warn "Proceeding with explicit --force-station-install intent; DGX release metadata qualification is bypassed, and active workloads are permitted during initial factory-runtime validation. Required host mutations still require workload quiescence; Station GB300 hardware and factory-runtime health checks remain required."
+        warn "Proceeding with explicit --force-station-install intent; only DGX release metadata qualification is bypassed. Station GB300 hardware, workload quiescence, and factory-runtime health checks remain required."
         info "Validating the existing Station GPU and local container runtime. Host packages, the NVIDIA driver, and runtime configuration will not be changed."
       else
         info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
@@ -3689,6 +3697,10 @@ ensure_station_express_host() {
       info "After signing in again, rerun the accepted Station Express recipe:"
       info "$(station_express_resume_command)"
       exit 11
+      ;;
+    12)
+      load_station_vllm_conflict_helpers
+      handle_station_vllm_conflict
       ;;
     *)
       error "DGX Station host preparation failed. Review the station-bootstrap log above, correct the reported host state, and rerun the installer."
@@ -3757,7 +3769,7 @@ describe_express_install() {
           ;;
         *)
           if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-            printf "  Explicit --force-station-install intent bypasses DGX release-metadata qualification and permits active workloads during initial factory-runtime validation. Required CDI, Docker runtime, service, or reboot mutations still require workload quiescence. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
+            printf "  Explicit --force-station-install intent bypasses only DGX release-metadata qualification. Active agent, inference, and Docker workloads still block Station preparation. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
           else
             printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
           fi
