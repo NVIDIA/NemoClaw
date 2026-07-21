@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,9 +9,11 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  MINIMUM_SAFE_NODE_TAR_VERSION,
   nodeTarImageScanErrors,
   scanNodeTarImage,
 } from "../scripts/checks/node-tar-image-scan.mts";
+import { MINIMUM_SAFE_TAR_VERSION } from "../scripts/patch-bundled-npm-tar.mts";
 
 const temporaryDirectories: string[] = [];
 
@@ -37,6 +40,39 @@ afterEach(() => {
 });
 
 describe("completed-image node-tar scan", () => {
+  it("runs as a standalone mounted script with the canonical safety floor", () => {
+    const directory = temporaryDirectory();
+    const scanRoot = path.join(directory, "root");
+    fs.mkdirSync(scanRoot);
+    writeTar(scanRoot, "opt/nemoclaw", "7.5.20");
+    const standaloneScanner = path.join(directory, "node-tar-image-scan.mts");
+    fs.copyFileSync(
+      path.join(import.meta.dirname, "..", "scripts", "checks", "node-tar-image-scan.mts"),
+      standaloneScanner,
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        fs.realpathSync(standaloneScanner),
+        "--root",
+        scanRoot,
+        "--image",
+        "standalone-fixture",
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(MINIMUM_SAFE_NODE_TAR_VERSION).toBe(MINIMUM_SAFE_TAR_VERSION);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      image: "standalone-fixture",
+      minimumVersion: MINIMUM_SAFE_TAR_VERSION,
+      packageCount: 1,
+    });
+  });
+
   it("enumerates fixed and affected physical installations", () => {
     const root = temporaryDirectory();
     writeTar(root, "opt/nemoclaw", "7.5.20");
