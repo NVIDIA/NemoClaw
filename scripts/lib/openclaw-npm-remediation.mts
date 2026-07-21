@@ -575,7 +575,7 @@ function packReplacement(
 
 function normalizeArchiveTimestamps(directory: string): void {
   const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
-    left.name.localeCompare(right.name),
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
   );
   for (const entry of entries) {
     const target = join(directory, entry.name);
