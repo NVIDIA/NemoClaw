@@ -27,6 +27,10 @@ const EVIDENCE_PREFIX = "NEMOCLAW_SECURITY_REVISION_EVIDENCE=";
 const REPLACEMENT_ROOT = "/usr/local/share/nemoclaw/openclaw-plugin-axios-1.18.0";
 const CONTAINER_HOME = "/sandbox";
 const RUN_TIMEOUT_MS = 3 * 60_000;
+const INSTALL_SUFFIX_ARGS: Readonly<Record<string, readonly string[]>> = {
+  "dev-suffix": ["--dev"],
+  "profile-suffix": ["--profile", "security-suffix"],
+};
 
 type InstallCase = Readonly<{
   args: readonly string[];
@@ -87,37 +91,52 @@ function safeDockerName(value: string): string {
     .replace(/^-+|-+$/gu, "");
 }
 
+function requireCondition(condition: boolean, message: string): void {
+  switch (condition) {
+    case true:
+      return;
+    default:
+      throw new Error(message);
+  }
+}
+
 function requireSafeImageReference(value: string): string {
   const image = value.trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,511}$/u.test(image)) {
-    throw new Error(`${IMAGE_ENV} must be a canonical Docker image reference`);
-  }
+  requireCondition(
+    /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,511}$/u.test(image),
+    `${IMAGE_ENV} must be a canonical Docker image reference`,
+  );
   return image;
 }
 
 function resolveConfiguredImage(env: NodeJS.ProcessEnv): string | undefined {
   const selected = env.E2E_TARGET_ID === TARGET_ID;
   const explicit = env[RUN_ENV];
-  if (explicit !== undefined && explicit !== "0" && explicit !== "1") {
-    throw new Error(`${RUN_ENV} must be 0 or 1`);
-  }
+  requireCondition(
+    explicit === undefined || explicit === "0" || explicit === "1",
+    `${RUN_ENV} must be 0 or 1`,
+  );
   const enabled = selected || explicit === "1";
   const image = env[IMAGE_ENV]?.trim();
-  if (!enabled) {
-    if (image) throw new Error(`${IMAGE_ENV} requires ${RUN_ENV}=1`);
-    return undefined;
+  switch (enabled) {
+    case false:
+      requireCondition(!image, `${IMAGE_ENV} requires ${RUN_ENV}=1`);
+      return undefined;
+    default:
+      requireCondition(
+        Boolean(image),
+        `${IMAGE_ENV} is required when the container E2E is enabled`,
+      );
+      return requireSafeImageReference(image as string);
   }
-  if (!image) throw new Error(`${IMAGE_ENV} is required when the container E2E is enabled`);
-  return requireSafeImageReference(image);
 }
 
 function installArgs(testCase: InstallCase, archivePath: string): string[] {
   const args = [...testCase.args];
   const installIndex = args.indexOf("install");
-  if (installIndex < 0) throw new Error(`install case ${testCase.id} has no install command`);
+  requireCondition(installIndex >= 0, `install case ${testCase.id} has no install command`);
   args.splice(installIndex + 1, 0, archivePath);
-  if (testCase.id === "profile-suffix") args.push("--profile", "security-suffix");
-  if (testCase.id === "dev-suffix") args.push("--dev");
+  args.push(...(INSTALL_SUFFIX_ARGS[testCase.id] ?? []));
   return args;
 }
 
@@ -270,25 +289,26 @@ function secureDockerRunArgs(options: {
     "--tmpfs",
     "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
   ];
-  if (options.hideReplacement) {
-    args.push(
-      "--mount",
-      `type=tmpfs,target=${REPLACEMENT_ROOT},tmpfs-size=1048576,tmpfs-mode=0555`,
-    );
-  }
+  args.push(
+    ...(options.hideReplacement
+      ? ["--mount", `type=tmpfs,target=${REPLACEMENT_ROOT},tmpfs-size=1048576,tmpfs-mode=0555`]
+      : []),
+  );
   args.push("--entrypoint", "bash", options.image, "-lc", options.script);
   return args;
 }
 
 function parseEvidence(result: DockerCommandResult): ProbeEvidence {
-  if (result.exitCode !== 0) throw new Error(resultText(result));
+  requireCondition(result.exitCode === 0, resultText(result));
   const line = result.stdout
     .split(/\r?\n/gu)
     .reverse()
     .find((candidate) => candidate.startsWith(EVIDENCE_PREFIX));
-  if (!line)
-    throw new Error(`container did not emit security revision evidence\n${resultText(result)}`);
-  return JSON.parse(line.slice(EVIDENCE_PREFIX.length)) as ProbeEvidence;
+  requireCondition(
+    Boolean(line),
+    `container did not emit security revision evidence\n${resultText(result)}`,
+  );
+  return JSON.parse((line as string).slice(EVIDENCE_PREFIX.length)) as ProbeEvidence;
 }
 
 function requireSuccessfulRemediation(testCase: InstallCase, evidence: ProbeEvidence): void {
@@ -407,9 +427,10 @@ realContainerTest(
           artifactName: `cleanup-${container}`,
           timeoutMs: 30_000,
         });
-        if (result.exitCode !== 0 && !result.stderr.includes("No such container")) {
-          throw new Error(resultText(result));
-        }
+        requireCondition(
+          result.exitCode === 0 || result.stderr.includes("No such container"),
+          resultText(result),
+        );
       }
       for (const volume of volumes) {
         await probe.expect(["volume", "rm", "-f", volume], {
