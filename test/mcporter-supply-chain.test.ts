@@ -17,6 +17,7 @@ const expectedVersion = "0.7.3";
 const expectedIntegrity =
   "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
 const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz";
+const expectedHonoNodeServerVersion = "2.0.11";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 
 function extractIntegrityGate(contents: string): string {
@@ -63,19 +64,28 @@ function runIntegrityGate(contents: string, version: string) {
 }
 
 describe("mcporter image supply-chain controls", () => {
-  it("resolves the committed production graph through npm's lockfile boundary", () => {
+  it("resolves the patched production graph through npm's lockfile boundary", () => {
     const result = spawnSync(
       "npm",
       ["ls", "--package-lock-only", "--omit=dev", "--all", "--json"],
       { cwd: runtimeDirectory, encoding: "utf8" },
     );
     expect(result.status, result.stderr).toBe(0);
-    const graph = JSON.parse(result.stdout) as {
-      dependencies?: Record<string, { version?: string }>;
+    type GraphNode = {
+      version?: string;
+      overridden?: boolean;
+      dependencies?: Record<string, GraphNode>;
+    };
+    const graph = JSON.parse(result.stdout) as GraphNode & {
       problems?: string[];
     };
     expect(graph.problems).toBeUndefined();
     expect(graph.dependencies?.mcporter?.version).toBe(expectedVersion);
+    expect(
+      graph.dependencies?.mcporter?.dependencies?.["@modelcontextprotocol/sdk"]?.dependencies?.[
+        "@hono/node-server"
+      ],
+    ).toMatchObject({ version: expectedHonoNodeServerVersion, overridden: true });
   });
 
   it.each(dockerfiles)("pins and verifies the package in $name", ({ contents }) => {

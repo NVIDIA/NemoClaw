@@ -227,11 +227,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("npm audit result in this note remains a point-in-time snapshot");
     expect(review).toContain("Advisory audit revalidated: 2026-07-21");
     expect(review).toContain(
-      "`0` info, `1` low, `1` moderate, `0` high, and `0` critical findings across `766` total dependencies",
+      "`0` info, `1` low, `12` moderate, `0` high, and `0` critical findings across `766` total dependencies",
     );
     expect(review).toContain(
       "The mcporter locked graph reported no findings across `138` dependencies",
     );
+    expect(review).toContain("`@hono/node-server` to patched release `2.0.11`");
+    expect(review).toContain("GHSA-frvp-7c67-39w9");
     expect(review).toContain("GHSA-v422-hmwv-36x6");
     expect(review).toContain("reviewed Slack and Microsoft Teams plugin graphs");
     expect(review).toContain("GHSA-j3f2-48v5-ccww");

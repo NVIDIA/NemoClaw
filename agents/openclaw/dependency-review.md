@@ -16,8 +16,9 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 - Locked graph: `agents/openclaw/mcporter-runtime/package-lock.json` (npm lockfile version 3).
 - Lock regeneration command: `npm --prefix agents/openclaw/mcporter-runtime install --package-lock-only --ignore-scripts --omit=dev`
 - Advisory command: `npm --prefix agents/openclaw/mcporter-runtime ci --ignore-scripts --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit signatures`
-- Advisory review date: 2026-06-30.
-- Advisory result: `0` known vulnerabilities across the resolved production dependency graph; npm verified registry signatures for all `120` resolved packages and attestations for `12` packages.
+- Transitive remediation: the runtime overrides `@hono/node-server` to exact version `2.0.11`, which is patched for `GHSA-frvp-7c67-39w9`. `@modelcontextprotocol/sdk@1.29.0` still requests the vulnerable `^1.19.9` line. The upstream v2 release preserves the public API. Its breaking changes end Node.js 18 support and remove the Vercel adapter. NemoClaw requires Node.js `>=22.19.0`, and mcporter production imports use MCP client transports rather than the server or static-file entrypoints. Remove the override after the SDK declares a dependency range that selects a patched release without it.
+- Advisory review date: 2026-07-21.
+- Advisory result: `0` known vulnerabilities across the resolved production dependency graph; npm verified registry signatures for all `120` resolved packages and attestations for `13` packages.
 
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.
 
