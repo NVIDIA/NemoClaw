@@ -79,11 +79,13 @@ describe("DGX Station documentation ownership", () => {
     expect(vllmSetup).toContain("Prepare DGX Station to Install NemoClaw");
     expect(vllmSetup).toContain("[Platform Support](../../reference/platform-support)");
     expect(vllmSetup).toContain("--station-deepseek");
+    expect(vllmSetup).toContain("bash -s -- --station-deepseek");
     expect(vllmSetup).toContain("For a headless DGX Station setup");
     expect(vllmSetup).toContain("NEMOCLAW_NON_INTERACTIVE=1");
     expect(vllmSetup).toContain("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
     expect(vllmSetup).not.toContain("Physical validation on one DGX Station GB300");
     expect(prerequisites).toContain("### DGX Station Express Preparation");
+    expect(prerequisites).toContain("checks Docker before it installs the NemoClaw CLI");
     expect(prerequisites).toMatch(/\| DGX OS \(Station\) \| Docker \| Tested with limitations \|/);
     expect(prerequisites).toContain("additional-setup/dgx-station-preparation");
     expect(prerequisites).not.toContain("DGX Station is Tested with limitations");
@@ -97,6 +99,7 @@ describe("DGX Station documentation ownership", () => {
     expect(quickstart).toContain("additional-setup/windows-preparation");
     expect(quickstart).toContain("../inference/local-inference/set-up-vllm");
     expect(quickstart).toContain("../reference/platform-support");
+    expect(quickstart).toContain("switches the remaining onboarding to non-interactive mode");
     expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
     expect(quickstart).not.toContain("DGX Station is Tested with limitations");
     expect(quickstart).not.toContain("Physical validation on one DGX Station GB300");
@@ -135,7 +138,13 @@ describe("DGX Station documentation ownership", () => {
 
     for (const [variant, agent] of variants) {
       const rendered = renderAgentVariantPage(source, variant);
+      const stationDeepseekCommand = [
+        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | \\",
+        `  NEMOCLAW_AGENT=${agent} \\`,
+        "  bash -s -- --station-deepseek",
+      ].join("\n");
 
+      expect(rendered).toContain(stationDeepseekCommand);
       expect(rendered).toContain(`NEMOCLAW_AGENT=${agent} \\`);
       expect(rendered).toContain("NEMOCLAW_PROVIDER=install-vllm");
       expect(rendered).not.toContain("<AgentOnly");

@@ -79,7 +79,7 @@ Use these details when your first-run path needs more control.
 
 <AccordionGroup>
   <Accordion title="Automate an installation">
-    The hosted installer follows the maintained last-known-good release by default and can prompt through an interactive terminal.
+    The hosted installer follows the maintained last-known-good release by default.
     In CI, a shell script, or another non-TTY context, pass the third-party software acceptance to `bash`.
 
     ```bash
@@ -148,6 +148,7 @@ Use these details when your first-run path needs more control.
 
     DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
 
+    After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
     Express install uses `my-assistant` unless you set `NEMOCLAW_SANDBOX_NAME`, and it applies the suggested Balanced policy.
     It can still prompt for `sudo` when host setup needs it.
     Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` to choose a provider yourself.

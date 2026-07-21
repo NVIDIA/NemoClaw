@@ -39,8 +39,8 @@ It cannot enable Station Express on another Station generation or hardware platf
 This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the exact automatic allowlist.
 Remove the override after those images publish recognized metadata or NemoClaw replaces the exact allowlist with a separately qualified platform-family and runtime-capability check.
 
-Run the override from an interactive terminal:
 If the installer cannot read the prompt, it stops before host changes.
+Run the override from an interactive terminal:
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --force-station-install
