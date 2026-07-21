@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRemediatedOpenClawArchive,
   patchOpenClawCorePackageGraph,
+  patchOpenClawOtelPluginPackageGraph,
   patchOpenClawPluginPackageGraph,
 } from "../scripts/lib/openclaw-npm-remediation.mts";
 
@@ -81,6 +82,7 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
         name: "openclaw",
         version: "2026.6.10",
         dependencies: {
+          "@modelcontextprotocol/sdk": "1.29.0",
           "@openclaw/fs-safe": "0.3.0",
           jszip: "3.10.1",
           minimatch: "10.2.5",
@@ -103,6 +105,7 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
             name: "openclaw",
             version: "2026.6.10",
             dependencies: {
+              "@modelcontextprotocol/sdk": "1.29.0",
               "@openclaw/fs-safe": "0.3.0",
               jszip: "3.10.1",
               minimatch: "10.2.5",
@@ -112,6 +115,16 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
           "node_modules/@openclaw/fs-safe": {
             version: "0.3.0",
             optionalDependencies: { jszip: "^3.10.1", tar: "7.5.13" },
+          },
+          "node_modules/@hono/node-server": {
+            version: "1.19.14",
+            resolved: "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.14.tgz",
+            integrity:
+              "sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==",
+          },
+          "node_modules/@modelcontextprotocol/sdk": {
+            version: "1.29.0",
+            dependencies: { "@hono/node-server": "^1.19.9" },
           },
           "node_modules/brace-expansion": {
             version: "5.0.6",
@@ -132,6 +145,60 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
             version: tarVersion,
             resolved: `https://registry.npmjs.org/tar/-/tar-${tarVersion}.tgz`,
             integrity: "sha512-old-tar",
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return directory;
+}
+
+function writeOtelFixture(jaegerVersion = "2.8.0"): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-otel-remediation-"));
+  temporaryDirectories.push(directory);
+  writeFileSync(
+    path.join(directory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "@openclaw/diagnostics-otel",
+        version: "2026.6.10",
+        dependencies: { "@opentelemetry/sdk-node": "0.219.0" },
+        bundledDependencies: ["@opentelemetry/sdk-node"],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    path.join(directory, "npm-shrinkwrap.json"),
+    `${JSON.stringify(
+      {
+        name: "@openclaw/diagnostics-otel",
+        version: "2026.6.10",
+        lockfileVersion: 3,
+        packages: {
+          "": {
+            name: "@openclaw/diagnostics-otel",
+            version: "2026.6.10",
+            dependencies: { "@opentelemetry/sdk-node": "0.219.0" },
+          },
+          "node_modules/@opentelemetry/propagator-jaeger": {
+            version: jaegerVersion,
+            resolved: `https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-${jaegerVersion}.tgz`,
+            integrity:
+              jaegerVersion === "2.8.0"
+                ? "sha512-Xnz9zZvvQzUw+9DrOn0MomR7BxFCkA2pcfXBQuHC28ndJpSbjLs7knzYb05kw5SyCjSsEWombkZMgGcJSk8JVg=="
+                : "sha512-drift",
+            dependencies: { "@opentelemetry/core": jaegerVersion },
+          },
+          "node_modules/@opentelemetry/sdk-node": {
+            version: "0.219.0",
+            dependencies: {
+              "@opentelemetry/core": "2.8.0",
+              "@opentelemetry/propagator-jaeger": jaegerVersion,
+            },
           },
         },
       },
@@ -183,6 +250,40 @@ function writeCoreArchiveFixtures(): {
   const fsSafeArchive = path.join(root, "fs-safe-0.3.0-source.tgz");
   packFixture(fsSafeDirectory, fsSafeArchive);
 
+  const modelContextProtocolSdkDirectory = path.join(root, "modelcontextprotocol-sdk-package");
+  mkdirSync(modelContextProtocolSdkDirectory, { recursive: true });
+  writeFileSync(
+    path.join(modelContextProtocolSdkDirectory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "@modelcontextprotocol/sdk",
+        version: "1.29.0",
+        dependencies: { "@hono/node-server": "^1.19.9" },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const modelContextProtocolSdkArchive = path.join(root, "sdk-1.29.0-source.tgz");
+  packFixture(modelContextProtocolSdkDirectory, modelContextProtocolSdkArchive);
+
+  const honoNodeServerDirectory = path.join(root, "hono-node-server-package");
+  mkdirSync(honoNodeServerDirectory, { recursive: true });
+  writeFileSync(
+    path.join(honoNodeServerDirectory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "@hono/node-server",
+        version: "2.0.5",
+        peerDependencies: { hono: "^4" },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const honoNodeServerArchive = path.join(root, "node-server-2.0.5-source.tgz");
+  packFixture(honoNodeServerDirectory, honoNodeServerArchive);
+
   const npmExecutable = path.join(root, "npm-fixture.sh");
   writeFileSync(
     npmExecutable,
@@ -190,22 +291,35 @@ function writeCoreArchiveFixtures(): {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `fs_safe_archive=${JSON.stringify(fsSafeArchive)}`,
-      'if [ "$1" = "view" ] && [ "$3" = "dist.integrity" ]; then',
-      '  printf "%s\\n" "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA=="',
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "view" ] && [ "$3" = "dist.tarball" ]; then',
-      '  printf "%s\\n" "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz"',
+      `modelcontextprotocol_sdk_archive=${JSON.stringify(modelContextProtocolSdkArchive)}`,
+      `hono_node_server_archive=${JSON.stringify(honoNodeServerArchive)}`,
+      'if [ "$1" = "view" ]; then',
+      '  case "$2:$3" in',
+      '    "@openclaw/fs-safe@0.3.0:dist.integrity") value="sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==" ;;',
+      '    "@openclaw/fs-safe@0.3.0:dist.tarball") value="https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz" ;;',
+      '    "@modelcontextprotocol/sdk@1.29.0:dist.integrity") value="sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==" ;;',
+      '    "@modelcontextprotocol/sdk@1.29.0:dist.tarball") value="https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz" ;;',
+      '    "@hono/node-server@2.0.5:dist.integrity") value="sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" ;;',
+      '    "@hono/node-server@2.0.5:dist.tarball") value="https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz" ;;',
+      "    *) exit 1 ;;",
+      "  esac",
+      '  printf "%s\\n" "$value"',
       "  exit 0",
       "fi",
       'if [ "$1" = "pack" ]; then',
+      '  case "$2" in',
+      '    "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz") archive="$fs_safe_archive"; filename="fs-safe-0.3.0.tgz"; integrity="sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==" ;;',
+      '    "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz") archive="$modelcontextprotocol_sdk_archive"; filename="sdk-1.29.0.tgz"; integrity="sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==" ;;',
+      '    "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz") archive="$hono_node_server_archive"; filename="node-server-2.0.5.tgz"; integrity="sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" ;;',
+      "    *) exit 1 ;;",
+      "  esac",
       '  destination=""',
       '  while [ "$#" -gt 0 ]; do',
       '    if [ "$1" = "--pack-destination" ]; then destination="$2"; shift 2; continue; fi',
       "    shift",
       "  done",
-      '  cp "$fs_safe_archive" "$destination/fs-safe-0.3.0.tgz"',
-      '  printf \'[{"filename":"fs-safe-0.3.0.tgz","integrity":"sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA=="}]\\n\'',
+      '  cp "$archive" "$destination/$filename"',
+      '  printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$filename" "$integrity"',
       "  exit 0",
       "fi",
       "exit 1",
@@ -362,6 +476,53 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
+  it("replaces the reviewed diagnostics OTEL Jaeger subtree", () => {
+    const directory = writeOtelFixture();
+
+    patchOpenClawOtelPluginPackageGraph(directory);
+
+    const shrinkwrap = readJson<{
+      packages: Record<
+        string,
+        {
+          dependencies?: Record<string, string>;
+          integrity?: string;
+          resolved?: string;
+          version?: string;
+        }
+      >;
+    }>(path.join(directory, "npm-shrinkwrap.json"));
+    expect(
+      shrinkwrap.packages["node_modules/@opentelemetry/sdk-node"]?.dependencies?.[
+        "@opentelemetry/propagator-jaeger"
+      ],
+    ).toBe("2.9.0");
+    expect(shrinkwrap.packages["node_modules/@opentelemetry/propagator-jaeger"]).toMatchObject({
+      version: "2.9.0",
+      resolved:
+        "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz",
+      integrity:
+        "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==",
+    });
+    expect(
+      shrinkwrap.packages[
+        "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core"
+      ],
+    ).toMatchObject({
+      version: "2.9.0",
+      resolved: "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz",
+      integrity:
+        "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==",
+    });
+  });
+
+  it("rejects a diagnostics OTEL Jaeger graph that changed after review", () => {
+    const directory = writeOtelFixture("2.8.1");
+    expect(() => patchOpenClawOtelPluginPackageGraph(directory)).toThrow(
+      "Jaeger graph changed after review",
+    );
+  });
+
   // source-shape-contract: security -- Exact core shrinkwrap metadata binds remediation output to the reviewed registry identities
   it("replaces the reviewed OpenClaw core tar and brace-expansion graph", () => {
     const directory = writeCoreFixture();
@@ -386,9 +547,13 @@ describe("OpenClaw npm remediation", () => {
       dependencies?: Record<string, string>;
     }>(path.join(directory, "package.json"));
     expect(packageJson.dependencies).toMatchObject({ jszip: "3.10.1", tar: "7.5.19" });
-    expect(packageJson.bundledDependencies).toEqual(["@openclaw/fs-safe"]);
+    expect(packageJson.bundledDependencies).toEqual([
+      "@hono/node-server",
+      "@modelcontextprotocol/sdk",
+      "@openclaw/fs-safe",
+    ]);
     expect(shrinkwrap.packages[""]).toMatchObject({
-      bundleDependencies: ["@openclaw/fs-safe"],
+      bundleDependencies: ["@hono/node-server", "@modelcontextprotocol/sdk", "@openclaw/fs-safe"],
       dependencies: { tar: "7.5.19" },
     });
     expect(shrinkwrap.packages["node_modules/tar"]).toMatchObject({
@@ -400,6 +565,17 @@ describe("OpenClaw npm remediation", () => {
     expect(shrinkwrap.packages["node_modules/@openclaw/fs-safe"]?.optionalDependencies).toBe(
       undefined,
     );
+    expect(shrinkwrap.packages["node_modules/@hono/node-server"]).toMatchObject({
+      version: "2.0.5",
+      resolved: "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz",
+      integrity:
+        "sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==",
+    });
+    expect(
+      shrinkwrap.packages["node_modules/@modelcontextprotocol/sdk"]?.dependencies?.[
+        "@hono/node-server"
+      ],
+    ).toBe("2.0.5");
     expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
       version: "5.0.7",
       resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
@@ -416,8 +592,8 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
-  // source-shape-contract: security -- Archive metadata proves the rebuilt package carries the reviewed bundled fs-safe remediation
-  it("rebuilds a guarded core archive with the patched fs-safe package bundled", () => {
+  // source-shape-contract: security -- Archive metadata proves the rebuilt package carries every reviewed bundled core remediation
+  it("rebuilds a guarded core archive with the patched dependency graph bundled", () => {
     const fixture = writeCoreArchiveFixtures();
     const request = {
       archivePath: fixture.archivePath,
@@ -462,11 +638,31 @@ describe("OpenClaw npm remediation", () => {
     const fsSafePackageJson = readJson<{ optionalDependencies?: Record<string, string> }>(
       path.join(extracted, "package", "node_modules", "@openclaw", "fs-safe", "package.json"),
     );
+    const modelContextProtocolSdkPackageJson = readJson<{
+      dependencies?: Record<string, string>;
+    }>(
+      path.join(
+        extracted,
+        "package",
+        "node_modules",
+        "@modelcontextprotocol",
+        "sdk",
+        "package.json",
+      ),
+    );
+    const honoNodeServerPackageJson = readJson<{ name?: string; version?: string }>(
+      path.join(extracted, "package", "node_modules", "@hono", "node-server", "package.json"),
+    );
     expect(packageJson).toMatchObject({
-      bundledDependencies: ["@openclaw/fs-safe"],
+      bundledDependencies: ["@hono/node-server", "@modelcontextprotocol/sdk", "@openclaw/fs-safe"],
       dependencies: { jszip: "3.10.1", tar: "7.5.19" },
     });
     expect(fsSafePackageJson.optionalDependencies).toBeUndefined();
+    expect(modelContextProtocolSdkPackageJson.dependencies?.["@hono/node-server"]).toBe("2.0.5");
+    expect(honoNodeServerPackageJson).toMatchObject({
+      name: "@hono/node-server",
+      version: "2.0.5",
+    });
   });
 
   // source-shape-contract: security -- Extracted plugin contents prove the rebuilt archive carries every reviewed Axios replacement package

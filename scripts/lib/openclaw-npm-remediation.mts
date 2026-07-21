@@ -9,8 +9,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   utimesSync,
@@ -23,7 +23,7 @@ import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
 type JsonObject = Record<string, any>;
 
 type Remediation = Readonly<{
-  kind: "core" | "plugin";
+  kind: "axios-plugin" | "core" | "otel-plugin";
   expectedPatchedMetadataIntegrity: string;
 }>;
 
@@ -77,23 +77,47 @@ const BRACE_EXPANSION_INTEGRITY =
   "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==";
 const BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz";
+const HONO_NODE_SERVER_VERSION = "2.0.5";
+const HONO_NODE_SERVER_INTEGRITY =
+  "sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==";
+const HONO_NODE_SERVER_TARBALL =
+  "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz";
+const MODEL_CONTEXT_PROTOCOL_SDK_VERSION = "1.29.0";
+const MODEL_CONTEXT_PROTOCOL_SDK_INTEGRITY =
+  "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==";
+const MODEL_CONTEXT_PROTOCOL_SDK_TARBALL =
+  "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz";
+const OTEL_PROPAGATOR_JAEGER_VERSION = "2.9.0";
+const OTEL_PROPAGATOR_JAEGER_INTEGRITY =
+  "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==";
+const OTEL_PROPAGATOR_JAEGER_TARBALL =
+  "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz";
+const OTEL_CORE_VERSION = "2.9.0";
+const OTEL_CORE_INTEGRITY =
+  "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==";
+const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 const CANONICAL_ARCHIVE_TIME = new Date(0);
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "@openclaw/msteams@2026.6.10": {
-    kind: "plugin",
+    kind: "axios-plugin",
     expectedPatchedMetadataIntegrity:
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
   },
   "@openclaw/slack@2026.6.10": {
-    kind: "plugin",
+    kind: "axios-plugin",
     expectedPatchedMetadataIntegrity:
       "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
+  },
+  "@openclaw/diagnostics-otel@2026.6.10": {
+    kind: "otel-plugin",
+    expectedPatchedMetadataIntegrity:
+      "sha512-QmgyGI7AQJrNGoWAYolunc18wUr6Q4iOK4n9YXCOo3Cxh+e2GONtOAbeu+OFpQW8PsF6x/iGInDQmeKD+jnOug==",
   },
   "openclaw@2026.6.10": {
     kind: "core",
     expectedPatchedMetadataIntegrity:
-      "sha512-7oKMgemit3Yizu6s83pvfXdoIB0oDccBSErtCS3dmBsqEqav9b/aiI1VxlE9Ph1Ih7jSVRUIGUyWVdBicym/0A==",
+      "sha512-3B3INhrI5ki3O2/Tm2o8cupkAhaBRJO51xGa/i2Ou3IgKF5MNydNBe8RkOLvjtY9dXM7NH+aLqig+TGhcaJWHQ==",
   },
 });
 
@@ -179,9 +203,15 @@ function writeJson(path: string, value: JsonObject): void {
 function hashPatchedMetadata(packageDirectory: string): string {
   const hash = createHash("sha512");
   const names = ["package.json", "npm-shrinkwrap.json"];
-  const bundledFsSafePackageJson = "node_modules/@openclaw/fs-safe/package.json";
-  if (existsSync(join(packageDirectory, bundledFsSafePackageJson))) {
-    names.push(bundledFsSafePackageJson);
+  for (const bundledPackageJson of [
+    "node_modules/@hono/node-server/package.json",
+    "node_modules/@modelcontextprotocol/sdk/package.json",
+    "node_modules/@openclaw/fs-safe/package.json",
+    "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core/package.json",
+    "node_modules/@opentelemetry/propagator-jaeger/package.json",
+    "node_modules/@opentelemetry/sdk-node/package.json",
+  ]) {
+    if (existsSync(join(packageDirectory, bundledPackageJson))) names.push(bundledPackageJson);
   }
   for (const name of names) {
     const contents = readFileSync(join(packageDirectory, name));
@@ -303,6 +333,71 @@ export function patchOpenClawPluginPackageGraph(
   writeJson(shrinkwrapPath, shrinkwrap);
 }
 
+export function patchOpenClawOtelPluginPackageGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(
+    packageJson,
+    "@openclaw/diagnostics-otel",
+    "2026.6.10",
+    "OpenClaw diagnostics OTEL plugin",
+  );
+  if (
+    packageJson.dependencies?.["@opentelemetry/sdk-node"] !== "0.219.0" ||
+    !Array.isArray(packageJson.bundledDependencies) ||
+    !packageJson.bundledDependencies.includes("@opentelemetry/sdk-node")
+  ) {
+    throw new Error("OpenClaw diagnostics OTEL package graph changed after review");
+  }
+
+  const shrinkwrap = readJson(shrinkwrapPath);
+  if (shrinkwrap.lockfileVersion !== 3 || !shrinkwrap.packages?.[""]) {
+    throw new Error("OpenClaw diagnostics OTEL must ship an npm lockfileVersion 3 shrinkwrap");
+  }
+  const sdkNode = shrinkwrap.packages["node_modules/@opentelemetry/sdk-node"] as
+    | JsonObject
+    | undefined;
+  const jaeger = shrinkwrap.packages["node_modules/@opentelemetry/propagator-jaeger"] as
+    | JsonObject
+    | undefined;
+  const nestedCoreKey =
+    "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core";
+  if (
+    sdkNode?.version !== "0.219.0" ||
+    sdkNode.dependencies?.["@opentelemetry/propagator-jaeger"] !== "2.8.0" ||
+    jaeger?.version !== "2.8.0" ||
+    jaeger.resolved !==
+      "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.8.0.tgz" ||
+    jaeger.integrity !==
+      "sha512-Xnz9zZvvQzUw+9DrOn0MomR7BxFCkA2pcfXBQuHC28ndJpSbjLs7knzYb05kw5SyCjSsEWombkZMgGcJSk8JVg==" ||
+    jaeger.dependencies?.["@opentelemetry/core"] !== "2.8.0" ||
+    shrinkwrap.packages[nestedCoreKey] !== undefined
+  ) {
+    throw new Error("OpenClaw diagnostics OTEL Jaeger graph changed after review");
+  }
+  sdkNode.dependencies["@opentelemetry/propagator-jaeger"] = OTEL_PROPAGATOR_JAEGER_VERSION;
+  shrinkwrap.packages["node_modules/@opentelemetry/propagator-jaeger"] = {
+    version: OTEL_PROPAGATOR_JAEGER_VERSION,
+    resolved: OTEL_PROPAGATOR_JAEGER_TARBALL,
+    integrity: OTEL_PROPAGATOR_JAEGER_INTEGRITY,
+    license: "Apache-2.0",
+    dependencies: { "@opentelemetry/core": OTEL_CORE_VERSION },
+    engines: { node: "^18.19.0 || >=20.6.0" },
+    peerDependencies: { "@opentelemetry/api": ">=1.0.0 <1.10.0" },
+  };
+  shrinkwrap.packages[nestedCoreKey] = {
+    version: OTEL_CORE_VERSION,
+    resolved: OTEL_CORE_TARBALL,
+    integrity: OTEL_CORE_INTEGRITY,
+    license: "Apache-2.0",
+    dependencies: { "@opentelemetry/semantic-conventions": "^1.29.0" },
+    engines: { node: "^18.19.0 || >=20.6.0" },
+    peerDependencies: { "@opentelemetry/api": ">=1.0.0 <1.10.0" },
+  };
+  writeJson(shrinkwrapPath, shrinkwrap);
+}
+
 export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   const packageJsonPath = join(packageDirectory, "package.json");
   const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
@@ -331,13 +426,30 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   const tar = packages["node_modules/tar"] as JsonObject | undefined;
   const braceExpansion = packages["node_modules/brace-expansion"] as JsonObject | undefined;
   const fsSafe = packages["node_modules/@openclaw/fs-safe"] as JsonObject | undefined;
+  const honoNodeServer = packages["node_modules/@hono/node-server"] as JsonObject | undefined;
   const jszip = packages["node_modules/jszip"] as JsonObject | undefined;
   const minimatch = packages["node_modules/minimatch"] as JsonObject | undefined;
+  const modelContextProtocolSdk = packages["node_modules/@modelcontextprotocol/sdk"] as
+    | JsonObject
+    | undefined;
   if (root.dependencies?.tar !== "7.5.16" || tar?.version !== "7.5.16") {
     throw new Error("openclaw@2026.6.10 tar shrinkwrap state changed after review");
   }
   if (root.dependencies?.jszip !== "3.10.1" || jszip?.version !== "3.10.1") {
     throw new Error("openclaw@2026.6.10 jszip shrinkwrap state changed after review");
+  }
+  if (
+    packageJson.dependencies?.["@modelcontextprotocol/sdk"] !== "1.29.0" ||
+    root.dependencies?.["@modelcontextprotocol/sdk"] !== "1.29.0" ||
+    modelContextProtocolSdk?.version !== "1.29.0" ||
+    modelContextProtocolSdk.dependencies?.["@hono/node-server"] !== "^1.19.9" ||
+    honoNodeServer?.version !== "1.19.14" ||
+    honoNodeServer.resolved !==
+      "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.14.tgz" ||
+    honoNodeServer.integrity !==
+      "sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw=="
+  ) {
+    throw new Error("openclaw@2026.6.10 Hono node server layout changed after review");
   }
   if (
     fsSafe?.optionalDependencies?.jszip !== "^3.10.1" ||
@@ -357,9 +469,17 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   }
 
   packageJson.dependencies.tar = TAR_VERSION;
-  packageJson.bundledDependencies = ["@openclaw/fs-safe"];
+  packageJson.bundledDependencies = [
+    "@hono/node-server",
+    "@modelcontextprotocol/sdk",
+    "@openclaw/fs-safe",
+  ];
   root.dependencies.tar = TAR_VERSION;
   root.bundleDependencies = [...packageJson.bundledDependencies];
+  modelContextProtocolSdk.dependencies["@hono/node-server"] = HONO_NODE_SERVER_VERSION;
+  honoNodeServer.version = HONO_NODE_SERVER_VERSION;
+  honoNodeServer.resolved = HONO_NODE_SERVER_TARBALL;
+  honoNodeServer.integrity = HONO_NODE_SERVER_INTEGRITY;
   tar.version = TAR_VERSION;
   tar.resolved = TAR_TARBALL;
   tar.integrity = TAR_INTEGRITY;
@@ -392,6 +512,40 @@ function patchFsSafePackageGraph(packageDirectory: string): void {
     );
   }
   delete packageJson.optionalDependencies;
+  writeJson(packageJsonPath, packageJson);
+}
+
+function patchModelContextProtocolPackageGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(
+    packageJson,
+    "@modelcontextprotocol/sdk",
+    MODEL_CONTEXT_PROTOCOL_SDK_VERSION,
+    "OpenClaw MCP SDK remediation package",
+  );
+  if (packageJson.dependencies?.["@hono/node-server"] !== "^1.19.9") {
+    throw new Error(
+      "@modelcontextprotocol/sdk@1.29.0 Hono node server dependency changed; review the remediation",
+    );
+  }
+  packageJson.dependencies["@hono/node-server"] = HONO_NODE_SERVER_VERSION;
+  writeJson(packageJsonPath, packageJson);
+}
+
+function patchOtelSdkNodePackageGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(
+    packageJson,
+    "@opentelemetry/sdk-node",
+    "0.219.0",
+    "OpenClaw diagnostics OTEL SDK package",
+  );
+  if (packageJson.dependencies?.["@opentelemetry/propagator-jaeger"] !== "2.8.0") {
+    throw new Error("@opentelemetry/sdk-node@0.219.0 Jaeger dependency changed after review");
+  }
+  packageJson.dependencies["@opentelemetry/propagator-jaeger"] = OTEL_PROPAGATOR_JAEGER_VERSION;
   writeJson(packageJsonPath, packageJson);
 }
 
@@ -526,12 +680,116 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       remediationRoot,
       env,
     );
+    const modelContextProtocolSdkArchive = packReplacement(
+      `@modelcontextprotocol/sdk@${MODEL_CONTEXT_PROTOCOL_SDK_VERSION}`,
+      MODEL_CONTEXT_PROTOCOL_SDK_INTEGRITY,
+      MODEL_CONTEXT_PROTOCOL_SDK_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const honoNodeServerArchive = packReplacement(
+      `@hono/node-server@${HONO_NODE_SERVER_VERSION}`,
+      HONO_NODE_SERVER_INTEGRITY,
+      HONO_NODE_SERVER_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const modelContextProtocolSdkPackage = extractArchive(
+      modelContextProtocolSdkArchive.archivePath,
+      join(remediationRoot, "modelcontextprotocol-sdk"),
+      remediationRoot,
+      env,
+    );
+    const honoNodeServerPackage = extractArchive(
+      honoNodeServerArchive.archivePath,
+      join(remediationRoot, "hono-node-server"),
+      remediationRoot,
+      env,
+    );
     patchFsSafePackageGraph(fsSafePackage);
+    patchModelContextProtocolPackageGraph(modelContextProtocolSdkPackage);
     copyReplacementPackage(
       fsSafePackage,
       join(sourcePackage, "node_modules", "@openclaw", "fs-safe"),
     );
+    copyReplacementPackage(
+      modelContextProtocolSdkPackage,
+      join(sourcePackage, "node_modules", "@modelcontextprotocol", "sdk"),
+    );
+    copyReplacementPackage(
+      honoNodeServerPackage,
+      join(sourcePackage, "node_modules", "@hono", "node-server"),
+    );
     patchOpenClawCorePackageGraph(sourcePackage);
+  } else if (remediation.kind === "otel-plugin") {
+    const jaegerArchive = packReplacement(
+      `@opentelemetry/propagator-jaeger@${OTEL_PROPAGATOR_JAEGER_VERSION}`,
+      OTEL_PROPAGATOR_JAEGER_INTEGRITY,
+      OTEL_PROPAGATOR_JAEGER_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const coreArchive = packReplacement(
+      `@opentelemetry/core@${OTEL_CORE_VERSION}`,
+      OTEL_CORE_INTEGRITY,
+      OTEL_CORE_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const jaegerPackage = extractArchive(
+      jaegerArchive.archivePath,
+      join(remediationRoot, "otel-propagator-jaeger"),
+      remediationRoot,
+      env,
+    );
+    const corePackage = extractArchive(
+      coreArchive.archivePath,
+      join(remediationRoot, "otel-core"),
+      remediationRoot,
+      env,
+    );
+    const jaegerPackageJson = readJson(join(jaegerPackage, "package.json"));
+    const corePackageJson = readJson(join(corePackage, "package.json"));
+    requirePackageIdentity(
+      jaegerPackageJson,
+      "@opentelemetry/propagator-jaeger",
+      OTEL_PROPAGATOR_JAEGER_VERSION,
+      "OpenTelemetry Jaeger remediation package",
+    );
+    requirePackageIdentity(
+      corePackageJson,
+      "@opentelemetry/core",
+      OTEL_CORE_VERSION,
+      "OpenTelemetry core remediation package",
+    );
+    requireDependencyShape(
+      jaegerPackageJson,
+      { "@opentelemetry/core": OTEL_CORE_VERSION },
+      "@opentelemetry/propagator-jaeger@2.9.0",
+    );
+    requireDependencyShape(
+      corePackageJson,
+      { "@opentelemetry/semantic-conventions": "^1.29.0" },
+      "@opentelemetry/core@2.9.0",
+    );
+    patchOtelSdkNodePackageGraph(join(sourcePackage, "node_modules", "@opentelemetry", "sdk-node"));
+    copyReplacementPackage(
+      jaegerPackage,
+      join(sourcePackage, "node_modules", "@opentelemetry", "propagator-jaeger"),
+    );
+    copyReplacementPackage(
+      corePackage,
+      join(
+        sourcePackage,
+        "node_modules",
+        "@opentelemetry",
+        "propagator-jaeger",
+        "node_modules",
+        "@opentelemetry",
+        "core",
+      ),
+    );
+    patchOpenClawOtelPluginPackageGraph(sourcePackage);
   } else {
     const axiosArchive = packReplacement(
       `axios@${AXIOS_VERSION}`,
@@ -665,7 +923,7 @@ if (isMainModule()) {
     return result;
   };
   try {
-    const remediated = buildRemediatedOpenClawArchive({
+    const remediated = remediateReviewedOpenClawArchive({
       archivePath: value("--archive"),
       packageSpec: value("--package-spec"),
       workingDirectory: value("--working-directory"),

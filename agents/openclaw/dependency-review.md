@@ -14,10 +14,11 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 - npm integrity: `sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==`
 - Registry metadata independently queried from npm: 2026-06-30.
 - Locked graph: `agents/openclaw/mcporter-runtime/package-lock.json` (npm lockfile version 3).
+- Reviewed transitive override: `@hono/node-server@2.0.5`, replacing the vulnerable `1.19.14` resolution beneath `@modelcontextprotocol/sdk@1.29.0` without changing `mcporter@0.7.3`.
 - Lock regeneration command: `npm --prefix agents/openclaw/mcporter-runtime install --package-lock-only --ignore-scripts --omit=dev`
 - Advisory command: `npm --prefix agents/openclaw/mcporter-runtime ci --ignore-scripts --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit signatures`
-- Advisory review date: 2026-06-30.
-- Advisory result: `0` known vulnerabilities across the resolved production dependency graph; npm verified registry signatures for all `120` resolved packages and attestations for `12` packages.
+- Advisory review date: 2026-07-21.
+- Advisory result: `0` known vulnerabilities across the `138`-package resolved production dependency graph. Image builds also require npm registry signature verification.
 
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.
 

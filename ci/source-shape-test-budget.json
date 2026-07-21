@@ -338,7 +338,7 @@
     },
     {
       "file": "test/openclaw-npm-remediation.test.ts",
-      "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
+      "test": "rebuilds a guarded core archive with the patched dependency graph bundled",
       "category": "security"
     },
     {

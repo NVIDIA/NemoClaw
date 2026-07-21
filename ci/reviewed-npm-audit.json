@@ -8,6 +8,35 @@
     "graphLabel": "reviewed raw archive graph",
     "expectedFindings": [
       {
+        "packageName": "@openclaw/diagnostics-otel",
+        "severity": "high",
+        "advisories": [],
+        "nodes": [
+          "node_modules/@openclaw/diagnostics-otel"
+        ]
+      },
+      {
+        "packageName": "@opentelemetry/propagator-jaeger",
+        "severity": "high",
+        "advisories": [
+          {
+            "id": "GHSA-45rx-2jwx-cxfr",
+            "severity": "high"
+          }
+        ],
+        "nodes": [
+          "node_modules/@openclaw/diagnostics-otel/node_modules/@opentelemetry/propagator-jaeger"
+        ]
+      },
+      {
+        "packageName": "@opentelemetry/sdk-node",
+        "severity": "high",
+        "advisories": [],
+        "nodes": [
+          "node_modules/@openclaw/diagnostics-otel/node_modules/@opentelemetry/sdk-node"
+        ]
+      },
+      {
         "packageName": "axios",
         "severity": "high",
         "advisories": [

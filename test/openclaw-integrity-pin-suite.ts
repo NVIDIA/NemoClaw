@@ -100,7 +100,7 @@ function openClawBaseProvenance(
 ): string {
   const recipe =
     version === PINNED_OPENCLAW_VERSION
-      ? "ignore-scripts+reviewed-lifecycle+transitive-remediation-v1"
+      ? "ignore-scripts+reviewed-lifecycle+transitive-remediation-v2"
       : "ignore-scripts+reviewed-lifecycle-v1";
   return [
     "schema=2",
@@ -390,6 +390,7 @@ function runOptionalOpenClawPluginBlock(
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-integrity-"));
   const log = path.join(tmp, "calls.log");
   const reviewedNpmExecutable = path.join(tmp, "reviewed-npm-fixture");
+  const remediationHelper = path.join(tmp, "openclaw-npm-remediation.cjs");
   fs.writeFileSync(
     reviewedNpmExecutable,
     [
@@ -419,6 +420,24 @@ function runOptionalOpenClawPluginBlock(
       "",
     ].join("\n"),
     { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    remediationHelper,
+    [
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      "const args = process.argv.slice(2);",
+      "const value = (name) => args[args.indexOf(name) + 1];",
+      'const source = value("--archive");',
+      'if (value("--package-spec") === "@openclaw/diagnostics-otel@2026.6.10") {',
+      '  const output = path.join(value("--working-directory"), "openclaw-remediated.tgz");',
+      "  fs.copyFileSync(source, output);",
+      "  console.log(output);",
+      "} else {",
+      "  console.log(source);",
+      "}",
+      "",
+    ].join("\n"),
   );
   const script = [
     "#!/usr/bin/env bash",
@@ -457,7 +476,9 @@ function runOptionalOpenClawPluginBlock(
     "  esac",
     "  return 1",
     "}",
-    command.replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER),
+    command
+      .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
+      .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -518,7 +539,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
         expect(reviewNote).toContain("`0` high");
         expect(reviewNote).toContain("`0` critical");
-        expect(reviewNote).toContain("`766` total dependencies");
+        expect(reviewNote).toContain("`746` total dependencies");
         expect(reviewNote).toContain(
           "`dist/pipeline.runtime-*.js`, which exports `prepareSlackMessage`",
         );
@@ -645,9 +666,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(calls).toContain(
           "npm pack https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.10.tgz --pack-destination",
         );
-        expect(calls).toMatch(
-          /openclaw plugins install npm-pack:\S*\/diagnostics-otel-2026\.6\.10\.tgz\n/,
-        );
+        expect(calls).toMatch(/openclaw plugins install npm-pack:\S*\/openclaw-remediated\.tgz\n/);
         expect(calls).toContain(
           `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.integrity`,
         );
@@ -796,7 +815,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
         );
         for (const calls of [production.calls, base.calls]) {
-          expect(calls).toContain("npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip");
+          expect(calls).toContain(
+            "npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe tar jszip",
+          );
         }
         for (const calls of [production.calls, base.calls]) {
           const installCalls = calls
@@ -890,7 +911,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "wrong lifecycle recipe",
           {
             baseProvenance: openClawBaseProvenance().replace(
-              "recipe=ignore-scripts+reviewed-lifecycle+transitive-remediation-v1",
+              "recipe=ignore-scripts+reviewed-lifecycle+transitive-remediation-v2",
               "recipe=ignore-scripts-only-v1",
             ),
           },

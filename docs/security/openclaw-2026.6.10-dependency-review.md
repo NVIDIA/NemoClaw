@@ -55,9 +55,9 @@ NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
 
 Revalidated on 2026-07-21: the command exited `0` under Node `v22.22.2`.
 This runtime satisfies the OpenClaw engine requirement of `>=22.19.0`.
-The raw reviewed-archive graph reported `0` info, `1` low, `6` moderate, `1` high, and `1` critical findings.
-The remediated reviewed-archive graph reported `0` info, `1` low, `12` moderate, `0` high, and `0` critical findings across `766` total dependencies.
-The mcporter locked graph reported `0` info, `0` low, `3` moderate, `0` high, and `0` critical findings across `138` dependencies.
+The raw reviewed-archive graph reported `0` info, `1` low, `6` moderate, `4` high, and `1` critical findings.
+The remediated reviewed-archive graph reported `0` info, `1` low, `1` moderate, `0` high, and `0` critical findings across `746` total dependencies.
+The mcporter locked graph reported `0` info, `0` low, `0` moderate, `0` high, and `0` critical findings across `138` dependencies.
 The configured `high` threshold therefore passed.
 
 The raw archive graph deliberately exceeds that threshold because it is the reviewed vulnerable input to this remediation. Its high/critical set is exact-match gated: any added or removed advisory, changed severity, changed package, or changed installed node fails CI. The threshold applies separately to the remediated archive and locked production graphs, which are the graphs that ship.
@@ -66,9 +66,11 @@ The retained low finding is `GHSA-v422-hmwv-36x6` in `body-parser@2.0.0` through
 It remains in the reviewed Slack and Microsoft Teams plugin graphs.
 One retained root moderate finding is `GHSA-j3f2-48v5-ccww` in `protobufjs@7.5.0` through `7.6.4`.
 It remains in the reviewed diagnostics OTEL and WhatsApp plugin graphs.
-The other is `GHSA-frvp-7c67-39w9` in `@hono/node-server` before `2.0.5`, reached through `@modelcontextprotocol/sdk` in both OpenClaw and mcporter.
-Npm propagates those two root moderate advisories to their affected parents, which accounts for the `12` and `3` moderate package-entry totals above.
-All three retained root advisories have upstream fixes, but applying them would change additional reviewed OpenClaw, plugin, or mcporter graphs.
+The remediated graph also closes `GHSA-frvp-7c67-39w9` in `@hono/node-server` before `2.0.5`, reached through `@modelcontextprotocol/sdk` in both OpenClaw and mcporter.
+The OpenClaw artifact carries the reviewed SDK with an exact Hono `2.0.5` dependency and bundles both packages; the independently locked mcporter graph resolves Hono `2.0.5` through a committed override.
+It also closes `GHSA-45rx-2jwx-cxfr` in `@opentelemetry/propagator-jaeger` before `2.9.0`, reached through `@opentelemetry/sdk-node` in the diagnostics OTEL plugin.
+The remediated plugin keeps SDK Node `0.219.0`, replaces only its Jaeger edge with `2.9.0`, and nests `@opentelemetry/core@2.9.0` beneath Jaeger while the rest of the reviewed OTEL graph remains on `2.8.0`.
+The retained `body-parser` and `protobufjs` root advisories have upstream fixes, but applying them would change additional reviewed plugin graphs.
 The current remediation does not silently extend its authority to those graphs.
 
 This review is an advisory snapshot for the direct OpenClaw runtime package, Codex ACP runtime helper, optional plugins, messaging plugins, and their npm dependency graphs at review time. Default PR and main CI now rematerialize those exact direct packages from SRI-verified reviewed local archives under Node `22.22.2`, install with lifecycle scripts disabled, run `npm audit --omit=dev --json`, and upload the raw reports from `coverage/reviewed-npm-audit`. The configured threshold in `ci/reviewed-npm-audit.json` is `high`. The same job independently installs and audits the committed mcporter production lock. This gate complements, but does not replace, the committed npm integrity pins and install-time archive checks.
@@ -81,7 +83,7 @@ The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transi
 
 ### Transitive Remediation Boundary
 
-`scripts/lib/openclaw-npm-remediation.mts` remediates only three exact reviewed identities.
+`scripts/lib/openclaw-npm-remediation.mts` remediates only four exact reviewed identities.
 It rejects an unexpected source dependency shape before it changes or installs an archive.
 The helper verifies every replacement package by exact registry SRI and tarball URL.
 It also rejects unsafe archive members before extraction and after repacking.
@@ -91,12 +93,18 @@ For `openclaw@2026.6.10`, the helper makes these changes:
 - Replaces `tar@7.5.16` with `tar@7.5.19`.
 - Replaces `brace-expansion@5.0.6` with `brace-expansion@5.0.7`.
 - Bundles the reviewed `@openclaw/fs-safe@0.3.0` package and removes its duplicate optional `tar` and `jszip` declarations. The bundled package resolves OpenClaw's reviewed direct `tar@7.5.19` and `jszip@3.10.1` dependencies instead, including during a global npm install.
+- Bundles the reviewed `@modelcontextprotocol/sdk@1.29.0` package with its Hono dependency pinned to exact `@hono/node-server@2.0.5`, and bundles that reviewed Hono package so a global npm install cannot re-resolve the vulnerable `1.19.14` subtree.
 - Verifies the installed global dependency tree before either the reviewed base image or production image can complete.
 
 For `@openclaw/slack@2026.6.10` and `@openclaw/msteams@2026.6.10`, the helper makes these changes:
 
 - Replaces bundled `axios@1.16.0` with `axios@1.18.0`.
 - Adds the reviewed nested `https-proxy-agent@5.0.1` and `agent-base@6.0.2` graph required by that Axios release.
+
+For `@openclaw/diagnostics-otel@2026.6.10`, the helper makes these changes:
+
+- Replaces bundled `@opentelemetry/propagator-jaeger@2.8.0` with `2.9.0`.
+- Patches only the reviewed `@opentelemetry/sdk-node@0.219.0` Jaeger edge and bundles nested `@opentelemetry/core@2.9.0` under Jaeger, avoiding a graph-wide OpenTelemetry upgrade.
 
 The replacement packages are bound to these registry identities:
 
@@ -105,19 +113,24 @@ The replacement packages are bound to these registry identities:
 | `tar@7.5.19` | `sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==` | `https://registry.npmjs.org/tar/-/tar-7.5.19.tgz` |
 | `brace-expansion@5.0.7` | `sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==` | `https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz` |
 | `@openclaw/fs-safe@0.3.0` | `sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==` | `https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz` |
+| `@modelcontextprotocol/sdk@1.29.0` | `sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==` | `https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz` |
+| `@hono/node-server@2.0.5` | `sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==` | `https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz` |
+| `@opentelemetry/propagator-jaeger@2.9.0` | `sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==` | `https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz` |
+| `@opentelemetry/core@2.9.0` | `sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==` | `https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz` |
 | `axios@1.18.0` | `sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==` | `https://registry.npmjs.org/axios/-/axios-1.18.0.tgz` |
 | `https-proxy-agent@5.0.1` | `sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==` | `https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz` |
 | `agent-base@6.0.2` | `sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==` | `https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz` |
 
 The helper extracts and rebuilds archives with `tar` instead of invoking a package build or pack lifecycle, and it disables npm lifecycle scripts while retrieving replacement archives.
 It binds each patched package manifest and shrinkwrap to a committed SHA-512 metadata value.
-The core value also covers the bundled `@openclaw/fs-safe` package manifest.
-The expected values are `sha512-7oKMgemit3Yizu6s83pvfXdoIB0oDccBSErtCS3dmBsqEqav9b/aiI1VxlE9Ph1Ih7jSVRUIGUyWVdBicym/0A==` for OpenClaw core, `sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
+The core value also covers the bundled `@openclaw/fs-safe`, `@modelcontextprotocol/sdk`, and `@hono/node-server` package manifests.
+The diagnostics value also covers the patched SDK Node, Jaeger, and nested OpenTelemetry core package manifests.
+The expected values are `sha512-3B3INhrI5ki3O2/Tm2o8cupkAhaBRJO51xGa/i2Ou3IgKF5MNydNBe8RkOLvjtY9dXM7NH+aLqig+TGhcaJWHQ==` for OpenClaw core, `sha512-QmgyGI7AQJrNGoWAYolunc18wUr6Q4iOK4n9YXCOo3Cxh+e2GONtOAbeu+OFpQW8PsF6x/iGInDQmeKD+jnOug==` for diagnostics OTEL, `sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
 Both the library and command-line entry points enforce the same committed values.
-`Dockerfile.base` records `ignore-scripts+reviewed-lifecycle+transitive-remediation-v1` in its protected provenance marker.
+`Dockerfile.base` records `ignore-scripts+reviewed-lifecycle+transitive-remediation-v2` in its protected provenance marker.
 The production Dockerfile rejects stale base provenance and repeats the remediation when the marker does not match.
-Both image paths run a depth-bounded `npm ls` against the installed OpenClaw, `fs-safe`, `tar`, and `jszip` graph so a missing or invalid direct dependency fails during image assembly without traversing the unrelated global tree.
-The messaging installer applies the same remediation before it installs the reviewed Slack or Microsoft Teams archive.
+Both image paths run a depth-bounded `npm ls` against the installed OpenClaw, MCP SDK, Hono node server, `fs-safe`, `tar`, and `jszip` graph so a missing or invalid reviewed dependency fails during image assembly without traversing the unrelated global tree.
+The optional plugin installer applies the same remediation before it installs diagnostics OTEL, and the messaging installer applies it before installing the reviewed Slack or Microsoft Teams archive.
 The reviewed npm audit applies that helper before installation, so Docker builds, messaging builds, and the advisory audit consume the same remediated archive shape.
 
 ### Transitive Remediation Concern Ledger
@@ -128,9 +141,11 @@ The following concerns record the failure mode, completed disposition, and remai
 |---|---|---|---|
 | `DEP-1` | The reviewed core archive resolves vulnerable `tar` and `brace-expansion` versions. A production image can retain the vulnerable graph. | The `migrate`, `guard`, and `test` dispositions replace exact source shapes with SRI-pinned versions, hash metadata, and reject drift in focused tests. | Full E2E must pass for the PR SHA. |
 | `DEP-2` | The reviewed Slack and Microsoft Teams archives bundle the vulnerable Axios graph. Messaging plugin installs can retain that graph. | The `migrate`, `guard`, and `test` dispositions add Axios `1.18.0` and its pinned nested proxy graph before local archive installation. | Full E2E must pass for the PR SHA. |
-| `DEP-3` | `body-parser` retains one low root advisory, while `protobufjs` and `@hono/node-server` retain moderate root advisories whose affected-parent propagation produces additional moderate package entries. Expanding this patch without review can cause silent dependency drift. | The `document` disposition records each package, consumer, severity, propagation, and fix availability in the raw reports. The configured `high` threshold passes. | Re-review the affected OpenClaw, plugin, and mcporter graphs before a later change remediates these findings. |
+| `DEP-3` | Both the reviewed OpenClaw archive and locked mcporter graph resolve vulnerable `@hono/node-server@1.19.14` through `@modelcontextprotocol/sdk@1.29.0`. | The `migrate`, `guard`, and `test` dispositions bind SRI-reviewed SDK and Hono archives, patch only the SDK's reviewed Hono edge, bundle the exact fixed subtree into OpenClaw, and override the independently locked mcporter resolution to Hono `2.0.5`. | Full E2E must pass for the PR SHA, including MCP runtime coverage. |
 | `DEP-4` | A previously built base image can claim the unremediated install recipe. | The `guard` and `test` dispositions change the protected provenance recipe. A stale or mismatched marker takes the complete reviewed install path. | Base-image and production-image CI must pass for the PR SHA. |
 | `DEP-5` | The replacement graph has no repository-generated lock-derived SBOM. The `https-proxy-agent@5.0.1` and `agent-base@6.0.2` tarballs declare MIT in package metadata but contain no license file. | The `document` disposition records reviewed registry metadata, SRI, tarball URL, declared license, and packaged license-file inventory. The other replacement tarballs include license files. `tar@7.5.19` declares BlueOak-1.0.0, and the others declare MIT. | Maintainers must retain this notice and SBOM limitation or add generated attribution evidence before release policy requires it. |
+| `DEP-6` | `body-parser` retains one low root advisory and `protobufjs` retains one moderate root advisory in reviewed plugin graphs. Expanding this patch without review can cause silent dependency drift. | The `document` disposition records each package, consumer, severity, propagation, and fix availability in the raw reports. The configured `high` threshold passes. | Re-review the affected plugin graphs before a later change remediates these findings. |
+| `DEP-7` | The reviewed diagnostics OTEL archive bundles vulnerable `@opentelemetry/propagator-jaeger@2.8.0` through SDK Node `0.219.0`. | The `migrate`, `guard`, and `test` dispositions replace only the reviewed Jaeger edge with SRI-pinned `2.9.0`, nest SRI-pinned core `2.9.0`, hash all patched metadata, and use the same artifact in optional installation and audit. | Full E2E must pass for the PR SHA, including diagnostics OTEL coverage. |
 
 ## Slack Source Review
 
@@ -340,9 +355,9 @@ No real Microsoft Teams tenant proof is included in this PR. The work remains tr
 - The #4434 compatibility-shim disposition is explicitly accepted for this OpenClaw 2026.6.10 PR only: `test/issue-4434-error-fields.test.ts` verifies 3/3 fields are present in the NemoClaw-patched runtime output and 3/3 fields are missing in the upstream-shaped `openclaw@2026.6.10` output. On the next OpenClaw bump that emits equivalent fields upstream, remove `scripts/patch-openclaw-issue-4434-diagnostics.mts` in the same change and keep the full live assertions.
 - The assembled-image and rebuilt-sandbox proof residual is explicitly accepted for this OpenClaw 2026.6.10 dependency bump only. The checked-in real-distribution harness binds the SRI-verified package to every reviewed patch and audit marker; production image workflows run the build-argument guard before assembling the final images; `network-policy` exercises the resulting OpenShell policy; and `messaging-providers`, `hermes-discord`, `channels-add-remove`, and both `channels-stop-start` variants exercise rebuilt sandboxes, installed messaging runtimes, and keyless registered-provider reuse without credential replacement. No single lane combines the final production image, a live `host.openshell.internal` SSRF-negative matrix, and every keyless custom-provider rebuild, so a cross-boundary packaging or wiring regression remains possible even though each boundary fails closed independently. Do not describe this as one combined end-to-end proof. Remove this acceptance when the canonical E2E matrix gains that assembled-image cross-product, or re-evaluate it on the next OpenClaw bump before retaining the same split proof.
 - The literal issue #2478 Local Ollama plus Telegram inbound recovery residual is explicitly accepted for this OpenClaw 2026.6.10 dependency bump only. `issue-2478-crash-loop-recovery` proves repeated gateway kill/respawn, guard-chain restoration, `inference.local` availability, and soak stability through a hermetic compatible endpoint; `messaging-providers` separately imports the installed Telegram `runtime-api.js`, sends through `sendMessageTelegram`, and verifies token rewrite plus fake Bot API capture. This does not reproduce `nemotron-3-super:120b` on Local Ollama or originate a Telegram inbound update after the crash, so agent/channel-specific inbound restart behavior remains a residual rather than proven equivalence. Do not claim the literal deployment scenario from these split lanes. Remove this acceptance when a stable CI fixture drives a Telegram inbound update through the recovered Local Ollama sandbox, or re-evaluate it on the next OpenClaw bump.
-- The transitive remediation closes the reviewed high-severity `tar`, `brace-expansion`, and Axios findings without changing the OpenClaw version.
+- The transitive remediation closes the reviewed `tar`, `brace-expansion`, Axios, Hono node server, and OpenTelemetry Jaeger findings without changing the OpenClaw version.
   The exact source shapes, replacement SRIs, tarball URLs, patched metadata, and provenance recipe fail closed on drift.
-  The low `body-parser` plus moderate `protobufjs` and `@hono/node-server` findings, including affected-parent propagation, remain documented at the configured `high` threshold.
+  The low `body-parser` and moderate `protobufjs` findings remain documented at the configured `high` threshold.
   Current NemoClaw closes the WeChat residual with `agents/openclaw/wechat-runtime/package-lock.json` and post-install graph verification.
 - `src/lib/messaging/channels/manifests.test.ts` remains below the shared `test-size:check` threshold and does not need extraction in this dependency bump.
 - The npm audit result in this note remains a point-in-time snapshot. Default PR and main CI rematerialize the production-compatible graph from the reviewed local archives, audit it and the committed mcporter lock with `npm audit --omit=dev --json`, upload both raw reports, and fail at the configured `high` threshold. The separate `wechat-runtime-audit` gate uses Node `22.19.0` and npm `10.9.4`, installs the committed WeChat production lock with scripts disabled, fails on any low-or-higher production advisory, verifies registry signatures, exercises the reviewed archive through a copied writable cache, and uploads its evidence. Pull requests execute that WeChat audit action from the base SHA; because PR #6739's base predates the action, that PR alone may bootstrap it from signed immutable commit `HOYALIM/NemoClaw@0d2256d71d5bbba3bcaaaa4d01714fa56f22d1e2`, while every other PR fails closed if its base lacks the action. The production installer routes registry metadata lookup, archive packing, and installation through the disposable writable-cache boundary so retrieval cannot fall back to `HOME/.npm`; the trusted source cache remains read-only and the disposable copy is removed in the same image layer.
