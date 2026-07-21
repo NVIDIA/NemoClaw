@@ -159,12 +159,12 @@ export function withSandboxReadinessTrace<T>(
 export function withDashboardReadinessTrace<T>(
   sandboxName: string,
   port: string | number,
-  attempts: number,
+  timeoutSeconds: number,
   fn: TraceFn<T>,
 ): T {
   return trace.withTraceSpan(
     "nemoclaw.dashboard.readiness_wait",
-    { sandbox_name: sandboxName, port, attempts },
+    { sandbox_name: sandboxName, port, timeout_seconds: timeoutSeconds },
     fn,
   );
 }

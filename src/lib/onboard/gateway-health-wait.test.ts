@@ -51,7 +51,7 @@ describe("waitForGatewayHealth", () => {
     expect(isGatewayHealthy).toHaveBeenCalledTimes(2);
     expect(isGatewayHttpReady).toHaveBeenCalledTimes(2);
     expect(options.sleepSeconds).toHaveBeenCalledTimes(1);
-    expect(options.sleepSeconds).toHaveBeenCalledWith(2);
+    expect(options.sleepSeconds).toHaveBeenCalledWith(0.25);
   });
 
   it("returns false when HTTP readiness never follows healthy metadata", async () => {
@@ -65,9 +65,13 @@ describe("waitForGatewayHealth", () => {
 
     await expect(waitForGatewayHealth(options)).resolves.toBe(false);
 
-    expect(options.isGatewayHealthy).toHaveBeenCalledTimes(2);
-    expect(options.isGatewayHttpReady).toHaveBeenCalledTimes(2);
-    expect(options.sleepSeconds).toHaveBeenCalledTimes(2);
+    expect(options.isGatewayHealthy).toHaveBeenCalledTimes(6);
+    expect(options.isGatewayHttpReady).toHaveBeenCalledTimes(6);
+    expect(options.sleepSeconds).toHaveBeenCalledTimes(6);
+    expect(options.sleepSeconds).toHaveBeenNthCalledWith(1, 0.25);
+    expect(
+      Math.max(...vi.mocked(options.sleepSeconds).mock.calls.map(([seconds]) => seconds)),
+    ).toBeLessThanOrEqual(2);
   });
 
   it("force-refreshes metadata after bootstrap secret repair", async () => {
@@ -114,7 +118,8 @@ describe("waitForGatewayHealth", () => {
     expect(isGatewayHealthy.mock.calls.length).toBeLessThan(10);
     expect(options.isGatewayHttpReady).toHaveBeenCalledTimes(isGatewayHealthy.mock.calls.length);
     expect(clock.sleeper).toHaveBeenCalled();
-    expect(clock.sleeper.mock.calls.every(([seconds]) => seconds === 1)).toBe(true);
+    expect(clock.sleeper).toHaveBeenNthCalledWith(1, 0.25);
+    expect(clock.sleeper.mock.calls.every(([seconds]) => seconds <= 1)).toBe(true);
   });
 
   it("preserves the configured immediate probes when the interval is zero (#3768)", async () => {
@@ -279,7 +284,7 @@ describe("waitForGatewayHealth", () => {
 
     await expect(waitForGatewayHealth(options)).resolves.toBe(false);
 
-    expect(options.isGatewayHttpReady).toHaveBeenCalledOnce();
+    expect(options.isGatewayHttpReady).toHaveBeenCalledTimes(4);
     expect(observedSignal?.aborted).toBe(true);
     expect(aborted).toBe(true);
   });

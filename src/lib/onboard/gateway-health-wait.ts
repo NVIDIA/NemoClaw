@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type WaitUntilOptions, waitUntilAsync } from "../core/wait";
+import { createReadinessWaitOptions, getLegacyPollDeadlineBudgetMs } from "./readiness-wait";
 
 type RunCaptureOpenshell = (args: string[], opts?: { ignoreError?: boolean }) => string;
 
@@ -23,15 +24,7 @@ export function getGatewayHealthWaitBudgetMs(
   healthPollCount: number,
   healthPollIntervalSeconds: number,
 ): number {
-  const normalizedCount = Number.isFinite(healthPollCount) ? Math.max(0, healthPollCount) : 0;
-  const normalizedIntervalSeconds = Number.isFinite(healthPollIntervalSeconds)
-    ? Math.max(0, healthPollIntervalSeconds)
-    : 0;
-  if (normalizedCount <= 0 || normalizedIntervalSeconds <= 0) return 0;
-  const budgetMs = normalizedCount * normalizedIntervalSeconds * 1000;
-  return Number.isFinite(budgetMs)
-    ? Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, budgetMs))
-    : Number.MAX_SAFE_INTEGER;
+  return getLegacyPollDeadlineBudgetMs(healthPollCount, healthPollIntervalSeconds);
 }
 
 export function formatGatewayHealthWaitBudget(
@@ -74,26 +67,13 @@ export function createGatewayHealthWaitOptions(
   const normalizedIntervalSeconds = Number.isFinite(healthPollIntervalSeconds)
     ? Math.max(0, healthPollIntervalSeconds)
     : 0;
-  const intervalMs = normalizedIntervalSeconds * 1000;
-  const commonOptions = {
-    initialIntervalMs: intervalMs,
-    maxIntervalMs: intervalMs,
-    backoffFactor: 1,
+  return createReadinessWaitOptions({
+    budgetMs: getGatewayHealthWaitBudgetMs(normalizedCount, normalizedIntervalSeconds),
+    maxIntervalMs: normalizedIntervalSeconds * 1000,
+    zeroBudgetAttempts: normalizedCount,
     now,
     sleep,
-  } satisfies WaitUntilOptions;
-
-  // A zero interval is an accepted fast-test and operator configuration. It
-  // has no meaningful time budget, so preserve the former bounded attempt
-  // semantics instead of turning scheduling overhead into a zero-probe wait.
-  if (intervalMs === 0) {
-    return { ...commonOptions, maxAttempts: normalizedCount };
-  }
-
-  return {
-    ...commonOptions,
-    deadlineMs: now() + getGatewayHealthWaitBudgetMs(normalizedCount, normalizedIntervalSeconds),
-  };
+  });
 }
 
 function startAbortableGatewayHttpProbe(

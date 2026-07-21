@@ -160,7 +160,8 @@ describe("gateway recovery", () => {
     // Sleeps happen after every probe except the last one (deadline check
     // after the final probe short-circuits before an extra sleep).
     expect(clock.sleeper).toHaveBeenCalled();
-    expect(clock.sleeper.mock.calls.every(([s]) => s === 1)).toBe(true);
+    expect(clock.sleeper).toHaveBeenNthCalledWith(1, 0.25);
+    expect(clock.sleeper.mock.calls.every(([s]) => s <= 1)).toBe(true);
   });
 
   it("succeeds on the first healthy probe without sleeping and sets OPENSHELL_GATEWAY (#3768)", async () => {
@@ -210,7 +211,7 @@ describe("gateway recovery", () => {
     // Exactly one inter-attempt sleep between the unhealthy first probe
     // and the healthy second probe.
     expect(deps.sleepSeconds).toHaveBeenCalledTimes(1);
-    expect(deps.sleepSeconds).toHaveBeenNthCalledWith(1, 2);
+    expect(deps.sleepSeconds).toHaveBeenNthCalledWith(1, 0.25);
     expect(deps.runCaptureOpenshell).toHaveBeenCalledTimes(6);
   });
 
