@@ -121,9 +121,13 @@ rollback_openclaw_state() {
   if [[ "$prior_state" == present ]]; then
     if ! mv -- "$rollback_root/prior-state" "$state_directory"; then
       # Both temporary roots are siblings of the live state directory. If the
-      # direct rename fails, copy only into the private restore root and expose
-      # the completed copy with a same-filesystem rename. An interrupted or
-      # partial copy therefore never becomes the live OpenClaw state.
+      # reverse rename still fails after the live tree was vacated (for example,
+      # because of host filesystem policy or endpoint-security contention), the
+      # wrapper cannot correct that external condition. Copy only into the
+      # private restore root and expose the completed copy with a same-filesystem
+      # rename, so a partial copy never becomes live. Remove this fallback only
+      # when the supported runtime contract makes reverse sibling renames
+      # infallible or replaces rollback with an equally atomic restore primitive.
       restore_root="$(mktemp -d "$(dirname -- "$state_directory")/.nemoclaw-openclaw-state-restore.XXXXXX")" || true
       if [[ -n "$restore_root" ]] \
         && cp -a -- "$rollback_root/prior-state" "$restore_root/completed-state" \
