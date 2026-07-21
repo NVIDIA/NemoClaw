@@ -7,8 +7,10 @@ import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -20,7 +22,7 @@ import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
 type JsonObject = Record<string, any>;
 
 type Remediation = Readonly<{
-  expectedPatchedIntegrity: string;
+  expectedPatchedTreeIntegrity: string;
 }>;
 
 type RemediationRequest = Readonly<{
@@ -32,7 +34,7 @@ type RemediationRequest = Readonly<{
 
 type BuildRequest = RemediationRequest &
   Readonly<{
-    expectedPatchedIntegrity?: string;
+    expectedPatchedTreeIntegrity?: string;
   }>;
 
 export type RemediatedArchive = Readonly<{
@@ -57,12 +59,12 @@ const AGENT_BASE_TARBALL = "https://registry.npmjs.org/agent-base/-/agent-base-6
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "@openclaw/msteams@2026.7.1": {
-    expectedPatchedIntegrity:
-      "sha512-qtdnGvSnxaOJPG5nY/qEhXQzZoJIqnzp+3jaq2DWVB74T+zBdb9i/KVsiGFloMSjXx/pg8+i+nkhKFTaEOYHZg==",
+    expectedPatchedTreeIntegrity:
+      "sha512-FL4l65gEbbwtDd9Ogr69+xBNzIfE4YS8Hib36G+kcmX+T0oB1zL+/qs6b4bJc+ygTsh60H3yqpFbXoQeN05JYQ==",
   },
   "@openclaw/slack@2026.7.1": {
-    expectedPatchedIntegrity:
-      "sha512-ctU4iNWpx3IDPDXqjRdU4TvzhM/dXUvuDXJHcl82/gUTMOFHO8bW+2UTTTKTNAmZbPz/YBeztJb6oaJfxxusvw==",
+    expectedPatchedTreeIntegrity:
+      "sha512-4ThnsNS+yBlFSkTaQn2xosxrDu1s0vrxcqka5QqFj+8dCEaTa9JVLRgNniYV/QNhO53wc7a2R5oQFElzYspT2w==",
   },
 });
 
@@ -138,6 +140,29 @@ function readJson(path: string): JsonObject {
 
 function writeJson(path: string, value: JsonObject): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+}
+
+function hashPackageTree(packageDirectory: string): string {
+  const hash = createHash("sha512");
+  const visit = (directory: string, relativeDirectory: string): void => {
+    for (const name of readdirSync(directory).sort()) {
+      const absolutePath = join(directory, name);
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${name}` : name;
+      const stats = lstatSync(absolutePath);
+      if (stats.isDirectory()) {
+        hash.update(`directory\0${relativePath}\0`);
+        visit(absolutePath, relativePath);
+      } else if (stats.isFile()) {
+        hash.update(`file\0${relativePath}\0${stats.size}\0`);
+        hash.update(readFileSync(absolutePath));
+        hash.update("\0");
+      } else {
+        throw new Error(`Remediated package tree has unsupported entry ${relativePath}`);
+      }
+    }
+  };
+  visit(packageDirectory, "");
+  return `sha512-${hash.digest("base64")}`;
 }
 
 function sortedObject(value: JsonObject): JsonObject {
@@ -394,10 +419,20 @@ export function buildRemediatedOpenClawPluginArchive(request: BuildRequest): Rem
   }
   const archivePath = resolve(outputDirectory, basename(packed[0].filename));
   validateArchiveMembers(archivePath, remediationRoot, env);
+  const packedPackage = extractArchive(
+    archivePath,
+    join(remediationRoot, "packed-output"),
+    remediationRoot,
+    env,
+  );
+  const treeIntegrity = hashPackageTree(packedPackage);
   const integrity = `sha512-${createHash("sha512").update(readFileSync(archivePath)).digest("base64")}`;
-  if (request.expectedPatchedIntegrity && integrity !== request.expectedPatchedIntegrity) {
+  if (
+    request.expectedPatchedTreeIntegrity &&
+    treeIntegrity !== request.expectedPatchedTreeIntegrity
+  ) {
     throw new Error(
-      `Remediated ${request.packageSpec} integrity mismatch: expected ${request.expectedPatchedIntegrity}, got ${integrity}`,
+      `Remediated ${request.packageSpec} tree integrity mismatch: expected ${request.expectedPatchedTreeIntegrity}, got ${treeIntegrity}`,
     );
   }
   return { archivePath, integrity, remediated: true };
@@ -418,7 +453,7 @@ export function remediateReviewedOpenClawPluginArchive(
   }
   return buildRemediatedOpenClawPluginArchive({
     ...request,
-    expectedPatchedIntegrity: remediation.expectedPatchedIntegrity,
+    expectedPatchedTreeIntegrity: remediation.expectedPatchedTreeIntegrity,
   });
 }
 

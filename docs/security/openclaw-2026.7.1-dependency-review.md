@@ -36,12 +36,12 @@ whose amd64 config reports Node `22.23.1`.
   - `sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==`
 - `@openclaw/slack@2026.7.1`
   - `sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==`
-  - remediated archive: `sha512-ctU4iNWpx3IDPDXqjRdU4TvzhM/dXUvuDXJHcl82/gUTMOFHO8bW+2UTTTKTNAmZbPz/YBeztJb6oaJfxxusvw==`
+  - remediated package tree: `sha512-4ThnsNS+yBlFSkTaQn2xosxrDu1s0vrxcqka5QqFj+8dCEaTa9JVLRgNniYV/QNhO53wc7a2R5oQFElzYspT2w==`
 - `@openclaw/whatsapp@2026.7.1`
   - `sha512-wLY/Omc5fleRpl2lKGN8sxt/8hYfHGwLRezmWsk8oCbea5pRKUPE6ZX+wJO1O52NOJkAGCuiXvS7x0qIeKxXbQ==`
 - `@openclaw/msteams@2026.7.1`
   - `sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==`
-  - remediated archive: `sha512-qtdnGvSnxaOJPG5nY/qEhXQzZoJIqnzp+3jaq2DWVB74T+zBdb9i/KVsiGFloMSjXx/pg8+i+nkhKFTaEOYHZg==`
+  - remediated package tree: `sha512-FL4l65gEbbwtDd9Ogr69+xBNzIfE4YS8Hib36G+kcmX+T0oB1zL+/qs6b4bJc+ygTsh60H3yqpFbXoQeN05JYQ==`
 - `@zed-industries/codex-acp@0.11.1`
   - `sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==`
   - `https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz`
@@ -70,8 +70,10 @@ plugin archives with this exact replacement graph:
 `scripts/lib/openclaw-npm-remediation.mts` verifies the original plugin and
 replacement package identities before it writes the archive. It rejects an
 upstream graph that no longer resolves Axios `1.16.0`. It then verifies the
-deterministic remediated archive integrity before installation. The production
-plugin installer and `reviewed-npm-audit` use this same function.
+deterministic remediated package-tree integrity before installation. This
+canonical tree digest is independent of npm-generated tar metadata, which can
+vary between npm patch releases without changing package contents. The
+production plugin installer and `reviewed-npm-audit` use this same function.
 
 This remediation is limited to `@openclaw/slack@2026.7.1` and
 `@openclaw/msteams@2026.7.1`. Remove it when a reviewed stable OpenClaw plugin
