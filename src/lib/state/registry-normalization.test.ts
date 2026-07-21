@@ -244,7 +244,7 @@ describe("baseline exclusion registry helpers (#7178)", () => {
 
     expect(
       registry.addBaselineExclusion("alpha", {
-        version: 1,
+        version: 1 as const,
         agent: "hermes",
         key: "nous_research",
         digest: "d".repeat(64),
@@ -292,7 +292,7 @@ describe("baseline exclusion registry helpers (#7178)", () => {
       id: "123e4567-e89b-42d3-a456-426614174001",
       operation: "exclude" as const,
       exclusion: {
-        version: 1,
+        version: 1 as const,
         agent: "hermes",
         key: "nous_research",
         digest: "a".repeat(64),
@@ -340,7 +340,12 @@ describe("baseline exclusion registry helpers (#7178)", () => {
     const transition = {
       id: "123e4567-e89b-42d3-a456-426614174004",
       operation: "restore" as const,
-      exclusion: { version: 1, agent: "hermes", key: "nous_research", digest: "a".repeat(64) },
+      exclusion: {
+        version: 1 as const,
+        agent: "hermes",
+        key: "nous_research",
+        digest: "a".repeat(64),
+      },
       targetLiveDigest: "b".repeat(64),
       startedAt: "2026-07-19T00:00:02.000Z",
     };

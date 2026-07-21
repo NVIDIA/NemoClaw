@@ -118,7 +118,13 @@ describe("rebuild post-restore session model reconciliation (#7102)", () => {
   it("discloses carried-over baseline exclusions in the successful rebuild summary (#7194)", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(registry, "getBaselineExclusions").mockReturnValue([
-      { key: "nous_research", digest: "digest-1", acknowledgedAt: "2026-07-19T00:00:00.000Z" },
+      {
+        version: 1,
+        agent: "hermes",
+        key: "nous_research",
+        digest: "digest-1",
+        acknowledgedAt: "2026-07-19T00:00:00.000Z",
+      },
     ]);
 
     await runRebuildPostRestorePhase(input());

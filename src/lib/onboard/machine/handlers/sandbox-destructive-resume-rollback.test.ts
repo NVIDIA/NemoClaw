@@ -38,7 +38,7 @@ describe("handleSandboxState destructive resume rollback (#7194)", () => {
       entry: {
         name: "saved",
         baselineExclusions: [
-          { version: 1, agent: "openclaw", key: "nous_research", digest: "abc" },
+          { version: 1 as const, agent: "openclaw", key: "nous_research", digest: "abc" },
         ],
       },
       wasDefault: false,
@@ -84,7 +84,7 @@ describe("handleSandboxState destructive resume rollback (#7194)", () => {
       entry: {
         name: "saved",
         baselineExclusions: [
-          { version: 1, agent: "openclaw", key: "nous_research", digest: "abc" },
+          { version: 1 as const, agent: "openclaw", key: "nous_research", digest: "abc" },
         ],
       },
       wasDefault: false,

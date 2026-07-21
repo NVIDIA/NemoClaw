@@ -156,6 +156,8 @@ describe("onboard tool-disclosure flow", () => {
   it("keeps baseline-exclusion retry metadata when absent replacement creation fails (#7194)", () => {
     const baselineExclusions = [
       {
+        version: 1 as const,
+        agent: "openclaw",
         key: "openclaw_docs",
         digest: "baseline-digest",
         acknowledgedAt: "2026-07-19T00:00:00.000Z",

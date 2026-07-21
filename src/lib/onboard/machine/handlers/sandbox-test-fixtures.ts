@@ -6,7 +6,7 @@ import { vi } from "vitest";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
-import type { SandboxRemovalReceipt } from "../../../state/registry";
+import type { BaselineExclusionEntry, SandboxRemovalReceipt } from "../../../state/registry";
 import type { SandboxStateOptions } from "./sandbox";
 
 export function makeMinimalPlan(
@@ -131,12 +131,7 @@ export function createDeps(
         inferenceProvider?: string | null;
         extraProviders: readonly string[];
         staleExtraProviders: readonly string[];
-        baselineExclusions?: readonly {
-          key: string;
-          digest: string;
-          acknowledgedAt?: string;
-          appliedAgentVersion?: string | null;
-        }[];
+        baselineExclusions?: readonly BaselineExclusionEntry[];
       }) => ({
         sandboxName: input.sandboxName,
         inferenceProvider: input.inferenceProvider ?? null,

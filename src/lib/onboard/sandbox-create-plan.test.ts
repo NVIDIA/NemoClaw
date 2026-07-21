@@ -171,7 +171,7 @@ describe("resolveSandboxCreateIntent", () => {
       policyTier: "balanced",
       baselineExclusions: [
         {
-          version: 1,
+          version: 1 as const,
           agent: "hermes",
           key: "nous_research",
           digest: "abc",

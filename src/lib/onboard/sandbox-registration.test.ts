@@ -275,6 +275,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
   it("carries complete baseline exclusion records through consecutive registrations", () => {
     const baselineExclusions = [
       {
+        version: 1 as const,
+        agent: "openclaw",
         key: "nous_research",
         digest: "abc",
         acknowledgedAt: "2026-07-19T00:00:00.000Z",

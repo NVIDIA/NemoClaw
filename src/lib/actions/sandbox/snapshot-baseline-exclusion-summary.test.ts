@@ -9,8 +9,8 @@ describe("formatSnapshotBaselineExclusionSummary (#7178)", () => {
   it("discloses active exclusions and their support impact", () => {
     expect(
       formatSnapshotBaselineExclusionSummary([
-        { key: "nous_research", digest: "digest-a" },
-        { key: "managed_inference", digest: "digest-b" },
+        { version: 1, agent: "hermes", key: "nous_research", digest: "digest-a" },
+        { version: 1, agent: "hermes", key: "managed_inference", digest: "digest-b" },
       ]),
     ).toEqual([
       "Active baseline exclusions: nous_research, managed_inference",
