@@ -781,7 +781,11 @@ function safeArchiveMembers(archivePath: string): string[] {
   return members;
 }
 
-export function verifyRemediatedArchiveContents(packageRoot: string, archivePath: string): void {
+export function verifyRemediatedArchiveContents(
+  packageRoot: string,
+  archivePath: string,
+  expectedSpec?: string,
+): void {
   const resolvedPackageRoot = path.resolve(packageRoot);
   const resolvedArchive = path.resolve(archivePath);
   const source = contentSnapshot(resolvedPackageRoot, "remediated plugin source tree");
@@ -805,6 +809,7 @@ export function verifyRemediatedArchiveContents(packageRoot: string, archivePath
         `remediated plugin archive contents changed during packing: ${changes.join("; ")}`,
       );
     }
+    if (expectedSpec) verifyReviewedOpenClawPluginTree(unpackedRoot, expectedSpec);
   } finally {
     rmSync(unpackedRoot, { recursive: true, force: true });
   }
@@ -884,8 +889,6 @@ export function materializeReviewedPluginSecurityRevision(options: {
   if (patchReviewedOpenClawPluginRoot(packageRoot, options.replacementRoot) !== expectedSpec) {
     throw new Error(`${expectedSpec} remediated package identity changed`);
   }
-  verifyReviewedOpenClawPluginTree(packageRoot, expectedSpec);
-
   const pack = spawnSync(
     "npm",
     [
@@ -919,7 +922,7 @@ export function materializeReviewedPluginSecurityRevision(options: {
     if (report[0].integrity !== observedIntegrity) {
       throw new Error(`${expectedSpec} npm pack integrity report changed`);
     }
-    verifyRemediatedArchiveContents(packageRoot, remediatedArchive);
+    verifyRemediatedArchiveContents(packageRoot, remediatedArchive, expectedSpec);
     const remediatedSpec = JSON.parse(runTar(["-xOzf", remediatedArchive, "package/package.json"]));
     if (packageSpec(remediatedSpec) !== expectedSpec) {
       throw new Error(`${expectedSpec} remediated archive identity changed`);

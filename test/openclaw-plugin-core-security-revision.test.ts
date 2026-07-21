@@ -272,7 +272,7 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
     tempDirectories.push(root);
     const source = path.join(root, "source");
     const staging = path.join(root, "staging", "package");
-    writePackage(source, { name: "packed-plugin", version: "1.0.0" });
+    writePackage(source, { name: "@openclaw/diagnostics-otel", version: "2026.6.10" });
     fs.writeFileSync(path.join(source, "payload.js"), "module.exports = true;\n");
     fs.cpSync(source, staging, { recursive: true });
     const archive = path.join(root, "packed-plugin.tgz");
@@ -280,7 +280,9 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
       encoding: "utf8",
     });
     expect(packed.status, packed.stderr).toBe(0);
-    expect(() => verifyRemediatedArchiveContents(source, archive)).not.toThrow();
+    expect(() =>
+      verifyRemediatedArchiveContents(source, archive, "@openclaw/diagnostics-otel@2026.6.10"),
+    ).not.toThrow();
     fs.writeFileSync(path.join(source, "payload.js"), "module.exports = false;\n");
     expect(() => verifyRemediatedArchiveContents(source, archive)).toThrow(
       "payload.js: contents changed during packing",
