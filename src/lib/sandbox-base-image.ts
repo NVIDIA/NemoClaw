@@ -12,6 +12,7 @@ import {
 } from "./adapters/docker";
 import { ROOT, redact } from "./runner";
 import { imageMeetsMinimumGlibc } from "./sandbox-base-image/image-compatibility";
+import { withLocalBuildHeartbeat } from "./sandbox-base-image/local-build-heartbeat";
 import { createSandboxBaseImageResolutionKey } from "./sandbox-base-image/resolution-key";
 import {
   finalizeSandboxBaseImageResolution,
@@ -255,11 +256,13 @@ function resolveLocalCandidate(
   // `suppressOutput` keeps captured stdio out of the user's terminal.
   // On failure, surface the captured stderr so the user still gets a
   // useful diagnostic.
-  const buildResult = dockerBuild(options.dockerfilePath, imageRef, options.rootDir || ROOT, {
-    quiet: true,
-    ignoreError: true,
-    suppressOutput: true,
-  });
+  const buildResult = withLocalBuildHeartbeat(() =>
+    dockerBuild(options.dockerfilePath, imageRef, options.rootDir || ROOT, {
+      quiet: true,
+      ignoreError: true,
+      suppressOutput: true,
+    }),
+  );
   if (buildResult.error || buildResult.status !== 0) {
     const diagnostics = formatBuildFailureDiagnostics(buildResult);
     if (diagnostics) console.error(diagnostics);
