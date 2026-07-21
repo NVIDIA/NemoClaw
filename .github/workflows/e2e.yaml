@@ -2294,7 +2294,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo fallocate -l 16G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
           sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
           sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
           sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
@@ -2379,7 +2379,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo fallocate -l 16G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
           sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
           sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
           sudo swapon /mnt/nemoclaw-hermes-rebuild.swap

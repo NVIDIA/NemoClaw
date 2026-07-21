@@ -41,7 +41,7 @@ describe("runner-pressure E2E workflow boundary (#7146)", () => {
 
     expect(provision).toBeDefined();
     expect(jobSteps.indexOf(provision)).toBeLessThan(jobSteps.indexOf(run));
-    expect(provision.run).toContain("fallocate -l 16G /mnt/nemoclaw-hermes-rebuild.swap");
+    expect(provision.run).toContain("fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap");
     expect(provision.run).toContain("chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap");
     expect(provision.run).toContain("mkswap /mnt/nemoclaw-hermes-rebuild.swap");
     expect(provision.run).toContain("swapon /mnt/nemoclaw-hermes-rebuild.swap");
