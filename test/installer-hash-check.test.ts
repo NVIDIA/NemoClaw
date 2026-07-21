@@ -54,6 +54,8 @@ const ASSET_DIGESTS = new Map([
   ],
 ]);
 const ASSETS = [...ASSET_DIGESTS.keys()];
+const FORMULA_ASSET = "openshell.rb";
+const FORMULA_DIGEST = "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23";
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_ASSET = "openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_DIGEST =
@@ -432,6 +434,7 @@ function renderPinFunction(
   assets: string[],
   openshellVersion: string,
   formatting: PinFormatting,
+  digestMap: ReadonlyMap<string, string> = ASSET_DIGESTS,
 ): string {
   const functionOpening =
     formatting === "mixed-whitespace" ? `${functionName}\t( )\t{` : `${functionName}() {`;
@@ -447,7 +450,7 @@ function renderPinFunction(
       : '  case "${release_tag}:${asset}" in';
   const cases = assets
     .map((asset) => {
-      const digest = ASSET_DIGESTS.get(asset) ?? "missing";
+      const digest = digestMap.get(asset) ?? "missing";
       const pattern =
         formatting === "quote-styles"
           ? `    'v${openshellVersion}:${asset}')`
@@ -477,17 +480,21 @@ function renderPinFunction(
 function replacePinFunction(
   source: string,
   functionName: string,
-  nextFunctionName: string,
+  nextMarker: string,
   replacement: string,
 ): string {
   const start = source.indexOf(`${functionName}() {`);
-  const next = source.indexOf(`\n${nextFunctionName}() {`, start);
+  const next = source.indexOf(`\n${nextMarker}`, start);
   expect(start, `${functionName} template start`).not.toBe(-1);
   expect(next, `${functionName} template end`).not.toBe(-1);
   return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
 }
 
-function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
+function renderInstallerTemplate(
+  openshellVersion: string,
+  pinFunction: string,
+  formulaPinFunction: string,
+): string {
   const selected = INSTALLER_TEMPLATE.replace(
     /^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
     `MIN_VERSION="${openshellVersion}"`,
@@ -497,11 +504,17 @@ function renderInstallerTemplate(openshellVersion: string, pinFunction: string):
       /^DEV_MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
       `DEV_MIN_VERSION="${openshellVersion}"`,
     );
-  const withPinFunction = replacePinFunction(
+  const withArchivePinFunction = replacePinFunction(
     selected,
     "openshell_pinned_sha256",
-    "openshell_checksum_line",
+    "openshell_checksum_line() {",
     pinFunction,
+  );
+  const withPinFunction = replacePinFunction(
+    withArchivePinFunction,
+    "openshell_formula_pinned_sha256",
+    "# A pinned digest authenticates bytes",
+    formulaPinFunction,
   );
   const sandboxFunctionStart = withPinFunction.indexOf("pinned_sandbox_build_version() {");
   const sandboxFunctionEnd = withPinFunction.indexOf(
@@ -524,7 +537,7 @@ function renderBrevTemplate(openshellVersion: string, pinFunction: string): stri
   return replacePinFunction(
     selected,
     "openshell_cli_pinned_sha256",
-    "openshell_checksum_line",
+    "openshell_checksum_line() {",
     pinFunction,
   );
 }
@@ -562,6 +575,13 @@ function createFixture(
     renderInstallerTemplate(
       openshellVersion,
       renderPinFunction("openshell_pinned_sha256", ASSETS, openshellVersion, formatting),
+      renderPinFunction(
+        "openshell_formula_pinned_sha256",
+        [FORMULA_ASSET],
+        openshellVersion,
+        formatting,
+        new Map([[FORMULA_ASSET, FORMULA_DIGEST]]),
+      ),
     ),
   );
   fs.writeFileSync(
@@ -610,16 +630,37 @@ case "$url" in
           *) printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-gateway-checksums-sha256.txt")}' >"$output" ;;
         esac
         ;;
-      openshell-sandbox-checksums-sha256.txt)
-        printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-sandbox-checksums-sha256.txt")}' >"$output"
-        ;;
+	      openshell-sandbox-checksums-sha256.txt)
+	        printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-sandbox-checksums-sha256.txt")}' >"$output"
+	        ;;
+	      openshell.rb)
+	        printf '%s\n' 'class Openshell < Formula; end' >"$output"
+	        ;;
+	    esac
+	    ;;
+	  *) exit 22 ;;
+	esac
+	`,
+  );
+  fs.chmodSync(path.join(binDir, "curl"), 0o755);
+  fs.writeFileSync(
+    path.join(binDir, "sha256sum"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  */openshell.rb)
+    printf '%s  %s\\n' '${FORMULA_DIGEST}' "$1"
+    ;;
+  *)
+    case "$(uname -s)" in
+      Darwin) /usr/bin/shasum -a 256 "$@" ;;
+      *) /usr/bin/sha256sum "$@" ;;
     esac
     ;;
-  *) exit 22 ;;
 esac
 `,
   );
-  fs.chmodSync(path.join(binDir, "curl"), 0o755);
+  fs.chmodSync(path.join(binDir, "sha256sum"), 0o755);
   return fixtureRoot;
 }
 
@@ -983,7 +1024,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
-    expect(result.stdout).toContain("14 OpenShell release-asset check(s) failed");
+    expect(result.stdout).toContain("15 OpenShell release-asset check(s) failed");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -992,7 +1033,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("digest does not match the pinned v0.0.72 release asset");
-    expect(result.stdout).toContain("expected all 10 pinned asset references");
+    expect(result.stdout).toContain("expected all 11 pinned asset references");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 

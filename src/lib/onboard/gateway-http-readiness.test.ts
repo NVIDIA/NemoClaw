@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import http from "node:http";
+import fs from "node:fs";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isGatewayHttpReady } from "./gateway-http-readiness";
+import { isDockerDriverGatewayHttpReady, isGatewayHttpReady } from "./gateway-http-readiness";
 
 const servers: http.Server[] = [];
 
@@ -82,5 +84,29 @@ describe("isGatewayHttpReady abort handling", () => {
     controller.abort();
 
     await expect(probe).resolves.toBe(false);
+  });
+});
+
+describe("isDockerDriverGatewayHttpReady TLS env", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("uses the supplied gateway env when loading Docker-driver mTLS client files", async () => {
+    const tlsDir = path.join("/tmp", "nemoclaw-probe-tls");
+    const readPaths: string[] = [];
+    const readFileSync = vi.spyOn(fs, "readFileSync").mockImplementation((filePath) => {
+      readPaths.push(String(filePath));
+      throw new Error("missing test TLS material");
+    });
+
+    await expect(
+      isDockerDriverGatewayHttpReady(1, "https://127.0.0.1:1/openshell.v1.OpenShell/Health", {
+        OPENSHELL_LOCAL_TLS_DIR: tlsDir,
+      }),
+    ).resolves.toBe(false);
+
+    expect(readFileSync).toHaveBeenCalled();
+    expect(readPaths[0]).toBe(path.join(tlsDir, "ca.crt"));
   });
 });

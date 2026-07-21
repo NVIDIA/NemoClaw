@@ -44,6 +44,7 @@ function makeHarness(options: HarnessOptions) {
     portListenerScan: {
       complete: options.scanComplete ?? true,
       pids: options.listenerPids,
+      unverifiedPids: [],
     },
     pidFileGatewayPid: options.pidFileGatewayPid === undefined ? 4242 : options.pidFileGatewayPid,
     initialHealth: {

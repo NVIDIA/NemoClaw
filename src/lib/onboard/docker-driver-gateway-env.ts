@@ -11,14 +11,16 @@ import {
   getGatewayHttpsEndpoint,
   WILDCARD_GATEWAY_BIND_ADDRESS,
 } from "../core/gateway-address";
-import { GATEWAY_PORT } from "../core/ports";
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
 import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
+  getOpenShellUserConfigHome,
   hasOpenShellGatewayUserService,
+  installAndReportNemoclawOpenShellGatewayUserService,
   type PackageManagedDockerDriverGatewayOptions,
   startPackageManagedDockerDriverGateway,
 } from "./docker-driver-gateway-service";
@@ -26,6 +28,7 @@ import {
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
 
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
+  "DOCKER_HOST",
   "OPENSHELL_DRIVERS",
   "OPENSHELL_BIND_ADDRESS",
   "OPENSHELL_SERVER_PORT",
@@ -57,7 +60,10 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
   PackageManagedDockerDriverGatewayOptions,
   "prepareOpenShellGatewayUserServiceEnv"
 > & {
+  env?: NodeJS.ProcessEnv;
+  gatewayBin?: string | null;
   gatewayEnv: Record<string, string>;
+  home?: string;
 };
 
 export function getGatewayPortCheckOptions(): { host: string } {
@@ -240,7 +246,25 @@ function formatEnvironmentFileAssignment(key: string, value: string): string {
   if (/[\0\r\n]/.test(value)) {
     throw new Error(`Invalid OpenShell gateway env value for ${key}: contains a line break`);
   }
+  if (key === "DOCKER_HOST") {
+    const dockerHost = normalizePackageServiceDockerHost(value);
+    if (!dockerHost) throw new Error("Invalid empty DOCKER_HOST for the OpenShell gateway service");
+    return `${key}='${dockerHost}'`;
+  }
   return `${key}=${value}`;
+}
+
+function normalizePackageServiceDockerHost(value: string | undefined): string | undefined {
+  const candidate = String(value || "").trim();
+  if (!candidate) return undefined;
+  const prefix = "unix://";
+  const socketPath = candidate.startsWith(prefix) ? candidate.slice(prefix.length) : "";
+  if (path.isAbsolute(socketPath) && !/[\0\r\n']/.test(socketPath)) {
+    return candidate;
+  }
+  throw new Error(
+    "Invalid DOCKER_HOST for the OpenShell gateway service; only safely serializable absolute unix:// Docker sockets are supported.",
+  );
 }
 
 function readTextFileIfPresent(filePath: string): string {
@@ -258,12 +282,24 @@ function readTextFileIfPresent(filePath: string): string {
   }
 }
 
-function writeDockerGatewayDebEnvOverrideFile(getOverride: () => Record<string, string>): void {
+function writeDockerGatewayDebEnvOverrideFile(
+  getOverride: () => Record<string, string>,
+  opts: { env?: NodeJS.ProcessEnv; home?: string } = {},
+): void {
   const override = getOverride();
-  const envDir = path.join(os.homedir(), ".config", "openshell");
+  const env = opts.env ?? process.env;
+  const home = opts.home ?? opts.env?.HOME ?? os.homedir();
+  const envDir = path.join(getOpenShellUserConfigHome(home, env), "openshell");
   const envFile = path.join(envDir, "gateway.env");
   fs.mkdirSync(envDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(envDir, 0o700);
+  try {
+    if (fs.lstatSync(envFile).isSymbolicLink()) {
+      throw new Error(`Refusing to write symlinked OpenShell gateway env file: ${envFile}`);
+    }
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
   const existing = readTextFileIfPresent(envFile);
   fs.writeFileSync(envFile, buildDockerGatewayDebEnvFile(existing, override), {
     encoding: "utf-8",
@@ -277,7 +313,7 @@ export function writeDockerGatewayDebEnvOverride(
   opts: Parameters<typeof hasOpenShellGatewayUserService>[0] = {},
 ): boolean {
   if (!hasOpenShellGatewayUserService(opts)) return false;
-  writeDockerGatewayDebEnvOverrideFile(getOverride);
+  writeDockerGatewayDebEnvOverrideFile(getOverride, opts);
   return true;
 }
 
@@ -290,14 +326,45 @@ export function writeDockerGatewayDebEnvOverrideOrThrow(
   }
 }
 
-export function startPackageManagedDockerDriverGatewayWithEnvOverride({
-  gatewayEnv,
-  ...options
-}: PackageManagedDockerDriverGatewayWithEnvOverrideOptions): Promise<boolean> {
+export function startPackageManagedDockerDriverGatewayWithEnvOverride(
+  optionsWithEnv: PackageManagedDockerDriverGatewayWithEnvOverrideOptions,
+): Promise<boolean> {
+  const { env: _env, gatewayBin, gatewayEnv, home, ...options } = optionsWithEnv;
+  const env = optionsWithEnv.env ?? process.env;
+  const gatewayPort = Number(gatewayEnv.OPENSHELL_SERVER_PORT ?? GATEWAY_PORT);
+  if (gatewayPort !== DEFAULT_GATEWAY_PORT) return Promise.resolve(false);
   assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
+  const effectiveHome = home ?? optionsWithEnv.env?.HOME ?? os.homedir();
+  if (gatewayBin !== undefined) {
+    const installResult = installAndReportNemoclawOpenShellGatewayUserService({
+      env,
+      gatewayBin,
+      home: effectiveHome,
+    });
+    if (
+      !installResult.installed &&
+      installResult.reason !== "not a Linux host" &&
+      installResult.reason !== "upstream OpenShell gateway service is installed"
+    ) {
+      throw new Error(
+        `OpenShell gateway user service could not be staged: ${installResult.reason ?? "unknown error"}`,
+      );
+    }
+  }
   return startPackageManagedDockerDriverGateway({
     ...options,
-    prepareOpenShellGatewayUserServiceEnv: () =>
-      writeDockerGatewayDebEnvOverrideFile(() => gatewayEnv),
+    hasOpenShellGatewayUserService:
+      options.hasOpenShellGatewayUserService ??
+      (() => hasOpenShellGatewayUserService({ env, home: effectiveHome })),
+    prepareOpenShellGatewayUserServiceEnv: () => {
+      const serviceGatewayEnv = { ...gatewayEnv };
+      delete serviceGatewayEnv.DOCKER_HOST;
+      const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
+      if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
+      writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, {
+        env,
+        home: effectiveHome,
+      });
+    },
   });
 }

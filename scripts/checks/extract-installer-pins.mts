@@ -48,7 +48,7 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // release; the later pin PR may then change release data without authorizing
 // any operational installer change. A mismatch reports the candidate hash.
 const TRUSTED_INSTALLER_TEMPLATE_SHA256 =
-  "a101f002bd8e02aa7b38960ddcb76c9fca419bc3766f6870446f6a7e99e14d78";
+  "4b43b7cee88eb1aa0c20607651dfe137c214c0eaa11b2f85165878d88981e01f";
 const TRUSTED_BREV_TEMPLATE_SHA256 =
   "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a";
 const EXPECTED_INSTALLER_ASSETS = [
@@ -61,6 +61,7 @@ const EXPECTED_INSTALLER_ASSETS = [
   "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
   "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
 ] as const;
+const EXPECTED_INSTALLER_FORMULA_ASSETS = ["openshell.rb"] as const;
 const EXPECTED_BREV_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-aarch64-unknown-linux-musl.tar.gz",
@@ -927,13 +928,22 @@ function runCli(): void {
     functionName: "openshell_pinned_sha256",
     sourceLabel: "installer",
   });
+  const installerFormulaPins = extractInstallerPins(installerSource, {
+    functionName: "openshell_formula_pinned_sha256",
+    sourceLabel: "installer",
+  });
   const brevPins = extractInstallerPins(brevInstallerSource, {
     functionName: "openshell_cli_pinned_sha256",
     sourceLabel: "Brev launchable",
   });
   assertExactAssetSet(installerPins, EXPECTED_INSTALLER_ASSETS, "installer pin table");
+  assertExactAssetSet(
+    installerFormulaPins,
+    EXPECTED_INSTALLER_FORMULA_ASSETS,
+    "installer formula pin table",
+  );
   assertExactAssetSet(brevPins, EXPECTED_BREV_ASSETS, "Brev pin table");
-  const pins = [...installerPins, ...brevPins];
+  const pins = [...installerPins, ...installerFormulaPins, ...brevPins];
   const releaseVersions = [...new Set(pins.map((pin) => pin.releaseVersion))].sort();
   if (releaseVersions.length !== 1) {
     fail(
@@ -949,7 +959,7 @@ function runCli(): void {
   }
   assertTrustedTemplate(
     installerSource,
-    ["openshell_pinned_sha256", "pinned_sandbox_build_version"],
+    ["openshell_pinned_sha256", "openshell_formula_pinned_sha256", "pinned_sandbox_build_version"],
     [
       /^MIN_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,
       /^MAX_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,

@@ -1260,6 +1260,138 @@ prefer_user_local_openshell() {
   fi
 }
 
+NEMOCLAW_GATEWAY_SERVICE_MARKER="NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1"
+NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE="# ${NEMOCLAW_GATEWAY_SERVICE_MARKER}"
+NEMOCLAW_GATEWAY_SERVICE_NAME="nemoclaw-openshell-gateway"
+
+upstream_openshell_gateway_user_service_installed() {
+  [[ "$(uname -s)" == "Linux" ]] || return 1
+  [[ -f /usr/local/lib/systemd/user/openshell-gateway.service ]] \
+    || [[ -f /usr/lib/systemd/user/openshell-gateway.service ]] \
+    || [[ -f /lib/systemd/user/openshell-gateway.service ]]
+}
+
+macos_openshell_homebrew_gateway_service_installed() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 1
+  command -v brew >/dev/null 2>&1 || return 1
+  brew list --formula openshell >/dev/null 2>&1 || return 1
+  brew info --json=v2 openshell 2>/dev/null \
+    | grep -Eq '"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"'
+}
+
+resolve_openshell_gateway_bin_for_service() {
+  local gateway_bin="${NEMOCLAW_OPENSHELL_GATEWAY_BIN:-}"
+  if [[ -n "$gateway_bin" && -x "$gateway_bin" ]]; then
+    printf "%s\n" "$gateway_bin"
+    return 0
+  fi
+
+  gateway_bin="$(command -v openshell-gateway 2>/dev/null || true)"
+  [[ -n "$gateway_bin" && -x "$gateway_bin" ]] || return 1
+  printf "%s\n" "$gateway_bin"
+}
+
+trusted_openshell_gateway_bin_for_service() {
+  local gateway_bin="${1:-}"
+  case "$gateway_bin" in
+    "${HOME}/.local/bin/openshell-gateway" | /usr/local/bin/openshell-gateway | /usr/bin/openshell-gateway)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+is_nemoclaw_openshell_gateway_user_service() {
+  local service_path="${1:-}"
+  [[ -f "$service_path" ]] || return 1
+  grep -Fxq "$NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE" "$service_path"
+}
+
+openshell_user_config_home() {
+  if [[ -n "${XDG_CONFIG_HOME:-}" && "$XDG_CONFIG_HOME" == /* ]]; then
+    printf '%s\n' "$XDG_CONFIG_HOME"
+  else
+    printf '%s\n' "${HOME}/.config"
+  fi
+}
+
+install_nemoclaw_openshell_gateway_user_service() {
+  [[ "$(uname -s)" == "Linux" ]] || return 0
+  [[ "$(resolve_nemoclaw_gateway_port)" -eq 8080 ]] || return 0
+
+  local service_dir
+  service_dir="$(openshell_user_config_home)/systemd/user"
+  local service_path="${service_dir}/${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
+
+  if [[ -L "$service_path" ]]; then
+    error "Refusing to replace symlinked OpenShell gateway user service: $service_path"
+  fi
+
+  if upstream_openshell_gateway_user_service_installed; then
+    if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
+      error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
+    fi
+    info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
+    return 0
+  fi
+
+  local gateway_bin
+  gateway_bin="$(resolve_openshell_gateway_bin_for_service)" \
+    || error "OpenShell gateway binary was not found for the managed user service."
+
+  case "$gateway_bin" in
+    *[[:space:]]*)
+      error "OpenShell gateway user service binary path contains whitespace: $gateway_bin"
+      ;;
+    /*) ;;
+    *)
+      error "OpenShell gateway user service binary path is not absolute: $gateway_bin"
+      ;;
+  esac
+  if ! trusted_openshell_gateway_bin_for_service "$gateway_bin"; then
+    error "OpenShell gateway user service binary path is not a trusted install path: $gateway_bin"
+  fi
+
+  if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
+    error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
+  fi
+
+  if ! {
+    mkdir -p "$service_dir" \
+      && chmod 700 "$service_dir" \
+      && cat >"$service_path" <<EOF
+# NemoClaw-managed OpenShell gateway user service
+$NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE
+[Unit]
+Description=OpenShell Gateway
+Documentation=https://github.com/NVIDIA/OpenShell
+After=default.target
+
+[Service]
+Type=simple
+StateDirectory=openshell/gateway
+Environment=OPENSHELL_LOCAL_TLS_DIR=%h/.local/state/openshell/tls
+EnvironmentFile=-%E/openshell/gateway.env
+ExecStartPre=$gateway_bin generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal --server-san localhost --server-san 127.0.0.1
+ExecStart=$gateway_bin
+Restart=on-failure
+RestartSec=5s
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=default.target
+EOF
+    chmod 600 "$service_path"
+  }; then
+    error "Could not install OpenShell gateway user service at $service_path"
+  fi
+
+  info "Installed OpenShell gateway user service at $service_path"
+}
+
 # Run scripts/install-openshell.sh during install_nemoclaw when appropriate.
 # - mode=force:      always invoke (GitHub-clone branch — fresh install path)
 # - mode=if-missing: invoke only when openshell is absent from PATH
@@ -1274,10 +1406,21 @@ maybe_install_openshell_during_install() {
     return 0
   fi
   if [[ "$mode" == "if-missing" ]] && command_exists openshell; then
-    return 0
+    if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1 \
+      && ! macos_openshell_homebrew_gateway_service_installed; then
+      info "OpenShell CLI exists but the macOS Homebrew gateway service is missing."
+    else
+      if [[ "$(uname -s)" == "Darwin" ]] && ! command -v brew >/dev/null 2>&1; then
+        warn "Homebrew is not installed; using the standalone OpenShell gateway without reboot persistence."
+      fi
+      prefer_user_local_openshell
+      install_nemoclaw_openshell_gateway_user_service
+      return 0
+    fi
   fi
   spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
   prefer_user_local_openshell
+  install_nemoclaw_openshell_gateway_user_service
 }
 
 ensure_cli_shim() {
