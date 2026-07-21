@@ -6,7 +6,6 @@ import {
   chmodSync,
   closeSync,
   constants,
-  existsSync,
   fchmodSync,
   mkdirSync,
   openSync,
