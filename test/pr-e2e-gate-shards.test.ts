@@ -31,7 +31,7 @@ describe("PR E2E shard policy", () => {
     });
   });
 
-  // source-shape-contract: security -- Malformed matrix shard selectors must fail closed before exact-SHA evidence dispatch
+  // source-shape-contract: security -- Malformed matrix shard selectors must fail closed before SHA evidence dispatch
   it("rejects malformed configured matrix shard selectors", () => {
     const workflow = fs.readFileSync(".github/workflows/e2e.yaml", "utf8");
     const shardExpression = "NEMOCLAW_E2E_SHARD: ${{ matrix.mode }}";

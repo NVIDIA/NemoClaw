@@ -3,7 +3,7 @@
 
 # Repo Policy
 
-Configurable defaults that adapt the skill to a specific repository. Edit this file when adopting the skill in a new repo. The skill reads these values to know what to gate on.
+Repository settings for this skill. Edit this file when you use the skill in another repository.
 
 ## Contents
 
@@ -22,13 +22,14 @@ CODEOWNERS approval is enforced via branch protection. The skill checks `reviewD
 codeowners_enforced_via_branch_protection: true
 ```
 
-If your repo does NOT enforce CODEOWNERS via branch protection, set this to `false` and add an explicit list of required teams to check.
+If branch protection does not enforce CODEOWNERS, set this value to `false` and add the required teams.
 
 ## Commit compliance policy
 
-NemoClaw default: the PR description requires a `Signed-off-by:` line, and every PR commit requires a GitHub verified signature.
-DCO is enforced by the `dco-check` workflow and checked directly in the PR body by the comparator and merge gate.
-Verified signatures are checked directly for every PR commit by the comparator and merge gate; branch protection remains a separate gate.
+NemoClaw requires a `Signed-off-by:` line in the PR description.
+GitHub must show each PR commit as `Verified`.
+The `dco-check` workflow, comparator, and merge gate check DCO.
+The comparator and merge gate check commit verification. Branch protection is a separate gate.
 
 ```yaml
 dco_required: true
@@ -68,7 +69,7 @@ The skill defers to ratchet enforcement in CI. NemoClaw uses `ci/coverage-thresh
 coverage_ratchet_enforced_via_ci: true
 ```
 
-If your repo does NOT ratchet coverage in CI, the skill needs to compute coverage delta itself — flag this as a v2 gap.
+If CI does not enforce coverage, report that this skill does not compute the coverage change.
 
 ## Discovery search
 

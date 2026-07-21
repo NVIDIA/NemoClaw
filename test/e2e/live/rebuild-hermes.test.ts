@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { resolveDirectSandboxContainer } from "../../../src/lib/sandbox/privileged-exec";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
@@ -20,6 +21,11 @@ import {
   snapshotFile,
   writeJsonFile,
 } from "../fixtures/file-state.ts";
+import {
+  HERMES_REBUILD_SWAP_BYTES,
+  needsHermesRebuildSwap,
+  parseActiveSwapBytes,
+} from "../fixtures/hermes-rebuild-swap.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -43,6 +49,7 @@ import {
 } from "./rebuild-hermes-old-base-fixture.ts";
 import { buildRebuildHermesOldSandboxDockerfile } from "./rebuild-hermes-old-sandbox.ts";
 import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
+import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
 // The rebuild regression invokes the checked-out CLI directly. Full install.sh
@@ -120,6 +127,97 @@ const LIVE_TIMEOUT_MS = 100 * 60_000;
 // generous diagnostic tail without letting a stuck child exhaust the hosted
 // runner by growing the fixture's in-memory stdout/stderr buffers forever.
 const LONG_COMMAND_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
+const HERMES_REBUILD_SWAP_FILE = "/mnt/nemoclaw-hermes-rebuild.swap";
+
+async function ensureHermesRebuildSwap(host: HostCliClient): Promise<void> {
+  const githubActions = process.env.GITHUB_ACTIONS === "true";
+  if (!githubActions) return;
+
+  const probeOptions = {
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 30_000,
+  };
+  const current = await host.command(
+    "swapon",
+    ["--show", "--bytes", "--noheadings", "--output", "SIZE"],
+    {
+      ...probeOptions,
+      artifactName: "prereq-hermes-rebuild-swap-before",
+    },
+  );
+  expectExitZero(current, "inspect active swap before Hermes rebuild");
+  if (
+    !needsHermesRebuildSwap({
+      activeSwapBytes: parseActiveSwapBytes(current.stdout),
+      githubActions,
+    })
+  ) {
+    return;
+  }
+
+  const provision = await host.command(
+    "sudo",
+    [
+      "bash",
+      "-c",
+      `set -euo pipefail
+swap_file="$1"
+swap_size_bytes="$2"
+swapoff "$swap_file" 2>/dev/null || true
+rm -f "$swap_file"
+fallocate -l "$swap_size_bytes" "$swap_file"
+chmod 0600 "$swap_file"
+mkswap "$swap_file"
+swapon "$swap_file"`,
+      "hermes-rebuild-swap",
+      HERMES_REBUILD_SWAP_FILE,
+      String(HERMES_REBUILD_SWAP_BYTES),
+    ],
+    {
+      ...probeOptions,
+      artifactName: "prereq-hermes-rebuild-swap-provision",
+      timeoutMs: 2 * 60_000,
+    },
+  );
+  expectExitZero(provision, "provision swap for Hermes rebuild");
+
+  const verified = await host.command(
+    "swapon",
+    ["--show", "--bytes", "--noheadings", "--output", "SIZE"],
+    {
+      ...probeOptions,
+      artifactName: "prereq-hermes-rebuild-swap-after",
+    },
+  );
+  expectExitZero(verified, "inspect active swap after Hermes rebuild provisioning");
+  expect(parseActiveSwapBytes(verified.stdout)).toBeGreaterThanOrEqual(HERMES_REBUILD_SWAP_BYTES);
+}
+
+function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[] {
+  // `openshell sandbox exec` intentionally runs inside Landlock, which cannot
+  // read the immutable `/opt/hermes` runtime. The rebuild contract needs to
+  // seed and inspect that runtime in the managed Docker container itself.
+  const containerId = resolveDirectSandboxContainer(sandboxName, "docker");
+  return buildHermesRuntimeExecArgs(containerId, command);
+}
+
+function inspectKanbanTaskArgs(sandboxName: string): string[] {
+  const script = [
+    "import json, sqlite3, sys",
+    "conn = sqlite3.connect(f'file:{sys.argv[1]}?mode=ro', uri=True)",
+    "rows = conn.execute('SELECT id, title, status FROM tasks WHERE title = ?', (sys.argv[2],)).fetchall()",
+    "conn.close()",
+    "print(json.dumps(rows))",
+    "raise SystemExit(0 if rows else 1)",
+  ].join("; ");
+  return hermesRuntimeExecArgs(sandboxName, [
+    "python3",
+    "-c",
+    script,
+    KANBAN_FILE,
+    KANBAN_TASK_TITLE,
+  ]);
+}
 
 interface RegistryData {
   sandboxes?: Record<string, Record<string, unknown>>;
@@ -566,6 +664,7 @@ test(STALE_BASE_REBUILD
     path.resolve(host.commandPath),
     "rebuild-Hermes must invoke the checked-out CLI through NEMOCLAW_CLI_BIN",
   ).toBe(CLI_ENTRYPOINT);
+  await ensureHermesRebuildSwap(host);
 
   const dockerInfo = await host.command("docker", ["info"], {
     artifactName: "prereq-docker-info",
@@ -1015,6 +1114,15 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(writeExcludedKanbanMarker, "write excluded Hermes kanban marker");
 
+  const seededKanbanDb = await host.command("docker", inspectKanbanTaskArgs(SANDBOX_NAME), {
+    artifactName: "phase-4-inspect-seeded-kanban-db",
+    env: testEnv(apiKey),
+    redactionValues,
+    timeoutMs: OPENSHELL_TIMEOUT_MS,
+  });
+  expectExitZero(seededKanbanDb, "inspect seeded Hermes kanban database");
+  expect(resultText(seededKanbanDb)).toContain(KANBAN_TASK_TITLE);
+
   const preEnv = await host.command(
     "openshell",
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/.env"],
@@ -1162,8 +1270,8 @@ test(STALE_BASE_REBUILD
   expect(restoredMarker.stdout).toBe(MARKER_CONTENT);
 
   const hermesVersion = await host.command(
-    "openshell",
-    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "hermes", "--version"],
+    "docker",
+    hermesRuntimeExecArgs(SANDBOX_NAME, ["hermes", "--version"]),
     {
       artifactName: "phase-7-hermes-version-after-rebuild",
       env: testEnv(apiKey),
@@ -1205,8 +1313,8 @@ test(STALE_BASE_REBUILD
   expect(resultText(restoredKanbanDatabase)).toContain(KANBAN_TASK_TITLE);
 
   const restoredKanban = await host.command(
-    "openshell",
-    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "hermes", "kanban", "list", "--json"],
+    "docker",
+    hermesRuntimeExecArgs(SANDBOX_NAME, ["hermes", "kanban", "list", "--json"]),
     {
       artifactName: "phase-7-list-kanban-after-rebuild",
       env: testEnv(apiKey),

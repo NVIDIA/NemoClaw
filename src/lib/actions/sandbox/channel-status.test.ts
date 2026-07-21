@@ -2,33 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import {
-  type ExecResult,
-  entry,
-  makeDeps,
-  showSandboxChannelStatus,
-} from "./channel-status.test-helpers";
+import { entry, makeDeps, showSandboxChannelStatus } from "./channel-status.test-helpers";
+
+// The whatsapp status hook now reads OpenClaw's authoritative live status JSON
+// (`openclaw channels status --channel whatsapp --json`) instead of scraping
+// shell markers, so these integration tests feed that JSON shape through the
+// mocked sandbox exec. `wa` is the default-account object under
+// `channelAccounts.whatsapp` in OpenClaw 2026.6.10.
+function waStatusJson(wa: Record<string, unknown>): string {
+  return JSON.stringify({
+    channels: { whatsapp: { configured: true } },
+    channelAccounts: { whatsapp: [{ ...wa, accountId: "default" }] },
+    channelDefaultAccountId: { whatsapp: "default" },
+  });
+}
 
 describe("showSandboxChannelStatus (whatsapp)", () => {
   it("returns idle verdict and exit code 1 when paired but no inbound observed", async () => {
-    const heartbeat = JSON.stringify({
+    const stdout = waStatusJson({
+      linked: true,
+      running: true,
+      connected: true,
+      healthState: "healthy",
       lastInboundAt: null,
-      messagesHandled: 0,
-      connectionState: "open",
     });
-    const stdout = [
-      "NEMOCLAW_WA_DIAG_OK",
-      "DIR /sandbox/.openclaw/whatsapp POPULATED",
-      "DIR /sandbox/.openclaw/platforms/whatsapp MISSING",
-      "NEMOCLAW_WA_HEARTBEAT_BEGIN",
-      heartbeat,
-      "NEMOCLAW_WA_HEARTBEAT_END",
-      "NEMOCLAW_WA_LOG_BEGIN",
-      "2026-05-28 connection.open",
-      "NEMOCLAW_WA_LOG_END",
-      "PROC 1234 baileys-runtime",
-      "NEMOCLAW_WA_PROC_DONE",
-    ].join("\n");
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);
@@ -52,22 +49,13 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
   });
 
   it("renders an idle verdict in the text report and exits non-zero", async () => {
-    const heartbeat = JSON.stringify({
+    const stdout = waStatusJson({
+      linked: true,
+      running: true,
+      connected: true,
+      healthState: "healthy",
       lastInboundAt: null,
-      messagesHandled: 0,
-      connectionState: "open",
     });
-    const stdout = [
-      "NEMOCLAW_WA_DIAG_OK",
-      "DIR /sandbox/.openclaw/whatsapp POPULATED",
-      "NEMOCLAW_WA_HEARTBEAT_BEGIN",
-      heartbeat,
-      "NEMOCLAW_WA_HEARTBEAT_END",
-      "NEMOCLAW_WA_LOG_BEGIN",
-      "NEMOCLAW_WA_LOG_END",
-      "PROC 1234 openclaw-whatsapp",
-      "NEMOCLAW_WA_PROC_DONE",
-    ].join("\n");
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);
@@ -90,22 +78,13 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
   });
 
   it("returns healthy verdict when paired and a recent inbound was observed", async () => {
-    const heartbeat = JSON.stringify({
-      lastInboundAt: "2026-05-28T03:59:30.000Z",
-      messagesHandled: 4,
-      connectionState: "open",
+    const stdout = waStatusJson({
+      linked: true,
+      running: true,
+      connected: true,
+      healthState: "healthy",
+      lastInboundAt: 1748404770000,
     });
-    const stdout = [
-      "NEMOCLAW_WA_DIAG_OK",
-      "DIR /sandbox/.openclaw/whatsapp POPULATED",
-      "NEMOCLAW_WA_HEARTBEAT_BEGIN",
-      heartbeat,
-      "NEMOCLAW_WA_HEARTBEAT_END",
-      "NEMOCLAW_WA_LOG_BEGIN",
-      "NEMOCLAW_WA_LOG_END",
-      "PROC 1234 openclaw-whatsapp",
-      "NEMOCLAW_WA_PROC_DONE",
-    ].join("\n");
     const { deps, out_lines } = makeDeps({
       exec: () => ({ status: 0, stdout, stderr: "" }),
     });
@@ -115,7 +94,40 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(dump).toMatch(/Verdict:.*healthy/);
   });
 
-  it("returns probe_failed when openshell exec produces no marker", async () => {
+  it("reports a stopped in-process bridge as not healthy even with a recent last inbound (#7016)", async () => {
+    // Regression for the append-only-log false positive (PRA-1 / CodeRabbit):
+    // a bridge that has stopped still leaves a recent `lastInboundAt` behind,
+    // but the authoritative `running: false` / `healthState: "stopped"` must
+    // win so the operator is not told a torn-down bridge is healthy.
+    const stdout = waStatusJson({
+      linked: true,
+      running: false,
+      connected: false,
+      healthState: "stopped",
+      lastStopAt: 1748404800000,
+      lastInboundAt: 1748404770000,
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    const { deps, out_lines } = makeDeps({
+      exec: () => ({ status: 0, stdout, stderr: "" }),
+    });
+    let threw: Error | null = null;
+    try {
+      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
+    } catch (err) {
+      threw = err as Error;
+    } finally {
+      exitSpy.mockRestore();
+    }
+    expect(threw?.message).toBe("process.exit(1)");
+    const dump = out_lines.join("\n");
+    expect(dump).not.toMatch(/Verdict:.*healthy/);
+    expect(dump).toMatch(/Bridge process: no WhatsApp bridge process observed/);
+  });
+
+  it("returns probe_failed when the openclaw status command exits non-zero", async () => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);
@@ -131,6 +143,27 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       exitSpy.mockRestore();
     }
     expect(threw?.message).toBe("process.exit(1)");
+  });
+
+  it("returns probe_failed when the openclaw status command throws", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    const { deps, out_lines } = makeDeps({
+      exec: () => {
+        throw new Error("sandbox exec unavailable");
+      },
+    });
+    let threw: Error | null = null;
+    try {
+      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
+    } catch (err) {
+      threw = err as Error;
+    } finally {
+      exitSpy.mockRestore();
+    }
+    expect(threw?.message).toBe("process.exit(1)");
+    expect(out_lines.join("\n")).toMatch(/Verdict:.*probe_failed/);
   });
 
   it("returns probe_failed when openshell exec returns null (timeout)", async () => {
@@ -154,12 +187,13 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
   });
 
   it("returns config_gap when the sandbox has whatsapp neither registered nor enabled", async () => {
-    const stdout = [
-      "NEMOCLAW_WA_DIAG_OK",
-      "DIR /sandbox/.openclaw/whatsapp MISSING",
-      "NEMOCLAW_WA_LOG_BEGIN",
-      "NEMOCLAW_WA_LOG_END",
-    ].join("\n");
+    const stdout = waStatusJson({
+      linked: true,
+      running: true,
+      connected: true,
+      healthState: "healthy",
+      lastInboundAt: 1748404770000,
+    });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);
@@ -180,130 +214,22 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(threw?.message).toBe("process.exit(1)");
   });
 
-  it("uses the hermes pairing hint when the agent is hermes", async () => {
-    const stdout = [
-      "NEMOCLAW_WA_DIAG_OK",
-      "DIR /sandbox/.hermes/platforms/whatsapp/session MISSING",
-      "NEMOCLAW_WA_LOG_BEGIN",
-      "NEMOCLAW_WA_LOG_END",
-    ].join("\n");
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code})`);
-    }) as never);
-    const { deps, out_lines } = makeDeps({
-      exec: () => ({ status: 0, stdout, stderr: "" }),
+  it("falls back to basic status for Hermes without running the OpenClaw probe", async () => {
+    const exec = vi.fn((_sandbox: string, _command: string, _timeoutMs?: number) => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+    const { deps } = makeDeps({
+      exec,
       agentName: "hermes",
+      sandbox: entry(["whatsapp"], [], {}, "hermes"),
     });
-    try {
-      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
-    } catch {
-      /* expected exit(1) for unpaired */
-    } finally {
-      exitSpy.mockRestore();
-    }
-    const dump = out_lines.join("\n");
-    expect(dump).toMatch(/hermes whatsapp/);
-    expect(dump).toMatch(/Verdict:.*unpaired/);
-  });
-
-  it("distinguishes 'pgrep completed with no matches' from 'probe never reached pgrep'", async () => {
-    // With the PROC_DONE marker, the orchestrator reports
-    // bridgeProcessAlive: false when pgrep ran cleanly with no matches
-    // (so the diagnostic can route to fail/idle) and null only when the
-    // probe aborted before reaching pgrep (so the diagnostic stays info
-    // and a healthy heartbeat is not penalized by an unrelated probe
-    // failure).
-    const stdoutNoMatch = [
-      "NEMOCLAW_WA_DIAG_OK",
-      "DIR /sandbox/.openclaw/whatsapp POPULATED",
-      "NEMOCLAW_WA_HEARTBEAT_BEGIN",
-      JSON.stringify({
-        lastInboundAt: "2026-05-27T00:00:00.000Z",
-        messagesHandled: 1,
-        connectionState: "open",
-      }),
-      "NEMOCLAW_WA_HEARTBEAT_END",
-      "NEMOCLAW_WA_LOG_BEGIN",
-      "NEMOCLAW_WA_LOG_END",
-      "NEMOCLAW_WA_PROC_DONE",
-    ].join("\n");
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code})`);
-    }) as never);
-    try {
-      const { deps: depsNoMatch, out_lines: linesNoMatch } = makeDeps({
-        exec: () => ({ status: 0, stdout: stdoutNoMatch, stderr: "" }),
-      });
-      try {
-        await showSandboxChannelStatus("alpha", { deps: depsNoMatch, channel: "whatsapp" });
-      } catch {
-        /* expected exit(1) for stale-heartbeat + no bridge */
-      }
-      const dumpNoMatch = linesNoMatch.join("\n");
-      expect(dumpNoMatch).toMatch(/Bridge process: no WhatsApp bridge process observed/);
-      expect(dumpNoMatch).toMatch(/Verdict:.*idle/);
-
-      const stdoutTimeout = [
-        "NEMOCLAW_WA_DIAG_OK",
-        "DIR /sandbox/.openclaw/whatsapp POPULATED",
-        "NEMOCLAW_WA_HEARTBEAT_BEGIN",
-        JSON.stringify({
-          lastInboundAt: "2026-05-28T03:59:30.000Z",
-          messagesHandled: 1,
-          connectionState: "open",
-        }),
-        "NEMOCLAW_WA_HEARTBEAT_END",
-        "NEMOCLAW_WA_LOG_BEGIN",
-        "NEMOCLAW_WA_LOG_END",
-        // No PROC_DONE — simulating a probe that aborted before reaching
-        // the pgrep stage.
-      ].join("\n");
-      const { deps: depsTimeout, out_lines: linesTimeout } = makeDeps({
-        exec: () => ({ status: 0, stdout: stdoutTimeout, stderr: "" }),
-      });
-      await showSandboxChannelStatus("alpha", { deps: depsTimeout, channel: "whatsapp" });
-      const dumpTimeout = linesTimeout.join("\n");
-      expect(dumpTimeout).toMatch(/Bridge process: could not enumerate sandbox processes/);
-      expect(dumpTimeout).toMatch(/Verdict:.*healthy/);
-    } finally {
-      exitSpy.mockRestore();
-    }
-  });
-
-  it("captures the probe script as a syntactically valid /bin/sh program", async () => {
-    // Regression guard: an earlier version joined the multi-line script with
-    // ` && ` which produced `do && if` and other invalid constructs,
-    // causing every real probe to look like exec failure. Validate the
-    // emitted script with `sh -n` before declaring the diagnostic working.
-    let capturedCmd: string | null = null;
-    const exec = (_sb: string, cmd: string): ExecResult | null => {
-      capturedCmd = cmd;
-      return {
-        status: 0,
-        stdout: "NEMOCLAW_WA_DIAG_OK\nDIR /sandbox/.openclaw/whatsapp MISSING\n",
-        stderr: "",
-      };
-    };
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code})`);
-    }) as never);
-    const { deps } = makeDeps({ exec });
-    try {
-      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
-    } catch {
-      /* unpaired path exits 1 */
-    } finally {
-      exitSpy.mockRestore();
-    }
-    expect(capturedCmd).not.toBeNull();
-    const { spawnSync } = await import("node:child_process");
-    const validation = spawnSync("sh", ["-n", "-c", capturedCmd as unknown as string], {
-      encoding: "utf-8",
-    });
-    expect(validation.status, validation.stderr || validation.stdout).toBe(0);
-    // The probe must also filter its own command line out of the pgrep results.
-    expect(capturedCmd as unknown as string).toMatch(/__nemoclaw_wa_self_pid/);
-    expect(capturedCmd as unknown as string).toMatch(/pgrep -fa/);
+    const result = await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
+    const commands = exec.mock.calls.map((call) => String(call[1] ?? "")).join("\n");
+    expect(commands).not.toContain("openclaw channels status");
+    expect(commands).not.toContain("platforms/whatsapp/session/creds.json");
+    expect(result && "verdict" in result && result.verdict).toBe("info");
   });
 
   it("skips the deep probe and reports paused state when WhatsApp is in disabledChannels", async () => {

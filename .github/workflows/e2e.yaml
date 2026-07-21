@@ -44,7 +44,7 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: PR head commit selected by the controller.
+        description: PR SHA selected by the controller.
         required: false
         default: ""
         type: string
@@ -155,7 +155,7 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open"; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$GITHUB_REPOSITORY" ]] || { echo "::error::pull request must originate from this repository"; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head commit"; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR SHA"; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base commit"; exit 1; }
 
       - name: Prepare E2E workspace
@@ -2296,6 +2296,16 @@ jobs:
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN -u GH_TOKEN bash scripts/install-openshell.sh
 
+      - name: Add swap for Hermes image rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
+          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
+          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
+          swapon --show
+
       - name: Run Hermes rebuild live test
         # Preserves the checked-out CLI, Docker/OpenShell, Hermes base-image
         # rebuild, registry, messaging-placeholder, and backup hygiene boundaries.
@@ -2387,6 +2397,16 @@ jobs:
         run: |
           set -euo pipefail
           env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN -u GH_TOKEN bash scripts/install-openshell.sh
+
+      - name: Add swap for Hermes image rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
+          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
+          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
+          swapon --show
 
       - name: Run Hermes stale-base rebuild live test
         # Uses NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1, preserving issue #3025's

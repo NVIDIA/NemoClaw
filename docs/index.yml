@@ -37,9 +37,11 @@ navigation:
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.openclaw.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
                   - page: "Additional Setup for DGX Station"
                     path: _build/agent-variants/get-started/dgx-station-preparation.openclaw.generated.mdx
@@ -402,9 +404,11 @@ navigation:
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.deepagents.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
                   - page: "Additional Setup for DGX Station"
                     path: _build/agent-variants/get-started/dgx-station-preparation.deepagents.generated.mdx
@@ -653,9 +657,11 @@ navigation:
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.hermes.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
                   - page: "Additional Setup for DGX Station"
                     path: _build/agent-variants/get-started/dgx-station-preparation.hermes.generated.mdx

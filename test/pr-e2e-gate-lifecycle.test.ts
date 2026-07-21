@@ -516,7 +516,7 @@ describe("PR E2E controller lifecycle", () => {
       expectedSummary:
         "moved from head `aaaaaaa` on base `bbbbbbb` to head `ccccccc` on base `bbbbbbb`",
     },
-  ])("records an obsolete exact-diff outcome without failing the controller when $label", async ({
+  ])("records an obsolete PR/base SHA outcome without failing the controller when $label", async ({
     currentPull,
     firstFinalizationPull = currentPull,
     writeEvidence,

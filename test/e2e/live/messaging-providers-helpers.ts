@@ -143,8 +143,8 @@ export function isUnresolvedPlaceholderRejection(text: string): boolean {
 
 export function isNvidiaEndpointRateLimitFailure(text: string): boolean {
   return (
-    /\b429\b|too many requests|rate limit/i.test(text) &&
-    /NVIDIA|endpoint|validation|models|inference/i.test(text)
+    /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
+    /HTTP 429|too many requests|rate limit/i.test(text)
   );
 }
 

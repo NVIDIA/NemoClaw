@@ -787,7 +787,7 @@ const SQLITE_BACKUP_PY = [
   "    src_conn.close()",
 ].join("\n");
 
-function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
+export function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
   if (spec.strategy === "sqlite_backup") {

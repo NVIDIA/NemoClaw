@@ -166,7 +166,7 @@ The container publishes port `8000` through Docker, so apply the firewall guidan
 DGX Station remains Deferred.
 On DGX Station GB300, NemoClaw can prepare a clean generic Ubuntu 24.04 ARM64 host for the reviewed Station path.
 By default, stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` requires the supported release marker before NemoClaw validates the factory GPU runtime in place.
-For the explicit temporary metadata override, follow [Prepare DGX Station to Install NemoClaw](../../get-started/prerequisites/dgx-station-preparation).
+For the explicit temporary metadata override, follow [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation).
 On Station GB300 only, a direct GPU sandbox receives the exact read-only BDF directory for each host-discovered NVIDIA display-class PCI device, plus the existing CPU, memory, NUMA topology, and NVIDIA module initialization paths.
 The policy does not grant `/sys`, the PCI parent subtree, or sysfs write access.
 In the physical DGX OS `7.5.0` validation, this exact-BDF policy passed sandbox `cuInit(0)` while reads of `/sys/fs/cgroup/cgroup.controllers` and `/sys/class/net/lo/address` remained denied.
