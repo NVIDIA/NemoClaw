@@ -51,6 +51,10 @@ describe("DGX Station documentation ownership", () => {
       expect(quickstart).toContain(version);
     }
     expect(stationPreparation).toContain("DGX Server for GALAXY-GB300");
+    expect(stationPreparation).toContain("Qualification uses the latest `DGX_OTA_VERSION`");
+    expect(stationPreparation).toContain("`DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`");
+    expect(stationPreparation).toContain("recognized GB300 hardware");
+    expect(stationPreparation).not.toMatch(/\b(?:0x)?31c[23]\b/i);
     expect(quickstart).toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("--force-station-install");
     expect(stationPreparation).toContain("metadata omits or varies fields");

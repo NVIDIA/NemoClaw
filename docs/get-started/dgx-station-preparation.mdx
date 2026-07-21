@@ -15,7 +15,11 @@ Complete this preparation before following the Quickstart on a qualifying DGX St
 ## Qualify Your DGX Station
 
 DGX Station GB300 express install accepts either the generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
-A stock DGX OS image qualifies only when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
+A stock DGX OS image requires a safe, root-owned `/etc/dgx-release` file with `DGX_PLATFORM=DGX Server for GALAXY-GB300`.
+Qualification uses the latest `DGX_OTA_VERSION` and accepts `7.2.0`, `7.4.0`, or `7.5.0`.
+When `DGX_OTA_PRETTY_NAME` is present, it must equal `DGX OS`.
+An OTA-upgraded host can omit `DGX_OTA_PRETTY_NAME`.
+When that field is absent, `DGX_PRETTY_NAME` must equal `NVIDIA DGX GB300WS`.
 NemoClaw also recognizes these exact no-OTA factory profiles for bounded qualification.
 Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires both `DGX_OTA_VERSION` and `DGX_OTA_DATE` to be absent, and requires every profile-specific field below:
 
@@ -30,10 +34,10 @@ Running containers still block initial preparation and every Docker configuratio
 Before a Docker restart or host reboot, stopped containers with a restart policy other than `no` also block preparation because they could start automatically.
 
 <Warning title="Temporary Metadata Override">
-Use `--force-station-install` only on a genuine DGX Station GB300 when automatic Station detection rejects its DGX release metadata.
+Use `--force-station-install` only when automatic Station detection rejects release metadata on a DGX Station with recognized GB300 hardware.
 The flag handles metadata variants not yet recognized by NemoClaw; it is not a general compatibility bypass.
 The flag bypasses only the `/etc/dgx-release` allowlist.
-It still requires ARM64 Ubuntu 24.04, DGX Station GB300 hardware identity, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent, inference, or Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
+It still requires ARM64 Ubuntu 24.04, recognized GB300 hardware, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent, inference, or Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
 The override preserves the existing factory driver, packages, and container-runtime configuration; it does not install or repair missing factory components.
 It cannot enable Station Express on another Station generation or hardware platform.
 This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the exact automatic allowlist.
