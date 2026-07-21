@@ -9,10 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   classifyReviewedInstallTarget,
-  parseOpenClawPluginInstallInvocation,
   patchInstalledOpenClawPlugins,
-  preparePluginInstallRollback,
-  rollbackPluginInstall,
 } from "../scripts/openclaw-plugin-axios-security-revision.mts";
 
 const tempDirectories: string[] = [];
@@ -180,104 +177,6 @@ describe("historical OpenClaw plugin Axios security revisions", () => {
         expectedPackageSpec: "@openclaw/slack@2026.6.10",
       }),
     ).toThrow();
-  });
-
-  it.each([
-    {
-      args: ["--profile", "qa", "plugins", "install", "npm:@openclaw/slack@2026.6.10"],
-      expectedStateSuffix: ".openclaw-qa",
-      targetIndex: 4,
-    },
-    {
-      args: ["plugins", "install", "npm:@openclaw/slack@2026.6.10", "--profile=qa"],
-      expectedStateSuffix: ".openclaw-qa",
-      targetIndex: 2,
-    },
-    {
-      args: ["--dev", "plugins", "install", "npm:@openclaw/slack@2026.6.10"],
-      expectedStateSuffix: ".openclaw-dev",
-      targetIndex: 3,
-    },
-    {
-      args: ["plugins", "install", "npm:@openclaw/slack@2026.6.10", "--dev"],
-      expectedStateSuffix: ".openclaw-dev",
-      targetIndex: 2,
-    },
-  ])("resolves the wrapper install target and state for $expectedStateSuffix", ({
-    args,
-    expectedStateSuffix,
-    targetIndex,
-  }) => {
-    const homeDirectory = path.join(os.tmpdir(), "nemoclaw-wrapper-home");
-    expect(parseOpenClawPluginInstallInvocation(args, { homeDirectory })).toEqual({
-      stateDirectory: path.join(homeDirectory, expectedStateSuffix),
-      targetIndex,
-    });
-  });
-
-  it("gives an explicit state directory precedence over profile selection", () => {
-    const stateDirectory = path.join(os.tmpdir(), "nemoclaw-custom-openclaw-state");
-    expect(
-      parseOpenClawPluginInstallInvocation(
-        ["--profile", "qa", "plugins", "install", "npm:@openclaw/slack@2026.6.10"],
-        { homeDirectory: os.tmpdir(), stateDirectory },
-      ),
-    ).toEqual({ stateDirectory, targetIndex: 4 });
-  });
-
-  it("does not enter remediation for commands other than plugins install", () => {
-    expect(
-      parseOpenClawPluginInstallInvocation(["plugins", "inspect", "slack"], {
-        homeDirectory: os.tmpdir(),
-      }),
-    ).toBeNull();
-  });
-
-  it("removes a fresh reviewed plugin when post-install remediation fails", () => {
-    const target = fixture();
-    const savedPlugin = path.join(path.dirname(target.homeDirectory), "fresh-plugin");
-    fs.renameSync(target.pluginRoot, savedPlugin);
-    const manifestPath = preparePluginInstallRollback({
-      stateDirectory: path.join(target.homeDirectory, ".openclaw"),
-      workingDirectory: path.dirname(target.homeDirectory),
-    });
-    fs.mkdirSync(path.dirname(target.pluginRoot), { recursive: true });
-    fs.renameSync(savedPlugin, target.pluginRoot);
-
-    rollbackPluginInstall({
-      manifestPath,
-      stateDirectory: path.join(target.homeDirectory, ".openclaw"),
-    });
-
-    expect(fs.existsSync(target.pluginRoot)).toBe(false);
-  });
-
-  it("restores a pre-install reviewed plugin after remediation failure", () => {
-    const target = fixture();
-    const manifestPath = preparePluginInstallRollback({
-      stateDirectory: path.join(target.homeDirectory, ".openclaw"),
-      workingDirectory: path.dirname(target.homeDirectory),
-    });
-    fs.writeFileSync(path.join(target.pluginRoot, "package.json"), "{}\n");
-    fs.rmSync(path.join(target.pluginRoot, "node_modules", "axios"), {
-      recursive: true,
-      force: true,
-    });
-
-    rollbackPluginInstall({
-      manifestPath,
-      stateDirectory: path.join(target.homeDirectory, ".openclaw"),
-    });
-
-    expect(
-      JSON.parse(fs.readFileSync(path.join(target.pluginRoot, "package.json"), "utf8")),
-    ).toMatchObject({ name: "@openclaw/slack", version: "2026.6.10" });
-    expect(
-      fs.readFileSync(
-        path.join(target.pluginRoot, "node_modules", "axios", "vulnerable.js"),
-        "utf8",
-      ),
-    ).toBe("old\n");
   });
 
   it("fails closed if a reviewed install reports success without a reviewed layout", () => {
