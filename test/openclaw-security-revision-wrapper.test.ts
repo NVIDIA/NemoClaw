@@ -108,6 +108,7 @@ function fixture() {
   const bin = path.join(root, "bin");
   const originalOpenClaw = path.join(bin, "openclaw-original.mjs");
   const axiosRemediation = path.join(bin, "axios-remediation.mjs");
+  const fakePluginCoreRemediation = path.join(bin, "plugin-core-remediation.mjs");
   const wrapper = path.join(root, "openclaw-wrapper.sh");
   const invocationLog = path.join(root, "openclaw-invocation.json");
   const remediationLog = path.join(root, "remediation-log.jsonl");
@@ -163,13 +164,43 @@ if (args.includes("--classify-install-target")) {
   else if (target.endsWith("reviewed-slack.tgz")) process.stdout.write("@openclaw/slack@2026.6.10");
 } else if (args.includes("--materialize-install-target")) {
   const target = value("--materialize-install-target");
-  fs.appendFileSync(process.env.FAKE_REMEDIATION_LOG, JSON.stringify({ mode: "materialize", target: value("--materialize-install-target") }) + "\\n");
+  fs.appendFileSync(process.env.FAKE_REMEDIATION_LOG, JSON.stringify({ mode: "materialize", target }) + "\\n");
   process.stdout.write("npm-pack:" + (target.endsWith(".tgz") ? path.resolve(target) : target));
 } else {
   const state = value("--state-directory");
   fs.appendFileSync(process.env.FAKE_REMEDIATION_LOG, JSON.stringify({ mode: "patch", spec: value("--expected-package-spec"), state }) + "\\n");
   if (process.env.FAKE_REMEDIATION_EXIT) process.exit(Number(process.env.FAKE_REMEDIATION_EXIT));
   fs.writeFileSync(path.join(state, "axios-remediated.txt"), "fixed\\n");
+}
+`,
+  );
+
+  fs.writeFileSync(
+    fakePluginCoreRemediation,
+    `#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+const args = process.argv.slice(2);
+const value = (name) => args[args.indexOf(name) + 1];
+const reviewed = new Set(
+  ["slack", "msteams", "discord", "diagnostics-otel", "whatsapp"].flatMap((plugin) =>
+    ["2026.5.22", "2026.5.27", "2026.6.10"].map((version) => "@openclaw/" + plugin + "@" + version),
+  ),
+);
+if (args.includes("--classify-install-target")) {
+  const target = value("--classify-install-target");
+  const normalized = target.startsWith("npm:") ? target.slice(4) : target;
+  if (reviewed.has(normalized)) process.stdout.write(normalized);
+  else if (target.endsWith("reviewed-slack.tgz")) process.stdout.write("@openclaw/slack@2026.6.10");
+} else if (args.includes("--materialize-remediated-install-target")) {
+  const target = value("--materialize-remediated-install-target");
+  fs.appendFileSync(process.env.FAKE_REMEDIATION_LOG, JSON.stringify({ mode: "core-materialize", target }) + "\\n");
+  process.stdout.write("npm-pack:" + (target.endsWith(".tgz") ? path.resolve(target) : target));
+} else {
+  const state = value("--state-directory");
+  fs.appendFileSync(process.env.FAKE_REMEDIATION_LOG, JSON.stringify({ mode: "core-patch", spec: value("--expected-package-spec"), state }) + "\\n");
+  if (process.env.FAKE_CORE_REMEDIATION_EXIT) process.exit(Number(process.env.FAKE_CORE_REMEDIATION_EXIT));
+  fs.writeFileSync(path.join(state, "core-remediated.txt"), "fixed\\n");
 }
 `,
   );
@@ -221,11 +252,19 @@ exec /bin/cp "$@"
         "/usr/local/lib/nemoclaw/openclaw-plugin-axios-security-revision.mts",
         axiosRemediation,
       )
+      .replace(
+        "/usr/local/lib/nemoclaw/openclaw-plugin-core-security-revision.mts",
+        fakePluginCoreRemediation,
+      )
       .replace("/usr/local/lib/nemoclaw/npm-tar-security-revision.mts", npmRemediation)
       .replace("/usr/local/share/nemoclaw/openclaw-plugin-axios-1.18.0", replacementRoot)
       .replace(
         "readonly OPENCLAW_STATE_ROOT=/sandbox",
         `readonly OPENCLAW_STATE_ROOT=${JSON.stringify(home)}`,
+      )
+      .replace(
+        "/usr/local/share/nemoclaw/openclaw-plugin-core-security-replacements-v1",
+        replacementRoot,
       )
       .replaceAll("/opt/nemoclaw", nemoclawRoot),
   );
@@ -325,7 +364,7 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
     expectedArguments[specIndex] = `npm-pack:${expectedArguments[specIndex]}`;
     expect(originalArguments(target)).toEqual(expectedArguments);
     expect(remediationEvents(target).at(-1)).toMatchObject({
-      mode: "patch",
+      mode: "core-patch",
       state: stateDirectory,
     });
     expect(fs.readFileSync(path.join(stateDirectory, "axios-remediated.txt"), "utf8")).toBe(
@@ -342,7 +381,10 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
       stateDirectory,
     });
     expect(result.status).toBe(0);
-    expect(remediationEvents(target).at(-1)).toMatchObject({ state: stateDirectory });
+    expect(remediationEvents(target).at(-1)).toMatchObject({
+      mode: "core-patch",
+      state: stateDirectory,
+    });
   });
 
   it("rejects a reviewed out-of-root state override before touching unrelated data", () => {
@@ -399,10 +441,32 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
     expected[4] = `npm-pack:${archive}`;
     expect(originalArguments(target)).toEqual(expected);
     expect(remediationEvents(target).at(-1)).toMatchObject({
-      mode: "patch",
+      mode: "core-patch",
       spec: "@openclaw/slack@2026.6.10",
       state: stateDirectory,
     });
+  });
+
+  it("remediates reviewed non-Axios official plugins", () => {
+    const target = fixture();
+    const stateDirectory = path.join(target.home, ".openclaw-whatsapp");
+    const args = ["--profile", "whatsapp", "plugins", "install", "@openclaw/whatsapp@2026.5.22"];
+    const result = run(target, args, {
+      env: { FAKE_MUTATE_STATE: "1" },
+      stateDirectory,
+    });
+    expect(result.status).toBe(0);
+    expect(remediationEvents(target)).not.toContainEqual(
+      expect.objectContaining({ mode: "patch" }),
+    );
+    expect(remediationEvents(target).at(-1)).toMatchObject({
+      mode: "core-patch",
+      spec: "@openclaw/whatsapp@2026.5.22",
+      state: stateDirectory,
+    });
+    expect(fs.readFileSync(path.join(stateDirectory, "core-remediated.txt"), "utf8")).toBe(
+      "fixed\n",
+    );
   });
 
   it("restores the exact prior state and original status when OpenClaw fails", () => {
@@ -442,6 +506,20 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
     });
     expect(result.status).toBe(31);
     expect(fs.existsSync(stateDirectory)).toBe(false);
+  });
+
+  it("restores the exact prior state when plugin-core remediation fails", () => {
+    const target = fixture();
+    const stateDirectory = path.join(target.home, ".openclaw");
+    fs.mkdirSync(stateDirectory);
+    fs.writeFileSync(path.join(stateDirectory, "prior.txt"), "prior\n");
+    const before = treeSnapshot(stateDirectory);
+    const result = run(target, ["plugins", "install", "@openclaw/whatsapp@2026.5.22"], {
+      env: { FAKE_CORE_REMEDIATION_EXIT: "32", FAKE_MUTATE_STATE: "1" },
+      stateDirectory,
+    });
+    expect(result.status).toBe(32);
+    expect(treeSnapshot(stateDirectory)).toEqual(before);
   });
 
   it("restores credentials without retaining plaintext when the atomic rollback rename fails", () => {

@@ -7,13 +7,15 @@ set -euo pipefail
 readonly ORIGINAL_OPENCLAW=/usr/local/bin/openclaw.nemoclaw-original
 readonly INVOCATION_PARSER=/usr/local/lib/nemoclaw/openclaw-security-revision-invocation.mts
 readonly AXIOS_REMEDIATION=/usr/local/lib/nemoclaw/openclaw-plugin-axios-security-revision.mts
+readonly PLUGIN_CORE_REMEDIATION=/usr/local/lib/nemoclaw/openclaw-plugin-core-security-revision.mts
 readonly NPM_REMEDIATION=/usr/local/lib/nemoclaw/npm-tar-security-revision.mts
 readonly REPLACEMENT_ROOT=/usr/local/share/nemoclaw/openclaw-plugin-axios-1.18.0
+readonly PLUGIN_CORE_REPLACEMENT_ROOT=/usr/local/share/nemoclaw/openclaw-plugin-core-security-replacements-v1
 readonly NEMOCLAW_ROOT=/opt/nemoclaw
 readonly OPENCLAW_STATE_ROOT=/sandbox
 
 invocation_file="$(mktemp /tmp/nemoclaw-openclaw-security-invocation.XXXXXX)"
-node --experimental-strip-types "$INVOCATION_PARSER" \
+node --no-warnings --experimental-strip-types "$INVOCATION_PARSER" \
   --describe-plugin-install -- "$@" >"$invocation_file" || {
   parser_status=$?
   rm -f -- "$invocation_file"
@@ -46,17 +48,22 @@ resolved_target="$(
     "$install_target"
 )"
 expected_package_spec=""
+axios_package_spec=""
 historical_nemoclaw=0
 if [[ "$resolved_target" == "$NEMOCLAW_ROOT" ]]; then
   historical_nemoclaw=1
 else
   expected_package_spec="$(
-    node --experimental-strip-types "$AXIOS_REMEDIATION" \
+    node --no-warnings --experimental-strip-types "$PLUGIN_CORE_REMEDIATION" \
       --classify-install-target "$install_target"
   )"
   if [[ -z "$expected_package_spec" ]]; then
     exec "$ORIGINAL_OPENCLAW" "$@"
   fi
+  axios_package_spec="$(
+    node --no-warnings --experimental-strip-types "$AXIOS_REMEDIATION" \
+      --classify-install-target "$install_target"
+  )"
 fi
 if [[ "$state_directory" != /* || "$state_directory" == / ]]; then
   echo "ERROR: OpenClaw state directory must be a non-root absolute path" >&2
@@ -188,9 +195,11 @@ rollback_required=1
 install_args=("$@")
 if [[ "$historical_nemoclaw" == 0 ]]; then
   materialized_target="$(
-    node --experimental-strip-types "$AXIOS_REMEDIATION" \
-      --materialize-install-target "$install_target" \
-      --working-directory "$remediation_working_directory"
+    node --no-warnings --experimental-strip-types "$PLUGIN_CORE_REMEDIATION" \
+      --materialize-remediated-install-target "$install_target" \
+      --working-directory "$remediation_working_directory" \
+      --replacement-root "$PLUGIN_CORE_REPLACEMENT_ROOT" \
+      --axios-replacement-root "$REPLACEMENT_ROOT"
   )"
   install_args[target_index]="$materialized_target"
 fi
@@ -203,9 +212,9 @@ else
 fi
 
 if [[ "$historical_nemoclaw" == 1 ]]; then
-  if node --experimental-strip-types "$NPM_REMEDIATION" \
+  if node --no-warnings --experimental-strip-types "$NPM_REMEDIATION" \
     --verify-install --nemoclaw-root "$NEMOCLAW_ROOT" \
-    && node --experimental-strip-types "$NPM_REMEDIATION" \
+    && node --no-warnings --experimental-strip-types "$NPM_REMEDIATION" \
       --verify-install --nemoclaw-root "$state_directory/extensions/nemoclaw"; then
     :
   else
@@ -213,9 +222,20 @@ if [[ "$historical_nemoclaw" == 1 ]]; then
     exit "$remediation_status"
   fi
 else
-  if node --experimental-strip-types "$AXIOS_REMEDIATION" \
+  if [[ -n "$axios_package_spec" ]]; then
+    if node --no-warnings --experimental-strip-types "$AXIOS_REMEDIATION" \
+      --state-directory "$state_directory" \
+      --replacement-root "$REPLACEMENT_ROOT" \
+      --expected-package-spec "$expected_package_spec"; then
+      :
+    else
+      remediation_status=$?
+      exit "$remediation_status"
+    fi
+  fi
+  if node --no-warnings --experimental-strip-types "$PLUGIN_CORE_REMEDIATION" \
     --state-directory "$state_directory" \
-    --replacement-root "$REPLACEMENT_ROOT" \
+    --replacement-root "$PLUGIN_CORE_REPLACEMENT_ROOT" \
     --expected-package-spec "$expected_package_spec"; then
     :
   else

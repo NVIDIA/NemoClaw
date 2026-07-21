@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   classifyReviewedInstallTarget,
   patchInstalledOpenClawPlugins,
+  patchReviewedOpenClawPluginAxiosRoot,
 } from "../scripts/openclaw-plugin-axios-security-revision.mts";
 
 const tempDirectories: string[] = [];
@@ -172,6 +173,21 @@ describe("historical OpenClaw plugin Axios security revisions", () => {
     );
     expect(classifyReviewedInstallTarget("npm:@openclaw/slack@2026.7.1")).toBe("");
     expect(classifyReviewedInstallTarget("/opt/nemoclaw")).toBe("");
+  });
+
+  it("patches a materialized reviewed archive root for build-time audit", () => {
+    const target = fixture();
+    expect(patchReviewedOpenClawPluginAxiosRoot(target.pluginRoot, target.replacementRoot)).toBe(
+      "@openclaw/slack@2026.6.10",
+    );
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(target.pluginRoot, "node_modules", "axios", "package.json"),
+          "utf8",
+        ),
+      ).version,
+    ).toBe("1.18.0");
   });
 
   it("rejects package metadata replaced by a symbolic link", () => {
