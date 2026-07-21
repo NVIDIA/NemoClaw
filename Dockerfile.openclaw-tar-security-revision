@@ -185,11 +185,10 @@ RUN set -euo pipefail; \
         tar -tvzf "$plugin_archive" | awk 'substr($0, 1, 1) != "-" && substr($0, 1, 1) != "d" { exit 1 }'; \
         mkdir "$plugin_work/package"; \
         tar -xzf "$plugin_archive" --no-same-owner --no-same-permissions --strip-components=1 -C "$plugin_work/package"; \
-        plugin_tree="$plugin_work/npm-tree.json"; \
-        if ! (cd "$plugin_work/package" && npm ls --omit=dev --all --json > "$plugin_tree"); then \
-            cat "$plugin_tree" >&2; \
-            exit 1; \
-        fi; \
+        node --experimental-strip-types /usr/local/lib/nemoclaw/openclaw-plugin-core-security-revision.mts \
+            --verify-plugin-tree \
+            --plugin-root "$plugin_work/package" \
+            --expected-package-spec "$plugin_spec"; \
         plugin_audit="$plugin_work/npm-audit.json"; \
         if ! (cd "$plugin_work/package" && NPM_CONFIG_CACHE="$plugin_work/npm-cache" npm audit --omit=dev --ignore-scripts --audit-level=high --json > "$plugin_audit"); then \
             cat "$plugin_audit" >&2; \
