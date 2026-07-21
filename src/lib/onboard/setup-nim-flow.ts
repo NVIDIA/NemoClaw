@@ -567,7 +567,7 @@ export function createSetupNim(
           }
           if (vllmRunning) {
             const message =
-              "vLLM is already running on the managed endpoint. " +
+              "vLLM is already running on this host. " +
               "Select Local vLLM, or stop the existing server before selecting the managed install path.";
             deps.error(`  ${message}`);
             if (deps.isNonInteractive()) {

@@ -2486,6 +2486,7 @@ run_apply() {
 
   require_command apt-cache
   require_command apt-get
+  require_command cmp
   require_command curl
   require_command dpkg
   require_command gpg
