@@ -2,9 +2,136 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Handles the ownership choice when Station Express finds an existing vLLM.
-# The installer owns the Express receipt and state helpers called below; this
-# module owns only vLLM discovery, prompt text, and the selected handoff.
+# Handles the ownership choice and continuation when Station Express finds an
+# existing vLLM. Shared installer state and receipt primitives remain in
+# install.sh.
+
+_STATION_LOCAL_VLLM_SELECTED=""
+
+station_local_vllm_resume_file() {
+  printf '%s/.nemoclaw/station-local-vllm-resume' "$HOME"
+}
+
+assert_station_local_vllm_resume_file_safe() {
+  local state_file=$1 state_dir mode
+  state_dir="$(dirname "$state_file")"
+  assert_station_express_resume_directory_safe "$state_dir"
+  [[ -f "$state_file" && ! -L "$state_file" && -O "$state_file" ]] \
+    || error "DGX Station Local vLLM resume state must be a regular file owned by the current user: ${state_file}"
+  mode="$(portable_file_mode "$state_file")" \
+    || error "Could not inspect DGX Station Local vLLM resume state permissions: ${state_file}"
+  [[ "$mode" == "600" ]] \
+    || error "DGX Station Local vLLM resume state must have mode 0600: ${state_file}"
+}
+
+save_station_local_vllm_resume() {
+  local state_file state_dir temp_file gateway_port vllm_port
+  gateway_port="$(resolve_nemoclaw_gateway_port)"
+  vllm_port="$(station_express_resume_port_value NEMOCLAW_VLLM_PORT 8000)"
+  state_file="$(station_local_vllm_resume_file)" \
+    || error "Could not resolve NemoClaw state for DGX Station Local vLLM resume."
+  state_dir="$(ensure_nemoclaw_state_dir)" \
+    || error "Could not prepare NemoClaw state for DGX Station Local vLLM resume."
+  assert_nemoclaw_state_path_safe "$state_file"
+  if [[ -e "$state_file" || -L "$state_file" ]]; then
+    assert_station_local_vllm_resume_file_safe "$state_file"
+  fi
+  temp_file="$(mktemp "${state_file}.tmp.XXXXXX")" \
+    || error "Could not create DGX Station Local vLLM resume state under ${state_dir}."
+  chmod 600 "$temp_file" || {
+    rm -f "$temp_file"
+    error "Could not secure DGX Station Local vLLM resume state under ${state_dir}."
+  }
+  if ! printf 'version=1\ngateway_port=%s\nvllm_port=%s\n' \
+    "$gateway_port" "$vllm_port" >"$temp_file"; then
+    rm -f "$temp_file"
+    error "Could not write DGX Station Local vLLM resume state under ${state_dir}."
+  fi
+  if ! mv -f "$temp_file" "$state_file"; then
+    rm -f "$temp_file"
+    error "Could not publish DGX Station Local vLLM resume state under ${state_dir}."
+  fi
+  assert_station_local_vllm_resume_file_safe "$state_file"
+  _STATION_LOCAL_VLLM_SELECTED=1
+}
+
+clear_station_local_vllm_resume() {
+  local state_file state_dir
+  state_file="$(station_local_vllm_resume_file)" || return 0
+  assert_nemoclaw_state_path_safe "$state_file"
+  state_dir="$(dirname "$state_file")"
+  [[ -e "$state_dir" || -L "$state_dir" ]] || return 0
+  assert_station_express_resume_directory_safe "$state_dir"
+  [[ -e "$state_file" || -L "$state_file" ]] || return 0
+  assert_station_local_vllm_resume_file_safe "$state_file"
+  rm -f "$state_file"
+}
+
+activate_station_local_vllm_continuation() {
+  local arg
+  local -a continuation_args=()
+  export NEMOCLAW_NO_EXPRESS=1
+  if declare -p _NEMOCLAW_INSTALLER_ARGS >/dev/null 2>&1; then
+    for arg in "${_NEMOCLAW_INSTALLER_ARGS[@]}"; do
+      case "$arg" in
+        --force-station-install | --station-deepseek) ;;
+        *) continuation_args+=("$arg") ;;
+      esac
+    done
+    _NEMOCLAW_INSTALLER_ARGS=("${continuation_args[@]}")
+  fi
+  # These caller-owned globals are consumed later by install.sh after this
+  # sourced module returns.
+  # shellcheck disable=SC2034
+  FORCE_STATION_INSTALL=""
+  # shellcheck disable=SC2034
+  STATION_DEEPSEEK=""
+}
+
+consume_station_local_vllm_resume() {
+  local state_file version_line gateway_port_line vllm_port_line saved_gateway_port saved_vllm_port
+  local current_gateway_port current_vllm_port line_count
+  state_file="$(station_local_vllm_resume_file)" || return 1
+  assert_nemoclaw_state_path_safe "$state_file"
+  [[ -e "$state_file" || -L "$state_file" ]] || return 1
+  assert_station_local_vllm_resume_file_safe "$state_file"
+  line_count="$(wc -l <"$state_file" | tr -d '[:space:]')"
+  version_line="$(sed -n '1p' "$state_file")"
+  gateway_port_line="$(sed -n '2p' "$state_file")"
+  vllm_port_line="$(sed -n '3p' "$state_file")"
+  saved_gateway_port="${gateway_port_line#gateway_port=}"
+  saved_vllm_port="${vllm_port_line#vllm_port=}"
+  if ! {
+    [[ "$line_count" == "3" && "$version_line" == "version=1" &&
+      "$gateway_port_line" == "gateway_port=${saved_gateway_port}" &&
+      "$vllm_port_line" == "vllm_port=${saved_vllm_port}" ]] \
+      && validate_station_express_resume_port "$saved_gateway_port" \
+      && validate_station_express_resume_port "$saved_vllm_port"
+  }; then
+    error "DGX Station Local vLLM resume state is invalid. Remove ${state_file} and rerun the installer."
+  fi
+  if ! NEMOCLAW_VLLM_PORT="$saved_vllm_port" station_existing_vllm_model >/dev/null 2>&1; then
+    rm -f "$state_file"
+    info "The saved Local vLLM endpoint at port ${saved_vllm_port} is no longer available. Express setup is available."
+    return 1
+  fi
+  if [[ -n "${NEMOCLAW_GATEWAY_PORT:-}" ]]; then
+    current_gateway_port="$(resolve_nemoclaw_gateway_port)"
+    [[ "$current_gateway_port" == "$saved_gateway_port" ]] \
+      || error "DGX Station Local vLLM resume requires NEMOCLAW_GATEWAY_PORT=${saved_gateway_port}."
+  fi
+  if [[ -n "${NEMOCLAW_VLLM_PORT:-}" ]]; then
+    current_vllm_port="$(station_express_resume_port_value NEMOCLAW_VLLM_PORT 8000)"
+    [[ "$current_vllm_port" == "$saved_vllm_port" ]] \
+      || error "DGX Station Local vLLM resume requires NEMOCLAW_VLLM_PORT=${saved_vllm_port}."
+  fi
+  NEMOCLAW_GATEWAY_PORT="$saved_gateway_port"
+  NEMOCLAW_VLLM_PORT="$saved_vllm_port"
+  export NEMOCLAW_GATEWAY_PORT NEMOCLAW_VLLM_PORT
+  clear_station_express_resume
+  rm -f "$state_file"
+  activate_station_local_vllm_continuation
+}
 
 station_existing_vllm_model() {
   local response model port
@@ -44,6 +171,7 @@ print_station_express_stop_and_resume() {
 }
 
 switch_station_express_to_local_vllm() {
+  save_station_local_vllm_resume
   clear_station_express_resume
   _SELECTED_EXPRESS_PLATFORM=""
   _STATION_EXPRESS_RESUME_LOADED=""
@@ -58,15 +186,13 @@ switch_station_express_to_local_vllm() {
   unset NEMOCLAW_NON_INTERACTIVE_SUDO_MODE NEMOCLAW_YES NEMOCLAW_POLICY_MODE
   unset NEMOCLAW_STATION_EXPRESS NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION
   unset NEMOCLAW_PROVIDER NEMOCLAW_MODEL NEMOCLAW_VLLM_MODEL
-  # shellcheck disable=SC2034
-  FORCE_STATION_INSTALL=""
-  # shellcheck disable=SC2034
-  STATION_DEEPSEEK=""
+  activate_station_local_vllm_continuation
   info "Continuing with advanced manual Local vLLM setup. The existing workload remains unchanged."
 }
 
 handle_station_vllm_conflict() {
-  local requested_model running_model choice
+  local requested_model running_model choice port
+  port="${NEMOCLAW_VLLM_PORT:-8000}"
   requested_model="${NEMOCLAW_MODEL:-${NEMOCLAW_VLLM_MODEL:-unknown}}"
   if ! validate_station_express_resume_model "$requested_model"; then
     requested_model="${NEMOCLAW_VLLM_MODEL:-unknown}"
@@ -74,7 +200,8 @@ handle_station_vllm_conflict() {
   running_model="$(station_existing_vllm_model 2>/dev/null || true)"
   running_model="${running_model:-unknown}"
 
-  warn "Existing vLLM detected: ${running_model}"
+  warn "Existing vLLM workload detected."
+  printf '  Model reported by port %s: %s\n' "$port" "$running_model"
   printf '  Express model: %s\n\n' "$requested_model"
   if ! express_prompt_can_read_tty; then
     warn "No interactive terminal is available. Keeping the Express setup and leaving the workload and host unchanged."
@@ -84,9 +211,10 @@ handle_station_vllm_conflict() {
 
   printf '  1. Keep Express with %s (default)\n' "$requested_model"
   if [[ "$running_model" == "unknown" ]]; then
-    printf '  2. Use existing vLLM (advanced manual setup)\n'
+    printf '  2. Use Local vLLM at port %s (advanced manual setup)\n' "$port"
   else
-    printf '  2. Use existing vLLM with %s (advanced manual setup)\n' "$running_model"
+    printf '  2. Use Local vLLM at port %s (reported model: %s; advanced manual setup)\n' \
+      "$port" "$running_model"
   fi
   while true; do
     printf '  Choose 1 or 2 [1]: '

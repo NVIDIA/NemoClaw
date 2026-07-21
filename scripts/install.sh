@@ -3966,6 +3966,11 @@ main() {
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
+  load_station_vllm_conflict_helpers
+  if consume_station_local_vllm_resume; then
+    info "Resuming the selected manual Local vLLM setup."
+  fi
+
   # Validate the gateway port before the banner, notice acceptance, downloads,
   # or any other installer side effect.
   resolve_nemoclaw_gateway_port >/dev/null
@@ -4077,6 +4082,9 @@ finalize_install() {
   print_done
   if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
     error "Installation incomplete: one or more existing sandboxes failed to upgrade. See the recovery guidance above."
+  fi
+  if [[ "${_STATION_LOCAL_VLLM_SELECTED:-}" == "1" ]]; then
+    clear_station_local_vllm_resume
   fi
 }
 

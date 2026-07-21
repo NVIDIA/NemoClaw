@@ -201,7 +201,7 @@ Use these details when your first-run path needs more control.
     Generic Ubuntu preparation can change pinned packages and then exits with status `10`; reboot, sign in, and run that printed command to resume.
     Stock DGX OS validation checks the factory stack in place without installing packages, restarting services, or rewriting the Docker runtime.
     One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
-    When an existing vLLM conflicts with the selected managed Express recipe, the installer shows the requested model and the running model when available, then offers two choices.
+    When an existing vLLM conflicts with the selected managed Express recipe, the installer shows the requested model and the model reported by the configured vLLM port when available.
     The default keeps Express, leaves the host unchanged, and prints the manual stop and exact resume steps.
     The second choice leaves vLLM untouched and continues seamlessly through advanced manual Local vLLM setup.
     Without an interactive terminal or a choice, the installer safely selects the default.

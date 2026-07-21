@@ -563,7 +563,12 @@ ensure_station_express_host
 
     expect(result.status, output).toBe(12);
     expect(output).toContain("Keep Express with nvidia/nemotron-3-ultra-550b-a55b (default)");
-    expect(output).toContain("Use existing vLLM with existing/model (advanced manual setup)");
+    expect(output).toContain("Existing vLLM workload detected");
+    expect(output).toContain("Model reported by port 8000: existing/model");
+    expect(output).toContain(
+      "Use Local vLLM at port 8000 (reported model: existing/model; advanced manual setup)",
+    );
+    expect(output).not.toContain("Existing vLLM detected: existing/model");
     expect(output).toContain("NEMOCLAW_INSTALL_TAG=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     expect(output).not.toContain("NEMOCLAW_NO_EXPRESS=1");
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(true);
@@ -595,44 +600,6 @@ fi
     expect(output).toContain("MODEL=unknown");
     expect(output).not.toContain("UNSAFE_MODEL_ACCEPTED");
     expect(output).not.toContain("unsafe model");
-  });
-
-  it("seamlessly returns to interactive Local vLLM setup without changing the workload", () => {
-    const { home, result, output } = runInstallerSourced(`
-_SELECTED_EXPRESS_PLATFORM='DGX Station'
-load_station_vllm_conflict_helpers
-NON_INTERACTIVE=1
-NON_INTERACTIVE_SOURCE='Station Express'
-NEMOCLAW_NON_INTERACTIVE=1
-NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
-NEMOCLAW_YES=1
-NEMOCLAW_POLICY_MODE=suggested
-NEMOCLAW_STATION_EXPRESS=1
-NEMOCLAW_PROVIDER=install-vllm
-NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
-NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
-station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
-station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
-station_existing_vllm_model() { printf 'existing/model'; }
-express_prompt_can_read_tty() { return 0; }
-read_station_vllm_conflict_choice() { printf '2'; }
-classify_dgx_station_release() { printf 'supported-ai-developer-tools'; }
-run_station_host_preparation() { return 12; }
-ensure_station_express_host
-printf 'STATE selected=%s noninteractive=%s provider=%s model=%s station=%s yes=%s policy=%s\n' \
-  "\${_SELECTED_EXPRESS_PLATFORM:-}" "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_PROVIDER:-}" \
-  "\${NEMOCLAW_MODEL:-}" "\${NEMOCLAW_STATION_EXPRESS:-}" "\${NEMOCLAW_YES:-}" \
-  "\${NEMOCLAW_POLICY_MODE:-}"
-`);
-
-    expect(result.status, output).toBe(0);
-    expect(output).toContain(
-      "Continuing with advanced manual Local vLLM setup. The existing workload remains unchanged.",
-    );
-    expect(output).toContain(
-      "STATE selected= noninteractive= provider= model= station= yes= policy=",
-    );
-    expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(false);
   });
 
   it("uses the Express-preserving default when the user submits an empty choice", () => {

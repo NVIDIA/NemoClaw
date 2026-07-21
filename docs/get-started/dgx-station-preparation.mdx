@@ -29,7 +29,7 @@ Station preparation preserves existing stopped Docker container records, capture
 Running containers block initial preparation and every Docker configuration change.
 Before a Docker restart or host reboot, stopped containers with a restart policy other than `no` also block preparation because they could start automatically.
 
-If preparation detects an existing vLLM workload, the installer shows the requested model and the running model when available, then offers two choices:
+If preparation detects an existing vLLM workload, the installer shows the requested model and the model reported by the configured vLLM port when available, then offers two choices:
 
 1. Keep the managed Express recipe. This default leaves the host unchanged and prints the workload stop command and exact Express resume command.
 2. Leave vLLM running and continue in the same installer run through advanced manual Local vLLM validation and configuration.
