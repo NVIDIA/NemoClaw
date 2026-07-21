@@ -253,7 +253,8 @@ Enable provider-derived policy on the target gateway before applying a blueprint
 openshell settings set --global --key providers_v2_enabled --value true --yes
 ```
 
-Copy `nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml` into the blueprint you operate.
+Copy `nemoclaw-blueprint/provider-profiles/okta-runtime-v1.yaml` into the blueprint you operate as `provider-profiles/acme-okta-runtime.yaml`.
+You can choose another tenant-specific filename, but set `profile_path` below to that exact relative path.
 Set its `token_url` to the tenant's authorization-server token endpoint, replace `api.example.okta.com` with the approved upstream API host, and add only the API scopes that the Okta authorization server grants to `refresh.scopes`.
 Keep the token endpoint and upstream host in the profile so refresh material and bearer-token presentation cannot be redirected by blueprint input.
 

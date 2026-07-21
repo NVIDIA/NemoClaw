@@ -13,6 +13,9 @@ interface FsEntry {
 
 const store = new Map<string, FsEntry>();
 const mockExeca = vi.fn();
+const missingEntry = (path: string): never => {
+  throw new Error(`ENOENT: ${path}`);
+};
 
 vi.mock("node:os", () => ({ homedir: () => "/fakehome" }));
 vi.mock("node:crypto", () => ({ randomUUID: () => "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }));
@@ -23,8 +26,7 @@ vi.mock("node:fs", async (importOriginal) => {
     mkdirSync: vi.fn((path: string) => store.set(path, { type: "dir" })),
     readFileSync: (path: string) => {
       const entry = store.get(path);
-      if (entry?.type !== "file") throw new Error(`ENOENT: ${path}`);
-      return entry.content ?? "";
+      return entry?.type === "file" ? (entry.content ?? "") : missingEntry(path);
     },
     writeFileSync: vi.fn((path: string, content: string) =>
       store.set(path, { type: "file", content }),
@@ -34,8 +36,7 @@ vi.mock("node:fs", async (importOriginal) => {
       const entries = [...store.keys()]
         .filter((key) => key.startsWith(prefix))
         .map((key) => key.slice(prefix.length).split("/")[0]);
-      if (entries.length === 0 && !store.has(path)) throw new Error(`ENOENT: ${path}`);
-      return [...new Set(entries)];
+      return entries.length > 0 || store.has(path) ? [...new Set(entries)] : missingEntry(path);
     },
   };
 });
@@ -121,6 +122,31 @@ describe("blueprint identity wrapper", () => {
     expect(loadBlueprint()).toEqual(input);
   });
 
+  it("rejects an empty identity component", () => {
+    store.set("blueprint.yaml", {
+      type: "file",
+      content: YAML.stringify(blueprint({ identity: {} })),
+    });
+
+    expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+  });
+
+  it("rejects identity environment names that overlap", () => {
+    const identity = oktaIdentity();
+    store.set("blueprint.yaml", {
+      type: "file",
+      content: YAML.stringify(
+        blueprint({
+          identity: {
+            okta: { ...identity, refresh_token_env: identity.client_secret_env },
+          },
+        }),
+      ),
+    });
+
+    expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+  });
+
   it("rejects profile paths that escape the blueprint directory", async () => {
     await expect(
       actionApply("default", blueprint({ identity: { okta: oktaIdentity("../outside.yaml") } })),
@@ -155,12 +181,13 @@ describe("blueprint identity wrapper", () => {
     const refreshCall = mockExeca.mock.calls.find(
       (call) => Array.isArray(call[1]) && call[1][0] === "provider" && call[1][2] === "configure",
     );
-    if (!refreshCall) throw new Error("Okta refresh configure call not found");
-    expect(refreshCall[1]).toContain("client_id=client-id");
-    expect(refreshCall[1]).not.toContain("refresh-secret");
-    expect(refreshCall[1]).not.toContain("client-secret");
-    expect(refreshCall[2].env.OKTA_REFRESH_TOKEN).toBe("refresh-secret");
-    expect(refreshCall[2].env.OKTA_CLIENT_SECRET).toBe("client-secret");
+    expect(refreshCall).toBeDefined();
+    const [, refreshArguments, refreshOptions] = refreshCall!;
+    expect(refreshArguments).toContain("client_id=client-id");
+    expect(refreshArguments).not.toContain("refresh-secret");
+    expect(refreshArguments).not.toContain("client-secret");
+    expect(refreshOptions.env.OKTA_REFRESH_TOKEN).toBe("refresh-secret");
+    expect(refreshOptions.env.OKTA_CLIENT_SECRET).toBe("client-secret");
     expect(mockExeca).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "provider", "attach", "test-sandbox", "acme-okta-runtime"],
@@ -169,9 +196,10 @@ describe("blueprint identity wrapper", () => {
   });
 
   it("composes fail-closed middleware while retaining existing middleware", async () => {
-    mockExeca.mockImplementation(async (_command: string, args: string[]) => {
-      if (args[0] === "policy" && args[1] === "get") {
-        return {
+    const responses = new Map([
+      [
+        "policy get",
+        {
           exitCode: 0,
           stdout: [
             "Version: 1",
@@ -187,10 +215,13 @@ describe("blueprint identity wrapper", () => {
             "",
           ].join("\n"),
           stderr: "",
-        };
-      }
-      return { exitCode: 0, stdout: "", stderr: "" };
-    });
+        },
+      ],
+    ]);
+    mockExeca.mockImplementation(
+      async (_command: string, args: string[]) =>
+        responses.get(args.slice(0, 2).join(" ")) ?? { exitCode: 0, stdout: "", stderr: "" },
+    );
     await actionApply(
       "default",
       blueprint({
@@ -207,10 +238,11 @@ describe("blueprint identity wrapper", () => {
       }),
     );
 
-    const merged = [...store.entries()].find(([path]) => path.endsWith("/merged-policy.yaml"))?.[1]
-      .content;
-    if (!merged) throw new Error("merged policy file not written");
-    expect(YAML.parse(merged).network_middlewares).toMatchObject({
+    const mergedEntry = [...store.entries()].find(([path]) =>
+      path.endsWith("/merged-policy.yaml"),
+    )?.[1];
+    expect(mergedEntry?.content).toBeDefined();
+    expect(YAML.parse(mergedEntry!.content!).network_middlewares).toMatchObject({
       existing: { middleware: "openshell/regex" },
       identity_guard: {
         middleware: "acme/identity-guard",

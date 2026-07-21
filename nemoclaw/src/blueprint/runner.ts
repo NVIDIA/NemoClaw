@@ -281,6 +281,11 @@ function isRuntimeIdentityConfig(value: unknown): value is RuntimeIdentityConfig
   ) {
     return false;
   }
+  const credentialEnvironmentNames = [
+    value.client_id_env,
+    value.refresh_token_env,
+    value.client_secret_env,
+  ].filter((name): name is string => typeof name === "string");
   return (
     typeof value.profile_path === "string" &&
     value.profile_path.length > 0 &&
@@ -296,7 +301,8 @@ function isRuntimeIdentityConfig(value: unknown): value is RuntimeIdentityConfig
     ENV_NAME_PATTERN.test(value.refresh_token_env) &&
     (value.client_secret_env === undefined ||
       (typeof value.client_secret_env === "string" &&
-        ENV_NAME_PATTERN.test(value.client_secret_env)))
+        ENV_NAME_PATTERN.test(value.client_secret_env))) &&
+    new Set(credentialEnvironmentNames).size === credentialEnvironmentNames.length
   );
 }
 
@@ -395,10 +401,12 @@ function isBlueprint(value: unknown): value is Blueprint {
 
   const identity = components.identity;
   if (identity !== undefined) {
-    if (!isPlainObject(identity) || !hasOnlyKeys(identity, ["okta"])) {
-      return false;
-    }
-    if (identity.okta !== undefined && !isRuntimeIdentityConfig(identity.okta)) {
+    if (
+      !isPlainObject(identity) ||
+      !hasOnlyKeys(identity, ["okta"]) ||
+      identity.okta === undefined ||
+      !isRuntimeIdentityConfig(identity.okta)
+    ) {
       return false;
     }
   }
