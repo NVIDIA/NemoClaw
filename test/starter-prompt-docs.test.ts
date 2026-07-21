@@ -486,7 +486,7 @@ describe("starter prompt docs CTA", () => {
     ).toThrow("use LF line endings");
   });
 
-  it("names non-interactive install controls and scopes Codex Docker approval (#7311)", () => {
+  it("names non-interactive install controls and scopes sandboxed Docker approval (#7311)", () => {
     const promptSource = readStarterPrompt();
     const quickstartSource = read("docs/get-started/quickstart.mdx");
 
@@ -498,21 +498,27 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).toContain("NEMOCLAW_AGENT=openclaw");
     expect(promptSource).toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z");
     expect(promptSource).toContain(
-      "ask permission to rerun only that exact command outside the sandbox",
+      "Request permission to rerun only that exact command outside the sandbox",
     );
     expect(promptSource).toContain("`NEMOCLAW_NON_INTERACTIVE=1` removes NemoClaw prompts");
-    expect(promptSource).toContain("it does not bypass Codex permissions");
     expect(promptSource).toContain(
-      "Do not change Docker socket permissions or request full access only to bypass the Codex sandbox.",
+      "`NEMOCLAW_NON_INTERACTIVE=1` does not bypass execution-sandbox permissions",
+    );
+    expect(promptSource).toContain(
+      "Do not change Docker socket permissions or request broad host access only to bypass the execution sandbox.",
     );
     expect(promptSource).not.toContain("or another approved host command");
     expect(quickstartSource).toContain(
       "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=vX.Y.Z bash",
     );
-    expect(quickstartSource).toContain("Approve only the exact Docker-dependent command");
     expect(quickstartSource).toContain(
-      "Do not change Docker socket permissions or select **Full access** only to bypass the restriction.",
+      "Approve only the exact Docker-dependent command that the coding agent requests",
     );
+    expect(quickstartSource).toContain(
+      "Do not change Docker socket permissions or grant broad host access only to bypass the restriction.",
+    );
+    expect(promptSource).not.toContain("## Codex Execution Sandbox");
+    expect(quickstartSource).not.toContain("When Codex reports");
     expect(quickstartSource).not.toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z curl");
     expect(promptSource).not.toContain("NEMOCLAW_INSTALL_TAG=<git-ref>");
     expect(quickstartSource).not.toContain("NEMOCLAW_INSTALL_TAG=<git-ref>");

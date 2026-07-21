@@ -65,15 +65,15 @@ Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-dee
 - Offer a user-local alternative only when official documentation supports it for that exact operation.
 - Do not silently use user-local Ollama for a system Ollama upgrade when the old system service would remain active.
 
-## Codex Execution Sandbox
+## Execution Sandbox
 
-- If this coding agent is Codex, keep **Ask for approval** enabled.
-- If the Codex execution sandbox blocks a Docker command, ask permission to rerun only that exact command outside the sandbox.
+- If the coding agent's execution sandbox blocks a Docker command, use its command-scoped approval flow, if available.
+- Request permission to rerun only that exact command outside the sandbox.
 - Before requesting approval, explain that Docker daemon access can modify containers, images, and host files.
-- Do not change Docker socket permissions or request full access only to bypass the Codex sandbox.
+- Do not change Docker socket permissions or request broad host access only to bypass the execution sandbox.
 - If the user or managed policy denies approval, stop before the command.
 - Explain that `NEMOCLAW_NON_INTERACTIVE=1` removes NemoClaw prompts.
-- Explain that it does not bypass Codex permissions.
+- Explain that `NEMOCLAW_NON_INTERACTIVE=1` does not bypass execution-sandbox permissions.
 
 ## Platform-Specific Instructions
 

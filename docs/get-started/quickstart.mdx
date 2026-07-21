@@ -128,10 +128,10 @@ Use these details when your first-run path needs more control.
     If the installer adds you to the `docker` group, run the printed `newgrp docker` command before you rerun it.
     On macOS, start Docker Desktop or Colima first.
 
-    When Codex reports that its execution sandbox blocked Docker, keep **Ask for approval** enabled.
-    Approve only the exact Docker-dependent command that Codex requests to rerun outside the sandbox.
-    Do not change Docker socket permissions or select **Full access** only to bypass the restriction.
-    If your organization blocks the approval, stop the coding-agent setup and contact the administrator who manages Codex permissions.
+    When a coding agent reports that its execution sandbox blocked Docker, use its command-scoped approval flow, if available.
+    Approve only the exact Docker-dependent command that the coding agent requests to rerun outside the sandbox.
+    Do not change Docker socket permissions or grant broad host access only to bypass the restriction.
+    If your organization blocks command-scoped approval, stop the coding-agent setup and contact the administrator who manages coding-agent permissions.
 
     DGX Spark, qualifying Station GB300 hosts, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
     Station accepts the generic Ubuntu 24.04 ARM64 image and stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
