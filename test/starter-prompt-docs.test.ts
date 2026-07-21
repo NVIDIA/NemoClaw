@@ -30,7 +30,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "3af571c4b28107aea132b31aa00cc89d4736c0d9";
+const promptAssetRevision = "ebf29b024c7a24e69ab8386b68e426d31a4c6821";
 
 type PromptAsset = {
   path: string;
@@ -53,7 +53,7 @@ const promptAssets = {
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
-    "e6dd3197bbe6e222a0794f6f6c07f423f6fd51c378e88ca45311d6b70ba83146", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "9f506ece27dcda3cf85735d7c6a80846a7727696b825cf8ca161334ac6925c1f", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   windowsWsl: definePromptAsset(
     "docs/resources/prompt-assets/windows-wsl.md",
