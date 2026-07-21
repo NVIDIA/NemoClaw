@@ -419,6 +419,8 @@ function expectStatePreservedAcrossUpgrade(
   legacy: OpenClawStateContract,
   upgraded: OpenClawStateContract,
 ): void {
+  expect(upgraded.placeholderEnvKeys).toContain("COMPATIBLE_API_KEY");
+
   // This custom-provider fixture sets COMPATIBLE_API_KEY, not
   // NVIDIA_INFERENCE_API_KEY, so v0.0.89 intentionally does not create the
   // NVIDIA auth-profile keyRef. Preserve any references the frozen runtime
@@ -1006,8 +1008,11 @@ async function installCurrentNemoclawUpgrade(
     NEMOCLAW_DASHBOARD_PORT: "",
     CHAT_UI_URL: "",
   });
+  const credentialScopedCurrentEnv = OPENCLAW_STATE_UPGRADE_PROOF
+    ? withoutEnvKeys(baseCurrentEnv, ["COMPATIBLE_API_KEY"])
+    : baseCurrentEnv;
   const currentEnv = exerciseOrdinaryUpgrade
-    ? withoutEnvKeys(baseCurrentEnv, [
+    ? withoutEnvKeys(credentialScopedCurrentEnv, [
         "ACCEPT_THIRD_PARTY_SOFTWARE",
         "NON_INTERACTIVE",
         "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
@@ -1016,10 +1021,14 @@ async function installCurrentNemoclawUpgrade(
         "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE",
       ])
     : {
-        ...baseCurrentEnv,
+        ...credentialScopedCurrentEnv,
         NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
         NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE: JSON.stringify([SURVIVOR_SANDBOX]),
       };
+  expect(
+    currentEnv.COMPATIBLE_API_KEY,
+    "installed-base upgrade must not re-seed the gateway credential",
+  ).toBe(OPENCLAW_STATE_UPGRADE_PROOF ? undefined : "dummy");
   const redactionValues = [process.env.GITHUB_TOKEN ?? ""].filter(Boolean);
   await runInstallerPayload(
     host,

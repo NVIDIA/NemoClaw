@@ -191,9 +191,11 @@ the per-agent database survives intact, the global database remains healthy,
 the legacy sidecar migration and `2026.7.1` startup checkpoint complete, and
 the restored `apiKey: "unused"` config still receives its gateway-held
 credential only at the OpenShell boundary.
-This custom route supplies `COMPATIBLE_API_KEY`, so the frozen v0.0.89
-runtime intentionally creates no NVIDIA auth-profile key reference; the E2E
-preserves any references that do exist without inventing one for this route.
+This custom route supplies `COMPATIBLE_API_KEY` only to the frozen v0.0.89
+install, then deliberately withholds it from the current installer so the
+post-upgrade turn proves the existing gateway-held credential was reused. The
+frozen runtime intentionally creates no NVIDIA auth-profile key reference; the
+E2E preserves any references that do exist without inventing one for this route.
 
 During image assembly, the shared-state repair rejects symbolic links,
 non-regular entries, and multiply linked files before it changes the ownership
