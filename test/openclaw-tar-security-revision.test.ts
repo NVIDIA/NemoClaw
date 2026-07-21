@@ -37,26 +37,29 @@ function fixture(
       dependencies: { tar: tarVersion },
     }),
   );
-  if (shrinkwrap) {
-    const packages: Record<string, unknown> = {
-      "": { dependencies: { tar: tarVersion } },
-      "node_modules/tar": {
-        version: tarVersion,
-        resolved: `https://registry.npmjs.org/tar/-/tar-${tarVersion}.tgz`,
-        integrity: "old-integrity",
-      },
-    };
-    if (fsSafeTarVersion) {
-      packages["node_modules/@openclaw/fs-safe"] = {
-        version: "0.3.0",
-        optionalDependencies: { tar: fsSafeTarVersion },
-      };
-    }
+  shrinkwrap &&
     fs.writeFileSync(
       path.join(openClawRoot, "npm-shrinkwrap.json"),
-      JSON.stringify({ lockfileVersion: 3, packages }),
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": { dependencies: { tar: tarVersion } },
+          "node_modules/tar": {
+            version: tarVersion,
+            resolved: `https://registry.npmjs.org/tar/-/tar-${tarVersion}.tgz`,
+            integrity: "old-integrity",
+          },
+          ...(fsSafeTarVersion
+            ? {
+                "node_modules/@openclaw/fs-safe": {
+                  version: "0.3.0",
+                  optionalDependencies: { tar: fsSafeTarVersion },
+                },
+              }
+            : {}),
+        },
+      }),
     );
-  }
   fs.writeFileSync(
     path.join(installedTarRoot, "package.json"),
     JSON.stringify({ name: "tar", version: tarVersion }),
