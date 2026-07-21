@@ -409,6 +409,7 @@ describe("runtime shared gateway route containment", () => {
         provider: "compatible-endpoint",
         model: "custom/model",
         canReuseRecordedRoute: false,
+        onboardEndpointUrl: null,
         getSandboxes: () => [alpha, beta],
         rewriteUrlWithDnsPinning,
         ensureHttpsPinRuntimeAdapter,
