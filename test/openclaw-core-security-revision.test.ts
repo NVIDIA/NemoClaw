@@ -23,6 +23,7 @@ const layouts = {
       "@earendil-works/pi-ai": ["0.75.1", "pi-ai"],
       "@earendil-works/pi-coding-agent": ["0.75.1", "pi-coding-agent"],
       "@earendil-works/pi-tui": ["0.75.1", "pi-tui"],
+      "@mariozechner/clipboard": ["0.3.6", "clipboard"],
       "body-parser": ["2.2.2", "body-parser"],
       "brace-expansion": ["5.0.6", "brace-expansion"],
       hono: ["4.12.22", "hono"],
@@ -49,6 +50,7 @@ const layouts = {
       "@earendil-works/pi-ai": ["0.75.4", "pi-ai", "0.75.4"],
       "@earendil-works/pi-coding-agent": ["0.75.4", "pi-coding-agent", "0.75.4"],
       "@earendil-works/pi-tui": ["0.75.4", "pi-tui", "0.75.4"],
+      "@mariozechner/clipboard": ["0.3.6", "clipboard", "0.3.6"],
       "body-parser": ["2.2.2", "body-parser", "2.2.2"],
       "brace-expansion": ["5.0.6", "brace-expansion", "5.0.6"],
       hono: ["4.12.18", "hono", "4.12.18"],
@@ -76,6 +78,7 @@ const layouts = {
       "@earendil-works/pi-ai": ["0.75.5", "pi-ai", "0.75.5"],
       "@earendil-works/pi-coding-agent": ["0.75.5", "pi-coding-agent", "0.75.5"],
       "@earendil-works/pi-tui": ["0.75.5", "pi-tui", "0.75.5"],
+      "@mariozechner/clipboard": ["0.3.6", "clipboard", "0.3.6"],
       "body-parser": ["2.2.2", "body-parser", "2.2.2"],
       "brace-expansion": ["5.0.6", "brace-expansion", "5.0.6"],
       hono: ["4.12.18", "hono", "4.12.18"],
@@ -131,7 +134,23 @@ function fixture(openClawVersion: keyof typeof layouts) {
   writePackage(openClawRoot, "openclaw", openClawVersion, rootDependencies);
 
   for (const [name, [observed]] of Object.entries(layout.replacements)) {
-    writePackage(path.join(openClawRoot, "node_modules", name), name, observed);
+    const installedDependencies =
+      name === "protobufjs" && openClawVersion === "2026.5.18"
+        ? { "@protobufjs/inquire": "^1.1.2" }
+        : {};
+    const installedMetadata =
+      name === "@earendil-works/pi-tui" && openClawVersion === "2026.5.18"
+        ? { optionalDependencies: { koffi: "^2.9.0" } }
+        : name === "@earendil-works/pi-tui" && openClawVersion === "2026.5.22"
+          ? { optionalDependencies: { koffi: "2.16.2" } }
+          : {};
+    writePackage(
+      path.join(openClawRoot, "node_modules", name),
+      name,
+      observed,
+      installedDependencies,
+      installedMetadata,
+    );
   }
   const usedPins = new Set([
     ...Object.values(layout.replacements).map(([, pin]) => pin),
@@ -142,11 +161,19 @@ function fixture(openClawVersion: keyof typeof layouts) {
     const packageDependencies =
       pinKey === "body-parser"
         ? { "content-type": "^2.0.0" }
-        : pinKey === "pi-coding-agent"
-          ? { undici: "8.3.0" }
-          : pinKey === "markdown-it"
-            ? { "linkify-it": "^5.0.2" }
-            : {};
+        : pinKey === "pi-ai"
+          ? {
+              "@anthropic-ai/sdk": "0.91.1",
+              "@aws-sdk/client-bedrock-runtime": "3.1048.0",
+              "@google/genai": "1.52.0",
+              "@smithy/node-http-handler": "4.7.3",
+              openai: "6.26.0",
+            }
+          : pinKey === "pi-coding-agent"
+            ? { undici: "8.3.0" }
+            : pinKey === "markdown-it"
+              ? { "linkify-it": "^5.0.2" }
+              : {};
     writePackage(
       path.join(replacementRoot, pinKey),
       pin.name,
@@ -156,6 +183,43 @@ function fixture(openClawVersion: keyof typeof layouts) {
         ? { optionalDependencies: { "@mariozechner/clipboard": "0.3.9" } }
         : {},
     );
+  }
+  const compatibilityVersions = {
+    "2026.5.18": {
+      "@anthropic-ai/sdk": "0.91.1",
+      "@aws-sdk/client-bedrock-runtime": "3.1053.0",
+      "@google/genai": "2.3.0",
+      "@smithy/node-http-handler": "4.7.4",
+      openai: "6.38.0",
+    },
+    "2026.5.22": {
+      "@anthropic-ai/sdk": "0.97.1",
+      "@aws-sdk/client-bedrock-runtime": "3.1051.0",
+      "@google/genai": "2.5.0",
+      "@smithy/node-http-handler": "4.7.3",
+      openai: "6.38.0",
+    },
+    "2026.5.27": {
+      "@anthropic-ai/sdk": "0.98.0",
+      "@aws-sdk/client-bedrock-runtime": "3.1053.0",
+      "@google/genai": "2.6.0",
+      "@smithy/node-http-handler": "4.7.4",
+      openai: "6.39.0",
+    },
+    "2026.6.10": {},
+  } as const;
+  for (const [name, version] of Object.entries(compatibilityVersions[openClawVersion])) {
+    writePackage(path.join(openClawRoot, "node_modules", name), name, version);
+  }
+  if (openClawVersion === "2026.5.18") {
+    writePackage(
+      path.join(openClawRoot, "node_modules", "@protobufjs/inquire"),
+      "@protobufjs/inquire",
+      "1.1.2",
+    );
+    writePackage(path.join(openClawRoot, "node_modules", "koffi"), "koffi", "2.16.2");
+  } else if (openClawVersion === "2026.5.22") {
+    writePackage(path.join(openClawRoot, "node_modules", "koffi"), "koffi", "2.16.2");
   }
 
   const packages: Record<string, unknown> = {
@@ -177,6 +241,12 @@ function fixture(openClawVersion: keyof typeof layouts) {
           }
         : {}),
     };
+  }
+  if (openClawVersion === "2026.5.18") {
+    packages["node_modules/@protobufjs/inquire"] = { version: "1.1.2" };
+    packages["node_modules/koffi"] = { version: "2.16.2" };
+  } else if (openClawVersion === "2026.5.22") {
+    packages["node_modules/koffi"] = { version: "2.16.2" };
   }
   layout.shrinkwrap
     ? fs.writeFileSync(
@@ -273,6 +343,26 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
     });
     expect(packages["node_modules/@earendil-works/pi-tui"].optionalDependencies).toBeUndefined();
     expect(packages["node_modules/@earendil-works/pi-tui"].peerDependencies).toBeUndefined();
+    expect(packages["node_modules/@mariozechner/clipboard"].version).toBe("0.3.9");
+    expect(packages["node_modules/@earendil-works/pi-ai"].dependencies).toMatchObject({
+      "@anthropic-ai/sdk": "0.97.1",
+      "@aws-sdk/client-bedrock-runtime": "3.1051.0",
+      "@google/genai": "2.5.0",
+      openai: "6.38.0",
+    });
+    expect(packages["node_modules/koffi"]).toBeUndefined();
+  });
+
+  it("removes helpers owned only by superseded oldest-layout packages", () => {
+    const target = fixture("2026.5.18");
+    patchOpenClawCoreDependencies({
+      ...target,
+      expectedOpenClawVersion: "2026.5.18",
+    });
+    expect(
+      fs.existsSync(path.join(target.openClawRoot, "node_modules", "@protobufjs/inquire")),
+    ).toBe(false);
+    expect(fs.existsSync(path.join(target.openClawRoot, "node_modules", "koffi"))).toBe(false);
   });
 
   it("rejects unsafe members in a reviewed replacement package", () => {
@@ -284,5 +374,24 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
         expectedOpenClawVersion: "2026.5.27",
       }),
     ).toThrow("unsafe member");
+  });
+
+  it("rejects an installed package reached through an intermediate symlink", () => {
+    const target = fixture("2026.5.27");
+    const scope = path.join(target.openClawRoot, "node_modules", "@mariozechner");
+    const external = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-core-external-"));
+    tempDirs.push(external);
+    fs.renameSync(scope, path.join(external, "scope"));
+    fs.symlinkSync(path.join(external, "scope"), scope);
+    expect(() =>
+      patchOpenClawCoreDependencies({
+        ...target,
+        expectedOpenClawVersion: "2026.5.27",
+      }),
+    ).toThrow("must remain inside the OpenClaw node_modules tree");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(external, "scope", "clipboard", "package.json"), "utf8"))
+        .version,
+    ).toBe("0.3.6");
   });
 });
