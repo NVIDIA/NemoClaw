@@ -31,6 +31,7 @@ type PackagePin = {
 type HistoricalLayout = {
   shrinkwrap: boolean;
   replacements: Record<string, { observed: string; pin: string; lockObserved?: string }>;
+  platformReplacements: Record<string, { observed: string; pin: string; lockObserved?: string }>;
   rootDirect: Record<string, string>;
   dependencyOverrides: Record<
     string,
@@ -162,6 +163,35 @@ export const CORE_SECURITY_PINS: Record<string, PackagePin> = {
       "sha512-ABnA53mdfkGZwOFUdZNv2S0CWGO/EIuPj8Vv9xmBFmSYg/qFc7ihO6q5FcQjvoE67kZpWkEc4AhD6B/os04yuA==",
     tarball: "https://registry.npmjs.org/@mariozechner/clipboard/-/clipboard-0.3.9.tgz",
   },
+  "clipboard-linux-x64-gnu": {
+    name: "@mariozechner/clipboard-linux-x64-gnu",
+    version: "0.3.9",
+    integrity:
+      "sha512-WORrMLd6EpElEME7JRKfSaY34nW1P5LbdgK5YNCS1ncG2LqmITsSMEJ8nh2mpvxb3TxqbOOKgY7k9eMJYlW9Mw==",
+    tarball:
+      "https://registry.npmjs.org/@mariozechner/clipboard-linux-x64-gnu/-/clipboard-linux-x64-gnu-0.3.9.tgz",
+  },
+  "clipboard-linux-arm64-gnu": {
+    name: "@mariozechner/clipboard-linux-arm64-gnu",
+    version: "0.3.9",
+    integrity:
+      "sha512-g59OkUGP2DDfCOIKypHeYgv2M55u/cKvXa5dSxFbEJ34XvIQMdcVmpKCkGUro3ZgefXiGVdwguvTMQGpHWzIXw==",
+    tarball:
+      "https://registry.npmjs.org/@mariozechner/clipboard-linux-arm64-gnu/-/clipboard-linux-arm64-gnu-0.3.9.tgz",
+  },
+};
+
+const CLIPBOARD_PLATFORM_REPLACEMENTS = {
+  "@mariozechner/clipboard-linux-arm64-gnu": {
+    observed: "0.3.6",
+    pin: "clipboard-linux-arm64-gnu",
+    lockObserved: "0.3.6",
+  },
+  "@mariozechner/clipboard-linux-x64-gnu": {
+    observed: "0.3.6",
+    pin: "clipboard-linux-x64-gnu",
+    lockObserved: "0.3.6",
+  },
 };
 
 const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
@@ -184,6 +214,7 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         undici: { observed: "8.3.0", pin: "undici" },
         ws: { observed: "8.20.1", pin: "ws" },
       },
+      platformReplacements: CLIPBOARD_PLATFORM_REPLACEMENTS,
       rootDirect: {
         "@earendil-works/pi-agent-core": "0.75.1",
         "@earendil-works/pi-ai": "0.75.1",
@@ -272,6 +303,7 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         undici: { observed: "8.3.0", pin: "undici", lockObserved: "8.3.0" },
         ws: { observed: "8.20.1", pin: "ws", lockObserved: "8.20.1" },
       },
+      platformReplacements: CLIPBOARD_PLATFORM_REPLACEMENTS,
       rootDirect: {
         "@earendil-works/pi-agent-core": "0.75.4",
         "@earendil-works/pi-ai": "0.75.4",
@@ -353,6 +385,7 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         protobufjs: { observed: "8.4.0", pin: "protobufjs-8", lockObserved: "8.4.0" },
         undici: { observed: "8.3.0", pin: "undici", lockObserved: "8.3.0" },
       },
+      platformReplacements: CLIPBOARD_PLATFORM_REPLACEMENTS,
       rootDirect: {
         "@earendil-works/pi-agent-core": "0.75.5",
         "@earendil-works/pi-ai": "0.75.5",
@@ -403,6 +436,7 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         protobufjs: { observed: "7.6.5", pin: "protobufjs-7", lockObserved: "7.6.3" },
         qs: { observed: "6.15.3", pin: "qs", lockObserved: "6.15.2" },
       },
+      platformReplacements: {},
       rootDirect: {},
       dependencyOverrides: {},
       obsoletePackages: {},
@@ -526,6 +560,20 @@ function reviewedLayout(expectedOpenClawVersion: string): HistoricalLayout {
   return layout;
 }
 
+function reviewedReplacements(
+  openClawRoot: string,
+  layout: HistoricalLayout,
+): HistoricalLayout["replacements"] {
+  const platformEntries = Object.entries(layout.platformReplacements).filter(([packageName]) =>
+    existsSync(path.join(openClawRoot, "node_modules", packageName)),
+  );
+  const expectedCount = Object.keys(layout.platformReplacements).length === 0 ? 0 : 1;
+  if (platformEntries.length !== expectedCount) {
+    throw new Error("historical clipboard platform package state does not match the review");
+  }
+  return Object.fromEntries([...Object.entries(layout.replacements), ...platformEntries]);
+}
+
 export function patchOpenClawCoreDependencies(options: {
   openClawRoot: string;
   replacementRoot: string;
@@ -536,6 +584,7 @@ export function patchOpenClawCoreDependencies(options: {
   directory(openClawRoot, "OpenClaw root");
   directory(replacementRoot, "replacement package root");
   const layout = reviewedLayout(options.expectedOpenClawVersion);
+  const replacements = reviewedReplacements(openClawRoot, layout);
   const manifestPath = path.join(openClawRoot, "package.json");
   const manifest = readJson(manifestPath, "OpenClaw package manifest");
   if (manifest.version !== options.expectedOpenClawVersion) {
@@ -544,7 +593,7 @@ export function patchOpenClawCoreDependencies(options: {
   const rootDependencies = dependencies(manifest, "OpenClaw package manifest");
 
   const replacementManifests = new Map<string, JsonRecord>();
-  for (const replacement of Object.values(layout.replacements)) {
+  for (const replacement of Object.values(replacements)) {
     if (!replacementManifests.has(replacement.pin)) {
       replacementManifests.set(
         replacement.pin,
@@ -554,7 +603,7 @@ export function patchOpenClawCoreDependencies(options: {
   }
   const contentTypeManifest = validateReplacement(replacementRoot, "content-type");
 
-  for (const [packageName, replacement] of Object.entries(layout.replacements)) {
+  for (const [packageName, replacement] of Object.entries(replacements)) {
     const installedRoot = installedPackageDirectory(
       openClawRoot,
       packageName,
@@ -576,7 +625,7 @@ export function patchOpenClawCoreDependencies(options: {
     }
   }
   for (const [ownerName, overrides] of Object.entries(layout.dependencyOverrides)) {
-    const replacement = layout.replacements[ownerName];
+    const replacement = replacements[ownerName];
     if (!replacement) throw new Error(`dependency override owner ${ownerName} has no replacement`);
     const replacementManifest = replacementManifests.get(replacement.pin) as JsonRecord;
     const replacementDependencies = dependencies(
@@ -654,7 +703,7 @@ export function patchOpenClawCoreDependencies(options: {
         throw new Error(`OpenClaw shrinkwrap direct ${packageName} dependency does not match`);
       }
     }
-    for (const [packageName, replacement] of Object.entries(layout.replacements)) {
+    for (const [packageName, replacement] of Object.entries(replacements)) {
       const lockEntry = record(
         packages[`node_modules/${packageName}`],
         `OpenClaw shrinkwrap ${packageName} package`,
@@ -679,7 +728,7 @@ export function patchOpenClawCoreDependencies(options: {
     throw new Error("OpenClaw shrinkwrap presence does not match the review");
   }
 
-  for (const [packageName, replacement] of Object.entries(layout.replacements)) {
+  for (const [packageName, replacement] of Object.entries(replacements)) {
     const pin = CORE_SECURITY_PINS[replacement.pin];
     const source = replacementDirectory(replacementRoot, replacement.pin);
     const destination = installedPackageDirectory(
@@ -725,7 +774,7 @@ export function patchOpenClawCoreDependencies(options: {
   );
 
   for (const [packageName, observed] of Object.entries(layout.rootDirect)) {
-    const replacement = layout.replacements[packageName];
+    const replacement = replacements[packageName];
     if (!replacement || replacement.observed !== observed) {
       throw new Error(`reviewed root dependency ${packageName} has no replacement`);
     }
@@ -737,10 +786,9 @@ export function patchOpenClawCoreDependencies(options: {
       "OpenClaw shrinkwrap root package",
     );
     for (const packageName of Object.keys(layout.rootDirect)) {
-      lockRootDependencies[packageName] =
-        CORE_SECURITY_PINS[layout.replacements[packageName].pin].version;
+      lockRootDependencies[packageName] = CORE_SECURITY_PINS[replacements[packageName].pin].version;
     }
-    for (const [packageName, replacement] of Object.entries(layout.replacements)) {
+    for (const [packageName, replacement] of Object.entries(replacements)) {
       const installedRoot = installedPackageDirectory(
         openClawRoot,
         packageName,
@@ -786,12 +834,13 @@ export function verifyOpenClawCoreDependencies(options: {
 }): void {
   const openClawRoot = path.resolve(options.openClawRoot);
   const layout = reviewedLayout(options.expectedOpenClawVersion);
+  const replacements = reviewedReplacements(openClawRoot, layout);
   const manifest = readJson(path.join(openClawRoot, "package.json"), "OpenClaw package manifest");
   if (manifest.version !== options.expectedOpenClawVersion) {
     throw new Error("patched OpenClaw version is inconsistent");
   }
   const rootDependencies = dependencies(manifest, "OpenClaw package manifest");
-  for (const [packageName, replacement] of Object.entries(layout.replacements)) {
+  for (const [packageName, replacement] of Object.entries(replacements)) {
     const pin = CORE_SECURITY_PINS[replacement.pin];
     const installedRoot = installedPackageDirectory(
       openClawRoot,
@@ -820,8 +869,7 @@ export function verifyOpenClawCoreDependencies(options: {
   }
   for (const packageName of Object.keys(layout.rootDirect)) {
     if (
-      rootDependencies[packageName] !==
-      CORE_SECURITY_PINS[layout.replacements[packageName].pin].version
+      rootDependencies[packageName] !== CORE_SECURITY_PINS[replacements[packageName].pin].version
     ) {
       throw new Error(`patched OpenClaw direct ${packageName} dependency is inconsistent`);
     }
@@ -864,7 +912,7 @@ export function verifyOpenClawCoreDependencies(options: {
   const shrinkwrapPath = path.join(openClawRoot, "npm-shrinkwrap.json");
   if (layout.shrinkwrap) {
     const packages = lockPackages(readJson(shrinkwrapPath, "OpenClaw shrinkwrap"));
-    for (const [packageName, replacement] of Object.entries(layout.replacements)) {
+    for (const [packageName, replacement] of Object.entries(replacements)) {
       const pin = CORE_SECURITY_PINS[replacement.pin];
       const lockEntry = record(
         packages[`node_modules/${packageName}`],

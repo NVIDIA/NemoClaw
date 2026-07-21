@@ -155,6 +155,7 @@ function fixture(openClawVersion: keyof typeof layouts) {
   const usedPins = new Set([
     ...Object.values(layout.replacements).map(([, pin]) => pin),
     "content-type",
+    ...(openClawVersion === "2026.6.10" ? [] : ["clipboard-linux-x64-gnu"]),
   ]);
   for (const pinKey of usedPins) {
     const pin = CORE_SECURITY_PINS[pinKey];
@@ -181,7 +182,20 @@ function fixture(openClawVersion: keyof typeof layouts) {
       packageDependencies,
       pinKey === "pi-coding-agent"
         ? { optionalDependencies: { "@mariozechner/clipboard": "0.3.9" } }
-        : {},
+        : pinKey === "clipboard"
+          ? {
+              optionalDependencies: {
+                "@mariozechner/clipboard-linux-x64-gnu": "0.3.9",
+              },
+            }
+          : {},
+    );
+  }
+  if (openClawVersion !== "2026.6.10") {
+    writePackage(
+      path.join(openClawRoot, "node_modules", "@mariozechner/clipboard-linux-x64-gnu"),
+      "@mariozechner/clipboard-linux-x64-gnu",
+      "0.3.6",
     );
   }
   const compatibilityVersions = {
@@ -240,6 +254,13 @@ function fixture(openClawVersion: keyof typeof layouts) {
             peerDependencies: { "stale-peer": "1.0.0" },
           }
         : {}),
+    };
+  }
+  if (openClawVersion !== "2026.6.10") {
+    packages["node_modules/@mariozechner/clipboard-linux-x64-gnu"] = {
+      version: "0.3.6",
+      resolved: "https://registry.npmjs.org/old.tgz",
+      integrity: "old-integrity",
     };
   }
   if (openClawVersion === "2026.5.18") {
@@ -344,6 +365,7 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
     expect(packages["node_modules/@earendil-works/pi-tui"].optionalDependencies).toBeUndefined();
     expect(packages["node_modules/@earendil-works/pi-tui"].peerDependencies).toBeUndefined();
     expect(packages["node_modules/@mariozechner/clipboard"].version).toBe("0.3.9");
+    expect(packages["node_modules/@mariozechner/clipboard-linux-x64-gnu"].version).toBe("0.3.9");
     expect(packages["node_modules/@earendil-works/pi-ai"].dependencies).toMatchObject({
       "@anthropic-ai/sdk": "0.97.1",
       "@aws-sdk/client-bedrock-runtime": "3.1051.0",
