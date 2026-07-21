@@ -246,23 +246,31 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
       .spyOn(openshellRuntime, "captureOpenshell")
       .mockImplementation((args) => {
         const command = args.join(" ");
-        if (command === "sandbox exec --name busy-recovered-box -- true") {
-          return { status: 0, output: "", stdout: "", stderr: "" };
-        }
-        if (command === "forward list") {
-          return {
+        const responses = {
+          "sandbox exec --name busy-recovered-box -- true": () => ({
+            status: 0,
+            output: "",
+            stdout: "",
+            stderr: "",
+          }),
+          "forward list": () => ({
             status: 0,
             output: forwardStarted
               ? "SANDBOX  BIND  PORT  PID  STATUS\nbusy-recovered-box  127.0.0.1  18789  12345  running"
               : "SANDBOX  BIND  PORT  PID  STATUS",
-          };
-        }
-        return { status: 1, output: "", stdout: "", stderr: "unexpected openshell command" };
+          }),
+        };
+        return (
+          responses[command as keyof typeof responses]?.() ?? {
+            status: 1,
+            output: "",
+            stdout: "",
+            stderr: "unexpected openshell command",
+          }
+        );
       });
     const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
-      if (args.join(" ") === "forward start --background 18789 busy-recovered-box") {
-        forwardStarted = true;
-      }
+      forwardStarted ||= args.join(" ") === "forward start --background 18789 busy-recovered-box";
       return { status: 0 } as never;
     });
 
