@@ -8,6 +8,9 @@
   "dependencies": {
     "mcporter": "0.7.3"
   },
+  "overrides": {
+    "@hono/node-server": "2.0.5"
+  },
   "engines": {
     "node": ">=22.19.0"
   }
