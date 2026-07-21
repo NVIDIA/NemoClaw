@@ -56,14 +56,24 @@ network_policies:
 `;
 const LIVE_ENTRY = getBaselineEntry(LIVE_POLICY, "nous_research");
 const LIVE_DIGEST = digestBaselineEntry(LIVE_ENTRY!);
-const HERMES_BASELINE_ENTRY = getBaselineEntry(
-  fs.readFileSync("agents/hermes/policy-additions.yaml", "utf8"),
-  "nous_research",
-);
+const HERMES_BASELINE = fs.readFileSync("agents/hermes/policy-additions.yaml", "utf8");
+const HERMES_BASELINE_ENTRY = getBaselineEntry(HERMES_BASELINE, "nous_research");
 const HERMES_BASELINE_DIGEST = digestBaselineEntry(HERMES_BASELINE_ENTRY!);
+const HERMES_MANAGED_INFERENCE_DIGEST = digestBaselineEntry(
+  getBaselineEntry(HERMES_BASELINE, "managed_inference")!,
+);
 const HERMES_RESTORED_POLICY = YAML.stringify({
   version: 1,
   network_policies: { nous_research: HERMES_BASELINE_ENTRY },
+});
+const OPENCLAW_BASELINE_ENTRY = getBaselineEntry(
+  fs.readFileSync("nemoclaw-blueprint/policies/openclaw-sandbox.yaml", "utf8"),
+  "managed_inference",
+);
+const OPENCLAW_BASELINE_DIGEST = digestBaselineEntry(OPENCLAW_BASELINE_ENTRY!);
+const OPENCLAW_RESTORED_POLICY = YAML.stringify({
+  version: 1,
+  network_policies: { managed_inference: OPENCLAW_BASELINE_ENTRY },
 });
 
 describe("excludeBaselineEntry persistence boundary (#7178)", () => {
@@ -400,6 +410,40 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
     const transaction = mocks.beginBaselineExclusionTransition.mock.calls[0]?.[1];
     expect(mocks.commitBaselineExclusionTransition).toHaveBeenCalledWith("alpha", transaction.id);
     expect(mocks.clearBaselineExclusionTransition).not.toHaveBeenCalled();
+  });
+
+  it("restores the current baseline before clearing an exclusion recorded for another agent (#7194)", () => {
+    const staleExclusion = {
+      ...RECORDED,
+      agent: "hermes",
+      key: "managed_inference",
+      digest: HERMES_MANAGED_INFERENCE_DIGEST,
+    };
+    mocks.getSandbox.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      agentVersion: "2.0.0",
+    });
+    mocks.getBaselineExclusions.mockReturnValue([staleExclusion]);
+    mocks.runCapture
+      .mockReturnValueOnce("version: 1\nnetwork_policies: {}\n")
+      .mockReturnValueOnce(OPENCLAW_RESTORED_POLICY);
+
+    expect(OPENCLAW_BASELINE_ENTRY).not.toBeNull();
+    expect(restoreBaselineEntry("alpha", "managed_inference", { nonFatal: true })).toBe(true);
+
+    expect(mocks.beginBaselineExclusionTransition).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        operation: "restore",
+        exclusion: staleExclusion,
+        targetLiveDigest: OPENCLAW_BASELINE_DIGEST,
+      }),
+    );
+    expect(mocks.run).toHaveBeenCalledOnce();
+    const transaction = mocks.beginBaselineExclusionTransition.mock.calls[0]?.[1];
+    expect(mocks.commitBaselineExclusionTransition).toHaveBeenCalledWith("alpha", transaction.id);
+    expect(mocks.removeBaselineExclusion).not.toHaveBeenCalled();
   });
 
   it.each([

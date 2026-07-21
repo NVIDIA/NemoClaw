@@ -1418,13 +1418,6 @@ function restoreBaselineEntryOnGateway(
     );
     return false;
   }
-  const currentAgent = registry.getSandbox(sandboxName)?.agent || "openclaw";
-  if (recordedExclusion.agent !== currentAgent) {
-    return registryTransitionStep(
-      () => registry.removeBaselineExclusion(sandboxName, key),
-      `The stale exclusion for agent '${recordedExclusion.agent}' could not be cleared; no live policy changes were made.`,
-    );
-  }
   // Resolve the current agent baseline before changing either durable or live
   // state. A missing non-OpenClaw baseline must not be mistaken for a release
   // that intentionally removed this key.
