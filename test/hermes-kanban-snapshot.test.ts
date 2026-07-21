@@ -49,23 +49,20 @@ function writeHermesRegistry(): void {
 it("fails the SQLite state backup when the online backup command fails (#7095)", () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-backup-failure-"));
   try {
-    const binDir = path.join(fixture, "bin");
     const sourceDir = path.join(fixture, "state");
-    fs.mkdirSync(binDir, { recursive: true });
     fs.mkdirSync(sourceDir, { recursive: true });
     fs.writeFileSync(path.join(sourceDir, "kanban.db"), "source database\n");
-    writeExecutable(path.join(binDir, "python3"), '#!/bin/sh\n[ "$1" = "-I" ] || exit 8\nexit 9\n');
 
     const command = sandboxState.buildStateFileBackupCommand(sourceDir, {
       path: "kanban.db",
       strategy: "sqlite_backup",
     });
     const result = spawnSync("sh", ["-c", command], {
-      env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH || ""}` },
       encoding: null,
     });
 
-    expect(result.status).toBe(9);
+    expect(command).toContain("/usr/bin/python3 -I -c");
+    expect(result.status).not.toBe(0);
     expect(result.stdout).toHaveLength(0);
   } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
