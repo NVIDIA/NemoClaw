@@ -270,7 +270,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(judgment).toContain("{candidate_comments}");
     expect(
       mergeGate.match(
-        /the PR is open and that the PR SHA, base SHA, and coordination identity still match/gu,
+        /the PR is open and that the PR SHA, base SHA, and required-check identity still match/gu,
       ),
     ).toHaveLength(2);
     expect(salvage).toContain("`headRepository.nameWithOwner` is `NVIDIA/NemoClaw`");

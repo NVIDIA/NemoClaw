@@ -14,7 +14,13 @@ describe("maintainer merge-gate check-name rollout", () => {
         formerCoordinationCheckPages: [
           {
             total_count: 1,
-            check_runs: [coordinationCheck({ id: 8001, name: "E2E / PR Gate Coordination" })],
+            check_runs: [
+              coordinationCheck({
+                id: 8001,
+                name: "E2E / PR Gate Coordination",
+                conclusion: "failure",
+              }),
+            ],
           },
         ],
       }).stdout,
