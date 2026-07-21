@@ -12,27 +12,10 @@ const DOCKERFILE = path.join(ROOT, "Dockerfile");
 
 function openclawStateRepairCommand(): string {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
-  const startMarker = "# Flatten stale published base images";
-  const endMarker = "# Stale-base fallback for the gateway/root-in-sandbox-group setup";
-  const start = dockerfile.indexOf(startMarker);
-  const end = dockerfile.indexOf(endMarker, start);
-  const runIndex = dockerfile.indexOf("RUN ", start);
-  if (start === -1 || end === -1 || runIndex === -1 || runIndex > end) {
-    throw new Error("Expected the OpenClaw state repair RUN instruction");
-  }
-  const runLines: string[] = [];
-  for (const line of dockerfile.slice(runIndex, end).split("\n")) {
-    runLines.push(line);
-    if (!line.trimEnd().endsWith("\\")) break;
-  }
-  if ((runLines.at(-1) ?? "").trimEnd().endsWith("\\")) {
-    throw new Error("Expected the complete OpenClaw state repair RUN instruction");
-  }
-  return runLines
-    .join("\n")
-    .trim()
-    .replace(/^RUN\s+/, "")
-    .replace(/\\\n/g, " ");
+  const [, instruction] = dockerfile.match(
+    /# Flatten stale published base images[\s\S]*?\nRUN ([\s\S]*?)\n\n# Stale-base fallback for the gateway\/root-in-sandbox-group setup/,
+  )!;
+  return instruction.trim().replace(/\\\n/g, " ");
 }
 
 function runUnsafeStateTarget(
