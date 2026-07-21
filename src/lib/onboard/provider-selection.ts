@@ -72,6 +72,22 @@ function findOption<T extends ProviderOption>(options: T[], key: string): T | un
   return options.find((option) => option.key === key);
 }
 
+/**
+ * On a managed-vLLM-default platform (#7293), pick the available local vLLM menu
+ * option: `vllm` when a server is already running (the menu exposes only that
+ * entry), otherwise the managed install `install-vllm`. Returns null when the
+ * preference is off or neither entry is present, so the caller falls back to
+ * cloud `build`.
+ */
+function resolveManagedVllmDefaultKey<T extends ProviderOption>(
+  input: ResolveRequestedProviderSelectionInput<T>,
+): string | null {
+  if (!input.preferManagedVllmDefault) return null;
+  if (findOption(input.options, "vllm")) return "vllm";
+  if (findOption(input.options, "install-vllm")) return "install-vllm";
+  return null;
+}
+
 function findWindowsHostKey(options: ProviderOption[]): string | null {
   return (
     options.find((option) => option.key === "start-windows-ollama")?.key ||
@@ -125,12 +141,9 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
       recoveredFromSandbox = true;
       recoveredModel = input.readRecordedModel(input.sandboxName);
     } else {
-      // Prefer managed local vLLM on DGX Spark/Station when its menu entry is
-      // present; otherwise fall back to cloud NVIDIA Endpoints (#7293).
-      providerKey =
-        input.preferManagedVllmDefault && findOption(input.options, "install-vllm")
-          ? "install-vllm"
-          : "build";
+      // Prefer managed local vLLM on DGX Spark/Station (running `vllm` or the
+      // managed `install-vllm`); fall back to cloud NVIDIA Endpoints (#7293).
+      providerKey = resolveManagedVllmDefaultKey(input) ?? "build";
     }
   }
 

@@ -142,6 +142,16 @@ describe("resolveRequestedProviderSelection", () => {
     assert.equal(selectedKey(result), "install-vllm");
   });
 
+  it("auto-selects an already-running local vLLM on a managed-vLLM platform (#7293)", () => {
+    // When vLLM is already running, the menu exposes only `vllm` (not install-vllm).
+    const result = resolve({
+      options: [option("build"), option("vllm")],
+      preferManagedVllmDefault: true,
+    });
+
+    assert.equal(selectedKey(result), "vllm");
+  });
+
   it("keeps the cloud default when the platform is not a managed-vLLM default (#7293)", () => {
     // Same options, but the host is not Spark/Station → must stay `build`.
     const result = resolve({
