@@ -109,6 +109,34 @@ const layouts = {
   },
 } as const;
 
+const historicalExtraPackages = {
+  "2026.5.18": {
+    "@mariozechner/clipboard-linux-x64-gnu": {
+      integrity: "old-integrity",
+      resolved: "https://registry.npmjs.org/old.tgz",
+      version: "0.3.6",
+    },
+    "@protobufjs/inquire": { version: "1.1.2" },
+    koffi: { version: "2.16.2" },
+  },
+  "2026.5.22": {
+    "@mariozechner/clipboard-linux-x64-gnu": {
+      integrity: "old-integrity",
+      resolved: "https://registry.npmjs.org/old.tgz",
+      version: "0.3.6",
+    },
+    koffi: { version: "2.16.2" },
+  },
+  "2026.5.27": {
+    "@mariozechner/clipboard-linux-x64-gnu": {
+      integrity: "old-integrity",
+      resolved: "https://registry.npmjs.org/old.tgz",
+      version: "0.3.6",
+    },
+  },
+  "2026.6.10": {},
+} as const;
+
 function writePackage(
   root: string,
   name: string,
@@ -191,13 +219,6 @@ function fixture(openClawVersion: keyof typeof layouts) {
           : {},
     );
   }
-  if (openClawVersion !== "2026.6.10") {
-    writePackage(
-      path.join(openClawRoot, "node_modules", "@mariozechner/clipboard-linux-x64-gnu"),
-      "@mariozechner/clipboard-linux-x64-gnu",
-      "0.3.6",
-    );
-  }
   const compatibilityVersions = {
     "2026.5.18": {
       "@anthropic-ai/sdk": "0.91.1",
@@ -225,17 +246,6 @@ function fixture(openClawVersion: keyof typeof layouts) {
   for (const [name, version] of Object.entries(compatibilityVersions[openClawVersion])) {
     writePackage(path.join(openClawRoot, "node_modules", name), name, version);
   }
-  if (openClawVersion === "2026.5.18") {
-    writePackage(
-      path.join(openClawRoot, "node_modules", "@protobufjs/inquire"),
-      "@protobufjs/inquire",
-      "1.1.2",
-    );
-    writePackage(path.join(openClawRoot, "node_modules", "koffi"), "koffi", "2.16.2");
-  } else if (openClawVersion === "2026.5.22") {
-    writePackage(path.join(openClawRoot, "node_modules", "koffi"), "koffi", "2.16.2");
-  }
-
   const packages: Record<string, unknown> = {
     "": { dependencies: { ...rootDependencies } },
   };
@@ -256,18 +266,9 @@ function fixture(openClawVersion: keyof typeof layouts) {
         : {}),
     };
   }
-  if (openClawVersion !== "2026.6.10") {
-    packages["node_modules/@mariozechner/clipboard-linux-x64-gnu"] = {
-      version: "0.3.6",
-      resolved: "https://registry.npmjs.org/old.tgz",
-      integrity: "old-integrity",
-    };
-  }
-  if (openClawVersion === "2026.5.18") {
-    packages["node_modules/@protobufjs/inquire"] = { version: "1.1.2" };
-    packages["node_modules/koffi"] = { version: "2.16.2" };
-  } else if (openClawVersion === "2026.5.22") {
-    packages["node_modules/koffi"] = { version: "2.16.2" };
+  for (const [name, metadata] of Object.entries(historicalExtraPackages[openClawVersion])) {
+    writePackage(path.join(openClawRoot, "node_modules", name), name, metadata.version);
+    packages[`node_modules/${name}`] = { ...metadata };
   }
   layout.shrinkwrap
     ? fs.writeFileSync(
