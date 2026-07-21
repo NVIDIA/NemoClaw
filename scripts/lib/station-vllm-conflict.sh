@@ -39,11 +39,7 @@ read_station_vllm_conflict_choice() {
 }
 
 print_station_express_stop_and_resume() {
-  if [[ -n "${_STATION_VLLM_STOP_COMMAND:-}" ]]; then
-    info "Keep Express: run '${_STATION_VLLM_STOP_COMMAND}' to stop the vLLM workload, then resume with:"
-  else
-    info "Keep Express: stop the vLLM workload, then resume with:"
-  fi
+  info "Keep Express: stop the vLLM workload with the command shown above, then resume with:"
   info "$(station_express_resume_command)"
 }
 

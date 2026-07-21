@@ -3626,32 +3626,18 @@ run_station_host_preparation() {
   # Public curl|bash starts in the root bootstrap, which clones the complete
   # selected ref before executing this payload. Keep the sibling lookup and
   # fail-closed check so Station preparation cannot drift from that ref.
-  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh" conflict_command_file status=0
+  local helper="${SCRIPT_DIR}/prepare-dgx-station-host.sh"
   local -a helper_args=(--apply)
   [[ -f "$helper" ]] || error "DGX Station host preparation helper is missing: ${helper}"
   if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
     helper_args+=(--force-station-install)
   fi
-  conflict_command_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-station-vllm-conflict-XXXXXX")" \
-    || error "Could not create temporary Station conflict state"
-  _cleanup_files+=("$conflict_command_file")
-  _STATION_VLLM_STOP_COMMAND=""
-  bash "$helper" "${helper_args[@]}" 2>&1 \
-    | filter_station_host_preparation_output "$conflict_command_file" || status=$?
-  if [[ "$status" -eq 12 && -s "$conflict_command_file" ]]; then
-    IFS= read -r _STATION_VLLM_STOP_COMMAND <"$conflict_command_file"
-  fi
-  rm -f "$conflict_command_file"
-  return "$status"
+  bash "$helper" "${helper_args[@]}" 2>&1 | filter_station_host_preparation_output
 }
 
 filter_station_host_preparation_output() {
-  local conflict_command_file="${1:-}" line detail
+  local line detail
   while IFS= read -r line; do
-    if [[ -n "$conflict_command_file" && ! -s "$conflict_command_file" &&
-      "$line" =~ stop_command=\'(docker\ stop\ --\ [0-9a-f]{12}|kill\ --\ [1-9][0-9]*)\' ]]; then
-      printf '%s\n' "${BASH_REMATCH[1]}" >"$conflict_command_file"
-    fi
     case "$line" in
       *" version="*" log="*)
         info "DGX Station host preparation log: ${line##* log=}"
