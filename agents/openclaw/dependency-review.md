@@ -14,7 +14,7 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 - npm integrity: `sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==`
 - Registry metadata independently queried from npm: 2026-06-30.
 - Locked graph: `agents/openclaw/mcporter-runtime/package-lock.json` (npm lockfile version 3).
-- Transitive remediation revalidated from npm on 2026-07-21: the manifest overrides `@hono/node-server` to exact version `2.0.11`, and the lock resolves that version. `2.0.5` is the first patched release for `GHSA-frvp-7c67-39w9`.
+- Transitive remediation revalidated from npm on 2026-07-21: the manifest overrides `@hono/node-server` to exact version `2.0.11` (`sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==`), and the lock resolves that version. `2.0.5` is the first patched release for `GHSA-frvp-7c67-39w9`.
 - Compatibility review: upstream `@hono/node-server` v2 retains its public API; its declared breaking changes remove Node 18 support and the `/vercel` adapter. NemoClaw requires Node `>=22.19.0`, the installed mcporter and MCP SDK sources do not import the removed adapter, and both image install paths instantiate and close the MCP SDK's Hono-backed `StreamableHTTPServerTransport` before accepting the graph.
 - Lock regeneration command: `npm --prefix agents/openclaw/mcporter-runtime install --package-lock-only --ignore-scripts --omit=dev`
 - Advisory command: `npm --prefix agents/openclaw/mcporter-runtime ci --ignore-scripts --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit signatures`
