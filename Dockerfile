@@ -42,6 +42,10 @@ RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 ARG BASE_IMAGE
+# Upgrade the final runtime even when an install or rebuild starts from a
+# published sandbox base with Node 22.22.2. OpenClaw 2026.7.1 requires the
+# SQLite WAL fix in Node 22.22.3 or newer.
+COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 # Dependency review evidence for this runtime pin lives in
 # docs/security/openclaw-2026.7.1-dependency-review.md.
 ARG OPENCLAW_VERSION=2026.7.1
@@ -80,6 +84,11 @@ ENV AWS_EC2_METADATA_DISABLED=true
 # filesystem transform cache so source fragments that mention provider marker
 # names do not persist under /tmp/jiti inside the sandbox.
 ENV JITI_FS_CACHE=false
+
+# NemoClaw always runs OpenClaw CLI work and the gateway as separate users in
+# one shared group, including direct Docker entrypoint deployments that do not
+# receive an OpenShell sandbox marker.
+ENV NEMOCLAW_OPENCLAW_SHARED_STATE=1
 
 # Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
 # onboard detects an operator-supplied corporate CA on the host it bakes it
@@ -216,12 +225,14 @@ COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
 COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
+COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
 COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
         /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts
 
 # Pre-install the codex-acp package so the embedded ACPx runtime can
@@ -780,6 +791,22 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-n
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
+# OpenClaw 2026.7.1 moved gateway startup work into shared and per-agent SQLite
+# databases, but hardens them to owner-only modes on every open. NemoClaw runs
+# the CLI and gateway as separate users in the sandbox group, so use
+# group-shared modes inside the NemoClaw image or an OpenShell sandbox. The
+# patch keeps private-store directories setgid, avoids a non-owner chmod when
+# the inherited mode is already safe, keeps generated models files readable by
+# the shared group, and ignores the obsolete update-check cache migration that
+# cannot archive across a shields-protected parent.
+#
+# Removal criteria: drop when upstream OpenClaw supports a split-user,
+# group-shared state databases and split-user cache migrations without
+# startup warnings.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
 # later since /sandbox/.nemoclaw is Landlock read_write for plugin state (#804).
@@ -1277,14 +1304,30 @@ RUN set -eu; \
         "$config_dir/credentials" \
         "$config_dir/flows" \
         "$config_dir/sandbox" \
+        "$config_dir/state" \
         "$config_dir/telegram" \
         "$config_dir/wechat" \
         "$config_dir/media" \
         "$config_dir/plugin-runtime-deps"; do \
         install -d -o sandbox -g sandbox -m 2770 "$dir"; \
     done; \
-    for file in "$config_dir/update-check.json" "$config_dir/exec-approvals.json"; do \
-        touch "$file"; \
+    update_check="$config_dir/update-check.json"; \
+    [ ! -L "$update_check" ] \
+        || { echo "ERROR: refusing symlinked OpenClaw update-check state" >&2; exit 1; }; \
+    [ ! -e "$update_check" ] || [ -f "$update_check" ] \
+        || { echo "ERROR: refusing non-regular OpenClaw update-check state" >&2; exit 1; }; \
+    rm -f "$update_check"; \
+    touch "$config_dir/exec-approvals.json"; \
+    chown sandbox:sandbox "$config_dir/exec-approvals.json"; \
+    chmod 660 "$config_dir/exec-approvals.json"; \
+    for file in \
+        "$config_dir/state/openclaw.sqlite" \
+        "$config_dir/state/openclaw.sqlite-wal" \
+        "$config_dir/state/openclaw.sqlite-shm" \
+        "$config_dir/state/openclaw.sqlite-journal"; do \
+        [ -e "$file" ] || [ -L "$file" ] || continue; \
+        [ -f "$file" ] && [ ! -L "$file" ] \
+            || { echo "ERROR: refusing unsafe OpenClaw state file: $file" >&2; exit 1; }; \
         chown sandbox:sandbox "$file"; \
         chmod 660 "$file"; \
     done; \

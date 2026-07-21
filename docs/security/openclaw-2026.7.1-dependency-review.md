@@ -11,7 +11,9 @@ Pin the production OpenClaw runtime and matching official plugins to the
 non-prerelease `v2026.7.1` release. This replaces `2026.6.10`, whose bundled
 graph contains the newly disclosed critical `tar` advisory. The reviewed
 `openclaw@2026.7.1` graph contains `tar@7.5.19`; the audit report contains no
-`tar` finding.
+`tar` finding. NemoClaw's plugin also consumes `tar` directly for guarded
+migration archives, so its manifest and lock move from `7.5.11` to `7.5.20`;
+the exact plugin graph reports no vulnerabilities after that update.
 
 The release lineage is unusually wide and divergent: the direct upstream
 comparison reports 4,407 commits ahead and 34 behind. The maintainer requested
@@ -47,6 +49,9 @@ whose amd64 config reports Node `22.23.1`.
   - `https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz`
 - `@tencent-weixin/openclaw-weixin@2.4.3`
   - `sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==`
+- `tar@7.5.20` (NemoClaw plugin direct dependency)
+  - `sha512-9FcyK4PA6+WbzlTM9WhQm6vB5W7cP7dUiPsv1g7YDwEQnQ1CGpK3MGlKk/ITVWMk05kHZuBhmVhiv8LZoy/PFQ==`
+  - `https://registry.npmjs.org/tar/-/tar-7.5.20.tgz`
 
 ## Audit result and temporary Axios remediation
 
@@ -54,6 +59,9 @@ The exact reviewed archive graph contains `822` total dependencies and reports
 `1` moderate, `0` high, and `0` critical vulnerabilities. The critical `tar`
 finding that blocked the previous pin is gone. The remaining moderate
 `protobufjs` finding is below the configured `high` threshold.
+
+The independently installed `nemoclaw/` plugin graph reports `0`
+vulnerabilities after resolving its direct `tar` dependency to `7.5.20`.
 
 The published Slack and Microsoft Teams plugin archives bundle `axios@1.16.0`.
 That version is in the affected range for the newly disclosed Axios
@@ -93,7 +101,7 @@ archive under `NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1`, applies every current
 NemoClaw patch, verifies syntax, and exercises the live device self-approval
 proof. This is not a substitute for focused nightly E2E proof.
 
-The `2026.7.1` dist changed two reviewed shapes:
+The `2026.7.1` dist changed seven reviewed shapes:
 
 - strict managed-proxy activation now uses `isStrictManagedProxyActive`; the
   patch still activates only inside OpenShell and only without an explicit
@@ -105,11 +113,71 @@ The `2026.7.1` dist changed two reviewed shapes:
   canonical pairing gate can create its pending request. The compatibility
   patch continues only an exact CLI/operator request limited to
   `operator.pairing`, `operator.read`, and `operator.write` into that gate; the
-  requested operation remains blocked until canonical pairing approval.
+  requested operation remains blocked until canonical pairing approval;
+- shared and per-agent SQLite state now run during the required gateway startup
+  checkpoint and apply owner-only modes on each open.
+  `scripts/patch-openclaw-shared-state-permissions.mts` keeps the upstream
+  `0700` directory and `0600` file modes when the OpenShell sandbox marker is
+  absent.
+  The image-wide `NEMOCLAW_OPENCLAW_SHARED_STATE=1` marker enables `2770` and
+  `0660` for direct containers. The legacy `OPENSHELL_SANDBOX=1` marker and
+  current validated OpenShell sandbox names cover runtimes that sanitize image
+  environment variables. The separate `sandbox` and `gateway` users can then
+  access the same database through their shared group. Workers that receive a
+  narrowed environment inherit these markers from the gateway process.
+  It skips `chmod` only when the existing mode already matches and rejects an
+  unexpected or ambiguous compiled-dist shape;
+- private file-store writes now reapply owner-only defaults to mutable agent
+  and identity paths. The same image marker selects setgid `2770` directories and
+  `0660` files, while preserving OpenClaw's path containment, symbolic-link,
+  pinned-write, and file-identity checks. An absent marker retains upstream
+  owner-only modes. Setgid preserves the shared `sandbox` group when either the
+  CLI or gateway creates a new private-store file;
+- generated `models.json` and plugin catalog paths reapply `0600` after the
+  private file-store write. Under the validated NemoClaw marker, the compiled
+  models-config patch keeps these files at `0660` and skips a non-owner `chmod`
+  when the inherited mode is already correct. Outside NemoClaw it preserves
+  the upstream `0600` behavior;
+- the legacy update-check migration is skipped only under the same validated
+  NemoClaw or OpenShell marker. This state contains polling, notification, and
+  auto-install cache for an OpenClaw version that NemoClaw pins in the image;
+  all other startup migrations and the upstream behavior outside NemoClaw are
+  unchanged.
 
 `scripts/patch-openclaw-device-self-approval.mts` remains required. Its new
 shape recognizers preserve the bounded stored-device credential flow and keep
 the canonical `approveDevicePairing` transaction fail closed.
+
+## Gateway Startup Migration Compatibility
+
+OpenClaw `2026.7.1` requires its migration checkpoint to complete without
+warnings before the gateway reports readiness.
+NemoClaw keeps supported sandbox upgrades compatible with that checkpoint as
+follows:
+
+- the final image copies Node `22.23.1` from the builder, including when the
+  image layers onto a published base that still contains Node `22.22.2`;
+- new images do not seed the legacy `update-check.json` placeholder.
+  During an upgrade, the descriptor-pinned config helper removes this obsolete
+  update polling and notification cache whether it is empty or populated when
+  the entrypoint can mutate the parent. A non-root gateway under the exact
+  root-owned shields-up topology retains the stable cache because it cannot
+  unlink it; the patched OpenClaw migration ignores that non-authoritative
+  pinned-version cache without producing a startup warning.
+  Without the compatibility patch, OpenClaw would try to harden and archive the
+  retained cache inside a shields-protected parent. Symbolic links, hard links,
+  directories, oversized files, or a file that changes during validation are
+  rejected;
+- a root entrypoint starts the `gateway` user with `HOME=/sandbox`, so startup
+  migrations do not probe the inaccessible `/root/.openclaw` path.
+
+These repairs run during image build or sandbox startup.
+They do not change the documented update and rebuild workflow.
+Regression coverage lives in `test/openclaw-2026-7-startup-compat.test.ts` and
+`test/openclaw-shared-state-permissions-patch.test.ts`.
+Remove the legacy cache repair after every supported upgrade source stops
+seeding the file or OpenClaw can migrate it across split users and a protected
+parent without a warning.
 
 ## Existing security and runtime contracts
 

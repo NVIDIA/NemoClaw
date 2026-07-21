@@ -38,6 +38,11 @@ const DEVICE_SELF_APPROVAL_PATCH = path.join(
   "scripts",
   "patch-openclaw-device-self-approval.mts",
 );
+const SHARED_STATE_PERMISSIONS_PATCH = path.join(
+  REPO_ROOT,
+  "scripts",
+  "patch-openclaw-shared-state-permissions.mts",
+);
 const REBUILD_RESUME_SESSION = path.join(
   REPO_ROOT,
   "src",
@@ -422,6 +427,15 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 		grep -Fq 'nemoclaw: validate bounded self-approval inside pairing lock' "$device_self_approval_patch"
 		grep -Fq 'COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts' Dockerfile
 		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \\' Dockerfile
+	shared_state_permissions_patch=${JSON.stringify(SHARED_STATE_PERMISSIONS_PATCH)}
+	grep -Fq 'nemoclaw: group-shared OpenClaw state' "$shared_state_permissions_patch"
+	grep -Fq 'nemoclaw: group-shared OpenClaw agent state' "$shared_state_permissions_patch"
+	grep -Fq 'nemoclaw: group-shared OpenClaw private store' "$shared_state_permissions_patch"
+	grep -Fq 'nemoclaw: group-shared OpenClaw file-store defaults' "$shared_state_permissions_patch"
+	grep -Fq 'nemoclaw: group-shared OpenClaw models file' "$shared_state_permissions_patch"
+	grep -Fq 'nemoclaw: ignore legacy OpenClaw update-check state' "$shared_state_permissions_patch"
+	grep -Fq 'COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts' Dockerfile
+	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \\' Dockerfile
 
 	phase_count="$(grep -Ec -- '--phase (runtime-setup|agent-install|post-agent-install)' Dockerfile)"
 test "$phase_count" -eq 3

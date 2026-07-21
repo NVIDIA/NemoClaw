@@ -121,6 +121,9 @@ RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologi
 # Create .openclaw with all state subdirs directly (mutable by default).
 # No separate .openclaw-data or symlink bridge — the production Dockerfile
 # layers config on top and sets final permissions.
+# Do not seed the legacy update-check.json file. OpenClaw 2026.7.1 treats an
+# empty or populated file as a fatal migration warning when the separate
+# gateway user cannot archive it through a shields-protected parent.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/514
 RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
         /sandbox/.openclaw/extensions \
@@ -136,9 +139,9 @@ RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
         /sandbox/.openclaw/credentials \
         /sandbox/.openclaw/flows \
         /sandbox/.openclaw/sandbox \
+        /sandbox/.openclaw/state \
         /sandbox/.openclaw/telegram \
         /sandbox/.openclaw/plugin-runtime-deps \
-    && touch /sandbox/.openclaw/update-check.json \
     && touch /sandbox/.openclaw/exec-approvals.json \
     && chown -R sandbox:sandbox /sandbox/.openclaw \
     && chmod -R g+w /sandbox/.openclaw \

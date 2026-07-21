@@ -44,6 +44,10 @@ const PINNED_OPENCLAW_VERSION = "2026.7.1";
 const PINNED_OPENCLAW_INTEGRITY =
   "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
 const PINNED_OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
+const PINNED_NEMOCLAW_TAR_VERSION = "7.5.20";
+const PINNED_NEMOCLAW_TAR_INTEGRITY =
+  "sha512-9FcyK4PA6+WbzlTM9WhQm6vB5W7cP7dUiPsv1g7YDwEQnQ1CGpK3MGlKk/ITVWMk05kHZuBhmVhiv8LZoy/PFQ==";
+const PINNED_NEMOCLAW_TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.20.tgz";
 const PINNED_CODEX_ACP_VERSION = "0.11.1";
 const PINNED_CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
@@ -459,6 +463,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain(`openclaw@${PINNED_OPENCLAW_VERSION}`);
         expect(reviewNote).toContain(PINNED_OPENCLAW_INTEGRITY);
         expect(reviewNote).toContain(PINNED_OPENCLAW_TARBALL);
+        expect(reviewNote).toContain(`tar@${PINNED_NEMOCLAW_TAR_VERSION}`);
+        expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_INTEGRITY);
+        expect(reviewNote).toContain(PINNED_NEMOCLAW_TAR_TARBALL);
         expect(reviewNote).toContain(`@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}`);
         expect(reviewNote).toContain(PINNED_CODEX_ACP_TARBALL);
         expect(reviewNote).toContain(PINNED_CODEX_ACP_INTEGRITY);
@@ -521,11 +528,35 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain("gateway/upstream reporting layer");
         expect(reviewNote).toContain("scripts/patch-openclaw-issue-4434-diagnostics.mts");
         expect(reviewNote).toContain("scripts/patch-openclaw-device-self-approval.mts");
+        expect(reviewNote).toContain("scripts/patch-openclaw-shared-state-permissions.mts");
+        expect(reviewNote).toContain("Gateway Startup Migration Compatibility");
+        expect(reviewNote).toContain("HOME=/sandbox");
         expect(reviewNote).toContain("approveDevicePairing");
         expect(reviewNote).toContain(
           "Recovery hint: check sandbox egress and provider reachability, then retry.",
         );
         expect(reviewNote).toContain("default 180-second timeout");
+      });
+
+      it("keeps NemoClaw's direct tar dependency above the reviewed advisory floor", () => {
+        const packageJson = JSON.parse(
+          fs.readFileSync(path.join(REPO_ROOT, "nemoclaw", "package.json"), "utf-8"),
+        ) as { dependencies?: Record<string, string> };
+        const packageLock = JSON.parse(
+          fs.readFileSync(path.join(REPO_ROOT, "nemoclaw", "package-lock.json"), "utf-8"),
+        ) as {
+          packages?: Record<string, { integrity?: string; resolved?: string; version?: string }>;
+        };
+        const lockedTar = packageLock.packages?.["node_modules/tar"];
+
+        expect(packageJson.dependencies?.tar).toBe(`^${PINNED_NEMOCLAW_TAR_VERSION}`);
+        expect(lockedTar).toEqual(
+          expect.objectContaining({
+            integrity: PINNED_NEMOCLAW_TAR_INTEGRITY,
+            resolved: PINNED_NEMOCLAW_TAR_TARBALL,
+            version: PINNED_NEMOCLAW_TAR_VERSION,
+          }),
+        );
       });
 
       it("keeps the Teams OpenClaw plugin manifest pinned to the reviewed 2026.7.1 integrity", () => {

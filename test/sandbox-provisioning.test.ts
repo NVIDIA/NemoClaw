@@ -853,11 +853,12 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       "plugin-runtime-deps",
       "sandbox",
       "skills",
+      "state",
       "telegram",
       "wechat",
       "workspace",
     ]);
-    expect(modern.filesAfterCleanup).toEqual(["exec-approvals.json", "update-check.json"]);
+    expect(modern.filesAfterCleanup).toEqual(["exec-approvals.json"]);
     expect(modern.cleanup.calls.split("\n").filter(Boolean)).not.toEqual(
       expect.arrayContaining([expect.stringMatching(/^find /)]),
     );
@@ -906,8 +907,8 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       const openclawDir = path.join(sandboxRoot, ".openclaw");
       expect(fs.statSync(openclawDir).isDirectory()).toBe(true);
       expect(fs.statSync(path.join(openclawDir, "exec-approvals.json")).isFile()).toBe(true);
-      expect(fs.statSync(path.join(openclawDir, "update-check.json")).isFile()).toBe(true);
-      for (const dir of ["credentials", "devices", "identity", "logs", "telegram"]) {
+      expect(fs.existsSync(path.join(openclawDir, "update-check.json"))).toBe(false);
+      for (const dir of ["credentials", "devices", "identity", "logs", "state", "telegram"]) {
         const stateDir = path.join(openclawDir, dir);
         expect(fs.statSync(stateDir).isDirectory()).toBe(true);
         expect(fs.lstatSync(stateDir).isSymbolicLink()).toBe(false);

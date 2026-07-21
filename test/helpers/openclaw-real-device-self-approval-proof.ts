@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 
 interface ProofOptions {
   dist: string;
+  nodeExecutable: string;
   patchScript: string;
   timeoutMs: number;
   tmp: string;
@@ -520,7 +521,7 @@ function runPairingCrashDirectionProof(
   const durablePath = durableSide === "pending" ? fixture.pendingPath : fixture.pairedPath;
   const interruptedPath = durableSide === "pending" ? fixture.pairedPath : fixture.pendingPath;
   const crash = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     [
       "--input-type=module",
       "-e",
@@ -620,7 +621,7 @@ throw new Error("injected crash did not terminate the process");
   );
 
   const restart = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     [
       "--input-type=module",
       "-e",
@@ -672,7 +673,7 @@ if (JSON.stringify(first) !== JSON.stringify(second)) throw new Error("second re
   requireIdlePairingJournal(fixture.journalPath, `real-dist ${durableSide}-first rollback journal`);
 
   const retry = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     [
       "--input-type=module",
       "-e",
@@ -724,7 +725,7 @@ function runRejectedRenameRollbackProof(
 ): void {
   const fixture = createPairingTransactionFixture(options.tmp, "rejected-rename", journalBasename);
   const proof = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     [
       "--input-type=module",
       "-e",
@@ -939,7 +940,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
     OPENCLAW_STATE_DIR: stateDir,
   };
   const runCli = (args: string[]) =>
-    spawnSync(process.execPath, [openclawEntry, ...args], {
+    spawnSync(options.nodeExecutable, [openclawEntry, ...args], {
       cwd: packageDir,
       encoding: "utf8",
       env,
@@ -948,7 +949,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
 
   const startGateway = (gatewayEnv: NodeJS.ProcessEnv, append: boolean) => {
     const gatewayLogFd = fs.openSync(gatewayLog, append ? "a" : "w");
-    const child = spawn(process.execPath, [openclawEntry, "gateway", "run"], {
+    const child = spawn(options.nodeExecutable, [openclawEntry, "gateway", "run"], {
       cwd: packageDir,
       env: gatewayEnv,
       stdio: ["ignore", gatewayLogFd, gatewayLogFd],
@@ -1127,7 +1128,7 @@ async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): 
 
 export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptions): Promise<void> {
   const patch = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     ["--experimental-strip-types", options.patchScript, options.dist],
     {
       encoding: "utf8",
@@ -1142,7 +1143,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   );
 
   const audit = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     ["--experimental-strip-types", options.patchScript, "--audit", options.dist],
     {
       encoding: "utf8",
@@ -1307,7 +1308,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   }
   const deviceBootstrapUrl = pathToFileURL(deviceBootstrapFile).href;
   const runtimeProof = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     [
       "--input-type=module",
       "-e",
