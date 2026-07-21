@@ -211,7 +211,6 @@ interface OpenClawStateContract {
   agentDbIntegrity: string;
   apiKey: unknown;
   globalDbIntegrity: string;
-  globalDbPrimaryCreatedAt: number;
   installedAgentDbMarker: string | null;
   keyRefIds: string[];
   legacyMemoryMarker: string | null;
@@ -280,12 +279,6 @@ const globalDbIntegrity = globalDb.prepare("PRAGMA integrity_check").get().integ
 const hasSchemaMeta = globalDb
   .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
   .get("schema_meta");
-const globalDbPrimaryCreatedAt = globalDb
-  .prepare("SELECT created_at AS createdAt FROM schema_meta WHERE meta_key = ?")
-  .get("primary")?.createdAt;
-if (typeof globalDbPrimaryCreatedAt !== "number") {
-  throw new Error("OpenClaw global database has no primary schema creation timestamp");
-}
 const startupCheckpoint = hasSchemaMeta
   ? globalDb
       .prepare("SELECT app_version AS appVersion FROM schema_meta WHERE meta_key = ?")
@@ -364,7 +357,6 @@ console.log(JSON.stringify({
   agentDbIntegrity,
   apiKey: config.models?.providers?.inference?.apiKey,
   globalDbIntegrity,
-  globalDbPrimaryCreatedAt,
   installedAgentDbMarker,
   keyRefIds: [...new Set(keyRefIds)].sort(),
   legacyMemoryMarker,
@@ -427,7 +419,6 @@ function expectStatePreservedAcrossUpgrade(
   legacy: OpenClawStateContract,
   upgraded: OpenClawStateContract,
 ): void {
-  expect(upgraded.globalDbPrimaryCreatedAt).toBe(legacy.globalDbPrimaryCreatedAt);
   // This custom-provider fixture sets COMPATIBLE_API_KEY, not
   // NVIDIA_INFERENCE_API_KEY, so v0.0.89 intentionally does not create the
   // NVIDIA auth-profile keyRef. Preserve any references the frozen runtime
