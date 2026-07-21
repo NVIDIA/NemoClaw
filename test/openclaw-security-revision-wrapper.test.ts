@@ -132,6 +132,10 @@ if (process.env.FAKE_MUTATE_STATE === "1") {
   fs.mkdirSync(state, { recursive: true });
   fs.writeFileSync(path.join(state, "new-state.txt"), "new\\n");
 }
+if (process.env.FAKE_REQUIRE_REAL_STATE === "1") {
+  const metadata = fs.lstatSync(state);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) process.exit(61);
+}
 if (process.env.FAKE_INSTALL_NEMOCLAW === "1") {
   const extension = path.join(state, "extensions", "nemoclaw");
   fs.mkdirSync(path.dirname(extension), { recursive: true });
@@ -384,6 +388,19 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
     expect(fs.readFileSync(path.join(stateDirectory, "axios-remediated.txt"), "utf8")).toBe(
       "fixed\n",
     );
+  });
+
+  it("materializes a missing state directory before invoking upstream OpenClaw", () => {
+    const target = fixture();
+    const stateDirectory = path.join(target.home, ".openclaw-fresh");
+    const result = run(target, ["plugins", "install", "@openclaw/slack@2026.6.10"], {
+      env: { FAKE_REQUIRE_REAL_STATE: "1", OPENCLAW_STATE_DIR: stateDirectory },
+      stateDirectory,
+    });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(fs.lstatSync(stateDirectory).isDirectory()).toBe(true);
+    expect(fs.statSync(stateDirectory).mode & 0o777).toBe(0o700);
   });
 
   it("lets OPENCLAW_STATE_DIR override a suffix profile", () => {

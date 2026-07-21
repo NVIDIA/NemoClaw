@@ -202,6 +202,15 @@ if [[ -e "$state_directory" || -L "$state_directory" ]]; then
     ln -s -- "$credential_hold_root/credentials" "$credential_path"
   fi
   prior_state=present
+else
+  # Materialize the validated path before invoking upstream OpenClaw so an
+  # attacker cannot substitute a symlink for an absent state directory in the
+  # validation-to-install window. A failed transaction removes this fresh tree.
+  mkdir -m 0700 -- "$state_directory"
+  if [[ ! -d "$state_directory" || -L "$state_directory" ]]; then
+    echo "ERROR: OpenClaw state directory must be a real directory: $state_directory" >&2
+    exit 64
+  fi
 fi
 rollback_required=1
 
