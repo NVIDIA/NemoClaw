@@ -1301,7 +1301,7 @@ function packVerifiedOpenClawPluginArchive(
   const remediated = remediateReviewedOpenClawPluginArchive({
     archivePath: archive.archivePath,
     env: env as NodeJS.ProcessEnv,
-    packageSpec: `${exactPackage.packageSpec}@${exactPackage.version}`,
+    packageSpec: exactPackage.packageSpec,
     workingDirectory: archive.rootDirectory,
   });
   return { archivePath: remediated.archivePath, rootDir: archive.rootDirectory };

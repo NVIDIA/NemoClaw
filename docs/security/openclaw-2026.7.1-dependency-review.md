@@ -80,10 +80,11 @@ This remediation is limited to `@openclaw/slack@2026.7.1` and
 release bundles Axios `>=1.18.0` and passes the repository audit.
 
 The reviewed installer verifies each registry identity and downloaded tarball
-integrity. `scripts/lib/reviewed-npm-archive.mts` uses `npm pack --json`, rejects
-reported archive filenames containing unsafe archive paths, binds reviewed npm
-installs to verified local archives, checks each reviewed npm plugin registry
-integrity, and returns only the verified local `.tgz` path.
+integrity. `scripts/lib/reviewed-npm-archive.mts` uses `npm pack --json` and
+rejects reported archive filenames containing unsafe archive paths. Its checks
+bind reviewed npm installs to verified local archives and check each reviewed
+npm plugin registry integrity. The helper returns only the verified local `.tgz`
+path.
 
 ## OpenClaw Compiled-Dist Patch Runtime Boundary
 

@@ -39,7 +39,7 @@ const REVIEWED_NPM_ARCHIVE_HELPER = path.join(
   "lib",
   "reviewed-npm-archive.mts",
 );
-const UNPINNED_OPENCLAW_VERSION = "2026.6.11";
+const UNPINNED_OPENCLAW_VERSION = "2026.7.2";
 const PINNED_OPENCLAW_VERSION = "2026.7.1";
 const PINNED_OPENCLAW_INTEGRITY =
   "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
@@ -454,7 +454,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
   describe("OpenClaw npm integrity pins", () => {
     if (group === "contract") {
       it("keeps the advisory review note aligned with the committed OpenClaw pin", () => {
-        const reviewNote = fs.readFileSync(DEPENDENCY_REVIEW_NOTE, "utf-8");
+        const reviewNote = fs.readFileSync(DEPENDENCY_REVIEW_NOTE, "utf-8").replace(/\s+/g, " ");
 
         expect(reviewNote).toContain(`openclaw@${PINNED_OPENCLAW_VERSION}`);
         expect(reviewNote).toContain(PINNED_OPENCLAW_INTEGRITY);
@@ -497,9 +497,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain("@openclaw/diagnostics-otel@2026.7.1");
         expect(reviewNote).toContain("@openclaw/brave-plugin@2026.7.1");
         expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
-        expect(reviewNote).toContain("`1` high");
+        expect(reviewNote).toContain("`1` moderate");
+        expect(reviewNote).toContain("`0` high");
         expect(reviewNote).toContain("`0` critical");
-        expect(reviewNote).toContain("`818` total dependencies");
+        expect(reviewNote).toContain("`822` total dependencies");
         expect(reviewNote).toContain(
           "`dist/pipeline.runtime-*.js`, which exports `prepareSlackMessage`",
         );
@@ -627,7 +628,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "npm pack https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.7.1.tgz --pack-destination",
         );
         expect(calls).toMatch(
-          /openclaw plugins install npm-pack:\S*\/diagnostics-otel-2026\.6\.10\.tgz\n/,
+          /openclaw plugins install npm-pack:\S*\/diagnostics-otel-2026\.7\.1\.tgz\n/,
         );
         expect(calls).toContain(
           `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.integrity`,
@@ -639,7 +640,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.1.tgz --pack-destination",
         );
         expect(calls).toMatch(
-          /openclaw plugins install npm-pack:\S*\/brave-plugin-2026\.6\.10\.tgz\n/,
+          /openclaw plugins install npm-pack:\S*\/brave-plugin-2026\.7\.1\.tgz\n/,
         );
         expect(calls).toContain("openclaw-env true true");
       });
@@ -666,7 +667,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
 
       it("fails closed before optional OpenClaw plugin install when the registry tarball URL drifts", () => {
         const driftedTarball =
-          "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.11.tgz";
+          "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.7.2.tgz";
         const { result, calls } = runOptionalOpenClawPluginBlock({
           otel: false,
           braveRegistryTarball: driftedTarball,
@@ -973,7 +974,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           ),
           {
             openclawVersion: PINNED_OPENCLAW_VERSION,
-            installedOpenClawVersion: "2026.6.11",
+            installedOpenClawVersion: UNPINNED_OPENCLAW_VERSION,
             committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
             registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
             baseProvenance: openClawBaseProvenance(),
@@ -982,7 +983,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
 
         expect(result.status).not.toBe(0);
         expect(`${result.stdout}${result.stderr}`).toContain(
-          `Base image has OpenClaw 2026.6.11, which is newer than reviewed target ${PINNED_OPENCLAW_VERSION}`,
+          `Base image has OpenClaw ${UNPINNED_OPENCLAW_VERSION}, which is newer than reviewed target ${PINNED_OPENCLAW_VERSION}`,
         );
         expect(calls).not.toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
         expect(calls).not.toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);

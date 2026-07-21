@@ -79,17 +79,29 @@ describe("OpenClaw npm remediation", () => {
     }>(path.join(directory, "npm-shrinkwrap.json"));
     expect(shrinkwrap.packages["node_modules/axios"]).toMatchObject({
       version: "1.18.0",
+      resolved: "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
+      integrity:
+        "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
       dependencies: { "https-proxy-agent": "^5.0.1" },
     });
     expect(shrinkwrap.packages["node_modules/axios/node_modules/https-proxy-agent"]).toMatchObject({
       version: "5.0.1",
+      resolved: "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz",
+      integrity:
+        "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",
       dependencies: { "agent-base": "6" },
     });
     expect(
       shrinkwrap.packages[
         "node_modules/axios/node_modules/https-proxy-agent/node_modules/agent-base"
       ],
-    ).toMatchObject({ version: "6.0.2", dependencies: { debug: "4" } });
+    ).toMatchObject({
+      version: "6.0.2",
+      resolved: "https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz",
+      integrity:
+        "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
+      dependencies: { debug: "4" },
+    });
   });
 
   it("rejects an upstream Axios graph that changed after review", () => {
