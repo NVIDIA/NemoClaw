@@ -106,11 +106,17 @@ const layouts = {
   },
 } as const;
 
-function writePackage(root: string, name: string, version: string, dependencies = {}) {
+function writePackage(
+  root: string,
+  name: string,
+  version: string,
+  dependencies = {},
+  metadata: Record<string, unknown> = {},
+) {
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(
     path.join(root, "package.json"),
-    JSON.stringify({ name, version, dependencies }),
+    JSON.stringify({ name, version, dependencies, ...metadata }),
   );
   fs.writeFileSync(path.join(root, "payload.js"), `${name}@${version}\n`);
 }
@@ -141,7 +147,15 @@ function fixture(openClawVersion: keyof typeof layouts) {
           : pinKey === "markdown-it"
             ? { "linkify-it": "^5.0.2" }
             : {};
-    writePackage(path.join(replacementRoot, pinKey), pin.name, pin.version, packageDependencies);
+    writePackage(
+      path.join(replacementRoot, pinKey),
+      pin.name,
+      pin.version,
+      packageDependencies,
+      pinKey === "pi-coding-agent"
+        ? { optionalDependencies: { "@mariozechner/clipboard": "0.3.9" } }
+        : {},
+    );
   }
 
   const packages: Record<string, unknown> = {
@@ -153,6 +167,15 @@ function fixture(openClawVersion: keyof typeof layouts) {
       resolved: "https://registry.npmjs.org/old.tgz",
       integrity: "old-integrity",
       dependencies: {},
+      ...(name === "@earendil-works/pi-coding-agent"
+        ? { optionalDependencies: { "@mariozechner/clipboard": "0.3.6" } }
+        : {}),
+      ...(name === "@earendil-works/pi-tui" && openClawVersion === "2026.5.22"
+        ? {
+            optionalDependencies: { koffi: "2.16.2" },
+            peerDependencies: { "stale-peer": "1.0.0" },
+          }
+        : {}),
     };
   }
   layout.shrinkwrap
@@ -183,6 +206,7 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
     }
     expect(dockerfile).toContain("npm audit --omit=dev --ignore-scripts --audit-level=low");
     expect(dockerfile).toContain("audit.metadata?.vulnerabilities?.total !== 0");
+    expect(dockerfile).toContain("npm ls --omit=dev --all");
   });
 
   it.each(
@@ -233,6 +257,22 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
         ),
       ).version,
     ).toBe("2.2.2");
+  });
+
+  it("synchronizes every lock dependency field with the replacement manifest", () => {
+    const target = fixture("2026.5.22");
+    patchOpenClawCoreDependencies({
+      ...target,
+      expectedOpenClawVersion: "2026.5.22",
+    });
+    const packages = JSON.parse(
+      fs.readFileSync(path.join(target.openClawRoot, "npm-shrinkwrap.json"), "utf8"),
+    ).packages;
+    expect(packages["node_modules/@earendil-works/pi-coding-agent"].optionalDependencies).toEqual({
+      "@mariozechner/clipboard": "0.3.9",
+    });
+    expect(packages["node_modules/@earendil-works/pi-tui"].optionalDependencies).toBeUndefined();
+    expect(packages["node_modules/@earendil-works/pi-tui"].peerDependencies).toBeUndefined();
   });
 
   it("rejects unsafe members in a reviewed replacement package", () => {

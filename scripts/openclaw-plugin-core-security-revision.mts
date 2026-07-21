@@ -313,8 +313,15 @@ function lockEntry(pin: Pin, manifest: JsonObject): JsonObject {
     integrity: pin.integrity,
     license: manifest.license,
   };
-  for (const field of ["dependencies", "engines", "bin"] as const) {
-    if (manifest[field] !== undefined) entry[field] = manifest[field];
+  for (const field of [
+    "dependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "peerDependenciesMeta",
+    "engines",
+    "bin",
+  ] as const) {
+    if (manifest[field] !== undefined) entry[field] = structuredClone(manifest[field]);
   }
   return entry;
 }

@@ -62,7 +62,24 @@ function replacementFixture(root: string): string {
     ["undici", "undici", "8.5.0", {}],
     ["ws", "ws", "8.21.1", {}],
   ] as const) {
-    writePackage(path.join(replacements, key), { name, version, dependencies, license: "MIT" });
+    writePackage(path.join(replacements, key), {
+      name,
+      version,
+      dependencies,
+      license: "MIT",
+      ...(key === "ws"
+        ? {
+            peerDependencies: {
+              bufferutil: "^4.0.1",
+              "utf-8-validate": ">=5.0.2",
+            },
+            peerDependenciesMeta: {
+              bufferutil: { optional: true },
+              "utf-8-validate": { optional: true },
+            },
+          }
+        : {}),
+    });
   }
   return replacements;
 }
@@ -149,6 +166,12 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
       ).toBe(version);
       expect(shrinkwrap.packages[`node_modules/${name}`].version).toBe(version);
     }
+    if (spec.startsWith("@openclaw/slack")) {
+      expect(shrinkwrap.packages["node_modules/ws"].peerDependenciesMeta).toEqual({
+        bufferutil: { optional: true },
+        "utf-8-validate": { optional: true },
+      });
+    }
   });
 
   it("classifies all reviewed plugin families and rejects unknown revisions", () => {
@@ -166,6 +189,38 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
     fs.symlinkSync(movedManifest, manifest);
 
     expect(() => patchReviewedOpenClawPluginRoot(target.pluginRoot, target.replacements)).toThrow();
+  });
+
+  it("rejects an intermediate candidate symlink before changing external plugin state", () => {
+    const target = pluginFixture("@openclaw/slack@2026.6.10");
+    const fixtureRoot = path.dirname(target.pluginRoot);
+    const externalNodeModules = path.join(fixtureRoot, "external-node-modules");
+    const externalPlugin = path.join(externalNodeModules, "@openclaw", "slack");
+    fs.mkdirSync(path.dirname(externalPlugin), { recursive: true });
+    fs.renameSync(target.pluginRoot, externalPlugin);
+    const sentinel = path.join(externalPlugin, "external-sentinel.txt");
+    fs.writeFileSync(sentinel, "must remain unchanged\n");
+
+    const stateDirectory = path.join(fixtureRoot, "state");
+    fs.mkdirSync(path.join(stateDirectory, "npm"), { recursive: true });
+    fs.symlinkSync(externalNodeModules, path.join(stateDirectory, "npm", "node_modules"), "dir");
+
+    expect(() =>
+      patchInstalledOpenClawPluginCore({
+        expectedPackageSpec: "@openclaw/slack@2026.6.10",
+        replacementRoot: target.replacements,
+        stateDirectory,
+      }),
+    ).toThrow("contains a symbolic link");
+    expect(fs.readFileSync(sentinel, "utf8")).toBe("must remain unchanged\n");
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(externalPlugin, "node_modules", "body-parser", "package.json"),
+          "utf8",
+        ),
+      ).version,
+    ).toBe("2.2.2");
   });
 
   it("fails closed before replacing any drifted bundled dependency", () => {

@@ -18,7 +18,22 @@ type ReviewedPackage = Readonly<{
   tarballUrl: string;
 }>;
 type LockedGraph = ReviewedPackage & Readonly<{ directory: string }>;
+type ReviewedAdvisory = Readonly<{
+  id: string;
+  severity: "high" | "critical";
+}>;
+type ReviewedFinding = Readonly<{
+  advisories: readonly ReviewedAdvisory[];
+  nodes: readonly string[];
+  packageName: string;
+  severity: "high" | "critical";
+}>;
+type ArchiveReview = Readonly<{
+  expectedFindings: readonly ReviewedFinding[];
+  graphLabel: string;
+}>;
 type AuditConfig = Readonly<{
+  archiveReview: ArchiveReview;
   archivePackages: readonly ReviewedPackage[];
   artifactDirectory: string;
   lockedGraphs: readonly LockedGraph[];
@@ -52,7 +67,9 @@ function readConfig(): AuditConfig {
     parsed.schemaVersion !== 1 ||
     !SEVERITIES.includes(parsed.severityThreshold) ||
     !Array.isArray(parsed.archivePackages) ||
-    !Array.isArray(parsed.lockedGraphs)
+    !Array.isArray(parsed.lockedGraphs) ||
+    typeof parsed.archiveReview?.graphLabel !== "string" ||
+    !Array.isArray(parsed.archiveReview.expectedFindings)
   ) {
     throw new Error("ci/reviewed-npm-audit.json is invalid");
   }
@@ -129,6 +146,104 @@ export function exceedsAuditThreshold(
   );
 }
 
+function object(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function severity(value: unknown, label: string): Severity {
+  if (typeof value !== "string" || !SEVERITIES.includes(value as Severity)) {
+    throw new Error(`${label} has an invalid severity`);
+  }
+  return value as Severity;
+}
+
+function atOrAbove(candidate: Severity, threshold: Severity): boolean {
+  return SEVERITIES.indexOf(candidate) >= SEVERITIES.indexOf(threshold);
+}
+
+function sortedUniqueStrings(value: unknown, label: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error(`${label} must be an array of strings`);
+  }
+  const sorted = [...value].sort();
+  if (new Set(sorted).size !== sorted.length) throw new Error(`${label} contains duplicates`);
+  return sorted;
+}
+
+function advisoryId(url: unknown, label: string): string {
+  if (typeof url !== "string") throw new Error(`${label} is missing its advisory URL`);
+  const match = /^https:\/\/github\.com\/advisories\/(GHSA-[0-9a-z-]+)$/u.exec(url);
+  if (!match) throw new Error(`${label} has an unreviewable advisory URL: ${url}`);
+  return match[1];
+}
+
+export function highSeverityAuditFindings(
+  report: Record<string, unknown>,
+  threshold: Severity,
+): ReviewedFinding[] {
+  const vulnerabilities = object(report.vulnerabilities, "npm audit vulnerabilities");
+  const findings: ReviewedFinding[] = [];
+  for (const [key, value] of Object.entries(vulnerabilities)) {
+    const vulnerability = object(value, `npm audit vulnerability ${key}`);
+    const findingSeverity = severity(vulnerability.severity, `npm audit vulnerability ${key}`);
+    if (!atOrAbove(findingSeverity, threshold)) continue;
+    if (vulnerability.name !== key) {
+      throw new Error(`npm audit vulnerability key/name mismatch for ${key}`);
+    }
+    if (!Array.isArray(vulnerability.via)) {
+      throw new Error(`npm audit vulnerability ${key} is missing via records`);
+    }
+    const advisories = vulnerability.via
+      .filter(
+        (entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null,
+      )
+      .map((entry, index) => ({
+        id: advisoryId(entry.url, `npm audit vulnerability ${key} via ${index}`),
+        severity: severity(entry.severity, `npm audit vulnerability ${key} via ${index}`),
+      }))
+      .filter(
+        (entry): entry is ReviewedAdvisory =>
+          entry.severity === "high" || entry.severity === "critical",
+      )
+      .sort((left, right) => left.id.localeCompare(right.id));
+    findings.push({
+      advisories,
+      nodes: sortedUniqueStrings(vulnerability.nodes, `npm audit vulnerability ${key} nodes`),
+      packageName: key,
+      severity: findingSeverity as "high" | "critical",
+    });
+  }
+  return findings.sort((left, right) => left.packageName.localeCompare(right.packageName));
+}
+
+function normalizeReviewedFindings(findings: readonly ReviewedFinding[]): ReviewedFinding[] {
+  return findings
+    .map((finding) => ({
+      advisories: [...finding.advisories].sort((left, right) => left.id.localeCompare(right.id)),
+      nodes: [...finding.nodes].sort(),
+      packageName: finding.packageName,
+      severity: finding.severity,
+    }))
+    .sort((left, right) => left.packageName.localeCompare(right.packageName));
+}
+
+export function assertReviewedAuditFindings(
+  report: Record<string, unknown>,
+  expected: readonly ReviewedFinding[],
+  threshold: Severity,
+): void {
+  const actual = highSeverityAuditFindings(report, threshold);
+  const normalizedExpected = normalizeReviewedFindings(expected);
+  if (JSON.stringify(actual) !== JSON.stringify(normalizedExpected)) {
+    throw new Error(
+      `reviewed raw npm audit findings changed\nExpected: ${JSON.stringify(normalizedExpected)}\nActual:   ${JSON.stringify(actual)}`,
+    );
+  }
+}
+
 function materializeArchiveGraph(packages: readonly ReviewedPackage[], tempRoot: string): string {
   const graphDirectory = path.join(tempRoot, "reviewed-archive-graph");
   fs.mkdirSync(graphDirectory);
@@ -193,22 +308,26 @@ function main(): void {
   fs.mkdirSync(artifactDirectory, { recursive: true });
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
-    const reports = [
-      {
-        label: "reviewed archive graph",
-        report: auditGraph(
-          materializeArchiveGraph(config.archivePackages, tempRoot),
-          path.join(artifactDirectory, "reviewed-archive-graph.json"),
-        ),
-      },
-      ...config.lockedGraphs.map((graph, index) => ({
-        label: graph.label,
-        report: auditGraph(
-          materializeLockedGraph(graph, tempRoot),
-          path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
-        ),
-      })),
-    ];
+    const archiveReport = auditGraph(
+      materializeArchiveGraph(config.archivePackages, tempRoot),
+      path.join(artifactDirectory, "reviewed-archive-graph.json"),
+    );
+    assertReviewedAuditFindings(
+      archiveReport,
+      config.archiveReview.expectedFindings,
+      config.severityThreshold,
+    );
+    const archiveCounts = vulnerabilityCounts(archiveReport);
+    console.log(
+      `${config.archiveReview.graphLabel} exact reviewed input: ${SEVERITIES.map((entry) => `${entry}=${archiveCounts[entry]}`).join(" ")}`,
+    );
+    const reports = config.lockedGraphs.map((graph, index) => ({
+      label: graph.label,
+      report: auditGraph(
+        materializeLockedGraph(graph, tempRoot),
+        path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
+      ),
+    }));
     const failures: string[] = [];
     for (const { label, report } of reports) {
       const counts = vulnerabilityCounts(report);

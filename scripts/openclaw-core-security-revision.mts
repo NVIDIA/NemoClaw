@@ -363,9 +363,19 @@ function syncLockPackage(lockEntry: JsonRecord, pin: PackagePin, manifest: JsonR
   lockEntry.version = pin.version;
   lockEntry.resolved = pin.tarball;
   lockEntry.integrity = pin.integrity;
-  if (manifest.dependencies === undefined) delete lockEntry.dependencies;
-  else
-    lockEntry.dependencies = record(manifest.dependencies, `${pin.name} replacement dependencies`);
+  for (const field of [
+    "dependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "peerDependenciesMeta",
+  ] as const) {
+    delete lockEntry[field];
+    if (manifest[field] !== undefined) {
+      lockEntry[field] = structuredClone(
+        record(manifest[field], `${pin.name} replacement ${field}`),
+      );
+    }
+  }
 }
 
 function reviewedLayout(expectedOpenClawVersion: string): HistoricalLayout {
