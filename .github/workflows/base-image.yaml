@@ -33,6 +33,8 @@ on:
       - "nemoclaw-blueprint/blueprint.yaml"
       - "scripts/lib/openclaw-npm-remediation.mts"
       - "scripts/lib/reviewed-npm-archive.mts"
+      - "scripts/checks/node-tar-image-scan.mts"
+      - "scripts/patch-bundled-npm-tar.mts"
       - "scripts/lib/sandbox-rlimits.sh"
   workflow_dispatch:
     inputs:
