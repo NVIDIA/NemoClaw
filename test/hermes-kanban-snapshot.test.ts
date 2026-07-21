@@ -54,7 +54,7 @@ it("fails the SQLite state backup when the online backup command fails (#7095)",
     fs.mkdirSync(binDir, { recursive: true });
     fs.mkdirSync(sourceDir, { recursive: true });
     fs.writeFileSync(path.join(sourceDir, "kanban.db"), "source database\n");
-    writeExecutable(path.join(binDir, "python3"), "#!/bin/sh\nexit 9\n");
+    writeExecutable(path.join(binDir, "python3"), '#!/bin/sh\n[ "$1" = "-I" ] || exit 8\nexit 9\n');
 
     const command = sandboxState.buildStateFileBackupCommand(sourceDir, {
       path: "kanban.db",
