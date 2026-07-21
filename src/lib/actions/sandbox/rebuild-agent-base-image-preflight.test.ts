@@ -206,6 +206,7 @@ describe("ensureRebuildAgentBaseImage", () => {
       imageRef: platformRef,
       overrideEnvVar,
       resolutionMetadata,
+      trustedRemoteOverride: { ref: platformRef, resolutionMetadata },
     });
     expect(pinAgentSandboxBaseImageRef).not.toHaveBeenCalled();
     expect(process.listenerCount("exit")).toBe(exitListenersBefore);

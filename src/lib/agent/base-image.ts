@@ -56,6 +56,11 @@ export interface EnsureAgentBaseImageResult {
   trustedLocalOverride?: TrustedLocalBaseImageOverride;
 }
 
+export type TrustedRemoteBaseImageOverride = Readonly<{
+  ref: string;
+  resolutionMetadata: SandboxBaseImageResolutionMetadata;
+}>;
+
 export interface CreateAgentSandboxResult {
   buildCtx: string;
   stagedDockerfile: string;
@@ -63,6 +68,7 @@ export interface CreateAgentSandboxResult {
 }
 
 const trustedLocalOverrideLeases = new Map<string, TrustedLocalBaseImageOverride>();
+const trustedRemoteOverrideLeases = new Map<string, TrustedRemoteBaseImageOverride>();
 
 export function pinTrustedAgentBaseImageOverrideForOperation(
   overrideEnvVar: string,
@@ -76,6 +82,21 @@ export function pinTrustedAgentBaseImageOverrideForOperation(
     restored = true;
     if (previous) trustedLocalOverrideLeases.set(overrideEnvVar, previous);
     else trustedLocalOverrideLeases.delete(overrideEnvVar);
+  };
+}
+
+export function pinTrustedAgentRemoteBaseImageOverrideForOperation(
+  overrideEnvVar: string,
+  override: TrustedRemoteBaseImageOverride,
+): () => void {
+  const previous = trustedRemoteOverrideLeases.get(overrideEnvVar);
+  trustedRemoteOverrideLeases.set(overrideEnvVar, override);
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    if (previous) trustedRemoteOverrideLeases.set(overrideEnvVar, previous);
+    else trustedRemoteOverrideLeases.delete(overrideEnvVar);
   };
 }
 
@@ -185,9 +206,9 @@ function hermesFinalDockerfileAcceptsBase(
   }
   if (
     typeof image !== "string" &&
-    HERMES_OFFICIAL_BASE_DIGEST_REF.test(imageRef) &&
-    (image.source === "override" ||
-      (image.source === "pinned" && image.pinnedRemoteRef === getHermesPinnedRemoteBaseRef(agent)))
+    image.source === "pinned" &&
+    image.pinnedRemoteRef === getHermesPinnedRemoteBaseRef(agent) &&
+    HERMES_OFFICIAL_BASE_DIGEST_REF.test(imageRef)
   ) {
     return true;
   }
@@ -445,8 +466,17 @@ export function ensureAgentBaseImage(
   }
 
   const explicitOverride = process.env[overrideEnvVar]?.trim();
+  const trustedRemoteOverride = trustedRemoteOverrideLeases.get(overrideEnvVar);
+  const canonicalEnv = { ...process.env };
+  delete canonicalEnv[overrideEnvVar];
   const resolved = explicitOverride
-    ? resolveExactImage(explicitOverride, trustedLocalOverrideLeases.get(overrideEnvVar))
+    ? trustedRemoteOverride?.ref === explicitOverride
+      ? resolveSandboxBaseImage({
+          ...resolutionOptions,
+          env: canonicalEnv,
+          resolutionHint: trustedRemoteOverride.resolutionMetadata,
+        })
+      : resolveExactImage(explicitOverride, trustedLocalOverrideLeases.get(overrideEnvVar))
     : resolveSandboxBaseImage(resolutionOptions);
   if (resolved) {
     if (!hermesFinalDockerfileAcceptsBase(agent, resolved)) {

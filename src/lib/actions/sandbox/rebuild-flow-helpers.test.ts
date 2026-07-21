@@ -291,6 +291,34 @@ describe("rebuild agent base image preflight", () => {
     expect(Object.hasOwn(env, overrideEnvVar)).toBe(false);
   });
 
+  it("leases pinned remote provenance only for the recreation scope (#7144)", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const trustedRemoteOverride = {
+      ref: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`,
+      resolutionMetadata: { key: "verified-remote" } as never,
+    };
+    const restoreTrust = vi.fn();
+    const pinTrust = vi
+      .spyOn(agentOnboard, "pinTrustedAgentRemoteBaseImageOverrideForOperation")
+      .mockReturnValue(restoreTrust);
+
+    const restore = pinRebuildAgentBaseImageForRecreate(
+      {
+        ok: true,
+        imageRef: trustedRemoteOverride.ref,
+        overrideEnvVar,
+        trustedRemoteOverride,
+      },
+      env,
+    );
+
+    expect(pinTrust).toHaveBeenCalledWith(overrideEnvVar, trustedRemoteOverride);
+    expect(env[overrideEnvVar]).toBe(trustedRemoteOverride.ref);
+    restore();
+    expect(restoreTrust).toHaveBeenCalledOnce();
+    expect(Object.hasOwn(env, overrideEnvVar)).toBe(false);
+  });
+
   it("removes a scoped recreation pin when the caller had no override", () => {
     const env: NodeJS.ProcessEnv = {};
     const restore = pinRebuildAgentBaseImageForRecreate(

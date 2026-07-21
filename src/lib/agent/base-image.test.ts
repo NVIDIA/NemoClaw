@@ -105,24 +105,6 @@ describe("agent base image provisioning", () => {
     );
   });
 
-  it("accepts a validated immutable Hermes override from the official repository (#7144)", () => {
-    const imageRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"f".repeat(64)}`;
-    vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", imageRef);
-    withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
-      resolveSandboxBaseImageMock.mockReturnValue({
-        ref: imageRef,
-        digest: `sha256:${"f".repeat(64)}`,
-        source: "override",
-        glibcVersion: "2.41",
-      });
-
-      expect(ensureAgentBaseImage(makeAgent())).toEqual({
-        imageTag: imageRef,
-        built: false,
-      });
-    });
-  });
-
   it("binds an identical local Hermes alias to its tracked pinned provenance (#7144)", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
     withMockedDocker(

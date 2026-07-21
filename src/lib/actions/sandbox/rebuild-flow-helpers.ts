@@ -13,6 +13,7 @@ import {
   getAgentSandboxBaseImageEnvVar,
   pinAgentSandboxBaseImageRef,
   pinTrustedAgentBaseImageOverrideForOperation,
+  pinTrustedAgentRemoteBaseImageOverrideForOperation,
 } from "../../agent/onboard";
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
@@ -62,6 +63,7 @@ export type RebuildAgentBaseImagePreflight = {
   resolutionMetadata?: SandboxBaseImageResolutionMetadata;
   disposeImageRef?: () => boolean;
   trustedLocalOverride?: import("../../sandbox-base-image").TrustedLocalBaseImageOverride;
+  trustedRemoteOverride?: import("../../agent/base-image").TrustedRemoteBaseImageOverride;
 };
 
 const rebuildAgentBaseImageDisposalResults = new WeakMap<RebuildAgentBaseImagePreflight, boolean>();
@@ -305,6 +307,9 @@ export function ensureRebuildAgentBaseImage(
       ...(resolutionMetadata ? { resolutionMetadata } : {}),
       ...(disposeImageRef ? { disposeImageRef } : {}),
       ...(result.trustedLocalOverride ? { trustedLocalOverride: result.trustedLocalOverride } : {}),
+      ...(imageRef && resolutionMetadata && isImmutableRemoteBaseImageRef(imageRef)
+        ? { trustedRemoteOverride: { ref: imageRef, resolutionMetadata } }
+        : {}),
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -330,11 +335,18 @@ export function pinRebuildAgentBaseImageForRecreate(
   const restoreTrustedOverride = preflight.trustedLocalOverride
     ? pinTrustedAgentBaseImageOverrideForOperation(overrideEnvVar, preflight.trustedLocalOverride)
     : () => undefined;
+  const restoreTrustedRemoteOverride = preflight.trustedRemoteOverride
+    ? pinTrustedAgentRemoteBaseImageOverrideForOperation(
+        overrideEnvVar,
+        preflight.trustedRemoteOverride,
+      )
+    : () => undefined;
   env[overrideEnvVar] = imageRef;
   let restored = false;
   return () => {
     if (restored) return;
     restored = true;
+    restoreTrustedRemoteOverride();
     restoreTrustedOverride();
     if (hadPriorValue && priorValue !== undefined) {
       env[overrideEnvVar] = priorValue;
