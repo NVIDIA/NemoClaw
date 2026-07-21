@@ -11,6 +11,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -31,6 +32,20 @@ type HistoricalLayout = {
   shrinkwrap: boolean;
   replacements: Record<string, { observed: string; pin: string; lockObserved?: string }>;
   rootDirect: Record<string, string>;
+  dependencyOverrides: Record<
+    string,
+    Record<string, { published: string; observed: string; target: string }>
+  >;
+  obsoletePackages: Record<
+    string,
+    {
+      observed: string;
+      owner: string;
+      ownerField: "dependencies" | "optionalDependencies";
+      ownerSpec: string;
+      lockObserved?: string;
+    }
+  >;
 };
 
 export const CORE_SECURITY_PINS: Record<string, PackagePin> = {
@@ -140,6 +155,13 @@ export const CORE_SECURITY_PINS: Record<string, PackagePin> = {
       "sha512-j/O/d7GcZCyNl7/hwZAb606rzqkyvaDctLmckbxLzHvFBzTJHuGEdodATcP3yIRoDrLHkIATJuvzbFlp/ki2cQ==",
     tarball: "https://registry.npmjs.org/content-type/-/content-type-2.0.0.tgz",
   },
+  clipboard: {
+    name: "@mariozechner/clipboard",
+    version: "0.3.9",
+    integrity:
+      "sha512-ABnA53mdfkGZwOFUdZNv2S0CWGO/EIuPj8Vv9xmBFmSYg/qFc7ihO6q5FcQjvoE67kZpWkEc4AhD6B/os04yuA==",
+    tarball: "https://registry.npmjs.org/@mariozechner/clipboard/-/clipboard-0.3.9.tgz",
+  },
 };
 
 const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
@@ -152,6 +174,7 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         "@earendil-works/pi-ai": { observed: "0.75.1", pin: "pi-ai" },
         "@earendil-works/pi-coding-agent": { observed: "0.75.1", pin: "pi-coding-agent" },
         "@earendil-works/pi-tui": { observed: "0.75.1", pin: "pi-tui" },
+        "@mariozechner/clipboard": { observed: "0.3.6", pin: "clipboard" },
         "body-parser": { observed: "2.2.2", pin: "body-parser" },
         "brace-expansion": { observed: "5.0.6", pin: "brace-expansion" },
         hono: { observed: "4.12.22", pin: "hono" },
@@ -169,6 +192,39 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         "markdown-it": "14.1.1",
         undici: "8.3.0",
         ws: "8.20.1",
+      },
+      dependencyOverrides: {
+        "@earendil-works/pi-ai": {
+          "@aws-sdk/client-bedrock-runtime": {
+            published: "3.1048.0",
+            observed: "3.1053.0",
+            target: "3.1053.0",
+          },
+          "@google/genai": { published: "1.52.0", observed: "2.3.0", target: "2.3.0" },
+          "@smithy/node-http-handler": {
+            published: "4.7.3",
+            observed: "4.7.4",
+            target: "4.7.4",
+          },
+          openai: { published: "6.26.0", observed: "6.38.0", target: "6.38.0" },
+        },
+        "@earendil-works/pi-coding-agent": {
+          undici: { published: "8.3.0", observed: "8.3.0", target: "8.5.0" },
+        },
+      },
+      obsoletePackages: {
+        "@protobufjs/inquire": {
+          observed: "1.1.2",
+          owner: "protobufjs",
+          ownerField: "dependencies",
+          ownerSpec: "^1.1.2",
+        },
+        koffi: {
+          observed: "2.16.2",
+          owner: "@earendil-works/pi-tui",
+          ownerField: "optionalDependencies",
+          ownerSpec: "^2.9.0",
+        },
       },
     },
   ],
@@ -197,6 +253,11 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
           pin: "pi-tui",
           lockObserved: "0.75.4",
         },
+        "@mariozechner/clipboard": {
+          observed: "0.3.6",
+          pin: "clipboard",
+          lockObserved: "0.3.6",
+        },
         "body-parser": { observed: "2.2.2", pin: "body-parser", lockObserved: "2.2.2" },
         "brace-expansion": {
           observed: "5.0.6",
@@ -219,6 +280,34 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         "markdown-it": "14.1.1",
         undici: "8.3.0",
         ws: "8.20.1",
+      },
+      dependencyOverrides: {
+        "@earendil-works/pi-ai": {
+          "@anthropic-ai/sdk": {
+            published: "0.91.1",
+            observed: "0.97.1",
+            target: "0.97.1",
+          },
+          "@aws-sdk/client-bedrock-runtime": {
+            published: "3.1048.0",
+            observed: "3.1051.0",
+            target: "3.1051.0",
+          },
+          "@google/genai": { published: "1.52.0", observed: "2.5.0", target: "2.5.0" },
+          openai: { published: "6.26.0", observed: "6.38.0", target: "6.38.0" },
+        },
+        "@earendil-works/pi-coding-agent": {
+          undici: { published: "8.3.0", observed: "8.3.0", target: "8.5.0" },
+        },
+      },
+      obsoletePackages: {
+        koffi: {
+          observed: "2.16.2",
+          owner: "@earendil-works/pi-tui",
+          ownerField: "optionalDependencies",
+          ownerSpec: "2.16.2",
+          lockObserved: "2.16.2",
+        },
       },
     },
   ],
@@ -247,6 +336,11 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
           pin: "pi-tui",
           lockObserved: "0.75.5",
         },
+        "@mariozechner/clipboard": {
+          observed: "0.3.6",
+          pin: "clipboard",
+          lockObserved: "0.3.6",
+        },
         "body-parser": { observed: "2.2.2", pin: "body-parser", lockObserved: "2.2.2" },
         "brace-expansion": {
           observed: "5.0.6",
@@ -267,6 +361,31 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         "markdown-it": "14.1.1",
         undici: "8.3.0",
       },
+      dependencyOverrides: {
+        "@earendil-works/pi-ai": {
+          "@anthropic-ai/sdk": {
+            published: "0.91.1",
+            observed: "0.98.0",
+            target: "0.98.0",
+          },
+          "@aws-sdk/client-bedrock-runtime": {
+            published: "3.1048.0",
+            observed: "3.1053.0",
+            target: "3.1053.0",
+          },
+          "@google/genai": { published: "1.52.0", observed: "2.6.0", target: "2.6.0" },
+          "@smithy/node-http-handler": {
+            published: "4.7.3",
+            observed: "4.7.4",
+            target: "4.7.4",
+          },
+          openai: { published: "6.26.0", observed: "6.39.0", target: "6.39.0" },
+        },
+        "@earendil-works/pi-coding-agent": {
+          undici: { published: "8.3.0", observed: "8.3.0", target: "8.5.0" },
+        },
+      },
+      obsoletePackages: {},
     },
   ],
   [
@@ -285,6 +404,8 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         qs: { observed: "6.15.3", pin: "qs", lockObserved: "6.15.2" },
       },
       rootDirect: {},
+      dependencyOverrides: {},
+      obsoletePackages: {},
     },
   ],
 ]);
@@ -336,6 +457,27 @@ function lockPackages(lock: JsonRecord): JsonRecord {
 
 function replacementDirectory(replacementRoot: string, pinKey: string): string {
   return path.join(replacementRoot, pinKey);
+}
+
+function installedPackageDirectory(
+  openClawRoot: string,
+  packageName: string,
+  label: string,
+): string {
+  const nodeModulesPath = path.join(openClawRoot, "node_modules");
+  directory(nodeModulesPath, "OpenClaw node_modules root");
+  const resolvedOpenClawRoot = realpathSync(openClawRoot);
+  const nodeModulesRoot = realpathSync(nodeModulesPath);
+  if (!nodeModulesRoot.startsWith(`${resolvedOpenClawRoot}${path.sep}`)) {
+    throw new Error("OpenClaw node_modules root must remain inside the OpenClaw root");
+  }
+  const packageRoot = path.join(openClawRoot, "node_modules", packageName);
+  directory(packageRoot, label);
+  const resolved = realpathSync(packageRoot);
+  if (!resolved.startsWith(`${nodeModulesRoot}${path.sep}`)) {
+    throw new Error(`${label} must remain inside the OpenClaw node_modules tree`);
+  }
+  return packageRoot;
 }
 
 function validateReplacement(replacementRoot: string, pinKey: string): JsonRecord {
@@ -413,8 +555,13 @@ export function patchOpenClawCoreDependencies(options: {
   const contentTypeManifest = validateReplacement(replacementRoot, "content-type");
 
   for (const [packageName, replacement] of Object.entries(layout.replacements)) {
+    const installedRoot = installedPackageDirectory(
+      openClawRoot,
+      packageName,
+      `installed ${packageName} root`,
+    );
     const installed = readJson(
-      path.join(openClawRoot, "node_modules", packageName, "package.json"),
+      path.join(installedRoot, "package.json"),
       `installed ${packageName} manifest`,
     );
     if (installed.name !== packageName || installed.version !== replacement.observed) {
@@ -426,6 +573,69 @@ export function patchOpenClawCoreDependencies(options: {
   for (const [packageName, observed] of Object.entries(layout.rootDirect)) {
     if (rootDependencies[packageName] !== observed) {
       throw new Error(`OpenClaw direct ${packageName} dependency does not match the review`);
+    }
+  }
+  for (const [ownerName, overrides] of Object.entries(layout.dependencyOverrides)) {
+    const replacement = layout.replacements[ownerName];
+    if (!replacement) throw new Error(`dependency override owner ${ownerName} has no replacement`);
+    const replacementManifest = replacementManifests.get(replacement.pin) as JsonRecord;
+    const replacementDependencies = dependencies(
+      replacementManifest,
+      `replacement ${ownerName} manifest`,
+    );
+    for (const [dependencyName, override] of Object.entries(overrides)) {
+      if (replacementDependencies[dependencyName] !== override.published) {
+        throw new Error(
+          `replacement ${ownerName} ${dependencyName} dependency does not match the review`,
+        );
+      }
+      const installedDependencyRoot = installedPackageDirectory(
+        openClawRoot,
+        dependencyName,
+        `installed ${dependencyName} root`,
+      );
+      const installedDependency = readJson(
+        path.join(installedDependencyRoot, "package.json"),
+        `installed ${dependencyName} manifest`,
+      );
+      if (
+        installedDependency.name !== dependencyName ||
+        installedDependency.version !== override.observed
+      ) {
+        throw new Error(
+          `installed ${dependencyName} compatibility state does not match the review`,
+        );
+      }
+    }
+  }
+  for (const [packageName, obsolete] of Object.entries(layout.obsoletePackages)) {
+    const ownerRoot = installedPackageDirectory(
+      openClawRoot,
+      obsolete.owner,
+      `obsolete ${packageName} owner root`,
+    );
+    const ownerManifest = readJson(
+      path.join(ownerRoot, "package.json"),
+      `obsolete ${packageName} owner manifest`,
+    );
+    const ownerDependencies = record(
+      ownerManifest[obsolete.ownerField],
+      `obsolete ${packageName} owner ${obsolete.ownerField}`,
+    );
+    if (ownerDependencies[packageName] !== obsolete.ownerSpec) {
+      throw new Error(`obsolete ${packageName} ownership does not match the review`);
+    }
+    const obsoleteRoot = installedPackageDirectory(
+      openClawRoot,
+      packageName,
+      `obsolete ${packageName} root`,
+    );
+    const installed = readJson(
+      path.join(obsoleteRoot, "package.json"),
+      `obsolete ${packageName} manifest`,
+    );
+    if (installed.name !== packageName || installed.version !== obsolete.observed) {
+      throw new Error(`obsolete ${packageName} state does not match the review`);
     }
   }
 
@@ -453,6 +663,15 @@ export function patchOpenClawCoreDependencies(options: {
         throw new Error(`OpenClaw shrinkwrap ${packageName} state does not match the review`);
       }
     }
+    for (const [packageName, obsolete] of Object.entries(layout.obsoletePackages)) {
+      const lockEntry = record(
+        packages[`node_modules/${packageName}`],
+        `OpenClaw shrinkwrap obsolete ${packageName} package`,
+      );
+      if (lockEntry.version !== obsolete.lockObserved) {
+        throw new Error(`OpenClaw shrinkwrap obsolete ${packageName} state does not match`);
+      }
+    }
     if (packages["node_modules/body-parser/node_modules/content-type"] !== undefined) {
       throw new Error("OpenClaw shrinkwrap unexpectedly contains nested body-parser content-type");
     }
@@ -463,28 +682,42 @@ export function patchOpenClawCoreDependencies(options: {
   for (const [packageName, replacement] of Object.entries(layout.replacements)) {
     const pin = CORE_SECURITY_PINS[replacement.pin];
     const source = replacementDirectory(replacementRoot, replacement.pin);
-    const destination = path.join(openClawRoot, "node_modules", packageName);
+    const destination = installedPackageDirectory(
+      openClawRoot,
+      packageName,
+      `installed ${packageName} replacement root`,
+    );
     replaceDirectory(source, destination, `security-${pin.version}`);
   }
-
-  const codingAgentPath = path.join(
-    openClawRoot,
-    "node_modules",
-    "@earendil-works",
-    "pi-coding-agent",
-    "package.json",
-  );
-  if (layout.replacements["@earendil-works/pi-coding-agent"]) {
-    const codingAgent = readJson(codingAgentPath, "replacement pi-coding-agent manifest");
-    const codingDependencies = dependencies(codingAgent, "replacement pi-coding-agent manifest");
-    if (codingDependencies.undici !== "8.3.0") {
-      throw new Error("replacement pi-coding-agent undici dependency does not match the review");
+  for (const [ownerName, overrides] of Object.entries(layout.dependencyOverrides)) {
+    const ownerPath = path.join(
+      installedPackageDirectory(openClawRoot, ownerName, `patched ${ownerName} root`),
+      "package.json",
+    );
+    const ownerManifest = readJson(ownerPath, `patched ${ownerName} manifest`);
+    const ownerDependencies = dependencies(ownerManifest, `patched ${ownerName} manifest`);
+    for (const [dependencyName, override] of Object.entries(overrides)) {
+      ownerDependencies[dependencyName] = override.target;
     }
-    codingDependencies.undici = CORE_SECURITY_PINS.undici.version;
-    writeFileSync(codingAgentPath, `${JSON.stringify(codingAgent, null, 2)}\n`);
+    writeFileSync(ownerPath, `${JSON.stringify(ownerManifest, null, 2)}\n`);
+  }
+  for (const packageName of Object.keys(layout.obsoletePackages)) {
+    const obsoleteRoot = installedPackageDirectory(
+      openClawRoot,
+      packageName,
+      `obsolete ${packageName} removal root`,
+    );
+    rmSync(obsoleteRoot, {
+      recursive: true,
+      force: false,
+    });
   }
 
-  const bodyParserRoot = path.join(openClawRoot, "node_modules", "body-parser");
+  const bodyParserRoot = installedPackageDirectory(
+    openClawRoot,
+    "body-parser",
+    "patched body-parser root",
+  );
   replaceDirectory(
     replacementDirectory(replacementRoot, "content-type"),
     path.join(bodyParserRoot, "node_modules", "content-type"),
@@ -508,14 +741,26 @@ export function patchOpenClawCoreDependencies(options: {
         CORE_SECURITY_PINS[layout.replacements[packageName].pin].version;
     }
     for (const [packageName, replacement] of Object.entries(layout.replacements)) {
+      const installedRoot = installedPackageDirectory(
+        openClawRoot,
+        packageName,
+        `patched ${packageName} root`,
+      );
+      const installedManifest = readJson(
+        path.join(installedRoot, "package.json"),
+        `patched ${packageName} manifest`,
+      );
       syncLockPackage(
         record(
           packages[`node_modules/${packageName}`],
           `OpenClaw shrinkwrap ${packageName} package`,
         ),
         CORE_SECURITY_PINS[replacement.pin],
-        replacementManifests.get(replacement.pin) as JsonRecord,
+        installedManifest,
       );
+    }
+    for (const packageName of Object.keys(layout.obsoletePackages)) {
+      delete packages[`node_modules/${packageName}`];
     }
     const contentTypePin = CORE_SECURITY_PINS["content-type"];
     packages["node_modules/body-parser/node_modules/content-type"] = {
@@ -523,15 +768,6 @@ export function patchOpenClawCoreDependencies(options: {
       resolved: contentTypePin.tarball,
       integrity: contentTypePin.integrity,
     };
-    if (layout.replacements["@earendil-works/pi-coding-agent"]) {
-      dependencies(
-        record(
-          packages["node_modules/@earendil-works/pi-coding-agent"],
-          "OpenClaw shrinkwrap pi-coding-agent package",
-        ),
-        "OpenClaw shrinkwrap pi-coding-agent package",
-      ).undici = CORE_SECURITY_PINS.undici.version;
-    }
     writeFileSync(shrinkwrapPath, `${JSON.stringify(shrinkwrap, null, 2)}\n`);
   }
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -557,23 +793,26 @@ export function verifyOpenClawCoreDependencies(options: {
   const rootDependencies = dependencies(manifest, "OpenClaw package manifest");
   for (const [packageName, replacement] of Object.entries(layout.replacements)) {
     const pin = CORE_SECURITY_PINS[replacement.pin];
+    const installedRoot = installedPackageDirectory(
+      openClawRoot,
+      packageName,
+      `patched ${packageName} root`,
+    );
     const installed = readJson(
-      path.join(openClawRoot, "node_modules", packageName, "package.json"),
+      path.join(installedRoot, "package.json"),
       `patched ${packageName} manifest`,
     );
     if (installed.name !== packageName || installed.version !== pin.version) {
       throw new Error(`patched ${packageName} package is inconsistent`);
     }
   }
+  const bodyParserRoot = installedPackageDirectory(
+    openClawRoot,
+    "body-parser",
+    "patched body-parser root",
+  );
   const nestedContentType = readJson(
-    path.join(
-      openClawRoot,
-      "node_modules",
-      "body-parser",
-      "node_modules",
-      "content-type",
-      "package.json",
-    ),
+    path.join(bodyParserRoot, "node_modules", "content-type", "package.json"),
     "patched body-parser content-type manifest",
   );
   if (nestedContentType.version !== CORE_SECURITY_PINS["content-type"].version) {
@@ -587,13 +826,38 @@ export function verifyOpenClawCoreDependencies(options: {
       throw new Error(`patched OpenClaw direct ${packageName} dependency is inconsistent`);
     }
   }
-  if (layout.replacements["@earendil-works/pi-coding-agent"]) {
-    const codingAgent = readJson(
-      path.join(openClawRoot, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
-      "patched pi-coding-agent manifest",
+  for (const [ownerName, overrides] of Object.entries(layout.dependencyOverrides)) {
+    const ownerRoot = installedPackageDirectory(
+      openClawRoot,
+      ownerName,
+      `patched ${ownerName} root`,
     );
-    if (dependencies(codingAgent, "patched pi-coding-agent manifest").undici !== "8.5.0") {
-      throw new Error("patched pi-coding-agent undici dependency is inconsistent");
+    const ownerManifest = readJson(
+      path.join(ownerRoot, "package.json"),
+      `patched ${ownerName} manifest`,
+    );
+    const ownerDependencies = dependencies(ownerManifest, `patched ${ownerName} manifest`);
+    for (const [dependencyName, override] of Object.entries(overrides)) {
+      if (ownerDependencies[dependencyName] !== override.target) {
+        throw new Error(`patched ${ownerName} ${dependencyName} dependency is inconsistent`);
+      }
+      const dependencyRoot = installedPackageDirectory(
+        openClawRoot,
+        dependencyName,
+        `patched ${dependencyName} root`,
+      );
+      const installedDependency = readJson(
+        path.join(dependencyRoot, "package.json"),
+        `patched ${dependencyName} manifest`,
+      );
+      if (installedDependency.version !== override.target) {
+        throw new Error(`patched ${dependencyName} compatibility package is inconsistent`);
+      }
+    }
+  }
+  for (const packageName of Object.keys(layout.obsoletePackages)) {
+    if (existsSync(path.join(openClawRoot, "node_modules", packageName))) {
+      throw new Error(`obsolete ${packageName} package remains installed`);
     }
   }
 
@@ -620,6 +884,11 @@ export function verifyOpenClawCoreDependencies(options: {
     );
     if (nestedLock.version !== CORE_SECURITY_PINS["content-type"].version) {
       throw new Error("patched body-parser content-type shrinkwrap entry is inconsistent");
+    }
+    for (const packageName of Object.keys(layout.obsoletePackages)) {
+      if (packages[`node_modules/${packageName}`] !== undefined) {
+        throw new Error(`obsolete ${packageName} shrinkwrap entry remains`);
+      }
     }
   } else if (existsSync(shrinkwrapPath)) {
     throw new Error("patched OpenClaw unexpectedly contains a shrinkwrap");
