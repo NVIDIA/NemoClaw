@@ -242,9 +242,11 @@ function normalizeReviewedFindings(findings: readonly ReviewedFinding[]): Review
 export function assertReviewedAuditFindings(
   report: Record<string, unknown>,
   expected: readonly ReviewedFinding[],
-  threshold: Severity,
 ): void {
-  const actual = highSeverityAuditFindings(report, threshold);
+  // The reviewed raw graph is an exact high-and-critical allowlist. Keep this
+  // independent from the configurable threshold used for remediated graphs so
+  // raising that threshold cannot silently stop detecting new high findings.
+  const actual = highSeverityAuditFindings(report, "high");
   const normalizedExpected = normalizeReviewedFindings(expected);
   if (JSON.stringify(actual) !== JSON.stringify(normalizedExpected)) {
     throw new Error(
@@ -342,7 +344,6 @@ function main(): void {
     assertReviewedAuditFindings(
       rawArchiveReport,
       config.archiveReview.expectedFindings,
-      config.severityThreshold,
     );
     const rawArchiveCounts = vulnerabilityCounts(rawArchiveReport);
     console.log(

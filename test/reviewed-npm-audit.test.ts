@@ -23,7 +23,7 @@ const input = JSON.parse(fs.readFileSync(0, "utf8"));
 if (input.operation === "list") {
   highSeverityAuditFindings(input.report, input.threshold);
 } else {
-  assertReviewedAuditFindings(input.report, input.expected, input.threshold);
+  assertReviewedAuditFindings(input.report, input.expected);
 }
 `;
 const CONFIG = JSON.parse(
@@ -145,6 +145,24 @@ describe("reviewed npm audit gate", () => {
       ],
     };
     const result = runAuditProbe(unrelated);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("reviewed raw npm audit findings changed");
+  });
+
+  it("keeps high findings in the exact-match gate when the remediation threshold is critical", () => {
+    const unrelated = reviewedHistoricalReport();
+    (unrelated.vulnerabilities as Record<string, unknown>).unrelated = {
+      name: "unrelated",
+      nodes: ["node_modules/unrelated"],
+      severity: "high",
+      via: [
+        {
+          severity: "high",
+          url: "https://github.com/advisories/GHSA-new0-unrelated-risk",
+        },
+      ],
+    };
+    const result = runAuditProbe(unrelated, { threshold: "critical" });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("reviewed raw npm audit findings changed");
   });
