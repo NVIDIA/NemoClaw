@@ -729,6 +729,58 @@ describe("createSetupNim", () => {
     });
   });
 
+  it("auto-selects managed vLLM on a DGX Spark non-interactive run with no requested provider (#7293)", async () => {
+    const profile = { name: "DGX Spark" } as VllmProfile;
+    const prompt = vi.fn(async () => unexpected("provider prompt"));
+    const detectInferenceProviderHostState = vi.fn(() =>
+      makeHostState({
+        vllmProfile: profile,
+        hasVllmImage: true,
+        vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
+      }),
+    );
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async (_profile, options) => {
+      options.beforeInstall?.("vllm-model");
+      return { ok: true };
+    });
+    const routeGuard = vi.fn(() => ({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    }));
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      state.provider = "vllm";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      return "selected";
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        // No explicit provider: the DGX Spark platform default must still pick
+        // managed vLLM instead of falling back to the cloud `build` handler
+        // (handleRemoteProviderSelection stays `unexpected`, so a fallback throws).
+        getNonInteractiveProvider: () => null,
+        prompt,
+        detectInferenceProviderHostState,
+        installVllm,
+        handleVllmSelection,
+      }),
+    );
+
+    const sparkGpu = { platform: "spark" } as unknown as Parameters<typeof setupNim>[0];
+    const result = await setupNim(sparkGpu, null, null, true, null, "nemoclaw", routeGuard);
+
+    expect(installVllm).toHaveBeenCalledWith(
+      profile,
+      expect.objectContaining({ hasImage: true, nonInteractive: true }),
+    );
+    expect(handleVllmSelection).toHaveBeenCalledOnce();
+    expect(prompt).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ provider: "vllm" });
+  });
+
   it("threads the DGX Station express model through the standard managed-vLLM selection contract", async () => {
     const profile = { name: "DGX Station", platform: "station" } as VllmProfile;
     const servedModel = "nvidia/nemotron-3-ultra-550b-a55b";
