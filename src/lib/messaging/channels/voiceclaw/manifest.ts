@@ -32,6 +32,7 @@ export const voiceclawManifest = {
       required: false,
       envKey: "VOICECLAW_AUDIO_BRIDGE_URL",
       statePath: "voiceclaw.audioBridgeUrl",
+      validValues: ["http://host.openshell.internal:7880"],
       defaultValue: "http://host.openshell.internal:7880",
       prompt: {
         label: "VoiceClaw audio bridge URL",

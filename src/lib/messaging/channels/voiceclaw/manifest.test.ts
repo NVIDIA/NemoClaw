@@ -126,4 +126,40 @@ describe("VoiceClaw channel manifest", () => {
       }),
     ]);
   });
+
+  it.each([
+    "http://example.test:7880",
+    "http://user:password@host.openshell.internal:7880",
+    "http://host.openshell.internal:7881",
+    "not-a-url",
+    "https://host.openshell.internal:7880",
+  ])("does not persist or render unsupported audio bridge URL %s (#6387)", async (value) => {
+    vi.stubEnv("VOICECLAW_ENABLED", "1");
+    vi.stubEnv("VOICECLAW_AUDIO_BRIDGE_URL", value);
+    const compiler = new ManifestCompiler(
+      createBuiltInChannelManifestRegistry(),
+      createBuiltInMessagingHookRegistry(),
+      createBuiltInRenderTemplateResolver(),
+    );
+
+    const plan = await compiler.compile({
+      sandboxName: "voice-agent",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["voiceclaw"],
+      credentialAvailability: {},
+    });
+
+    const serialized = JSON.stringify(plan);
+    expect(serialized).not.toContain(value);
+    expect(
+      plan.channels[0]?.inputs.find((input) => input.inputId === "audioBridgeUrl"),
+    ).toMatchObject({ value: "http://host.openshell.internal:7880" });
+    expect(plan.agentRender[0]).toMatchObject({
+      value: {
+        config: { audioBridgeUrl: "http://host.openshell.internal:7880" },
+      },
+    });
+  });
 });
