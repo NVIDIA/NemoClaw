@@ -10,7 +10,13 @@ export function parseActiveSwapBytes(output: string): number {
     .filter(Boolean)
     .reduce((total, line) => {
       const fields = line.split(/\s+/u);
-      const size = fields.length === 1 ? fields[0] : fields.length === 5 ? fields[2] : undefined;
+      const isSwapRow =
+        fields.length === 5 &&
+        (fields[1] === "file" || fields[1] === "partition") &&
+        /^\d+$/u.test(fields[2] ?? "") &&
+        /^\d+$/u.test(fields[3] ?? "") &&
+        /^-?\d+$/u.test(fields[4] ?? "");
+      const size = fields.length === 1 ? fields[0] : isSwapRow ? fields[2] : undefined;
       if (!size || !/^\d+$/u.test(size)) return total;
       return total + Number.parseInt(size, 10);
     }, 0);

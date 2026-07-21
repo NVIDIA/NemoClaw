@@ -24,6 +24,13 @@ describe("Hermes rebuild swap", () => {
     expect(parseActiveSwapBytes(output)).toBe(37_580_955_648);
   });
 
+  it("ignores unrelated five-field output", () => {
+    const activeSwapBytes = parseActiveSwapBytes("notice ignored 34359738368 text text");
+
+    expect(activeSwapBytes).toBe(0);
+    expect(needsHermesRebuildSwap({ activeSwapBytes, githubActions: true })).toBe(true);
+  });
+
   it("provisions swap only on GitHub Actions runners below the rebuild floor", () => {
     expect(needsHermesRebuildSwap({ activeSwapBytes: 0, githubActions: true })).toBe(true);
     expect(
