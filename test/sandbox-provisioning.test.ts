@@ -262,7 +262,7 @@ function runOpenclawStaleGroupFallback() {
 }
 
 describe("sandbox provisioning: runtime npm online state", () => {
-  it("replays the Dockerfile ENV directives for runtime npm and shared OpenClaw state", () => {
+  it("does not bake the split-user OpenClaw state marker into the runtime environment", () => {
     const exports = collectDockerfileEnvExports(DOCKERFILE);
     const probe = [
       "#!/usr/bin/env bash",
@@ -276,7 +276,7 @@ describe("sandbox provisioning: runtime npm online state", () => {
       fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
-      expect(result.stdout.trim().split("\n")).toEqual(["false", "1"]);
+      expect(result.stdout.trim().split("\n")).toEqual(["false", "unset"]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

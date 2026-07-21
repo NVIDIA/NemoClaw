@@ -2,11 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { patchOpenClawPluginPackageGraph } from "../scripts/lib/openclaw-npm-remediation.mts";
+import {
+  hashPackageTree,
+  patchOpenClawPluginPackageGraph,
+} from "../scripts/lib/openclaw-npm-remediation.mts";
 
 const temporaryDirectories: string[] = [];
 
@@ -79,6 +82,46 @@ afterEach(() => {
 });
 
 describe("OpenClaw npm remediation", () => {
+  it("hashes package entries through opened file descriptors", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-tree-integrity-"));
+    temporaryDirectories.push(directory);
+    mkdirSync(path.join(directory, "nested"));
+    writeFileSync(path.join(directory, "package.json"), '{"name":"fixture"}\n');
+    writeFileSync(path.join(directory, "nested", "content.txt"), "reviewed content\n");
+
+    const first = hashPackageTree(directory);
+    const second = hashPackageTree(directory);
+
+    expect(first).toMatch(/^sha512-/);
+    expect(second).toBe(first);
+  });
+
+  it("rejects symbolic links in a remediated package tree", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-tree-symlink-"));
+    temporaryDirectories.push(directory);
+    const outside = path.join(directory, "..", `${path.basename(directory)}-outside`);
+    writeFileSync(outside, "must not be hashed\n");
+    temporaryDirectories.push(outside);
+    symlinkSync(outside, path.join(directory, "linked-content"));
+
+    expect(() => hashPackageTree(directory)).toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects FIFOs without blocking in a remediated package tree",
+    () => {
+      const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-tree-fifo-"));
+      temporaryDirectories.push(directory);
+      const fifo = path.join(directory, "blocked-reader");
+      const created = spawnSync("mkfifo", [fifo], { encoding: "utf8", timeout: 5000 });
+      expect(created.status, created.stderr).toBe(0);
+
+      const startedAt = Date.now();
+      expect(() => hashPackageTree(directory)).toThrow(/unsupported entry/);
+      expect(Date.now() - startedAt).toBeLessThan(1000);
+    },
+  );
+
   it("replaces the reviewed bundled Axios graph with the patched graph", () => {
     const directory = writeFixture();
 

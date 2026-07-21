@@ -10,7 +10,6 @@ import {
   cpSync,
   existsSync,
   fstatSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -146,31 +145,33 @@ function writeJson(path: string, value: JsonObject): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
-function hashPackageTree(packageDirectory: string): string {
+// The package tree lives below the caller's freshly created 0700 remediation
+// root. Pin each regular file's type and contents to the same no-follow
+// descriptor, and reject special entries after a nonblocking open.
+export function hashPackageTree(packageDirectory: string): string {
   const hash = createHash("sha512");
   const visit = (directory: string, relativeDirectory: string): void => {
     for (const name of readdirSync(directory).sort()) {
       const absolutePath = join(directory, name);
       const relativePath = relativeDirectory ? `${relativeDirectory}/${name}` : name;
-      const stats = lstatSync(absolutePath);
-      if (stats.isDirectory()) {
-        hash.update(`directory\0${relativePath}\0`);
-        visit(absolutePath, relativePath);
-      } else if (stats.isFile()) {
-        const descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-        try {
-          const openedStats = fstatSync(descriptor);
-          if (!openedStats.isFile()) {
-            throw new Error(`Remediated package tree has unsupported entry ${relativePath}`);
-          }
+      const descriptor = openSync(
+        absolutePath,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      try {
+        const openedStats = fstatSync(descriptor);
+        if (openedStats.isDirectory()) {
+          hash.update(`directory\0${relativePath}\0`);
+          visit(absolutePath, relativePath);
+        } else if (openedStats.isFile()) {
           hash.update(`file\0${relativePath}\0${openedStats.size}\0`);
           hash.update(readFileSync(descriptor));
           hash.update("\0");
-        } finally {
-          closeSync(descriptor);
+        } else {
+          throw new Error(`Remediated package tree has unsupported entry ${relativePath}`);
         }
-      } else {
-        throw new Error(`Remediated package tree has unsupported entry ${relativePath}`);
+      } finally {
+        closeSync(descriptor);
       }
     }
   };

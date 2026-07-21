@@ -29,7 +29,10 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import {
+  type FakeOpenAiCompatibleServer,
+  startFakeOpenAiCompatibleServer,
+} from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -62,6 +65,9 @@ const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
 const OLD_OPENCLAW_VERSION = process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ?? "2026.4.24";
+const CURRENT_OPENCLAW_VERSION = process.env.NEMOCLAW_CURRENT_OPENCLAW_VERSION ?? "";
+const OPENCLAW_STATE_UPGRADE_PROOF =
+  process.env.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF === "1";
 const { sandboxBaseDigest: OLD_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgradeFixture({
   nemoclawRef: OLD_NEMOCLAW_REF,
   nemoclawCommit: OLD_NEMOCLAW_COMMIT,
@@ -81,8 +87,15 @@ const SURVIVOR_SANDBOX =
     .join("-");
 const SURVIVOR_MARKER = `gateway-upgrade-survivor-${Date.now()}`;
 const SURVIVOR_MARKER_PATH = "/sandbox/.openclaw/workspace/nemoclaw-gateway-upgrade-marker";
+const INSTALLED_AGENT_DB_MARKER = `openclaw-2026-6-agent-db-${Date.now()}`;
+const LEGACY_MEMORY_MARKER = `openclaw-2026-6-memory-${Date.now()}`;
+const LEGACY_MEMORY_SIDECAR = "/sandbox/.openclaw/memory/main.sqlite";
+const OPENCLAW_GLOBAL_STATE_DB = "/sandbox/.openclaw/state/openclaw.sqlite";
+const OPENCLAW_MAIN_AGENT_DB =
+  "/sandbox/.openclaw/agents/main/agent/openclaw-agent.sqlite";
+const LEGACY_UPDATE_CHECK_PATH = "/sandbox/.openclaw/update-check.json";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
-const TEST_TIMEOUT_MS = 60 * 60_000;
+const TEST_TIMEOUT_MS = 65 * 60_000;
 const INSTALL_TIMEOUT_MS = 35 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 
@@ -91,6 +104,11 @@ expect(
   SURVIVOR_SANDBOX.startsWith("e2e-gateway-upgrade-survivor"),
   `openshell-gateway-upgrade live test only accepts survivor sandbox names with prefix e2e-gateway-upgrade-survivor; got ${SURVIVOR_SANDBOX}`,
 ).toBe(true);
+if (OPENCLAW_STATE_UPGRADE_PROOF) {
+  expect(OLD_NEMOCLAW_REF).toBe("v0.0.89");
+  expect(OLD_OPENCLAW_VERSION).toBe("2026.6.10");
+  expect(CURRENT_OPENCLAW_VERSION).toBe("2026.7.1");
+}
 
 function writeExecutable(target: string, contents: string): void {
   fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
@@ -183,6 +201,239 @@ async function bash(
       timeoutMs: options.timeoutMs ?? OPENSHELL_TIMEOUT_MS,
     },
   );
+}
+
+interface OpenClawStateContract {
+  agentDbIntegrity: string;
+  apiKey: unknown;
+  globalDbIntegrity: string;
+  installedAgentDbMarker: string | null;
+  keyRefIds: string[];
+  legacyMemoryMarker: string | null;
+  legacyMemorySidecarArchived: boolean;
+  legacyMemorySidecarPresent: boolean;
+  literalSecretEnvKeys: string[];
+  literalSecretInState: boolean;
+  placeholderEnvKeys: string[];
+  startupCheckpoint: string | null;
+  uid: number;
+  updateCheckPresent: boolean;
+  version: string;
+}
+
+function encodedNodeCommand(source: string): string {
+  const payload = Buffer.from(source, "utf8").toString("base64");
+  return `printf '%s' ${shellQuote(payload)} | base64 -d | NODE_NO_WARNINGS=1 node`;
+}
+
+async function runInSurvivorSandbox(
+  host: HostCliClient,
+  command: string,
+  options: { artifactName: string; currentCli?: boolean; timeoutMs?: number },
+): Promise<ShellProbeResult> {
+  const prefix = options.currentCli
+    ? `nemoclaw ${shellQuote(SURVIVOR_SANDBOX)} exec --`
+    : `openshell sandbox exec --name ${shellQuote(SURVIVOR_SANDBOX)} --`;
+  return bash(host, `${prefix} sh -lc ${shellQuote(command)}`, {
+    artifactName: options.artifactName,
+    redactionValues: ["dummy"],
+    timeoutMs: options.timeoutMs ?? 60_000,
+  });
+}
+
+async function inspectOpenClawStateContract(
+  host: HostCliClient,
+  phase: "legacy" | "upgraded",
+): Promise<OpenClawStateContract> {
+  const seedLegacyUpdateCheck = phase === "legacy";
+  const source = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const { DatabaseSync } = require("node:sqlite");
+const configPath = "/sandbox/.openclaw/openclaw.json";
+const authPath = "/sandbox/.openclaw/agents/main/agent/auth-profiles.json";
+const globalDbPath = ${JSON.stringify(OPENCLAW_GLOBAL_STATE_DB)};
+const agentDbPath = ${JSON.stringify(OPENCLAW_MAIN_AGENT_DB)};
+const installedAgentDbMarkerValue = ${JSON.stringify(INSTALLED_AGENT_DB_MARKER)};
+const legacyMemoryPath = ${JSON.stringify(LEGACY_MEMORY_SIDECAR)};
+const legacyMemoryMarkerValue = ${JSON.stringify(LEGACY_MEMORY_MARKER)};
+const updateCheckPath = ${JSON.stringify(LEGACY_UPDATE_CHECK_PATH)};
+const configText = fs.readFileSync(configPath, "utf8");
+const authText = fs.existsSync(authPath) ? fs.readFileSync(authPath, "utf8") : "{}";
+const config = JSON.parse(configText);
+const auth = JSON.parse(authText);
+if (${JSON.stringify(seedLegacyUpdateCheck)}) {
+  fs.writeFileSync(updateCheckPath, JSON.stringify({
+    lastCheckedAt: "2026-07-20T00:00:00.000Z",
+    lastAvailableVersion: "2026.7.1",
+  }) + "\n", { mode: 0o600 });
+}
+const globalDb = new DatabaseSync(globalDbPath, { readOnly: true });
+const globalDbIntegrity = globalDb.prepare("PRAGMA integrity_check").get().integrity_check;
+const hasSchemaMeta = globalDb
+  .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+  .get("schema_meta");
+const startupCheckpoint = hasSchemaMeta
+  ? globalDb
+      .prepare("SELECT app_version AS appVersion FROM schema_meta WHERE meta_key = ?")
+      .get("startup-migrations")?.appVersion ?? null
+  : null;
+globalDb.close();
+const agentDb = new DatabaseSync(agentDbPath, {
+  readOnly: !${JSON.stringify(seedLegacyUpdateCheck)},
+});
+agentDb.exec("PRAGMA busy_timeout = 5000");
+if (${JSON.stringify(seedLegacyUpdateCheck)}) {
+  // cache_entries is present with this exact shape in both published versions;
+  // a non-expiring private scope proves the real 6.10 agent DB was restored
+  // without being coupled to Memory Core's normal reindex cleanup.
+  agentDb.prepare("INSERT OR REPLACE INTO cache_entries (scope, key, value_json, blob, expires_at, updated_at) VALUES (?, ?, ?, NULL, NULL, ?)")
+    .run("nemoclaw-e2e-state-upgrade", "installed-agent-db-marker", JSON.stringify(installedAgentDbMarkerValue), 1);
+}
+const agentDbIntegrity = agentDb.prepare("PRAGMA integrity_check").get().integrity_check;
+const installedAgentDbMarkerJson = agentDb
+  .prepare("SELECT value_json AS valueJson FROM cache_entries WHERE scope = ? AND key = ?")
+  .get("nemoclaw-e2e-state-upgrade", "installed-agent-db-marker")?.valueJson;
+const installedAgentDbMarker =
+  typeof installedAgentDbMarkerJson === "string" ? JSON.parse(installedAgentDbMarkerJson) : null;
+let legacyMemoryMarker = null;
+if (${JSON.stringify(seedLegacyUpdateCheck)}) {
+  fs.mkdirSync(path.dirname(legacyMemoryPath), { recursive: true });
+  const legacyMemoryDb = new DatabaseSync(legacyMemoryPath);
+  legacyMemoryDb.exec([
+    "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, source TEXT NOT NULL, hash TEXT NOT NULL, mtime INTEGER NOT NULL, size INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS chunks (id TEXT PRIMARY KEY, path TEXT NOT NULL, source TEXT NOT NULL, start_line INTEGER NOT NULL, end_line INTEGER NOT NULL, hash TEXT NOT NULL, model TEXT NOT NULL, text TEXT NOT NULL, embedding TEXT NOT NULL, updated_at INTEGER NOT NULL)",
+  ].join(";\n"));
+  legacyMemoryDb.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)")
+    .run("nemoclaw-e2e-state-upgrade", legacyMemoryMarkerValue);
+  legacyMemoryDb.prepare("INSERT OR REPLACE INTO files (path, source, hash, mtime, size) VALUES (?, ?, ?, ?, ?)")
+    .run("memory/nemoclaw-e2e.md", "memory", "nemoclaw-e2e-hash", 1, legacyMemoryMarkerValue.length);
+  legacyMemoryDb.prepare("INSERT OR REPLACE INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run("nemoclaw-e2e-legacy-memory", "memory/nemoclaw-e2e.md", "memory", 1, 1, "nemoclaw-e2e-hash", "none", legacyMemoryMarkerValue, "[]", 1);
+  legacyMemoryDb.close();
+  fs.chmodSync(legacyMemoryPath, 0o600);
+  legacyMemoryMarker = legacyMemoryMarkerValue;
+} else {
+  legacyMemoryMarker = agentDb
+    .prepare("SELECT text FROM memory_index_chunks WHERE id = ?")
+    .get("nemoclaw-e2e-legacy-memory")?.text ?? null;
+}
+agentDb.close();
+const keyRefIds = [];
+function collectKeyRefs(value) {
+  if (!value || typeof value !== "object") return;
+  if (value.keyRef?.source === "env" && typeof value.keyRef.id === "string") {
+    keyRefIds.push(value.keyRef.id);
+  }
+  for (const child of Object.values(value)) collectKeyRefs(child);
+}
+collectKeyRefs(config);
+collectKeyRefs(auth);
+const envEntries = Object.entries(process.env);
+console.log(JSON.stringify({
+  agentDbIntegrity,
+  apiKey: config.models?.providers?.inference?.apiKey,
+  globalDbIntegrity,
+  installedAgentDbMarker,
+  keyRefIds: [...new Set(keyRefIds)].sort(),
+  legacyMemoryMarker,
+  legacyMemorySidecarArchived: fs.existsSync(legacyMemoryPath + ".migrated"),
+  legacyMemorySidecarPresent: fs.existsSync(legacyMemoryPath),
+  literalSecretEnvKeys: envEntries.filter(([, value]) => value === "dummy").map(([key]) => key),
+  literalSecretInState: configText.includes("dummy") || authText.includes("dummy"),
+  placeholderEnvKeys: envEntries
+    .filter(([, value]) => typeof value === "string" && value.startsWith("openshell:resolve:env:"))
+    .map(([key]) => key)
+    .sort(),
+  startupCheckpoint,
+  uid: process.getuid(),
+  updateCheckPresent: fs.existsSync(updateCheckPath),
+  version: execFileSync("openclaw", ["--version"], { encoding: "utf8" }).trim(),
+}));
+`;
+  const result = await runInSurvivorSandbox(host, encodedNodeCommand(source), {
+    artifactName: `state-upgrade-${phase}-contract`,
+    currentCli: phase === "upgraded",
+  });
+  expectExitZero(result, `${phase} OpenClaw state contract inspection`);
+  const json = result.stdout.trim().split("\n").at(-1) ?? "";
+  expect(json, `${phase} OpenClaw state contract must emit JSON`).not.toBe("");
+  const summary = JSON.parse(json) as OpenClawStateContract;
+  expect(summary.uid, `${phase} contract must run as the sandbox user`).toBeGreaterThan(0);
+  expect(summary.apiKey, `${phase} custom-provider config must retain the proxy sentinel`).toBe(
+    "unused",
+  );
+  expect(summary.literalSecretEnvKeys).toEqual([]);
+  expect(summary.literalSecretInState).toBe(false);
+  expect(summary.updateCheckPresent).toBe(seedLegacyUpdateCheck);
+  expect(summary.globalDbIntegrity).toBe("ok");
+  expect(summary.agentDbIntegrity).toBe("ok");
+  expect(summary.installedAgentDbMarker).toBe(INSTALLED_AGENT_DB_MARKER);
+  if (phase === "legacy") {
+    expect(summary.startupCheckpoint).toBeNull();
+    expect(summary.legacyMemoryMarker).toBe(LEGACY_MEMORY_MARKER);
+    expect(summary.legacyMemorySidecarPresent).toBe(true);
+    expect(summary.legacyMemorySidecarArchived).toBe(false);
+  } else {
+    expect(summary.startupCheckpoint).toBe(CURRENT_OPENCLAW_VERSION);
+    expect(summary.legacyMemoryMarker).toBe(LEGACY_MEMORY_MARKER);
+    expect(summary.legacyMemorySidecarPresent).toBe(false);
+    expect(summary.legacyMemorySidecarArchived).toBe(true);
+  }
+  const versionToken = summary.version.match(/\b\d{4}\.\d{1,2}\.\d{1,2}\b/)?.[0];
+  expect(versionToken).toBe(phase === "legacy" ? OLD_OPENCLAW_VERSION : CURRENT_OPENCLAW_VERSION);
+  return summary;
+}
+
+function expectOptionalStateReferencesPreserved(
+  legacy: OpenClawStateContract,
+  upgraded: OpenClawStateContract,
+): void {
+  // This custom-provider fixture sets COMPATIBLE_API_KEY, not
+  // NVIDIA_INFERENCE_API_KEY, so v0.0.89 intentionally does not create the
+  // NVIDIA auth-profile keyRef. Preserve any references the frozen runtime
+  // does emit without inventing one for this route.
+  for (const keyRefId of legacy.keyRefIds) {
+    expect(upgraded.keyRefIds).toContain(keyRefId);
+  }
+  for (const envKey of legacy.placeholderEnvKeys) {
+    expect(upgraded.placeholderEnvKeys).toContain(envKey);
+  }
+}
+
+async function assertOpenClawAgentSecretBoundary(
+  host: HostCliClient,
+  fake: FakeOpenAiCompatibleServer,
+  phase: "legacy" | "upgraded",
+): Promise<void> {
+  const requestOffset = fake.requests().length;
+  const agent = await runInSurvivorSandbox(
+    host,
+    `openclaw agent --agent main --json --thinking off --session-id ${shellQuote(
+      `e2e-state-upgrade-${phase}`,
+    )} -m ${shellQuote("Reply with only: ok")}`,
+    {
+      artifactName: `state-upgrade-${phase}-agent`,
+      currentCli: phase === "upgraded",
+      timeoutMs: 120_000,
+    },
+  );
+  expectExitZero(agent, `${phase} sandbox-user OpenClaw agent turn`);
+  expect(resultText(agent).toLowerCase()).toContain("ok");
+  const requests = fake
+    .requests()
+    .slice(requestOffset)
+    .filter((request) => request.path.includes("/chat/completions"));
+  expect(requests.length, `${phase} agent turn must reach the compatible endpoint`).toBeGreaterThan(
+    0,
+  );
+  expect(requests.some((request) => request.auth === "Bearer dummy")).toBe(true);
+  expect(requests.some((request) => request.auth === "Bearer unused")).toBe(false);
+  expect(
+    requests.some((request) => request.auth?.includes("openshell:resolve:env:")),
+  ).toBe(false);
 }
 
 // The frozen release installers are the source of truth, but their embedded
@@ -466,7 +717,10 @@ async function installOldNemoclawAndClaw(
     `downloaded ${OLD_NEMOCLAW_REF} installer must match its pinned SHA-256`,
   ).toBe(OLD_INSTALLER_SHA256);
   fs.chmodSync(oldInstaller, 0o755);
-  patchOldInstallerFixture(oldInstaller);
+  // v0.0.89 already contains the reviewed 2026.6.10 integrity/tarball pins.
+  // Keep it byte-representative of the installed base instead of injecting
+  // the legacy fixture adapter used by the established older lanes.
+  if (OLD_NEMOCLAW_REF !== "v0.0.89") patchOldInstallerFixture(oldInstaller);
 
   const installEnv = liveEnv({
     PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
@@ -856,6 +1110,12 @@ runLinuxOpenShellGatewayUpgrade(
       oldOpenClawVersion: OLD_OPENCLAW_VERSION,
       oldSandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
       currentOpenShellVersion: CURRENT_OPENSHELL_VERSION,
+      ...(OPENCLAW_STATE_UPGRADE_PROOF
+        ? {
+            currentOpenClawVersion: CURRENT_OPENCLAW_VERSION,
+            openClawStateUpgrade: "2026.6.10 installed state to 2026.7.1",
+          }
+        : {}),
       survivorSandbox: SURVIVOR_SANDBOX,
     });
 
@@ -889,6 +1149,8 @@ runLinuxOpenShellGatewayUpgrade(
       host: "0.0.0.0",
       model: "test-model",
       publicHost: "host.openshell.internal",
+      requireAuth: OPENCLAW_STATE_UPGRADE_PROOF,
+      requireAuthModels: OPENCLAW_STATE_UPGRADE_PROOF,
       responseText: "ok",
     });
     cleanup.add("close compatible endpoint mock", async () => {
@@ -900,6 +1162,12 @@ runLinuxOpenShellGatewayUpgrade(
     });
 
     await installOldNemoclawAndClaw(host, artifacts, fake.baseUrl);
+    let legacyStateContract: OpenClawStateContract | undefined;
+    if (OPENCLAW_STATE_UPGRADE_PROOF) {
+      await assertOpenClawAgentSecretBoundary(host, fake, "legacy");
+      legacyStateContract = await inspectOpenClawStateContract(host, "legacy");
+      await artifacts.writeJson("openclaw-2026-6-state-contract.json", legacyStateContract);
+    }
     const hiddenOldOpenShellDir =
       OLD_NEMOCLAW_REF === "v0.0.55" ? await stageOldOpenShellInUserLocalBin(host) : undefined;
     const survivorPid = await startSurvivorAgentInExistingClaw(host);
@@ -911,6 +1179,12 @@ runLinuxOpenShellGatewayUpgrade(
       hiddenOldOpenShellDir,
     );
     await assertSurvivorSandboxAfterUpgrade(host);
+    if (OPENCLAW_STATE_UPGRADE_PROOF) {
+      const upgradedStateContract = await inspectOpenClawStateContract(host, "upgraded");
+      expectOptionalStateReferencesPreserved(legacyStateContract!, upgradedStateContract);
+      await artifacts.writeJson("openclaw-2026-7-state-contract.json", upgradedStateContract);
+      await assertOpenClawAgentSecretBoundary(host, fake, "upgraded");
+    }
   },
 );
 

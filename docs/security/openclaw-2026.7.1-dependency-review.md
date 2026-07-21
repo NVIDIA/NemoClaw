@@ -121,30 +121,31 @@ The `2026.7.1` dist changed seven reviewed shapes:
 - shared and per-agent SQLite state now run during the required gateway startup
   checkpoint and apply owner-only modes on each open.
   `scripts/patch-openclaw-shared-state-permissions.mts` keeps the upstream
-  `0700` directory and `0600` file modes when the OpenShell sandbox marker is
-  absent.
-  The image-wide `NEMOCLAW_OPENCLAW_SHARED_STATE=1` marker enables `2770` and
-  `0660` for direct containers. The legacy `OPENSHELL_SANDBOX=1` marker and
-  current validated OpenShell sandbox names cover runtimes that sanitize image
-  environment variables. The separate `sandbox` and `gateway` users can then
-  access the same database through their shared group. Workers that receive a
-  narrowed environment inherit these markers from the gateway process.
+  `0700` directory and `0600` file modes in same-UID OpenShell sandboxes.
+  The entrypoint derives `NEMOCLAW_OPENCLAW_SHARED_STATE=1` only for its root,
+  split-user topology; it explicitly removes that marker from non-root
+  OpenShell startup. Direct-container `sandbox` and `gateway` users can then
+  access the same database through their shared group, while OpenShell keeps
+  OpenClaw's native private-mode contract. The image does not retain this
+  marker; its descriptor-safe final repair normalizes any build-created global
+  SQLite files for a later direct runtime. Gateway workers and direct-container
+  connect shells inherit the entrypoint-derived marker.
   It skips `chmod` only when the existing mode already matches and rejects an
   unexpected or ambiguous compiled-dist shape;
-- generic private file stores remain owner-only at upstream `0700` directory
-  and `0600` file modes, including device identity, device authentication, and
-  credential-profile paths. The shared-state marker does not broaden these
-  security boundaries to the sandbox group;
+- the patch leaves upstream private-store enforcement unchanged, including its
+  `0700` directory and `0600` file modes for device identity, device
+  authentication, and credential-profile paths. The shared-state marker is not
+  consulted by those generic stores;
 - generated `models.json` is the reviewed exception to the generic private-store
-  rule. Under the validated NemoClaw marker, the compiled models-config patch
+  rule. Under the split-user NemoClaw marker, the compiled models-config patch
   keeps this non-secret provider configuration at `0660` and skips a non-owner
-  `chmod` when the inherited mode is already correct. Outside NemoClaw it
-  preserves the upstream `0600` behavior;
-- the legacy update-check migration is skipped only under the same validated
-  NemoClaw or OpenShell marker. This state contains polling, notification, and
-  auto-install cache for an OpenClaw version that NemoClaw pins in the image;
-  all other startup migrations and the upstream behavior outside NemoClaw are
-  unchanged.
+  `chmod` when the inherited mode is already correct. Same-UID OpenShell and
+  runtimes outside NemoClaw preserve the upstream `0600` behavior;
+- the legacy update-check migration is skipped only under the split-user marker
+  or a validated OpenShell marker. This state contains polling, notification,
+  and auto-install cache for an OpenClaw version that NemoClaw pins in the
+  image; all other startup migrations and the upstream behavior outside
+  NemoClaw are unchanged.
 
 `scripts/patch-openclaw-device-self-approval.mts` remains required. Its new
 shape recognizers preserve the bounded stored-device credential flow and keep
@@ -180,6 +181,17 @@ follows:
   rejected;
 - a root entrypoint starts the `gateway` user with `HOME=/sandbox`, so startup
   migrations do not probe the inaccessible `/root/.openclaw` path.
+
+Installed-base coverage is the `v0.0.89-x86_64` row in the
+`openshell-gateway-upgrade` E2E matrix. It installs the immutable v0.0.89
+release with OpenClaw `2026.6.10`, seeds its legacy Memory Core SQLite and
+update-check state, then upgrades through the current installer. The row proves
+the `2026.7.1` startup checkpoint and per-agent database migration complete
+with intact SQLite state, and that the restored `apiKey: "unused"` config
+still receives its gateway-held credential only at the OpenShell boundary.
+This custom route supplies `COMPATIBLE_API_KEY`, so the frozen v0.0.89
+runtime intentionally creates no NVIDIA auth-profile key reference; the E2E
+preserves any references that do exist without inventing one for this route.
 
 During image assembly, the shared-state repair rejects symbolic links,
 non-regular entries, and multiply linked files before it changes the ownership

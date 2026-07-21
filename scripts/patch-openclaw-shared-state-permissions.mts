@@ -5,13 +5,13 @@
 /*
  * Temporary compatibility patch for OpenClaw 2026.7.1 split-user state.
  *
- * NemoClaw intentionally runs the OpenClaw CLI and gateway as separate users
- * in the same group. OpenClaw 2026.7.1 makes shared and per-agent SQLite state
- * part of gateway startup, but hardens those paths to owner-only modes. Use
- * group-shared modes for those databases inside the NemoClaw image or an
- * OpenShell sandbox, keep generic credential and identity stores owner-only,
- * and ignore only the obsolete pinned-version update cache when its migration
- * cannot archive through a shields-protected parent.
+ * NemoClaw's root entrypoint runs the OpenClaw CLI and gateway as separate
+ * users in the same group. OpenClaw 2026.7.1 makes shared and per-agent SQLite
+ * state part of gateway startup, but hardens those paths to owner-only modes.
+ * For that topology, keep generic credential and identity stores owner-only
+ * while applying group-shared modes only to the databases. Leave private-store
+ * enforcement unchanged, and ignore only the obsolete pinned-version update
+ * cache when its migration cannot archive through a shields-protected parent.
  *
  * Remove this patch once upstream supports a group-shared state database for
  * split-user containers without requiring a non-owner to chmod an already
@@ -31,6 +31,13 @@ export const MODELS_MARKER = "/* nemoclaw: group-shared OpenClaw models file */"
 
 const GROUP_SHARED_ENV_HELPER = [
   "function nemoclawUsesGroupSharedState(env) {",
+  "\tconst nemoclawSharedStateMarker = env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;",
+  '\treturn nemoclawSharedStateMarker === "1";',
+  "}",
+].join("\n");
+
+const MANAGED_RUNTIME_ENV_HELPER = [
+  "function nemoclawUsesManagedRuntime(env) {",
   "\tconst nemoclawSharedStateMarker = env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;",
   "\tconst nemoclawOpenShellMarker = env?.OPENSHELL_SANDBOX ?? process.env.OPENSHELL_SANDBOX;",
   '\treturn nemoclawSharedStateMarker === "1" || nemoclawOpenShellMarker === "1" || (typeof nemoclawOpenShellMarker === "string" && /^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(nemoclawOpenShellMarker));',
@@ -111,7 +118,6 @@ const PATCHED_STATE_REQUIRED_PATTERNS = [
   "const NEMOCLAW_SHARED_STATE_FILE_MODE = 0o660;",
   "function nemoclawUsesGroupSharedState(env) {",
   "env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE",
-  "env?.OPENSHELL_SANDBOX ?? process.env.OPENSHELL_SANDBOX",
   "function bestEffortChmodSync(target, mode, skipWhenModeMatches = false) {",
   "(statSync(target).mode & 0o7777) === mode",
   "const nemoclawGroupSharedState = nemoclawUsesGroupSharedState(env);",
@@ -194,19 +200,19 @@ const UPSTREAM_MIGRATION_START = [
 ].join("\n");
 
 const PATCHED_MIGRATION_START = [
-  GROUP_SHARED_ENV_HELPER,
+  MANAGED_RUNTIME_ENV_HELPER,
   UPSTREAM_MIGRATION_FUNCTION_START,
-  `\tif (nemoclawUsesGroupSharedState()) return { changes, warnings }; ${MIGRATION_MARKER}`,
+  `\tif (nemoclawUsesManagedRuntime()) return { changes, warnings }; ${MIGRATION_MARKER}`,
   "\tif (!fileExists(params.detected.sourcePath)) return {",
 ].join("\n");
 
 const PATCHED_MIGRATION_REQUIRED_PATTERNS = [
   MIGRATION_MARKER,
-  "function nemoclawUsesGroupSharedState(env) {",
+  "function nemoclawUsesManagedRuntime(env) {",
   "env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE",
   "env?.OPENSHELL_SANDBOX ?? process.env.OPENSHELL_SANDBOX",
   "function migrateLegacyUpdateCheckState(params) {",
-  "if (nemoclawUsesGroupSharedState()) return { changes, warnings };",
+  "if (nemoclawUsesManagedRuntime()) return { changes, warnings };",
 ] as const;
 
 const UPSTREAM_MODELS_FILE_MODE_HELPER = [
@@ -231,7 +237,6 @@ const PATCHED_MODELS_REQUIRED_PATTERNS = [
   MODELS_MARKER,
   "function nemoclawUsesGroupSharedState(env) {",
   "env?.NEMOCLAW_OPENCLAW_SHARED_STATE ?? process.env.NEMOCLAW_OPENCLAW_SHARED_STATE",
-  "env?.OPENSHELL_SANDBOX ?? process.env.OPENSHELL_SANDBOX",
   "async function ensureModelsFileModeForModelsJson(pathname) {",
   "const nemoclawModelsFileMode = nemoclawGroupSharedState ? 0o660 : 384;",
   "((await fs.stat(pathname)).mode & 0o7777) === nemoclawModelsFileMode",

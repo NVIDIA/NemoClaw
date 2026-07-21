@@ -406,7 +406,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
   it.each([
     "1",
     "sandbox-name",
-  ])("uses group-shared state modes for the OpenShell marker %s", async (openShellMarker) => {
+  ])("retains owner-only state modes for the same-UID OpenShell marker %s", async (openShellMarker) => {
     const fixture = makeFixture();
     try {
       patchOpenClawSharedStatePermissions(fixture.dist);
@@ -421,9 +421,9 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       fs.writeFileSync(wal, "");
       runtime.ensureOpenClawStatePermissions(database, env);
 
-      expect(mode(stateDir)).toBe(0o2770);
-      expect(mode(database)).toBe(0o660);
-      expect(mode(wal)).toBe(0o660);
+      expect(mode(stateDir)).toBe(0o700);
+      expect(mode(database)).toBe(0o600);
+      expect(mode(wal)).toBe(0o600);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
@@ -501,6 +501,32 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
+
+  it.each(["1", "sandbox-name"])(
+    "retains owner-only per-agent database modes in same-UID OpenShell %s",
+    async (openShellMarker) => {
+      const fixture = makeFixture();
+      try {
+        patchOpenClawSharedStatePermissions(fixture.dist);
+        const runtime = await importAgentFixture(fixture.agentFiles[0]);
+        const agentDir = path.join(fixture.root, "openshell-agent-state");
+        const database = path.join(agentDir, "main.sqlite");
+        const options = {
+          agentId: "main",
+          env: { OPENCLAW_AGENT_DIR: agentDir, OPENSHELL_SANDBOX: openShellMarker },
+        };
+
+        runtime.ensureOpenClawAgentDatabasePermissions(database, options);
+        fs.writeFileSync(database, "");
+        runtime.ensureOpenClawAgentDatabasePermissions(database, options);
+
+        expect(mode(agentDir)).toBe(0o700);
+        expect(mode(database)).toBe(0o600);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("retains owner-only secret-file modes under the NemoClaw marker", async () => {
     const fixture = makeFixture();
@@ -631,17 +657,14 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     }
   });
 
-  it.each([
-    "1",
-    "sandbox-name",
-  ])("keeps generated models files group-readable under the OpenShell marker %s", async (openShellMarker) => {
+  it("keeps generated models files group-readable under the split-user marker", async () => {
     const fixture = makeFixture();
     const previousShared = process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
     const previousOpenShell = process.env.OPENSHELL_SANDBOX;
     try {
       patchOpenClawSharedStatePermissions(fixture.dist);
-      delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      process.env.OPENSHELL_SANDBOX = openShellMarker;
+      process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = "1";
+      delete process.env.OPENSHELL_SANDBOX;
       const runtime = await importModelsFixture(fixture.modelsFiles[0]);
       const modelsFile = path.join(fixture.root, "models.json");
       fs.writeFileSync(modelsFile, "{}", { mode: 0o600 });
@@ -660,14 +683,14 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     }
   });
 
-  it("retains the upstream generated-models mode outside NemoClaw", async () => {
+  it.each(["1", "sandbox-name"])("retains the upstream generated-models mode in same-UID OpenShell %s", async (openShellMarker) => {
     const fixture = makeFixture();
     const previousShared = process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
     const previousOpenShell = process.env.OPENSHELL_SANDBOX;
     try {
       patchOpenClawSharedStatePermissions(fixture.dist);
       delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      process.env.OPENSHELL_SANDBOX = "sandbox_name";
+      process.env.OPENSHELL_SANDBOX = openShellMarker;
       const runtime = await importModelsFixture(fixture.modelsFiles[0]);
       const modelsFile = path.join(fixture.root, "models.json");
       fs.writeFileSync(modelsFile, "{}", { mode: 0o660 });

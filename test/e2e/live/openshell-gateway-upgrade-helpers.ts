@@ -67,6 +67,8 @@ export function expectedLegacyRegistryMetadata(nemoclawRef: string): {
       return { nemoclawVersion: undefined, fromDockerfile: undefined };
     case "v0.0.74":
       return { nemoclawVersion: "0.0.74", fromDockerfile: null };
+    case "v0.0.89":
+      return { nemoclawVersion: "0.0.89", fromDockerfile: null };
     default:
       throw new Error(`Unsupported gateway-upgrade registry fixture: ${nemoclawRef}`);
   }

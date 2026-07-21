@@ -3404,6 +3404,13 @@ PROXYEOF
       _escaped_openclaw_env_value="$(printf '%s' "$_openclaw_env_value" | sed "s/'/'\\\\''/g")"
       printf "export %s='%s'\n" "$_openclaw_env_name" "$_escaped_openclaw_env_value"
     done
+    if [ "${NEMOCLAW_OPENCLAW_SHARED_STATE:-}" = "1" ]; then
+      printf 'export NEMOCLAW_OPENCLAW_SHARED_STATE=1\n'
+    else
+      # Old/custom images may still carry the former image-wide marker. Keep
+      # connect shells aligned with the topology selected by PID 1.
+      printf 'unset NEMOCLAW_OPENCLAW_SHARED_STATE\n'
+    fi
     if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
       _escaped_gateway_port="$(printf '%s' "$OPENCLAW_GATEWAY_PORT" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_PORT='%s'\n" "$_escaped_gateway_port"
@@ -5376,6 +5383,17 @@ handle_openclaw_gateway_control_request() {
 }
 
 # ── Main ─────────────────────────────────────────────────────────
+
+# OpenClaw 2026.7.1 enforces owner-only SQLite and models-file modes on every
+# open. Only the root entrypoint uses NemoClaw's separate sandbox/gateway UIDs;
+# OpenShell starts this entrypoint as the sandbox UID and runs both roles as that
+# same user. Derive the compatibility marker from the real topology instead of
+# an image-wide or caller-supplied environment marker.
+if [ "$(id -u)" -eq 0 ]; then
+  export NEMOCLAW_OPENCLAW_SHARED_STATE=1
+else
+  unset NEMOCLAW_OPENCLAW_SHARED_STATE
+fi
 
 # Begin the root PID 1 readiness lease before any startup path reads or mutates
 # OpenClaw config. Recovery runs before the locked-parent discriminator so a

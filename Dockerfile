@@ -85,11 +85,6 @@ ENV AWS_EC2_METADATA_DISABLED=true
 # names do not persist under /tmp/jiti inside the sandbox.
 ENV JITI_FS_CACHE=false
 
-# NemoClaw always runs OpenClaw CLI work and the gateway as separate users in
-# one shared group, including direct Docker entrypoint deployments that do not
-# receive an OpenShell sandbox marker.
-ENV NEMOCLAW_OPENCLAW_SHARED_STATE=1
-
 # Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
 # onboard detects an operator-supplied corporate CA on the host it bakes it
 # here; the RUN below decodes it to a root-owned file that the entrypoint
@@ -792,14 +787,15 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-
     /usr/local/lib/node_modules/openclaw/dist
 
 # OpenClaw 2026.7.1 moved gateway startup work into shared and per-agent SQLite
-# databases, but hardens them to owner-only modes on every open. NemoClaw runs
-# the CLI and gateway as separate users in the sandbox group, so use
-# group-shared modes inside the NemoClaw image or an OpenShell sandbox. The
-# patch keeps generic credential and identity stores owner-only, avoids a
-# non-owner chmod when a reviewed shared database mode is already safe, keeps
-# generated models files readable by the shared group, and ignores the obsolete
-# update-check cache migration that cannot archive across a shields-protected
-# parent.
+# databases, but hardens them to owner-only modes on every open. NemoClaw's
+# root entrypoint runs the CLI and gateway as separate users in the sandbox
+# group, so use group-shared modes only when that split-user runtime marker is
+# present. Same-UID OpenShell sandboxes retain OpenClaw's private modes. The
+# patch leaves generic credential and identity store enforcement unchanged,
+# avoids a non-owner chmod when a reviewed shared database mode is already
+# safe, keeps generated models files readable by the shared group, and ignores
+# the obsolete update-check cache migration that cannot archive across a
+# shields-protected parent.
 #
 # Removal criteria: drop when upstream OpenClaw supports a split-user,
 # group-shared state databases and split-user cache migrations without
