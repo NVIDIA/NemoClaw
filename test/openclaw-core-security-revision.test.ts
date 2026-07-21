@@ -144,23 +144,23 @@ function fixture(openClawVersion: keyof typeof layouts) {
     writePackage(path.join(replacementRoot, pinKey), pin.name, pin.version, packageDependencies);
   }
 
-  if (layout.shrinkwrap) {
-    const packages: Record<string, unknown> = {
-      "": { dependencies: { ...rootDependencies } },
+  const packages: Record<string, unknown> = {
+    "": { dependencies: { ...rootDependencies } },
+  };
+  for (const [name, replacement] of Object.entries(layout.replacements)) {
+    packages[`node_modules/${name}`] = {
+      version: replacement[2],
+      resolved: "https://registry.npmjs.org/old.tgz",
+      integrity: "old-integrity",
+      dependencies: {},
     };
-    for (const [name, replacement] of Object.entries(layout.replacements)) {
-      packages[`node_modules/${name}`] = {
-        version: replacement[2],
-        resolved: "https://registry.npmjs.org/old.tgz",
-        integrity: "old-integrity",
-        dependencies: {},
-      };
-    }
-    fs.writeFileSync(
-      path.join(openClawRoot, "npm-shrinkwrap.json"),
-      JSON.stringify({ lockfileVersion: 3, packages }),
-    );
   }
+  layout.shrinkwrap
+    ? fs.writeFileSync(
+        path.join(openClawRoot, "npm-shrinkwrap.json"),
+        JSON.stringify({ lockfileVersion: 3, packages }),
+      )
+    : undefined;
   return { openClawRoot, replacementRoot };
 }
 
