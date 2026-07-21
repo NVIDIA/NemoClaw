@@ -582,6 +582,7 @@ const REVIEWED_NPM_TREE_PROBLEMS: Readonly<Record<string, readonly string[]>> = 
   "2026.5.27": [
     "invalid: tar@7.5.19 <openclaw-root>/node_modules/tar",
     "invalid: protobufjs@8.7.1 <openclaw-root>/node_modules/protobufjs",
+    "invalid: fast-uri@3.1.3 <openclaw-root>/node_modules/fast-uri",
     "invalid: fast-xml-parser@5.7.0 <openclaw-root>/node_modules/fast-xml-parser",
     "invalid: @aws-sdk/token-providers@3.1053.0 <openclaw-root>/node_modules/@aws-sdk/token-providers",
   ],
