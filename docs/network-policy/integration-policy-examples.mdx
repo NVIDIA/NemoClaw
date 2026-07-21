@@ -75,6 +75,9 @@ Preview the endpoints before applying:
 $$nemoclaw my-assistant policy-add outlook --dry-run
 ```
 
+NemoClaw generates the preview from the exact preset policy YAML that `policy-add` would apply.
+It lists hosts, ports, access, protocol, TLS, and enforcement settings, HTTP methods and paths, and the binary allowlist.
+
 Apply the preset:
 
 ```bash
