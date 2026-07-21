@@ -271,15 +271,35 @@ export function ensureRebuildAgentBaseImage(
   if (!rebuildAgent) return { ok: true, imageRef: null, overrideEnvVar: null };
   const agentDef = loadAgent(rebuildAgent);
   const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentDef.name);
-  const hasExplicitOverride = Boolean(process.env[overrideEnvVar]?.trim());
+  const explicitOverride = process.env[overrideEnvVar]?.trim() ?? "";
+  const hasExplicitOverride = explicitOverride !== "";
   try {
-    const result = ensureAgentBaseImage(agentDef, {
-      forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
-      ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
-      ...(options.forceBaseImageRefresh !== undefined
-        ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
-        : {}),
-    });
+    // A rebuild test or maintainer workflow may retain the tracked official
+    // image under a local alias so a later CLI process can reuse the cache.
+    // Prove that identity before the resolver sees the otherwise-untrusted
+    // alias, and lease the proof only for this resolution call. Arbitrary local
+    // overrides still fail closed in resolveSandboxBaseImage.
+    const explicitOverrideMetadata = hasExplicitOverride
+      ? bindLocalAgentBaseImageToPinnedProvenance(agentDef, explicitOverride)
+      : null;
+    const restoreExplicitOverrideTrust = explicitOverrideMetadata
+      ? pinTrustedAgentRemoteBaseImageOverrideForOperation(overrideEnvVar, {
+          ref: explicitOverride,
+          resolutionMetadata: explicitOverrideMetadata,
+        })
+      : () => undefined;
+    let result: ReturnType<typeof ensureAgentBaseImage>;
+    try {
+      result = ensureAgentBaseImage(agentDef, {
+        forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
+        ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
+        ...(options.forceBaseImageRefresh !== undefined
+          ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
+          : {}),
+      });
+    } finally {
+      restoreExplicitOverrideTrust();
+    }
     const needsTemporaryHandoff =
       result.imageTag !== null &&
       !isCanonicalLocalBaseImageRef(agentDef.name, result.imageTag) &&

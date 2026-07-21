@@ -1185,7 +1185,7 @@ test(STALE_BASE_REBUILD
       progress.phase("phase 5 current base reuse");
       await artifacts.writeText(
         "phase-5-current-base-reuse.txt",
-        `Reusing phase 1 Hermes base ${phase1BaseResolution.ref} (${phase1BaseResolution.digest ?? phase1BaseResolution.imageId}) through ${CURRENT_BASE_REUSE_TAG}; rebuild must not construct it again.\n`,
+        `Reusing phase 1 Hermes base ${phase1BaseResolution.ref} (${phase1BaseResolution.digest ?? phase1BaseResolution.imageId}) through verified alias ${CURRENT_BASE_REUSE_TAG}; rebuild must canonicalize it to the official digest without constructing it again.\n`,
       );
       break;
     }
@@ -1215,9 +1215,7 @@ test(STALE_BASE_REBUILD
   });
   expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
   const rebuildOutput = resultText(rebuild);
-  expect(rebuildOutput).toContain(
-    `Using Hermes Agent base image: ${baseReusePlan?.preparedRef ?? phase1BaseResolution.ref}`,
-  );
+  expect(rebuildOutput).toContain(`Using Hermes Agent base image: ${phase1BaseResolution.ref}`);
   expect(rebuildOutput).not.toContain("Rebuilding Hermes Agent base image");
   await waitForSandboxReady(host, apiKey, "phase-6-post-rebuild");
 

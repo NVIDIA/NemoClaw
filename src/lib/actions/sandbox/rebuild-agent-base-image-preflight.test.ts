@@ -81,6 +81,10 @@ describe("ensureRebuildAgentBaseImage", () => {
     const pinAgentSandboxBaseImageRef = vi
       .spyOn(loadAgentOnboard(), "pinAgentSandboxBaseImageRef")
       .mockImplementation((_agentName, imageRef) => imageRef);
+    const restoreTrustedRemoteOverride = vi.fn();
+    const pinTrustedAgentRemoteBaseImageOverrideForOperation = vi
+      .spyOn(loadAgentOnboard(), "pinTrustedAgentRemoteBaseImageOverrideForOperation")
+      .mockReturnValue(restoreTrustedRemoteOverride);
     const dockerRmi = vi
       .spyOn(loadDockerImage(), "dockerRmi")
       .mockReturnValue({ status: 0 } as never);
@@ -89,6 +93,8 @@ describe("ensureRebuildAgentBaseImage", () => {
       ensureAgentBaseImage,
       bindLocalAgentBaseImageToPinnedProvenance,
       pinAgentSandboxBaseImageRef,
+      pinTrustedAgentRemoteBaseImageOverrideForOperation,
+      restoreTrustedRemoteOverride,
       dockerRmi,
     };
   }
@@ -213,18 +219,27 @@ describe("ensureRebuildAgentBaseImage", () => {
     expect(dockerRmi).not.toHaveBeenCalled();
   });
 
-  it("binds an explicit local override after its immutable recreate handoff (#7144)", () => {
+  it("binds an explicit local alias before resolving its official remote identity (#7144)", () => {
     vi.stubEnv(overrideEnvVar, "hermes:override");
     const {
       agent,
       ensureAgentBaseImage,
       bindLocalAgentBaseImageToPinnedProvenance,
       pinAgentSandboxBaseImageRef,
+      pinTrustedAgentRemoteBaseImageOverrideForOperation,
+      restoreTrustedRemoteOverride,
     } = setup();
-    const resolutionMetadata = { key: "canonical-base" } as SandboxBaseImageResolutionMetadata;
-    const immutableRef = `nemoclaw-hermes-sandbox-base-local:rebuild-123-${"b".repeat(16)}-image-${"c".repeat(64)}`;
-    ensureAgentBaseImage.mockReturnValue({ imageTag: "hermes:override", built: false });
-    pinAgentSandboxBaseImageRef.mockReturnValue(immutableRef);
+    const immutableRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"c".repeat(64)}`;
+    const resolutionMetadata = {
+      key: "canonical-base",
+      ref: immutableRef,
+      digest: `sha256:${"c".repeat(64)}`,
+    } as SandboxBaseImageResolutionMetadata;
+    ensureAgentBaseImage.mockReturnValue({
+      imageTag: immutableRef,
+      built: false,
+      resolutionMetadata,
+    });
     bindLocalAgentBaseImageToPinnedProvenance.mockReturnValue(resolutionMetadata);
     const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
 
@@ -235,20 +250,24 @@ describe("ensureRebuildAgentBaseImage", () => {
       imageRef: immutableRef,
       overrideEnvVar,
       resolutionMetadata,
-      disposeImageRef: expect.any(Function),
+      trustedRemoteOverride: { ref: immutableRef, resolutionMetadata },
     });
+    expect(bindLocalAgentBaseImageToPinnedProvenance).toHaveBeenCalledWith(
+      agent,
+      "hermes:override",
+    );
+    expect(pinTrustedAgentRemoteBaseImageOverrideForOperation).toHaveBeenCalledWith(
+      overrideEnvVar,
+      { ref: "hermes:override", resolutionMetadata },
+    );
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
       forceBaseImageRebuild: false,
     });
-    expect(pinAgentSandboxBaseImageRef).toHaveBeenCalledWith("hermes", "hermes:override", {
-      forceLocal: true,
-      temporary: true,
-    });
-    expect(bindLocalAgentBaseImageToPinnedProvenance).toHaveBeenCalledWith(agent, immutableRef);
-    expect(pinAgentSandboxBaseImageRef.mock.invocationCallOrder[0]).toBeLessThan(
-      bindLocalAgentBaseImageToPinnedProvenance.mock.invocationCallOrder[0],
+    expect(bindLocalAgentBaseImageToPinnedProvenance.mock.invocationCallOrder[0]).toBeLessThan(
+      ensureAgentBaseImage.mock.invocationCallOrder[0],
     );
-    expect(result.disposeImageRef?.()).toBe(true);
+    expect(restoreTrustedRemoteOverride).toHaveBeenCalledOnce();
+    expect(pinAgentSandboxBaseImageRef).not.toHaveBeenCalled();
   });
 
   it("retains exit cleanup until a failed temporary removal succeeds (#7144)", () => {
