@@ -41,10 +41,15 @@ it("pins Brave web-search and preserves its placeholder during build-time doctor
       "set -euo pipefail",
       `call_log=${JSON.stringify(log)}`,
       'openclaw() { printf "%s|BRAVE_API_KEY=%s\\n" "$*" "${BRAVE_API_KEY:-}" >> "$call_log"; }',
-      command.replaceAll(
-        "/scripts/lib/reviewed-npm-archive.mts",
-        path.join(ROOT, "scripts", "lib", "reviewed-npm-archive.mts"),
-      ),
+      command
+        .replaceAll(
+          "/scripts/lib/reviewed-npm-archive.mts",
+          path.join(ROOT, "scripts", "lib", "reviewed-npm-archive.mts"),
+        )
+        .replaceAll(
+          "/scripts/lib/openclaw-npm-remediation.mts",
+          path.join(ROOT, "scripts", "lib", "openclaw-npm-remediation.mts"),
+        ),
     ].join("\n");
     const scriptPath = path.join(tmp, "run.sh");
     fs.writeFileSync(scriptPath, script, { mode: 0o700 });
