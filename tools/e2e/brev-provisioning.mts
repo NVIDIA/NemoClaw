@@ -67,6 +67,33 @@ export function parseBrevJsonInventory(raw: unknown): BrevProvisioningInstance[]
   });
 }
 
+/**
+ * Parse human-readable `brev ls` output for best-effort cleanup only.
+ *
+ * Unlike `brev ls --json`, the text form has no machine-readable contract that
+ * distinguishes an empty inventory from diagnostic or format-drifted output.
+ * It must therefore never be used as authoritative evidence of absence.
+ */
+export function parseBrevTextInventory(output: string): BrevProvisioningSnapshot {
+  const instances: BrevProvisioningInstance[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const fields = trimmed.split(/\s+/);
+    const [name] = fields;
+    if (!name || /^(NAME|TYPE|Usage:|Error:|no)$/i.test(name)) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) continue;
+    const status = fields.find((field) =>
+      /^(CREATING|DELETING|FAILED|OFF|ON|READY|RUNNING|STARTING|STOPPED|STOPPING)$/i.test(field),
+    );
+    instances.push({
+      name,
+      status: status?.toUpperCase(),
+    });
+  }
+  return { authoritative: false, instances };
+}
+
 /** Resolve a bounded retry count from BREV_PROVISION_ATTEMPTS. */
 export function parseBrevProvisioningAttempts(raw: string | undefined, fallback = 2): number {
   const parsed = Number(raw ?? fallback);

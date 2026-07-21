@@ -7,6 +7,7 @@ import {
   observeBrevProvisioningProgress,
   parseBrevJsonInventory,
   parseBrevProvisioningAttempts,
+  parseBrevTextInventory,
 } from "../tools/e2e/brev-provisioning.mts";
 
 describe("Brev provisioning state", () => {
@@ -135,5 +136,14 @@ describe("Brev provisioning state", () => {
     expect(() => parseBrevJsonInventory({})).toThrow(
       "Brev JSON inventory has an unrecognized shape",
     );
+  });
+
+  it("does not treat successful unrecognized text output as authoritative absence", () => {
+    const snapshot = parseBrevTextInventory("Brev service diagnostic: retry later");
+
+    expect(snapshot.authoritative).toBe(false);
+    expect(
+      evaluateBrevProvisioningState(snapshot.instances, "pr-42", 2, snapshot.authoritative),
+    ).toEqual({ kind: "continue", consecutiveMissing: 2 });
   });
 });

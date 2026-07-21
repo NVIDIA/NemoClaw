@@ -57,6 +57,7 @@ import {
   observeBrevProvisioningProgress,
   parseBrevJsonInventory,
   parseBrevProvisioningAttempts,
+  parseBrevTextInventory,
 } from "../../tools/e2e/brev-provisioning.mts";
 import {
   BREV_MESSAGING_COMPAT_TIMEOUT_MS,
@@ -143,29 +144,9 @@ function brev(...args: string[]): string {
 
 type BrevInstance = { name: string; status?: string };
 
-function parseBrevListOutput(output: string): BrevInstance[] {
-  const instances: BrevInstance[] = [];
-  for (const line of output.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const fields = trimmed.split(/\s+/);
-    const [name] = fields;
-    if (!name || /^(NAME|TYPE|Usage:|Error:|no)$/i.test(name)) continue;
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) continue;
-    const status = fields.find((field) =>
-      /^(CREATING|DELETING|FAILED|OFF|ON|READY|RUNNING|STARTING|STOPPED|STOPPING)$/i.test(field),
-    );
-    instances.push({
-      name,
-      status: status?.toUpperCase(),
-    });
-  }
-  return instances;
-}
-
 function inspectBrevInstances(): {
   authoritative: boolean;
-  instances: BrevInstance[];
+  instances: readonly BrevInstance[];
 } {
   try {
     return {
@@ -174,17 +155,14 @@ function inspectBrevInstances(): {
     };
   } catch {
     try {
-      return {
-        authoritative: true,
-        instances: parseBrevListOutput(brev("ls")),
-      };
+      return parseBrevTextInventory(brev("ls"));
     } catch {
       return { authoritative: false, instances: [] };
     }
   }
 }
 
-function listBrevInstances(): BrevInstance[] {
+function listBrevInstances(): readonly BrevInstance[] {
   return inspectBrevInstances().instances;
 }
 
