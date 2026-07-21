@@ -498,6 +498,12 @@ describe("starter prompt docs CTA", () => {
     }
 
     expect(promptSource).toContain("NEMOCLAW_AGENT=openclaw");
+    expect(promptSource).toContain("NEMOCLAW_AGENT=hermes");
+    expect(promptSource).toContain("NEMOCLAW_AGENT=langchain-deepagents-code");
+    expect(promptSource).toContain(
+      "set `NEMOCLAW_AGENT` and `NEMOCLAW_PROVIDER` from my selections",
+    );
+    expect(quickstartSource).toMatch(/NEMOCLAW_AGENT=openclaw\s*\\\s*NEMOCLAW_PROVIDER=build/);
     expect(promptSource).toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z");
     expect(promptSource).toContain("clear any inherited `NEMOCLAW_INSTALL_REF`");
     expect(promptSource).toContain(
@@ -529,6 +535,9 @@ describe("starter prompt docs CTA", () => {
     expect(commandsSource).toContain(
       "A nonempty value takes precedence over `NEMOCLAW_INSTALL_TAG`.",
     );
+    expect(commandsSource).toContain("Overridden by the `--install-ref` flag.");
+    expect(commandsSource).toContain("Overridden by the `--install-tag` flag.");
+    expect(commandsSource).toContain("Defaults to the admin-promoted `lkg` tag when unset.");
     expect(updateSource).toContain(
       "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=lkg bash",
     );
