@@ -63,6 +63,7 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 | Public reference APIs | `public-reference` |
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
+| Shrike Security AI action governance | `shrike-security` |
 | Tavily Search | `tavily` |
 | Telegram Bot API | `telegram` |
 | Weather and geocoding APIs | `weather` |
@@ -285,6 +286,21 @@ Configure `TAVILY_API_KEY` during that onboarding run.
 The `tavily` preset permits only `POST /search` and `POST /extract` to `api.tavily.com`.
 It enables request-body credential rewriting because Hermes sends its resolver placeholder in the JSON `api_key` field.
 OpenShell replaces that placeholder at egress, so the raw key is not written into the sandbox configuration.
+
+## AI Agent Action Governance With Shrike Security
+
+Use the `shrike-security` preset when the agent should consult [Shrike Security](https://shrikesecurity.com) before executing tool calls.
+The preset allows egress to `api.shrikesecurity.com` only, path-scoped to the `/agent/api/scan/enforce` decision endpoints, read-only session status, and health checks.
+The scan API returns one of `allow`, `warn`, `require_approval`, or `block` for each submitted action, and the calling SDK or MCP wrapper enforces that decision at the tool-call boundary.
+
+```bash
+$$nemoclaw my-assistant policy-add shrike-security --dry-run
+$$nemoclaw my-assistant policy-add shrike-security --yes
+```
+
+Scanning activates only after you configure a `SHRIKE_API_KEY` credential for the sandboxed agent.
+Without the key, the preset adds the network allowance but no scan traffic leaves the sandbox.
+Shrike documents API keys and the enforce contract in its [Quickstart](https://shrikesecurity.com/docs/quickstart).
 
 ## Weather and Public Reference Lookups
 
