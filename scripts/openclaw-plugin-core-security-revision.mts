@@ -273,6 +273,29 @@ function contentSnapshot(directory: string, label: string): ContentEntry[] {
   return entries;
 }
 
+function changedContentEntries(source: ContentEntry[], packed: ContentEntry[]): string[] {
+  const sourceByPath = new Map(source.map((entry) => [entry.path, entry]));
+  const packedByPath = new Map(packed.map((entry) => [entry.path, entry]));
+  const paths = [...new Set([...sourceByPath.keys(), ...packedByPath.keys()])].sort();
+  return paths
+    .flatMap((entryPath) => {
+      const sourceEntry = sourceByPath.get(entryPath);
+      const packedEntry = packedByPath.get(entryPath);
+      if (!sourceEntry) return [`${entryPath}: added during packing`];
+      if (!packedEntry) return [`${entryPath}: omitted during packing`];
+      if (sourceEntry.digest !== packedEntry.digest) {
+        return [`${entryPath}: contents changed during packing`];
+      }
+      if (sourceEntry.mode !== packedEntry.mode) {
+        return [
+          `${entryPath}: mode changed during packing (${sourceEntry.mode.toString(8)} -> ${packedEntry.mode.toString(8)})`,
+        ];
+      }
+      return [];
+    })
+    .slice(0, 20);
+}
+
 function packageSpec(manifest: JsonObject): string {
   return `${String(manifest.name)}@${String(manifest.version)}`;
 }
@@ -512,8 +535,11 @@ export function verifyRemediatedArchiveContents(packageRoot: string, archivePath
       unpackedRoot,
     ]);
     const packed = contentSnapshot(unpackedRoot, "remediated plugin archive tree");
-    if (JSON.stringify(packed) !== JSON.stringify(source)) {
-      throw new Error("remediated plugin archive contents changed during packing");
+    const changes = changedContentEntries(source, packed);
+    if (changes.length > 0) {
+      throw new Error(
+        `remediated plugin archive contents changed during packing: ${changes.join("; ")}`,
+      );
     }
   } finally {
     rmSync(unpackedRoot, { recursive: true, force: true });
