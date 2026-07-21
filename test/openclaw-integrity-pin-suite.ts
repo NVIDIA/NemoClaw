@@ -796,6 +796,9 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
         );
         for (const calls of [production.calls, base.calls]) {
+          expect(calls).toContain("npm ls -g --all openclaw @openclaw/fs-safe tar jszip");
+        }
+        for (const calls of [production.calls, base.calls]) {
           const installCalls = calls
             .split("\n")
             .filter((call) => call.startsWith("npm install -g "));

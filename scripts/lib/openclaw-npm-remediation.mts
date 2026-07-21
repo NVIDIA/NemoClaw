@@ -89,7 +89,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "openclaw@2026.6.10": {
     kind: "core",
     expectedPatchedMetadataIntegrity:
-      "sha512-m5CjeXs484TZPC4g4ESFfxncv0BKJOGUtn0r63qDi3jolwMCJ1DKG0n1pfweAuLEAlfoCKXRpY0Rl0i+POcezw==",
+      "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
   },
 });
 
@@ -302,6 +302,9 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   if (packageJson.dependencies?.tar !== "7.5.16") {
     throw new Error("openclaw@2026.6.10 must declare reviewed tar@7.5.16 before remediation");
   }
+  if (packageJson.dependencies?.jszip !== "3.10.1") {
+    throw new Error("openclaw@2026.6.10 must declare reviewed jszip@3.10.1 before remediation");
+  }
   if (packageJson.dependencies?.["brace-expansion"] !== undefined) {
     throw new Error("openclaw@2026.6.10 unexpectedly declares brace-expansion directly");
   }
@@ -319,15 +322,23 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   const tar = packages["node_modules/tar"] as JsonObject | undefined;
   const braceExpansion = packages["node_modules/brace-expansion"] as JsonObject | undefined;
   const fsSafe = packages["node_modules/@openclaw/fs-safe"] as JsonObject | undefined;
+  const jszip = packages["node_modules/jszip"] as JsonObject | undefined;
   const minimatch = packages["node_modules/minimatch"] as JsonObject | undefined;
   if (root.dependencies?.tar !== "7.5.16" || tar?.version !== "7.5.16") {
     throw new Error("openclaw@2026.6.10 tar shrinkwrap state changed after review");
   }
+  if (root.dependencies?.jszip !== "3.10.1" || jszip?.version !== "3.10.1") {
+    throw new Error("openclaw@2026.6.10 jszip shrinkwrap state changed after review");
+  }
   if (
+    fsSafe?.optionalDependencies?.jszip !== "^3.10.1" ||
     fsSafe?.optionalDependencies?.tar !== "7.5.13" ||
+    Object.keys(fsSafe.optionalDependencies).length !== 2 ||
     packages["node_modules/@openclaw/fs-safe/node_modules/tar"] !== undefined
   ) {
-    throw new Error("openclaw@2026.6.10 @openclaw/fs-safe tar layout changed after review");
+    throw new Error(
+      "openclaw@2026.6.10 @openclaw/fs-safe optional dependency layout changed after review",
+    );
   }
   if (
     braceExpansion?.version !== "5.0.6" ||
@@ -342,7 +353,7 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   tar.version = TAR_VERSION;
   tar.resolved = TAR_TARBALL;
   tar.integrity = TAR_INTEGRITY;
-  fsSafe.optionalDependencies.tar = TAR_VERSION;
+  delete fsSafe.optionalDependencies;
   braceExpansion.version = BRACE_EXPANSION_VERSION;
   braceExpansion.resolved = BRACE_EXPANSION_TARBALL;
   braceExpansion.integrity = BRACE_EXPANSION_INTEGRITY;
@@ -370,7 +381,7 @@ function patchFsSafePackageGraph(packageDirectory: string): void {
       "@openclaw/fs-safe@0.3.0 optional dependency graph changed; review the remediation",
     );
   }
-  packageJson.optionalDependencies.tar = TAR_VERSION;
+  delete packageJson.optionalDependencies;
   writeJson(packageJsonPath, packageJson);
 }
 

@@ -254,7 +254,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("`tar@7.5.16` with `tar@7.5.19`");
     expect(review).toContain("`brace-expansion@5.0.6` with `brace-expansion@5.0.7`");
     expect(review).toContain("`@openclaw/fs-safe@0.3.0`");
-    expect(review).toContain("optional `tar` pin from `7.5.13` to `7.5.19`");
+    expect(review).toContain("removes its duplicate optional `tar` and `jszip` declarations");
+    expect(review).toContain("direct `tar@7.5.19` and `jszip@3.10.1` dependencies");
     expect(review).toContain("`axios@1.16.0` with `axios@1.18.0`");
     expect(review).toContain("`https-proxy-agent@5.0.1` and `agent-base@6.0.2`");
     expect(review).toContain("exact registry SRI and tarball URL");
@@ -272,7 +273,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
       "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",
       "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
-      "sha512-m5CjeXs484TZPC4g4ESFfxncv0BKJOGUtn0r63qDi3jolwMCJ1DKG0n1pfweAuLEAlfoCKXRpY0Rl0i+POcezw==",
+      "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
       "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
     ]) {
@@ -431,6 +432,7 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_not_contains "$openclaw_block" 'pack_reviewed_npm_tarball' "$dockerfile inline pack helper"
   check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
   check_contains "$openclaw_block" 'ignore-scripts+reviewed-lifecycle+transitive-remediation-v1' "$dockerfile base provenance recipe"
+  check_contains "$openclaw_block" 'npm ls -g --all openclaw @openclaw/fs-safe tar jszip' "$dockerfile installed remediation graph guard"
   check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
   check_contains "$openclaw_block" 'mcporter-integrity=' "$dockerfile mcporter provenance integrity"
   check_contains "$openclaw_block" 'mcporter-lock-sha256=' "$dockerfile mcporter provenance lock hash"

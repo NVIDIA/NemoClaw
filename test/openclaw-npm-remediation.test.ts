@@ -80,7 +80,12 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
       {
         name: "openclaw",
         version: "2026.6.10",
-        dependencies: { "@openclaw/fs-safe": "0.3.0", minimatch: "10.2.5", tar: tarVersion },
+        dependencies: {
+          "@openclaw/fs-safe": "0.3.0",
+          jszip: "3.10.1",
+          minimatch: "10.2.5",
+          tar: tarVersion,
+        },
       },
       null,
       2,
@@ -99,13 +104,14 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
             version: "2026.6.10",
             dependencies: {
               "@openclaw/fs-safe": "0.3.0",
+              jszip: "3.10.1",
               minimatch: "10.2.5",
               tar: tarVersion,
             },
           },
           "node_modules/@openclaw/fs-safe": {
             version: "0.3.0",
-            optionalDependencies: { tar: "7.5.13" },
+            optionalDependencies: { jszip: "^3.10.1", tar: "7.5.13" },
           },
           "node_modules/brace-expansion": {
             version: "5.0.6",
@@ -115,6 +121,12 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
           "node_modules/minimatch": {
             version: "10.2.5",
             dependencies: { "brace-expansion": "^5.0.5" },
+          },
+          "node_modules/jszip": {
+            version: "3.10.1",
+            resolved: "https://registry.npmjs.org/jszip/-/jszip-3.10.1.tgz",
+            integrity:
+              "sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==",
           },
           "node_modules/tar": {
             version: tarVersion,
@@ -372,7 +384,7 @@ describe("OpenClaw npm remediation", () => {
       bundledDependencies?: string[];
       dependencies?: Record<string, string>;
     }>(path.join(directory, "package.json"));
-    expect(packageJson.dependencies).toMatchObject({ tar: "7.5.19" });
+    expect(packageJson.dependencies).toMatchObject({ jszip: "3.10.1", tar: "7.5.19" });
     expect(packageJson.bundledDependencies).toEqual(["@openclaw/fs-safe"]);
     expect(shrinkwrap.packages[""]).toMatchObject({ dependencies: { tar: "7.5.19" } });
     expect(shrinkwrap.packages["node_modules/tar"]).toMatchObject({
@@ -381,9 +393,9 @@ describe("OpenClaw npm remediation", () => {
       integrity:
         "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
     });
-    expect(shrinkwrap.packages["node_modules/@openclaw/fs-safe"]).toMatchObject({
-      optionalDependencies: { tar: "7.5.19" },
-    });
+    expect(shrinkwrap.packages["node_modules/@openclaw/fs-safe"]?.optionalDependencies).toBe(
+      undefined,
+    );
     expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
       version: "5.0.7",
       resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
@@ -442,9 +454,9 @@ describe("OpenClaw npm remediation", () => {
     );
     expect(packageJson).toMatchObject({
       bundledDependencies: ["@openclaw/fs-safe"],
-      dependencies: { tar: "7.5.19" },
+      dependencies: { jszip: "3.10.1", tar: "7.5.19" },
     });
-    expect(fsSafePackageJson.optionalDependencies).toMatchObject({ tar: "7.5.19" });
+    expect(fsSafePackageJson.optionalDependencies).toBeUndefined();
   });
 
   // source-shape-contract: security -- Extracted plugin contents prove the rebuilt archive carries every reviewed Axios replacement package

@@ -85,7 +85,8 @@ For `openclaw@2026.6.10`, the helper makes these changes:
 
 - Replaces `tar@7.5.16` with `tar@7.5.19`.
 - Replaces `brace-expansion@5.0.6` with `brace-expansion@5.0.7`.
-- Bundles the reviewed `@openclaw/fs-safe@0.3.0` package and changes its optional `tar` pin from `7.5.13` to `7.5.19`.
+- Bundles the reviewed `@openclaw/fs-safe@0.3.0` package and removes its duplicate optional `tar` and `jszip` declarations. The bundled package resolves OpenClaw's reviewed direct `tar@7.5.19` and `jszip@3.10.1` dependencies instead, including during a global npm install.
+- Verifies the installed global dependency tree before either the reviewed base image or production image can complete.
 
 For `@openclaw/slack@2026.6.10` and `@openclaw/msteams@2026.6.10`, the helper makes these changes:
 
@@ -106,10 +107,11 @@ The replacement packages are bound to these registry identities:
 The helper extracts and rebuilds archives with `tar` instead of invoking a package build or pack lifecycle, and it disables npm lifecycle scripts while retrieving replacement archives.
 It binds each patched package manifest and shrinkwrap to a committed SHA-512 metadata value.
 The core value also covers the bundled `@openclaw/fs-safe` package manifest.
-The expected values are `sha512-m5CjeXs484TZPC4g4ESFfxncv0BKJOGUtn0r63qDi3jolwMCJ1DKG0n1pfweAuLEAlfoCKXRpY0Rl0i+POcezw==` for OpenClaw core, `sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
+The expected values are `sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==` for OpenClaw core, `sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
 Both the library and command-line entry points enforce the same committed values.
 `Dockerfile.base` records `ignore-scripts+reviewed-lifecycle+transitive-remediation-v1` in its protected provenance marker.
 The production Dockerfile rejects stale base provenance and repeats the remediation when the marker does not match.
+Both image paths run `npm ls` against the installed OpenClaw, `fs-safe`, `tar`, and `jszip` graph so a missing or invalid global dependency fails during image assembly.
 The messaging installer applies the same remediation before it installs the reviewed Slack or Microsoft Teams archive.
 The reviewed npm audit applies that helper before installation, so Docker builds, messaging builds, and the advisory audit consume the same remediated archive shape.
 
