@@ -22,7 +22,10 @@ import {
   splitRebuildableSandboxes,
 } from "../domain/maintenance/upgrade";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
-import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
+import {
+  captureNamedGatewaySandboxListReadOnly,
+  captureSandboxListWithGatewayPreflightOrExit,
+} from "../openshell-sandbox-list";
 import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-recovery";
 import * as sandboxVersion from "../sandbox/version";
 import * as registry from "../state/registry";
@@ -190,17 +193,46 @@ function isPreparedRecoveryCandidate(
 async function confirmAbsentRecoveryCandidates(
   absentCandidates: registry.SandboxEntry[],
   selectedGatewayName: string,
+  checkOnly = false,
 ): Promise<registry.SandboxEntry[]> {
   if (absentCandidates.length === 0) return absentCandidates;
-  const confirmation = await captureSandboxListWithGatewayPreflightOrExit(
-    {
-      action: "confirming sandboxes absent from the selected gateway",
-      command: `${CLI_NAME} upgrade-sandboxes`,
-    },
-    { gatewayName: selectedGatewayName },
-  );
+  const context = {
+    action: "confirming sandboxes absent from the selected gateway",
+    command: `${CLI_NAME} upgrade-sandboxes`,
+  };
+  // #7279: a read-only check must never recover/select the gateway.
+  const confirmation = checkOnly
+    ? captureNamedGatewaySandboxListReadOnly(context, selectedGatewayName)
+    : await captureSandboxListWithGatewayPreflightOrExit(context, {
+        gatewayName: selectedGatewayName,
+      });
   const confirmedLiveNames = parseReadySandboxNames(confirmation.output || "");
   return absentCandidates.filter((sandbox) => !confirmedLiveNames.has(sandbox.name));
+}
+
+/**
+ * Choose the gateway `upgrade-sandboxes --check` observes. A read-only check
+ * must target where the registered sandboxes actually live, not the ambient
+ * NEMOCLAW_GATEWAY_PORT default: onboarding under a non-default port records the
+ * sandbox under e.g. `nemoclaw-18080`, and pinning to the default `nemoclaw`
+ * both misreports it and (before #7279) started/selected the wrong gateway.
+ * A single recorded gateway is the unambiguous target; with several distinct
+ * ones (or none), keep the ambient default so multi-gateway behavior is
+ * unchanged — the read-only query still avoids any mutation either way.
+ */
+function resolveCheckGatewayName(
+  sandboxes: readonly registry.SandboxEntry[],
+  fallbackGatewayName: string,
+): string {
+  const recorded = new Set<string>();
+  for (const sandbox of sandboxes) {
+    try {
+      recorded.add(resolveSandboxGatewayName(sandbox));
+    } catch {
+      // Invalid persisted binding — never drive a list against it.
+    }
+  }
+  return recorded.size === 1 ? [...recorded][0] : fallbackGatewayName;
 }
 
 export async function upgradeSandboxes(
@@ -222,14 +254,22 @@ export async function upgradeSandboxes(
   // initial list, the confirmation list, and persisted-binding eligibility must
   // share this source; OpenShell's mutable current selection may be a sibling
   // gateway where the same sandbox name has different state.
-  const selectedGatewayName = resolveGatewayName(upgradeSandboxesDependencies.getGatewayPort());
-  const liveResult = await captureSandboxListWithGatewayPreflightOrExit(
-    {
-      action: "checking sandbox upgrade state",
-      command: `${CLI_NAME} upgrade-sandboxes`,
-    },
-    { gatewayName: selectedGatewayName },
-  );
+  const ambientGatewayName = resolveGatewayName(upgradeSandboxesDependencies.getGatewayPort());
+  // #7279: `--check` is documented read-only. Target the gateway the registered
+  // sandboxes actually record and query it without starting or selecting any
+  // gateway; only the mutating auto path keeps the recovering preflight.
+  const selectedGatewayName = checkOnly
+    ? resolveCheckGatewayName(sandboxes, ambientGatewayName)
+    : ambientGatewayName;
+  const liveListContext = {
+    action: "checking sandbox upgrade state",
+    command: `${CLI_NAME} upgrade-sandboxes`,
+  };
+  const liveResult = checkOnly
+    ? captureNamedGatewaySandboxListReadOnly(liveListContext, selectedGatewayName)
+    : await captureSandboxListWithGatewayPreflightOrExit(liveListContext, {
+        gatewayName: selectedGatewayName,
+      });
   const liveNames = parseReadySandboxNames(liveResult.output || "");
   // Sandboxes the selected gateway observes in a non-Ready phase. Absence from
   // the selected gateway is handled by isPreparedRecoveryCandidate, which recovers
@@ -293,6 +333,7 @@ export async function upgradeSandboxes(
     const confirmedAbsentCandidates = await confirmAbsentRecoveryCandidates(
       absentCandidates,
       selectedGatewayName,
+      checkOnly,
     );
     const confirmedAbsentNames = new Set(confirmedAbsentCandidates.map((s) => s.name));
     for (const sandbox of absentCandidates) {
