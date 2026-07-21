@@ -7,8 +7,6 @@ import path from "node:path";
 
 import { vi } from "vitest";
 
-import { resolveDualStationSimulationFixturePython } from "../../scripts/simulate-dual-station.mts";
-
 import type {
   ModelStagingCommandOptions,
   ModelStagingCommandResult,
@@ -24,11 +22,27 @@ function result(stdout = "", status = 0): ModelStagingCommandResult {
   return { status, stdout, stderr: "" };
 }
 
+function resolveFixturePython(): string {
+  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
+    if (!directory || !path.isAbsolute(directory) || path.normalize(directory) !== directory) {
+      continue;
+    }
+    try {
+      const candidate = fs.realpathSync(path.join(directory, "python3"));
+      fs.accessSync(candidate, fs.constants.X_OK);
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Keep searching PATH for an executable fixture interpreter.
+    }
+  }
+  throw new Error("python3 is required for the Station model-staging fixtures");
+}
+
 function runPython(
   args: readonly string[],
   options: ModelStagingCommandOptions,
 ): ModelStagingCommandResult {
-  const completed = spawnSync(resolveDualStationSimulationFixturePython(), [...args], {
+  const completed = spawnSync(resolveFixturePython(), [...args], {
     encoding: "utf8",
     env: options.env,
     input: options.input,

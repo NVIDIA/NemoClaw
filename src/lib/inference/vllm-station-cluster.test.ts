@@ -1,15 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
 import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { resolveDualStationSimulationFixturePython } from "../../../scripts/simulate-dual-station.mts";
 
 import { buildRemoteVllmDockerEnv } from "./vllm-docker-env";
 import {
@@ -32,11 +29,27 @@ import {
 import {
   createDualStationSshBindingFixture,
   type DualStationSshBindingFixture,
-  retargetDualStationSshBindingFixture,
 } from "./vllm-station-ssh-binding.test-support";
 
 const LOCAL_HOME = "/home/local";
 const PEER_HOME = "/home/nvidia";
+
+function resolveFixturePython(): string {
+  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
+    if (!directory || !path.isAbsolute(directory) || path.normalize(directory) !== directory) {
+      continue;
+    }
+    try {
+      const candidate = fs.realpathSync(path.join(directory, "python3"));
+      fs.accessSync(candidate, fs.constants.X_OK);
+      if (fs.statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Keep searching PATH for an executable fixture interpreter.
+    }
+  }
+  throw new Error("python3 is required for the Station host-probe fixtures");
+}
+
 function strictDockerSshConfig(binding: DualStationSshBinding): string {
   return [
     `hostname ${binding.resolvedHost}`,
@@ -233,11 +246,10 @@ function fixtureDeps(
 }
 
 function runWith(deps: StationClusterProbeDeps, target = "nvidia@station-b") {
-  sshFixture = retargetDualStationSshBindingFixture(
-    sshFixture,
-    target,
-    validatePeerTarget(target).ok,
-  );
+  if (validatePeerTarget(target).ok && sshFixture.binding.peerTarget !== target) {
+    sshFixture.cleanup();
+    sshFixture = createDualStationSshBindingFixture(target);
+  }
   return probeDualStationVllmCapability({
     env: {
       [NEMOCLAW_DGX_STATION_PEER_ENV]: target,
@@ -373,7 +385,7 @@ describe("probeDualStationVllmCapability", () => {
       peerModelSnapshot: "ready",
       plan: { peerSshBinding: { peerTarget: target } },
     });
-    assert(result.kind === "ready", "expected ready fixture");
+    if (result.kind !== "ready") throw new Error("expected ready fixture");
     expect(buildRemoteVllmDockerEnv(result.plan.peerSshBinding, {}).DOCKER_HOST).toBe(
       `ssh://${result.plan.peerSshBinding.sshUser}@${result.plan.peerSshBinding.resolvedHost}`,
     );
@@ -872,7 +884,7 @@ describe("probe command boundary", () => {
       },
     );
     createStationClusterProbeDeps(recordingSpawn).probeLocalHost();
-    const python = resolveDualStationSimulationFixturePython();
+    const python = resolveFixturePython();
 
     try {
       const executed = spawnSync(python, ["-"], {
@@ -913,7 +925,7 @@ describe("probe command boundary", () => {
       },
     );
     createStationClusterProbeDeps(recordingSpawn).probeLocalHost();
-    const python = resolveDualStationSimulationFixturePython();
+    const python = resolveFixturePython();
     const fixturePrelude = String.raw`
 import pathlib
 import stat as fixture_stat

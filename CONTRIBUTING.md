@@ -307,7 +307,6 @@ These are the primary npm scripts for day-to-day development:
 | `npm run test:watch` | Watch the CLI, plugin, and E2E-support projects and rerun affected tests |
 | `npm run test:shuffle` | Shuffle test order in the focused source projects without collecting coverage |
 | `npm run test:diagnose:leaks` | Report async-resource leaks and diagnose a Vitest process that hangs during shutdown |
-| `npm run test:dual-station-sim` | Run the guarded, fixture-backed dual-DGX Station planner and lifecycle simulator |
 | `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
 | `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
 | `npm run test:live-e2e` | Opt into live E2E scenarios (mutates real external state) |
@@ -328,39 +327,6 @@ npx vitest run --project e2e-support
 
 This project is fast and does not run live targets. Live E2E remains opt-in through
 `npm run test:live-e2e` or the applicable GitHub Actions workflow.
-
-### Dual-Station Simulation
-
-Run the dual-Station simulator when changing DGX Station topology qualification, strict peer SSH
-binding, model staging, distributed launch arguments, lifecycle ownership, rollback, or managed-vLLM
-source orchestration:
-
-```bash
-npm run test:dual-station-sim
-```
-
-The command selects only the repository's audited non-live source suites, gives the Vitest child a
-private temporary home, cache, and temp directory, passes a minimal allowlist of local process
-variables, forces live projects off, and prepends fail-fast shims for Docker, SSH, networking, GPU,
-Python, and download commands. Its planner fixtures
-model two GB300 systems, two 400 Gbit/s MTU-9000 CX-8 rails, reciprocal private `/30` links, direct
-routes and neighbors, jumbo frames, and a common RoCEv2 GID. Its in-memory Docker adapters exercise
-the exact production launch contracts, worker-first ordering, ownership, transaction, rollback,
-reconciliation, secret placement, and cleanup logic. A connected contract test passes the real
-planner output into those lifecycle functions and models registration-gated readiness, bearer auth,
-worker loss, and recovery in memory.
-
-The simulator does not execute or cover `install.sh` pair-preparation integration; its audited suites
-begin at the managed-vLLM source contracts.
-
-The selected suites use in-memory adapters rather than a real Docker daemon, SSH target, network
-interface, GPU, image pull, or model download. They may execute local fixture-only shell syntax
-checks and therefore require a POSIX development host. The runner is bounded to two minutes. This
-guarding is defense in depth around a narrowly reviewed suite list, not an OS network sandbox. The
-simulated service is not a real vLLM server. This simulator does not prove NCCL, RoCE, GPUDirect
-RDMA, physical link behavior, or real TP=2 inference.
-Use an explicitly authorized live two-Station smoke for those claims; do not add production
-`SKIP_GPU`, `SKIP_RDMA`, or assumed-ready switches to make this simulator pass.
 
 ### Test Declarative Behavior
 
