@@ -186,39 +186,6 @@ const REVIEWED_PLUGINS: Readonly<Record<string, PluginReview>> = Object.freeze({
   ),
 });
 
-const REMEDIATED_PLUGIN_INTEGRITIES: Readonly<Record<string, string>> = Object.freeze({
-  "@openclaw/slack@2026.5.22":
-    "sha512-YhIC1rwr2Ez+CjiYlNeGcEXAm/Gj9rGJlrYscIhFsXujetgzkV6Ac2Or6/Gl101H2AFLbUj4Km3zBCTZ10u9nQ==",
-  "@openclaw/msteams@2026.5.22":
-    "sha512-Gt1ed2sUi6gmTDzRLVaq2D7FLcLucLtKWk4qai+CHFxg/WdfeBK+5eamwM/uXHl8GTCFOubnL1sr3ChTszWoUQ==",
-  "@openclaw/discord@2026.5.22":
-    "sha512-XB6yf5B95NADny9WKRlVVMFHivpQRuwp8XIoKQtQ0YMWU5BJZrAGSzzudEu30Haom5rXrAvjApYGdFUKq3I0KQ==",
-  "@openclaw/diagnostics-otel@2026.5.22":
-    "sha512-cTM2b9fjOfII0CMUB4xTyZqAiQ9C5J/l8YGVYF22AoHb0eM9UiLkEfwdGDe7PajNv/wONGnJvBPioOMN7Gd0Xg==",
-  "@openclaw/whatsapp@2026.5.22":
-    "sha512-4CkdaXgFMjjX9AVK5QvCjJhA1WkgVN/W34CXa7yLSwBEZl9W0DQnDrpASUiTvFETRDb+pBgLc1F+t5FJWVuJBg==",
-  "@openclaw/slack@2026.5.27":
-    "sha512-oZLukTVMuU0rZfEp9mOp6AmT39sK/P6ZI7MpsFtGzOJs7tu5mueWbfHqbsQHE1qxeWgNbp7yAbucWcbPUkDneA==",
-  "@openclaw/msteams@2026.5.27":
-    "sha512-csAuFGkArScARt86vvUW9/dwZLZQJRZ84eSWBVQeTli3dlmXITZ8IsCO6nPPVK3pRiwsSi89Ofmn42M61zYi2g==",
-  "@openclaw/discord@2026.5.27":
-    "sha512-I/u/8GWGVRzrrnR7PUwE8bt4SwSoaOkCuR52gq8t22yRMVyZvNvfcl6MxHGwZ1HmhynXPVuwTN4PTngMgO4J4Q==",
-  "@openclaw/diagnostics-otel@2026.5.27":
-    "sha512-qjadWYgImNweDzRI4wC/ObtLosfKtHZnknqft9wfHzAm+rtTOWebxUxF6wLQUJi8F2ZgAIQd1uvoTNP1jjEUDA==",
-  "@openclaw/whatsapp@2026.5.27":
-    "sha512-tbSPcPU/c4Jq13PMbOTPPBPYA3mpij2TLeuhwC6tpedE2p/TBnhx509VXohrm/TPCeWbO6WRCQnlmop3tmRHJg==",
-  "@openclaw/slack@2026.6.10":
-    "sha512-KXGqe1l5eXc+8psjFSuJ5dCySfs70sFAE27g/E80sRwmcBLlt2UYuqMPoidGAO3SmkXKldm+Zn/NNLDhLwqUjQ==",
-  "@openclaw/msteams@2026.6.10":
-    "sha512-MWC5bORDs2WlhdqAgw5IP7pUZnnOXm7dfgRv5QABeKiTpm6d+OtdaZuyKGf2pNVWmQ+yjDZPMPurg/JGGLA9Yw==",
-  "@openclaw/discord@2026.6.10":
-    "sha512-/R/O9KD4/NmC02BtiCPfBz52nAMsgpdem+uqozf+HHio5ii4IhNNW9fJpgvMM40PXxizQcq4yzV4u4vzfXGl8g==",
-  "@openclaw/diagnostics-otel@2026.6.10":
-    "sha512-JR8DDLKIUp0MDZYMGF7wypiH/lOlW+QDsiw9SLBG4R6DkBA0oNazhVrux0XdQZJwLbqeLdUITcxf9Zsq8HHiZw==",
-  "@openclaw/whatsapp@2026.6.10":
-    "sha512-6A8wISi0SbGHcB0K5CLEVFs4ypMEzuSekafm+K+2uEuFg65bGmzbNf5j0Ba40TyRvZzPaVkn6Tc/zGqFAqYTLw==",
-});
-
 function readJson(file: string): JsonObject {
   const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -277,6 +244,33 @@ function rejectUnsafeTree(directory: string, label: string): void {
     if (entry.isDirectory() && !entry.isSymbolicLink()) rejectUnsafeTree(child, label);
     else if (!entry.isFile()) throw new Error(`${label} contains an unsafe member: ${child}`);
   }
+}
+
+type ContentEntry = Readonly<{ digest: string; mode: number; path: string }>;
+
+function contentSnapshot(directory: string, label: string): ContentEntry[] {
+  rejectUnsafeTree(directory, label);
+  const entries: ContentEntry[] = [];
+  const visit = (current: string): void => {
+    for (const name of readdirSync(current).sort()) {
+      if (name.includes("\n") || name.includes("\r") || name.includes("\\")) {
+        throw new Error(`${label} contains an unsafe name: ${name}`);
+      }
+      const child = path.join(current, name);
+      const metadata = lstatSync(child);
+      if (metadata.isDirectory()) {
+        visit(child);
+      } else if (metadata.isFile()) {
+        entries.push({
+          digest: createHash("sha512").update(readFileSync(child)).digest("base64"),
+          mode: metadata.mode & 0o777,
+          path: path.relative(directory, child),
+        });
+      }
+    }
+  };
+  visit(directory);
+  return entries;
 }
 
 function packageSpec(manifest: JsonObject): string {
@@ -475,11 +469,17 @@ function runTar(args: string[]): string {
   return result.stdout;
 }
 
-function classifyArchive(archivePath: string): string {
+function safeArchiveMembers(archivePath: string): string[] {
   const resolved = path.resolve(archivePath);
   const members = runTar(["-tzf", resolved]).split("\n").filter(Boolean);
+  const entryTypes = runTar(["-tvzf", resolved])
+    .split("\n")
+    .filter(Boolean)
+    .map((entry) => entry[0]);
   if (
     !members.includes("package/package.json") ||
+    entryTypes.length !== members.length ||
+    entryTypes.some((type) => type !== "-" && type !== "d") ||
     members.some((member) => {
       const normalized = member.endsWith("/") ? member.slice(0, -1) : member;
       return (
@@ -491,6 +491,38 @@ function classifyArchive(archivePath: string): string {
   ) {
     throw new Error(`OpenClaw plugin archive has an unsafe member: ${resolved}`);
   }
+  return members;
+}
+
+export function verifyRemediatedArchiveContents(packageRoot: string, archivePath: string): void {
+  const resolvedPackageRoot = path.resolve(packageRoot);
+  const resolvedArchive = path.resolve(archivePath);
+  const source = contentSnapshot(resolvedPackageRoot, "remediated plugin source tree");
+  safeArchiveMembers(resolvedArchive);
+  const unpackedRoot = mkdtempSync(
+    path.join(path.dirname(resolvedArchive), "nemoclaw-remediated-verify-"),
+  );
+  try {
+    runTar([
+      "-xzf",
+      resolvedArchive,
+      "--strip-components=1",
+      "--no-same-owner",
+      "-C",
+      unpackedRoot,
+    ]);
+    const packed = contentSnapshot(unpackedRoot, "remediated plugin archive tree");
+    if (JSON.stringify(packed) !== JSON.stringify(source)) {
+      throw new Error("remediated plugin archive contents changed during packing");
+    }
+  } finally {
+    rmSync(unpackedRoot, { recursive: true, force: true });
+  }
+}
+
+function classifyArchive(archivePath: string): string {
+  const resolved = path.resolve(archivePath);
+  safeArchiveMembers(resolved);
   const manifest = JSON.parse(runTar(["-xOzf", resolved, "package/package.json"]));
   const spec = packageSpec(manifest);
   const reviewed = REVIEWED_PLUGINS[spec];
@@ -593,11 +625,10 @@ export function materializeReviewedPluginSecurityRevision(options: {
     const observedIntegrity = `sha512-${createHash("sha512")
       .update(readFileSync(remediatedArchive))
       .digest("base64")}`;
-    if (observedIntegrity !== REMEDIATED_PLUGIN_INTEGRITIES[expectedSpec]) {
-      throw new Error(
-        `${expectedSpec} remediated archive integrity mismatch: expected ${REMEDIATED_PLUGIN_INTEGRITIES[expectedSpec]}, got ${observedIntegrity}`,
-      );
+    if (report[0].integrity !== observedIntegrity) {
+      throw new Error(`${expectedSpec} npm pack integrity report changed`);
     }
+    verifyRemediatedArchiveContents(packageRoot, remediatedArchive);
     const remediatedSpec = JSON.parse(runTar(["-xOzf", remediatedArchive, "package/package.json"]));
     if (packageSpec(remediatedSpec) !== expectedSpec) {
       throw new Error(`${expectedSpec} remediated archive identity changed`);

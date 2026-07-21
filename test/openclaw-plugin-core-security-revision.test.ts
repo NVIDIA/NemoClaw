@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import {
   classifyReviewedPluginCoreInstallTarget,
   patchInstalledOpenClawPluginCore,
   patchReviewedOpenClawPluginRoot,
+  verifyRemediatedArchiveContents,
 } from "../scripts/openclaw-plugin-core-security-revision.mts";
 
 const tempDirectories: string[] = [];
@@ -187,6 +189,38 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
       "@openclaw/whatsapp@2026.5.22",
     );
     expect(classifyReviewedPluginCoreInstallTarget("npm:@openclaw/whatsapp@2026.7.1")).toBe("");
+  });
+
+  it("verifies packed plugin contents instead of unstable gzip bytes", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-pack-contents-"));
+    tempDirectories.push(root);
+    const source = path.join(root, "source");
+    const staging = path.join(root, "staging", "package");
+    writePackage(source, { name: "packed-plugin", version: "1.0.0" });
+    fs.writeFileSync(path.join(source, "payload.js"), "module.exports = true;\n");
+    fs.cpSync(source, staging, { recursive: true });
+    const archive = path.join(root, "packed-plugin.tgz");
+    const packed = spawnSync("tar", ["-czf", archive, "-C", path.dirname(staging), "package"], {
+      encoding: "utf8",
+    });
+    expect(packed.status, packed.stderr).toBe(0);
+    expect(() => verifyRemediatedArchiveContents(source, archive)).not.toThrow();
+    fs.writeFileSync(path.join(source, "payload.js"), "module.exports = false;\n");
+    expect(() => verifyRemediatedArchiveContents(source, archive)).toThrow(
+      "archive contents changed during packing",
+    );
+
+    const linkedArchive = path.join(root, "linked-plugin.tgz");
+    fs.symlinkSync("payload.js", path.join(staging, "payload-link.js"));
+    const linked = spawnSync(
+      "tar",
+      ["-czf", linkedArchive, "-C", path.dirname(staging), "package"],
+      { encoding: "utf8" },
+    );
+    expect(linked.status, linked.stderr).toBe(0);
+    expect(() => verifyRemediatedArchiveContents(source, linkedArchive)).toThrow(
+      "archive has an unsafe member",
+    );
   });
 
   it("rejects package metadata replaced by a symbolic link", () => {
