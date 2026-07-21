@@ -25,7 +25,8 @@ Before asking for consent, explain all of these boundaries:
 - NemoClaw does not configure the two private rails, scan the network, enroll SSH trust, or reboot either Station. The operator owns physical isolation, firewalling, SSH trust, and manual reboots.
 - The dual-Station runtime uses unauthenticated Ray, NCCL, and vLLM coordination traffic, including the Ray head on TCP port `6379` and Ray worker traffic. Both Stations and every host that can reach either rail must be mutually trusted; a shared `/24` is not equivalent to the required direct private `/30` rails.
 - Nemotron Ultra Express discloses an approximately `352 GB` model download. DeepSeek Express downloads its pinned vLLM container and model data. Both require enough space on the model-cache filesystem and Docker storage.
-- DGX Station remains an evaluation path with deferred end-to-end validation on physical hardware, so startup may still fail after readiness checks.
+- DGX Station is tested with limitations across qualified profiles on one physical DGX Station GB300.
+- Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
 
 Ask: "Which DGX Station Express option would you like?"
 Choices:
