@@ -5,6 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs.mts";
+
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const PREREQUISITES = path.join(REPO_ROOT, "docs", "get-started", "prerequisites.mdx");
@@ -48,25 +50,34 @@ describe("DGX Station documentation ownership", () => {
     }
     for (const version of ["7.2.0", "7.4.0", "7.5.0"]) {
       expect(stationPreparation).toContain(version);
-      expect(quickstart).toContain(version);
+      expect(quickstart).not.toContain(version);
     }
     expect(stationPreparation).toContain("DGX Server for GALAXY-GB300");
-    expect(quickstart).toContain("DGX Server for GALAXY-GB300");
+    expect(quickstart).not.toContain("DGX Server for GALAXY-GB300");
     expect(stationPreparation).toContain("--force-station-install");
     expect(stationPreparation).toContain("metadata omits or varies fields");
     expect(stationPreparation).toContain("Remove the override after");
-    expect(quickstart).toContain("--force-station-install");
+    expect(quickstart).not.toContain("--force-station-install");
     expect(platformSupport).toContain("explicit temporary metadata override");
     expect(platformSupport).toContain("exact read-only BDF directory");
     expect(platformSupport).toContain("they do not expose `/sys`, the PCI parent subtree");
     expect(platformSupport).toContain("`/sys/fs/cgroup/cgroup.controllers`");
     expect(platformSupport).toContain("`/sys/class/net/lo/address`");
-    expect(vllmSetup).toContain("explicit temporary metadata override");
-    expect(stationPreparation).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-    expect(stationPreparation).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
+    expect(vllmSetup).toContain("Prepare DGX Station to Install NemoClaw");
+    expect(vllmSetup).toContain("[Platform Support](../../reference/platform-support)");
+    expect(vllmSetup).toContain("--station-deepseek");
+    expect(vllmSetup).toContain("For a headless DGX Station setup");
+    expect(vllmSetup).toContain("NEMOCLAW_NON_INTERACTIVE=1");
+    expect(vllmSetup).toContain("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
+    expect(vllmSetup).not.toContain("One physical DGX OS `7.5.0` GB300 validation completed");
+    expect(stationPreparation).not.toContain(
+      "One physical DGX OS `7.5.0` GB300 validation completed",
+    );
+    expect(quickstart).not.toContain("One physical DGX OS `7.5.0` GB300 validation completed");
+    expect(quickstart).not.toContain("--station-deepseek");
     expect(stationPreparation).toContain("[Platform Support](../../reference/platform-support)");
     expect(prerequisites).toContain("### DGX Station Express Preparation");
-    expect(prerequisites).toMatch(/\| DGX OS \(Station\) \| Docker \| Deferred \|/);
+    expect(prerequisites).toContain("| DGX OS (Station) | Docker |");
     expect(prerequisites).toContain("additional-setup/dgx-station-preparation");
     expect(prerequisites).toContain(
       "[Additional Setup for DGX Station](additional-setup/dgx-station-preparation)",
@@ -75,9 +86,10 @@ describe("DGX Station documentation ownership", () => {
       "[Additional Setup for Windows Machines](additional-setup/windows-preparation)",
     );
     expect(quickstart).toContain("additional-setup/dgx-station-preparation");
+    expect(quickstart).toContain("additional-setup/windows-preparation");
+    expect(quickstart).toContain("../inference/local-inference/set-up-vllm");
+    expect(quickstart).toContain("../reference/platform-support");
     expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
-    expect(quickstart).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-    expect(quickstart).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
   });
 
   it("labels platform-specific prerequisite pages as additional setup", () => {
@@ -96,6 +108,23 @@ describe("DGX Station documentation ownership", () => {
     ).toHaveLength(3);
     expect(docsIndex.match(/page: "Additional Setup for DGX Station"/g)).toHaveLength(3);
     expect(docsIndex.match(/page: "Additional Setup for Windows Machines"/g)).toHaveLength(3);
+  });
+
+  it("keeps the headless Station installer agent-aware in every generated guide", () => {
+    const source = fs.readFileSync(VLLM_SETUP, "utf-8");
+    const variants = [
+      ["openclaw", "openclaw"],
+      ["hermes", "hermes"],
+      ["deepagents", "langchain-deepagents-code"],
+    ] as const;
+
+    for (const [variant, agent] of variants) {
+      const rendered = renderAgentVariantPage(source, variant);
+
+      expect(rendered).toContain(`NEMOCLAW_AGENT=${agent} \\`);
+      expect(rendered).toContain("NEMOCLAW_PROVIDER=install-vllm");
+      expect(rendered).not.toContain("<AgentOnly");
+    }
   });
 
   it("redirects every retired Prerequisites child route directly to Additional Setup", () => {

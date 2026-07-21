@@ -40,6 +40,7 @@ This override exists for current genuine Station factory images whose `/etc/dgx-
 Remove the override after those images publish recognized metadata or NemoClaw replaces the exact allowlist with a separately qualified platform-family and runtime-capability check.
 
 Run the override from an interactive terminal:
+If the installer cannot read the prompt, it stops before host changes.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --force-station-install
@@ -53,6 +54,7 @@ The installer records the override in the printed relogin command when Docker-gr
 
 On the generic Ubuntu path, accepting express install prepares the host with NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
 Preparation probes package and runtime state first, reuses exact matches, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
+
 NemoClaw accepts an idle PackageKit daemon and quiesces it during repository and package changes.
 NemoClaw still stops before mutation when it finds any of these conditions:
 
@@ -133,14 +135,7 @@ The preparation helper writes a private audit log under `~/station-bootstrap-log
 Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS path leaves only the digest-pinned visibility-test image in the Docker cache.
 The AI Developer Tools path can also leave the packaged CDI refresh units enabled when it repairs a missing device.
 
-One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
-Repeat qualification from a clean host and CI coverage remain pending.
-For the complete support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
-
-<Warning title="DGX Station Support Status">
-DGX Station remains Deferred.
-Repeat qualification from a clean host and CI coverage remain pending before any support-status promotion.
-</Warning>
+For the current support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
 
 ## Next Step
 
