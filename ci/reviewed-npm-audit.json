@@ -4,7 +4,7 @@
   "severityThreshold": "high",
   "artifactDirectory": "coverage/reviewed-npm-audit",
   "archiveReview": {
-    "graphLabel": "reviewed archive graph",
+    "graphLabel": "reviewed raw archive graph",
     "expectedFindings": [
       {
         "packageName": "axios",

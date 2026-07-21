@@ -244,40 +244,57 @@ export function assertReviewedAuditFindings(
   }
 }
 
-function materializeArchiveGraph(packages: readonly ReviewedPackage[], tempRoot: string): string {
-  const graphDirectory = path.join(tempRoot, "reviewed-archive-graph");
+function installArchiveGraph(
+  graphName: string,
+  archivePaths: readonly string[],
+  tempRoot: string,
+): string {
+  const graphDirectory = path.join(tempRoot, graphName);
   fs.mkdirSync(graphDirectory);
   fs.writeFileSync(
     path.join(graphDirectory, "package.json"),
     `${JSON.stringify({ name: "nemoclaw-reviewed-production-graph", private: true, version: "1.0.0" }, null, 2)}\n`,
   );
-  const archives = packages.map((reviewed) => {
-    const archive = packReviewedNpmArchive({
+  run(
+    "npm",
+    ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", ...archivePaths],
+    graphDirectory,
+  );
+  return graphDirectory;
+}
+
+function materializeArchiveGraphs(
+  packages: readonly ReviewedPackage[],
+  tempRoot: string,
+): Readonly<{ raw: string; remediated: string }> {
+  const archives = packages.map((reviewed) => ({
+    packageSpec: reviewed.packageSpec,
+    packed: packReviewedNpmArchive({
       expectedIntegrity: reviewed.integrity,
       label: reviewed.label,
       packageSpec: reviewed.packageSpec,
       tarballUrl: reviewed.tarballUrl,
       tempDirectory: tempRoot,
-    });
-    return remediateReviewedOpenClawArchive({
-      archivePath: archive.archivePath,
-      packageSpec: reviewed.packageSpec,
-      workingDirectory: archive.rootDirectory,
-    });
-  });
-  run(
-    "npm",
-    [
-      "install",
-      "--ignore-scripts",
-      "--omit=dev",
-      "--no-audit",
-      "--no-fund",
-      ...archives.map((archive) => archive.archivePath),
-    ],
-    graphDirectory,
+    }),
+  }));
+  const raw = installArchiveGraph(
+    "reviewed-raw-archive-graph",
+    archives.map(({ packed }) => packed.archivePath),
+    tempRoot,
   );
-  return graphDirectory;
+  const remediatedPaths = archives.map(({ packageSpec, packed }) =>
+    remediateReviewedOpenClawArchive({
+      archivePath: packed.archivePath,
+      packageSpec,
+      workingDirectory: packed.rootDirectory,
+    }),
+  );
+  const remediated = installArchiveGraph(
+    "reviewed-remediated-archive-graph",
+    remediatedPaths.map((archive) => archive.archivePath),
+    tempRoot,
+  );
+  return { raw, remediated };
 }
 
 function materializeLockedGraph(graph: LockedGraph, tempRoot: string): string {
@@ -308,26 +325,36 @@ function main(): void {
   fs.mkdirSync(artifactDirectory, { recursive: true });
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
-    const archiveReport = auditGraph(
-      materializeArchiveGraph(config.archivePackages, tempRoot),
-      path.join(artifactDirectory, "reviewed-archive-graph.json"),
+    const archiveGraphs = materializeArchiveGraphs(config.archivePackages, tempRoot);
+    const rawArchiveReport = auditGraph(
+      archiveGraphs.raw,
+      path.join(artifactDirectory, "reviewed-raw-archive-graph.json"),
     );
     assertReviewedAuditFindings(
-      archiveReport,
+      rawArchiveReport,
       config.archiveReview.expectedFindings,
       config.severityThreshold,
     );
-    const archiveCounts = vulnerabilityCounts(archiveReport);
+    const rawArchiveCounts = vulnerabilityCounts(rawArchiveReport);
     console.log(
-      `${config.archiveReview.graphLabel} exact reviewed input: ${SEVERITIES.map((entry) => `${entry}=${archiveCounts[entry]}`).join(" ")}`,
+      `${config.archiveReview.graphLabel} exact reviewed input: ${SEVERITIES.map((entry) => `${entry}=${rawArchiveCounts[entry]}`).join(" ")}`,
     );
-    const reports = config.lockedGraphs.map((graph, index) => ({
-      label: graph.label,
-      report: auditGraph(
-        materializeLockedGraph(graph, tempRoot),
-        path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
-      ),
-    }));
+    const reports = [
+      {
+        label: "reviewed remediated archive graph",
+        report: auditGraph(
+          archiveGraphs.remediated,
+          path.join(artifactDirectory, "reviewed-remediated-archive-graph.json"),
+        ),
+      },
+      ...config.lockedGraphs.map((graph, index) => ({
+        label: graph.label,
+        report: auditGraph(
+          materializeLockedGraph(graph, tempRoot),
+          path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
+        ),
+      })),
+    ];
     const failures: string[] = [];
     for (const { label, report } of reports) {
       const counts = vulnerabilityCounts(report);
