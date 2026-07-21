@@ -12,7 +12,7 @@ Do not run the Station preparation helper separately or reproduce Express by pre
 
 The installer provides these Station Express choices:
 
-1. The ordinary installer checks for one already-trusted peer at the deterministic counterpart on each of two configured private `/30` ConnectX-8 rails. A qualified pair selects `nemotron-3-ultra-550b-a55b`, served as `nvidia/nemotron-3-ultra-550b-a55b`; otherwise it retains the single-Station `deepseek-v4-flash` default, served as `deepseek-ai/DeepSeek-V4-Flash`.
+1. The ordinary installer checks for one already-trusted peer at the deterministic counterpart on each of two configured private `/30` ConnectX-8 rails. A qualified pair selects `nemotron-3-ultra-550b-a55b`, served as `nemotron-ultra` through the vLLM 0.25.1 and Ray 2.56.0 dual-Station recipe; otherwise it retains the single-Station `deepseek-v4-flash` default, served as `deepseek-ai/DeepSeek-V4-Flash`.
 2. The explicit `--station-deepseek` flag selects `deepseek-v4-flash`, served as `deepseek-ai/DeepSeek-V4-Flash`.
 
 Both choices use the same Station detection, host-preparation, consent, suggested-policy, default-sandbox, and revision resume flow.
@@ -23,7 +23,7 @@ Before asking for consent, explain all of these boundaries:
 - Official Station preparation may add the trusted local account to the `docker` group, which grants root-equivalent control and is suitable only for a trusted single-user development host.
 - Official Station preparation may require an operator-controlled reboot and resumes only with the accepted NemoClaw revision.
 - NemoClaw does not configure the two private rails, scan the network, enroll SSH trust, or reboot either Station. The operator owns physical isolation, firewalling, SSH trust, and manual reboots.
-- The dual-Station runtime uses unauthenticated coordination traffic, including TCP port `29501`. Both Stations and every host that can reach either rail must be mutually trusted; a shared `/24` is not equivalent to the required direct private `/30` rails.
+- The dual-Station runtime uses unauthenticated Ray, NCCL, and vLLM coordination traffic, including the Ray head on TCP port `6379` and Ray worker traffic. Both Stations and every host that can reach either rail must be mutually trusted; a shared `/24` is not equivalent to the required direct private `/30` rails.
 - Nemotron Ultra Express discloses an approximately `352 GB` model download. DeepSeek Express downloads its pinned vLLM container and model data. Both require enough space on the model-cache filesystem and Docker storage.
 - DGX Station remains an evaluation path with deferred end-to-end validation on physical hardware, so startup may still fail after readiness checks.
 

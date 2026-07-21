@@ -3081,6 +3081,7 @@ validate_express_platform_boundary() {
 
 STATION_ULTRA_VLLM_MODEL="nemotron-3-ultra-550b-a55b"
 STATION_ULTRA_SERVED_MODEL="nvidia/nemotron-3-ultra-550b-a55b"
+STATION_ULTRA_DUAL_SERVED_MODEL="nemotron-ultra"
 STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416"
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
@@ -3230,7 +3231,7 @@ configure_station_express_model() {
       "$STATION_ULTRA_VLLM_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
         NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
         ;;
-      "$STATION_ULTRA_SERVED_MODEL")
+      "$STATION_ULTRA_SERVED_MODEL" | "$STATION_ULTRA_DUAL_SERVED_MODEL")
         # The served alias is useful in route output but is not a Hugging Face
         # repository ID. Normalize it to the registered model slug before the
         # existing managed-vLLM selector consumes it.
@@ -3254,7 +3255,7 @@ station_dual_model_requested() {
   local selected_model
   selected_model="$(normalize_station_vllm_model "${NEMOCLAW_VLLM_MODEL:-}")"
   case "$selected_model" in
-    "" | "$STATION_ULTRA_VLLM_MODEL" | "$STATION_ULTRA_SERVED_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
+    "" | "$STATION_ULTRA_VLLM_MODEL" | "$STATION_ULTRA_SERVED_MODEL" | "$STATION_ULTRA_DUAL_SERVED_MODEL" | "nvidia/nvidia-nemotron-3-ultra-550b-a55b-nvfp4")
       return 0
       ;;
     *)
@@ -4049,13 +4050,13 @@ ensure_station_express_pair() {
       NEMOCLAW_DGX_STATION_PEER="$peer_target"
       NEMOCLAW_DGX_STATION_SSH_BINDING="$ssh_binding"
       export NEMOCLAW_DGX_STATION_PEER NEMOCLAW_DGX_STATION_SSH_BINDING
+      NEMOCLAW_MODEL="$STATION_ULTRA_DUAL_SERVED_MODEL"
+      export NEMOCLAW_MODEL
       if [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
         # Leave the vLLM selector unset. The trusted peer is the existing
         # installVllm signal that performs the authoritative full capability
         # probe and selects Nemotron Ultra without a second prompt.
         unset NEMOCLAW_VLLM_MODEL
-        NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"
-        export NEMOCLAW_MODEL
       fi
       ok "Trusted reciprocal dual-DGX Station pair is ready (${peer_target})"
       ;;

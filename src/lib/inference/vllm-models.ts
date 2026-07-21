@@ -52,6 +52,15 @@ export const NEMOTRON_ULTRA_STATION_IMAGE = {
   },
 } as const;
 
+/** Runtime pinned from the published dual-DGX-Station playbook. */
+export const NEMOTRON_ULTRA_DUAL_STATION_IMAGE = {
+  tag: "vllm/vllm-openai:v0.25.1-aarch64",
+  arm64: {
+    ref: "vllm/vllm-openai@sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37",
+    downloadSizeBytes: 10_238_912_364,
+  },
+} as const;
+
 export interface VllmModelDef {
   /** Hugging Face model id (also passed to `vllm serve`). */
   id: string;
@@ -513,18 +522,20 @@ function rewriteVllmArgs(
 }
 
 export interface NemotronUltraDistributedServeOptions {
-  /** vLLM multiprocessing rank: 0 serves the API and 1 runs headless. */
+  /** Ray role: rank 0 owns the API and rank 1 is the worker. */
   nodeRank: 0 | 1;
-  /** Routable rank-0 address used by both nodes for the distributed rendezvous. */
+  /** Routable head address used by both nodes for the Ray control plane. */
   masterAddr: string;
-  /** Routable rank-0 port used by both nodes for the distributed rendezvous. */
+  /** Routable Ray head port. */
   masterPort: number;
+  /** Routable address of the node running this command. */
+  nodeAddr?: string;
 }
 
 /**
- * Build one side of the validated two-Station Nemotron Ultra vLLM v0.22
- * direct-tensor-parallel launch. Existing callers keep the single-node
- * registry command unless they opt into this rank/address/port API.
+ * Build one side of the published two-Station Nemotron Ultra vLLM v0.25.1
+ * Ray pipeline-parallel launch. Existing callers keep the single-node
+ * registry command unless they opt into this role/address/port API.
  */
 export function buildNemotronUltraDistributedServeCommand(
   options: NemotronUltraDistributedServeOptions,
@@ -543,6 +554,13 @@ export function buildNemotronUltraDistributedServeCommand(
   ) {
     throw new Error("Nemotron Ultra distributed masterPort must be an integer from 1 to 65535.");
   }
+  const nodeAddr = (options.nodeAddr ?? masterAddr).trim();
+  if (net.isIP(nodeAddr) !== 4) {
+    throw new Error("Nemotron Ultra distributed nodeAddr must be a canonical IPv4 address.");
+  }
+  if (options.nodeRank === 0 && nodeAddr !== masterAddr) {
+    throw new Error("Nemotron Ultra Ray head nodeAddr must match masterAddr.");
+  }
 
   const model = VLLM_MODELS.find(
     (candidate) => candidate.envValue === "nemotron-3-ultra-550b-a55b",
@@ -553,48 +571,87 @@ export function buildNemotronUltraDistributedServeCommand(
     );
   }
 
-  const sharedArgs = rewriteVllmArgs(SHARED_VLLM_ARGS, { "--tensor-parallel-size": "2" });
+  const sharedArgs = rewriteVllmArgs(SHARED_VLLM_ARGS, {
+    "--tensor-parallel-size": "1",
+    "--pipeline-parallel-size": "2",
+  });
   const modelArgs = rewriteVllmArgs(
     model.modelArgs,
     {
       // Rank 0 binds only to the selected direct-attach RoCE address. This
       // keeps the API off the management network while still giving the
       // OpenShell route a host-reachable endpoint. The lifecycle also enables
-      // vLLM bearer authentication. The headless worker exposes no API.
-      "--host": options.nodeRank === 0 ? masterAddr : "127.0.0.1",
-      "--max-num-seqs": "16",
-      "--gpu-memory-utilization": "0.85",
+      // vLLM bearer authentication. The Ray worker exposes no API.
+      "--host": masterAddr,
+      "--max-num-seqs": "256",
+      "--gpu-memory-utilization": "0.9",
     },
-    new Set(["--kernel_config", "--speculative-config"]),
+    new Set([
+      "--cpu-offload-gb",
+      "--cpu-offload-params",
+      "--kernel_config",
+      "--speculative-config",
+      "--default-chat-template-kwargs",
+    ]),
   );
-  const serveEnv = {
-    ...model.serveEnv,
-    VLLM_FLOAT32_MATMUL_PRECISION: "high",
-  };
-  const envPrefix = `${Object.entries(serveEnv)
-    .map(([key, value]) => `export ${key}=${value}`)
-    .join(" && ")} && `;
   const args = [
     ...sharedArgs,
-    "--nnodes",
-    "2",
-    "--node-rank",
-    String(options.nodeRank),
-    "--master-addr",
-    shellQuote(masterAddr),
-    "--master-port",
-    String(options.masterPort),
-    ...(options.nodeRank === 1 ? ["--headless"] : []),
+    "--distributed-executor-backend",
+    "ray",
+    "--kv-cache-dtype",
+    "fp8",
     "--max-model-len",
-    "32768",
+    "262144",
+    "--distributed-timeout-seconds",
+    "7200",
+    "--enable-prefix-caching",
     "--revision",
     model.revision,
     "--served-model-name",
-    model.servedModelId,
+    "nemotron-ultra",
     ...modelArgs,
   ];
-
-  return `${envPrefix}vllm serve ${model.id} ${args.join(" ")}`;
+  const bootstrap = [
+    "set -euo pipefail",
+    'export PATH="$HOME/.local/bin:$PATH"',
+    'python3 -m pip install --user --no-cache-dir "ray==2.56.0"',
+  ];
+  if (options.nodeRank === 1) {
+    return [
+      ...bootstrap,
+      "python3 - <<'PY'",
+      "import socket",
+      "import time",
+      `address = (${JSON.stringify(masterAddr)}, ${String(options.masterPort)})`,
+      "deadline = time.time() + 3600",
+      "while True:",
+      "    try:",
+      "        with socket.create_connection(address, timeout=5):",
+      "            break",
+      "    except OSError:",
+      "        if time.time() >= deadline:",
+      '            raise TimeoutError("Ray head did not become reachable within 3600 seconds")',
+      "        time.sleep(5)",
+      "PY",
+      `exec ray start --address=${shellQuote(`${masterAddr}:${String(options.masterPort)}`)} --node-ip-address=${shellQuote(nodeAddr)} --num-gpus=1 --block`,
+    ].join("\n");
+  }
+  return [
+    ...bootstrap,
+    `ray start --head --node-ip-address=${shellQuote(masterAddr)} --port=${String(options.masterPort)} --num-gpus=1`,
+    "python3 - <<'PY'",
+    "import time",
+    "import ray",
+    'ray.init(address="auto")',
+    "deadline = time.time() + 3600",
+    'while ray.cluster_resources().get("GPU", 0) < 2:',
+    "    if time.time() >= deadline:",
+    '        raise TimeoutError("peer DGX Station GPU did not join Ray within 3600 seconds")',
+    "    time.sleep(5)",
+    "print(ray.cluster_resources())",
+    "PY",
+    `exec vllm serve ${model.id} ${args.join(" ")}`,
+  ].join("\n");
 }
 
 /**

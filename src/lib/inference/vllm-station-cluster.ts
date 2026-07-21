@@ -8,7 +8,7 @@ import path from "node:path";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { isDgxStationGb300Product } from "./dgx-station-identity";
 import { buildVllmSshTransportEnv } from "./vllm-docker-env";
-import { NEMOTRON_ULTRA_STATION_IMAGE, VLLM_MODELS } from "./vllm-models";
+import { NEMOTRON_ULTRA_DUAL_STATION_IMAGE, VLLM_MODELS } from "./vllm-models";
 import {
   type DualStationSshBinding,
   dualStationPinnedSshArgs,
@@ -44,11 +44,12 @@ if (!ultraModel?.revision) {
 }
 
 export const DUAL_STATION_VLLM_RUNTIME = Object.freeze({
-  image: NEMOTRON_ULTRA_STATION_IMAGE.arm64.ref,
+  image: NEMOTRON_ULTRA_DUAL_STATION_IMAGE.arm64.ref,
   modelId: ultraModel.id,
   modelRevision: ultraModel.revision,
-  servedModelId: ultraModel.servedModelId ?? ultraModel.id,
-  tensorParallelSize: 2 as const,
+  servedModelId: "nemotron-ultra",
+  tensorParallelSize: 1 as const,
+  pipelineParallelSize: 2 as const,
   nodeCount: 2 as const,
 });
 

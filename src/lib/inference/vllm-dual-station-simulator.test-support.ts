@@ -383,11 +383,11 @@ export function createDualStationLifecycleSimulator() {
       throw new Error("both simulated roles must be running before registration");
     }
     if (
-      !worker.command.includes("--node-rank 1") ||
-      !worker.command.includes("--headless") ||
-      !worker.command.includes("--master-addr 192.168.240.1") ||
-      !head.command.includes("--node-rank 0") ||
-      head.command.includes("--headless") ||
+      !worker.command.includes("ray start --address=192.168.240.1:6379") ||
+      !worker.command.includes("--node-ip-address=192.168.240.2") ||
+      worker.command.includes("vllm serve") ||
+      !head.command.includes("ray start --head --node-ip-address=192.168.240.1 --port=6379") ||
+      !head.command.includes("--distributed-executor-backend ray") ||
       worker.labels[DUAL_STATION_VLLM_TRANSACTION_LABEL] !==
         head.labels[DUAL_STATION_VLLM_TRANSACTION_LABEL]
     ) {

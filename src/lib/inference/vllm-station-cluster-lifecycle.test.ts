@@ -160,7 +160,7 @@ function fakeContainer(
       [DUAL_STATION_VLLM_CLUSTER_LABEL]: dualStationVllmClusterId(fixturePlan()),
       [DUAL_STATION_VLLM_GPU_LABEL]:
         role === "head" ? fixturePlan().local.gpu.uuid : fixturePlan().peer.gpu.uuid,
-      [DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL]: "1",
+      [DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL]: "2",
       [DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL]: dualStationVllmLaunchContract(fixturePlan(), role),
       [DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL]: API_KEY_FINGERPRINT,
       [DUAL_STATION_VLLM_TRANSACTION_LABEL]: TRANSACTION_ID,
@@ -190,6 +190,8 @@ function seedLegacyHead(fake: LifecycleHarness): void {
     "local",
     fakeContainer("head", {
       id: LEGACY_HEAD_ID,
+      image:
+        "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416",
       labels: { [DUAL_STATION_VLLM_MANAGED_LABEL]: "true" },
     }),
   );
@@ -301,7 +303,7 @@ describe("dual-Station managed vLLM run argv", () => {
     expect(args).toContain(plan.runtime.image);
     expect(dockerValues(args, "--label")).toEqual(
       expect.arrayContaining([
-        `${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}=1`,
+        `${DUAL_STATION_VLLM_LAUNCH_SCHEMA_LABEL}=2`,
         `${DUAL_STATION_VLLM_LAUNCH_CONTRACT_LABEL}=${dualStationVllmLaunchContract(plan, role)}`,
         `${DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL}=${API_KEY_FINGERPRINT}`,
         `${DUAL_STATION_VLLM_TRANSACTION_LABEL}=${TRANSACTION_ID}`,
@@ -324,9 +326,13 @@ describe("dual-Station managed vLLM run argv", () => {
     ]);
     expect(args.filter((arg) => arg === "-lc")).toHaveLength(1);
     expect(imageIndex).toBe(args.length - 3);
-    expect(command).toContain(`--node-rank ${role === "head" ? "0" : "1"}`);
-    expect(command).toContain(role === "head" ? "--host 192.168.240.1" : "--host 127.0.0.1");
-    expect(command.includes("--headless")).toBe(role === "worker");
+    expect(command).toContain('python3 -m pip install --user --no-cache-dir "ray==2.56.0"');
+    expect(command).toContain(
+      role === "head"
+        ? "ray start --head --node-ip-address=192.168.240.1 --port=6379 --num-gpus=1"
+        : "ray start --address=192.168.240.1:6379 --node-ip-address=192.168.240.2 --num-gpus=1 --block",
+    );
+    expect(command.includes("vllm serve")).toBe(role === "head");
   });
 
   it.each(["head", "worker"] as const)("builds a bounded, no-pull %s GPU smoke command", (role) => {

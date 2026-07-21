@@ -131,6 +131,9 @@ For the complete support status and direct GPU policy boundaries, see [Platform 
 
 ## Prepare a Two-Station Pair
 
+Complete NVIDIA's [two-Station CX8 fabric playbook](https://build.nvidia.com/station/connect-two-stations/instructions) before running NemoClaw pair preparation.
+The published [dual-Station Nemotron Ultra playbook](https://build.nvidia.com/station/nemoclaw/dual-nodes) is the runtime recipe tracked by this managed path.
+
 When no peer or model is selected explicitly, Station Express checks for one trusted reciprocal peer at the deterministic counterpart address on each of two configured private `/30` ConnectX-8 rails.
 It automatically selects the pinned `nemotron-3-ultra-550b-a55b` recipe only after both Stations pass reciprocal identity, GPU, route, neighbor, and jumbo-frame checks.
 If no trusted pair qualifies, Express retains the single-Station `deepseek-v4-flash` default.
@@ -148,7 +151,7 @@ If either Station requires a reboot, the installer stops with status `10` and na
 Owner-only resume state binds the exact NemoClaw revision, preparation helper, SSH host key, GPU identities, and reciprocal rails; the installer never reboots either host automatically.
 
 <Warning title="Trusted Pair Boundary">
-The dual-Station runtime uses unauthenticated PyTorch and vLLM coordination traffic, including TCP port `29501`.
+The dual-Station runtime uses unauthenticated Ray, NCCL, and vLLM coordination traffic, including the Ray head on TCP port `6379` and Ray's worker traffic.
 Treat both Stations and every host that can reach either private rail as mutually trusted.
 The operator owns physical rail isolation, host firewalling, SSH trust, and reboot control.
 Do not use the pair path on a shared or routed network without separately reviewed isolation evidence.

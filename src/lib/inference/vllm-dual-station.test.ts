@@ -267,7 +267,7 @@ beforeEach(() => {
             ok: true,
             httpStatus: 200,
             message: "ok",
-            body: JSON.stringify({ data: [{ id: "nvidia/nemotron-3-ultra-550b-a55b" }] }),
+            body: JSON.stringify({ data: [{ id: "nemotron-ultra" }] }),
           }
         : { ok: false, httpStatus: 401, message: "unauthorized", body: "" };
   });
@@ -642,7 +642,7 @@ describe("dual DGX Station vLLM install orchestration", () => {
           httpStatus: 200,
           message: "ok",
           body: args.at(-1)?.endsWith("/v1/models")
-            ? JSON.stringify({ data: [{ id: "nvidia/nemotron-3-ultra-550b-a55b" }] })
+            ? JSON.stringify({ data: [{ id: "nemotron-ultra" }] })
             : "",
         }));
       },
@@ -692,7 +692,7 @@ describe("dual DGX Station vLLM install orchestration", () => {
       httpStatus: 200,
       message: "ok",
       body: args.at(-1)?.endsWith("/v1/models")
-        ? JSON.stringify({ data: [{ id: "nvidia/nemotron-3-ultra-550b-a55b" }] })
+        ? JSON.stringify({ data: [{ id: "nemotron-ultra" }] })
         : "",
     }));
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });

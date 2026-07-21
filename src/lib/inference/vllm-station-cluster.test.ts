@@ -379,7 +379,7 @@ describe("probeDualStationVllmCapability", () => {
     );
   });
 
-  it("returns a deterministic two-rail TP2 plan and permits one auxiliary non-GB300 GPU", () => {
+  it("returns a deterministic two-rail Ray PP2 plan and permits one auxiliary non-GB300 GPU", () => {
     const deps = fixtureDeps();
 
     const result = runWith(deps);
@@ -394,9 +394,11 @@ describe("probeDualStationVllmCapability", () => {
         },
         runtime: {
           image:
-            "vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416",
+            "vllm/vllm-openai@sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37",
           modelRevision: "183968f87ae4cedce3039313cac1fd43d112c578",
-          tensorParallelSize: 2,
+          servedModelId: "nemotron-ultra",
+          tensorParallelSize: 1,
+          pipelineParallelSize: 2,
           nodeCount: 2,
         },
         local: {

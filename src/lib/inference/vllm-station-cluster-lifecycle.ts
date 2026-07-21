@@ -34,10 +34,10 @@ export const DUAL_STATION_VLLM_API_KEY_FINGERPRINT_LABEL =
   "com.nvidia.nemoclaw.vllm-api-key-fingerprint";
 export const DUAL_STATION_VLLM_TRANSACTION_LABEL = "com.nvidia.nemoclaw.vllm-transaction";
 export const DUAL_STATION_VLLM_GPU_SMOKE_LABEL = "com.nvidia.nemoclaw.gpu-smoke";
-export const DUAL_STATION_VLLM_MASTER_PORT = 29501;
+export const DUAL_STATION_VLLM_MASTER_PORT = 6379;
 
 const HEAD_API_PORT = 8000;
-// The pinned vLLM 0.22 image ships a non-root-ready /home/vllm. Each Station
+// The pinned Station vLLM images ship a non-root-ready /home/vllm. Each Station
 // mounts an owner-only tmpfs there and runs as the probed model-cache owner.
 const VLLM_RUNTIME_HOME = "/home/vllm";
 const HF_CACHE_CONTAINER_DIR = `${VLLM_RUNTIME_HOME}/.cache/huggingface`;
@@ -58,7 +58,7 @@ const SAFE_GPU_UUID_PATTERN = /^GPU-[A-Za-z0-9-]{8,123}$/;
 const GPU_SMOKE_NONCE_PATTERN = /^[a-f0-9]{32}$/;
 const TRANSACTION_ID_PATTERN = /^[a-f0-9]{32}$/;
 const GPU_SMOKE_CONTAINER_PREFIX = "nemoclaw-vllm-gpu-smoke";
-const DUAL_STATION_VLLM_LAUNCH_SCHEMA = "1";
+const DUAL_STATION_VLLM_LAUNCH_SCHEMA = "2";
 const VLLM_FINGERPRINT_CONTEXT = "nemoclaw-dual-station-vllm-api-key\0";
 // Compatibility bridge for schema-less single-Station Ultra containers from
 // the v0.0.86 rollback window before dual launch schema 1.
@@ -234,6 +234,7 @@ function assertSafePlan(plan: DualStationVllmPlan): void {
     plan.runtime.modelRevision !== DUAL_STATION_VLLM_RUNTIME.modelRevision ||
     plan.runtime.servedModelId !== DUAL_STATION_VLLM_RUNTIME.servedModelId ||
     plan.runtime.tensorParallelSize !== DUAL_STATION_VLLM_RUNTIME.tensorParallelSize ||
+    plan.runtime.pipelineParallelSize !== DUAL_STATION_VLLM_RUNTIME.pipelineParallelSize ||
     plan.runtime.nodeCount !== DUAL_STATION_VLLM_RUNTIME.nodeCount
   ) {
     throw new Error("Dual-Station vLLM requires the exact pinned runtime contract.");
@@ -388,6 +389,7 @@ function buildDualStationVllmBaseRunArgs(
   const clusterId = clusterIdForPlan(plan);
   const args = [
     "--pull=never",
+    "--init",
     "--restart",
     "unless-stopped",
     "--network",
@@ -441,8 +443,12 @@ function buildDualStationVllmBaseRunArgs(
   appendEnv(args, "HF_HUB_OFFLINE", "1");
   appendEnv(args, "TRANSFORMERS_OFFLINE", "1");
   appendEnv(args, "VLLM_HOST_IP", endpoints[0].address);
+  appendEnv(args, "VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS", role === "head" ? "7200" : "3600");
+  appendEnv(args, "VLLM_ALLOW_LONG_MAX_MODEL_LEN", "1");
   appendEnv(args, "NCCL_IB_HCA", endpoints.map((item) => item.rdmaDevice).join(","));
   appendEnv(args, "NCCL_IB_DISABLE", "0");
+  appendEnv(args, "NCCL_IB_ADDR_FAMILY", "AF_INET");
+  appendEnv(args, "NCCL_IB_ROCE_VERSION_NUM", "2");
   appendEnv(args, "NCCL_IB_GID_INDEX", String(plan.roceGidIndex));
   appendEnv(args, "NCCL_IB_TC", "106");
   appendEnv(args, "NCCL_IB_QPS_PER_CONNECTION", "4");
@@ -474,6 +480,7 @@ function buildDualStationVllmBaseRunArgs(
       nodeRank: role === "head" ? 0 : 1,
       masterAddr: plan.masterAddress,
       masterPort: DUAL_STATION_VLLM_MASTER_PORT,
+      nodeAddr: endpoints[0].address,
     }),
   );
   return args;
@@ -704,7 +711,6 @@ function inspectManagedContainer(
   if (
     spec.role === "head" &&
     name === spec.name &&
-    image === spec.image &&
     image === LEGACY_SINGLE_STATION_MIGRATION_IMAGE &&
     (state === "running" || (options.allowStoppedLegacy && state === "exited")) &&
     managed === "true" &&

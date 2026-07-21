@@ -88,6 +88,7 @@ Managed profiles and model-specific recipes use immutable image digests:
 - DGX Spark and DGX Station models without a model-specific runtime use the `linux/arm64` digest `sha256:9204569b17ee4c0eff75194b8e6e458479c8aee18953b5ab9cf359fcdac659e2` with a compressed layer size of `9.60 GB` under `nvcr.io/nvidia/vllm:26.05.post1-py3`.
 - The DGX Station Nemotron 3 Ultra express recipe uses the multi-platform index digest `sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416` under `vllm/vllm-openai:v0.22.0`; on DGX Station, that index selects a `linux/arm64` manifest with a compressed layer size of `10.67 GB`.
   It also pins Hugging Face revision `183968f87ae4cedce3039313cac1fd43d112c578` for the approximately `352.38 GB` model download.
+- A qualified two-Station Ultra pair instead uses the ARM64 manifest digest `sha256:2cc49b81319f7a66a33dd8bd63a7bfddae079122b33ce51989b6828a1f038c37` under `vllm/vllm-openai:v0.25.1-aarch64`, with `10.24 GB` of compressed layers.
 - Generic Linux `arm64` hosts use `sha256:447995cbb57e6c7cf792cab95e9852e5f62b5fb6d2f39e030fa4eda9a54eadb4` with a compressed layer size of `9.28 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 - Generic Linux `amd64` hosts use `sha256:7be6c2f676c36059a494fe17254e69ae5c677535ba6191044e5fc8e42a91c773` with a compressed layer size of `8.93 GB` under `nvcr.io/nvidia/vllm:26.03.post1-py3`.
 
@@ -168,15 +169,17 @@ Without terminal access, the installer stops before it installs Docker or build 
 Configure the physical rails and SSH host-key and authentication trust before installation.
 NemoClaw does not modify rail configuration, enroll SSH trust, or reboot either host automatically.
 If either host requires a reboot after pinned prerequisite changes, the installer stops with status `10` and resumes only after the manual reboot with owner-only state tied to the printed exact revision and reciprocal identity.
-The registered Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
+The registered two-Station Ultra recipe tracks the [latest NVIDIA dual-Station playbook](https://build.nvidia.com/station/nemoclaw/dual-nodes).
+It pins vLLM `0.25.1` and Ray `2.56.0`, uses one tensor-parallel rank per Station with pipeline parallelism across the pair, serves the `nemotron-ultra` alias with a `262144`-token model limit, and retains the Nemotron reasoning and tool-call parsers.
 The single-Station fallback keeps NemoClaw's bridge-networked managed-inference topology and publishes port `8000` through Docker.
 The qualified dual-Station runtime intentionally uses Docker host networking on both containers so NCCL and RDMA can bind the validated direct-attach rails.
 The head binds only the selected rank-0 address on a qualified private `/30` rail and requires the generated bearer key for `/v1`; `/health` remains unauthenticated for readiness.
-The worker is headless and exposes no API.
+The worker joins the Ray cluster and exposes no vLLM API.
 Neither dual-Station container publishes a Docker port, so Docker bridge isolation and port-mapping rules do not protect this path.
 As compensating controls, both containers run as the probed non-root UID and GID with a read-only root filesystem, all Linux capabilities dropped, `no-new-privileges`, only the selected GPU UUID and exact `uverbs` devices, and a read-only model cache; the worker does not receive the serving key.
 Treat both Stations and their direct rails as one trusted runtime boundary.
 Allow port `8000` from the OpenShell Docker subnet only to the selected rank-0 rail address, deny it on management and LAN interfaces, and restrict distributed-serving traffic to the reciprocal addresses on the two qualified private rails.
+That distributed traffic includes the Ray head on TCP `6379` and Ray worker ports; do not expose either rail to an untrusted or routed network.
 
 <Warning>
 DGX Station remains Deferred.

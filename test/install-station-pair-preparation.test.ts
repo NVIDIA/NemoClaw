@@ -1215,9 +1215,7 @@ printf 'RESULT peer=%s model=%s selector=%s binding=%s\n' "\${NEMOCLAW_DGX_STATI
     );
     try {
       expect(result.status, output).toBe(0);
-      expect(output).toContain(
-        "RESULT peer=10.10.0.2 model=nvidia/nemotron-3-ultra-550b-a55b selector=",
-      );
+      expect(output).toContain("RESULT peer=10.10.0.2 model=nemotron-ultra selector=");
       const expectedToken = JSON.parse(coordinatorResult("ready")).sshBinding;
       expect(output).toContain(`binding=${expectedToken}`);
       const args = fs.readFileSync(argsFile, "utf8");
@@ -1263,9 +1261,7 @@ printf 'RESULT peer=%s model=%s binding=%s\n' "$NEMOCLAW_DGX_STATION_PEER" "$NEM
     );
     try {
       expect(result.status, output).toBe(0);
-      expect(output).toContain(
-        `RESULT peer=${explicitPeer} model=nvidia/nemotron-3-ultra-550b-a55b`,
-      );
+      expect(output).toContain(`RESULT peer=${explicitPeer} model=nemotron-ultra`);
       expect(output).toContain(`binding=${JSON.parse(coordinatorResult("ready")).sshBinding}`);
       const args = fs.readFileSync(argsFile, "utf8");
       expect(args).toContain(`--explicit-peer ${explicitPeer}`);

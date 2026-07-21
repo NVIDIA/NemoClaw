@@ -144,6 +144,7 @@ function peerStagingForPlan(value: DualStationVllmPlan): string {
     DUAL_STATION_VLLM_RUNTIME.modelRevision,
     DUAL_STATION_VLLM_RUNTIME.servedModelId,
     String(DUAL_STATION_VLLM_RUNTIME.tensorParallelSize),
+    String(DUAL_STATION_VLLM_RUNTIME.pipelineParallelSize),
     String(DUAL_STATION_VLLM_RUNTIME.nodeCount),
     value.local.gpu.uuid,
     value.peer.gpu.uuid,

@@ -37,6 +37,7 @@ import {
 } from "./vllm-docker-env";
 import {
   buildVllmServeCommand,
+  NEMOTRON_ULTRA_DUAL_STATION_IMAGE,
   NEMOTRON_ULTRA_STATION_IMAGE,
   parseVllmExtraServeArgs,
   VLLM_EXTRA_ARGS_ENV,
@@ -1451,6 +1452,14 @@ async function runVllmInstall(
       }
     }
     if (dualStationPlan) {
+      servedModelId = dualStationPlan.runtime.servedModelId;
+      runtimeProfile = {
+        ...runtimeProfile,
+        image: dualStationPlan.runtime.image,
+        imageDownloadSizeBytes: NEMOTRON_ULTRA_DUAL_STATION_IMAGE.arm64.downloadSizeBytes,
+        imageUnpackedSizeBytes: undefined,
+        loadTimeoutSec: 7200,
+      };
       if (VLLM_PORT !== 8000) {
         console.error(
           "  Dual DGX Station setup requires the default vLLM port 8000; unset NEMOCLAW_VLLM_PORT and retry.",
