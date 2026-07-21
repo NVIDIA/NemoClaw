@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import {
   closeSync,
   constants,
@@ -32,6 +33,7 @@ type HistoricalLayout = {
   shrinkwrap: boolean;
   replacements: Record<string, { observed: string; pin: string; lockObserved?: string }>;
   platformReplacements: Record<string, { observed: string; pin: string; lockObserved?: string }>;
+  platformReplacementCount: number;
   rootDirect: Record<string, string>;
   dependencyOverrides: Record<
     string,
@@ -179,9 +181,25 @@ export const CORE_SECURITY_PINS: Record<string, PackagePin> = {
     tarball:
       "https://registry.npmjs.org/@mariozechner/clipboard-linux-arm64-gnu/-/clipboard-linux-arm64-gnu-0.3.9.tgz",
   },
+  "clipboard-linux-x64-musl": {
+    name: "@mariozechner/clipboard-linux-x64-musl",
+    version: "0.3.9",
+    integrity:
+      "sha512-/DHn+1DrfL6oRaPPWXaOKvonFFrni666fxd+zFqiQEfvBH0tsHVWjq9iqBk0oDp0qaPA72lIMy5BptxISBEhZQ==",
+    tarball:
+      "https://registry.npmjs.org/@mariozechner/clipboard-linux-x64-musl/-/clipboard-linux-x64-musl-0.3.9.tgz",
+  },
+  "clipboard-linux-arm64-musl": {
+    name: "@mariozechner/clipboard-linux-arm64-musl",
+    version: "0.3.9",
+    integrity:
+      "sha512-AGuJdgKsmJdm4Pych7kv3sqe591ERRaAHW3xjLooiFzn8J+PxUyof++7YZrB5Y5tpnTO+K18Og3taj2NpluCRQ==",
+    tarball:
+      "https://registry.npmjs.org/@mariozechner/clipboard-linux-arm64-musl/-/clipboard-linux-arm64-musl-0.3.9.tgz",
+  },
 };
 
-const CLIPBOARD_PLATFORM_REPLACEMENTS = {
+const CLIPBOARD_GNU_PLATFORM_REPLACEMENTS = {
   "@mariozechner/clipboard-linux-arm64-gnu": {
     observed: "0.3.6",
     pin: "clipboard-linux-arm64-gnu",
@@ -190,6 +208,20 @@ const CLIPBOARD_PLATFORM_REPLACEMENTS = {
   "@mariozechner/clipboard-linux-x64-gnu": {
     observed: "0.3.6",
     pin: "clipboard-linux-x64-gnu",
+    lockObserved: "0.3.6",
+  },
+};
+
+const CLIPBOARD_DUAL_LIBC_PLATFORM_REPLACEMENTS = {
+  ...CLIPBOARD_GNU_PLATFORM_REPLACEMENTS,
+  "@mariozechner/clipboard-linux-arm64-musl": {
+    observed: "0.3.6",
+    pin: "clipboard-linux-arm64-musl",
+    lockObserved: "0.3.6",
+  },
+  "@mariozechner/clipboard-linux-x64-musl": {
+    observed: "0.3.6",
+    pin: "clipboard-linux-x64-musl",
     lockObserved: "0.3.6",
   },
 };
@@ -214,7 +246,8 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         undici: { observed: "8.3.0", pin: "undici" },
         ws: { observed: "8.20.1", pin: "ws" },
       },
-      platformReplacements: CLIPBOARD_PLATFORM_REPLACEMENTS,
+      platformReplacements: CLIPBOARD_GNU_PLATFORM_REPLACEMENTS,
+      platformReplacementCount: 1,
       rootDirect: {
         "@earendil-works/pi-agent-core": "0.75.1",
         "@earendil-works/pi-ai": "0.75.1",
@@ -303,7 +336,8 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         undici: { observed: "8.3.0", pin: "undici", lockObserved: "8.3.0" },
         ws: { observed: "8.20.1", pin: "ws", lockObserved: "8.20.1" },
       },
-      platformReplacements: CLIPBOARD_PLATFORM_REPLACEMENTS,
+      platformReplacements: CLIPBOARD_DUAL_LIBC_PLATFORM_REPLACEMENTS,
+      platformReplacementCount: 2,
       rootDirect: {
         "@earendil-works/pi-agent-core": "0.75.4",
         "@earendil-works/pi-ai": "0.75.4",
@@ -330,6 +364,9 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         },
         "@earendil-works/pi-coding-agent": {
           undici: { published: "8.3.0", observed: "8.3.0", target: "8.5.0" },
+        },
+        qs: {
+          "side-channel": { published: "^1.1.1", observed: "1.1.0", target: "1.1.0" },
         },
       },
       obsoletePackages: {
@@ -385,7 +422,8 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         protobufjs: { observed: "8.4.0", pin: "protobufjs-8", lockObserved: "8.4.0" },
         undici: { observed: "8.3.0", pin: "undici", lockObserved: "8.3.0" },
       },
-      platformReplacements: CLIPBOARD_PLATFORM_REPLACEMENTS,
+      platformReplacements: CLIPBOARD_DUAL_LIBC_PLATFORM_REPLACEMENTS,
+      platformReplacementCount: 2,
       rootDirect: {
         "@earendil-works/pi-agent-core": "0.75.5",
         "@earendil-works/pi-ai": "0.75.5",
@@ -437,12 +475,29 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         qs: { observed: "6.15.3", pin: "qs", lockObserved: "6.15.2" },
       },
       platformReplacements: {},
+      platformReplacementCount: 0,
       rootDirect: {},
       dependencyOverrides: {},
       obsoletePackages: {},
     },
   ],
 ]);
+
+const REVIEWED_NPM_TREE_PROBLEMS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "2026.5.18": ["invalid: node-domexception@1.0.0 <openclaw-root>/node_modules/node-domexception"],
+  "2026.5.22": [
+    "invalid: tar@7.5.19 <openclaw-root>/node_modules/tar",
+    "invalid: protobufjs@8.7.1 <openclaw-root>/node_modules/protobufjs",
+    "invalid: fast-xml-parser@5.7.0 <openclaw-root>/node_modules/fast-xml-parser",
+  ],
+  "2026.5.27": [
+    "invalid: tar@7.5.19 <openclaw-root>/node_modules/tar",
+    "invalid: protobufjs@8.7.1 <openclaw-root>/node_modules/protobufjs",
+    "invalid: fast-xml-parser@5.7.0 <openclaw-root>/node_modules/fast-xml-parser",
+    "invalid: @aws-sdk/token-providers@3.1053.0 <openclaw-root>/node_modules/@aws-sdk/token-providers",
+  ],
+  "2026.6.10": [],
+});
 
 function record(value: unknown, label: string): JsonRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -567,11 +622,86 @@ function reviewedReplacements(
   const platformEntries = Object.entries(layout.platformReplacements).filter(([packageName]) =>
     existsSync(path.join(openClawRoot, "node_modules", packageName)),
   );
-  const expectedCount = Object.keys(layout.platformReplacements).length === 0 ? 0 : 1;
-  if (platformEntries.length !== expectedCount) {
+  if (platformEntries.length !== layout.platformReplacementCount) {
     throw new Error("historical clipboard platform package state does not match the review");
   }
   return Object.fromEntries([...Object.entries(layout.replacements), ...platformEntries]);
+}
+
+function normalizedNpmTreeProblems(openClawRoot: string, problems: unknown): string[] {
+  if (!Array.isArray(problems) || problems.some((problem) => typeof problem !== "string")) {
+    throw new Error("OpenClaw npm tree problems must be a string array");
+  }
+  const resolvedRoot = path.resolve(openClawRoot);
+  return (problems as string[])
+    .map((problem) => problem.replaceAll(resolvedRoot, "<openclaw-root>"))
+    .sort();
+}
+
+export function assertReviewedOpenClawNpmTreeReport(options: {
+  expectedOpenClawVersion: string;
+  openClawRoot: string;
+  report: JsonRecord;
+  status: number;
+}): void {
+  const reviewed = REVIEWED_NPM_TREE_PROBLEMS[options.expectedOpenClawVersion];
+  if (!reviewed) {
+    throw new Error(
+      `OpenClaw ${options.expectedOpenClawVersion} has no reviewed npm tree baseline`,
+    );
+  }
+  const manifest = readJson(
+    path.join(path.resolve(options.openClawRoot), "package.json"),
+    "OpenClaw npm tree package manifest",
+  );
+  if (manifest.version !== options.expectedOpenClawVersion) {
+    throw new Error("OpenClaw npm tree package identity changed");
+  }
+  const problems = normalizedNpmTreeProblems(options.openClawRoot, options.report.problems ?? []);
+  const expected = [...reviewed].sort();
+  if (
+    !Number.isInteger(options.status) ||
+    options.status < 0 ||
+    options.status > 1 ||
+    (options.status === 0) !== (problems.length === 0) ||
+    JSON.stringify(problems) !== JSON.stringify(expected)
+  ) {
+    throw new Error(
+      `OpenClaw ${options.expectedOpenClawVersion} npm tree differs from the reviewed baseline: ${JSON.stringify(
+        {
+          status: options.status,
+          problems,
+          reviewed: expected,
+        },
+      )}`,
+    );
+  }
+}
+
+export function verifyReviewedOpenClawNpmTree(options: {
+  expectedOpenClawVersion: string;
+  openClawRoot: string;
+}): void {
+  const openClawRoot = path.resolve(options.openClawRoot);
+  directory(openClawRoot, "OpenClaw npm tree root");
+  const result = spawnSync("npm", ["ls", "--omit=dev", "--all", "--json"], {
+    cwd: openClawRoot,
+    encoding: "utf8",
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  let report: JsonRecord;
+  try {
+    report = record(JSON.parse(result.stdout), "OpenClaw npm tree report");
+  } catch (error) {
+    throw new Error(`OpenClaw npm tree output was not JSON: ${String(error)}`);
+  }
+  assertReviewedOpenClawNpmTreeReport({
+    expectedOpenClawVersion: options.expectedOpenClawVersion,
+    openClawRoot,
+    report,
+    status: result.status ?? 2,
+  });
 }
 
 export function patchOpenClawCoreDependencies(options: {
@@ -953,6 +1083,10 @@ function argument(name: string): string {
 function main(): void {
   const openClawRoot = argument("--openclaw-root");
   const expectedOpenClawVersion = argument("--expected-openclaw-version");
+  if (process.argv.includes("--verify-npm-tree")) {
+    verifyReviewedOpenClawNpmTree({ openClawRoot, expectedOpenClawVersion });
+    return;
+  }
   if (process.argv.includes("--verify")) {
     verifyOpenClawCoreDependencies({ openClawRoot, expectedOpenClawVersion });
     return;
