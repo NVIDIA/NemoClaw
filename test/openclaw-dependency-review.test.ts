@@ -235,8 +235,11 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "`0` info, `1` low, `1` moderate, `0` high, and `0` critical findings across `766` total dependencies",
     );
     expect(review).toContain(
-      "The mcporter locked graph reported no findings across `138` dependencies",
+      "The remediated mcporter locked graph reported no findings across `138` dependencies",
     );
+    expect(review).toContain("GHSA-frvp-7c67-39w9");
+    expect(review).toContain("@hono/node-server@1.19.14");
+    expect(review).toContain("exact reviewed `2.0.5`");
     expect(review).toContain("GHSA-v422-hmwv-36x6");
     expect(review).toContain("reviewed Slack and Microsoft Teams plugin graphs");
     expect(review).toContain("GHSA-j3f2-48v5-ccww");

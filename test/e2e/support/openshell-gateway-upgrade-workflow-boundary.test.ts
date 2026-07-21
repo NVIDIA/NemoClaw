@@ -18,6 +18,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
+  patchHistoricalInstallerAdvisoryThreshold,
   upgradeGatewayCleanupScript,
   validateLegacyGatewayUpgradeFixture,
 } from "../live/openshell-gateway-upgrade-helpers.ts";
@@ -77,6 +78,62 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     expect(currentGatewayUpgradeInstallerArgs("current-install.sh", { interactive: true })).toEqual(
       ["current-install.sh"],
     );
+  });
+
+  it("keeps frozen installer setup deterministic without weakening the candidate audit", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-historical-audit-"));
+    const installer = path.join(tmp, "install.sh");
+    const payload = path.join(tmp, "payload.sh");
+    const oldSource = path.join(tmp, "old-source");
+    const dockerfile = path.join(oldSource, "Dockerfile");
+    fs.mkdirSync(oldSource);
+    fs.writeFileSync(
+      dockerfile,
+      [
+        "RUN npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\",
+        "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      payload,
+      `#!/usr/bin/env bash
+set -euo pipefail
+nemoclaw_src="$1"
+_CLI_DISPLAY=NemoClaw
+release_ref=v0.0.89
+spin() { :; }
+    spin "Cloning \${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
+`,
+    );
+    const installerSource = `#!/usr/bin/env bash
+set -euo pipefail
+payload_script="$1"
+source_root=${JSON.stringify(tmp)}
+  legacy_script="\${source_root}/install.sh"
+`;
+    const patchedInstaller = patchHistoricalInstallerAdvisoryThreshold(installerSource);
+    expect(patchHistoricalInstallerAdvisoryThreshold(patchedInstaller)).toBe(patchedInstaller);
+    expect(() => patchHistoricalInstallerAdvisoryThreshold("#!/usr/bin/env bash\n")).toThrow(
+      /bootstrap payload hook not found/,
+    );
+    fs.writeFileSync(installer, patchedInstaller);
+
+    try {
+      const patchPayload = spawnSync("bash", [installer, payload], {
+        encoding: "utf8",
+        env: { ...process.env, NEMOCLAW_OLD_OPENCLAW_VERSION: "2026.6.10" },
+      });
+      expect(patchPayload.status, patchPayload.stderr).toBe(0);
+      const patchDockerfile = spawnSync("bash", [payload, oldSource], { encoding: "utf8" });
+      expect(patchDockerfile.status, patchDockerfile.stderr).toBe(0);
+
+      const result = fs.readFileSync(dockerfile, "utf8");
+      expect(result).toContain("mcporter-runtime audit --omit=dev --audit-level=high");
+      expect(result).toContain("mcporter-runtime audit signatures");
+      expect(result).not.toContain("mcporter-runtime audit --omit=dev --audit-level=low");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("pins the registry metadata written by each historical release fixture", () => {

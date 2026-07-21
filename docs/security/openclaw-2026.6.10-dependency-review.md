@@ -56,8 +56,14 @@ NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
 Revalidated on 2026-07-21: the command exited `0` under Node `v22.22.2`.
 This runtime satisfies the OpenClaw engine requirement of `>=22.19.0`.
 The remediated reviewed-archive graph reported `0` info, `1` low, `1` moderate, `0` high, and `0` critical findings across `766` total dependencies.
-The mcporter locked graph reported no findings across `138` dependencies.
+The remediated mcporter locked graph reported no findings across `138` dependencies.
 The configured `high` threshold therefore passed.
+
+The unmodified mcporter graph resolves `@hono/node-server@1.19.14`, affected by
+`GHSA-frvp-7c67-39w9`. Because the first patched release is outside the version
+range declared by the locked MCP SDK, the dedicated runtime manifest pins the
+exact reviewed `2.0.5` archive through npm's override mechanism. Focused ESM
+and CommonJS Streamable HTTP transport probes cover the compatibility boundary.
 
 The retained low finding is `GHSA-v422-hmwv-36x6` in `body-parser@2.0.0` through `2.2.2`.
 It remains in the reviewed Slack and Microsoft Teams plugin graphs.

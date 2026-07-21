@@ -15,9 +15,10 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 - Registry metadata independently queried from npm: 2026-06-30.
 - Locked graph: `agents/openclaw/mcporter-runtime/package-lock.json` (npm lockfile version 3).
 - Lock regeneration command: `npm --prefix agents/openclaw/mcporter-runtime install --package-lock-only --ignore-scripts --omit=dev`
-- Advisory command: `npm --prefix agents/openclaw/mcporter-runtime ci --ignore-scripts --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit signatures`
-- Advisory review date: 2026-06-30.
+- Advisory command: `npm --prefix agents/openclaw/mcporter-runtime ci --ignore-scripts --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit --omit=dev --audit-level=low && npm --prefix agents/openclaw/mcporter-runtime audit signatures`
+- Advisory review date: 2026-07-21.
 - Advisory result: `0` known vulnerabilities across the resolved production dependency graph; npm verified registry signatures for all `120` resolved packages and attestations for `12` packages.
+- `GHSA-frvp-7c67-39w9` remediation: the locked `@modelcontextprotocol/sdk@1.29.0` still requests vulnerable `@hono/node-server@^1.19.9`, while the first patched release is `2.0.5`. The runtime manifest therefore pins an exact npm override to `2.0.5`. Node `>=20` remains inside the image's Node `>=22.19.0` contract; real ESM and CommonJS Streamable HTTP transport construction/start/close probes plus `mcporter --version` validate the major override. Remove it when the SDK's declared range resolves to a reviewed patched release.
 
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.
 

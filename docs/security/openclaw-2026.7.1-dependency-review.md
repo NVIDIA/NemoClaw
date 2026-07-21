@@ -3,7 +3,7 @@
 
 # OpenClaw 2026.7.1 dependency review
 
-Review date: 2026-07-20
+Review date: 2026-07-21
 
 ## Decision
 
@@ -62,6 +62,18 @@ finding that blocked the previous pin is gone. The remaining moderate
 
 The independently installed `nemoclaw/` plugin graph reports `0`
 vulnerabilities after resolving its direct `tar` dependency to `7.5.20`.
+
+The separately locked `mcporter@0.7.3` runtime graph originally resolved
+`@hono/node-server@1.19.14`, affected by `GHSA-frvp-7c67-39w9`. The locked
+`@modelcontextprotocol/sdk@1.29.0` still declares `@hono/node-server@^1.19.9`,
+while the first patched release is `2.0.5`. The dedicated runtime manifest pins
+that exact reviewed release through npm's override mechanism. Its Node `>=20`
+requirement remains inside the image's Node contract, and real ESM plus
+CommonJS Streamable HTTP transport construction/start/close probes cover the
+major-version compatibility boundary. The resulting `138`-dependency graph
+reports `0` known vulnerabilities; image assembly keeps the low audit threshold,
+signature verification, and exact committed lock mandatory. Remove the override
+when the SDK's declared range resolves to a reviewed patched release.
 
 The published Slack and Microsoft Teams plugin archives bundle `axios@1.16.0`.
 That version is in the affected range for the newly disclosed Axios

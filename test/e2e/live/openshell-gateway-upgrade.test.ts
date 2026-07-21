@@ -39,6 +39,7 @@ import {
   currentGatewayUpgradeInstallerArgs,
   expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
+  patchHistoricalInstallerAdvisoryThreshold,
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
   validateLegacyGatewayUpgradeFixture,
@@ -580,6 +581,11 @@ NEMOCLAW_OLD_PAYLOAD_PIN_PY
   fs.writeFileSync(installer, patchedText, "utf8");
 }
 
+function patchOldInstallerAdvisoryThresholdFixture(installer: string): void {
+  const text = fs.readFileSync(installer, "utf8");
+  fs.writeFileSync(installer, patchHistoricalInstallerAdvisoryThreshold(text), "utf8");
+}
+
 function createOldDockerWrapper(artifacts: ArtifactSink): string {
   const wrapperDir = artifacts.pathFor("old-docker-wrapper");
   const logFile = artifacts.pathFor("old-docker-wrapper.log");
@@ -790,11 +796,16 @@ async function installOldNemoclawAndClaw(
     `downloaded ${OLD_NEMOCLAW_REF} installer must match its pinned SHA-256`,
   ).toBe(OLD_INSTALLER_SHA256);
   fs.chmodSync(oldInstaller, 0o755);
-  // v0.0.89 already contains the reviewed 2026.6.10 integrity/tarball pins.
-  // Keep it byte-representative of the installed base instead of injecting
-  // the legacy fixture adapter used by the established older lanes.
-  const oldInstallerFixturePatches =
-    OLD_NEMOCLAW_REF === "v0.0.89" ? [] : [patchOldInstallerFixture];
+  // v0.0.89 already contains the reviewed 2026.6.10 integrity/tarball pins, so
+  // it does not need the old version-pin adapter. Both frozen releases whose
+  // Dockerfiles run a live advisory query need the bounded threshold adapter;
+  // otherwise advisory publication can block fixture setup before migration.
+  const oldInstallerFixturePatches = [
+    ...(OLD_NEMOCLAW_REF === "v0.0.89" ? [] : [patchOldInstallerFixture]),
+    ...(["v0.0.74", "v0.0.89"].includes(OLD_NEMOCLAW_REF)
+      ? [patchOldInstallerAdvisoryThresholdFixture]
+      : []),
+  ];
   for (const patchInstaller of oldInstallerFixturePatches) {
     patchInstaller(oldInstaller);
   }
@@ -853,6 +864,11 @@ async function installOldNemoclawAndClaw(
   expect(oldLog, `old fixture must show pinned OpenClaw ${OLD_OPENCLAW_VERSION}`).toMatch(
     new RegExp(`OpenClaw ${oldOpenClawVersionPattern}|openclaw@${oldOpenClawVersionPattern}`),
   );
+  if (["v0.0.74", "v0.0.89"].includes(OLD_NEMOCLAW_REF)) {
+    expect(oldLog).toContain(
+      "INFO: Historical upgrade fixture retains npm audit at the reviewed high threshold",
+    );
+  }
 
   const openshellVersion = await bash(host, `openshell --version`, {
     artifactName: "old-openshell-version",
