@@ -22,6 +22,7 @@ import {
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { buildOldHermesDockerfile } from "./rebuild-hermes-dockerfile.ts";
 import { buildRebuildHermesChildEnv } from "./rebuild-hermes-env.ts";
 import {
   cleanupTrackedRebuildHermesImage,
@@ -263,36 +264,6 @@ async function removeHermesFixtureImage(
     /No such image|No such object|image .* not found/iu,
     options.label,
   );
-}
-
-function oldHermesDockerfile(): string {
-  return [
-    `FROM ${OLD_BASE_TAG}`,
-    "USER sandbox",
-    "WORKDIR /sandbox",
-    "RUN mkdir -p /sandbox/.hermes/memories \\",
-    "             /sandbox/.hermes/sessions \\",
-    "             /sandbox/.hermes/workspace \\",
-    "    && printf '%s\\n' \\",
-    "      '_config_version: 12' \\",
-    "      'platforms:' \\",
-    "      '  discord:' \\",
-    "      '    enabled: true' \\",
-    `      '    token: "${DISCORD_PLACEHOLDER}"' \\`,
-    "      '  api_server:' \\",
-    "      '    enabled: true' \\",
-    "      '    extra:' \\",
-    "      '      port: 18642' \\",
-    "      '      host: 127.0.0.1' \\",
-    "      > /sandbox/.hermes/config.yaml \\",
-    "    && printf '%s\\n' \\",
-    "      'API_SERVER_PORT=18642' \\",
-    "      'API_SERVER_HOST=127.0.0.1' \\",
-    `      'DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}' \\`,
-    "      > /sandbox/.hermes/.env",
-    'CMD ["/bin/bash"]',
-    "",
-  ].join("\n");
 }
 
 async function waitForSandboxReady(host: HostCliClient, apiKey: string): Promise<void> {
@@ -653,7 +624,14 @@ test(STALE_BASE_REBUILD
 
   const oldDockerfileDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-hermes-"));
   const oldDockerfile = path.join(oldDockerfileDir, "Dockerfile");
-  fs.writeFileSync(oldDockerfile, oldHermesDockerfile(), "utf8");
+  fs.writeFileSync(
+    oldDockerfile,
+    buildOldHermesDockerfile({
+      baseTag: OLD_BASE_TAG,
+      discordPlaceholder: DISCORD_PLACEHOLDER,
+    }),
+    "utf8",
+  );
   try {
     const provider = await host.command(
       "bash",
