@@ -781,6 +781,52 @@ describe("createSetupNim", () => {
     expect(result).toMatchObject({ provider: "vllm" });
   });
 
+  it("reuses an already-running local vLLM on a DGX Spark non-interactive run with no requested provider (#7293)", async () => {
+    const profile = { name: "DGX Spark" } as VllmProfile;
+    // vLLM already running → the menu exposes only `vllm`; the no-provider
+    // default must reuse it (handleVllmSelection) and never reinstall
+    // (installVllm stays `unexpected`) or fall back to the cloud handler.
+    const detectInferenceProviderHostState = vi.fn(() =>
+      makeHostState({
+        vllmRunning: true,
+        vllmProfile: profile,
+        hasVllmImage: true,
+        vllmEntries: [{ key: "vllm", label: "Local vLLM (localhost:8000) — running (suggested)" }],
+      }),
+    );
+    const routeGuard = vi.fn(() => ({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    }));
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      state.provider = "vllm";
+      state.model = "vllm-model";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      return "selected";
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => null,
+        detectInferenceProviderHostState,
+        handleVllmSelection,
+      }),
+    );
+
+    const sparkGpu = { platform: "spark" } as unknown as Parameters<typeof setupNim>[0];
+    const result = await setupNim(sparkGpu, null, null, true, null, "nemoclaw", routeGuard);
+
+    expect(handleVllmSelection).toHaveBeenCalledOnce();
+    expect(handleVllmSelection).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ managedInstall: false }),
+    );
+    expect(result).toMatchObject({ provider: "vllm" });
+  });
+
   it("threads the DGX Station express model through the standard managed-vLLM selection contract", async () => {
     const profile = { name: "DGX Station", platform: "station" } as VllmProfile;
     const servedModel = "nvidia/nemotron-3-ultra-550b-a55b";
