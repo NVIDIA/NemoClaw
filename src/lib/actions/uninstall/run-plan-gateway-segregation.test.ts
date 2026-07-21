@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE } from "../../onboard/docker-driver-gateway-service";
 import { readGatewayRegistryFile } from "../../state/gateway-registry";
 import { migrateLegacyPortState } from "../../state/legacy-port-migration";
 import { type RunResult, runUninstallPlan } from "./run-plan";
@@ -518,7 +519,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       fs.writeFileSync(path.join(nemoclawConfig, "keep"), "default");
       fs.writeFileSync(
         servicePath,
-        "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n[Service]\nExecStart=/usr/bin/openshell-gateway\n",
+        `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}\n[Service]\nExecStart=/usr/bin/openshell-gateway\n`,
       );
       fs.writeFileSync(
         path.join(shared, "sandboxes.json"),

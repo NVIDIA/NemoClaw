@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { type OpenRegularFile, openRegularFileNoFollow } from "../../adapters/fs/regular-file";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
 import { isErrnoException } from "../../core/errno";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
@@ -71,6 +72,7 @@ export interface UninstallRunDeps {
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log?: (message: string) => void;
+  openRegularFile?: typeof openRegularFileNoFollow;
   platform?: NodeJS.Platform;
   readProcessArgv?: (pid: number) => readonly string[] | null;
   readLine?: () => string | null;
@@ -297,6 +299,7 @@ interface UninstallRuntime {
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log: (message: string) => void;
+  openRegularFile: typeof openRegularFileNoFollow;
   platform: NodeJS.Platform;
   readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
   readLine: () => string | null;
@@ -327,6 +330,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
         }
       }),
     log: deps.log ?? ((message) => console.log(message)),
+    openRegularFile: deps.openRegularFile ?? openRegularFileNoFollow,
     platform: deps.platform ?? process.platform,
     readProcessArgv: deps.readProcessArgv,
     readLine: deps.readLine ?? readLineFromStdin,
@@ -768,16 +772,25 @@ function removeNemoclawOpenShellGatewayUserService(runtime: UninstallRuntime): b
   );
   if (!runtime.existsSync(servicePath)) return true;
 
-  let unit = "";
+  let serviceFile: OpenRegularFile;
   try {
-    if (fs.lstatSync(servicePath).isSymbolicLink()) {
-      runtime.warn(`Leaving ${servicePath} in place because it is a symbolic link.`);
-      return false;
-    }
-    unit = fs.readFileSync(servicePath, "utf-8");
+    serviceFile = runtime.openRegularFile(servicePath);
+  } catch (error) {
+    runtime.warn(
+      isErrnoException(error) && error.code === "ELOOP"
+        ? `Leaving ${servicePath} in place because it is a symbolic link.`
+        : `Failed to read ${servicePath}; leaving gateway user service in place.`,
+    );
+    return false;
+  }
+  let unit: string;
+  try {
+    unit = serviceFile.readUtf8();
   } catch {
     runtime.warn(`Failed to read ${servicePath}; leaving gateway user service in place.`);
     return false;
+  } finally {
+    serviceFile.close();
   }
   if (
     !unit
@@ -836,19 +849,26 @@ function removeNemoclawOpenShellGatewayEnv(
 ): { keptUnrelatedContent: boolean; ok: boolean } {
   const envPath = path.join(paths.openshellConfigDir, "gateway.env");
   if (!runtime.existsSync(envPath)) return { keptUnrelatedContent: false, ok: true };
+  let envFile: OpenRegularFile;
   try {
-    if (fs.lstatSync(envPath).isSymbolicLink()) {
-      runtime.warn(`Leaving ${envPath} in place because it is a symbolic link.`);
-      return { keptUnrelatedContent: true, ok: false };
-    }
-    const existing = fs.readFileSync(envPath, "utf-8");
+    envFile = runtime.openRegularFile(envPath, { writable: true });
+  } catch (error) {
+    runtime.warn(
+      isErrnoException(error) && error.code === "ELOOP"
+        ? `Leaving ${envPath} in place because it is a symbolic link.`
+        : `Failed to clean ${envPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { keptUnrelatedContent: true, ok: false };
+  }
+  try {
+    const existing = envFile.readUtf8();
     const preserved = buildDockerGatewayDebEnvFile(existing, {});
     if (preserved.trim()) {
-      fs.writeFileSync(envPath, preserved, { encoding: "utf-8", mode: 0o600 });
-      fs.chmodSync(envPath, 0o600);
+      envFile.replaceUtf8(preserved, 0o600);
       runtime.log(`Removed NemoClaw gateway settings from ${envPath}`);
       return { keptUnrelatedContent: true, ok: true };
     }
+    envFile.close();
     runtime.rmSync(envPath, { force: true });
     runtime.log(`Removed ${envPath}`);
     return { keptUnrelatedContent: false, ok: true };
@@ -857,6 +877,8 @@ function removeNemoclawOpenShellGatewayEnv(
       `Failed to clean ${envPath}: ${error instanceof Error ? error.message : String(error)}`,
     );
     return { keptUnrelatedContent: true, ok: false };
+  } finally {
+    envFile.close();
   }
 }
 

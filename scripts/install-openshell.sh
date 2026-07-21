@@ -647,7 +647,9 @@ download_openshell_formula() {
     warn "gh CLI formula download failed (auth may not be configured) — falling back to curl"
     rm -f "$output"
   fi
-  curl -fL -sS "https://github.com/NVIDIA/OpenShell/releases/download/${release_tag}/openshell.rb" \
+  curl --proto '=https' --tlsv1.2 -fL -sS \
+    --connect-timeout 10 --max-time 30 --retry 3 --retry-delay 1 --retry-all-errors \
+    "https://github.com/NVIDIA/OpenShell/releases/download/${release_tag}/openshell.rb" \
     -o "$output"
 }
 
@@ -710,8 +712,9 @@ install_macos_homebrew_formula() {
   if [ -z "$brew_prefix" ] || [ ! -x "$openshell_bin" ]; then
     openshell_bin="$(command -v openshell 2>/dev/null || true)"
   fi
-  [ -n "$openshell_bin" ] && [ -x "$openshell_bin" ] \
-    || fail "Homebrew completed but the openshell binary was not found on PATH."
+  if [ -z "$openshell_bin" ] || [ ! -x "$openshell_bin" ]; then
+    fail "Homebrew completed but the openshell binary was not found on PATH."
+  fi
   require_openshell_messaging_features "$openshell_bin"
   info "$("$openshell_bin" --version 2>&1 || echo openshell) installed"
   info "OpenShell Homebrew service staged; onboarding will start it after gateway validation."
@@ -781,8 +784,9 @@ info "Installing OpenShell from release '$RELEASE_TAG'..."
 if [ "$OS" = "Darwin" ]; then
   if command -v brew >/dev/null 2>&1; then
     install_macos_homebrew_formula
+  else
+    warn "Homebrew is not installed; installing the standalone OpenShell gateway without reboot persistence."
   fi
-  warn "Homebrew is not installed; installing the standalone OpenShell gateway without reboot persistence."
 fi
 
 case "$OS" in

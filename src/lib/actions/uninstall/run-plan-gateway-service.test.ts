@@ -167,17 +167,6 @@ describe("uninstall OpenShell gateway user service", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-service-"));
     const servicePath = writeManagedService(tmpHome);
     const errors: string[] = [];
-    const originalReadFileSync = fs.readFileSync;
-    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((
-      target: fs.PathOrFileDescriptor,
-      options?: Parameters<typeof fs.readFileSync>[1],
-    ) => {
-      return String(target) === servicePath
-        ? (() => {
-            throw new Error("permission denied");
-          })()
-        : (originalReadFileSync(target, options as never) as ReturnType<typeof fs.readFileSync>);
-    }) as typeof fs.readFileSync);
 
     try {
       const result = runUninstallPlan(
@@ -188,6 +177,9 @@ describe("uninstall OpenShell gateway user service", () => {
           error: (line) => errors.push(line),
           existsSync: (target) => String(target).startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
+          openRegularFile: () => {
+            throw new Error("permission denied");
+          },
           platform: "linux",
           rmSync: fs.rmSync,
           run: vi.fn(() => ok()),
@@ -204,7 +196,39 @@ describe("uninstall OpenShell gateway user service", () => {
         "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
       );
     } finally {
-      readSpy.mockRestore();
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to remove a symlinked managed service path", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-service-"));
+    const targetPath = path.join(tmpHome, "foreign.service");
+    const servicePath = getNemoclawOpenShellGatewayUserServicePath(tmpHome);
+    fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+    fs.writeFileSync(targetPath, `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`);
+    fs.symlinkSync(targetPath, servicePath);
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: false },
+        {
+          commandExists: () => true,
+          env: homeEnv(tmpHome),
+          existsSync: (target) => String(target).startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          platform: "linux",
+          rmSync: fs.rmSync,
+          run: vi.fn(() => ok()),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(fs.readFileSync(targetPath, "utf-8")).toContain(
+        NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
+      );
+      expect(fs.lstatSync(servicePath).isSymbolicLink()).toBe(true);
+    } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });

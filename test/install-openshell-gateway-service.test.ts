@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { buildNemoclawOpenShellGatewayUserService } from "../src/lib/onboard/docker-driver-gateway-service";
 import { TEST_SYSTEM_PATH, writeExecutable } from "./helpers/installer-sourced-env";
 
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
@@ -56,6 +57,7 @@ describe("install.sh OpenShell gateway service", () => {
 
       const unit = fs.readFileSync(servicePath, "utf-8");
       expect(result.status).toBe(0);
+      expect(unit).toBe(buildNemoclawOpenShellGatewayUserService(gatewayBin));
       expect(unit).toContain("# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1");
       expect(unit).toContain("After=default.target");
       expect(unit).toContain("Environment=OPENSHELL_LOCAL_TLS_DIR=%h/.local/state/openshell/tls");
