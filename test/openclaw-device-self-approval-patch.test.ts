@@ -150,7 +150,7 @@ function selfApprovalOptions() {
 }
 
 describe("OpenClaw bounded device self-approval patch (#4462)", () => {
-  it("applies and audits exactly one CLI, gateway, and canonical-state target", () => {
+  it("applies and audits exactly one CLI, gateway-auth, gateway-handler, and canonical-state target", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-self-approval-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -158,17 +158,62 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     try {
       const freshAudit = runPatch(dist, true);
       expect(freshAudit.status, `${freshAudit.stdout}${freshAudit.stderr}`).toBe(0);
-      expect(freshAudit.stdout).toContain("3 OK · 0 missing");
+      expect(freshAudit.stdout).toContain("4 OK · 0 missing");
       expect(freshAudit.stdout).toContain("would-apply");
 
       const apply = runPatch(dist);
       expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
       const appliedAudit = runPatch(dist, true);
       expect(appliedAudit.status, `${appliedAudit.stdout}${appliedAudit.stderr}`).toBe(0);
-      expect(appliedAudit.stdout.match(/already-applied/gu)).toHaveLength(3);
+      expect(appliedAudit.stdout.match(/already-applied/gu)).toHaveLength(4);
 
       const secondApply = runPatch(dist);
       expect(secondApply.status, `${secondApply.stdout}${secondApply.stderr}`).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("routes only a bounded CLI device-token scope mismatch into canonical pairing", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-auth-upgrade-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "message-handler-fixture.js"), "utf8");
+      const connect = runFixture<
+        (
+          params: Record<string, unknown>,
+          verify: () => Promise<Record<string, unknown>>,
+        ) => Promise<Record<string, unknown>>
+      >(source, "connect");
+      const scopeMismatch = async () => ({ ok: false, reason: "scope_mismatch" });
+
+      await expect(
+        connect(
+          { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+          scopeMismatch,
+        ),
+      ).resolves.toMatchObject({ authOk: true, authMethod: "device-token" });
+      for (const candidate of [
+        { client: { id: "control-ui", mode: "ui" }, role: "operator", scopes: ["operator.write"] },
+        { client: { id: "cli", mode: "cli" }, role: "node", scopes: ["operator.write"] },
+        { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.admin"] },
+        {
+          client: { id: "cli", mode: "cli" },
+          role: "operator",
+          scopes: ["operator.write", "operator.write"],
+        },
+      ]) {
+        await expect(connect(candidate, scopeMismatch)).resolves.toMatchObject({ authOk: false });
+      }
+      await expect(
+        connect(
+          { client: { id: "cli", mode: "cli" }, role: "operator", scopes: ["operator.write"] },
+          async () => ({ ok: false, reason: "token-mismatch" }),
+        ),
+      ).resolves.toMatchObject({ authOk: false });
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

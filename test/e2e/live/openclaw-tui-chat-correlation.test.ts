@@ -58,12 +58,12 @@ import {
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 
 const SANDBOX_NAME = "e2e-openclaw-tui-corr";
-// OpenClaw 2026.6.10 is the post-fix regression-guard version for #2603 + #3145.
+// OpenClaw 2026.7.1 is the post-fix regression-guard version for #2603 + #3145.
 // Historical buggy builds were older; this live guard asserts the fixed
 // protocol/history contract stays stable on the pinned OpenClaw version.
 // Override via env so future pin bumps do not require a code edit.
 const EXPECTED_OPENCLAW_VERSION =
-  process.env.E2E_OPENCLAW_TUI_CORRELATION_PINNED_VERSION ?? "2026.6.10";
+  process.env.E2E_OPENCLAW_TUI_CORRELATION_PINNED_VERSION ?? "2026.7.1";
 
 const LIVE_SCRIPT_NAME = "openclaw-issue2603-chat-correlation.cjs";
 const SANDBOX_GATEWAY_PORT = 18789;

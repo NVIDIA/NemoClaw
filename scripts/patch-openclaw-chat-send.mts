@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * Temporary NemoClaw compatibility shim for OpenClaw 2026.5.x and 2026.6.x
+ * Temporary NemoClaw compatibility shim for OpenClaw 2026.5.x through 2026.7.x
  * chat.send gateway behavior. Remove this when upstream OpenClaw preserves
  * submitted chat.send run lineage and stops emitting empty terminal chat
  * events.
@@ -229,7 +229,8 @@ function patchFollowupRunIdPreservation(source: string, file: string): PatchResu
   // 2026.5.22 closes over params.opts and uses createReplyOperation, and
   // 2026.5.27 closes over params.opts and admits a queued reply turn before
   // creating the run id. OpenClaw 2026.6.10 keeps that admission flow but routes
-  // the session id through effectiveQueued and includes routeThreadId.
+  // the session id through effectiveQueued and includes routeThreadId. OpenClaw
+  // 2026.7.1 resolves the queued inbound context immediately before the run id.
   let nextSource = working.replace(
     /(replyOperation = createReplyOperation\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal(?: \?\? opts\?\.abortSignal)?\n\s*\}\);\n\s*)const runId = crypto\.randomUUID\(\);/,
     (_match, prefix) =>
@@ -239,6 +240,14 @@ function patchFollowupRunIdPreservation(source: string, file: string): PatchResu
   if (nextSource === working) {
     nextSource = working.replace(
       /(const admission = await admitReplyTurn\(\{\n\s*sessionId: (?:run\.sessionId|effectiveQueued\.admissionSessionId \?\? run\.sessionId),\n\s*sessionKey: replySessionKey \?\? "",\n\s*kind: "queued_followup",\n\s*resetTriggered: false,\n\s*(?:routeThreadId: queued\.originatingThreadId,\n\s*)?upstreamAbortSignal: queued\.abortSignal\n\s*\}\);[\s\S]*?replyOperation = admission\.operation;[\s\S]*?\n\s*)const runId = crypto\.randomUUID\(\);/,
+      (_match, prefix) =>
+        `${prefix}const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); ` +
+        `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,
+    );
+  }
+  if (nextSource === working) {
+    nextSource = working.replace(
+      /(const currentInboundContext = opts\?\.isHeartbeat === true \? effectiveQueued\.currentInboundContext : refreshActiveGoalContext\(effectiveQueued\.currentInboundContext, goalContextSessionEntry\);\n\s*)const runId = crypto\.randomUUID\(\);/,
       (_match, prefix) =>
         `${prefix}const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); ` +
         `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,

@@ -176,6 +176,7 @@ function requestsNonOperatorDeviceRole(pending) {
   const roles = new Set([...(pending.roles ?? []), ...(pending.role ? [pending.role] : [])]);
   return [...roles].some((role) => role !== "operator");
 }
+
 function emitDevicePairingDeniedSecurityEvent() {}
 function emitDevicePairingLifecycleSecurityEvent() {}
 function formatDevicePairingForbiddenMessage(value) { return value.reason; }
@@ -240,6 +241,63 @@ const deviceHandlers = {
     respond(true, { requestId, device: redactPairedDevice(approved.device) }, void 0);
   }
 };
+`);
+}
+
+function gatewayAuthFixture(): string {
+  return compiledIndent(`
+const GATEWAY_CLIENT_IDS = { CLI: "cli" };
+const GATEWAY_CLIENT_MODES = { CLI: "cli" };
+function mapDeviceTokenAuthFailureReason() { return "device_token_mismatch"; }
+async function resolveConnectAuthDecisionCore(params) {
+  let authResult = params.state.authResult;
+  let authOk = params.state.authOk;
+  let authMethod = params.state.authMethod;
+  let deviceTokenSharedGatewaySessionGeneration;
+  function finish() { return { authResult, authOk, authMethod, deviceTokenSharedGatewaySessionGeneration }; }
+  const deviceTokenCandidate = params.state.deviceTokenCandidate;
+  if (!params.hasDeviceIdentity || !params.deviceId || authOk || !deviceTokenCandidate) return finish();
+  const tokenCheck = await params.verifyDeviceToken({
+    deviceId: params.deviceId,
+    token: deviceTokenCandidate,
+    role: params.role,
+    scopes: params.scopes
+  });
+    if (tokenCheck.ok) {
+      authOk = true;
+      authMethod = "device-token";
+    if (tokenCheck.issuer?.kind === "shared-gateway-auth") deviceTokenSharedGatewaySessionGeneration = tokenCheck.issuer.generation;
+    params.rateLimiter?.reset(params.clientIp, "device-token");
+  } else {
+    authResult = { ok: false, reason: mapDeviceTokenAuthFailureReason() };
+    params.rateLimiter?.recordFailure(params.clientIp, "device-token");
+  }
+  return finish();
+}
+async function resolveConnectAuthDecision(params) { return resolveConnectAuthDecisionCore(params); }
+async function connect(connectParams, verifyDeviceToken) {
+  const role = connectParams.role;
+  const scopes = connectParams.scopes;
+  const authRateLimiter = null;
+  const authDecision = await resolveConnectAuthDecision({
+    state: {
+      authResult: { ok: false },
+      authOk: false,
+      authMethod: "token",
+      deviceTokenCandidate: "stored-token"
+    },
+    hasDeviceIdentity: true,
+    deviceId: "device-1",
+    publicKey: "public-key-1",
+          role,
+          scopes,
+          rateLimiter: authRateLimiter,
+    clientIp: "127.0.0.1",
+    verifyBootstrapToken: async () => ({ ok: false }),
+    verifyDeviceToken: async (paramsLocal) => await verifyDeviceToken(paramsLocal)
+  });
+  return authDecision;
+}
 `);
 }
 
@@ -434,6 +492,7 @@ async function approveBootstrapDevicePairing(requestId, bootstrapProfile, option
 
 export function writeFixtureDist(dist: string): void {
   fs.writeFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), cliFixture());
+  fs.writeFileSync(path.join(dist, "message-handler-fixture.js"), gatewayAuthFixture());
   fs.writeFileSync(path.join(dist, "devices-fixture.js"), handlerFixture());
   fs.writeFileSync(path.join(dist, "device-pairing-fixture.js"), stateFixture());
 }

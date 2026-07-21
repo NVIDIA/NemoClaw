@@ -15,6 +15,7 @@ const RUNTIME_FUNCTION_NAMES = [
 const RUNTIME_MODULE_FILE_PATTERNS = new Map<string, RegExp>([
   ["2026.5.27", /^pi-tools-.*\.js$/],
   ["2026.6.10", /^agent-tools-.*\.js$/],
+  ["2026.7.1", /^agent-tools-.*\.js$/],
 ]);
 type RuntimeFunctionName = (typeof RUNTIME_FUNCTION_NAMES)[number];
 type ExpectedMode = "progressive" | "direct";

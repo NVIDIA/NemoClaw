@@ -2851,7 +2851,7 @@ def brief_child_error(out, err):
 # runtime environment, so list calls resolve the same live gateway through
 # local loopback instead of the injected private-interface URL. Approval calls
 # additionally drop the gateway env triplet so OpenClaw must use the local
-# device token. The reviewed 2026.6.10 dist patch requests only
+# device token. The reviewed 2026.7.1 dist patch requests only
 # operator.pairing for a complete bounded CLI self-upgrade and forces the
 # existing local-only stored-device-auth path so a shared token reloaded from
 # config cannot win authentication. The gateway then validates and commits in
@@ -3452,7 +3452,7 @@ openclaw() {
   local _nemoclaw_guard_request_handled=0 _nemoclaw_guard_request_status=0
   # NemoClaw#4462: approval calls temporarily drop the gateway URL/port/token
   # so OpenClaw resolves the local loopback gateway and device token. The
-  # reviewed 2026.6.10 compatibility patch then performs bounded same-device
+  # reviewed 2026.7.1 compatibility patch then performs bounded same-device
   # scope upgrades in the gateway's canonical locked pairing writer. This
   # wrapper never reads or writes pending.json/paired.json.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then

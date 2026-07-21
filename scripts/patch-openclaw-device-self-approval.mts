@@ -2,17 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * Temporary compatibility patch for OpenClaw 2026.6.10 device scope upgrades.
+ * Temporary compatibility patch for OpenClaw 2026.6.10 through 2026.7.1 device
+ * scope upgrades.
  *
- * The 2026.6.10 devices CLI asks for the scopes it is trying to approve. A
- * device that currently has only operator.pairing is therefore rejected by
- * the gateway handshake before device.pair.approve can run. Its operator.admin
- * retry fails the same way, after which NemoClaw historically repaired the two
- * JSON state files directly. A configured gateway.auth.token would otherwise
+ * The devices CLI asks for the scopes it is trying to approve. A device that
+ * currently has only operator.pairing is therefore rejected by the gateway
+ * handshake before device.pair.approve can run. OpenClaw 2026.7.1 also rejects
+ * that valid device token during authentication, before its canonical pairing
+ * path can create the scope-upgrade request. Its operator.admin retry fails the
+ * same way, after which NemoClaw historically repaired the two JSON state files
+ * directly. A configured gateway.auth.token would otherwise
  * take precedence over the already-issued device credential and reach the
  * handler as shared-token auth. Keep the entire approval in OpenClaw instead:
- * for the exact same-device CLI repair, explicitly use OpenClaw's stored device
- * credential with operator.pairing, then let the gateway's canonical
+ * for the exact bounded CLI mismatch, continue only into OpenClaw's pairing
+ * gate; for the resulting same-device repair, explicitly use OpenClaw's stored
+ * device credential with operator.pairing, then let the gateway's canonical
  * approveDevicePairing path reload, lock, rotate the token, persist, broadcast,
  * and respond.
  *
@@ -42,6 +46,8 @@ const CLI_APPLIED_MARKERS = [
   CLI_RETRY_MARKER,
   CLI_LIST_MARKER,
 ] as const;
+const AUTH_SCOPE_UPGRADE_MARKER =
+  "nemoclaw: route bounded CLI device-token scope upgrade into pairing";
 const HANDLER_MARKER = "nemoclaw: bounded same-device scope approval";
 const STATE_MARKER = "nemoclaw: validate bounded self-approval inside pairing lock";
 const STATE_TRANSACTION_MARKER = "nemoclaw: recover bounded self-approval state transaction";
@@ -294,9 +300,49 @@ const CLI_APPROVE_CALL_REPLACEMENT = [
 ].join("\n");
 const CLI_ADMIN_RETRY_TARGET =
   '\t\tif (isDevicePairingApprovalDenied(error) && !scopes?.includes("operator.admin")) return await callGatewayCli("device.pair.approve", opts, { requestId }, { scopes: [ADMIN_SCOPE] });';
+const CLI_ADMIN_RETRY_TARGET_2026_7_1 =
+  '\t\tif (isDevicePairingApprovalDenied(error) && !scopes?.includes("operator.admin")) try {';
 const CLI_ADMIN_RETRY_REPLACEMENT = [
   "\t\tif (nemoclawUseStoredDeviceAuth) throw error; // nemoclaw: keep bounded stored device auth fail closed (#4462)",
   CLI_ADMIN_RETRY_TARGET,
+].join("\n");
+const CLI_ADMIN_RETRY_REPLACEMENT_2026_7_1 = [
+  "\t\tif (nemoclawUseStoredDeviceAuth) throw error; // nemoclaw: keep bounded stored device auth fail closed (#4462)",
+  CLI_ADMIN_RETRY_TARGET_2026_7_1,
+].join("\n");
+
+const AUTH_DECISION_CALL_TARGET = [
+  "\t\t\t\t\trole,",
+  "\t\t\t\t\tscopes,",
+  "\t\t\t\t\trateLimiter: authRateLimiter,",
+].join("\n");
+const AUTH_DECISION_CALL_REPLACEMENT = [
+  "\t\t\t\t\trole,",
+  "\t\t\t\t\tscopes,",
+  "\t\t\t\t\tclientId: connectParams.client.id,",
+  "\t\t\t\t\tclientMode: connectParams.client.mode,",
+  "\t\t\t\t\trateLimiter: authRateLimiter,",
+].join("\n");
+const AUTH_DEVICE_TOKEN_TARGET = [
+  "\t\tif (tokenCheck.ok) {",
+  "\t\t\tauthOk = true;",
+  '\t\t\tauthMethod = "device-token";',
+].join("\n");
+const AUTH_DEVICE_TOKEN_REPLACEMENT = [
+  '\t\tconst nemoclawAllowedUpgradeScopes = new Set(["operator.pairing", "operator.read", "operator.write"]);',
+  '\t\tconst nemoclawScopeUpgradeScopes = Array.isArray(params.scopes) ? params.scopes.map((scope) => typeof scope === "string" ? scope.trim() : "") : [];',
+  "\t\tconst nemoclawCliScopeUpgrade =",
+  "\t\t\t!tokenCheck.ok &&",
+  '\t\t\t(tokenCheck.reason === "scope-mismatch" || tokenCheck.reason === "scope_mismatch") &&',
+  "\t\t\tparams.clientId === GATEWAY_CLIENT_IDS.CLI &&",
+  "\t\t\tparams.clientMode === GATEWAY_CLIENT_MODES.CLI &&",
+  '\t\t\tparams.role === "operator" &&',
+  "\t\t\tnemoclawScopeUpgradeScopes.length > 0 &&",
+  "\t\t\tnemoclawScopeUpgradeScopes.length === new Set(nemoclawScopeUpgradeScopes).size &&",
+  "\t\t\tnemoclawScopeUpgradeScopes.every((scope) => scope && nemoclawAllowedUpgradeScopes.has(scope));",
+  "\t\tif (tokenCheck.ok || nemoclawCliScopeUpgrade) { // nemoclaw: route bounded CLI device-token scope upgrade into pairing (#4462)",
+  "\t\t\tauthOk = true;",
+  '\t\t\tauthMethod = "device-token";',
 ].join("\n");
 
 const HANDLER_HELPER = [
@@ -618,6 +664,26 @@ const STATE_LIST_REPLACEMENT = [
   "\t});",
   "}",
 ].join("\n");
+const STATE_LIST_TARGET_2026_7_1 = [
+  "async function listDevicePairing(baseDir) {",
+  "\tconst state = await loadState(baseDir);",
+  "\treturn {",
+  "\t\tpending: Object.values(state.pendingById).map(toPublicPendingDevicePairingRequest).toSorted((a, b) => b.ts - a.ts),",
+  "\t\tpaired: Object.values(state.pairedByDeviceId).toSorted((a, b) => b.approvedAtMs - a.approvedAtMs)",
+  "\t};",
+  "}",
+].join("\n");
+const STATE_LIST_REPLACEMENT_2026_7_1 = [
+  "async function listDevicePairing(baseDir) {",
+  "\treturn await withLock(async () => {",
+  "\t\tconst state = await loadState(baseDir);",
+  "\t\treturn {",
+  "\t\t\tpending: Object.values(state.pendingById).map(toPublicPendingDevicePairingRequest).toSorted((a, b) => b.ts - a.ts),",
+  "\t\t\tpaired: Object.values(state.pairedByDeviceId).toSorted((a, b) => b.approvedAtMs - a.approvedAtMs)",
+  "\t\t};",
+  "\t});",
+  "}",
+].join("\n");
 const STATE_GET_PAIRED_TARGET = [
   "/** Return one paired device by normalized device id. */",
   "async function getPairedDevice(deviceId, baseDir) {",
@@ -640,6 +706,22 @@ const STATE_GET_PENDING_REPLACEMENT = [
   "/** Return one pending pairing request by request id. */",
   "async function getPendingDevicePairing(requestId, baseDir) {",
   "\treturn await withLock(async () => (await loadState(baseDir)).pendingById[requestId] ?? null);",
+  "}",
+].join("\n");
+const STATE_GET_PENDING_TARGET_2026_7_1 = [
+  "/** Return one pending pairing request by request id. */",
+  "async function getPendingDevicePairing(requestId, baseDir) {",
+  "\tconst pending = (await loadState(baseDir)).pendingById[requestId];",
+  "\treturn pending ? toPublicPendingDevicePairingRequest(pending) : null;",
+  "}",
+].join("\n");
+const STATE_GET_PENDING_REPLACEMENT_2026_7_1 = [
+  "/** Return one pending pairing request by request id. */",
+  "async function getPendingDevicePairing(requestId, baseDir) {",
+  "\treturn await withLock(async () => {",
+  "\t\tconst pending = (await loadState(baseDir)).pendingById[requestId];",
+  "\t\treturn pending ? toPublicPendingDevicePairingRequest(pending) : null;",
+  "\t});",
   "}",
 ].join("\n");
 const STATE_FUNCTION_ANCHOR =
@@ -807,11 +889,54 @@ const FILE_SPECS: FileSpec[] = [
         file,
       );
       if (result.error) return { source, status: "no-match", error: result.error };
+      const retryTarget = result.source.includes(CLI_ADMIN_RETRY_TARGET)
+        ? CLI_ADMIN_RETRY_TARGET
+        : CLI_ADMIN_RETRY_TARGET_2026_7_1;
+      const retryReplacement =
+        retryTarget === CLI_ADMIN_RETRY_TARGET
+          ? CLI_ADMIN_RETRY_REPLACEMENT
+          : CLI_ADMIN_RETRY_REPLACEMENT_2026_7_1;
       result = replaceExactlyOnce(
         result.source,
-        CLI_ADMIN_RETRY_TARGET,
-        CLI_ADMIN_RETRY_REPLACEMENT,
+        retryTarget,
+        retryReplacement,
         "devices CLI stored-auth fail-closed retry target",
+        file,
+      );
+      return result.error
+        ? { source, status: "no-match", error: result.error }
+        : { source: result.source, status: "would-apply" };
+    },
+  },
+  {
+    id: "gateway-auth-scope-upgrade",
+    label: "device-token scope-upgrade gateway auth runtime",
+    marker: AUTH_SCOPE_UPGRADE_MARKER,
+    selector(source) {
+      return (
+        source.includes("async function resolveConnectAuthDecisionCore(params)") &&
+        source.includes("const authDecision = await resolveConnectAuthDecision({") &&
+        source.includes("verifyDeviceToken: async") &&
+        (source.includes(AUTH_DEVICE_TOKEN_TARGET) || source.includes(AUTH_SCOPE_UPGRADE_MARKER))
+      );
+    },
+    patch(source, file) {
+      if (source.includes(AUTH_SCOPE_UPGRADE_MARKER)) {
+        return { source, status: "already-applied" };
+      }
+      let result = replaceExactlyOnce(
+        source,
+        AUTH_DECISION_CALL_TARGET,
+        AUTH_DECISION_CALL_REPLACEMENT,
+        "gateway auth decision CLI identity target",
+        file,
+      );
+      if (result.error) return { source, status: "no-match", error: result.error };
+      result = replaceExactlyOnce(
+        result.source,
+        AUTH_DEVICE_TOKEN_TARGET,
+        AUTH_DEVICE_TOKEN_REPLACEMENT,
+        "gateway device-token scope-upgrade target",
         file,
       );
       return result.error
@@ -902,10 +1027,13 @@ const FILE_SPECS: FileSpec[] = [
         file,
       );
       if (result.error) return { source, status: "no-match", error: result.error };
+      const listTarget = result.source.includes(STATE_LIST_TARGET)
+        ? STATE_LIST_TARGET
+        : STATE_LIST_TARGET_2026_7_1;
       result = replaceExactlyOnce(
         result.source,
-        STATE_LIST_TARGET,
-        STATE_LIST_REPLACEMENT,
+        listTarget,
+        listTarget === STATE_LIST_TARGET ? STATE_LIST_REPLACEMENT : STATE_LIST_REPLACEMENT_2026_7_1,
         "canonical pairing list lock target",
         file,
       );
@@ -918,10 +1046,15 @@ const FILE_SPECS: FileSpec[] = [
         file,
       );
       if (result.error) return { source, status: "no-match", error: result.error };
+      const pendingTarget = result.source.includes(STATE_GET_PENDING_TARGET)
+        ? STATE_GET_PENDING_TARGET
+        : STATE_GET_PENDING_TARGET_2026_7_1;
       result = replaceExactlyOnce(
         result.source,
-        STATE_GET_PENDING_TARGET,
-        STATE_GET_PENDING_REPLACEMENT,
+        pendingTarget,
+        pendingTarget === STATE_GET_PENDING_TARGET
+          ? STATE_GET_PENDING_REPLACEMENT
+          : STATE_GET_PENDING_REPLACEMENT_2026_7_1,
         "canonical pending-device reader lock target",
         file,
       );

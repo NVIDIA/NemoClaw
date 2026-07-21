@@ -22,17 +22,17 @@ const compiledPreload = path.join(
 
 // Reviewed from the published @openclaw/msteams artifact, not inferred from
 // NemoClaw source. The integrity is npm's dist.integrity; the SHA-256 values
-// identify the exact runtime entry and plugin entry reviewed for 2026.6.10.
+// identify the exact runtime entry and plugin entry reviewed for 2026.7.1.
 // This fixture intentionally models only that package/load boundary. It does
 // not vendor or claim to test the upstream Bot Framework send/parser code.
 const REVIEWED_MSTEAMS_CONTRACT = {
-  version: "2026.6.10",
+  version: "2026.7.1",
   npmIntegrity:
-    "sha512-GjHnCPvjbnI0C7mEFcdT2uKDH4/WwOe2dZBfQiWxBtkE76m6TNG0J9dJjD4mc8/pk8rXSO0cWw+KV9jzWtF9VA==",
+    "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==",
   runtimeExtension: "./dist/index.js",
   pluginSpecifier: "./channel-plugin-api.js",
   indexSha256: "2a83ee979d5ee9f12c7ac507ebd87024be3315de3f2cc87c81effc9ca85246d1",
-  pluginEntrySha256: "2d451b31ba4fbcc0e22ea4654fdc55dc05ae680765b7d636bfbf89177eb1be4b",
+  pluginEntrySha256: "3f155003264d64d92f780eae17eab48ebe18d56e67dacdc8f0587a1f09266165",
 } as const;
 
 function readPinnedOpenClawVersion(): string {
@@ -58,7 +58,7 @@ function writeReviewedPackageShape(root: string, version: string): string {
   fs.writeFileSync(
     path.join(distDir, "reviewed-channel-entry-contract.js"),
     // The published package's runtime extension delegates to
-    // defineBundledChannelEntry. OpenClaw 2026.6.10 then uses createRequire for
+    // defineBundledChannelEntry. OpenClaw 2026.7.1 then uses createRequire for
     // built dist/*.js plugin entries. Preserve that reviewed loader seam here
     // without copying the upstream Teams sender or parser implementation.
     [

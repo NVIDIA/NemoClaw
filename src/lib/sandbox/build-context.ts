@@ -261,6 +261,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "openclaw-npm-remediation.mts"),
+    path.join(stagedScriptsDir, "lib", "openclaw-npm-remediation.mts"),
+  );
   normalizeReadModesForDockerCopy(stagedScriptsDir);
 
   return { buildCtx, stagedDockerfile };

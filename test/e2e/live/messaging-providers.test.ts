@@ -907,7 +907,7 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
     );
     check(
       installedSlackProof.proof === "openclaw-pipeline-runtime",
-      `M-S17c: OpenClaw 2026.6.10 Slack proof used the reviewed pipeline/runtime exports (${installedSlackProof.proof})`,
+      `M-S17c: OpenClaw 2026.7.1 Slack proof used the reviewed pipeline/runtime exports (${installedSlackProof.proof})`,
     );
     const slackRuntimeCapture = lastJsonLine(
       fakeSlack.captureFile,

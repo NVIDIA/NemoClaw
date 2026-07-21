@@ -225,12 +225,12 @@ describe("OpenClaw Tool Search pinned-runtime validator", () => {
     expect(result.visibleToolNames).toEqual(["nemoclaw_runtime_validator_probe"]);
   });
 
-  it("selects the exact 2026.6.10 agent-tools runtime layout", async () => {
+  it("selects the exact 2026.7.1 agent-tools runtime layout", async () => {
     const fixture = writeFixture({
       runtimeFileName: "agent-tools-fixture.js",
-      version: "2026.6.10",
+      version: "2026.7.1",
     });
-    const result = await validateFixture(fixture, "progressive", "2026.6.10");
+    const result = await validateFixture(fixture, "progressive", "2026.7.1");
 
     expect(result.runtimeModulePath).toMatch(/agent-tools-fixture\.js$/);
   });
