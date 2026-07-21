@@ -17,6 +17,7 @@ describe("built-in channel manifests", () => {
   it("registers every known channel for supported gateway agents", () => {
     const registry = createBuiltInChannelManifestRegistry();
     const channelNames = knownChannelNames();
+    const hermesChannelNames = channelNames.filter((channelName) => channelName !== "googlechat");
 
     expect(BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => manifest.id)).toEqual(channelNames);
     expect(registry.list().map((manifest) => manifest.id)).toEqual(channelNames);
@@ -24,7 +25,7 @@ describe("built-in channel manifests", () => {
       channelNames,
     );
     expect(registry.listAvailable({ agent: "hermes" }).map((manifest) => manifest.id)).toEqual(
-      channelNames,
+      hermesChannelNames,
     );
   });
 
@@ -97,6 +98,10 @@ describe("built-in channel manifests", () => {
       "src/lib/messaging/channels/whatsapp/hooks/status-health-eval.ts",
       "src/lib/messaging/channels/teams/manifest.ts",
       "src/lib/messaging/channels/teams/hooks/host-forward-port-conflict.ts",
+      "src/lib/messaging/channels/googlechat/manifest.ts",
+      "src/lib/messaging/channels/googlechat/hooks/index.ts",
+      "src/lib/messaging/channels/googlechat/hooks/tunnel-audience-gate.ts",
+      "src/lib/messaging/channels/googlechat/template-resolver.ts",
       "src/lib/messaging/hooks/common/config-prompt.ts",
       "src/lib/messaging/hooks/common/token-paste.ts",
     ];

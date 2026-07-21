@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect } from "../fixtures/e2e-test.ts";
+import { startChannelsStopStartProgress } from "./channels-stop-start-progress.ts";
 import { assertChannelsStopStartSandboxName } from "./channels-stop-start-safety.ts";
 import {
   type AgentKind,
@@ -33,6 +34,11 @@ if (AGENT !== "openclaw" && AGENT !== "hermes") {
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-channels-stop-start-${AGENT}`;
 assertChannelsStopStartSandboxName(SANDBOX_NAME);
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");
+// Bridge channels that need a live public tunnel and a valid service-account key
+// (googlechat) are intentionally excluded from this fake-token matrix; their
+// add/stop/start/remove lifecycle is covered by
+// test/channels-add-bridge-lifecycle.test.ts. teams (#5585) is a separate,
+// pre-existing gap and is out of scope for this channel's PR.
 const CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp"] as const;
 const PROVIDERS: Record<string, (sandbox: string) => string[]> = {
   telegram: (sandbox) => [`${sandbox}-telegram-bridge`],
@@ -438,6 +444,9 @@ export async function runChannelsStopStartTarget({
     sandboxName: SANDBOX_NAME,
     channels: CHANNELS,
   });
+
+  const progress = startChannelsStopStartProgress(AGENT);
+  cleanup.trackDisposable("stop channels stop/start progress", progress.stop);
 
   cleanup.trackGateway(host, "nemoclaw", {
     artifactName: `cleanup-openshell-gateway-destroy-${AGENT}`,

@@ -24,6 +24,7 @@ type LegacyOnboardProvidersModule = {
 };
 
 type RebuildModule = typeof import("./rebuild");
+type GooglechatWebhookLifecycleModule = typeof import("../../tunnel/googlechat-webhook-lifecycle");
 
 /**
  * Injectable, late-bound boundary around provider registration and rebuild
@@ -46,5 +47,10 @@ export const policyChannelDependencies = {
   ): ReturnType<RebuildModule["rebuildSandbox"]> {
     const rebuild = require("./rebuild") as RebuildModule;
     return rebuild.rebuildSandbox(sandboxName, args);
+  },
+  stopGooglechatWebhookTunnel(sandboxName: string): void {
+    const lifecycle =
+      require("../../tunnel/googlechat-webhook-lifecycle") as GooglechatWebhookLifecycleModule;
+    lifecycle.stopGooglechatWebhookTunnel(sandboxName);
   },
 };

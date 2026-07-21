@@ -9,12 +9,20 @@ keywords: ["nemoclaw onboard messaging", "messaging channel picker", "channel en
 content:
   type: "how_to"
 ---
+import { AgentOnly } from "../_components/AgentGuide";
+
 Enable channels during onboarding when you are creating or recreating a sandbox.
 
 ## Use the Interactive Picker
 
 When the wizard reaches **Messaging channels**, it lists Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams when the selected agent supports them.
 Press a channel number to toggle it on or off, then press **Enter** when done.
+
+<AgentOnly variant="openclaw">
+The OpenClaw picker also lists experimental Google Chat.
+Google Chat enrollment is interactive because you must set and confirm the public HTTP endpoint in Google Cloud Console.
+Refer to [Set Up Google Chat](set-up-google-chat) before selecting it.
+</AgentOnly>
 
 If you select no channels, pressing **Enter** skips messaging setup.
 If a token-based channel token is not already in the environment or credential store, the wizard prompts for it and saves it.
@@ -55,6 +63,11 @@ The quotes keep the export from triggering a redirection or syntax error when yo
 This release does not support non-interactive WeChat configuration because the iLink QR handshake requires a human to scan the QR on a paired phone.
 Run `$$nemoclaw onboard` interactively when you want to enable WeChat.
 For non-interactive WhatsApp selection, set `WHATSAPP_ALLOWED_IDS` to a nonempty comma-separated sender list.
+
+<AgentOnly variant="openclaw">
+Google Chat also requires interactive enrollment.
+NemoClaw skips it in non-interactive mode even when you supply its environment variables.
+</AgentOnly>
 
 ## Run Onboarding
 

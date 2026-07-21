@@ -61,6 +61,7 @@ export type CleanupSandboxServicesDeps = {
   unloadOllamaModels?: () => void;
   runOpenshell?: RunOpenshell;
   rmSync?: typeof fs.rmSync;
+  stopGooglechatWebhookTunnel?: (sandboxName: string) => string;
 };
 
 type ShieldsTimerNeutralizeResult = {
@@ -137,6 +138,13 @@ export function cleanupSandboxServices(
       return runtime.runOpenshell(args, opts);
     });
   const rmSync = deps.rmSync ?? fs.rmSync;
+  const stopGooglechatWebhookTunnel =
+    deps.stopGooglechatWebhookTunnel ??
+    ((name: string) => {
+      const lifecycle =
+        require("../../tunnel/googlechat-webhook-lifecycle") as typeof import("../../tunnel/googlechat-webhook-lifecycle");
+      return lifecycle.stopGooglechatWebhookTunnel(name);
+    });
 
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
@@ -152,6 +160,14 @@ export function cleanupSandboxServices(
     }
   }
 
+  let googlechatServicesPidDir = `${servicesPidDir}-googlechat`;
+  try {
+    googlechatServicesPidDir = stopGooglechatWebhookTunnel(validatedSandboxName);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`  ${YW}⚠${R} Failed to stop Google Chat webhook tunnel: ${message}`);
+  }
+
   try {
     rmSync(servicesPidDir, {
       recursive: true,
@@ -159,6 +175,14 @@ export function cleanupSandboxServices(
     });
   } catch {
     // PID directory may not exist — ignore.
+  }
+  try {
+    rmSync(googlechatServicesPidDir, {
+      recursive: true,
+      force: true,
+    });
+  } catch {
+    // Dedicated Google Chat service directory may not exist — ignore.
   }
 
   // Delete every per-sandbox messaging and search provider created during

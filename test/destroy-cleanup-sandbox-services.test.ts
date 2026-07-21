@@ -20,7 +20,12 @@ function buildDeps(sandbox: SandboxLike): {
   deps: Required<
     Pick<
       CleanupSandboxServicesDeps,
-      "getSandbox" | "stopAll" | "unloadOllamaModels" | "runOpenshell" | "rmSync"
+      | "getSandbox"
+      | "stopAll"
+      | "unloadOllamaModels"
+      | "runOpenshell"
+      | "rmSync"
+      | "stopGooglechatWebhookTunnel"
     >
   >;
   stopAllCalls: Array<{ sandboxName: string }>;
@@ -43,6 +48,7 @@ function buildDeps(sandbox: SandboxLike): {
       }),
       runOpenshell: vi.fn(() => ({ status: 0 })),
       rmSync: vi.fn(),
+      stopGooglechatWebhookTunnel: vi.fn(() => "/tmp/nemoclaw-services-regression-2717-googlechat"),
     },
   };
 }
@@ -89,6 +95,11 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
       path.join("/tmp", "nemoclaw-services-regression-2717"),
       { recursive: true, force: true },
     );
+    expect(harness.deps.stopGooglechatWebhookTunnel).toHaveBeenCalledWith("regression-2717");
+    expect(harness.deps.rmSync).toHaveBeenCalledWith(
+      path.join("/tmp", "nemoclaw-services-regression-2717-googlechat"),
+      { recursive: true, force: true },
+    );
 
     const providerDeleteCalls = vi
       .mocked(harness.deps.runOpenshell)
@@ -111,5 +122,6 @@ describe("cleanupSandboxServices Ollama unload (#2717)", () => {
     expect(harness.deps.unloadOllamaModels).not.toHaveBeenCalled();
     expect(harness.deps.rmSync).not.toHaveBeenCalled();
     expect(harness.deps.runOpenshell).not.toHaveBeenCalled();
+    expect(harness.deps.stopGooglechatWebhookTunnel).not.toHaveBeenCalled();
   });
 });
