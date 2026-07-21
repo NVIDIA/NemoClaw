@@ -32,6 +32,7 @@ import {
   requireRebuildHermesInitialImageTag,
 } from "./rebuild-hermes-image-state.ts";
 import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
+import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
 // The migrated scope is the legacy non-interactive shell regression: install.sh,
@@ -97,7 +98,7 @@ function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[]
   // read the immutable `/opt/hermes` runtime. The rebuild contract needs to
   // seed and inspect that runtime in the managed Docker container itself.
   const containerId = resolveDirectSandboxContainer(sandboxName, "docker");
-  return ["exec", "--user", "sandbox", "--env", "HOME=/sandbox", containerId, ...command];
+  return buildHermesRuntimeExecArgs(containerId, command);
 }
 
 interface RegistryData {
