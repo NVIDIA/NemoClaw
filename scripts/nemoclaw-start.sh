@@ -2539,9 +2539,9 @@ start_auto_pair() {
   # The gateway must retain NemoClaw's private-interface URL, but the watcher
   # is an ordinary OpenClaw CLI client. Source the trusted runtime environment
   # in this child only so an injected private URL is removed before the first
-  # `devices list`. The list call below also drops shared gateway auth so
-  # OpenClaw must complete its local-loopback device pairing bootstrap before
-  # this watcher starts approving bounded requests.
+  # `devices list`. The first list call keeps shared gateway auth but uses the
+  # reviewed child-only marker to retain CLI identity, allowing OpenClaw's
+  # canonical local-loopback pairing bootstrap. Later calls use device auth.
   # An explicit URL override is preserved by write_runtime_shell_env().
   (
     if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
@@ -2663,6 +2663,7 @@ QUIET_POLLS = 0
 APPROVED = 0
 SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
+PAIRING_BOOTSTRAPPED = False
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
 # (the gateway stores connectParams.client.id verbatim). The policy requires
 # an explicit known clientId and never trusts an allowlisted mode by itself.
@@ -2877,14 +2878,14 @@ def brief_child_error(out, err):
 # Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
 # runtime environment, so list calls resolve the same live gateway through
 # local loopback instead of the injected private-interface URL. List and
-# approval calls additionally drop the gateway env triplet so OpenClaw must
-# use local device auth. The reviewed 2026.7.1 dist patch requests only
-# operator.pairing for a complete bounded CLI self-upgrade and forces the
-# existing local-only stored-device-auth path so a shared token reloaded from
-# config cannot win authentication. The gateway then validates and commits in
-# OpenClaw's canonical locked pairing writer. Remove both pieces when upstream
-# supports that flow.
-def run(*args, strip_gateway_env=False):
+# The first successful list call retains the loopback shared token and sets a
+# private child marker. The reviewed 2026.7.1 dist patch uses that marker only
+# to retain the CLI device identity that OpenClaw otherwise omits for loopback
+# shared-token calls, so OpenClaw can perform its canonical silent local
+# pairing transaction. Later list and approval calls drop the gateway env
+# triplet and use the stored device credential. Remove both pieces when
+# upstream supports that flow.
+def run(*args, strip_gateway_env=False, force_device_pairing=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
     # no timeout would hold a hung `openclaw devices list/approve` past
@@ -2892,6 +2893,9 @@ def run(*args, strip_gateway_env=False):
     env = None
     if strip_gateway_env:
         env = gateway_approval_env(os.environ)
+    elif force_device_pairing:
+        env = dict(os.environ)
+        env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS, env=env,
@@ -2939,7 +2943,14 @@ while time.time() < DEADLINE:
     if not SLOW_MODE and time.time() >= FAST_DEADLINE:
         SLOW_MODE = True
         print(f'[auto-pair] fast-mode deadline reached; switching to slow-mode approvals={APPROVED}')
-    rc, out, err = run(OPENCLAW, 'devices', 'list', '--json', strip_gateway_env=True)
+    rc, out, err = run(
+        OPENCLAW,
+        'devices',
+        'list',
+        '--json',
+        strip_gateway_env=PAIRING_BOOTSTRAPPED,
+        force_device_pairing=not PAIRING_BOOTSTRAPPED,
+    )
     if rc != 0 or not out:
         initial_request_id = pairing_required_request_id(out, err)
         if (
@@ -2962,6 +2973,9 @@ while time.time() < DEADLINE:
                 print(f'[auto-pair] initial CLI approve failed request={initial_request_id}: {failure}')
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
+    if not PAIRING_BOOTSTRAPPED:
+        PAIRING_BOOTSTRAPPED = True
+        print('[auto-pair] loopback CLI pairing bootstrap completed')
     try:
         data = json.loads(out)
     except Exception:

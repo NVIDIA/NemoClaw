@@ -151,6 +151,16 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
   requireOrderedMarkers(
     gatewayCall.source,
     [
+      "function shouldOmitDeviceIdentityForGatewayCall(params)",
+      "NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING",
+      "nemoclaw: force device identity for loopback pairing bootstrap",
+      "const mode = params.opts.mode",
+    ],
+    "loopback pairing-bootstrap device identity",
+  );
+  requireOrderedMarkers(
+    gatewayCall.source,
+    [
       "const useStoredDeviceAuth = opts.useStoredDeviceAuth === true;",
       "const resolvedCredentials = useStoredDeviceAuth ? {} : await resolveGatewayCredentials(context);",
       "const storedAuth = loadStoredOperatorDeviceAuthToken(deviceIdentity);",
@@ -1152,17 +1162,19 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   );
   requireSuccess(audit, "audit bounded device self-approval patch");
   for (const marker of [
+    "gateway call device-identity runtime:",
     "devices CLI approval runtime:",
     "device-token scope-upgrade gateway auth runtime:",
     "device pairing gateway handler:",
     "canonical device pairing state runtime:",
-    "Summary: 4 OK · 0 missing",
+    "Summary: 5 OK · 0 missing",
   ]) {
     requireIncludes(audit.stdout, marker, "device self-approval audit");
   }
 
   const sources = readDistSources(options.dist);
   for (const marker of [
+    "nemoclaw: force device identity for loopback pairing bootstrap",
     "nemoclaw: reach gateway for bounded same-device scope approval",
     "nemoclaw: route bounded CLI device-token scope upgrade into pairing",
     "nemoclaw: bounded same-device scope approval",
@@ -1208,7 +1220,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   const packageDir = path.dirname(options.dist);
   const install = spawnSync(
     "npm",
-    ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
+    ["install", "--ignore-scripts", "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund"],
     { cwd: packageDir, encoding: "utf8", timeout: 120_000 },
   );
   requireSuccess(install, "install reviewed OpenClaw runtime dependencies without scripts");

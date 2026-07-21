@@ -7,11 +7,11 @@
  *
  * NemoClaw intentionally runs the OpenClaw CLI and gateway as separate users
  * in the same group. OpenClaw 2026.7.1 makes shared and per-agent SQLite state
- * and private file stores part of gateway startup, but hardens those paths to
- * owner-only modes. Preserve upstream behavior outside NemoClaw, use
- * group-shared modes inside its image or an OpenShell sandbox, and ignore only
- * the obsolete pinned-version update cache when its migration cannot archive
- * through a shields-protected parent.
+ * part of gateway startup, but hardens those paths to owner-only modes. Use
+ * group-shared modes for those databases inside the NemoClaw image or an
+ * OpenShell sandbox, keep generic credential and identity stores owner-only,
+ * and ignore only the obsolete pinned-version update cache when its migration
+ * cannot archive through a shields-protected parent.
  *
  * Remove this patch once upstream supports a group-shared state database for
  * split-user containers without requiring a non-owner to chmod an already
@@ -26,9 +26,7 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
 export const MARKER = "/* nemoclaw: group-shared OpenClaw state */";
 export const AGENT_MARKER = "/* nemoclaw: group-shared OpenClaw agent state */";
-export const SECRET_MARKER = "/* nemoclaw: group-shared OpenClaw private store */";
 export const MIGRATION_MARKER = "/* nemoclaw: ignore legacy OpenClaw update-check state */";
-export const FILE_STORE_MARKER = "/* nemoclaw: group-shared OpenClaw file-store defaults */";
 export const MODELS_MARKER = "/* nemoclaw: group-shared OpenClaw models file */";
 
 const GROUP_SHARED_ENV_HELPER = [
@@ -184,65 +182,6 @@ const PATCHED_AGENT_REQUIRED_PATTERNS = [
   "(statSync(candidate).mode & 0o7777) !== nemoclawAgentFileMode",
 ] as const;
 
-const UPSTREAM_SECRET_MODE_CONSTANTS = [
-  "const PRIVATE_SECRET_DIR_MODE = 448;",
-  "const PRIVATE_SECRET_FILE_MODE = 384;",
-].join("\n");
-
-const PATCHED_SECRET_MODE_CONSTANTS = [
-  `const NEMOCLAW_SHARED_SECRET_DIR_MODE = 0o2770; ${SECRET_MARKER}`,
-  "const NEMOCLAW_SHARED_SECRET_FILE_MODE = 0o660;",
-  GROUP_SHARED_ENV_HELPER,
-  "const PRIVATE_SECRET_DIR_MODE = nemoclawUsesGroupSharedState() ? NEMOCLAW_SHARED_SECRET_DIR_MODE : 448;",
-  "const PRIVATE_SECRET_FILE_MODE = nemoclawUsesGroupSharedState() ? NEMOCLAW_SHARED_SECRET_FILE_MODE : 384;",
-].join("\n");
-
-const UPSTREAM_SECRET_PATH_MODE_HELPER = [
-  "async function enforcePrivatePathMode(resolvedPath, expectedMode, kind) {",
-  '\tif (process.platform === "win32") return;',
-  "\tawait fs$1.chmod(resolvedPath, expectedMode);",
-  "\tconst actualMode = (await fs$1.stat(resolvedPath)).mode & 511;",
-  "\tif (actualMode !== expectedMode) throw new Error(`Private secret ${kind} ${resolvedPath} has insecure permissions ${actualMode.toString(8)}.`);",
-  "}",
-].join("\n");
-
-const PATCHED_SECRET_PATH_MODE_HELPER = [
-  "async function enforcePrivatePathMode(resolvedPath, expectedMode, kind) {",
-  '\tif (process.platform === "win32") return;',
-  "\tconst nemoclawGroupSharedState = nemoclawUsesGroupSharedState();",
-  "\tconst nemoclawModeMask = nemoclawGroupSharedState ? 0o7777 : 511;",
-  "\tif (nemoclawGroupSharedState && ((await fs$1.stat(resolvedPath)).mode & nemoclawModeMask) === expectedMode) return;",
-  "\tawait fs$1.chmod(resolvedPath, expectedMode);",
-  "\tconst actualMode = (await fs$1.stat(resolvedPath)).mode & nemoclawModeMask;",
-  "\tif (actualMode !== expectedMode) throw new Error(`Private secret ${kind} ${resolvedPath} has insecure permissions ${actualMode.toString(8)}.`);",
-  "}",
-].join("\n");
-
-const UPSTREAM_SECRET_WRITE_DEFAULTS = [
-  "async function writeSecretFileAtomic(params) {",
-  "\tconst mode = params.mode ?? 384;",
-  "\tconst dirMode = params.dirMode ?? 448;",
-].join("\n");
-
-const PATCHED_SECRET_WRITE_DEFAULTS = [
-  "async function writeSecretFileAtomic(params) {",
-  "\tconst mode = params.mode ?? PRIVATE_SECRET_FILE_MODE;",
-  "\tconst dirMode = params.dirMode ?? PRIVATE_SECRET_DIR_MODE;",
-].join("\n");
-
-const PATCHED_SECRET_REQUIRED_PATTERNS = [
-  SECRET_MARKER,
-  "const NEMOCLAW_SHARED_SECRET_DIR_MODE = 0o2770;",
-  "const NEMOCLAW_SHARED_SECRET_FILE_MODE = 0o660;",
-  "const PRIVATE_SECRET_DIR_MODE = nemoclawUsesGroupSharedState()",
-  "const PRIVATE_SECRET_FILE_MODE = nemoclawUsesGroupSharedState()",
-  "const nemoclawModeMask = nemoclawGroupSharedState ? 0o7777 : 511;",
-  "nemoclawGroupSharedState && ((await fs$1.stat(resolvedPath)).mode & nemoclawModeMask) === expectedMode",
-  "const actualMode = (await fs$1.stat(resolvedPath)).mode & nemoclawModeMask;",
-  "const mode = params.mode ?? PRIVATE_SECRET_FILE_MODE;",
-  "const dirMode = params.dirMode ?? PRIVATE_SECRET_DIR_MODE;",
-] as const;
-
 const UPSTREAM_MIGRATION_FUNCTION_START = [
   "function migrateLegacyUpdateCheckState(params) {",
   "\tconst changes = [];",
@@ -268,51 +207,6 @@ const PATCHED_MIGRATION_REQUIRED_PATTERNS = [
   "env?.OPENSHELL_SANDBOX ?? process.env.OPENSHELL_SANDBOX",
   "function migrateLegacyUpdateCheckState(params) {",
   "if (nemoclawUsesGroupSharedState()) return { changes, warnings };",
-] as const;
-
-const UPSTREAM_FILE_STORE_START = [
-  "function fileStore(options) {",
-  "\tconst rootDir = path.resolve(options.rootDir);",
-  "\tconst privateMode = options.private ?? false;",
-  "\tconst dirMode = options.dirMode ?? 448;",
-  "\tconst mode = options.mode ?? 384;",
-].join("\n");
-
-const PATCHED_FILE_STORE_START = [
-  GROUP_SHARED_ENV_HELPER,
-  `function fileStore(options) { ${FILE_STORE_MARKER}`,
-  "\tconst rootDir = path.resolve(options.rootDir);",
-  "\tconst privateMode = options.private ?? false;",
-  "\tconst nemoclawGroupSharedPrivateStore = privateMode && nemoclawUsesGroupSharedState();",
-  "\tconst dirMode = options.dirMode ?? (nemoclawGroupSharedPrivateStore ? 0o2770 : 448);",
-  "\tconst mode = options.mode ?? (nemoclawGroupSharedPrivateStore ? 0o660 : 384);",
-].join("\n");
-
-const UPSTREAM_FILE_STORE_SYNC_START = [
-  "function fileStoreSync(options) {",
-  "\tconst rootDir = path.resolve(options.rootDir);",
-  "\tconst privateMode = options.private ?? false;",
-  "\tconst dirMode = options.dirMode ?? 448;",
-  "\tconst mode = options.mode ?? 384;",
-].join("\n");
-
-const PATCHED_FILE_STORE_SYNC_START = [
-  "function fileStoreSync(options) {",
-  "\tconst rootDir = path.resolve(options.rootDir);",
-  "\tconst privateMode = options.private ?? false;",
-  "\tconst nemoclawGroupSharedPrivateStore = privateMode && nemoclawUsesGroupSharedState();",
-  "\tconst dirMode = options.dirMode ?? (nemoclawGroupSharedPrivateStore ? 0o2770 : 448);",
-  "\tconst mode = options.mode ?? (nemoclawGroupSharedPrivateStore ? 0o660 : 384);",
-].join("\n");
-
-const PATCHED_FILE_STORE_REQUIRED_PATTERNS = [
-  FILE_STORE_MARKER,
-  "function nemoclawUsesGroupSharedState(env) {",
-  "function fileStore(options) {",
-  "function fileStoreSync(options) {",
-  "const nemoclawGroupSharedPrivateStore = privateMode && nemoclawUsesGroupSharedState();",
-  "const dirMode = options.dirMode ?? (nemoclawGroupSharedPrivateStore ? 0o2770 : 448);",
-  "const mode = options.mode ?? (nemoclawGroupSharedPrivateStore ? 0o660 : 384);",
 ] as const;
 
 const UPSTREAM_MODELS_FILE_MODE_HELPER = [
@@ -435,45 +329,6 @@ export function patchOpenClawAgentDbText(source: string, file: string): PatchTex
   return { patched: true, status: "patched", text };
 }
 
-function validatePatchedSecretText(source: string, file: string): void {
-  for (const pattern of PATCHED_SECRET_REQUIRED_PATTERNS) {
-    requireExactlyOnce(source, pattern, `patched pattern ${JSON.stringify(pattern)}`, file);
-  }
-  for (const upstreamTarget of [
-    UPSTREAM_SECRET_MODE_CONSTANTS,
-    UPSTREAM_SECRET_PATH_MODE_HELPER,
-    UPSTREAM_SECRET_WRITE_DEFAULTS,
-  ]) {
-    if (source.includes(upstreamTarget)) {
-      throw new Error(
-        `${file}: patch marker is present but an upstream private-store target remains`,
-      );
-    }
-  }
-}
-
-export function patchOpenClawSecretFileText(source: string, file: string): PatchTextResult {
-  if (source.includes(SECRET_MARKER)) {
-    validatePatchedSecretText(source, file);
-    return { patched: false, status: "already-patched", text: source };
-  }
-
-  requireExactlyOnce(source, UPSTREAM_SECRET_MODE_CONSTANTS, "private-store mode constants", file);
-  requireExactlyOnce(
-    source,
-    UPSTREAM_SECRET_PATH_MODE_HELPER,
-    "private-store path mode helper",
-    file,
-  );
-  requireExactlyOnce(source, UPSTREAM_SECRET_WRITE_DEFAULTS, "private-store write defaults", file);
-  const text = source
-    .replace(UPSTREAM_SECRET_MODE_CONSTANTS, PATCHED_SECRET_MODE_CONSTANTS)
-    .replace(UPSTREAM_SECRET_PATH_MODE_HELPER, PATCHED_SECRET_PATH_MODE_HELPER)
-    .replace(UPSTREAM_SECRET_WRITE_DEFAULTS, PATCHED_SECRET_WRITE_DEFAULTS);
-  validatePatchedSecretText(text, file);
-  return { patched: true, status: "patched", text };
-}
-
 function validatePatchedMigrationText(source: string, file: string): void {
   for (const pattern of PATCHED_MIGRATION_REQUIRED_PATTERNS) {
     requireExactlyOnce(source, pattern, `patched pattern ${JSON.stringify(pattern)}`, file);
@@ -492,39 +347,6 @@ export function patchOpenClawStateMigrationText(source: string, file: string): P
   requireExactlyOnce(source, UPSTREAM_MIGRATION_START, "legacy update-check migration start", file);
   const text = source.replace(UPSTREAM_MIGRATION_START, PATCHED_MIGRATION_START);
   validatePatchedMigrationText(text, file);
-  return { patched: true, status: "patched", text };
-}
-
-function validatePatchedFileStoreText(source: string, file: string): void {
-  for (const pattern of PATCHED_FILE_STORE_REQUIRED_PATTERNS) {
-    const expectedCount = pattern.startsWith("const ") ? 2 : 1;
-    const count = countOccurrences(source, pattern);
-    if (count !== expectedCount) {
-      throw new Error(
-        `${file}: expected exactly ${expectedCount === 1 ? "one" : expectedCount} patched pattern ${JSON.stringify(pattern)}, found ${count}`,
-      );
-    }
-  }
-  if (
-    source.includes(UPSTREAM_FILE_STORE_START) ||
-    source.includes(UPSTREAM_FILE_STORE_SYNC_START)
-  ) {
-    throw new Error(`${file}: patch marker is present but an upstream file-store target remains`);
-  }
-}
-
-export function patchOpenClawFileStoreText(source: string, file: string): PatchTextResult {
-  if (source.includes(FILE_STORE_MARKER)) {
-    validatePatchedFileStoreText(source, file);
-    return { patched: false, status: "already-patched", text: source };
-  }
-
-  requireExactlyOnce(source, UPSTREAM_FILE_STORE_START, "async file-store defaults", file);
-  requireExactlyOnce(source, UPSTREAM_FILE_STORE_SYNC_START, "sync file-store defaults", file);
-  const text = source
-    .replace(UPSTREAM_FILE_STORE_START, PATCHED_FILE_STORE_START)
-    .replace(UPSTREAM_FILE_STORE_SYNC_START, PATCHED_FILE_STORE_SYNC_START);
-  validatePatchedFileStoreText(text, file);
   return { patched: true, status: "patched", text };
 }
 
@@ -598,19 +420,6 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
       `Expected exactly one OpenClaw per-agent database target in ${resolvedDist}, found ${agentCandidates.length}`,
     );
   }
-  const secretCandidates = listCandidates(resolvedDist, /^secret-file-.+\.js$/).filter((file) => {
-    const source = fs.readFileSync(file, "utf8");
-    return (
-      source.includes(SECRET_MARKER) ||
-      source.includes("const PRIVATE_SECRET_DIR_MODE = 448;") ||
-      source.includes("async function enforcePrivatePathMode(resolvedPath, expectedMode, kind) {")
-    );
-  });
-  if (secretCandidates.length !== 1) {
-    throw new Error(
-      `Expected exactly one OpenClaw private-store target in ${resolvedDist}, found ${secretCandidates.length}`,
-    );
-  }
   const migrationCandidates = listCandidates(resolvedDist, /^state-migrations-.+\.js$/).filter(
     (file) => {
       const source = fs.readFileSync(file, "utf8");
@@ -623,19 +432,6 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
   if (migrationCandidates.length !== 1) {
     throw new Error(
       `Expected exactly one OpenClaw state-migration target in ${resolvedDist}, found ${migrationCandidates.length}`,
-    );
-  }
-  const fileStoreCandidates = listCandidates(resolvedDist, /^file-store-.+\.js$/).filter((file) => {
-    const source = fs.readFileSync(file, "utf8");
-    return (
-      source.includes(FILE_STORE_MARKER) ||
-      (source.includes("function fileStore(options) {") &&
-        source.includes("function fileStoreSync(options) {"))
-    );
-  });
-  if (fileStoreCandidates.length !== 1) {
-    throw new Error(
-      `Expected exactly one OpenClaw file-store target in ${resolvedDist}, found ${fileStoreCandidates.length}`,
     );
   }
   const modelsCandidates = listCandidates(resolvedDist, /^models-config-.+\.js$/).filter((file) => {
@@ -656,20 +452,13 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
 
   const stateFile = stateCandidates[0];
   const agentFile = agentCandidates[0];
-  const secretFile = secretCandidates[0];
   const migrationFile = migrationCandidates[0];
-  const fileStoreFile = fileStoreCandidates[0];
   const modelsFile = modelsCandidates[0];
   const stateResult = patchOpenClawStateDbText(fs.readFileSync(stateFile, "utf8"), stateFile);
   const agentResult = patchOpenClawAgentDbText(fs.readFileSync(agentFile, "utf8"), agentFile);
-  const secretResult = patchOpenClawSecretFileText(fs.readFileSync(secretFile, "utf8"), secretFile);
   const migrationResult = patchOpenClawStateMigrationText(
     fs.readFileSync(migrationFile, "utf8"),
     migrationFile,
-  );
-  const fileStoreResult = patchOpenClawFileStoreText(
-    fs.readFileSync(fileStoreFile, "utf8"),
-    fileStoreFile,
   );
   const modelsResult = patchOpenClawModelsConfigText(
     fs.readFileSync(modelsFile, "utf8"),
@@ -677,19 +466,12 @@ export function patchOpenClawSharedStatePermissions(distDir: string): PatchDistR
   );
   if (stateResult.patched) fs.writeFileSync(stateFile, stateResult.text);
   if (agentResult.patched) fs.writeFileSync(agentFile, agentResult.text);
-  if (secretResult.patched) fs.writeFileSync(secretFile, secretResult.text);
   if (migrationResult.patched) fs.writeFileSync(migrationFile, migrationResult.text);
-  if (fileStoreResult.patched) fs.writeFileSync(fileStoreFile, fileStoreResult.text);
   if (modelsResult.patched) fs.writeFileSync(modelsFile, modelsResult.text);
   const patched =
-    stateResult.patched ||
-    agentResult.patched ||
-    secretResult.patched ||
-    migrationResult.patched ||
-    fileStoreResult.patched ||
-    modelsResult.patched;
+    stateResult.patched || agentResult.patched || migrationResult.patched || modelsResult.patched;
   return {
-    files: [stateFile, agentFile, secretFile, migrationFile, fileStoreFile, modelsFile],
+    files: [stateFile, agentFile, migrationFile, modelsFile],
     patched,
     status: patched ? "patched" : "already-patched",
   };

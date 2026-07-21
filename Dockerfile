@@ -795,10 +795,11 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-tool-
 # databases, but hardens them to owner-only modes on every open. NemoClaw runs
 # the CLI and gateway as separate users in the sandbox group, so use
 # group-shared modes inside the NemoClaw image or an OpenShell sandbox. The
-# patch keeps private-store directories setgid, avoids a non-owner chmod when
-# the inherited mode is already safe, keeps generated models files readable by
-# the shared group, and ignores the obsolete update-check cache migration that
-# cannot archive across a shields-protected parent.
+# patch keeps generic credential and identity stores owner-only, avoids a
+# non-owner chmod when a reviewed shared database mode is already safe, keeps
+# generated models files readable by the shared group, and ignores the obsolete
+# update-check cache migration that cannot archive across a shields-protected
+# parent.
 #
 # Removal criteria: drop when upstream OpenClaw supports a split-user,
 # group-shared state databases and split-user cache migrations without

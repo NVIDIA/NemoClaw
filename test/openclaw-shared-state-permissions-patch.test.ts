@@ -10,18 +10,14 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   AGENT_MARKER,
-  FILE_STORE_MARKER,
   MARKER,
   MIGRATION_MARKER,
   MODELS_MARKER,
   patchOpenClawAgentDbText,
-  patchOpenClawFileStoreText,
   patchOpenClawModelsConfigText,
-  patchOpenClawSecretFileText,
   patchOpenClawSharedStatePermissions,
   patchOpenClawStateDbText,
   patchOpenClawStateMigrationText,
-  SECRET_MARKER,
 } from "../scripts/patch-openclaw-shared-state-permissions.mts";
 import { restoreEnv } from "./helpers/env-test-helpers";
 
@@ -380,28 +376,27 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       expect(first.stdout).toContain("SQLite state permissions patched");
       const patchedState = fs.readFileSync(fixture.stateFiles[0], "utf8");
       const patchedAgent = fs.readFileSync(fixture.agentFiles[0], "utf8");
-      const patchedSecret = fs.readFileSync(fixture.secretFiles[0], "utf8");
+      const upstreamSecret = fs.readFileSync(fixture.secretFiles[0], "utf8");
       const patchedMigration = fs.readFileSync(fixture.migrationFiles[0], "utf8");
-      const patchedFileStore = fs.readFileSync(fixture.fileStoreFiles[0], "utf8");
+      const upstreamFileStore = fs.readFileSync(fixture.fileStoreFiles[0], "utf8");
       const patchedModels = fs.readFileSync(fixture.modelsFiles[0], "utf8");
       expect(patchedState.split(MARKER)).toHaveLength(2);
       expect(patchedAgent.split(AGENT_MARKER)).toHaveLength(2);
-      expect(patchedSecret.split(SECRET_MARKER)).toHaveLength(2);
       expect(patchedMigration.split(MIGRATION_MARKER)).toHaveLength(2);
-      expect(patchedFileStore.split(FILE_STORE_MARKER)).toHaveLength(2);
       expect(patchedModels.split(MODELS_MARKER)).toHaveLength(2);
       expect(patchedState).toContain("NEMOCLAW_SHARED_STATE_DIR_MODE = 0o2770");
       expect(patchedAgent).toContain("NEMOCLAW_SHARED_AGENT_DB_DIR_MODE = 0o2770");
-      expect(patchedSecret).toContain("NEMOCLAW_SHARED_SECRET_DIR_MODE = 0o2770");
+      expect(upstreamSecret).toBe(UPSTREAM_SECRET_FILE_SOURCE);
+      expect(upstreamFileStore).toBe(UPSTREAM_FILE_STORE_SOURCE);
 
       const second = runPatch(fixture.dist);
       expect(second.status, `${second.stdout}${second.stderr}`).toBe(0);
       expect(second.stdout).toContain("SQLite state permissions already-patched");
       expect(fs.readFileSync(fixture.stateFiles[0], "utf8")).toBe(patchedState);
       expect(fs.readFileSync(fixture.agentFiles[0], "utf8")).toBe(patchedAgent);
-      expect(fs.readFileSync(fixture.secretFiles[0], "utf8")).toBe(patchedSecret);
+      expect(fs.readFileSync(fixture.secretFiles[0], "utf8")).toBe(upstreamSecret);
       expect(fs.readFileSync(fixture.migrationFiles[0], "utf8")).toBe(patchedMigration);
-      expect(fs.readFileSync(fixture.fileStoreFiles[0], "utf8")).toBe(patchedFileStore);
+      expect(fs.readFileSync(fixture.fileStoreFiles[0], "utf8")).toBe(upstreamFileStore);
       expect(fs.readFileSync(fixture.modelsFiles[0], "utf8")).toBe(patchedModels);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -507,7 +502,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     }
   });
 
-  it("keeps private-store paths group-accessible without rechmodding inherited directories", async () => {
+  it("retains owner-only secret-file modes under the NemoClaw marker", async () => {
     const fixture = makeFixture();
     const previousMarker = process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
     try {
@@ -519,9 +514,9 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       fs.chmodSync(privateDir, 0o2770);
 
       const defaults = await runtime.writeSecretFileAtomic({});
-      expect(defaults).toEqual({ dirMode: 0o2770, mode: 0o660 });
+      expect(defaults).toEqual({ dirMode: 0o700, mode: 0o600 });
       await runtime.enforcePrivatePathMode(privateDir, defaults.dirMode, "directory");
-      expect(mode(privateDir)).toBe(0o2770);
+      expect(mode(privateDir)).toBe(0o700);
     } finally {
       restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousMarker);
       fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -529,53 +524,57 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
   });
 
   it.skipIf(process.platform !== "linux" || (process.getuid?.() ?? -1) !== 0)(
-    "preserves the shared group on files created by a different private-store user",
+    "denies a same-group user access to another user's device identity",
     async () => {
       const fixture = makeFixture();
-      const previousMarker = process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
       try {
         patchOpenClawSharedStatePermissions(fixture.dist);
-        process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = "1";
         const runtime = await importFileStoreFixture(fixture.fileStoreFiles[0]);
-        const sharedDir = path.join(fixture.root, "cross-user-private-store");
-        const sharedFile = path.join(sharedDir, "identity.json");
-        const defaults = runtime.fileStore({ rootDir: sharedDir, private: true });
+        const privateDir = path.join(fixture.root, "gateway-private-store");
+        const identityFile = path.join(privateDir, "identity.json");
+        const defaults = runtime.fileStore({ rootDir: privateDir, private: true });
         const sharedGid = 65_534;
+        const gatewayUid = 65_532;
+        const sandboxUid = 65_533;
         fs.chmodSync(fixture.root, 0o755);
-        fs.mkdirSync(sharedDir, { mode: 0o700 });
-        fs.chownSync(sharedDir, 0, sharedGid);
-        fs.chmodSync(sharedDir, defaults.dirMode);
+        fs.mkdirSync(privateDir, { mode: defaults.dirMode });
+        fs.chownSync(privateDir, gatewayUid, sharedGid);
+        fs.chmodSync(privateDir, defaults.dirMode);
 
         const writer = spawnSync(
           process.execPath,
           [
             "-e",
-            `process.umask(0); require("node:fs").writeFileSync(${JSON.stringify(sharedFile)}, "shared", { mode: ${defaults.mode} });`,
+            `process.umask(0); require("node:fs").writeFileSync(${JSON.stringify(identityFile)}, "gateway-credential", { mode: ${defaults.mode} });`,
           ],
-          { encoding: "utf8", gid: sharedGid, uid: 65_532 },
+          { encoding: "utf8", gid: sharedGid, uid: gatewayUid },
         );
         expect(writer.status, writer.stderr).toBe(0);
-        expect(fs.statSync(sharedFile).gid).toBe(sharedGid);
-        expect(mode(sharedFile)).toBe(0o660);
+        expect(mode(privateDir)).toBe(0o700);
+        expect(mode(identityFile)).toBe(0o600);
 
         const reader = spawnSync(
           process.execPath,
-          [
-            "-e",
-            `process.stdout.write(require("node:fs").readFileSync(${JSON.stringify(sharedFile)}, "utf8"))`,
-          ],
-          { encoding: "utf8", gid: sharedGid, uid: 65_533 },
+          ["-e", `require("node:fs").readFileSync(${JSON.stringify(identityFile)}, "utf8")`],
+          { encoding: "utf8", gid: sharedGid, uid: sandboxUid },
         );
-        expect(reader.status, reader.stderr).toBe(0);
-        expect(reader.stdout).toBe("shared");
+        expect(reader.status).not.toBe(0);
+        expect(reader.stderr).toContain("EACCES");
+
+        const writerFromSandbox = spawnSync(
+          process.execPath,
+          ["-e", `require("node:fs").appendFileSync(${JSON.stringify(identityFile)}, "tampered")`],
+          { encoding: "utf8", gid: sharedGid, uid: sandboxUid },
+        );
+        expect(writerFromSandbox.status).not.toBe(0);
+        expect(writerFromSandbox.stderr).toContain("EACCES");
       } finally {
-        restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousMarker);
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
     },
   );
 
-  it("selects group-shared defaults for normal async and sync private stores only", async () => {
+  it("retains owner-only defaults for async and sync private stores under NemoClaw", async () => {
     const fixture = makeFixture();
     const previousMarker = process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
     try {
@@ -588,7 +587,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
         runtime.fileStore({ rootDir, private: true }),
         runtime.fileStoreSync({ rootDir, private: true }),
       ]) {
-        expect(result).toMatchObject({ dirMode: 0o2770, mode: 0o660, privateMode: true });
+        expect(result).toMatchObject({ dirMode: 0o700, mode: 0o600, privateMode: true });
       }
       expect(runtime.fileStore({ rootDir })).toMatchObject({
         dirMode: 0o700,
@@ -889,34 +888,6 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       fs.rmSync(ambiguousMigration.root, { recursive: true, force: true });
     }
 
-    const missingFileStore = makeFixture(1, 1, 1, 1, 0);
-    try {
-      expect(() => patchOpenClawSharedStatePermissions(missingFileStore.dist)).toThrow(
-        "Expected exactly one OpenClaw file-store target",
-      );
-    } finally {
-      fs.rmSync(missingFileStore.root, { recursive: true, force: true });
-    }
-
-    const ambiguousFileStore = makeFixture(1, 1, 1, 1, 2);
-    try {
-      expect(() => patchOpenClawSharedStatePermissions(ambiguousFileStore.dist)).toThrow(
-        "Expected exactly one OpenClaw file-store target",
-      );
-      for (const file of [
-        ...ambiguousFileStore.stateFiles,
-        ...ambiguousFileStore.agentFiles,
-        ...ambiguousFileStore.secretFiles,
-        ...ambiguousFileStore.migrationFiles,
-        ...ambiguousFileStore.fileStoreFiles,
-        ...ambiguousFileStore.modelsFiles,
-      ]) {
-        expect(fs.readFileSync(file, "utf8")).not.toContain("nemoclaw:");
-      }
-    } finally {
-      fs.rmSync(ambiguousFileStore.root, { recursive: true, force: true });
-    }
-
     const missingModels = makeFixture(1, 1, 1, 1, 1, 0);
     try {
       expect(() => patchOpenClawSharedStatePermissions(missingModels.dist)).toThrow(
@@ -952,20 +923,8 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       patchOpenClawAgentDbText(`${UPSTREAM_AGENT_DB_SOURCE}\n${AGENT_MARKER}\n`, "partial.js"),
     ).toThrow("expected exactly one patched pattern");
     expect(() =>
-      patchOpenClawSecretFileText(
-        `${UPSTREAM_SECRET_FILE_SOURCE}\n${SECRET_MARKER}\n`,
-        "partial.js",
-      ),
-    ).toThrow("expected exactly one patched pattern");
-    expect(() =>
       patchOpenClawStateMigrationText(
         `${UPSTREAM_STATE_MIGRATION_SOURCE}\n${MIGRATION_MARKER}\n`,
-        "partial.js",
-      ),
-    ).toThrow("expected exactly one patched pattern");
-    expect(() =>
-      patchOpenClawFileStoreText(
-        `${UPSTREAM_FILE_STORE_SOURCE}\n${FILE_STORE_MARKER}\n`,
         "partial.js",
       ),
     ).toThrow("expected exactly one patched pattern");

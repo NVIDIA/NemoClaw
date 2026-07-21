@@ -39,6 +39,7 @@ const CLI_APPROVE_MARKER =
 const CLI_SCOPE_MARKER = "nemoclaw: reach gateway for bounded same-device scope approval";
 const CLI_RETRY_MARKER = "nemoclaw: keep bounded stored device auth fail closed";
 const CLI_LIST_MARKER = "nemoclaw: preflight bounded stored device auth before live pairing list";
+const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
 const CLI_APPLIED_MARKERS = [
   CLI_MARKER,
   CLI_APPROVE_MARKER,
@@ -62,6 +63,16 @@ const CLI_SELECTOR_DEPENDENCIES = [
   "normalizeOptionalString",
   "listDevicePairing",
 ] as const;
+
+const CALL_OMIT_IDENTITY_TARGET = [
+  "function shouldOmitDeviceIdentityForGatewayCall(params) {",
+  "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
+].join("\n");
+const CALL_OMIT_IDENTITY_REPLACEMENT = [
+  "function shouldOmitDeviceIdentityForGatewayCall(params) {",
+  `\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") return false; // ${CALL_FORCE_IDENTITY_MARKER} (#4462)`,
+  "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
+].join("\n");
 
 type PatchStatus = "already-applied" | "no-match" | "would-apply";
 
@@ -799,6 +810,33 @@ const STATE_APPROVAL_PERSIST_REPLACEMENT = [
 ].join("\n");
 
 const FILE_SPECS: FileSpec[] = [
+  {
+    id: "gateway-call-device-identity",
+    label: "gateway call device-identity runtime",
+    marker: CALL_FORCE_IDENTITY_MARKER,
+    selector(source) {
+      return (
+        source.includes("function shouldOmitDeviceIdentityForGatewayCall(params) {") &&
+        source.includes("const isLocalCliSharedAuth =") &&
+        (source.includes(CALL_OMIT_IDENTITY_TARGET) || source.includes(CALL_FORCE_IDENTITY_MARKER))
+      );
+    },
+    patch(source, file) {
+      if (source.includes(CALL_FORCE_IDENTITY_MARKER)) {
+        return { source, status: "already-applied" };
+      }
+      const result = replaceExactlyOnce(
+        source,
+        CALL_OMIT_IDENTITY_TARGET,
+        CALL_OMIT_IDENTITY_REPLACEMENT,
+        "gateway call device-identity omission target",
+        file,
+      );
+      return result.error
+        ? { source, status: "no-match", error: result.error }
+        : { source: result.source, status: "would-apply" };
+    },
+  },
   {
     id: "devices-cli",
     label: "devices CLI approval runtime",

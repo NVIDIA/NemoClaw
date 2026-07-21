@@ -150,7 +150,7 @@ function selfApprovalOptions() {
 }
 
 describe("OpenClaw bounded device self-approval patch (#4462)", () => {
-  it("applies and audits exactly one CLI, gateway-auth, gateway-handler, and canonical-state target", () => {
+  it("applies and audits each reviewed CLI, gateway, and canonical-state target", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-self-approval-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -158,17 +158,46 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     try {
       const freshAudit = runPatch(dist, true);
       expect(freshAudit.status, `${freshAudit.stdout}${freshAudit.stderr}`).toBe(0);
-      expect(freshAudit.stdout).toContain("4 OK · 0 missing");
+      expect(freshAudit.stdout).toContain("5 OK · 0 missing");
       expect(freshAudit.stdout).toContain("would-apply");
 
       const apply = runPatch(dist);
       expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
       const appliedAudit = runPatch(dist, true);
       expect(appliedAudit.status, `${appliedAudit.stdout}${appliedAudit.stderr}`).toBe(0);
-      expect(appliedAudit.stdout.match(/already-applied/gu)).toHaveLength(4);
+      expect(appliedAudit.stdout.match(/already-applied/gu)).toHaveLength(5);
 
       const secondApply = runPatch(dist);
       expect(secondApply.status, `${secondApply.stdout}${secondApply.stderr}`).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("retains device identity only for the explicitly marked loopback bootstrap child", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-identity-bootstrap-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "call-fixture.js"), "utf8");
+      const runtime = runFixture<{
+        setForceDevicePairing(value: boolean): void;
+        shouldOmitDeviceIdentityForGatewayCall(params: Record<string, unknown>): boolean;
+      }>(source, "({ setForceDevicePairing, shouldOmitDeviceIdentityForGatewayCall })");
+      const params = {
+        authMode: "token",
+        opts: { clientName: "cli", mode: "cli" },
+        token: "loopback-token",
+        url: "ws://127.0.0.1:18789",
+      };
+
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(params)).toBe(true);
+      runtime.setForceDevicePairing(true);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(params)).toBe(false);
+      runtime.setForceDevicePairing(false);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(params)).toBe(true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

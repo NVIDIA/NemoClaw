@@ -131,17 +131,15 @@ The `2026.7.1` dist changed seven reviewed shapes:
   narrowed environment inherit these markers from the gateway process.
   It skips `chmod` only when the existing mode already matches and rejects an
   unexpected or ambiguous compiled-dist shape;
-- private file-store writes now reapply owner-only defaults to mutable agent
-  and identity paths. The same image marker selects setgid `2770` directories and
-  `0660` files, while preserving OpenClaw's path containment, symbolic-link,
-  pinned-write, and file-identity checks. An absent marker retains upstream
-  owner-only modes. Setgid preserves the shared `sandbox` group when either the
-  CLI or gateway creates a new private-store file;
-- generated `models.json` and plugin catalog paths reapply `0600` after the
-  private file-store write. Under the validated NemoClaw marker, the compiled
-  models-config patch keeps these files at `0660` and skips a non-owner `chmod`
-  when the inherited mode is already correct. Outside NemoClaw it preserves
-  the upstream `0600` behavior;
+- generic private file stores remain owner-only at upstream `0700` directory
+  and `0600` file modes, including device identity, device authentication, and
+  credential-profile paths. The shared-state marker does not broaden these
+  security boundaries to the sandbox group;
+- generated `models.json` is the reviewed exception to the generic private-store
+  rule. Under the validated NemoClaw marker, the compiled models-config patch
+  keeps this non-secret provider configuration at `0660` and skips a non-owner
+  `chmod` when the inherited mode is already correct. Outside NemoClaw it
+  preserves the upstream `0600` behavior;
 - the legacy update-check migration is skipped only under the same validated
   NemoClaw or OpenShell marker. This state contains polling, notification, and
   auto-install cache for an OpenClaw version that NemoClaw pins in the image;
@@ -151,11 +149,14 @@ The `2026.7.1` dist changed seven reviewed shapes:
 `scripts/patch-openclaw-device-self-approval.mts` remains required. Its new
 shape recognizers preserve the bounded stored-device credential flow and keep
 the canonical `approveDevicePairing` transaction fail closed.
-The startup auto-pair watcher removes the gateway URL, port, and shared token
-from both `devices list` and `devices approve`. OpenClaw `2026.7.1` otherwise
-accepts the shared token for the list call without creating the canonical CLI
-pairing request. Local device authentication makes the list call initiate that
-pairing flow before the bounded approval runs.
+Until the initial `devices list` succeeds, the startup auto-pair watcher keeps
+the loopback shared token and sets a child-only marker. The compiled
+gateway-call patch uses that marker only to retain the CLI device identity that
+OpenClaw `2026.7.1` otherwise omits for loopback shared-token calls. OpenClaw
+then performs its canonical silent local-pairing transaction and issues the
+stored device token. After bootstrap, list calls and every `devices approve`
+remove the gateway URL, port, and shared token so the bounded approval flow uses
+that device credential.
 
 ## Gateway Startup Migration Compatibility
 

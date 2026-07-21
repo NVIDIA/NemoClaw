@@ -586,15 +586,28 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           .readdirSync(dist)
           .filter((file) => /^secret-file-.+\.js$/.test(file))
           .map((file) => path.join(dist, file))
-          .filter((file) =>
-            fs
-              .readFileSync(file, "utf-8")
-              .includes("/* nemoclaw: group-shared OpenClaw private store */"),
-          );
+          .filter((file) => {
+            const source = fs.readFileSync(file, "utf-8");
+            return (
+              source.includes("const PRIVATE_SECRET_DIR_MODE = 448;") &&
+              source.includes("const PRIVATE_SECRET_FILE_MODE = 384;")
+            );
+          });
         requireRuntimeEqual(
           String(privateStoreTargets.length),
           "1",
-          "private-store patch target count",
+          "owner-only private-store target count",
+        );
+        requireRuntimeEqual(
+          String(
+            privateStoreTargets.some((file) =>
+              fs
+                .readFileSync(file, "utf-8")
+                .includes("/* nemoclaw: group-shared OpenClaw private store */"),
+            ),
+          ),
+          "false",
+          "generic private-store sharing marker",
         );
         const stateMigrationTargets = fs
           .readdirSync(dist)
@@ -614,15 +627,30 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           .readdirSync(dist)
           .filter((file) => /^file-store-.+\.js$/.test(file))
           .map((file) => path.join(dist, file))
-          .filter((file) =>
-            fs
-              .readFileSync(file, "utf-8")
-              .includes("/* nemoclaw: group-shared OpenClaw file-store defaults */"),
-          );
+          .filter((file) => {
+            const source = fs.readFileSync(file, "utf-8");
+            return (
+              source.includes("function fileStore(options) {") &&
+              source.includes("function fileStoreSync(options) {") &&
+              source.includes("const dirMode = options.dirMode ?? 448;") &&
+              source.includes("const mode = options.mode ?? 384;")
+            );
+          });
         requireRuntimeEqual(
           String(fileStoreTargets.length),
           "1",
-          "private file-store defaults patch target count",
+          "owner-only file-store defaults target count",
+        );
+        requireRuntimeEqual(
+          String(
+            fileStoreTargets.some((file) =>
+              fs
+                .readFileSync(file, "utf-8")
+                .includes("/* nemoclaw: group-shared OpenClaw file-store defaults */"),
+            ),
+          ),
+          "false",
+          "generic file-store sharing marker",
         );
         const modelsConfigTargets = fs
           .readdirSync(dist)
@@ -650,7 +678,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
             encoding: "utf-8",
             timeout: PATCH_COMMAND_TIMEOUT_MS,
           });
-          requireSpawnSuccess(syntax, `validate patched SQLite state syntax: ${target}`);
+          requireSpawnSuccess(syntax, `validate reviewed OpenClaw dist syntax: ${target}`);
         }
 
         // This proof installs the reviewed shrinkwrapped runtime dependencies

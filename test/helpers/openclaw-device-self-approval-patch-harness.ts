@@ -15,6 +15,28 @@ function compiledIndent(source: string): string {
   return source.replace(/^( +)/gmu, (indent) => "\t".repeat(Math.floor(indent.length / 2)));
 }
 
+function gatewayCallFixture(): string {
+  return compiledIndent(`
+const process = { env: {} };
+const GATEWAY_CLIENT_NAMES = { CLI: "cli", GATEWAY_CLIENT: "gateway-client" };
+const GATEWAY_CLIENT_MODES = { CLI: "cli", BACKEND: "backend" };
+function isLoopbackGatewayUrl(url) { return url.startsWith("ws://127.0.0.1:"); }
+function shouldOmitDeviceIdentityForGatewayCall(params) {
+  const mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;
+  const clientName = params.opts.clientName ?? GATEWAY_CLIENT_NAMES.CLI;
+  const hasSharedSecretAuth = params.authMode === "token" && Boolean(params.token) || params.authMode === "password" && Boolean(params.password);
+  const isLoopback = isLoopbackGatewayUrl(params.url);
+  const isLocalBackendSharedAuth = mode === GATEWAY_CLIENT_MODES.BACKEND && clientName === GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT && (hasSharedSecretAuth || params.allowAuthNone === true) && isLoopback;
+  const isLocalCliSharedAuth = mode === GATEWAY_CLIENT_MODES.CLI && clientName === GATEWAY_CLIENT_NAMES.CLI && hasSharedSecretAuth && isLoopback;
+  return isLocalBackendSharedAuth || isLocalCliSharedAuth;
+}
+function setForceDevicePairing(value) {
+  if (value) process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING = "1";
+  else delete process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
+}
+`);
+}
+
 function cliFixture(): string {
   return compiledIndent(`
 const ADMIN_SCOPE = "operator.admin";
@@ -491,6 +513,7 @@ async function approveBootstrapDevicePairing(requestId, bootstrapProfile, option
 }
 
 export function writeFixtureDist(dist: string): void {
+  fs.writeFileSync(path.join(dist, "call-fixture.js"), gatewayCallFixture());
   fs.writeFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), cliFixture());
   fs.writeFileSync(path.join(dist, "message-handler-fixture.js"), gatewayAuthFixture());
   fs.writeFileSync(path.join(dist, "devices-fixture.js"), handlerFixture());
