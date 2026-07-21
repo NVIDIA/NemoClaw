@@ -24,7 +24,7 @@ describe("built-in channel manifests", () => {
       channelNames,
     );
     expect(registry.listAvailable({ agent: "hermes" }).map((manifest) => manifest.id)).toEqual(
-      channelNames,
+      channelNames.filter((channelName) => channelName !== "voiceclaw"),
     );
   });
 
@@ -46,6 +46,13 @@ describe("built-in channel manifests", () => {
   it("limits the WhatsApp live-health hook to its OpenClaw status contract", () => {
     const whatsapp = BUILT_IN_CHANNEL_MANIFESTS.find((manifest) => manifest.id === "whatsapp");
     const statusHealth = whatsapp?.hooks.find((hook) => hook.id === "whatsapp-status-health");
+    expect(statusHealth?.agents).toEqual(["openclaw"]);
+  });
+
+  it("limits VoiceClaw and its live-health hook to OpenClaw", () => {
+    const voiceclaw = BUILT_IN_CHANNEL_MANIFESTS.find((manifest) => manifest.id === "voiceclaw");
+    const statusHealth = voiceclaw?.hooks.find((hook) => hook.id === "voiceclaw-status-health");
+    expect(voiceclaw?.supportedAgents).toEqual(["openclaw"]);
     expect(statusHealth?.agents).toEqual(["openclaw"]);
   });
 
@@ -97,6 +104,8 @@ describe("built-in channel manifests", () => {
       "src/lib/messaging/channels/whatsapp/hooks/status-health-eval.ts",
       "src/lib/messaging/channels/teams/manifest.ts",
       "src/lib/messaging/channels/teams/hooks/host-forward-port-conflict.ts",
+      "src/lib/messaging/channels/voiceclaw/manifest.ts",
+      "src/lib/messaging/channels/voiceclaw/hooks/status-health.ts",
       "src/lib/messaging/hooks/common/config-prompt.ts",
       "src/lib/messaging/hooks/common/token-paste.ts",
     ];

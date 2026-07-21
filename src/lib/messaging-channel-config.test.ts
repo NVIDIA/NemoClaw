@@ -31,6 +31,8 @@ describe("messaging channel config", () => {
       "MSTEAMS_APP_ID",
       "MSTEAMS_TENANT_ID",
       "MSTEAMS_PORT",
+      "VOICECLAW_ENABLED",
+      "VOICECLAW_AUDIO_BRIDGE_URL",
     ]);
   });
 

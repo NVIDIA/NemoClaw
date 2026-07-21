@@ -16,6 +16,7 @@ describe("messaging channel diagnostics", () => {
       "slack",
       "whatsapp",
       "teams",
+      "voiceclaw",
     ]);
     expect(specs.find((spec) => spec.channelId === "telegram")).toMatchObject({
       policyPresets: ["telegram"],
@@ -35,6 +36,10 @@ describe("messaging channel diagnostics", () => {
     });
     expect(specs.find((spec) => spec.channelId === "teams")).toMatchObject({
       policyPresets: ["teams"],
+      preferredDefault: false,
+    });
+    expect(specs.find((spec) => spec.channelId === "voiceclaw")).toMatchObject({
+      policyPresets: ["voiceclaw"],
       preferredDefault: false,
     });
   });

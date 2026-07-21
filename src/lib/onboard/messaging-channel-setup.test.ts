@@ -802,6 +802,17 @@ describe("detectMessagingChannelsFromEnv", () => {
     expect(detectMessagingChannelsFromEnv(null)).toContain("whatsapp");
   });
 
+  it("detects VoiceClaw only from its explicit non-interactive selector", () => {
+    process.env.VOICECLAW_AUDIO_BRIDGE_URL = "http://host.openshell.internal:7880";
+    expect(detectMessagingChannelsFromEnv({ name: "openclaw" } as never)).not.toContain(
+      "voiceclaw",
+    );
+
+    process.env.VOICECLAW_ENABLED = "1";
+    expect(detectMessagingChannelsFromEnv({ name: "openclaw" } as never)).toContain("voiceclaw");
+    expect(detectMessagingChannelsFromEnv({ name: "hermes" } as never)).not.toContain("voiceclaw");
+  });
+
   it.each(
     BLANK_WHATSAPP_SEED_CASES,
   )("does not detect credentialless WhatsApp when its optional allowlist is $label", ({

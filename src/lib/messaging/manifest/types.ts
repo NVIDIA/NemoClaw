@@ -167,6 +167,8 @@ export interface ChannelRuntimeByAgentSpec
 export interface ChannelOpenClawRuntimeSpec extends ChannelRuntimeSpec {
   /** Key owned under openclaw.json `channels`, when this manifest manages one. */
   readonly channelName?: string;
+  /** OpenClaw extension id when it differs from, or exists without, a channel key. */
+  readonly extensionId?: string;
 }
 
 /** Agent-runtime metadata consumed by shared runtime setup and diagnostics. */
@@ -179,7 +181,10 @@ export interface ChannelRuntimeSpec {
 
 /** Agent-runtime metadata for common channel visibility diagnostics. */
 export interface ChannelRuntimeVisibilitySpec {
+  /** Keys under openclaw.json `channels` that establish configured runtime state. */
   readonly configKeys: readonly string[];
+  /** Keys under openclaw.json `plugins.entries` for plugin-only communication surfaces. */
+  readonly pluginConfigKeys?: readonly string[];
   readonly logPatterns: readonly string[];
 }
 

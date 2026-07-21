@@ -50,6 +50,19 @@ describe("extractEnabledChannelsFromOpenclawConfig", () => {
     expect(extractEnabledChannelsFromOpenclawConfig({ channels: { defaults: {} } })).toEqual([]);
   });
 
+  it("detects plugin-only VoiceClaw runtime configuration", () => {
+    expect(
+      extractEnabledChannelsFromOpenclawConfig({
+        plugins: { entries: { voiceclaw: { enabled: true } } },
+      }),
+    ).toEqual(["voiceclaw"]);
+    expect(
+      extractEnabledChannelsFromOpenclawConfig({
+        plugins: { entries: { voiceclaw: { enabled: false } } },
+      }),
+    ).toEqual([]);
+  });
+
   it("collects channels with at least one enabled account", () => {
     const config = {
       channels: {
@@ -151,7 +164,15 @@ describe("buildGatewayLogScanScript", () => {
     expect(script).toContain("(launched|respawning)");
     expect(script).toContain('buf=""');
     expect(script).toContain("grep -iwoE '");
-    for (const token of ["telegram", "discord", "slack", "whatsapp", "wechat", "openclaw-weixin"]) {
+    for (const token of [
+      "telegram",
+      "discord",
+      "slack",
+      "whatsapp",
+      "wechat",
+      "openclaw-weixin",
+      "voiceclaw",
+    ]) {
       expect(script).toContain(token);
     }
     expect(script).not.toContain("tail -n");

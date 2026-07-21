@@ -8,6 +8,7 @@ import type { RenderedChannelConfigParser } from "./rendered-config-parser-utils
 import { slackRenderedConfigParser } from "./slack/rendered-config-parser";
 import { teamsRenderedConfigParser } from "./teams/rendered-config-parser";
 import { telegramRenderedConfigParser } from "./telegram/rendered-config-parser";
+import { voiceclawRenderedConfigParser } from "./voiceclaw/rendered-config-parser";
 import { wechatRenderedConfigParser } from "./wechat/rendered-config-parser";
 import { whatsappRenderedConfigParser } from "./whatsapp/rendered-config-parser";
 
@@ -38,6 +39,8 @@ function renderedConfigParserForBuiltInManifest(
       return teamsRenderedConfigParser;
     case "telegram":
       return telegramRenderedConfigParser;
+    case "voiceclaw":
+      return voiceclawRenderedConfigParser;
     case "wechat":
       return wechatRenderedConfigParser;
     case "whatsapp":

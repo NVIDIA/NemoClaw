@@ -33,6 +33,7 @@ describe("built-in messaging channel metadata", () => {
       "slack",
       "whatsapp",
       "teams",
+      "voiceclaw",
     ]);
     expect(listAvailableMessagingChannelIds({ agent: "hermes" })).toEqual([
       "telegram",
@@ -52,6 +53,7 @@ describe("built-in messaging channel metadata", () => {
       slack: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
       whatsapp: [],
       teams: ["MSTEAMS_APP_PASSWORD"],
+      voiceclaw: [],
     });
     expect(getMessagingChannelForCredentialEnvKey("SLACK_APP_TOKEN")).toBe("slack");
     expect(getMessagingChannelForCredentialEnvKey("WHATSAPP_ALLOWED_IDS")).toBeNull();
@@ -66,7 +68,7 @@ describe("built-in messaging channel metadata", () => {
       "demo-slack-bridge",
       "demo-slack-app",
     ]);
-    expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp"]);
+    expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp", "voiceclaw"]);
   });
 
   it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
@@ -89,6 +91,8 @@ describe("built-in messaging channel metadata", () => {
       "TEAMS_ALLOWED_USERS",
       "MSTEAMS_PORT",
       "TEAMS_REQUIRE_MENTION",
+      "VOICECLAW_ENABLED",
+      "VOICECLAW_AUDIO_BRIDGE_URL",
     ]);
     expect(getMessagingConfigEnvAliases()).toEqual({
       DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
@@ -108,6 +112,7 @@ describe("built-in messaging channel metadata", () => {
       slack: ["slack"],
       whatsapp: ["whatsapp"],
       teams: ["teams"],
+      voiceclaw: ["voiceclaw"],
     });
     expect(getMessagingPolicyKeysByChannel({ agent: "hermes" })).toMatchObject({
       telegram: ["telegram"],
@@ -147,7 +152,16 @@ describe("built-in messaging channel metadata", () => {
       slack: ["slack"],
       whatsapp: ["whatsapp"],
       teams: ["msteams"],
+      voiceclaw: [],
     });
+    expect(
+      Object.fromEntries(
+        listOpenClawRuntimeChannelMetadata().map((entry) => [
+          entry.channelId,
+          entry.pluginConfigKeys,
+        ]),
+      ),
+    ).toMatchObject({ voiceclaw: ["voiceclaw"] });
     expect(
       Object.fromEntries(
         listMessagingPackageInstallSpecs({ agent: "openclaw" }).map((entry) => [

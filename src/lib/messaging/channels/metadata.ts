@@ -55,6 +55,7 @@ export interface MessagingPolicyPresetMetadata {
 export interface OpenClawRuntimeChannelMetadata {
   readonly channelId: string;
   readonly configKeys: readonly string[];
+  readonly pluginConfigKeys: readonly string[];
   readonly logPatterns: readonly string[];
 }
 
@@ -304,7 +305,8 @@ export function listOpenClawPluginExtensionIds(
 ): string[] {
   return uniqueStrings(
     selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) => {
-      const extensionId = manifest.runtime?.openclaw?.channelName;
+      const extensionId =
+        manifest.runtime?.openclaw?.extensionId ?? manifest.runtime?.openclaw?.channelName;
       const installsPlugin = (manifest.agentPackages ?? []).some(
         (agentPackage) =>
           agentPackage.agent === "openclaw" && agentPackage.manager === "openclaw-plugin",
@@ -320,11 +322,18 @@ export function listOpenClawRuntimeChannelMetadata(
   return selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) => {
     const visibility = manifest.runtime?.openclaw?.visibility;
     if (!visibility) return [];
-    if (visibility.configKeys.length === 0 || visibility.logPatterns.length === 0) return [];
+    const pluginConfigKeys = visibility.pluginConfigKeys ?? [];
+    if (
+      (visibility.configKeys.length === 0 && pluginConfigKeys.length === 0) ||
+      visibility.logPatterns.length === 0
+    ) {
+      return [];
+    }
     return [
       {
         channelId: manifest.id,
         configKeys: [...visibility.configKeys],
+        pluginConfigKeys: [...pluginConfigKeys],
         logPatterns: [...visibility.logPatterns],
       },
     ];

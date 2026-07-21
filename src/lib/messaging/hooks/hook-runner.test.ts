@@ -49,6 +49,7 @@ describe("MessagingHookRegistry", () => {
       "telegram.gatewayConflictStatus",
       "telegram.statusHealth",
       "telegram.getMeReachability",
+      "voiceclaw.statusHealth",
       "wechat.ilinkLogin",
       "wechat.seedOpenClawAccount",
       "wechat.healthCheck",

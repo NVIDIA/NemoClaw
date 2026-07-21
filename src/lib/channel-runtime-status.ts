@@ -103,18 +103,19 @@ export interface ChannelRuntimeStatusDeps {
 }
 
 /**
- * Extract the set of channels with at least one enabled account from a parsed
- * OpenClaw config. Returns a sorted, deduplicated list of canonical channel
- * names. Unknown keys under `channels.*` are ignored — manifest-side
- * channel names are authoritative.
+ * Extract the enabled messaging channels from a parsed OpenClaw config.
+ * Account-backed channels come from `channels.*`; manifests can also declare
+ * plugin-only entries such as VoiceClaw. Returns a sorted, deduplicated list
+ * of canonical channel names. Unknown config keys are ignored because
+ * manifest-side visibility metadata is authoritative.
  */
 export function extractEnabledChannelsFromOpenclawConfig(json: unknown): string[] {
   if (!json || typeof json !== "object") return [];
-  const channels = (json as Record<string, unknown>).channels;
-  if (!channels || typeof channels !== "object") return [];
+  const config = json as Record<string, unknown>;
+  const channels = isObject(config.channels) ? config.channels : {};
   const channelKeyToName = runtimeConfigKeyToChannelName(DEFAULT_RUNTIME_VISIBILITY_METADATA);
   const visible = new Set<string>();
-  for (const [key, value] of Object.entries(channels as Record<string, unknown>)) {
+  for (const [key, value] of Object.entries(channels)) {
     const canonical = channelKeyToName.get(key);
     if (!canonical) continue;
     if (!value || typeof value !== "object") continue;
@@ -131,7 +132,19 @@ export function extractEnabledChannelsFromOpenclawConfig(json: unknown): string[
       }
     }
   }
+  const pluginEntries =
+    isObject(config.plugins) && isObject(config.plugins.entries) ? config.plugins.entries : {};
+  const pluginKeyToName = runtimePluginConfigKeyToChannelName(DEFAULT_RUNTIME_VISIBILITY_METADATA);
+  for (const [key, value] of Object.entries(pluginEntries)) {
+    const canonical = pluginKeyToName.get(key);
+    if (!canonical || !isObject(value) || value.enabled !== true) continue;
+    visible.add(canonical);
+  }
   return [...visible].sort();
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 // Sentinel header the gateway-log scan script always echoes when the log
@@ -165,7 +178,7 @@ const GATEWAY_BOOT_MARKER_REGEX = "\\[gateway\\].*(launched|respawning)";
  *      buffer at EOF is the slice written since the most recent launch.
  *   2. `grep -iwoE` pulls just channel-name tokens out of that slice;
  *      `sort -fu` collapses duplicates so the output is bounded by the
- *      number of channel patterns (today: 6).
+ *      number of channel patterns.
  *
  * Pure builder — no side effects, exported for unit testing the exact
  * script the probe emits.
@@ -222,6 +235,18 @@ function runtimeConfigKeyToChannelName(
   const aliases = new Map<string, string>();
   for (const output of outputs) {
     for (const key of output.configKeys) {
+      aliases.set(key, output.channelId);
+    }
+  }
+  return aliases;
+}
+
+function runtimePluginConfigKeyToChannelName(
+  outputs: readonly OpenClawRuntimeChannelMetadata[],
+): ReadonlyMap<string, string> {
+  const aliases = new Map<string, string>();
+  for (const output of outputs) {
+    for (const key of output.pluginConfigKeys) {
       aliases.set(key, output.channelId);
     }
   }

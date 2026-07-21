@@ -10,6 +10,10 @@ import {
   createTelegramHookRegistrations,
   type TelegramHookOptions,
 } from "../channels/telegram/hooks";
+import {
+  createVoiceClawHookRegistrations,
+  type VoiceClawHookOptions,
+} from "../channels/voiceclaw/hooks";
 import { createWechatHookRegistrations, type WechatHookOptions } from "../channels/wechat/hooks";
 import {
   createWhatsappHookRegistrations,
@@ -26,6 +30,7 @@ export interface BuiltInMessagingHookOptions {
   readonly slack?: SlackHookOptions;
   readonly teams?: TeamsHookOptions;
   readonly telegram?: TelegramHookOptions;
+  readonly voiceclaw?: VoiceClawHookOptions;
   readonly wechat?: WechatHookOptions;
   readonly whatsapp?: WhatsappHookOptions;
   // Host capability threaded into every channel's `phase:"status"` health hook,
@@ -50,6 +55,9 @@ export function createBuiltInMessagingHookRegistrations(
         withOpenClawBridgeHealthOptions(options.telegram, options.openclawBridgeHealth),
         options.statusHealth,
       ),
+    ),
+    ...createVoiceClawHookRegistrations(
+      withStatusHealthOptions(options.voiceclaw, options.statusHealth),
     ),
     ...createWechatHookRegistrations(options.wechat),
     ...createWhatsappHookRegistrations(

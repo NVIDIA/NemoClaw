@@ -24,6 +24,7 @@ import { discordManifest } from "../../channels/discord/manifest.ts";
 import { slackManifest } from "../../channels/slack/manifest.ts";
 import { teamsManifest } from "../../channels/teams/manifest.ts";
 import { telegramManifest } from "../../channels/telegram/manifest.ts";
+import { voiceclawManifest } from "../../channels/voiceclaw/manifest.ts";
 import { wechatManifest } from "../../channels/wechat/manifest.ts";
 import { whatsappManifest } from "../../channels/whatsapp/manifest.ts";
 import type { ChannelAgentPackageRuntimeLockSpec, ChannelManifest } from "../../manifest/types.ts";
@@ -155,6 +156,7 @@ const TRUSTED_CHANNEL_MANIFESTS: readonly ChannelManifest[] = [
   slackManifest,
   whatsappManifest,
   teamsManifest,
+  voiceclawManifest,
 ] as const;
 
 function isPinnedHermesUvPackageSpec(spec: string): boolean {

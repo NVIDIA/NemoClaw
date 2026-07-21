@@ -16,7 +16,7 @@ import {
 } from "./channels";
 
 describe("sandbox-channels KNOWN_CHANNELS", () => {
-  it("covers telegram, discord, wechat, slack, whatsapp, and teams", () => {
+  it("covers every built-in messaging channel", () => {
     expect(knownChannelNames()).toEqual([
       "telegram",
       "discord",
@@ -24,6 +24,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
       "slack",
       "whatsapp",
       "teams",
+      "voiceclaw",
     ]);
   });
 
@@ -49,6 +50,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelDef("discord")?.loginMethod).toBeUndefined();
     expect(getChannelDef("slack")?.loginMethod).toBeUndefined();
     expect(getChannelDef("teams")?.loginMethod).toBeUndefined();
+    expect(getChannelDef("voiceclaw")?.loginMethod).toBeUndefined();
   });
 
   it("declares wechat as DM-only with the WECHAT_ALLOWED_IDS env key", () => {
@@ -76,12 +78,18 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelTokenKeys(KNOWN_CHANNELS.whatsapp)).toEqual([]);
   });
 
+  it("declares no provider credential for VoiceClaw", () => {
+    expect(getChannelDef("voiceclaw")?.envKey).toBeUndefined();
+    expect(getChannelTokenKeys(KNOWN_CHANNELS.voiceclaw)).toEqual([]);
+  });
+
   it("only slack declares a secondary app-token env var", () => {
     expect(getChannelDef("telegram")?.appTokenEnvKey).toBeUndefined();
     expect(getChannelDef("discord")?.appTokenEnvKey).toBeUndefined();
     expect(getChannelDef("slack")?.appTokenEnvKey).toBe("SLACK_APP_TOKEN");
     expect(getChannelDef("whatsapp")?.appTokenEnvKey).toBeUndefined();
     expect(getChannelDef("teams")?.appTokenEnvKey).toBeUndefined();
+    expect(getChannelDef("voiceclaw")?.appTokenEnvKey).toBeUndefined();
   });
 
   it("asks for Microsoft Teams AAD object IDs as a comma-separated allowlist", () => {
@@ -129,6 +137,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(getChannelDef("DISCORD")).toBe(KNOWN_CHANNELS.discord);
     expect(getChannelDef("  WhatsApp  ")).toBe(KNOWN_CHANNELS.whatsapp);
     expect(getChannelDef("  Teams  ")).toBe(KNOWN_CHANNELS.teams);
+    expect(getChannelDef("  VoiceClaw  ")).toBe(KNOWN_CHANNELS.voiceclaw);
   });
 
   it("returns undefined for unknown channel names", () => {
@@ -194,6 +203,7 @@ describe("sandbox-channels listChannels", () => {
       "slack",
       "whatsapp",
       "teams",
+      "voiceclaw",
     ]);
     const telegram = list.find((c) => c.name === "telegram");
     expect(telegram?.envKey).toBe("TELEGRAM_BOT_TOKEN");
@@ -202,5 +212,7 @@ describe("sandbox-channels listChannels", () => {
     expect(whatsapp?.envKey).toBeUndefined();
     const teams = list.find((c) => c.name === "teams");
     expect(teams?.envKey).toBe("MSTEAMS_APP_PASSWORD");
+    const voiceclaw = list.find((c) => c.name === "voiceclaw");
+    expect(voiceclaw?.envKey).toBeUndefined();
   });
 });

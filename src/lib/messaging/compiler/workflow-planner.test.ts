@@ -784,6 +784,75 @@ describe("MessagingWorkflowPlanner", () => {
     expect(removed?.agentRender.some((entry) => entry.channelId === "telegram")).toBe(false);
   });
 
+  it("preserves VoiceClaw settings across add and rebuild, then removes its plan entries (#6387)", async () => {
+    const added = await withEnv(
+      {
+        VOICECLAW_ENABLED: "1",
+        VOICECLAW_AUDIO_BRIDGE_URL: "http://host.openshell.internal:7880",
+      },
+      () =>
+        planner().buildPlan({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "add-channel",
+          isInteractive: false,
+          configuredChannels: ["voiceclaw"],
+          disabledChannels: [],
+        }),
+    );
+
+    const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: added },
+      },
+    });
+
+    expect(rebuilt?.workflow).toBe("rebuild");
+    expect(rebuilt?.channels).toMatchObject([
+      {
+        channelId: "voiceclaw",
+        active: true,
+        inputs: [
+          { inputId: "enabled", value: "1" },
+          {
+            inputId: "audioBridgeUrl",
+            value: "http://host.openshell.internal:7880",
+          },
+        ],
+      },
+    ]);
+    expect(rebuilt?.agentRender).toMatchObject([
+      {
+        channelId: "voiceclaw",
+        path: "plugins.entries.voiceclaw",
+      },
+    ]);
+    expect(rebuilt?.networkPolicy.entries).toMatchObject([
+      { channelId: "voiceclaw", presetName: "voiceclaw" },
+    ]);
+
+    const removed = await planner().buildChannelRemovePlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: rebuilt! },
+      },
+      channelId: "voiceclaw",
+    });
+
+    expect(removed).toMatchObject({
+      workflow: "remove-channel",
+      channels: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      stateUpdates: [],
+    });
+  });
+
   it("preserves an explicit empty plan on rebuild after the final channel is removed", async () => {
     const existingPlan = await planner().buildPlan({
       sandboxName: "demo",
