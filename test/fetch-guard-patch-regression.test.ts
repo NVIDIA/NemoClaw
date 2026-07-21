@@ -243,6 +243,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     '    printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$pack_file" "$OPENCLAW_2026_6_10_INTEGRITY";',
     "    return 0",
     "  fi",
+    '  if [ "${1:-}" = "ls" ]; then return 0; fi',
     '  if [ "${1:-}" = "install" ]; then return 0; fi',
     '  if [ "${1:-}" = "--prefix" ]; then return 0; fi',
     "  return 1",
@@ -354,6 +355,7 @@ describe("fetch-guard patch regression guard", () => {
       "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
     );
     expect(stale.calls).toContain("postinstall-bundled-plugins.mjs");
+    expect(stale.calls).toContain("npm ls -g --all openclaw @openclaw/fs-safe tar jszip");
     expect(stale.calls).toContain(
       `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,
     );
@@ -370,6 +372,7 @@ describe("fetch-guard patch regression guard", () => {
       "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
     );
     expect(current.calls).toContain("postinstall-bundled-plugins.mjs");
+    expect(current.calls).toContain("npm ls -g --all openclaw @openclaw/fs-safe tar jszip");
     expect(current.calls).toContain(
       `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,
     );
