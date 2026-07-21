@@ -432,7 +432,7 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_not_contains "$openclaw_block" 'pack_reviewed_npm_tarball' "$dockerfile inline pack helper"
   check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
   check_contains "$openclaw_block" 'ignore-scripts+reviewed-lifecycle+transitive-remediation-v1' "$dockerfile base provenance recipe"
-  check_contains "$openclaw_block" 'npm ls -g --all openclaw @openclaw/fs-safe tar jszip' "$dockerfile installed remediation graph guard"
+  check_contains "$openclaw_block" 'npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip' "$dockerfile installed remediation graph guard"
   check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
   check_contains "$openclaw_block" 'mcporter-integrity=' "$dockerfile mcporter provenance integrity"
   check_contains "$openclaw_block" 'mcporter-lock-sha256=' "$dockerfile mcporter provenance lock hash"

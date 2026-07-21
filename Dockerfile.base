@@ -293,7 +293,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         echo "Error: Installed OpenClaw ${OPENCLAW_INSTALLED_VERSION:-unknown} does not match reviewed target ${OPENCLAW_VERSION}"; exit 1; \
     fi \
     && if [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then \
-        npm ls -g --all openclaw @openclaw/fs-safe tar jszip >/dev/null; \
+        npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip >/dev/null; \
     fi \
     && MCPORTER_EXPECTED_INTEGRITY="" \
     && MCPORTER_EXPECTED_TARBALL="" \

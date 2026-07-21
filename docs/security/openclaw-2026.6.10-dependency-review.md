@@ -111,7 +111,7 @@ The expected values are `sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3
 Both the library and command-line entry points enforce the same committed values.
 `Dockerfile.base` records `ignore-scripts+reviewed-lifecycle+transitive-remediation-v1` in its protected provenance marker.
 The production Dockerfile rejects stale base provenance and repeats the remediation when the marker does not match.
-Both image paths run `npm ls` against the installed OpenClaw, `fs-safe`, `tar`, and `jszip` graph so a missing or invalid global dependency fails during image assembly.
+Both image paths run a depth-bounded `npm ls` against the installed OpenClaw, `fs-safe`, `tar`, and `jszip` graph so a missing or invalid direct dependency fails during image assembly without traversing the unrelated global tree.
 The messaging installer applies the same remediation before it installs the reviewed Slack or Microsoft Teams archive.
 The reviewed npm audit applies that helper before installation, so Docker builds, messaging builds, and the advisory audit consume the same remediated archive shape.
 
