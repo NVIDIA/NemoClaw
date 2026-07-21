@@ -368,6 +368,48 @@ function preparePluginPatch(pluginRoot: string): PluginPatch | null {
   return { ...preparePluginMetadata(pluginRoot, manifest), pluginRoot, spec };
 }
 
+export function patchReviewedOpenClawPluginAxiosRoot(
+  pluginRoot: string,
+  replacementRoot: string,
+): string | null {
+  const resolvedReplacementRoot = path.resolve(replacementRoot);
+  validateReplacementTree(resolvedReplacementRoot);
+  const patch = preparePluginPatch(path.resolve(pluginRoot));
+  if (!patch) return null;
+  const replacements: StagedReplacement[] = [];
+  let commitStarted = false;
+  try {
+    const axiosReplacement = stageDirectoryReplacement({
+      label: `${patch.spec} Axios package tree`,
+      livePath: path.join(patch.pluginRoot, "node_modules", "axios"),
+      sourcePath: resolvedReplacementRoot,
+    });
+    replacements.push(axiosReplacement);
+    validateReplacementTree(axiosReplacement.stagedPath);
+    replacements.push(
+      stageJsonReplacement({
+        label: `${patch.spec} package metadata`,
+        livePath: path.join(patch.pluginRoot, "package.json"),
+        value: patch.manifest,
+      }),
+      stageJsonReplacement({
+        label: `${patch.spec} shrinkwrap metadata`,
+        livePath: path.join(patch.pluginRoot, "npm-shrinkwrap.json"),
+        value: patch.shrinkwrap,
+      }),
+    );
+    commitStarted = true;
+    commitStagedReplacementTransaction({
+      replacements,
+      verify: () => verifyPatchedPlugin(patch.pluginRoot, patch.spec),
+    });
+  } catch (error) {
+    if (!commitStarted) discardStagedReplacements(replacements);
+    throw error;
+  }
+  return patch.spec;
+}
+
 export function patchInstalledOpenClawPlugins(options: {
   homeDirectory?: string;
   replacementRoot: string;
@@ -526,7 +568,12 @@ if (isMainModule()) {
     return result;
   };
   try {
-    if (args.includes("--classify-install-target")) {
+    if (args.includes("--patch-plugin-root")) {
+      patchReviewedOpenClawPluginAxiosRoot(
+        value("--patch-plugin-root"),
+        value("--replacement-root"),
+      );
+    } else if (args.includes("--classify-install-target")) {
       process.stdout.write(classifyReviewedInstallTarget(value("--classify-install-target")));
     } else if (args.includes("--materialize-install-target")) {
       process.stdout.write(

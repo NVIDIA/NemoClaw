@@ -19,7 +19,7 @@ if [[ "${EUID}" -eq 0 && "${1:-}" == ci ]]; then
       local status=$?
       trap - EXIT
       if [[ "$restore_required" == 1 ]]; then
-        if ! node --experimental-strip-types "$REMEDIATION" \
+        if ! node --no-warnings --experimental-strip-types "$REMEDIATION" \
           --restore-install \
           --nemoclaw-root "$NEMOCLAW_ROOT" \
           --backup-directory "$backup_directory"; then
@@ -32,13 +32,13 @@ if [[ "${EUID}" -eq 0 && "${1:-}" == ci ]]; then
     }
     trap cleanup EXIT
 
-    node --experimental-strip-types "$REMEDIATION" \
+    node --no-warnings --experimental-strip-types "$REMEDIATION" \
       --prepare-install \
       --nemoclaw-root "$NEMOCLAW_ROOT" \
       --backup-directory "$backup_directory"
     restore_required=1
     "$ORIGINAL_NPM" "$@"
-    node --experimental-strip-types "$REMEDIATION" \
+    node --no-warnings --experimental-strip-types "$REMEDIATION" \
       --verify-install \
       --nemoclaw-root "$NEMOCLAW_ROOT"
     restore_required=0
