@@ -128,4 +128,41 @@ describe("resolveRequestedProviderSelection", () => {
       assert.equal(result.recoveredFromSandbox, false);
     }
   });
+
+  it("auto-selects managed vLLM on a DGX managed-vLLM platform when no provider is given (#7293)", () => {
+    const result = resolve({
+      options: [option("build"), option("install-vllm")],
+      preferManagedVllmDefault: true,
+    });
+
+    assert.equal(result.kind, "selected");
+    if (result.kind === "selected") {
+      assert.equal(result.selected.key, "install-vllm");
+    }
+  });
+
+  it("keeps the cloud default when the platform is not a managed-vLLM default (#7293)", () => {
+    // Same options, but the host is not Spark/Station → must stay `build`.
+    const result = resolve({
+      options: [option("build"), option("install-vllm")],
+      preferManagedVllmDefault: false,
+    });
+
+    assert.equal(result.kind, "selected");
+    if (result.kind === "selected") {
+      assert.equal(result.selected.key, "build");
+    }
+  });
+
+  it("keeps the cloud default when no managed-vLLM entry is available (#7293)", () => {
+    const result = resolve({
+      options: [option("build"), option("openai")],
+      preferManagedVllmDefault: true,
+    });
+
+    assert.equal(result.kind, "selected");
+    if (result.kind === "selected") {
+      assert.equal(result.selected.key, "build");
+    }
+  });
 });

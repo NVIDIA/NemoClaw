@@ -59,6 +59,13 @@ export interface ResolveRequestedProviderSelectionInput<T extends ProviderOption
   isWindowsHostOllama: boolean;
   windowsHostOllamaSupported: boolean;
   hermesProviderAvailable: boolean;
+  /**
+   * On a DGX platform where managed vLLM is the recommended default (Spark /
+   * Station), a non-interactive onboard with no requested/recorded provider
+   * should auto-select `install-vllm` instead of falling back to cloud `build`
+   * (#7293) — matching the option the interactive menu already offers.
+   */
+  preferManagedVllmDefault?: boolean;
 }
 
 function findOption<T extends ProviderOption>(options: T[], key: string): T | undefined {
@@ -118,7 +125,12 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
       recoveredFromSandbox = true;
       recoveredModel = input.readRecordedModel(input.sandboxName);
     } else {
-      providerKey = "build";
+      // Prefer managed local vLLM on DGX Spark/Station when its menu entry is
+      // present; otherwise fall back to cloud NVIDIA Endpoints (#7293).
+      providerKey =
+        input.preferManagedVllmDefault && findOption(input.options, "install-vllm")
+          ? "install-vllm"
+          : "build";
     }
   }
 
