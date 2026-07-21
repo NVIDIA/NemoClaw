@@ -191,7 +191,11 @@ export function patchBundledNpmTar(options: {
 }
 
 function run(command: string, args: readonly string[]): void {
-  const result = spawnSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 60_000,
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`${command} failed: ${`${result.stdout ?? ""}${result.stderr ?? ""}`.trim()}`);

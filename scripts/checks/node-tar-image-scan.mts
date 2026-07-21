@@ -7,7 +7,9 @@ import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync }
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const MINIMUM_SAFE_NODE_TAR_VERSION = "7.5.19";
+import { MINIMUM_SAFE_TAR_VERSION } from "../patch-bundled-npm-tar.mts";
+
+export const MINIMUM_SAFE_NODE_TAR_VERSION = MINIMUM_SAFE_TAR_VERSION;
 
 type ExactVersion = readonly [number, number, number];
 

@@ -8,12 +8,12 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const dockerfiles = [
-  "Dockerfile.base",
-  "Dockerfile",
-  "agents/hermes/Dockerfile.base",
-  "agents/hermes/Dockerfile",
-  "agents/langchain-deepagents-code/Dockerfile.base",
-  "agents/langchain-deepagents-code/Dockerfile",
+  { file: "Dockerfile.base", installsWithNpm: true },
+  { file: "Dockerfile", installsWithNpm: true },
+  { file: "agents/hermes/Dockerfile.base", installsWithNpm: true },
+  { file: "agents/hermes/Dockerfile", installsWithNpm: true },
+  { file: "agents/langchain-deepagents-code/Dockerfile.base", installsWithNpm: false },
+  { file: "agents/langchain-deepagents-code/Dockerfile", installsWithNpm: false },
 ] as const;
 
 function completedStage(source: string): string {
@@ -22,7 +22,10 @@ function completedStage(source: string): string {
 }
 
 describe("node-tar image remediation contract", () => {
-  it.each(dockerfiles)("patches npm before use and scans the completed %s filesystem", (file) => {
+  it.each(
+    dockerfiles,
+  )("patches npm before use and scans the completed $file filesystem", (entry) => {
+    const { file, installsWithNpm } = entry;
     const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
     const reviewedCopy = source.indexOf(
       "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
@@ -47,9 +50,14 @@ describe("node-tar image remediation contract", () => {
     expect(scanRun, file).toBeGreaterThan(scanCopy);
     expect(source, file).toContain("> /usr/local/share/nemoclaw/node-tar-inventory.json");
 
-    const npmConsumersBeforePatch = [...source.matchAll(/^RUN\s+.*\bnpm\s+(?:ci|install)\b/gmu)]
-      .map((match) => match.index)
-      .filter((index) => index < patchRun);
-    expect(npmConsumersBeforePatch, file).toEqual([]);
+    const executableSource = source.replace(/^\s*#.*$/gmu, (comment) => " ".repeat(comment.length));
+    const npmConsumers = [...executableSource.matchAll(/\bnpm\s+(?:ci|install)\b/gu)].map(
+      (match) => match.index,
+    );
+    expect(npmConsumers.length > 0, file).toBe(installsWithNpm);
+    expect(
+      npmConsumers.every((index) => index > patchRun),
+      file,
+    ).toBe(true);
   });
 });
