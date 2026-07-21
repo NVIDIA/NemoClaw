@@ -440,9 +440,13 @@ async function assertOpenClawAgentSecretBoundary(
   expect(requests.length, `${phase} agent turn must reach the compatible endpoint`).toBeGreaterThan(
     0,
   );
-  expect(requests.some((request) => request.auth === "Bearer dummy")).toBe(true);
-  expect(requests.some((request) => request.auth === "Bearer unused")).toBe(false);
-  expect(requests.some((request) => request.auth?.includes("openshell:resolve:env:"))).toBe(false);
+  // The fake endpoint deliberately records only the validated auth result, not
+  // the bearer value. With requireAuth enabled, "ok" means the request carried
+  // the exact gateway-held `dummy` credential; `unused`, a placeholder, or a
+  // missing header would receive 401 and could not complete this agent turn.
+  expect(
+    requests.every((request) => request.auth === "ok" && request.authorizationSent === true),
+  ).toBe(true);
 }
 
 async function captureLegacyOpenClawStateUpgradeProof(
