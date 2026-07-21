@@ -90,6 +90,7 @@ const INSTALL_CASES: readonly InstallCase[] = [
     expectedStateRoot: `${CONTAINER_HOME}/custom-state`,
   },
 ];
+const TEST_TIMEOUT_MS = RUN_TIMEOUT_MS * (INSTALL_CASES.length + 2) + 10 * 60_000;
 
 function safeDockerName(value: string): string {
   return value
@@ -796,5 +797,5 @@ realContainerTest(
       },
     });
   },
-  20 * 60_000,
+  TEST_TIMEOUT_MS,
 );

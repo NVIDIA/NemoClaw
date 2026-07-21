@@ -225,6 +225,7 @@ ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.
 COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
 COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
 # names do not persist in runtime snapshots or leak-scan inputs.
@@ -265,13 +266,21 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     if [ -z "$EXPECTED_INTEGRITY" ]; then \
         echo "Error: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin"; exit 1; \
     fi; \
-    OPENCLAW_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+    OPENCLAW_SOURCE_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
         --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
         --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
-    if [ -z "$OPENCLAW_PACK_PATH" ] || [ ! -f "$OPENCLAW_PACK_PATH" ] || [ -L "$OPENCLAW_PACK_PATH" ]; then \
+    if [ -z "$OPENCLAW_SOURCE_PACK_PATH" ] || [ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ] || [ -L "$OPENCLAW_SOURCE_PACK_PATH" ]; then \
         echo "Error: reviewed OpenClaw archive path is empty or invalid"; exit 1; \
     fi; \
-    OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
+    OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_SOURCE_PACK_PATH")"; \
+    OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
+    OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
+    if [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then \
+        OPENCLAW_PACK_PATH="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
+            --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
+            --working-directory "$OPENCLAW_PACK_DIR")"; \
+        OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'; \
+    fi; \
     npm install -g --ignore-scripts "$OPENCLAW_PACK_PATH" \
     && case "$OPENCLAW_VERSION" in \
         2026.4.24|2026.6.10) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
@@ -282,6 +291,9 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && OPENCLAW_INSTALLED_VERSION="$(openclaw --version 2>/dev/null | awk '{print $2}')" \
     && if [ "$OPENCLAW_INSTALLED_VERSION" != "$OPENCLAW_VERSION" ]; then \
         echo "Error: Installed OpenClaw ${OPENCLAW_INSTALLED_VERSION:-unknown} does not match reviewed target ${OPENCLAW_VERSION}"; exit 1; \
+    fi \
+    && if [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then \
+        npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip >/dev/null; \
     fi \
     && MCPORTER_EXPECTED_INTEGRITY="" \
     && MCPORTER_EXPECTED_TARBALL="" \
@@ -310,7 +322,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         "package=openclaw@${OPENCLAW_VERSION}" \
         "integrity=${EXPECTED_INTEGRITY}" \
         "tarball=${EXPECTED_TARBALL}" \
-        'recipe=ignore-scripts+reviewed-lifecycle-v1' \
+        "recipe=${OPENCLAW_RECIPE}" \
         "mcporter-package=mcporter@${MCPORTER_VERSION}" \
         "mcporter-integrity=${MCPORTER_EXPECTED_INTEGRITY}" \
         "mcporter-tarball=${MCPORTER_EXPECTED_TARBALL}" \

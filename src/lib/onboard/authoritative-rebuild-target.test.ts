@@ -107,6 +107,7 @@ describe("prepared provider reconfiguration handoff", () => {
     onboardLockAlreadyHeld: true,
     targetGatewayName: "nemoclaw-8081",
     targetGatewayPort: 8081,
+    endpointSource: "onboard" as const,
     rebuildProviderReconfigure: providerTarget,
   };
 
@@ -148,6 +149,7 @@ describe("prepared provider reconfiguration handoff", () => {
         provider: "compatible-endpoint",
         model: "nvidia/model",
         endpointUrl: "https://inference.example.test/v1",
+        endpointSource: "onboard",
         preferredInferenceApi: "openai-completions",
         source: "registry",
       },
