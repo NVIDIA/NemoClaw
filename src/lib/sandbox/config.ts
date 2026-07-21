@@ -33,10 +33,12 @@ const {
 }: typeof import("../state/mcp-lifecycle-lock") = require("../state/mcp-lifecycle-lock");
 const {
   runOpenClawConfigGuard,
+  validateOpenClawConfigCandidate,
 }: typeof import("../shields/openclaw-config-lock") = require("../shields/openclaw-config-lock");
 const { isPrivateHostname, isPrivateIp } = require("../private-networks");
 const {
   privilegedSandboxExecArgv,
+  resolveDirectSandboxContainer,
 }: typeof import("./privileged-exec") = require("./privileged-exec");
 const {
   buildHermesUpstreamHeader,
@@ -45,6 +47,10 @@ const {
   parseConfig,
   serializeConfig,
 }: typeof import("./config-format") = require("./config-format");
+const {
+  OPENSHELL_OPERATION_TIMEOUT_MS,
+}: typeof import("../adapters/openshell/timeouts") = require("../adapters/openshell/timeouts");
+const { redactFull }: typeof import("../security/redact") = require("../security/redact");
 
 type ConfigObject = import("../security/credential-filter").ConfigObject;
 type ConfigValue = import("../security/credential-filter").ConfigValue;
@@ -113,6 +119,7 @@ function configFail(lines: string | readonly string[], exitCode = 1): never {
 
 function restartSandboxAgentAfterConfigSet(
   sandboxName: string,
+  agentName: string,
   restartImpl?: ManagedGatewayRestart,
 ): void {
   const restart =
@@ -120,9 +127,15 @@ function restartSandboxAgentAfterConfigSet(
     (require("../actions/sandbox/process-recovery").restartSandboxGateway as ManagedGatewayRestart);
   const result = restart(sandboxName);
   if (!result.ok) {
-    configFail(
-      `  Config was updated, but the managed gateway restart failed for '${sandboxName}'.`,
-    );
+    // The config was already written to disk (the CAS write above succeeded),
+    // but the running agent was not reloaded. Say so plainly and point at the
+    // idempotent retry rather than leaving disk and the live gateway silently
+    // diverged. The restart layer has already printed its own failure detail.
+    configFail([
+      `  Config was written to disk but NOT applied to the running agent.`,
+      `  The ${agentName} gateway restart did not complete for '${sandboxName}' (see the failure above).`,
+      `  Retry the restart with: nemoclaw ${shellQuote(sandboxName)} gateway restart`,
+    ]);
   }
 }
 
@@ -182,18 +195,33 @@ function privilegedSandboxExec(
   });
 }
 
-function openClawConfigGuardExec(sandboxName: string) {
+function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: string) {
   return {
     run: (cmd: string[], input?: string) => {
-      const result = dockerSpawnSync(
-        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
-        {
-          encoding: "utf-8",
-          input,
-          timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
-          maxBuffer: 2 * 1024 * 1024,
-        },
-      );
+      let argv: string[];
+      try {
+        argv = privilegedSandboxExecArgv(
+          sandboxName,
+          cmd,
+          input !== undefined,
+          true,
+          expectedContainerId,
+        );
+      } catch (error) {
+        return {
+          status: null,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const result = dockerSpawnSync(argv, {
+        encoding: "utf-8",
+        input,
+        timeout: OPENCLAW_CONFIG_GUARD_TIMEOUT_MS,
+        maxBuffer: 2 * 1024 * 1024,
+      });
       return {
         status: result.status,
         signal: result.signal,
@@ -485,12 +513,20 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
   }
 }
 
+type ValidatedOpenClawCandidate = {
+  content: string;
+  privileged: import("../shields/state-dir-lock").PrivilegedExec;
+};
+
 function writeSandboxConfig(
   sandboxName: string,
   target: AgentConfigTarget,
   config: ConfigObject,
+  // Interactive config set supplies this after validating outside the mutation locks.
+  // Other callers retain the existing digest-bound write behavior.
+  validatedOpenClawCandidate?: ValidatedOpenClawCandidate,
 ): void {
-  const content = composeSandboxConfigBody(config, target);
+  const content = validatedOpenClawCandidate?.content ?? composeSandboxConfigBody(config, target);
   if (target.agentName === "hermes") {
     const expectedConfigSha256 = (config as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string })[
       CONFIG_SOURCE_SHA256
@@ -533,12 +569,16 @@ function writeSandboxConfig(
         "Refusing OpenClaw config write without the digest from the matching sandbox read.",
       );
     }
-    const result = runOpenClawConfigGuard(openClawConfigGuardExec(sandboxName), "write-config", {
-      expectedConfigSha256,
-      input: content,
-    });
+    const result = runOpenClawConfigGuard(
+      validatedOpenClawCandidate?.privileged ?? openClawConfigGuardExec(sandboxName),
+      "write-config",
+      {
+        expectedConfigSha256,
+        input: content,
+      },
+    );
     if (result.issues.length > 0) {
-      throw new Error(`OpenClaw config write refused: ${result.issues.join(", ")}`);
+      configFail(result.issues.map((issue) => `  ${issue}`));
     }
     const expectedNewDigest = createHash("sha256").update(content).digest("hex");
     if (result.configSha256 !== expectedNewDigest) {
@@ -592,6 +632,167 @@ function recomputeSandboxConfigHash(sandboxName: string, target: AgentConfigTarg
   const script = buildRecomputeSandboxConfigHashScript(target);
   if (!script) return;
   privilegedSandboxExec(sandboxName, ["sh", "-c", script]);
+}
+
+// Absolute path to the Hermes dashboard config seeder inside the sandbox image
+// (installed by the agents/hermes image build). The python resolution order
+// mirrors start.sh's trusted `_HERMES_PYTHON` list.
+const HERMES_DASHBOARD_SEEDER_PATH = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
+const HERMES_TRUSTED_PYTHON3 = [
+  "/opt/hermes/.venv/bin/python3",
+  "/usr/local/bin/python3",
+  "/usr/bin/python3",
+] as const;
+const HERMES_DASHBOARD_PATH_ABSENT_STATUS = 3;
+// OpenShell rejects CR/LF in argv, so encode the multiline program inside a
+// single-line Python expression.
+const HERMES_DASHBOARD_PATH_INSPECTION = `exec(${JSON.stringify(
+  [
+    "import os",
+    "import stat",
+    "import sys",
+    "try:",
+    "    mode = os.lstat(sys.argv[1]).st_mode",
+    "except FileNotFoundError:",
+    `    raise SystemExit(${HERMES_DASHBOARD_PATH_ABSENT_STATUS})`,
+    "except OSError as exc:",
+    '    print(f"unable to inspect Hermes dashboard path: {exc}", file=sys.stderr)',
+    "    raise SystemExit(2)",
+    "raise SystemExit(0 if stat.S_ISDIR(mode) else 2)",
+  ].join("\n"),
+)})`;
+
+export type HermesDashboardReseedResult = "converged" | "absent" | "failed";
+
+export interface HermesDashboardReseedDeps {
+  getOpenshellBinary: () => string;
+  captureOpenshellCommand: (
+    binary: string,
+    args: string[],
+    options: import("../adapters/openshell/client").CaptureOpenshellOptions,
+  ) => import("../adapters/openshell/client").CaptureOpenshellResult;
+  reportFailure?: (stage: "python" | "inspection" | "seed", detail: string) => void;
+}
+
+const HERMES_DASHBOARD_RESEED_DIAGNOSTIC_MAX_CHARS = 800;
+
+function hermesDashboardReseedFailureDetail(
+  result: import("../adapters/openshell/client").CaptureOpenshellResult,
+): string {
+  const raw =
+    result.error?.message || result.stderr?.trim() || result.output.trim() || result.stdout?.trim();
+  const detail = redactFull(raw || "no command output")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const bounded = detail.slice(0, HERMES_DASHBOARD_RESEED_DIAGNOSTIC_MAX_CHARS);
+  return [
+    `status=${result.status === null ? "null" : result.status}`,
+    result.signal ? `signal=${result.signal}` : "",
+    bounded ? `detail=${bounded}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * Re-run the Hermes dashboard config seeder inside the sandbox so the isolated
+ * dashboard-home config (`<configDir>/dashboard-home/config.yaml`) re-mirrors the
+ * gateway config's model routing after an in-place `inference set`. Sandbox
+ * startup runs the same seeder; without re-running it, Dashboard Chat and its
+ * `/api/model/info` endpoint stay on the previous model even though the gateway
+ * config, registry, and CLI status all report the new one (#6893).
+ *
+ * Runs as the sandbox user (non-privileged `sandbox exec`, matching start.sh's
+ * step-down before touching sandbox-owned dashboard-home state); the seeder does
+ * no-follow atomic writes and refuses symlinked paths. Best-effort: returns
+ * `failed` on failure so the caller can warn without aborting the route switch.
+ */
+function seedHermesDashboardConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  deps: HermesDashboardReseedDeps = { getOpenshellBinary, captureOpenshellCommand },
+): HermesDashboardReseedResult {
+  const dashboardHome = `${target.configDir}/dashboard-home`;
+  const binary = deps.getOpenshellBinary();
+  const capture = (command: string[]) =>
+    deps.captureOpenshellCommand(
+      binary,
+      ["sandbox", "exec", "--name", sandboxName, "--", ...command],
+      {
+        ignoreError: true,
+        includeStreams: true,
+        maxBuffer: CONFIG_CAPTURE_MAX_BUFFER,
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      },
+    );
+  const failed = (result: import("../adapters/openshell/client").CaptureOpenshellResult) =>
+    Boolean(result.error || result.signal || result.status !== 0);
+  const reportFailure = (
+    stage: "python" | "inspection" | "seed",
+    result: import("../adapters/openshell/client").CaptureOpenshellResult,
+  ) => {
+    const detail = hermesDashboardReseedFailureDetail(result);
+    if (deps.reportFailure) {
+      deps.reportFailure(stage, detail);
+      return;
+    }
+    console.error(`  Hermes dashboard reseed ${stage} failed: ${detail}`);
+  };
+
+  let python: (typeof HERMES_TRUSTED_PYTHON3)[number] | null = null;
+  let lastPythonFailure: import("../adapters/openshell/client").CaptureOpenshellResult | undefined;
+  for (const candidate of HERMES_TRUSTED_PYTHON3) {
+    const probe = capture([candidate, "-c", ""]);
+    if (!failed(probe)) {
+      python = candidate;
+      break;
+    }
+    lastPythonFailure = probe;
+  }
+  if (!python) {
+    if (lastPythonFailure) reportFailure("python", lastPythonFailure);
+    return "failed";
+  }
+
+  // lstat distinguishes a genuinely absent profile from a file, a symlink
+  // (including a broken one), or an inspection error. Only the first case is a
+  // clean no-op; everything else fails closed so callers cannot report sync.
+  const inspection = capture([python, "-c", HERMES_DASHBOARD_PATH_INSPECTION, dashboardHome]);
+  if (
+    !inspection.error &&
+    !inspection.signal &&
+    inspection.status === HERMES_DASHBOARD_PATH_ABSENT_STATUS
+  ) {
+    return "absent";
+  }
+  if (failed(inspection)) {
+    reportFailure("inspection", inspection);
+    return "failed";
+  }
+
+  const dashboardConfigPath = `${dashboardHome}/config.yaml`;
+  const seed = capture([
+    python,
+    HERMES_DASHBOARD_SEEDER_PATH,
+    target.configPath,
+    dashboardConfigPath,
+    `${target.configDir}/.env`,
+    `${dashboardHome}/.env`,
+  ]);
+  if (failed(seed)) {
+    reportFailure("seed", seed);
+    return "failed";
+  }
+  const seededMarker = `[dashboard] seeded model routing into ${dashboardConfigPath}`;
+  if (
+    !String(seed.stderr ?? "")
+      .split(/\r?\n/u)
+      .includes(seededMarker)
+  ) {
+    reportFailure("seed", seed);
+    return "failed";
+  }
+  return "converged";
 }
 
 // ---------------------------------------------------------------------------
@@ -951,10 +1152,8 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     );
   }
 
-  // First-time writes go through a confirmation gate so users get a
-  // signal when they are creating a brand-new key (which may be a typo)
-  // without coupling the validator to OpenClaw's evolving config schema
-  // (see #2400).
+  // First-time writes require explicit consent before agent-specific validation.
+  // Keep this cross-agent typo guard independent of any one agent's schema (#2400).
   if (oldValue === undefined) {
     const gate = classifyNewKeyGate({
       acceptNewPath: opts.acceptNewPath,
@@ -989,10 +1188,26 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     configFail(`  URL validation failed${suffix}: ${message}`);
   }
 
-  // Serialize only the authoritative re-read/CAS write under the shared
-  // sandbox lock and then the shields transition lock. Interactive approval
-  // and DNS validation above must not hold either lock across the auto-restore
-  // deadline. If anything changed while the user was deciding, fail closed.
+  // Validation can take up to 30 seconds, so keep it outside both mutation locks.
+  let validatedOpenClawCandidate: ValidatedOpenClawCandidate | undefined;
+  if (target.agentName === "openclaw") {
+    setDotpath(config, opts.key, safeValue);
+    const content = composeSandboxConfigBody(config, target);
+    try {
+      const containerId = resolveDirectSandboxContainer(sandboxName, null);
+      const privileged = openClawConfigGuardExec(sandboxName, containerId);
+      const issues = validateOpenClawConfigCandidate(privileged, content);
+      if (issues.length > 0) configFail(issues.map((issue) => `  ${issue}`));
+      validatedOpenClawCandidate = { content, privileged };
+    } catch (error) {
+      if (error instanceof SandboxConfigError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      configFail(`  OpenClaw schema validation could not start: ${message}`);
+    }
+  }
+
+  // Re-read under both mutation locks and enforce the source digest. For
+  // OpenClaw, also require the exact serialized bytes validated above.
   await withSandboxMutationLock(sandboxName, () =>
     withTimerBoundShieldsMutationLock(sandboxName, "config set write", () => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
@@ -1015,8 +1230,20 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
       }
       setDotpath(currentConfig, opts.key!, safeValue);
 
+      if (target.agentName === "openclaw") {
+        const currentCandidateContent = composeSandboxConfigBody(currentConfig, target);
+        if (
+          !validatedOpenClawCandidate ||
+          currentCandidateContent !== validatedOpenClawCandidate.content
+        ) {
+          configFail(
+            "  OpenClaw config candidate changed after schema validation. Re-run config set against the current value.",
+          );
+        }
+      }
+
       console.log(`  Writing config to sandbox (${target.configPath})...`);
-      writeSandboxConfig(sandboxName, target, currentConfig);
+      writeSandboxConfig(sandboxName, target, currentConfig, validatedOpenClawCandidate);
       recomputeSandboxConfigHash(sandboxName, target);
 
       appendAuditEntry({
@@ -1032,7 +1259,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
   // Restart if requested
   if (opts.restart) {
-    restartSandboxAgentAfterConfigSet(sandboxName);
+    restartSandboxAgentAfterConfigSet(sandboxName, target.agentName);
   } else {
     console.log("");
     for (const line of buildConfigSetRestartGuidance(sandboxName, target.agentName)) {
@@ -1225,6 +1452,7 @@ export {
   resolveAgentConfig,
   restartSandboxAgentAfterConfigSet,
   rewriteConfigUrlsWithDnsPinning,
+  seedHermesDashboardConfig,
   setDotpath,
   validateConfigDotpath,
   validateUrlValue,

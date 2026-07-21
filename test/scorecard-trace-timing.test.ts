@@ -3,41 +3,13 @@
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import * as traceTiming from "../scripts/scorecard/analyze-trace-timing.mts";
 import { ONBOARD_TRACE_PHASE_NAMES } from "../src/lib/onboard/tracing";
 
-type TraceTimingAnalyzer = {
-  ONBOARD_PHASE_ORDER: readonly string[];
-  TRACE_SUMMARY_FILE: string;
-  buildPhaseRows: (...args: any[]) => Array<{
-    label: string;
-    currentMs: number;
-    priorMs: number;
-    deltaAbsMs: number;
-    deltaMs?: number;
-  }>;
-  buildTraceTimingResult: (...args: any[]) => Promise<any>;
-  buildTraceSummaryLines: (...args: any[]) => string[];
-  evaluateOnboardPerformanceBudget: (...args: any[]) => any;
-  exceedsThreshold: (...args: any[]) => boolean;
-  formatTopPhaseChanges: (...args: any[]) => string;
-  readOnboardPerformanceBudget: () => unknown;
-  readValidatedTraceSummaryZip: (
-    zipPath: string,
-    warn?: (message: string) => void,
-  ) => string | null;
-  redactSensitiveTraceText: (value: string) => string;
-  selectOnboardTrace: (
-    ...args: any[]
-  ) => { totalMs: number; phases: Record<string, number> } | null;
-};
-
-const require = createRequire(import.meta.url);
-const traceTiming: TraceTimingAnalyzer = require("../scripts/scorecard/analyze-trace-timing.ts");
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 
 function timingSummary(
@@ -204,9 +176,9 @@ describe("cloud onboard scorecard trace timing", () => {
       },
     );
     const summaryLines = traceTiming.buildTraceSummaryLines(
-      { totalMs: 8_000 },
-      { totalMs: 15_000 },
-      { name: "v0.0.56" },
+      { totalMs: 8_000, phases: {} },
+      { totalMs: 15_000, phases: {} },
+      { name: "v0.0.56", major: 0, minor: 0, patch: 56 },
       phaseRows,
     );
 
@@ -215,7 +187,12 @@ describe("cloud onboard scorecard trace timing", () => {
       "sandbox -8.0s; gateway +2.0s; preflight -1.0s",
     );
     expect(
-      traceTiming.buildTraceSummaryLines({ totalMs: 1 }, { totalMs: 2 }, { name: "v0" }, []),
+      traceTiming.buildTraceSummaryLines(
+        { totalMs: 1, phases: {} },
+        { totalMs: 2, phases: {} },
+        { name: "v0", major: 0, minor: 0, patch: 0 },
+        [],
+      ),
     ).toEqual([]);
     expect(summaryLines).toContain("## Cloud Onboard Trace Timing");
     expect(summaryLines).toContain("| Phase | Current | Previous | Delta |");
@@ -239,14 +216,14 @@ describe("cloud onboard scorecard trace timing", () => {
 
     const warning = traceTiming.evaluateOnboardPerformanceBudget({
       budget,
-      currentTrace: { totalMs: 850_000 },
-      priorTrace: { totalMs: 580_000 },
+      currentTrace: { totalMs: 850_000, phases: {} },
+      priorTrace: { totalMs: 580_000, phases: {} },
       phaseRows,
     });
     const ok = traceTiming.evaluateOnboardPerformanceBudget({
       budget,
-      currentTrace: { totalMs: 100_000 },
-      priorTrace: { totalMs: 95_000 },
+      currentTrace: { totalMs: 100_000, phases: {} },
+      priorTrace: { totalMs: 95_000, phases: {} },
       phaseRows: [],
     });
 
@@ -298,7 +275,7 @@ describe("cloud onboard scorecard trace timing", () => {
           "nemoclaw.onboard.phase.sandbox": 200_000,
         },
       },
-      priorTrace: { totalMs: 200_000 },
+      priorTrace: { totalMs: 200_000, phases: {} },
       phaseRows: [],
     });
 
@@ -335,7 +312,7 @@ describe("cloud onboard scorecard trace timing", () => {
           "nemoclaw.onboard.phase.sandbox": 200_000,
         },
       },
-      priorTrace: { totalMs: 280_000 },
+      priorTrace: { totalMs: 280_000, phases: {} },
       phaseRows,
     });
 

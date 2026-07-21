@@ -71,6 +71,7 @@ export type PrepareSandboxCreatePlanInput = {
   basePolicyPath: string;
   buildCtx: string;
   sandboxName: string;
+  inferenceProvider?: string | null;
   channels: MessagingChannel[];
   enabledChannels: string[] | null;
   disabledChannelNames: ReadonlySet<string>;
@@ -99,6 +100,7 @@ export function prepareSandboxCreatePlan({
   basePolicyPath,
   buildCtx,
   sandboxName,
+  inferenceProvider,
   channels,
   enabledChannels,
   disabledChannelNames,
@@ -131,6 +133,7 @@ export function prepareSandboxCreatePlan({
   const intent = resolveSandboxCreateIntent({
     basePolicyPath,
     sandboxName,
+    inferenceProvider,
     channels,
     enabledChannels,
     disabledChannelNames,

@@ -442,7 +442,7 @@ const releasePath = process.argv[3];
       lifecycleLock.withMcpLifecycleLock(
         "alpha",
         () => "acquired",
-        options({ timeoutMs: 200, corruptLockGraceMs: 20 }),
+        options({ corruptLockGraceMs: 20 }),
       ),
     ).resolves.toBe("acquired");
     expect(fs.existsSync(lockPath)).toBe(false);

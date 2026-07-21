@@ -39,11 +39,22 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
         env: {},
         writeStderr: (line) => stderr.push(line),
       },
+      "nemoclaw-8091",
     );
 
     expect(captureOpenshell).toHaveBeenNthCalledWith(
       1,
-      ["settings", "set", "runtime-sandbox", "--key", "ocsf_json_enabled", "--value", "true"],
+      [
+        "settings",
+        "set",
+        "-g",
+        "nemoclaw-8091",
+        "runtime-sandbox",
+        "--key",
+        "ocsf_json_enabled",
+        "--value",
+        "true",
+      ],
       expect.objectContaining({
         ignoreError: true,
         includeStderr: true,
@@ -52,7 +63,16 @@ describe("policy-denial hint runtime adapter integration (#5978)", () => {
     );
     expect(captureOpenshell).toHaveBeenNthCalledWith(
       2,
-      ["logs", "runtime-sandbox", "-n", String(POLICY_HINT_TAIL_LINES), "--source", "all"],
+      [
+        "logs",
+        "-g",
+        "nemoclaw-8091",
+        "runtime-sandbox",
+        "-n",
+        String(POLICY_HINT_TAIL_LINES),
+        "--source",
+        "all",
+      ],
       expect.objectContaining({
         ignoreError: true,
         includeStderr: true,

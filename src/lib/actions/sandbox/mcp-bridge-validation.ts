@@ -17,7 +17,7 @@ import { normalizeMcpServerUrl } from "./mcp-bridge-url-validation";
 // must reject a missing or malformed security manifest instead of letting the
 // CLI start with a weakened credential-name denylist. Input, package, image,
 // and workflow contracts pin its structure, installed path, and version.
-import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.72.json";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.85.json";
 
 export {
   MCP_SERVER_URL_MAX_LENGTH,
@@ -28,6 +28,7 @@ export {
 
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const VALID_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+const OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE = /^v[0-9]+_[A-Za-z0-9_]+$/;
 const VALID_SANDBOX_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 const OPENSHELL_VERSION_OUTPUT_RE =
   /^openshell\s+([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/;
@@ -140,7 +141,7 @@ export function assertMcpCredentialBoundaryRuntimeVersion(
 // key and exposes or executes the provider value outside the intended request.
 // sourceBoundary: the versioned JSON manifest pins OpenShell-owned keys to the
 // shipped source commit; NemoClaw owns host and agent runtime-control rejects.
-// whyNotSourceFix: v0.0.72 exposes provider keys to every fresh sandbox exec
+// whyNotSourceFix: v0.0.85 exposes provider keys to every fresh sandbox exec
 // and does not advertise safe credential-name capabilities at runtime.
 // regressionTest: the mcp-bridge-input validation/runtime suites check every
 // pinned and runtime key; package contracts require version alignment.
@@ -178,6 +179,12 @@ export function validateMcpServerName(name: string): void {
 
 export function validateMcpCredentialEnvName(name: string): void {
   validatePersistedMcpCredentialEnvName(name);
+  if (OPENSHELL_REVISIONED_CREDENTIAL_NAME_RE.test(name)) {
+    throw new McpBridgeError(
+      `MCP credential environment name '${name}' is reserved for OpenShell credential revisions and would be skipped instead of attached. Use a dedicated secret name such as MY_SERVICE_MCP_TOKEN.`,
+      2,
+    );
+  }
   if (isSubprocessEnvNameAllowed(name)) {
     throw new McpBridgeError(
       `MCP credential environment name '${name}' is reserved for host subprocess control and could be forwarded outside the provider mutation. Use a dedicated secret name such as MY_SERVICE_MCP_TOKEN.`,

@@ -45,6 +45,7 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
       reason: "test fixture",
     },
     stateDirs: [],
+    runtimeAuthStateDirs: [],
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "hermes --version",

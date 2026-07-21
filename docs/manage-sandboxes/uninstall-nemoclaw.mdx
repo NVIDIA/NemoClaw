@@ -23,11 +23,18 @@ $$nemoclaw uninstall
 | `--keep-openshell` | Leave OpenShell binaries installed. |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models. |
 | `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. |
-| `--gateway <name>` | Override the gateway name to remove. The default is `nemoclaw`. |
+| `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
+
+`NEMOCLAW_GATEWAY_PORT` selects the gateway instance to uninstall (`nemoclaw` for port `8080`, or `nemoclaw-<port>` for a non-default port).
+For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
+Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
 
 <Note>
-The uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
-Uninstall removes every other entry under `~/.nemoclaw/`.
+For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
+A non-default gateway uses the corresponding entries under `~/.nemoclaw/gateways/<port>/`.
+When no sibling gateways remain, uninstall also removes the shared CLI, services, images, providers, configuration, models, and swap.
+When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
+Either way, the preserved entries above stay unless you pass `--destroy-user-data`.
 
 Interactive runs prompt before they remove the preserved entries, and the default answer keeps them.
 For non-interactive runs using `--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell, pass `--destroy-user-data` or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries.

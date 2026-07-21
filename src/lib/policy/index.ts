@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 // Namespace access keeps resolveOpenshell spyable in focused policy tests.
@@ -44,6 +45,7 @@ import {
   type PolicyValue,
   parseNetworkPolicies,
 } from "./preset-parsing";
+import { escapeTerminalText, logPresetScope, renderPresetScope } from "./preset-scope-render";
 import { splitSemanticFindings, validatePolicySemantics } from "./semantic-validation";
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
@@ -560,6 +562,66 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
   return YAML.stringify(output);
 }
 
+export type PresetPolicyState = "absent" | "drift" | "match";
+
+function classifyPresetEntries(currentPolicy: string, presetEntries: string): PresetPolicyState {
+  try {
+    const current = YAML.parse(currentPolicy)?.network_policies;
+    const expected = YAML.parse(`network_policies:\n${presetEntries}`)?.network_policies;
+    if (!expected || typeof expected !== "object" || Array.isArray(expected)) {
+      return "drift";
+    }
+    const expectedEntries = Object.entries(expected);
+    if (expectedEntries.length === 0) return "drift";
+    if (!current || typeof current !== "object" || Array.isArray(current)) return "absent";
+    const presentEntries = expectedEntries.filter(([key]) => Object.hasOwn(current, key));
+    if (presentEntries.length === 0) return "absent";
+    return expectedEntries.every(
+      ([key, value]) => Object.hasOwn(current, key) && isDeepStrictEqual(current[key], value),
+    )
+      ? "match"
+      : "drift";
+  } catch {
+    return "drift";
+  }
+}
+
+function policyDocumentsMatch(left: string, right: string): boolean {
+  try {
+    return isDeepStrictEqual(YAML.parse(left), YAML.parse(right));
+  } catch {
+    return false;
+  }
+}
+
+function logPresetNoNewEgress(
+  presetName: string,
+  logger: (line: string) => void = console.log,
+): void {
+  logger(
+    `  Preset '${escapeTerminalText(presetName)}' is already effective; no new egress would be opened.`,
+  );
+}
+
+function logPresetScopeForState(
+  presetName: string,
+  content: string,
+  state: PresetPolicyState | null,
+  logger: (line: string) => void = console.log,
+): void {
+  if (state === "match") {
+    logPresetNoNewEgress(presetName, logger);
+    return;
+  }
+  const heading =
+    state === "absent"
+      ? "  Effective egress that would be opened:"
+      : state === "drift"
+        ? "  Effective egress scope that would replace the current preset policy:"
+        : "  Effective egress scope to be applied (live delta unavailable):";
+  for (const line of renderPresetScope(content, { heading })) logger(line);
+}
+
 function mergePresetNamesIntoPolicy(
   currentPolicy: string,
   presetNames: string[],
@@ -850,6 +912,8 @@ function applyPresetContent(
     expectedExistingNetworkPolicyContent?: string | null;
     nonFatal?: boolean;
     skipRegistryUpdate?: boolean;
+    suppressDisclosure?: boolean;
+    disclosedPresetState?: PresetPolicyState | null;
   } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
@@ -935,33 +999,49 @@ function applyPresetContent(
   }
   const merged = mergePresetIntoPolicy(currentPolicy, presetEntries);
 
-  const endpoints = getPresetEndpoints(presetContent);
-  if (endpoints.length > 0) {
-    console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
+  const presetState = classifyPresetEntries(currentPolicy, presetEntries);
+  const disclosedStateStillCurrent =
+    Object.prototype.hasOwnProperty.call(options, "disclosedPresetState") &&
+    options.disclosedPresetState === presetState;
+  if (!options.suppressDisclosure && !disclosedStateStillCurrent) {
+    logPresetScopeForState(presetName, presetContent, presetState);
   }
+
+  // Ownership-aware callers use a successful `policy set --wait` as part of
+  // their live-policy/registry transaction, even when the desired document is
+  // byte-for-byte equivalent to the current policy. Skipping that submission
+  // would let the caller commit its ownership reservation without observing a
+  // failed gateway mutation. Ordinary preset re-application remains a no-op.
+  const requiresOwnedKeyRefresh = Object.prototype.hasOwnProperty.call(
+    options,
+    "expectedExistingNetworkPolicyContent",
+  );
+  const policyChanged = requiresOwnedKeyRefresh || !policyDocumentsMatch(currentPolicy, merged);
 
   // Run before creating temp resources so a missing-binary exit doesn't
   // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
-  if (!assertOpenshellResolvable(options)) return false;
+  if (policyChanged && !assertOpenshellResolvable(options)) return false;
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
-  const tmpFile = path.join(tmpDir, "policy.yaml");
-  fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
+  if (policyChanged) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
+    const tmpFile = path.join(tmpDir, "policy.yaml");
+    fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
-  try {
-    if (!setPolicyFile(tmpFile, sandboxName, options)) return false;
-
-    console.log(`  Applied preset: ${presetName}`);
-  } finally {
     try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      /* ignored */
-    }
-    try {
-      fs.rmdirSync(tmpDir);
-    } catch {
-      /* ignored */
+      if (!setPolicyFile(tmpFile, sandboxName, options)) return false;
+
+      console.log(`  Applied preset: ${presetName}`);
+    } finally {
+      try {
+        fs.unlinkSync(tmpFile);
+      } catch {
+        /* ignored */
+      }
+      try {
+        fs.rmdirSync(tmpDir);
+      } catch {
+        /* ignored */
+      }
     }
   }
 
@@ -1061,7 +1141,12 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     );
     return false;
   }
-  const endpointLogs: string[][] = [];
+  const presetContents: Array<{
+    content: string;
+    name: string;
+    state: PresetPolicyState;
+  }> = [];
+  const originalPolicy = merged;
 
   for (const presetName of uniquePresetNames) {
     const presetContent = loadPresetForSandbox(sandboxName, presetName);
@@ -1076,41 +1161,43 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
       return false;
     }
 
-    const endpoints = getPresetEndpoints(presetContent);
-    endpointLogs.push(endpoints);
+    const state = classifyPresetEntries(merged, presetEntries);
+    presetContents.push({ content: presetContent, name: presetName, state });
     merged = mergePresetIntoPolicy(merged, presetEntries);
   }
 
-  for (const endpoints of endpointLogs) {
-    if (endpoints.length > 0) {
-      console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
-    }
+  for (const preset of presetContents) {
+    logPresetScopeForState(preset.name, preset.content, preset.state);
   }
+
+  const policyChanged = !policyDocumentsMatch(originalPolicy, merged);
 
   // Run before creating temp resources so a missing-binary exit doesn't
   // orphan files in $TMPDIR (the finally cleanup doesn't run on process.exit).
-  assertOpenshellResolvable();
+  if (policyChanged) assertOpenshellResolvable();
 
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
-  const tmpFile = path.join(tmpDir, "policy.yaml");
-  fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
+  if (policyChanged) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
+    const tmpFile = path.join(tmpDir, "policy.yaml");
+    fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
 
-  try {
-    run(buildPolicySetCommand(tmpFile, sandboxName));
-
-    for (const presetName of uniquePresetNames) {
-      console.log(`  Applied preset: ${presetName}`);
-    }
-  } finally {
     try {
-      fs.unlinkSync(tmpFile);
-    } catch {
-      /* ignored */
-    }
-    try {
-      fs.rmdirSync(tmpDir);
-    } catch {
-      /* ignored */
+      run(buildPolicySetCommand(tmpFile, sandboxName));
+
+      for (const preset of presetContents.filter((entry) => entry.state !== "match")) {
+        console.log(`  Applied preset: ${preset.name}`);
+      }
+    } finally {
+      try {
+        fs.unlinkSync(tmpFile);
+      } catch {
+        /* ignored */
+      }
+      try {
+        fs.rmdirSync(tmpDir);
+      } catch {
+        /* ignored */
+      }
     }
   }
 
@@ -1538,6 +1625,9 @@ export {
   loadPreset,
   loadPresetForSandbox,
   loadPresetFromFile,
+  logPresetNoNewEgress,
+  logPresetScope,
+  logPresetScopeForState,
   mergePresetIntoPolicy,
   mergePresetNamesIntoPolicy,
   networkPoliciesHasAllowedIps,
@@ -1549,6 +1639,7 @@ export {
   removeBuiltinPresetAttribution,
   removePreset,
   removePresetFromPolicy,
+  renderPresetScope,
   resolvePermissivePolicyPath,
   selectForRemoval,
   selectFromList,

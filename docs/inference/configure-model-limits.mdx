@@ -9,8 +9,6 @@ keywords: ["nemoclaw context window", "nemoclaw max tokens", "model limits"]
 content:
   type: "how_to"
 ---
-import { AgentOnly } from "../_components/AgentGuide";
-
 Configure model limits before onboarding so NemoClaw can bake them into the sandbox image.
 Changing a build-time model limit on an existing sandbox requires fresh recreation.
 
@@ -45,7 +43,7 @@ Hermes accepts `NEMOCLAW_CONTEXT_WINDOW` as its model-limit override.
 
 | Variable | Values | Default |
 |---|---|---|
-| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer in tokens | Unset so Hermes auto-detects |
+| `NEMOCLAW_CONTEXT_WINDOW` | Positive integer, at least `64000` tokens | Unset so Hermes auto-detects |
 
 ```bash
 export NEMOCLAW_CONTEXT_WINDOW=65536
@@ -53,7 +51,13 @@ $$nemoclaw onboard
 ```
 
 When onboarding resolves a valid value, NemoClaw writes it as `model.context_length` in `/sandbox/.hermes/config.yaml`.
-If no explicit or probed value is available, the field remains unset so Hermes can auto-detect it from the endpoint.
+For non-Ollama endpoints, the field remains unset when no explicit or probed value is available so Hermes can auto-detect it from the endpoint.
+When NemoClaw starts Local Ollama on macOS or Linux, it requests at least `64000` tokens.
+Fresh onboarding then verifies the loaded model's actual `context_length` through `/api/ps`.
+Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this verification before reusing its route.
+When `NEMOCLAW_CONTEXT_WINDOW` is larger than `64000`, the Ollama runtime must provide at least that larger value.
+Onboarding stops before building the sandbox when Ollama reports a smaller, missing, or malformed value and shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting Ollama.
+Setting `NEMOCLAW_CONTEXT_WINDOW` does not raise the Ollama daemon's runtime context or bypass this check.
 
 </AgentOnly>
 

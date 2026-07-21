@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * OpenShell v0.0.72 provider mutations have no compare-and-swap operation, so
+ * OpenShell v0.0.85 provider mutations have no compare-and-swap operation, so
  * another client can race between NemoClaw's preinspection and mutation. A
  * nonzero mutation result is therefore ambiguous and always fails closed;
  * NemoClaw never infers success from a later resource-version increase.
@@ -121,7 +121,7 @@ export function upsertMcpProvider(
   options.prepareMutation?.(action);
   // invalidState: another OpenShell client replaces a mutable provider name
   // between inspection and mutation. sourceBoundary: OpenShell owns provider
-  // compare-and-swap; v0.0.72 exposes no provider CAS flags. whyNotSourceFix:
+  // compare-and-swap; v0.0.85 exposes no provider CAS flags. whyNotSourceFix:
   // NemoClaw cannot atomically mutate the upstream store, so it uses randomized
   // names, a lifecycle mutex, and immutable-ID/resource-version reinspection.
   // regressionTest: mcp-provider-ownership.test.ts simulates a concurrent

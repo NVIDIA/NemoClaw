@@ -64,6 +64,9 @@ function runPreparedContextScenario(scenario: PreparedContextScenario): Prepared
   const imageTagPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "domain", "sandbox", "image-tag.ts"),
   );
+  const dockerGpuSandboxCreatePath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
+  );
 
   const script = String.raw`
 const fs = require("node:fs");
@@ -77,6 +80,7 @@ const buildContextStage = require(${buildContextStagePath});
 const dockerfilePatchFlow = require(${dockerfilePatchFlowPath});
 const sandboxCreatePlanMaterialization = require(${sandboxCreatePlanPath});
 const imageTag = require(${imageTagPath});
+const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
 const { loadAgent } = require(${agentDefsPath});
 
 const scenario = ${JSON.stringify(scenario)};
@@ -90,6 +94,17 @@ const resolvedBuildIds = [];
 let cleanupCalls = 0;
 let patchCalls = 0;
 let stageCalls = 0;
+
+dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
+  maybeApplyDuringCreate: () => {},
+  createFailureMessage: () => null,
+  exitOnPatchError: () => {},
+  ensureApplied: () => {},
+  waitForSupervisorReconnectIfNeeded: () => {},
+  selectedMode: () => null,
+  printReadinessFailureIfEnabled: () => {},
+  verifyGpuOrExit: (verify) => verify(sandboxName),
+});
 
 buildContextStage.stageCreateSandboxBuildContext = () => {
   stageCalls += 1;

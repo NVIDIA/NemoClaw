@@ -140,6 +140,14 @@ export function loadAgent(name: string): AgentDefinition {
   const inference = readInference(raw);
   const mcp = readMcpCapability(raw);
   const stateDirs = readStringArray(raw, "state_dirs");
+  const runtimeAuthStateDirs = readStringArray(raw, "runtime_auth_state_dirs");
+  for (const dir of runtimeAuthStateDirs ?? []) {
+    if (!stateDirs?.includes(dir)) {
+      throw new Error(
+        `Agent manifest field 'runtime_auth_state_dirs' entry '${dir}' must also be listed in 'state_dirs'`,
+      );
+    }
+  }
   const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
@@ -165,6 +173,7 @@ export function loadAgent(name: string): AgentDefinition {
     inference,
     mcp,
     state_dirs: stateDirs,
+    runtime_auth_state_dirs: runtimeAuthStateDirs,
     state_files: stateFiles,
     user_managed_files: userManagedFiles,
     _legacy_paths: legacyPathConfig,
@@ -226,6 +235,10 @@ export function loadAgent(name: string): AgentDefinition {
 
     get stateDirs(): string[] {
       return stateDirs ?? [];
+    },
+
+    get runtimeAuthStateDirs(): string[] {
+      return runtimeAuthStateDirs ?? [];
     },
 
     get stateFiles(): AgentStateFile[] {

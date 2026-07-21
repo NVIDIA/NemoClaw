@@ -33,7 +33,7 @@ const CURRENT_INSTALLED_DOCKERFILE = [
   "COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py",
   'RUN mcp_digest="$(/opt/hermes/.venv/bin/python -I /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py --guard /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py --config /sandbox/.hermes/config.yaml)"',
   "COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
-  "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json",
+  "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
   "RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \\",
   "    && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts",
   "RUN mkdir -p /sandbox/.hermes/dashboard-home",
@@ -275,7 +275,7 @@ fi
     );
     const installedAgentDockerfile = path.join(path.dirname(installedDockerfile), "Dockerfile");
     const preMcpDockerfile = CURRENT_INSTALLED_DOCKERFILE.replace(
-      /^(?:COPY (?:agents\/hermes\/(?:build-mcp-digest|mcp-config-transaction)\.py|src\/lib\/actions\/sandbox\/openshell-child-visible-credentials\.v0\.0\.72\.json) .*|RUN mcp_digest=.*build-hermes-mcp-digest\.py.*)\n/gm,
+      /^(?:COPY (?:agents\/hermes\/(?:build-mcp-digest|mcp-config-transaction)\.py|src\/lib\/actions\/sandbox\/openshell-child-visible-credentials\.v0\.0\.85\.json) .*|RUN mcp_digest=.*build-hermes-mcp-digest\.py.*)\n/gm,
       "",
     );
     fs.mkdirSync(path.dirname(installedDockerfile), { recursive: true });
@@ -300,7 +300,7 @@ fi
       expect(run.status).toBe(1);
       expect(run.stdout).toContain("INVALID: installed copy");
       expect(run.stdout).toContain("marker hermes-mcp-config-transaction.py");
-      expect(run.stdout).toContain("marker openshell-child-visible-credentials.v0.0.72.json");
+      expect(run.stdout).toContain("marker openshell-child-visible-credentials.v0.0.85.json");
       expect(run.stdout).toContain("marker COPY agents/hermes/build-mcp-digest.py");
       expect(run.stdout).toContain("marker /opt/hermes/.venv/bin/python -I");
       expect(fs.readFileSync(installedDockerfile, "utf-8")).toBe(CURRENT_INSTALLED_BASE);

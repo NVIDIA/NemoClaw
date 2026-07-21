@@ -51,6 +51,7 @@ function runRecoveryClassification(
     source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
     info() { :; }
     warn() { :; }
+    sleep() { :; }
     _PREEXISTING_SANDBOX_COUNT=1
     recover_preexisting_sandboxes_before_onboard "${stubBin}" >/dev/null 2>&1 || true
     echo "recovery_ran=\${_PREEXISTING_SANDBOX_RECOVERY_RAN:-unset}"

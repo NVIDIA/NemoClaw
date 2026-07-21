@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,23 @@ import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-docker
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
+const HERMES_INTEGRITY_FILES = [
+  {
+    arg: "NEMOCLAW_HERMES_WRAPPER_SHA256",
+    source: "agents/hermes/hermes-wrapper.py",
+    target: "/usr/local/lib/nemoclaw/hermes-wrapper.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_VALIDATOR_SHA256",
+    source: "agents/hermes/validate-env-secret-boundary.py",
+    target: "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256",
+    source: "agents/hermes/finalize-tirith-marker.py",
+    target: "/usr/local/lib/nemoclaw/finalize-tirith-marker.py",
+  },
+] as const;
 
 type LegacyDataFixture =
   | "none"
@@ -108,6 +126,23 @@ function runFinalLayout({
 }
 
 describe("Hermes final image layout", () => {
+  // source-shape-contract: security -- Exact source-to-image digests keep the reviewed Hermes runtime entrypoints bound to the files copied into the sandbox image
+  it("keeps security entrypoint hashes synchronized with the copied files", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+
+    for (const entry of HERMES_INTEGRITY_FILES) {
+      const digest = createHash("sha256")
+        .update(fs.readFileSync(path.join(ROOT, entry.source)))
+        .digest("hex");
+      const declaredDigest = dockerfile.match(
+        new RegExp(`^ARG ${entry.arg}=([0-9a-f]{64})$`, "mu"),
+      )?.[1];
+
+      expect(dockerfile).toContain(`COPY ${entry.source} ${entry.target}`);
+      expect(declaredDigest, `${entry.arg} must match ${entry.source}`).toBe(digest);
+    }
+  });
+
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });
     try {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { markPhaseActivity } from "../../core/phase-activity";
 import { markPromptActive } from "../../core/prompt-activity";
 import {
   createPhaseProgressReporter,
@@ -157,6 +158,28 @@ describe("phase progress", () => {
     await wrapped.run("ctx");
 
     expect(state.lines).toEqual(["  ⏳ Still working on Sandbox creation… (30s elapsed)"]);
+  });
+
+  it("names a registered long-running sub-stage instead of the phase label (#7156)", async () => {
+    const { reporter, state } = createHarness({ interactive: false });
+    const wrapped = reporter.wrap(
+      phase("provider_selection", async (context) => {
+        state.clockMs = 30_000;
+        const releasePhaseActivity = markPhaseActivity("vLLM install");
+        state.timerCallback?.();
+        releasePhaseActivity();
+        state.clockMs = 60_000;
+        state.timerCallback?.();
+        return { context, result: advanceTo("inference") };
+      }),
+    );
+
+    await wrapped.run("ctx");
+
+    expect(state.lines).toEqual([
+      "  ⏳ Still working on vLLM install… (30s elapsed)",
+      "  ⏳ Still working on Provider selection… (60s elapsed)",
+    ]);
   });
 
   it("clears the timer and preserves the phase error", async () => {

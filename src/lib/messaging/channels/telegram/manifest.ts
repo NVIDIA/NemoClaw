@@ -8,6 +8,7 @@ export const telegramManifest = {
   id: "telegram",
   displayName: "Telegram",
   description: "Telegram bot messaging",
+  diagnosticsProbe: "log-tail",
   enrollmentNotes: [
     "For Telegram group chats, disable privacy mode in @BotFather (/setprivacy -> your bot -> Disable).",
     "After changing privacy mode, remove and re-add the bot to each group before testing @mentions.",
@@ -260,6 +261,18 @@ export const telegramManifest = {
       outputs: [
         {
           id: "bridgeHealth",
+          kind: "status",
+        },
+      ],
+    },
+    {
+      id: "telegram-status-health",
+      phase: "status",
+      handler: "telegram.statusHealth",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "channelHealth",
           kind: "status",
         },
       ],

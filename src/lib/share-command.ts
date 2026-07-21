@@ -13,9 +13,11 @@ import { spawnSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-
-import { buildShareCommandDeps } from "./share-command-deps";
+import { GATEWAY_PORT } from "./core/ports";
 import type { ShareCommandDeps } from "./share-command-deps";
+import { buildShareCommandDeps } from "./share-command-deps";
+import { rejectSymlinksOnPath } from "./state/config-io";
+import { nemoclawStateRoot } from "./state/state-root";
 
 export class ShareCommandError extends Error {
   readonly lines: readonly string[];
@@ -61,7 +63,11 @@ export function isMountPoint(dir: string): boolean {
 }
 
 export function defaultShareMountDir(sandboxName: string): string {
-  return path.join(process.env.HOME || os.homedir(), ".nemoclaw", "mounts", sandboxName);
+  return path.join(
+    nemoclawStateRoot(process.env.HOME || os.homedir(), GATEWAY_PORT),
+    "mounts",
+    sandboxName,
+  );
 }
 
 /**
@@ -124,6 +130,7 @@ export function checkLocalMountWritable(localMount: string): {
   reason?: string;
 } {
   try {
+    rejectSymlinksOnPath(localMount);
     // Node's fs.mkdirSync(path, { recursive: true }) masks EROFS as ENOENT when
     // the leaf is missing on a read-only parent (#4311). Use non-recursive mkdir
     // when the parent already exists so EROFS propagates with its true errno;
@@ -140,6 +147,7 @@ export function checkLocalMountWritable(localMount: string): {
     } else {
       fs.mkdirSync(localMount, { recursive: true });
     }
+    rejectSymlinksOnPath(localMount);
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException | undefined)?.code;
     if (code === "EROFS") return { writable: false, reason: "parent filesystem is read-only" };

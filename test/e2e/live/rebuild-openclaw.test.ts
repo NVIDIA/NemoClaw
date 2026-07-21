@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Buffer } from "node:buffer";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -166,8 +165,7 @@ async function cleanupOldOpenClawBaseImage(host: HostCliClient): Promise<void> {
 }
 
 function pythonExecArgs(script: string): string[] {
-  const encoded = Buffer.from(script, "utf8").toString("base64");
-  return ["python3", "-c", `import base64; exec(base64.b64decode('${encoded}'))`];
+  return ["python3", "-c", script];
 }
 
 async function waitForSandboxReady(sandbox: {

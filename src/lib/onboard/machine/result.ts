@@ -31,6 +31,12 @@ export interface OnboardStateCompleteResult {
   metadata?: Record<string, unknown> | null;
 }
 
+export interface OnboardStatePauseResult {
+  type: "pause";
+  updates?: SessionUpdates;
+  metadata?: Record<string, unknown> | null;
+}
+
 export interface OnboardStateFailedResult {
   type: "failed";
   error: string | null;
@@ -40,6 +46,7 @@ export interface OnboardStateFailedResult {
 
 export type OnboardStateResult =
   | OnboardStateTransitionResult
+  | OnboardStatePauseResult
   | OnboardStateCompleteResult
   | OnboardStateFailedResult;
 
@@ -82,6 +89,13 @@ export function completeOnboardMachine(
   metadata: Record<string, unknown> | null = null,
 ): OnboardStateCompleteResult {
   return { type: "complete", updates, metadata };
+}
+
+export function pauseOnboardMachine(
+  updates: SessionUpdates = {},
+  metadata: Record<string, unknown> | null = null,
+): OnboardStatePauseResult {
+  return { type: "pause", updates, metadata };
 }
 
 export function failOnboardMachine(

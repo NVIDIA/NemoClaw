@@ -91,7 +91,9 @@ describe("stopSandboxChannels", () => {
       expect.arrayContaining(["kubectl", "exec", "-n", "openshell", "-c", "agent"]),
     );
     const script = String(args.at(-1));
-    expect(script).toContain("ps -eo user=,pid=,args=");
+    expect(script).toContain("ps -eo uid=,pid=,args=");
+    expect(script).toContain("stat -Lc '%u'");
+    expect(script).not.toContain("ps -eo user=,pid=,args=");
     expect(script).toContain("openclaw-gateway");
     expect(script).toContain("kill -TERM $pids");
     expect(script).toContain("kill -KILL $remaining");

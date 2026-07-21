@@ -1,13 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
-import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import {
+  validateE2eWorkflowBoundary,
+  validateJetsonRunnerDispatchBoundary,
+} from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract.ts";
 
 function validateWorkflowMutation(
@@ -15,14 +13,7 @@ function validateWorkflowMutation(
 ): string[] {
   const workflow = readWorkflow();
   mutate(workflow);
-  const directory = mkdtempSync(join(tmpdir(), "nemoclaw-jetson-guard-"));
-  const workflowPath = join(directory, "workflow.yaml");
-  try {
-    writeFileSync(workflowPath, YAML.stringify(workflow));
-    return validateE2eWorkflowBoundary(workflowPath);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
+  return validateJetsonRunnerDispatchBoundary(workflow);
 }
 
 describe("Jetson nvmap GPU E2E workflow boundary", () => {
@@ -58,16 +49,12 @@ describe("Jetson nvmap GPU E2E workflow boundary", () => {
       guard!.if = "always()";
       const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
       steps.splice(authIndex + 1, 0, guard!);
-      steps.find((step) => step.name === "Upload Jetson nvmap GPU artifacts")!.if = "success()";
-      steps.find((step) => step.name === "Clean up Docker auth")!.if = "success()";
     });
     expect(guardErrors).toEqual(
       expect.arrayContaining([
         "jetson-nvmap-gpu job must use ubuntu-latest unless allow_jetson_runner_queue is true",
         "jetson-nvmap-gpu dispatch guard must run before Docker Hub auth",
         "jetson-nvmap-gpu dispatch guard must run unless allow_jetson_runner_queue is true",
-        "jetson-nvmap-gpu upload-e2e-artifacts invocation must run with always()",
-        "jetson-nvmap-gpu Docker Hub cleanup step must always run",
       ]),
     );
   });

@@ -12,7 +12,7 @@ const PATCH_SCRIPT = path.join(
   import.meta.dirname,
   "..",
   "scripts",
-  "patch-openclaw-issue-4434-diagnostics.ts",
+  "patch-openclaw-issue-4434-diagnostics.mts",
 );
 
 type Formatter = (raw: unknown) => string;
@@ -295,7 +295,7 @@ describe("OpenClaw diagnostics compatibility patch (#4434)", () => {
         },
       );
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(2);
-      expect(result.stderr).toContain("Usage: patch-openclaw-issue-4434-diagnostics.ts");
+      expect(result.stderr).toContain("Usage: patch-openclaw-issue-4434-diagnostics.mts");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

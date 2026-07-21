@@ -430,7 +430,8 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(skill).toContain("# Security Code Review");
     expect(skill).toContain("Category 1: Secrets and Credentials");
     expect(prompt).toContain("Trusted security review skill from main checkout");
-    expect(prompt).toContain("For NemoClaw PRs, check sandbox escape vectors");
+    expect(prompt).toContain("For NemoClaw PRs, check SSRF bypasses");
+    expect(prompt).not.toContain("For NemoClaw PRs, check sandbox escape vectors");
     expect(prompt).toContain(
       "Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status",
     );

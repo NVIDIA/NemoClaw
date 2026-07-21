@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync as nodeExecFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -70,7 +71,7 @@ vi.mock("child_process", () => ({
 }));
 
 vi.mock("node:child_process", () => ({
-  execFileSync: vi.fn(() => ""),
+  execFileSync: vi.fn(),
   spawnSync: vi.fn(() => ({
     status: 0,
     stdout: "",
@@ -81,11 +82,33 @@ vi.mock("node:child_process", () => ({
 
 let tmpDir: string;
 
+type NodeExecFileSyncMock = ReturnType<typeof vi.fn>;
+
+function defaultNodeExecFileSync(file: string, argv?: readonly string[]): string {
+  const args = Array.isArray(argv) ? argv : [];
+  return file === "ps" && args.includes("lstart=") ? "Mon Jan 01 00:00:00 2026" : "";
+}
+
+function setNodeExecFileSyncMock(
+  implementation: (file: string, argv?: readonly string[]) => string = defaultNodeExecFileSync,
+): void {
+  (nodeExecFileSync as unknown as NodeExecFileSyncMock).mockImplementation(implementation);
+}
+
+function withDefaultNodeExecFileSync(
+  file: string,
+  argv: readonly string[] | undefined,
+  fallback: () => string,
+): string {
+  return defaultNodeExecFileSync(file, argv) || fallback();
+}
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-test-"));
   vi.stubEnv("HOME", tmpDir);
   vi.resetModules();
   vi.clearAllMocks();
+  setNodeExecFileSyncMock();
 });
 
 afterEach(() => {
@@ -427,28 +450,27 @@ describe("shields — unit logic", () => {
         });
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const dockerExecFileSync = (await import("node:child_process")).execFileSync as ReturnType<
-        typeof vi.fn
-      >;
-      dockerExecFileSync.mockImplementation((_file: string, argv?: readonly string[]) => {
-        const cmd = Array.isArray(argv) ? argv.join(" ") : "";
-        if (cmd.includes(` stat -c %a %U:%G ${hashPath}`)) {
-          return "444 root:root";
-        }
-        if (cmd.includes(` stat -c %a %U:%G ${configPath}`)) {
-          return "444 root:root";
-        }
-        if (cmd.includes(` lsattr -d ${hashPath}`)) {
-          return `----i---------e----- ${hashPath}`;
-        }
-        if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw")) {
-          return "755 root:root";
-        }
-        if (cmd.includes(` lsattr -d ${configPath}`)) {
-          return `----i---------e----- ${configPath}`;
-        }
-        return "";
-      });
+      setNodeExecFileSyncMock((_file: string, argv?: readonly string[]) =>
+        withDefaultNodeExecFileSync(_file, argv, () => {
+          const cmd = Array.isArray(argv) ? argv.join(" ") : "";
+          if (cmd.includes(` stat -c %a %U:%G ${hashPath}`)) {
+            return "444 root:root";
+          }
+          if (cmd.includes(` stat -c %a %U:%G ${configPath}`)) {
+            return "444 root:root";
+          }
+          if (cmd.includes(` lsattr -d ${hashPath}`)) {
+            return `----i---------e----- ${hashPath}`;
+          }
+          if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw")) {
+            return "755 root:root";
+          }
+          if (cmd.includes(` lsattr -d ${configPath}`)) {
+            return `----i---------e----- ${configPath}`;
+          }
+          return "";
+        }),
+      );
 
       const { shieldsStatus } = await loadShieldsModule();
 
@@ -548,28 +570,27 @@ describe("shields — unit logic", () => {
 
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const dockerExecFileSync = (await import("node:child_process")).execFileSync as ReturnType<
-        typeof vi.fn
-      >;
-      dockerExecFileSync.mockImplementation((_file: string, argv?: readonly string[]) => {
-        const cmd = Array.isArray(argv) ? argv.join(" ") : "";
-        if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw/.config-hash")) {
-          return "444 root:root";
-        }
-        if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw/openclaw.json")) {
-          return "444 root:root";
-        }
-        if (cmd.includes(" lsattr -d /sandbox/.openclaw/.config-hash")) {
-          return "----i---------e----- /sandbox/.openclaw/.config-hash";
-        }
-        if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw")) {
-          return "755 root:root";
-        }
-        if (cmd.includes(" lsattr -d /sandbox/.openclaw/openclaw.json")) {
-          return "----i---------e----- /sandbox/.openclaw/openclaw.json";
-        }
-        return "";
-      });
+      setNodeExecFileSyncMock((_file: string, argv?: readonly string[]) =>
+        withDefaultNodeExecFileSync(_file, argv, () => {
+          const cmd = Array.isArray(argv) ? argv.join(" ") : "";
+          if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw/.config-hash")) {
+            return "444 root:root";
+          }
+          if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw/openclaw.json")) {
+            return "444 root:root";
+          }
+          if (cmd.includes(" lsattr -d /sandbox/.openclaw/.config-hash")) {
+            return "----i---------e----- /sandbox/.openclaw/.config-hash";
+          }
+          if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw")) {
+            return "755 root:root";
+          }
+          if (cmd.includes(" lsattr -d /sandbox/.openclaw/openclaw.json")) {
+            return "----i---------e----- /sandbox/.openclaw/openclaw.json";
+          }
+          return "";
+        }),
+      );
 
       const { shieldsStatus } = await loadShieldsModule();
       shieldsStatus(sandboxName);

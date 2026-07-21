@@ -12,6 +12,7 @@ import type {
   createDockerGpuSandboxCreatePatch,
   DockerGpuSandboxCreatePatch,
 } from "./docker-gpu-sandbox-create";
+import { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
 import type {
   prepareSandboxCreateLaunchWithPrebuild,
   SandboxCreateLaunchWithPrebuild,
@@ -93,10 +94,14 @@ export async function runSandboxCreateStep(
     openshellArgv: context.openshellArgv,
     prebuild: context.prebuild,
   });
+  const startupCommandPatch = resolveDockerStartupCommandPatch(
+    context.agent,
+    context.prebuild.dockerDriverGateway,
+  );
   const dockerGpuCreatePatch = deps.createDockerGpuPatch({
     route: context.useDockerGpuPatch ? "compatibility" : "native",
-    persistStartupCommand:
-      context.prebuild.dockerDriverGateway === true && context.agent?.name === "hermes",
+    persistStartupCommand: startupCommandPatch.persistStartupCommand,
+    requiredUlimits: startupCommandPatch.requiredUlimits,
     sandboxName: context.sandboxName,
     gpuDevice: context.gpuDevice,
     openshellSandboxCommand: sandboxStartupCommand,

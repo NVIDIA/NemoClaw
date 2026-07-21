@@ -61,10 +61,6 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
-function nodeEvalArg(source: string): string {
-  const encoded = Buffer.from(source, "utf8").toString("base64");
-  return `eval(Buffer.from(${JSON.stringify(encoded)}, "base64").toString("utf8"))`;
-}
 
 interface MockRequestLog {
   method: string;
@@ -413,15 +409,11 @@ console.log(JSON.stringify({
 }));
 process.exit(errors.length ? 1 : 0);
 `;
-  const result = await sandbox.exec(
-    SANDBOX_NAME,
-    ["node", "-e", nodeEvalArg(script), COMPAT_MODEL],
-    {
-      artifactName: "openclaw-config-compatible-endpoint",
-      env: commandEnv(),
-      timeoutMs: 60_000,
-    },
-  );
+  const result = await sandbox.exec(SANDBOX_NAME, ["node", "-e", script, COMPAT_MODEL], {
+    artifactName: "openclaw-config-compatible-endpoint",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
   expect(result.exitCode, resultText(result)).toBe(0);
 }
 
@@ -443,7 +435,7 @@ sock.setTimeout(1000, () => finish("TIMEOUT", 1));
 `;
   let last: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= 30; attempt += 1) {
-    last = await sandbox.exec(SANDBOX_NAME, ["node", "-e", nodeEvalArg(script)], {
+    last = await sandbox.exec(SANDBOX_NAME, ["node", "-e", script], {
       artifactName: `gateway-ready-compatible-endpoint-${attempt}`,
       env: commandEnv(),
       timeoutMs: 5_000,

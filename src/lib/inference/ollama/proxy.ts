@@ -16,6 +16,7 @@ const { isNonInteractiveEnv }: typeof import("../../core/non-interactive") =
 const { waitForPort } = require("../../core/wait");
 const { ensurePulledOllamaModel }: typeof import("./model-discovery") =
   require("./model-discovery");
+const { ollamaModelRefsMatch }: typeof import("./model-discovery") = require("./model-discovery");
 const {
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
@@ -27,6 +28,7 @@ const {
   validateOllamaModel,
 } = require("../local");
 const { anyRegistryModelFits, modelFitsAvailableMemory } = require("../ollama-model-registry");
+const { isOllamaAuthProxyCommandLine }: typeof import("./process") = require("./process");
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
 const { promptManualModelId } = require("../model-prompts");
@@ -134,12 +136,12 @@ function loadPersistedProxyPid(): number | null {
 // ── Process management ───────────────────────────────────────────
 
 function isOllamaProxyProcess(pid: number | null | undefined): boolean {
-  return isLocalAdapterProcess(pid, "ollama-auth-proxy.js", runCapture);
+  return isLocalAdapterProcess(pid, isOllamaAuthProxyCommandLine, runCapture);
 }
 
 function spawnOllamaAuthProxy(token: string): number | null {
   const child = spawnDetachedNodeAdapter({
-    scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.js"),
+    scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
     env: {
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
@@ -155,7 +157,7 @@ function killStaleProxy(): void {
   try {
     killLocalAdapterPid({
       pidPath: PROXY_PID_PATH,
-      processNeedle: "ollama-auth-proxy.js",
+      processMatcher: isOllamaAuthProxyCommandLine,
       run,
       runCapture,
     });
@@ -491,7 +493,7 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
 
 async function promptOllamaModel(
   gpu: GpuInfo | null = null,
-  promptOptions: { excludeModels?: ReadonlySet<string> } = {},
+  promptOptions: { defaultModel?: string | null; excludeModels?: ReadonlySet<string> } = {},
 ) {
   const excludeModels = promptOptions.excludeModels;
   const isExcluded = (tag: string): boolean =>
@@ -510,11 +512,21 @@ async function promptOllamaModel(
   const usingInstalled = installedFitting.length > 0;
   const bootstrap = getBootstrapOllamaModelOptions(gpu).filter((tag: string) => !isExcluded(tag));
   const options = usingInstalled ? installedFitting : bootstrap;
+  const requestedDefaultModel =
+    typeof promptOptions.defaultModel === "string" ? promptOptions.defaultModel.trim() : "";
+  const requestedDefaultOption = requestedDefaultModel
+    ? options.find((option: string) => ollamaModelRefsMatch(option, requestedDefaultModel))
+    : undefined;
   const defaultModelCandidate = getDefaultOllamaModel(gpu);
-  const defaultModel = isExcluded(defaultModelCandidate)
-    ? (options[0] ?? defaultModelCandidate)
-    : defaultModelCandidate;
-  const defaultIndex = Math.max(0, options.indexOf(defaultModel));
+  const defaultModel =
+    requestedDefaultOption ??
+    (isExcluded(defaultModelCandidate)
+      ? (options[0] ?? defaultModelCandidate)
+      : defaultModelCandidate);
+  const defaultIndex = Math.max(
+    0,
+    options.findIndex((option: string) => ollamaModelRefsMatch(option, defaultModel)),
+  );
 
   console.log("");
   console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");

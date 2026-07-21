@@ -201,6 +201,11 @@ if [ "$0" = "$MANAGED_EXEC_LAUNCHER" ]; then
     printf '%s\n' 'dcode-managed-exec requires a command.' >&2
     exit 64
   fi
+  # Invalid state: OpenShell can preserve auxiliary descriptors from its
+  # transport, but route-probe evidence must travel only on stdout/stderr.
+  # Close the legacy descriptor before the managed command starts so sandbox
+  # startup code cannot reuse the former fd 3 probe channel (#7031).
+  exec 3>&-
   exec "$@"
 fi
 

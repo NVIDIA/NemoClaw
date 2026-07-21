@@ -28,7 +28,10 @@ describe("uninstall CLI flags", () => {
     );
     fs.mkdirSync(path.join(stateDir, "backups", "20260320-120000"), { recursive: true });
     fs.writeFileSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"), "hello");
-    fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "[]");
+    fs.writeFileSync(
+      path.join(stateDir, "sandboxes.json"),
+      JSON.stringify({ defaultSandbox: null, sandboxes: {} }),
+    );
     return stateDir;
   }
 
@@ -96,9 +99,9 @@ describe("uninstall CLI flags", () => {
     writeFakeTools(path.join(tmp, "bin"));
     try {
       const result = runUninstall(tmp, ["--yes"]);
-
-      expect(result.status).toBe(0);
       const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status, output).toBe(0);
       expect(output).toMatch(/NemoClaw/);
       expect(output).toMatch(/Claws retracted/);
     } finally {
@@ -112,8 +115,9 @@ describe("uninstall CLI flags", () => {
     const stateDir = seedPreservedState(tmp);
     try {
       const result = runUninstall(tmp, ["--yes"]);
+      const output = `${result.stdout}${result.stderr}`;
 
-      expect(result.status).toBe(0);
+      expect(result.status, output).toBe(0);
       expect(
         fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json")),
       ).toBe(true);
@@ -132,9 +136,9 @@ describe("uninstall CLI flags", () => {
     const stateDir = seedPreservedState(tmp);
     try {
       const result = runUninstall(tmp, ["--yes", "--destroy-user-data"]);
-
-      expect(result.status).toBe(0);
       const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status, output).toBe(0);
       expect(output).toMatch(/--destroy-user-data set; purging user data under ~\/\.nemoclaw\//);
       expect(fs.existsSync(stateDir)).toBe(false);
     } finally {

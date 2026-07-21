@@ -13,6 +13,7 @@ import {
   StateClient,
 } from "./clients/index.ts";
 import { DockerPrerequisite, DockerProbe } from "./docker-probe.ts";
+import { createE2EInferenceAdapter, type E2EInferenceAdapter } from "./inference-adapter.ts";
 import {
   EnvironmentPhaseFixture,
   LifecyclePhaseFixture,
@@ -33,6 +34,7 @@ export interface E2ETargetFixtures {
   gateway: GatewayClient;
   sandbox: SandboxClient;
   provider: ProviderClient;
+  inference: E2EInferenceAdapter;
   state: StateClient;
   environment: EnvironmentPhaseFixture;
   onboard: OnboardingPhaseFixture;
@@ -94,6 +96,14 @@ export const test = base.extend<E2ETargetFixtures>({
   },
   provider: async ({ shellProbe }, use) => {
     await use(new ProviderClient(shellProbe));
+  },
+  inference: async ({ artifacts, provider, secrets }, use) => {
+    const inference = await createE2EInferenceAdapter({ artifacts, provider, secrets });
+    try {
+      await use(inference);
+    } finally {
+      await inference.close();
+    }
   },
   state: async ({}, use) => {
     await use(new StateClient());

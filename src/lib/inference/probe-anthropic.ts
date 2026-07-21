@@ -14,7 +14,10 @@ import {
   runCurlProbe,
 } from "../adapters/http/probe";
 import { normalizeCredentialValue } from "../credentials/store";
-import { buildResolvePinArgs } from "./endpoint-ssrf-preflight";
+import {
+  buildResolvePinArgs,
+  type TrustedPrivateEndpointCapability,
+} from "./endpoint-ssrf-preflight";
 
 export type AnthropicStreamingDiagnosticCode =
   | "anthropic-streaming-content-after-message-stop"
@@ -57,6 +60,8 @@ export interface AnthropicProbeOptions {
    * a private/internal address after the public preflight (TOCTOU — #6293).
    */
   pinnedAddresses?: readonly string[];
+  /** Non-forgeable proof of the exact private subset admitted by the SSRF preflight. */
+  trustedPrivateCapability?: TrustedPrivateEndpointCapability;
 }
 
 // Streaming validation must not hang the onboarding wizard on an endpoint
@@ -148,6 +153,7 @@ export function probeAnthropicEndpoint(
       {
         trustedConfigFiles: authConfig.trustedConfigFiles,
         pinnedAddresses: options.pinnedAddresses,
+        trustedPrivateCapability: options.trustedPrivateCapability,
       },
     );
     if (!result.ok) {
@@ -183,6 +189,7 @@ export function probeAnthropicEndpoint(
         {
           trustedConfigFiles: authConfig.trustedConfigFiles,
           pinnedAddresses: options.pinnedAddresses,
+          trustedPrivateCapability: options.trustedPrivateCapability,
         },
       );
       if (!streamResult.ok) {

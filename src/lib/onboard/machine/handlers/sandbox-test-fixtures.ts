@@ -4,6 +4,7 @@
 import { vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import type { CheckpointProviderBinding } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import type { SandboxStateOptions } from "./sandbox";
 
@@ -93,8 +94,9 @@ export function createDeps(
       ResourceProfile
     >["deps"]
   > = {},
+  initialSession: Session = createSession(),
 ) {
-  let session = createSession();
+  let session = initialSession;
   const calls = {
     checkGatewayRouteCompatibility: vi.fn(() => ({ ok: true as const })),
     note: vi.fn(),
@@ -111,7 +113,9 @@ export function createDeps(
     configureWebSearch: vi.fn(async () => null as WebSearchConfig | null),
     startStep: vi.fn(async () => undefined),
     getRecordedChannels: vi.fn(() => null),
+    showMessagingStage: vi.fn(),
     setupMessaging: vi.fn(async () => [] as string[]),
+    stageCredentialProviders: vi.fn(async () => [] as CheckpointProviderBinding[]),
     promptName: vi.fn(async () => "my-assistant"),
     selectResourceProfile: vi.fn(async () => null as ResourceProfile | null),
     stopStale: vi.fn(),
@@ -122,10 +126,12 @@ export function createDeps(
     resolveCreateIntent: vi.fn(
       async (input: {
         sandboxName: string;
+        inferenceProvider?: string | null;
         extraProviders: readonly string[];
         staleExtraProviders: readonly string[];
       }) => ({
         sandboxName: input.sandboxName,
+        inferenceProvider: input.inferenceProvider ?? null,
         activeMessagingChannels: [],
         messagingProviderRequests: [],
         reusableMessagingProviders: [],
@@ -217,11 +223,14 @@ export function createDeps(
       configureWebSearch: calls.configureWebSearch,
       startRecordedStep: calls.startStep,
       getRecordedMessagingChannelsForResume: calls.getRecordedChannels,
+      showMessagingStage: calls.showMessagingStage,
       setupMessagingChannels: calls.setupMessaging,
       readMessagingPlanFromEnv: () => null,
       writePlanToEnv: () => undefined,
       clearPlanEnv: calls.clearPlanEnv,
       getRegistrySandboxMessagingPlan: () => null,
+      providerMatchesGatewayCredential: () => false,
+      stageSandboxCredentialProviders: calls.stageCredentialProviders,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,
       stopStaleDashboardListenersForSandbox: calls.stopStale,

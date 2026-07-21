@@ -57,6 +57,20 @@ describe("inference switch workflow boundary", () => {
     );
   });
 
+  it("rejects missing or misconfigured E2E shard mappings", () => {
+    const missingShard = readInferenceSwitchWorkflow();
+    delete missingShard.jobs["hermes-inference-switch"].env!.NEMOCLAW_E2E_SHARD;
+    expect(validateInferenceSwitchWorkflow(missingShard)).toContain(
+      "hermes-inference-switch must map NEMOCLAW_E2E_SHARD from its mode matrix",
+    );
+
+    const hardcodedShard = readInferenceSwitchWorkflow();
+    hardcodedShard.jobs["openclaw-inference-switch"].env!.NEMOCLAW_E2E_SHARD = "hosted";
+    expect(validateInferenceSwitchWorkflow(hardcodedShard)).toContain(
+      "openclaw-inference-switch must map NEMOCLAW_E2E_SHARD from its mode matrix",
+    );
+  });
+
   it("uses a healthy hosted switch target and scopes its credentials to hosted mode", () => {
     const wrongTarget = readInferenceSwitchWorkflow();
     const hosted = wrongTarget.jobs["hermes-inference-switch"].strategy?.matrix?.include?.find(

@@ -114,7 +114,7 @@ export function validateHermesDashboardWorkflow(workflow: HermesDashboardWorkflo
   }
 
   const run = findStep(job, "Run Hermes dashboard live Vitest test");
-  if (!run.run?.includes("npx vitest run --project e2e-live")) {
+  if (!run.run?.includes("tools/e2e/live-vitest-invocation.mts run --test-path")) {
     errors.push(`${JOB_NAME} must run the live Vitest project`);
   }
   if (!run.run?.includes("test/e2e/live/hermes-e2e.test.ts")) {

@@ -355,6 +355,24 @@ check("disabled", False)
     }
   });
 
+  it.each([
+    ["OPENSHELL_TLS_CA", "/etc/openshell/tls/client/ca.crt"],
+    ["OPENSHELL_TLS_CERT", "/etc/openshell/tls/client/tls.crt"],
+    ["OPENSHELL_TLS_KEY", "/etc/openshell/tls/client/tls.key"],
+  ])("rejects supervisor-only %s before settings bootstrap", (name, value) => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const result = spawnSync("python3", ["-m", "deepagents_code"], {
+      env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
+      encoding: "utf8",
+    });
+
+    expect(result.status, `${name} was allowed`).not.toBe(0);
+    expect(result.stderr).toContain(`runtime environment variable ${name}`);
+    expect(result.stderr).toContain("reserved for the OpenShell supervisor");
+    expect(result.stderr).not.toContain(value);
+  });
+
   it("allows the managed OTLP collector URL in the direct-module runtime (#6466)", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
@@ -451,7 +469,6 @@ check("disabled", False)
       ["GITHUB_MCP_TOKEN", "prefix-openshell:resolve:env:GITHUB_MCP_TOKEN"],
       ["GITHUB_MCP_TOKEN", "openshell:resolve:env:OTHER_TOKEN"],
       ["GITHUB_MCP_TOKEN", `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_MCP_TOKEN`],
-      ["OPENSHELL_TLS_KEY", "openshell:resolve:env:OPENSHELL_TLS_KEY"],
     ]) {
       const result = run(name, value);
       expect(result.status, `${name}=${value} was allowed`).not.toBe(0);

@@ -44,17 +44,12 @@ export async function bestEffortPreclean(run: () => Promise<unknown>): Promise<v
   }
 }
 
-function singleLineShell(script: string): string {
-  const encoded = Buffer.from(script, "utf8").toString("base64");
-  return `tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; printf %s '${encoded}' | base64 -d > "$tmp"; sh "$tmp"`;
-}
-
 export async function sandboxShell(
   sandbox: SandboxClient,
   script: string,
   options: { artifactName: string; timeoutMs?: number; redactionValues?: string[] },
 ): Promise<ShellProbeResult> {
-  return await sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(singleLineShell(script)), {
+  return await sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(script), {
     artifactName: options.artifactName,
     env: commandEnv(),
     timeoutMs: options.timeoutMs ?? 60_000,

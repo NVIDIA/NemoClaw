@@ -105,7 +105,7 @@ console.log(JSON.stringify({
     assert.equal(payload.proxySpawns.length, 1);
     assert.equal(payload.pid, "4242");
     assert.equal(payload.proxySpawns[0].cmd, process.execPath);
-    assert.ok(payload.proxySpawns[0].args[0].endsWith("scripts/ollama-auth-proxy.js"));
+    assert.ok(payload.proxySpawns[0].args[0].endsWith("scripts/ollama-auth-proxy.mts"));
     assert.equal(payload.proxySpawns[0].detached, true);
     assert.equal(payload.proxySpawns[0].stdio, "ignore");
     assert.equal(payload.proxySpawns[0].env.OLLAMA_PROXY_TOKEN, "persisted-token");
@@ -378,7 +378,7 @@ console.log(JSON.stringify({
     assert.equal(payload.pid, "5000");
     assert.deepEqual(payload.runCommands[0], ["kill", "4242"]);
     assert.equal(payload.proxySpawns[0].cmd, process.execPath);
-    assert.ok(payload.proxySpawns[0].args[0].endsWith("scripts/ollama-auth-proxy.js"));
+    assert.ok(payload.proxySpawns[0].args[0].endsWith("scripts/ollama-auth-proxy.mts"));
     assert.equal(payload.proxySpawns[0].env.OLLAMA_PROXY_TOKEN, "persisted-token");
     assert.equal(payload.proxySpawns[0].env.OLLAMA_PROXY_PORT, "11435");
     assert.equal(payload.proxySpawns[0].env.OLLAMA_BACKEND_PORT, "11434");

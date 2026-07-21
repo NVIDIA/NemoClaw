@@ -7,6 +7,7 @@
 // `onboard/bedrock-runtime.ts` exactly as the inline branch did.
 
 import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../../inference/config";
+import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-ssrf-preflight";
 import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
 import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
@@ -129,6 +130,7 @@ export async function setupRemoteProviderInference(
     skipHostInferenceSmoke?: boolean;
     preferredInferenceApi?: string | null;
     pinnedAddresses?: readonly string[];
+    trustedPrivateCapability?: TrustedPrivateEndpointCapability;
     capabilityCache?: import("../inference-capability-cache").OnboardInferenceCapabilityCache;
   },
   deps: RemoteProviderDeps,
@@ -143,6 +145,7 @@ export async function setupRemoteProviderInference(
     skipHostInferenceSmoke,
     preferredInferenceApi,
     pinnedAddresses,
+    trustedPrivateCapability,
     capabilityCache,
   } = args;
   const {
@@ -277,6 +280,7 @@ export async function setupRemoteProviderInference(
           {
             skipResponsesProbe: true,
             pinnedAddresses,
+            trustedPrivateCapability,
           },
         );
         if (!surfaceProbe.ok) {

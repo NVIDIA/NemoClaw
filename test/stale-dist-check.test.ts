@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { checkStaleDist, warnIfStale } from "../src/lib/stale-dist-check";
 
 function mkRepo() {
@@ -112,5 +113,34 @@ describe("stale-dist-check", () => {
     };
     expect(() => warnIfStale(root, throwingStream)).not.toThrow();
     expect(warnIfStale(root, throwingStream)).toBe(false);
+  });
+
+  it("runs from an unrelated directory and fails open when its helper cannot load", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const fixtureEntry = path.join(root, "scripts", "check-stale-dist.mts");
+    const fixtureHelper = path.join(root, "src", "lib", "stale-dist-check.ts");
+    fs.mkdirSync(path.dirname(fixtureEntry), { recursive: true });
+    fs.copyFileSync(path.join(repoRoot, "scripts", "check-stale-dist.mts"), fixtureEntry);
+    writeFile(
+      fixtureHelper,
+      fs.readFileSync(path.join(repoRoot, "src", "lib", "stale-dist-check.ts"), "utf8"),
+      5_000_000,
+    );
+    writeFile(path.join(root, "dist", "lib", "stale-dist-check.js"), "", 1_000_000);
+
+    const runHook = () =>
+      spawnSync(process.execPath, ["--experimental-strip-types", fixtureEntry], {
+        cwd: os.tmpdir(),
+        encoding: "utf8",
+        env: { ...process.env, NODE_OPTIONS: "" },
+      });
+
+    const warning = runHook();
+    expect(warning.status, warning.stderr).toBe(0);
+    expect(warning.stderr).toContain("compiled dist/ is older than src/");
+
+    fs.rmSync(fixtureHelper);
+    const missingHelper = runHook();
+    expect(missingHelper.status, missingHelper.stderr).toBe(0);
   });
 });

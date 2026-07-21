@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   GATEWAY_AUTH_REVIEW_NOTE,
+  GATEWAY_MIGRATION_REVIEW_NOTE,
   jwtBundlePaths,
   mintOpenShellStyleSandboxJwt,
   parseTomlInteger,
@@ -21,6 +22,7 @@ import {
 describe("docker-driver-gateway auth contract", () => {
   it("keeps the OpenShell gateway auth source review aligned with the generated config", () => {
     const compatibilityReview = fs.readFileSync(GATEWAY_AUTH_REVIEW_NOTE, "utf-8");
+    const migrationReview = fs.readFileSync(GATEWAY_MIGRATION_REVIEW_NOTE, "utf-8");
     const inheritedAuthReview = fs.readFileSync(
       path.join(path.dirname(GATEWAY_AUTH_REVIEW_NOTE), "openshell-0.0.71-gateway-auth-review.mdx"),
       "utf-8",
@@ -42,6 +44,10 @@ describe("docker-driver-gateway auth contract", () => {
     expect(compatibilityReview).toContain("_provider_*");
     expect(compatibilityReview).toContain("protocol: mcp");
     expect(compatibilityReview).toContain("protocol: json-rpc");
+    expect(migrationReview).toContain("3dee5570a46076a57a3b056f35f35ebc0861ac85");
+    expect(migrationReview).toContain(
+      "sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9",
+    );
 
     expect(inheritedAuthReview).toContain("openshell_server::config_file::load()");
     expect(inheritedAuthReview).toContain("allow_unauthenticated_users");
@@ -62,7 +68,7 @@ describe("docker-driver-gateway auth contract", () => {
     expect(inheritedAuthReview).toContain("valid sandbox JWT access from Docker origin");
   });
 
-  it("emits an OpenShell 0.0.72-compatible sandbox JWT bundle and TTL contract", () => {
+  it("emits an OpenShell 0.0.85-compatible sandbox JWT bundle and TTL contract", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);
@@ -160,7 +166,7 @@ describe("docker-driver-gateway auth contract", () => {
     }
   });
 
-  it("emits the complete OpenShell 0.0.72 gateway auth TOML schema", () => {
+  it("emits the complete OpenShell 0.0.85 gateway auth TOML schema", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);

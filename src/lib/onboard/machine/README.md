@@ -13,9 +13,9 @@ The target shape is a machine-driven onboarding runner:
 2. Build an onboarding context that contains sanitized operator choices, runtime dependencies, and mutable values returned by states.
 3. Enter `runOnboardMachine(context)`.
 4. Dispatch the current machine state to a handler.
-5. Let the handler return an explicit state result such as advance, retry, branch, complete, or failed.
+5. Let the handler return an explicit state result such as advance, retry, branch, pause, complete, or failed.
 6. Apply the result through `OnboardRuntime`, which validates the transition, updates the persisted session snapshot, and emits redacted machine events.
-7. Continue until the machine reaches `complete` or `failed`.
+7. Continue until the machine reaches `complete` or `failed`, or a handler pauses at a retryable non-terminal state.
 
 In that final shape, `src/lib/onboard.ts` should be a thin entrypoint. State handlers should own state-specific prompts, resume validation, repair decisions, and side effects.
 
@@ -80,7 +80,8 @@ sequence must declare its source state in `metadata.state`, and that source must
 machine's current state when the result is applied. The runner also checks the handler's sequence
 ownership allowlist; add a new entry in `DEFAULT_SEQUENCE_OWNERSHIP` before introducing another
 composite handler that crosses into a later state. Terminal results (`complete` or `failed`) end
-the sequence immediately.
+the sequence immediately. A `pause` result persists any supplied safe context and returns control
+without a state transition so a later process can resume the same non-terminal state.
 
 ## Runtime responsibilities
 

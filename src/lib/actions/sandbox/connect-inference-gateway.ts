@@ -1,10 +1,38 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { assertGatewayRouteCompatibility } from "../../inference/gateway-route-compatibility";
+import {
+  checkGatewayRouteCompatibility,
+  GatewayRouteConflictError,
+  isAdvisoryProviderModelRouteConflict,
+} from "../../inference/gateway-route-compatibility";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+
+function sandboxGatewayRouteCompatibility(
+  sandboxName: string,
+  sb: SandboxEntry,
+  gatewayName: string,
+  sandboxes: readonly SandboxEntry[],
+) {
+  return checkGatewayRouteCompatibility({
+    gatewayName,
+    sandboxName,
+    route: sb,
+    sandboxes,
+  });
+}
+
+export function canSandboxGatewayRouteRealign(
+  sandboxName: string,
+  sb: SandboxEntry,
+  gatewayName: string,
+  sandboxes: readonly SandboxEntry[] = registry.listSandboxes().sandboxes,
+): boolean {
+  const result = sandboxGatewayRouteCompatibility(sandboxName, sb, gatewayName, sandboxes);
+  return result.ok || isAdvisoryProviderModelRouteConflict(result);
+}
 
 export function buildGatewayInferenceGetArgs(gatewayName: string): string[] {
   return ["inference", "get", "-g", gatewayName];
@@ -37,10 +65,13 @@ export function assertSandboxGatewayRouteCompatible(
   sb: SandboxEntry,
   gatewayName: string,
 ): void {
-  assertGatewayRouteCompatibility({
-    gatewayName,
+  const result = sandboxGatewayRouteCompatibility(
     sandboxName,
-    route: sb,
-    sandboxes: registry.listSandboxes().sandboxes,
-  });
+    sb,
+    gatewayName,
+    registry.listSandboxes().sandboxes,
+  );
+  if (!result.ok && !isAdvisoryProviderModelRouteConflict(result)) {
+    throw new GatewayRouteConflictError(result);
+  }
 }

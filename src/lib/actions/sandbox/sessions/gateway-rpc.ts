@@ -123,24 +123,17 @@ process.stdout.write(JSON.stringify(result));
 process.stdout.write("\\n");
 `.trim();
 
-const GATEWAY_ADMIN_RPC_LOADER = `await import("data:text/javascript;base64," + process.argv[1]);`;
-const GATEWAY_ADMIN_RPC_SCRIPT_B64 = Buffer.from(GATEWAY_ADMIN_RPC_SCRIPT, "utf8").toString(
-  "base64",
-);
-
 export function buildGatewayAdminRpcShell(proxyEnvPath = "/tmp/nemoclaw-proxy-env.sh"): string {
   return `
 set -e
 ${buildTrustedProxyEnvSourceShell(proxyEnvPath)}
-export NEMOCLAW_GATEWAY_RPC_METHOD="$3"
-export NEMOCLAW_GATEWAY_RPC_PARAMS_B64="$4"
-exec node --input-type=module --eval "$1" "$2"
+export NEMOCLAW_GATEWAY_RPC_METHOD="$2"
+export NEMOCLAW_GATEWAY_RPC_PARAMS_B64="$3"
+exec node --input-type=module --eval "$1"
 `.trim();
 }
 
 const GATEWAY_ADMIN_RPC_SHELL = buildGatewayAdminRpcShell();
-const GATEWAY_ADMIN_RPC_SHELL_B64 = Buffer.from(GATEWAY_ADMIN_RPC_SHELL, "utf8").toString("base64");
-const GATEWAY_ADMIN_RPC_SHELL_WRAPPER = `printf '%s' '${GATEWAY_ADMIN_RPC_SHELL_B64}' | base64 -d | bash -s -- "$1" "$2" "$3" "$4"`;
 
 function isSupportedGatewayAdminMethod(method: string): method is GatewayAdminMethod {
   return SUPPORTED_GATEWAY_ADMIN_METHODS.has(method);
@@ -172,10 +165,9 @@ function captureGatewayCall(opts: GatewayCallOptions) {
       "--",
       "bash",
       "-lc",
-      GATEWAY_ADMIN_RPC_SHELL_WRAPPER,
+      GATEWAY_ADMIN_RPC_SHELL,
       "nemoclaw-sessions-admin-rpc",
-      GATEWAY_ADMIN_RPC_LOADER,
-      GATEWAY_ADMIN_RPC_SCRIPT_B64,
+      GATEWAY_ADMIN_RPC_SCRIPT,
       opts.method,
       params,
     ],

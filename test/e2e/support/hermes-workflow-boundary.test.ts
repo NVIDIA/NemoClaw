@@ -149,6 +149,57 @@ describe("Hermes GPU boundary", () => {
     );
   });
 
+  it("rejects inference adapter boundary drift", () => {
+    expect(validateE2eWorkflowBoundary()).toEqual([]);
+
+    const errors = wfErrors((workflow) => {
+      workflow.env.NEMOCLAW_E2E_INFERENCE_MODE = "internal-nvidia";
+      workflow.jobs["hermes-e2e"].env.NEMOCLAW_E2E_INFERENCE_MODE = "mock";
+      workflow.jobs["hermes-e2e"].env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE = "1";
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "hermes-e2e job must consume the defaulted inference mode input",
+        "hermes-e2e job must leave hosted inference selection to the adapter",
+        "workflow env must leave inference mode scoped to adapter-consuming jobs",
+      ]),
+    );
+  });
+
+  it("rejects unconditional live secret in hermes-e2e mock run step", () => {
+    const errors = wfErrors((workflow) => {
+      const run = step(workflow.jobs["hermes-e2e"], "Run Hermes live Vitest test");
+      run.env = { NVIDIA_INFERENCE_API_KEY: KEY };
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch",
+        ),
+      ]),
+    );
+  });
+
+  it("rejects live secret exposure to a PR checkout", () => {
+    const errors = wfErrors((workflow) => {
+      const run = step(workflow.jobs["hermes-e2e"], "Run Hermes live Vitest test");
+      run.env = {
+        NVIDIA_INFERENCE_API_KEY:
+          "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}",
+      };
+    }, validateE2eWorkflowBoundary);
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch",
+        ),
+      ]),
+    );
+  });
+
   it.each([
     ["hash", (fixture: string) => `${fixture}\n# drift`, "trusted SHA-256"],
     ["mode", (fixture: string) => fixture.replace("install -m 0600", "install -m 0644"), "0644"],

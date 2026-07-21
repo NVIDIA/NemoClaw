@@ -15,6 +15,7 @@ import type {
   DockerGpuPatchMode,
   DockerGpuPatchResult,
   DockerGpuPatchSandboxSnapshot,
+  DockerUlimit,
 } from "./docker-gpu-patch-types";
 
 export { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
@@ -77,6 +78,7 @@ export type {
   DockerGpuPatchModeKind,
   DockerGpuPatchResult,
   DockerGpuPatchSandboxSnapshot,
+  DockerUlimit,
 } from "./docker-gpu-patch-types";
 export {
   findOpenShellDockerSandboxContainerIds,

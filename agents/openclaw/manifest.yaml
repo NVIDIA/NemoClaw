@@ -56,6 +56,19 @@ state_dirs:
   - whatsapp
   - credentials
 
+# Machine-local gateway auth state: the Ed25519 device identity
+# (identity/device.json) and paired-device token store (devices/). Backup
+# sanitization scrubs their key/token fields, so a restored copy can never
+# authenticate — restoring it replaces working pairing state with corrupt
+# files and the CLI fails with GatewayCredentialsRequiredError (issue #6852).
+# These dirs stay in state_dirs so destroy still wipes them from the durable
+# volume, but they are never captured into or restored from snapshots;
+# OpenClaw regenerates the identity on demand and NemoClaw auto-pair
+# re-pairs on connect.
+runtime_auth_state_dirs:
+  - identity
+  - devices
+
 # ── Top-level durable state files ───────────────────────────────
 # openclaw.json holds the core OpenClaw settings the state dirs above do not
 # cover: model/provider config, MCP servers, custom agents, and channel

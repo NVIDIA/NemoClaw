@@ -93,7 +93,7 @@ describe("authenticated MCP live fixtures", () => {
     ).toBeNull();
   });
 
-  it("waits for public readiness and registers unconditional process cleanup", async () => {
+  it("requires three consecutive public readiness probes and resets after a failure", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-fixture-"));
     const cloudflared = path.join(directory, "cloudflared");
     const priorAmbientSecret = process.env.MCP_TUNNEL_MUST_NOT_LEAK;
@@ -115,6 +115,8 @@ describe("authenticated MCP live fixtures", () => {
     );
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({ body: null, status: 502 } as Response)
+      .mockResolvedValueOnce({ body: null, status: 405 } as Response)
       .mockResolvedValueOnce({ body: null, status: 502 } as Response)
       .mockResolvedValue({ body: null, status: 405 } as Response);
     let cleanupName = "";
@@ -139,7 +141,9 @@ describe("authenticated MCP live fixtures", () => {
         origin: "https://fixture-cleanup-123.trycloudflare.com",
         url: "https://fixture-cleanup-123.trycloudflare.com/mcp",
       });
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      // 502, 405, 502 resets the streak; only the following three 405s admit
+      // the tunnel. The count is the observable consecutive-readiness contract.
+      expect(fetchMock).toHaveBeenCalledTimes(6);
       expect(cleanupName).toBe("stop unit MCP fixture cloudflared quick tunnel");
       expect(cleanupProcess).toBeTypeOf("function");
     } finally {

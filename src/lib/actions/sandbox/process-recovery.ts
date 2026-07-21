@@ -361,6 +361,13 @@ function hasGatewayRecoveryMarker(result: SandboxCommandResult | null): boolean 
   );
 }
 
+// Source contract: scripts/gateway-control.sh and its installed managed helper
+// emit SUPERVISOR_BUSY while another request owns the controller lease or
+// publication marker. SUPERVISOR_UNAVAILABLE also covers integrity refusals,
+// ambiguous discovery, and process-identity changes, so it must remain
+// definitive. Retry only the exact lease-contention marker within the
+// existing bounded window. Removal condition: delete this classifier and its
+// retry cases once the installed controller waits through contention itself.
 function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult | null): boolean {
   if (result === null) return false;
   if (result.status !== 1) return false;
@@ -369,7 +376,7 @@ function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult |
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  return lines.length === 1 && ["SUPERVISOR_UNAVAILABLE", "SUPERVISOR_BUSY"].includes(lines[0]);
+  return lines.length === 1 && lines[0] === "SUPERVISOR_BUSY";
 }
 
 function isExactlyMissingManagedSupervisor(result: SandboxCommandResult | null): boolean {
@@ -406,7 +413,8 @@ export function confirmRecoveredSandboxGatewayManaged(
     options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
   const result = requestGatewaySupervisorAction(sandboxName, "probe");
   if (hasGatewayRecoveryMarker(result)) return true;
-  return result === null ? null : false;
+  if (result === null || isExactlyRetryableManagedRecoveryFailure(result)) return null;
+  return false;
 }
 
 export async function isSandboxGatewayRunningForStatus(
@@ -710,6 +718,26 @@ function recoveryAgentDisplayName(
   return agentRuntime.getAgentDisplayName(null);
 }
 
+function confirmManagedGatewayWithinSettleWindow(
+  sandboxName: string,
+  managedProbe: (sandboxName: string) => boolean | null,
+  sleep: (seconds: number) => void,
+  settleSeconds: number,
+  intervalSeconds: number,
+): boolean {
+  const retryLeadSeconds =
+    intervalSeconds > 0 ? Math.min(intervalSeconds, settleSeconds) : settleSeconds;
+  const beforeDeadlineSeconds = settleSeconds - retryLeadSeconds;
+  if (beforeDeadlineSeconds > 0) sleep(beforeDeadlineSeconds);
+
+  const beforeDeadlineResult = managedProbe(sandboxName);
+  if (beforeDeadlineResult === false) return false;
+  if (retryLeadSeconds > 0) sleep(retryLeadSeconds);
+  const atDeadlineResult = managedProbe(sandboxName);
+  if (atDeadlineResult !== null) return atDeadlineResult;
+  return beforeDeadlineResult === true;
+}
+
 export function waitForRecoveredSandboxGateway(
   sandboxName: string,
   options: {
@@ -784,14 +812,24 @@ export function waitForRecoveredSandboxGateway(
   if (!options.quiet) {
     console.log(`  Confirming the gateway stays responsive (~${settleSeconds}s)...`);
   }
-  sleep(settleSeconds);
   if (initialManagedHealthPassed) {
     // The managed probe is a read-only, authenticated point check in the exact
-    // gateway network namespace. Its typed failure is authoritative: never let
-    // an outer-namespace HTTP response override it or extend this settle check
-    // beyond the controller's single bounded probe.
-    return managedProbe?.(sandboxName) === true;
+    // gateway network namespace. Probe once inside the final poll interval and
+    // again at the settle deadline, so one authenticated controller race can
+    // clear without extending the configured settle window. A recent
+    // authenticated success remains authoritative when only the deadline
+    // attempt is transient; a definitive failure is authoritative, and an
+    // outer-namespace HTTP response must never override either result.
+    if (!managedProbe) return false;
+    return confirmManagedGatewayWithinSettleWindow(
+      sandboxName,
+      managedProbe,
+      sleep,
+      settleSeconds,
+      intervalSeconds,
+    );
   }
+  sleep(settleSeconds);
   // A stopped HTTP probe is still only a point-in-time observation. PID 1 can
   // have respawned the gateway while OpenClaw is still finishing its startup
   // transition, so multiple stopped results may precede a healthy listener.

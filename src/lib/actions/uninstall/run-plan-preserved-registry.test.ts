@@ -22,7 +22,13 @@ function setupStateDir(): { tmpHome: string; stateDir: string } {
   const stateDir = path.join(tmpHome, ".nemoclaw");
   fs.mkdirSync(path.join(stateDir, "rebuild-backups"), { recursive: true });
   fs.mkdirSync(path.join(stateDir, "backups"), { recursive: true });
-  fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "[]");
+  fs.writeFileSync(
+    path.join(stateDir, "sandboxes.json"),
+    JSON.stringify({
+      defaultSandbox: "preserved-box",
+      sandboxes: { "preserved-box": { name: "preserved-box" } },
+    }),
+  );
   return { tmpHome, stateDir };
 }
 

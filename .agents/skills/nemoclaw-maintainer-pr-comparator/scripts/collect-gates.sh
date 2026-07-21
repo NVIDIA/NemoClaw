@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Collect Tier 0 gate state for a PR and emit JSON for downstream scoring.
-# Covers gates 1-5 (state, CI on latest SHA, mergeable, contributor compliance,
+# Covers gates 1-5 (state, CI on PR SHA, mergeable, contributor compliance,
 # branch protection). Gate 6 (CodeRabbit threads) is handled by
 # check-coderabbit-threads.sh.
 #
@@ -41,7 +41,7 @@ else
 fi
 
 raw=$(gh pr view "$pr" "${repo_args[@]}" \
-  --json number,state,body,headRefOid,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision \
+  --json number,state,body,author,headRefOid,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision \
   2>/dev/null) || {
   emit_error "fetch_failed"
   exit 0
@@ -51,7 +51,7 @@ raw=$(gh pr view "$pr" "${repo_args[@]}" \
 state=$(printf '%s' "$raw" | jq -r .state)
 gate_state_open=$([ "$state" = "OPEN" ] && echo true || echo false)
 
-# Gate 2: CI green on latest head SHA. statusCheckRollup contains the latest run.
+# Gate 2: CI passes on the PR SHA. statusCheckRollup contains the run for that SHA.
 # Fail closed when required checks are missing, including an empty rollup.
 required_checks='["checks","check-hash","changes","commit-lint","dco-check","E2E / PR Gate"]'
 observed_checks=$(printf '%s' "$raw" | jq -c '[(.statusCheckRollup // [])[] | (.name // .context // empty)] | unique')
@@ -106,6 +106,12 @@ if printf '%s' "$raw" | jq -r '.body // ""' | grep -Eq '^Signed-off-by:[[:space:
 else
   dco_declaration_present=false
 fi
+author_login=$(printf '%s' "$raw" | jq -r '.author.login // ""' | tr '[:upper:]' '[:lower:]')
+if [ "$author_login" = "app/dependabot" ] || [ "$author_login" = "dependabot[bot]" ]; then
+  dco_declaration_bypassed=true
+else
+  dco_declaration_bypassed=false
+fi
 
 commits_fetch_failed=false
 commit_parse_failed=false
@@ -122,7 +128,8 @@ elif commits_json=$(printf '%s\n' "$commits_raw" | jq -s '.' 2>/dev/null); then
   unverified_commits=$(printf '%s' "$commits_json" | jq '[.[] | select(.verified != true) | {sha, reason}]')
   unverified_count=$(printf '%s' "$unverified_commits" | jq 'length')
   gate_contributor_compliance=$(
-    [ "$dco_declaration_present" = "true" ] && [ "$unverified_count" = "0" ] && echo true || echo false
+    { [ "$dco_declaration_present" = "true" ] || [ "$dco_declaration_bypassed" = "true" ]; } \
+      && [ "$unverified_count" = "0" ] && echo true || echo false
   )
 else
   commit_count=0
@@ -166,6 +173,7 @@ jq -n \
   --arg mergeable "$mergeable" \
   --arg merge_state "$merge_state" \
   --argjson dco_declaration_present "$dco_declaration_present" \
+  --argjson dco_declaration_bypassed "$dco_declaration_bypassed" \
   --argjson commit_count "$commit_count" \
   --argjson unverified_commits "$unverified_commits" \
   --argjson commit_fetch_failed "$commits_fetch_failed" \
@@ -177,7 +185,7 @@ jq -n \
     head_sha: $head_sha,
     gates: {
       state_open: $gate_state_open,
-      ci_green_latest_sha: $gate_ci_green,
+      ci_green_sha: $gate_ci_green,
       mergeable: $gate_mergeable,
       contributor_compliance: $gate_contributor_compliance,
       branch_protection: $gate_branch_protection
@@ -192,6 +200,7 @@ jq -n \
       mergeable: $mergeable,
       merge_state_status: $merge_state,
       dco_declaration_present: $dco_declaration_present,
+      dco_declaration_bypassed: $dco_declaration_bypassed,
       commit_count: $commit_count,
       unverified_commits: $unverified_commits,
       commit_fetch_failed: $commit_fetch_failed,

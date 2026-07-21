@@ -25,6 +25,7 @@ import {
   type SandboxStatusAgentInfo,
   type SandboxStatusRouteDrift,
   type SandboxStatusSnapshot,
+  type ServingProcessHealth,
 } from "./status-snapshot";
 
 export interface SandboxStatusTextContext
@@ -37,6 +38,7 @@ export interface SandboxStatusTextContext
     | "routeDrift"
     | "inferenceHealth"
     | "terminalRuntimeHealth"
+    | "servingProcessHealth"
   > {
   sandboxName: string;
   statusAgent: SandboxStatusAgentInfo;
@@ -88,11 +90,20 @@ function printInferenceProbeLine(probe: ProviderHealthStatus): void {
     return;
   }
   if (probe.ok) {
-    console.log(`    ${label}: ${G}healthy${R} (${probe.endpoint})`);
+    console.log(`    ${label}: ${G}${probe.okLabel ?? "healthy"}${R} (${probe.endpoint})`);
     return;
   }
   console.log(`    ${label}: ${RD}${probe.failureLabel || "unreachable"}${R} (${probe.endpoint})`);
   console.log(`      ${probe.detail}`);
+}
+
+function printServingProcessHealth(
+  statusAgent: SandboxStatusAgentInfo,
+  health: ServingProcessHealth | null,
+): void {
+  if (!health) return;
+  const label = `Serving process (${statusAgent.agentDisplayName.toLowerCase()} gateway)`;
+  console.log(`    ${label}: ${D}not checked${R}`);
 }
 
 function printInferenceStatus(context: SandboxStatusTextContext): void {
@@ -105,6 +116,7 @@ function printInferenceStatus(context: SandboxStatusTextContext): void {
   if (context.lookup.state !== "present") {
     console.log("    Inference: not verified (gateway/sandbox state not verified)");
   }
+  printServingProcessHealth(context.statusAgent, context.servingProcessHealth);
 }
 
 function inferenceHealthExitCode(inferenceHealth: ProviderHealthStatus | null): number | null {
@@ -249,11 +261,9 @@ function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEn
   }
 }
 
-// The Model/Provider lines above show the live gateway route, which the
-// shared per-gateway route lets another sandbox move (#6315). When it no
-// longer matches this sandbox's recorded route, say so instead of presenting
-// the live value as this sandbox's own; wording mirrors the connect-time
-// divergence warning (#3726).
+// The Model/Provider lines above show this sandbox's recorded route. The live
+// shared route can differ after another onboard, so report that drift
+// separately; wording mirrors the connect-time divergence warning (#3726).
 function printInferenceRouteDrift(
   drift: SandboxStatusRouteDrift | null,
   sandboxName: string,
@@ -266,6 +276,15 @@ function printInferenceRouteDrift(
   );
   const { liveProvider, liveModel, recordedRoute } = display;
   console.log(`    ${YW}Warning: ${display.warning}${R}`);
+  if (!drift.canConnect) {
+    console.log(
+      `    ${YW}The recorded route cannot be restored with ${CLI_NAME} connect while another registered sandbox uses different provider-global endpoint, API-family, or credential identity.${R}`,
+    );
+    console.log(
+      `    ${YW}Remove or re-onboard the conflicting sandbox before reconnecting '${sandboxName}'.${R}`,
+    );
+    return;
+  }
   console.log(
     `    ${YW}${CLI_NAME} ${shellQuote(sandboxName)} connect realigns the gateway to ${recordedRoute}; to adopt the live route instead:${R}`,
   );

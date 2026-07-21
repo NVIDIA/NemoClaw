@@ -10,7 +10,7 @@ export default class SandboxExecCommand extends NemoClawCommand {
   static strict = false;
   static summary = "Run a command non-interactively in a running sandbox";
   static description =
-    "Run a single command inside a running sandbox via the OpenShell exec endpoint. The command runs as the sandbox user (HOME=/sandbox) and exits with the remote command's exit code. Use `--` to separate exec options from the user command. Stdin is inherited by default only when it is a terminal; pass `--stdin` to forward an intentional pipe.";
+    "Run a single command inside a running sandbox via the OpenShell exec endpoint. The command runs as the sandbox user (HOME=/sandbox) and exits with the remote command's exit code. Use `--` to separate exec options from the user command; arguments after it preserve embedded line endings and quotes. NUL bytes are rejected, and `--workdir` must remain single-line. Stdin is inherited by default only when it is a terminal; pass `--stdin` to forward an intentional pipe.";
   static usage = [
     "<name> [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] [--stdin|--no-stdin] -- <cmd> [args...]",
   ];

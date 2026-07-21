@@ -5,6 +5,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { GATEWAY_PORT } from "../core/ports";
+import { rejectSymlinksOnPath } from "../state/config-io";
+import { nemoclawStateRoot } from "../state/state-root";
+
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_RELEVANT_LOG_LINES = 120;
@@ -153,14 +157,15 @@ export function collectSandboxCreateFailureDiagnostics(
   const homeDir = options.homeDir ?? os.homedir();
   const now = options.now ?? new Date();
   const dir = path.join(
-    homeDir,
-    ".nemoclaw",
+    nemoclawStateRoot(homeDir, GATEWAY_PORT),
     "onboard-failures",
     `${timestampForPath(now)}-${sanitizePathPart(sandboxName)}`,
   );
 
   try {
+    rejectSymlinksOnPath(dir);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    rejectSymlinksOnPath(dir);
   } catch {
     return null;
   }

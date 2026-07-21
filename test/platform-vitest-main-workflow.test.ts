@@ -31,11 +31,16 @@ describe("platform Vitest main workflow", () => {
   // source-shape-contract: compatibility -- macOS must use the same modern shell/tool semantics as the Linux sandbox fixtures
   it("provisions the pinned macOS test runtime before running the full suite", () => {
     const stepNames = job("macos-vitest").steps?.map((entry) => entry.name) ?? [];
+    const checkout = step("macos-vitest", "Checkout");
     const setupPython = step("macos-vitest", "Setup Python");
     const install = step("macos-vitest", "Install macOS test dependencies");
     const run = install.run ?? "";
 
     expect(job("macos-vitest")["timeout-minutes"]).toBe(60);
+    expect(checkout.with).toMatchObject({
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    });
     expect(stepNames.indexOf("Setup Python")).toBeLessThan(
       stepNames.indexOf("Install macOS test dependencies"),
     );
@@ -48,7 +53,7 @@ describe("platform Vitest main workflow", () => {
       cache: "pip",
       "cache-dependency-path": MACOS_REQUIREMENTS_PATH,
     });
-    for (const dependency of ["bash", "coreutils", "gawk", "ripgrep"]) {
+    for (const dependency of ["bash", "coreutils", "fd", "gawk", "ripgrep"]) {
       expect(run).toMatch(new RegExp(`brew install[^\\n]*\\b${dependency}\\b`, "u"));
     }
     expect(run).toContain("$(brew --prefix bash)/bin");
@@ -72,11 +77,16 @@ describe("platform Vitest main workflow", () => {
   // source-shape-contract: security -- ordinary tests stay non-root while the five UID-0 contracts remain isolated
   it("keeps the WSL suite unprivileged with explicit root-only contracts", () => {
     const stepNames = job("wsl-vitest").steps?.map((entry) => entry.name) ?? [];
+    const checkout = step("wsl-vitest", "Checkout");
     const install = step("wsl-vitest", "Install Ubuntu dependencies").run ?? "";
     const fullSuite = step("wsl-vitest", "Run full Vitest suite in WSL").run ?? "";
     const rootSuite = step("wsl-vitest", "Run root-required Vitest contracts in WSL").run ?? "";
 
     expect(job("wsl-vitest")["timeout-minutes"]).toBe(60);
+    expect(checkout.with).toMatchObject({
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    });
     expect(stepNames.indexOf("Install Ubuntu dependencies")).toBeLessThan(
       stepNames.indexOf("Run full Vitest suite in WSL"),
     );

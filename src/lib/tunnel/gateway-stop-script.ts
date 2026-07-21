@@ -35,11 +35,23 @@ parent="$PPID"
 gateway_pid_file="/tmp/nemoclaw-gateway.pid"
 gateway_marker_file="/tmp/nemoclaw-gateway-local"
 
+# Resolve the supported gateway accounts to stable numeric IDs. GNU ps limits
+# the displayed width of user names, so a long account cannot be compared
+# reliably with stat's full owner name.
+allowed_bare_uids=","
+for allowed_bare_user in gateway sandbox; do
+  allowed_bare_uid="$(id -u "$allowed_bare_user" 2>/dev/null || true)"
+  case "$allowed_bare_uid" in
+    ''|0|*[!0-9]*) ;;
+    *) allowed_bare_uids="$allowed_bare_uids$allowed_bare_uid," ;;
+  esac
+done
+
 # Open both identity files once, then validate and read those exact file
 # descriptions through /proc. This prevents a same-owner process from swapping
 # a pathname in world-writable /tmp between validation and the PID read.
-pidfile_owner=""
-marker_owner=""
+pidfile_owner_uid=""
+marker_owner_uid=""
 if [ -f "$gateway_pid_file" ] && [ -f "$gateway_marker_file" ] && \
    [ ! -L "$gateway_pid_file" ] && [ ! -L "$gateway_marker_file" ] && \
    exec 3<"$gateway_pid_file" 4<"$gateway_marker_file"; then
@@ -47,24 +59,24 @@ if [ -f "$gateway_pid_file" ] && [ -f "$gateway_marker_file" ] && \
     fd_path="$1"
     [ -f "$fd_path" ] || return 1
     mode="$(stat -Lc '%a' "$fd_path" 2>/dev/null)" || return 1
-    owner="$(stat -Lc '%U' "$fd_path" 2>/dev/null)" || return 1
+    owner_uid="$(stat -Lc '%u' "$fd_path" 2>/dev/null)" || return 1
     case "$mode" in
       *00) ;;
       *) return 1 ;;
     esac
-    case "$owner" in
-      root|gateway|sandbox) ;;
+    case ",0$allowed_bare_uids" in
+      *,"$owner_uid",*) ;;
       *) return 1 ;;
     esac
-    printf '%s\n' "$owner"
+    printf '%s\n' "$owner_uid"
   }
-  pidfile_owner="$(trusted_identity_fd "/proc/$$/fd/3" || true)"
-  marker_owner="$(trusted_identity_fd "/proc/$$/fd/4" || true)"
+  pidfile_owner_uid="$(trusted_identity_fd "/proc/$$/fd/3" || true)"
+  marker_owner_uid="$(trusted_identity_fd "/proc/$$/fd/4" || true)"
 fi
 
 pidfile_pid=""
 identity_files_trusted=0
-if [ -n "$pidfile_owner" ] && [ "$pidfile_owner" = "$marker_owner" ]; then
+if [ -n "$pidfile_owner_uid" ] && [ "$pidfile_owner_uid" = "$marker_owner_uid" ]; then
   IFS= read -r raw_pidfile_line <&3 || true
   raw_pidfile_pid="$(printf '%s\n' "$raw_pidfile_line" | awk '{ print $1 }')"
   raw_pidfile_starttime="$(printf '%s\n' "$raw_pidfile_line" | awk '{ print $2 }')"
@@ -81,29 +93,28 @@ if [ -n "$pidfile_owner" ] && [ "$pidfile_owner" = "$marker_owner" ]; then
   esac
 fi
 
-# A root-owned identity file can authorize either supported gateway user. A
+# A root-owned identity file can authorize either supported gateway UID. A
 # gateway- or sandbox-owned identity can authorize only a process of that same
-# user, enforced in the matcher below.
-allowed_bare_users="gateway,sandbox"
+# UID, enforced in the matcher below.
 find_gateway_pids() {
-  ps -eo user=,pid=,args= 2>/dev/null | awk \
+  ps -eo uid=,pid=,args= 2>/dev/null | awk \
     -v self="$self" \
     -v parent="$parent" \
     -v pidfile_pid="$pidfile_pid" \
     -v identity_files_trusted="$identity_files_trusted" \
-    -v identity_owner="$pidfile_owner" \
-    -v allowed_bare_users="$allowed_bare_users" '
-    function allowed_bare_user(user) {
-      return index("," allowed_bare_users ",", "," user ",") > 0
+    -v identity_owner_uid="$pidfile_owner_uid" \
+    -v allowed_bare_uids="$allowed_bare_uids" '
+    function allowed_bare_uid(uid) {
+      return index(allowed_bare_uids, "," uid ",") > 0
     }
     $2 ~ /^[0-9]+$/ && $2 != self && $2 != parent {
-      user = $1
+      uid = $1
       pid = $2
       cmd = $0
       sub(/^[[:space:]]*[^[:space:]]+[[:space:]]+[0-9]+[[:space:]]+/, "", cmd)
       if (cmd ~ /(^|[[:space:]\/])openclaw-gateway([[:space:]]|$)/ || cmd ~ /(^|[[:space:]\/])openclaw[[:space:]]+gateway([[:space:]]|$)/) {
         seen[pid] = 1
-      } else if (identity_files_trusted == "1" && pid == pidfile_pid && allowed_bare_user(user) && (identity_owner == "root" || identity_owner == user) && cmd ~ /(^|[[:space:]\/])openclaw[[:space:]]*$/) {
+      } else if (identity_files_trusted == "1" && pid == pidfile_pid && allowed_bare_uid(uid) && (identity_owner_uid == "0" || identity_owner_uid == uid) && cmd ~ /(^|[[:space:]\/])openclaw[[:space:]]*$/) {
         seen[pid] = 1
       }
     }

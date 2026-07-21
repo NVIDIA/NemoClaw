@@ -2395,11 +2395,14 @@ write_auth_profile() {
     return
   fi
 
-  # Read the provider key from the NEMOCLAW_PROVIDER_KEY env var (exported at
-  # Dockerfile:99 from the build-time ARG). This avoids parsing openclaw.json
-  # and ensures the auth profile matches the provider key in the model config.
+  # Read the route identifier from the NEMOCLAW_INFERENCE_PROVIDER_ID env var
+  # (exported from the build-time ARG). This avoids parsing openclaw.json and
+  # ensures the auth profile matches the route identifier in the model config.
+  # NEMOCLAW_PROVIDER_KEY is the legacy image-variable name, read as a fallback
+  # through v0.0.89 so pre-existing custom images keep routing. Remove this
+  # fallback in v0.0.90.
   # See: https://github.com/NVIDIA/NemoClaw/issues/1332
-  local provider_key="${NEMOCLAW_PROVIDER_KEY:-inference}"
+  local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
 
   python3 - "$provider_key" <<'PYAUTH'
 import json
@@ -5495,7 +5498,9 @@ if [ "$(id -u)" -ne 0 ]; then
     wait "$EXITED_GATEWAY_PID" || RC=$?
     mark_openclaw_gateway_stopped
     if [ "$RC" -eq 0 ] \
-      && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
+      && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}" \
+      && ! gateway_control_exit_was_host_authorized \
+        "$EXITED_GATEWAY_PID" "$EXITED_GATEWAY_START_IDENTITY"; then
       exit 0
     fi
     NOW=$(date +%s)
@@ -5782,7 +5787,9 @@ while :; do
     continue
   fi
   if [ "$RC" -eq 0 ] \
-    && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
+    && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}" \
+    && ! gateway_control_exit_was_host_authorized \
+      "$EXITED_GATEWAY_PID" "$EXITED_GATEWAY_START_IDENTITY"; then
     exit 0
   fi
   NOW=$(date +%s)

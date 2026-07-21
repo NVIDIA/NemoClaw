@@ -13,11 +13,11 @@ import { runRealOpenClawDeviceSelfApprovalProof } from "./helpers/openclaw-real-
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
-const PATCH_OPENCLAW_CHAT_SEND = path.join(REPO_ROOT, "scripts", "patch-openclaw-chat-send.js");
+const PATCH_OPENCLAW_CHAT_SEND = path.join(REPO_ROOT, "scripts", "patch-openclaw-chat-send.mts");
 const PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS = path.join(
   REPO_ROOT,
   "scripts",
-  "patch-openclaw-issue-4434-diagnostics.ts",
+  "patch-openclaw-issue-4434-diagnostics.mts",
 );
 // Focused patch scripts also scan the full generated dist. APFS cold-cache
 // reads can exceed one minute, so keep them bounded without using unit-fixture
@@ -443,7 +443,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         // scan so dependency materialization cannot perturb their timing.
         await runRealOpenClawDeviceSelfApprovalProof({
           dist,
-          patchScript: path.join(REPO_ROOT, "scripts", "patch-openclaw-device-self-approval.ts"),
+          patchScript: path.join(REPO_ROOT, "scripts", "patch-openclaw-device-self-approval.mts"),
           timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
           tmp,
         });

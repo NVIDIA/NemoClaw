@@ -35,8 +35,8 @@ const {
   isHijackedDockerInternalUrl,
 } = require("./onboard-host-docker-internal");
 const { isNvcfFunctionNotFoundForAccount, nvcfFunctionNotFoundMessage } = require("../validation");
-const { isPrivateHostname, isLoopbackHostname } = require("../private-networks");
-const { buildResolvePinArgs } = require("./endpoint-ssrf-preflight");
+const { isPrivateHostname, isPrivateIp, isLoopbackHostname } = require("../private-networks");
+const { buildResolvePinArgs, isOperatorTrustablePrivateIp } = require("./endpoint-ssrf-preflight");
 const {
   executeProbeWithHttpRetry,
   isProbeTimeout,
@@ -279,6 +279,7 @@ function calibrateOpenAiLikeValidationTiming(baseUrl, options = {}) {
     const result = runCurlProbe(args, {
       timeoutMs: getProbeProcessTimeoutMs(args),
       pinnedAddresses: options.pinnedAddresses,
+      trustedPrivateCapability: options.trustedPrivateCapability,
     });
     const durationMs = Date.now() - startedAtMs;
     const calibration =
@@ -351,6 +352,7 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
       {
         trustedConfigFiles: authConfig.trustedConfigFiles,
         pinnedAddresses: options.pinnedAddresses,
+        trustedPrivateCapability: options.trustedPrivateCapability,
       },
     );
 
@@ -467,6 +469,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       timeoutMs: getProbeProcessTimeoutMs(args),
       trustedConfigFiles: authConfig.trustedConfigFiles,
       pinnedAddresses: options.pinnedAddresses,
+      trustedPrivateCapability: options.trustedPrivateCapability,
     });
 
     if (!result.ok) {
@@ -568,6 +571,7 @@ function runChatCompletionsProbe({
   isWsl: isWslOverride,
   trustedConfigFiles,
   pinnedAddresses,
+  trustedPrivateCapability,
   validationTiming,
 }) {
   const args = getChatCompletionsProbeCurlArgs({
@@ -578,7 +582,11 @@ function runChatCompletionsProbe({
     pinnedAddresses,
     validationTiming,
   });
-  const probeOpts = { timeoutMs: getProbeProcessTimeoutMs(args), pinnedAddresses };
+  const probeOpts = {
+    timeoutMs: getProbeProcessTimeoutMs(args),
+    pinnedAddresses,
+    trustedPrivateCapability,
+  };
   if (trustedConfigFiles && trustedConfigFiles.length > 0) {
     probeOpts.trustedConfigFiles = trustedConfigFiles;
   }
@@ -621,6 +629,7 @@ function runDoubledTimeoutChatCompletionsRetry({
           extraHeaders: options.extraHeaders,
           timingArgs: doubledArgs,
           pinnedAddresses: options.pinnedAddresses,
+          trustedPrivateCapability: options.trustedPrivateCapability,
         })
       : (() => {
           const retryArgs = buildRetryArgs();
@@ -628,6 +637,7 @@ function runDoubledTimeoutChatCompletionsRetry({
             timeoutMs: getProbeProcessTimeoutMs(retryArgs),
             trustedConfigFiles: authConfig.trustedConfigFiles,
             pinnedAddresses: options.pinnedAddresses,
+            trustedPrivateCapability: options.trustedPrivateCapability,
           });
         })();
   return runChatCompletionsRetryLoop(runRetryProbe);
@@ -692,11 +702,34 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   } catch {
     probeHostname = "";
   }
+  const bareProbeHostname =
+    probeHostname.startsWith("[") && probeHostname.endsWith("]")
+      ? probeHostname.slice(1, -1)
+      : probeHostname;
+  const pinnedAddresses = options.pinnedAddresses;
+  // This synchronous source check is defense-in-depth; the curl boundary
+  // validates that the capability was actually issued by the preflight.
+  const trustedCapabilityAddresses = options.trustedPrivateCapability?.addresses;
+  const trustedPrivateAddresses = new Set(
+    Array.isArray(trustedCapabilityAddresses) ? trustedCapabilityAddresses : [],
+  );
+  // Private destinations require the exact address capability issued by the
+  // shared DNS preflight. Public pins remain sufficient for reserved internal
+  // names because curl is forced to the already-approved public address.
+  const trustedPrivatePreflight =
+    (isOperatorTrustablePrivateIp(bareProbeHostname) &&
+      trustedPrivateAddresses.has(bareProbeHostname)) ||
+    (pinnedAddresses !== undefined &&
+      pinnedAddresses.length > 0 &&
+      pinnedAddresses.every(
+        (address) => !isPrivateIp(address) || trustedPrivateAddresses.has(address),
+      ));
   if (
     probeHostname &&
     isPrivateHostname(probeHostname) &&
     !isLoopbackHostname(probeHostname) &&
-    !isHijackedDockerInternalUrl(endpointUrl)
+    !isHijackedDockerInternalUrl(endpointUrl) &&
+    !trustedPrivatePreflight
   ) {
     return {
       ok: false,
@@ -721,7 +754,6 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   // Pin every probe curl to the SSRF-preflight-validated address(es) the caller
   // captured, so a second DNS lookup here cannot rebind the hostname to a
   // private/internal address after the public preflight (TOCTOU — cv, #6293).
-  const pinnedAddresses = options.pinnedAddresses;
   let authConfig;
   try {
     authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
@@ -735,6 +767,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
                 authMode: options.authMode,
                 extraHeaders: options.extraHeaders,
                 pinnedAddresses,
+                trustedPrivateCapability: options.trustedPrivateCapability,
                 validationTiming,
               }),
           }
@@ -757,7 +790,11 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
                   }),
                   `${baseUrl}/responses`,
                 ],
-                { trustedConfigFiles: authConfig.trustedConfigFiles, pinnedAddresses },
+                {
+                  trustedConfigFiles: authConfig.trustedConfigFiles,
+                  pinnedAddresses,
+                  trustedPrivateCapability: options.trustedPrivateCapability,
+                },
               ),
           };
 
@@ -770,6 +807,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               authMode: options.authMode,
               extraHeaders: options.extraHeaders,
               pinnedAddresses,
+              trustedPrivateCapability: options.trustedPrivateCapability,
               validationTiming,
             })
           : runChatCompletionsProbe({
@@ -779,6 +817,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               isWsl: options.isWsl,
               trustedConfigFiles: authConfig.trustedConfigFiles,
               pinnedAddresses,
+              trustedPrivateCapability: options.trustedPrivateCapability,
               validationTiming,
             }),
     };
@@ -825,7 +864,11 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               }),
               `${baseUrl}/responses`,
             ],
-            { trustedConfigFiles: authConfig.trustedConfigFiles, pinnedAddresses },
+            {
+              trustedConfigFiles: authConfig.trustedConfigFiles,
+              pinnedAddresses,
+              trustedPrivateCapability: options.trustedPrivateCapability,
+            },
           );
           if (!streamResult.ok && streamResult.missingEvents.length > 0) {
             // Backend responds but lacks required streaming events — fall back
@@ -1058,6 +1101,7 @@ export async function verifyOnboardInferenceSmoke(options: any) {
       authMode: getProbeAuthMode(options.provider),
       extraHeaders: getProbeExtraHeaders(options.provider),
       pinnedAddresses: options.pinnedAddresses,
+      trustedPrivateCapability: options.trustedPrivateCapability,
     })
   ) {
     console.log(
@@ -1074,6 +1118,7 @@ export async function verifyOnboardInferenceSmoke(options: any) {
     extraHeaders: getProbeExtraHeaders(options.provider),
     skipResponsesProbe: true,
     pinnedAddresses: options.pinnedAddresses,
+    trustedPrivateCapability: options.trustedPrivateCapability,
   });
 
   if (probe.ok) {

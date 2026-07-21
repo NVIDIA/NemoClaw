@@ -82,6 +82,12 @@ interface SessionStateComplete {
   >;
 }
 
+interface SessionStatePostVerify {
+  status: "in_progress";
+  resumable: true;
+  machine: { state: "post_verify" };
+}
+
 interface MutableSessionState extends Record<string, unknown> {
   status?: string;
   resumable?: boolean;
@@ -171,6 +177,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
       "resume sandbox recreation filters stale extra providers while preserving live attachments",
       "resume proves recreated sandbox provider attachments are selectively reconciled",
       "host trust-store anchor corporate CA source is baked and merged after resume",
+      "an unreachable committed route pauses at final verification and completes after repair",
       "implicit resume is detected and --fresh suppresses that auto-resume",
     ],
   });
@@ -212,7 +219,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   // fake OpenAI-compatible endpoint at a host address the OpenShell gateway and
   // sandbox can route to, matching test/e2e/lib/hermetic-compatible-inference.sh.
   const fakePublicHost = "host.openshell.internal";
-  const fake = await startFakeOpenAiCompatibleServer({
+  let fake = await startFakeOpenAiCompatibleServer({
     apiKey: FAKE_COMPATIBLE_AUTH_VALUE,
     host: "0.0.0.0",
     model: FAKE_COMPATIBLE_MODEL,
@@ -230,6 +237,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
     publicHost: fakePublicHost,
   });
   const localModelsUrl = new URL(`${fake.baseUrl}/models`);
+  const fakePort = Number(localModelsUrl.port);
   localModelsUrl.hostname = "127.0.0.1";
   const modelsResponse = await fetch(localModelsUrl, {
     headers: { Authorization: `Bearer ${FAKE_COMPATIBLE_AUTH_VALUE}` },
@@ -541,7 +549,67 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   expect(containsExactJsonToken(registry, SANDBOX_NAME)).toBe(true);
 
   // ──────────────────────────────────────────────────────────────────
-  // Phase 3.5: implicit resume — a plain `onboard` auto-detects an
+  // Phase 3.5: a committed route that goes offline leaves final
+  // verification retryable; restoring the same endpoint lets a later resume
+  // re-probe and complete without recreating the sandbox.
+  // ──────────────────────────────────────────────────────────────────
+  markSessionInProgress(SESSION_FILE);
+  await fake.close();
+
+  const unavailableResumeRun = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "onboard", "--resume", "--non-interactive"],
+    {
+      artifactName: "phase-3-5-onboard-resume-route-unavailable",
+      env: resumeEnv,
+      redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+  const unavailableResumeText = `${unavailableResumeRun.stdout}\n${unavailableResumeRun.stderr}`;
+  expect(unavailableResumeRun.exitCode, unavailableResumeText).not.toBe(0);
+  expect(unavailableResumeText).toContain("is not ready");
+  expect(unavailableResumeText).toContain("inference");
+
+  const paused = readSession<SessionStatePostVerify>(SESSION_FILE);
+  await artifacts.writeJson("phase-3-5-session-route-unavailable.json", {
+    status: paused.status,
+    resumable: paused.resumable,
+    machineState: paused.machine.state,
+  });
+  expect(paused.status).toBe("in_progress");
+  expect(paused.resumable).toBe(true);
+  expect(paused.machine.state).toBe("post_verify");
+
+  fake = await startFakeOpenAiCompatibleServer({
+    apiKey: FAKE_COMPATIBLE_AUTH_VALUE,
+    host: "0.0.0.0",
+    model: FAKE_COMPATIBLE_MODEL,
+    port: fakePort,
+    publicHost: fakePublicHost,
+    requireAuth: true,
+    requireAuthModels: true,
+  });
+  expect(fake.baseUrl).toBe(`http://${fakePublicHost}:${String(fakePort)}/v1`);
+
+  const repairedResumeRun = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, "onboard", "--resume", "--non-interactive"],
+    {
+      artifactName: "phase-3-5-onboard-resume-route-restored",
+      env: resumeEnv,
+      redactionValues: [FAKE_COMPATIBLE_AUTH_VALUE],
+      timeoutMs: ONBOARD_TIMEOUT_MS,
+    },
+  );
+  const repairedResumeText = `${repairedResumeRun.stdout}\n${repairedResumeRun.stderr}`;
+  expect(repairedResumeRun.exitCode, repairedResumeText).toBe(0);
+  expect(repairedResumeText).toContain("is ready");
+  const repaired = readSession<SessionStateComplete>(SESSION_FILE);
+  expect(repaired.status).toBe("complete");
+
+  // ──────────────────────────────────────────────────────────────────
+  // Phase 4: implicit resume — a plain `onboard` auto-detects an
   // in_progress session, and `--fresh` suppresses that auto-resume.
   // ──────────────────────────────────────────────────────────────────
   markSessionInProgress(SESSION_FILE);
@@ -549,7 +617,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
     "node",
     [CLI_ENTRYPOINT, "onboard", "--non-interactive"],
     {
-      artifactName: "phase-3-5-onboard-implicit-resume",
+      artifactName: "phase-4-onboard-implicit-resume",
       env: {
         ...buildAvailabilityProbeEnv(),
         NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
@@ -574,7 +642,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
     "node",
     [CLI_ENTRYPOINT, "onboard", "--fresh", "--non-interactive"],
     {
-      artifactName: "phase-3-5-onboard-fresh-suppresses-resume",
+      artifactName: "phase-4-onboard-fresh-suppresses-resume",
       env: {
         ...buildAvailabilityProbeEnv(),
         NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,

@@ -246,4 +246,33 @@ describe("sandbox skill action orchestration", () => {
     expectTempSshConfigCleanedUp(tempConfig);
     expect(process.exitCode).toBeUndefined();
   });
+
+  it("adds shields recovery guidance when skill upload fails (#6859)", async () => {
+    const skillDir = makeSkillDir();
+    skillInstall.uploadDirectory.mockReturnValue({
+      uploaded: 0,
+      failed: ["SKILL.md"],
+      skippedDotfiles: [],
+      unsafePaths: [],
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      throw new Error(`process.exit ${code}`);
+    }) as typeof process.exit);
+
+    try {
+      await expect(
+        installSandboxSkill("alpha", { command: "install", path: skillDir }),
+      ).rejects.toThrow("process.exit 1");
+    } finally {
+      fs.rmSync(skillDir, { recursive: true, force: true });
+    }
+
+    const output = error.mock.calls.map((args) => args.join(" ")).join("\n");
+    expect(output).toContain("Failed to upload 1 file(s): SKILL.md");
+    expect(output).toContain("locked while shields are up");
+    expect(output).toContain("nemoclaw alpha shields down");
+    expect(skillInstall.postInstall).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
 });

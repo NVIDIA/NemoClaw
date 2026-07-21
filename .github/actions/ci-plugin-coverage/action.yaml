@@ -31,7 +31,11 @@ runs:
           --coverage.include="nemoclaw/src/**/*.ts" \
           --coverage.include="nemoclaw/src/**/*.cts" \
           --coverage.exclude="**/*.test.ts"
-        npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"
+        coverage_ratchet=scripts/check-coverage-ratchet.mts
+        if [ ! -f "$coverage_ratchet" ]; then
+          coverage_ratchet=scripts/check-coverage-ratchet.ts
+        fi
+        npx tsx "$coverage_ratchet" coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"
 
     - name: Upload plugin coverage report
       if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}

@@ -69,14 +69,18 @@ export function createSandboxGpuCreateAttemptRunner(
         "  This compatibility container swap may relax container confinement compared with native injection. The retry is running only because NEMOCLAW_DOCKER_GPU_PATCH=fallback explicitly authorized it.",
       );
     }
+    const hasRequiredUlimits = (input.requiredUlimits?.length ?? 0) > 0;
     const dockerGpuCreatePatch = createDockerGpuSandboxCreatePatch({
       route,
-      // Native attachment cannot be reproduced by a startup-only swap. The
-      // compatibility route owns its GPU envelope; no-GPU can persist startup.
-      persistStartupCommand: input.persistStartupCommand === true && route !== "native",
+      // The startup clone preserves native CDI devices, so DCode can apply its
+      // exact required limits without replacing the native GPU envelope.
+      // Other native routes are not swapped solely to persist a command.
+      persistStartupCommand:
+        input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits),
       sandboxName: input.sandboxName,
       gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
       openshellSandboxCommand: input.sandboxStartupCommand,
+      requiredUlimits: input.requiredUlimits,
       timeoutSecs: input.sandboxReadyTimeoutSecs,
       backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
       deps,

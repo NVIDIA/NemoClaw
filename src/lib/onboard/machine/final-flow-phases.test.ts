@@ -71,10 +71,10 @@ describe("final onboard flow phases", () => {
       phases,
       resume: true,
       recordStateResult: async (result) => {
-        if (result.type === "complete" || result.type === "failed") {
-          recorded.push(result.type);
-        } else {
+        if (result.type === "transition") {
           recorded.push(result.next);
+        } else {
+          recorded.push(result.type);
         }
       },
       recordInvalidatedStateResult: async (result) => {

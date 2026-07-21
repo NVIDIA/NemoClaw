@@ -72,7 +72,7 @@ if (args[0] === "gateway" && args[1] === "info") {
   process.exit(0);
 }
 
-if (args[0] === "sandbox" && args[1] === "get" && args[2] === "my-assistant") {
+if (args[0] === "sandbox" && args[1] === "get" && (args[2] === "my-assistant" || args[4] === "my-assistant")) {
   state.sandboxGetCalls += 1;
   fs.writeFileSync(statePath, JSON.stringify(state));
   if (state.sandboxGetCalls === 1) {

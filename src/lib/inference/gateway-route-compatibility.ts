@@ -30,6 +30,7 @@ export type GatewayRouteConflictReason =
   | "provider-model"
   | "custom-endpoint"
   | "custom-api"
+  | "provider-credential"
   | "incomplete-route"
   | "incomplete-custom-route"
   | "invalid-gateway-binding";
@@ -38,6 +39,7 @@ export interface GatewayRouteConflict {
   sandboxName: string;
   reason: GatewayRouteConflictReason;
   scope?: "requested" | "registered";
+  recordedRoute?: { provider: string; model: string };
 }
 
 export type GatewayRouteCompatibilityResult =
@@ -111,6 +113,13 @@ function customRouteConflict(
   if (requestedEndpoint !== recordedEndpoint) return "custom-endpoint";
   if (requestedApi !== recordedApi) return "custom-api";
   return null;
+}
+
+function providerCredentialConflict(
+  requested: GatewayInferenceRoute,
+  recorded: GatewayInferenceRoute,
+): boolean {
+  return nonEmptyString(requested.credentialEnv) !== nonEmptyString(recorded.credentialEnv);
 }
 
 /**
@@ -187,6 +196,7 @@ export function preflightGatewayRouteDiscovery(
           sandboxName: sandbox.name,
           reason: "provider-model" as const,
           scope: "registered" as const,
+          recordedRoute: configuredRoute(sandbox) ?? undefined,
         })),
       },
     };
@@ -197,6 +207,7 @@ export function preflightGatewayRouteDiscovery(
     provider,
     model: requestedModel ?? recorded.model,
     endpointUrl: nonEmptyString(request.route.endpointUrl) ?? reference.endpointUrl,
+    credentialEnv: nonEmptyString(request.route.credentialEnv) ?? reference.credentialEnv,
     preferredInferenceApi:
       nonEmptyString(request.route.preferredInferenceApi) ?? reference.preferredInferenceApi,
   };
@@ -270,17 +281,55 @@ export function checkGatewayRouteCompatibility(
       continue;
     }
 
+    if (
+      CUSTOM_ROUTE_PROVIDERS.has(recorded.provider) &&
+      (!canonicalEndpoint(sandbox.endpointUrl, endpointFlavor(recorded.provider)) ||
+        !normalizedInferenceApi(sandbox.preferredInferenceApi))
+    ) {
+      conflicts.push({
+        sandboxName: sandbox.name,
+        reason: "incomplete-custom-route",
+        scope: "registered",
+        recordedRoute: recorded,
+      });
+      continue;
+    }
+
+    // A provider/model-only mutation cannot safely replace provider-global
+    // endpoint, API-family, or credential identity. Compare that fingerprint
+    // first so a simultaneous model difference cannot hide a provider mutation.
+    if (recorded.provider === requested.provider) {
+      let providerIdentityConflict = false;
+      if (CUSTOM_ROUTE_PROVIDERS.has(requested.provider)) {
+        const reason = customRouteConflict(requested.provider, request.route, sandbox);
+        if (reason) {
+          conflicts.push({
+            sandboxName: sandbox.name,
+            reason,
+            scope: "registered",
+            recordedRoute: recorded,
+          });
+          providerIdentityConflict = true;
+        }
+      }
+      if (providerCredentialConflict(request.route, sandbox)) {
+        conflicts.push({
+          sandboxName: sandbox.name,
+          reason: "provider-credential",
+          scope: "registered",
+          recordedRoute: recorded,
+        });
+        providerIdentityConflict = true;
+      }
+      if (providerIdentityConflict) continue;
+    }
     if (recorded.provider !== requested.provider || recorded.model !== requested.model) {
       conflicts.push({
         sandboxName: sandbox.name,
         reason: "provider-model",
         scope: "registered",
+        recordedRoute: recorded,
       });
-      continue;
-    }
-    if (CUSTOM_ROUTE_PROVIDERS.has(requested.provider)) {
-      const reason = customRouteConflict(requested.provider, request.route, sandbox);
-      if (reason) conflicts.push({ sandboxName: sandbox.name, reason, scope: "registered" });
     }
   }
 
@@ -297,6 +346,66 @@ export function checkGatewayRouteCompatibility(
 
 function safeDisplay(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]/g, "?");
+}
+
+const ADVISORY_ROUTE_CONFLICTS = new Set<GatewayRouteConflictReason>(["provider-model"]);
+
+/**
+ * True only for provider/model differences that a route-only mutation can
+ * reconcile. Provider-global endpoint, API-family, and credential identity
+ * differences remain hard errors because they require unsafe provider mutation.
+ */
+export function isAdvisoryGatewayRouteConflict(
+  result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
+): boolean {
+  return (
+    result.conflicts.length > 0 &&
+    result.conflicts.every(
+      (conflict) => conflict.scope !== "requested" && ADVISORY_ROUTE_CONFLICTS.has(conflict.reason),
+    )
+  );
+}
+
+/**
+ * True only when a provider/model-only route mutation can safely reconcile the
+ * conflict. Provider-global endpoint, API-family, and credential changes stay
+ * fail-closed while another registered sandbox depends on the current identity.
+ */
+export function isAdvisoryProviderModelRouteConflict(
+  result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
+): boolean {
+  return (
+    result.conflicts.length > 0 &&
+    result.conflicts.every(
+      (conflict) => conflict.scope !== "requested" && conflict.reason === "provider-model",
+    )
+  );
+}
+
+/** Explain the single-gateway side effect immediately before route mutation. */
+export function formatGatewayRouteImpactWarning(
+  result: Exclude<GatewayRouteCompatibilityResult, { ok: true }>,
+): string {
+  const affected = [...result.conflicts]
+    .sort((left, right) => left.sandboxName.localeCompare(right.sandboxName))
+    .map((conflict) => {
+      const name = `'${safeDisplay(conflict.sandboxName)}'`;
+      return conflict.recordedRoute
+        ? `${name} (${safeDisplay(conflict.recordedRoute.provider)} / ${safeDisplay(conflict.recordedRoute.model)})`
+        : name;
+    })
+    .join(", ");
+  const target = result.sandboxName
+    ? `Onboarding '${safeDisplay(result.sandboxName)}'`
+    : "This onboarding run";
+  const nextRoute = `${safeDisplay(result.route.provider)} / ${safeDisplay(result.route.model)}`;
+  return (
+    `Warning: ${target} will re-point the one shared inference route on OpenShell gateway ` +
+    `'${safeDisplay(result.gatewayName)}' to ${nextRoute}. ` +
+    `Affected registered sandboxes: ${affected}. ` +
+    `They will use ${nextRoute} until the shared route is changed again. ` +
+    "OpenShell currently exposes this route per gateway, not per sandbox."
+  );
 }
 
 export function formatGatewayRouteConflict(
@@ -325,6 +434,15 @@ export function formatGatewayRouteConflict(
   const hasInvalidGatewayBinding = result.conflicts.some(
     (conflict) => conflict.reason === "invalid-gateway-binding",
   );
+  const providerIdentityDifferences = [
+    result.conflicts.some((conflict) => conflict.reason === "custom-endpoint") ? "endpoint" : null,
+    result.conflicts.some((conflict) => conflict.reason === "custom-api") ? "API family" : null,
+    result.conflicts.some((conflict) => conflict.reason === "provider-credential")
+      ? "credential identity"
+      : null,
+  ].filter((value): value is string => value !== null);
+  const requiresRegistryRepair =
+    hasIncompleteCustomRoute || hasIncompleteRoute || hasInvalidGatewayBinding;
   const detail = [
     hasIncompleteCustomRoute
       ? "At least one custom route lacks durable endpoint or API-family metadata, so compatibility cannot be proven; remove and re-onboard that sandbox with complete custom-route metadata."
@@ -334,6 +452,11 @@ export function formatGatewayRouteConflict(
       : null,
     hasInvalidGatewayBinding
       ? "At least one registry row has an invalid gateway binding, so gateway separation cannot be proven; restore its known-good gateway binding or remove and re-onboard that sandbox."
+      : null,
+    providerIdentityDifferences.length > 0
+      ? `At least one registered sandbox uses a different ${providerIdentityDifferences.join(
+          ", ",
+        )} for the same shared provider. NemoClaw will not replace provider-global configuration while that sandbox remains registered.`
       : null,
   ]
     .filter(Boolean)
@@ -348,7 +471,9 @@ export function formatGatewayRouteConflict(
     "Stopped sandboxes are included because they use the same gateway route when restarted. " +
     (requestedRouteIncomplete
       ? "Remove and re-onboard the sandbox with complete custom-route metadata."
-      : "Align the routes, remove the conflicting sandbox, or use another NEMOCLAW_GATEWAY_PORT.")
+      : requiresRegistryRepair
+        ? "Repair incomplete registry metadata, or remove and re-onboard the affected sandbox."
+        : "Align the recorded routes, or remove a conflicting sandbox that is no longer needed.")
   );
 }
 

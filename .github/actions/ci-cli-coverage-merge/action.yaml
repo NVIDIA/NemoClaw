@@ -51,7 +51,11 @@ runs:
       shell: bash
       run: |
         test -s dist/nemoclaw.js
-        npx tsx scripts/check-dist-sourcemaps.ts dist
+        dist_sourcemap_check=scripts/check-dist-sourcemaps.mts
+        if [ ! -f "$dist_sourcemap_check" ]; then
+          dist_sourcemap_check=scripts/check-dist-sourcemaps.ts
+        fi
+        npx tsx "$dist_sourcemap_check" dist
 
     - name: Download CLI shard blob reports
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -95,7 +99,11 @@ runs:
           --coverage.include="src/**/*.ts" \
           --coverage.exclude="test/**/*.js" \
           --coverage.exclude="test/**/*.ts"
-        npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"
+        coverage_ratchet=scripts/check-coverage-ratchet.mts
+        if [ ! -f "$coverage_ratchet" ]; then
+          coverage_ratchet=scripts/check-coverage-ratchet.ts
+        fi
+        npx tsx "$coverage_ratchet" coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"
 
     - name: Upload CLI coverage report
       if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}

@@ -1,17 +1,14 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Use NemoClaw Agent Prompts, Docs MCP Server, and Skills with Your AI Coding Agent"
-sidebar-title: "Prompts, MCP, and Skills"
+title: "Use NemoClaw Docs with Your Coding Agents"
+sidebar-title: "Use Docs with Agents"
 description: "NemoClaw exposes an MCP docs server and Markdown documentation that AI coding agents can use when they help you install, configure, or operate a sandbox."
 description-agent: "Guides users and their AI coding agents to the NemoClaw docs MCP server, canonical Markdown documentation, llms.txt index, and optional docs-routing skill. Use when users ask about AI agent support, Markdown docs, MCP docs server, agent skills, Cursor, Claude Code, Codex, or Copilot."
 keywords: ["nemoclaw ai agent docs", "nemoclaw mcp docs", "nemoclaw markdown docs", "llms.txt", "cursor", "claude code", "copilot"]
 content:
   type: "how_to"
 ---
-import { StarterPromptButton } from "../_components/StarterPromptButton";
-import { StarterPromptFallback } from "../_components/StarterPrompt";
-
 NemoClaw publishes an MCP docs server and Markdown versions of its Fern documentation for AI coding agents.
 Your agent can search or fetch the same canonical pages that appear on the docs site and apply that guidance to your local setup.
 
@@ -21,11 +18,10 @@ Use this page when you want your agent to help with installation, inference conf
 
 The fastest path is to copy the starter prompt from the NemoClaw home page and paste it into your local coding agent.
 The prompt tells the agent to use NemoClaw skills when available, bootstrap the docs-routing skill when missing, use the Markdown docs, ask one question at a time, run commands only with permission, and use the checked-in local credential helper and form after you approve the exact command that will receive the credentials.
-NemoClaw keeps the prompt text in a shared docs source so the copy button and manual fallback render the same content.
+NemoClaw keeps the prompt text in [`docs/resources/starter-prompt.md`](https://github.com/NVIDIA/NemoClaw/blob/main/docs/resources/starter-prompt.md) so the copy button always uses the canonical Markdown source.
+Downstream integrations can pin that repository path to a commit SHA instead of copying and maintaining a separate prompt.
 
-<StarterPromptButton />
-
-<StarterPromptFallback />
+<Markdown src="/../docs/_build/StarterPrompt.generated.mdx" />
 
 ## Configure the Docs MCP Server
 

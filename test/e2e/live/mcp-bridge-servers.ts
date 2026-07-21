@@ -59,6 +59,7 @@ const MCP_NOTIFICATION_METHODS = new Set([
 const TRYCLOUDFLARE_ORIGIN_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com(?=$|[\s"'\\/])/i;
 const QUICK_TUNNEL_ATTEMPTS = 3;
 const QUICK_TUNNEL_ATTEMPT_TIMEOUT_MS = 45_000;
+const QUICK_TUNNEL_CONSECUTIVE_READY_PROBES = 3;
 const QUICK_TUNNEL_DISCOVERY_CARRY_LIMIT = 512;
 const OMITTED_CLOUDFLARED_OUTPUT_DIAGNOSTIC = "cloudflared child output omitted from diagnostics";
 const CLOUDFLARED_ENV_NAMES = new Set([
@@ -225,6 +226,7 @@ export async function startPublicMcpHttpsTunnel(options: {
 
   for (let attempt = 1; attempt <= QUICK_TUNNEL_ATTEMPTS; attempt += 1) {
     let origin: string | null = null;
+    let consecutiveReadyProbes = 0;
     let childOutputSeen = false;
     let spawnError: Error | undefined;
     const inspectOutputForOrigin = (): ((chunk: string) => void) => {
@@ -269,15 +271,23 @@ export async function startPublicMcpHttpsTunnel(options: {
       if (origin) {
         const probe = await probePublicTunnel(origin);
         if (probe.ready) {
-          const tunnel = {
-            origin,
-            url: `${origin}/mcp`,
-            close,
-          };
-          options.cleanup.add(`stop ${options.label} cloudflared quick tunnel`, tunnel.close);
-          return tunnel;
+          consecutiveReadyProbes += 1;
+          if (consecutiveReadyProbes >= QUICK_TUNNEL_CONSECUTIVE_READY_PROBES) {
+            const tunnel = {
+              origin,
+              url: `${origin}/mcp`,
+              close,
+            };
+            options.cleanup.add(`stop ${options.label} cloudflared quick tunnel`, tunnel.close);
+            return tunnel;
+          }
+          lastFailure =
+            `cloudflared quick tunnel passed ${consecutiveReadyProbes}/` +
+            `${QUICK_TUNNEL_CONSECUTIVE_READY_PROBES} consecutive readiness probes`;
+        } else {
+          consecutiveReadyProbes = 0;
+          lastFailure = `cloudflared published a quick-tunnel URL but ${probe.diagnostic}`;
         }
-        lastFailure = `cloudflared published a quick-tunnel URL but ${probe.diagnostic}`;
       }
       await delay(500);
     }

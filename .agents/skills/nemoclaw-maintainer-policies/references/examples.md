@@ -471,6 +471,8 @@ Anti-examples:
 - Do not treat `v0.0.8` as a readiness claim.
 - Do not move stragglers before the semver tag and workflow-managed `latest` are verified.
 - Do not leave an open straggler on the released label after authorized post-tag housekeeping succeeds.
+- Do not keep a released label after open stragglers move forward.
+- Do not rename or reuse a released label for a future version.
 - Do not bulk-edit daily version labels outside the named release automation or another explicit authorization context.
 
 ## Agent-Owned Label Examples

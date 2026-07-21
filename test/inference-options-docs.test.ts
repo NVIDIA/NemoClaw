@@ -25,7 +25,7 @@ const { probeOpenAiLikeEndpoint } = require("../src/lib/inference/onboard-probes
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const chooseModelPath = path.join(repoRoot, "docs", "inference", "choose-model.mdx");
 const hermesProviderPath = path.join(repoRoot, "docs", "inference", "use-hermes-provider.mdx");
-const releaseNotesPath = path.join(repoRoot, "docs", "about", "release-notes.mdx");
+const releaseNotesPath = path.join(repoRoot, "docs", "changelog", "2026-07-09.mdx");
 const inferenceDocsDir = path.join(repoRoot, "docs", "inference");
 const docsNavPath = path.join(repoRoot, "docs", "index.yml");
 const fernDocsPath = path.join(repoRoot, "fern", "docs.yml");
@@ -226,10 +226,8 @@ describe("inference setup navigation", () => {
   it("routes the latest local and compatible inference release note through the shared chooser", () => {
     const markdown = fs.readFileSync(releaseNotesPath, "utf8");
     const releaseStart = markdown.indexOf("## v0.0.79");
-    const releaseEnd = markdown.indexOf("## v0.0.78", releaseStart);
     expect(releaseStart).toBeGreaterThanOrEqual(0);
-    expect(releaseEnd).toBeGreaterThan(releaseStart);
-    const release = markdown.slice(releaseStart, releaseEnd);
+    const release = markdown.slice(releaseStart);
     const bulletStart = release.indexOf("- Local and compatible inference setup");
     const bulletEnd = release.indexOf("\n- ", bulletStart + 1);
     expect(bulletStart).toBeGreaterThanOrEqual(0);
@@ -237,9 +235,9 @@ describe("inference setup navigation", () => {
     const bullet = release.slice(bulletStart, bulletEnd);
 
     expect(bullet).toContain(
-      "[Choose a Local Inference Server](../inference/local-inference/choose-local-inference-server)",
+      "[Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server)",
     );
-    expect(bullet).not.toContain("../inference/local-inference/set-up-ollama");
+    expect(bullet).not.toContain("/inference/local-inference/set-up-ollama");
   });
 
   it("routes local options to focused setup pages", () => {
@@ -294,9 +292,14 @@ describe("inference setup navigation", () => {
     const markdown = fs.readFileSync(vllmSetupPath, "utf8");
     const entries = [
       {
-        prefix: "- DGX Spark and DGX Station",
+        prefix: "- DGX Spark and DGX Station models without a model-specific runtime",
         image: VLLM_IMAGES.ngc2605Post1.arm64,
         tag: VLLM_IMAGES.ngc2605Post1.tag,
+      },
+      {
+        prefix: "- The DGX Station Nemotron 3 Ultra express recipe",
+        image: VLLM_IMAGES.vllm022.arm64,
+        tag: VLLM_IMAGES.vllm022.tag,
       },
       {
         prefix: "- Generic Linux `arm64` hosts",
@@ -317,6 +320,16 @@ describe("inference setup navigation", () => {
       expect(line).toContain(`\`${(image.downloadSizeBytes / 1_000_000_000).toFixed(2)} GB\``);
       expect(line).toContain(`\`${tag}\``);
     }
+  });
+
+  it("documents the canonical Station Ultra recipe and DeepSeek demo override", () => {
+    const markdown = fs.readFileSync(vllmSetupPath, "utf8");
+
+    expect(markdown).toContain("--station-deepseek");
+    expect(markdown).toContain("memory/stack ulimits");
+    expect(markdown).toContain("MTP speculative decoding");
+    expect(markdown).toContain("model-cache storage is insufficient");
+    expect(markdown).toContain("not retained by the long-lived vLLM container");
   });
 
   it("keeps tool-calling remediation canonical in troubleshooting", () => {
@@ -351,8 +364,8 @@ describe("inference setup navigation", () => {
 
   it("scopes post-ready sandbox route verification to local inference providers", () => {
     const markdown = fs.readFileSync(verifyInferenceRoutePath, "utf8");
-    const start = markdown.indexOf("## Understand Post-Ready Checks");
-    const end = markdown.indexOf("## Send a Short Agent Request", start);
+    const start = markdown.indexOf("## Understand Local Provider Post-Ready Checks");
+    const end = markdown.indexOf("## Understand Final Route Checks", start);
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     const section = markdown.slice(start, end);
@@ -365,8 +378,23 @@ describe("inference setup navigation", () => {
     );
     expect(getSandboxRuntimeInferenceEndpoint("nvidia-nim")).toBeNull();
     expect(getSandboxRuntimeInferenceEndpoint("compatible-endpoint")).toBeNull();
-    expect(section).toContain("For local Ollama and vLLM");
+    expect(section).toContain(
+      "For local Ollama and vLLM on Docker GPU sandboxes using the compatibility route",
+    );
     expect(section).toContain("NVIDIA NIM and other compatible endpoints");
+  });
+
+  it("documents universal final route verification separately from local warmup", () => {
+    const markdown = fs.readFileSync(verifyInferenceRoutePath, "utf8");
+    const start = markdown.indexOf("## Understand Final Route Checks");
+    const end = markdown.indexOf("## Send a Short Agent Request", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const section = markdown.slice(start, end);
+
+    expect(section).toContain("`https://inference.local/v1/models`");
+    expect(section).toContain("retryable at final verification");
+    expect(section).toContain("Provider setup still performs its own");
   });
 
   it("explains the host-side validation limit of the containerized gateway alias", () => {

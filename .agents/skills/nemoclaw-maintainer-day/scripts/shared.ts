@@ -104,6 +104,10 @@ export interface StatusCheck {
   __typename?: string;
   name?: string; // CheckRun field
   context?: string; // StatusContext field
+  workflowName?: string; // CheckRun workflow identity
+  startedAt?: string; // CheckRun/StatusContext RFC3339 timestamp
+  completedAt?: string; // CheckRun RFC3339 timestamp
+  detailsUrl?: string; // CheckRun workflow-run identity when Actions produced it
   status?: string; // CheckRun: COMPLETED, IN_PROGRESS, QUEUED, etc.
   conclusion?: string; // CheckRun: SUCCESS, FAILURE, NEUTRAL, SKIPPED, etc.
   state?: string; // StatusContext: SUCCESS, FAILURE, PENDING, ERROR

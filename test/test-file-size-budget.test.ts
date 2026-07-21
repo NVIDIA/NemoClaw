@@ -8,7 +8,7 @@ import {
   evaluateTestFileSizeBudget,
   formatViolations,
   parseBudget,
-} from "../scripts/check-test-file-size-budget";
+} from "../scripts/check-test-file-size-budget.mts";
 
 describe("test file size budget", () => {
   it("counts trailing-newline and non-trailing-newline files consistently", () => {

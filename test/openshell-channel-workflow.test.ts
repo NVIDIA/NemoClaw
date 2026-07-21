@@ -63,8 +63,8 @@ function runLaunchableDevGate() {
 describe("OpenShell channel workflow boundary", () => {
   it.each([
     { channel: "dev", expected: "dev" },
-    { channel: "stable", expected: "v0.0.72" },
-    { channel: "auto", expected: "v0.0.72" },
+    { channel: "stable", expected: "v0.0.85" },
+    { channel: "auto", expected: "v0.0.85" },
     { channel: "dev", explicit: "v9.9.9", expected: "v9.9.9" },
   ])("resolves launchable channel $channel to $expected", ({ channel, explicit, expected }) => {
     const result = resolveLaunchableVersion({ channel, explicit });

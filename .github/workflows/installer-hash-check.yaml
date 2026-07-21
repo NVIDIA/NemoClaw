@@ -11,9 +11,16 @@
 
 name: Security / Installer Hash Check
 
+run-name: >-
+  ${{ github.event_name == 'pull_request' &&
+  format('Installer Hash PR #{0} head {1} base {2} gate true',
+  github.event.pull_request.number, github.event.pull_request.head.sha,
+  github.event.pull_request.base.sha) ||
+  format('Installer Hash {0} {1}', github.event_name, github.sha) }}
+
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
   schedule:

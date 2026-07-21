@@ -5,8 +5,8 @@
  *
  * Preserves the real-system boundaries: two NemoClaw onboards on one
  * host, per-port OpenShell Docker-driver gateways, dashboard forward
- * allocation, `nemoclaw list`, OpenShell sandbox discovery, host socket probes,
- * and destroy/health cleanup.
+ * allocation, port-scoped `nemoclaw list`, OpenShell sandbox discovery, host
+ * socket probes, and selected-instance uninstall/health cleanup.
  */
 
 import fs from "node:fs";
@@ -184,6 +184,20 @@ async function expectPortListening(
   return result;
 }
 
+async function expectPortNotListening(
+  host: HostCliClient,
+  port: string,
+  artifactName: string,
+): Promise<ShellProbeResult> {
+  const result = await host.command("bash", ["-lc", `! ss -ltn | grep -Eq '[:.]${port}\\b'`], {
+    artifactName,
+    env: commandEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(result.exitCode, resultText(result)).toBe(0);
+  return result;
+}
+
 async function prerequisiteOrSkip(
   host: HostCliClient,
   skip: (message: string) => never,
@@ -315,8 +329,12 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
 
   const gatewayA = gatewayNameForPort(GATEWAY_PORT_A);
   const gatewayB = gatewayNameForPort(GATEWAY_PORT_B);
+  // OpenShell reaches this fixture from its gateway network namespace, where
+  // the runner's loopback address is not routable.
   const fake = await startFakeOpenAiCompatibleServer({
+    host: "0.0.0.0",
     port: Number(process.env.NEMOCLAW_E2E_FAKE_PORT ?? 0),
+    publicHost: "host.openshell.internal",
   });
   await artifacts.target.declare({
     id: "concurrent-gateway-ports",
@@ -325,7 +343,8 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
       "sandbox A onboards on the default NemoClaw gateway and dashboard port",
       "sandbox B onboards with NEMOCLAW_GATEWAY_PORT on a non-default gateway",
       "both sandboxes, gateways, and dashboard forwards coexist without port collision",
-      "destroying sandbox B leaves sandbox A healthy on the default gateway",
+      "each port-scoped registry lists only the sandbox owned by that gateway",
+      "uninstalling gateway B removes only its scoped state and leaves gateway A plus the shared CLI healthy",
     ],
     gatewayA,
     gatewayB,
@@ -382,6 +401,7 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
 
   const listAfterA = await command(host, ["list"], {
     artifactName: "phase-1-nemoclaw-list-after-a",
+    env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A }),
     timeoutMs: 60_000,
   });
   expect(listAfterA.exitCode, resultText(listAfterA)).toBe(0);
@@ -415,34 +435,65 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
   await expectPortListening(host, GATEWAY_PORT_A, "phase-3-gateway-port-a-still-listening");
   await expectPortListening(host, GATEWAY_PORT_B, "phase-3-gateway-port-b-listening");
 
-  const listBoth = await command(host, ["list"], {
-    artifactName: "phase-3-nemoclaw-list-both-sandboxes",
+  const listGatewayA = await command(host, ["list"], {
+    artifactName: "phase-3-nemoclaw-list-gateway-a",
+    env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A }),
     timeoutMs: 60_000,
   });
-  expect(listBoth.exitCode, resultText(listBoth)).toBe(0);
-  expect(outputIncludesSandbox(listBoth.stdout, SANDBOX_A), listBoth.stdout).toBe(true);
-  expect(outputIncludesSandbox(listBoth.stdout, SANDBOX_B), listBoth.stdout).toBe(true);
-  const dashboardAAfterB = dashboardPortFromList(listBoth.stdout, SANDBOX_A);
-  const dashboardB = dashboardPortFromList(listBoth.stdout, SANDBOX_B);
-  expect(dashboardAAfterB, listBoth.stdout).toBe(dashboardA);
-  expect(dashboardB, listBoth.stdout).toBeTruthy();
+  expect(listGatewayA.exitCode, resultText(listGatewayA)).toBe(0);
+  expect(outputIncludesSandbox(listGatewayA.stdout, SANDBOX_A), listGatewayA.stdout).toBe(true);
+  expect(outputIncludesSandbox(listGatewayA.stdout, SANDBOX_B), listGatewayA.stdout).toBe(false);
+
+  const listGatewayB = await command(host, ["list"], {
+    artifactName: "phase-3-nemoclaw-list-gateway-b",
+    env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
+    timeoutMs: 60_000,
+  });
+  expect(listGatewayB.exitCode, resultText(listGatewayB)).toBe(0);
+  expect(outputIncludesSandbox(listGatewayB.stdout, SANDBOX_B), listGatewayB.stdout).toBe(true);
+  expect(outputIncludesSandbox(listGatewayB.stdout, SANDBOX_A), listGatewayB.stdout).toBe(false);
+
+  const dashboardAAfterB = dashboardPortFromList(listGatewayA.stdout, SANDBOX_A);
+  const dashboardB = dashboardPortFromList(listGatewayB.stdout, SANDBOX_B);
+  expect(dashboardAAfterB, listGatewayA.stdout).toBe(dashboardA);
+  expect(dashboardB, listGatewayB.stdout).toBeTruthy();
   expect(dashboardB).not.toBe(dashboardA);
 
-  const destroyB = await command(host, [SANDBOX_B, "destroy", "--yes"], {
-    artifactName: "phase-4-destroy-sandbox-b",
+  const uninstallB = await command(host, ["uninstall", "--yes", "--destroy-user-data"], {
+    artifactName: "phase-4-uninstall-gateway-b",
     env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),
     timeoutMs: 5 * 60_000,
   });
-  expect(destroyB.exitCode, resultText(destroyB)).toBe(0);
+  expect(uninstallB.exitCode, resultText(uninstallB)).toBe(0);
 
-  const phaseAAfterDestroyB = await waitForSandboxReady(
+  const phaseAAfterUninstallB = await waitForSandboxReady(
     sandbox,
     SANDBOX_A,
     gatewayA,
-    "phase-4-sandbox-a-still-ready-after-b-destroy",
+    "phase-4-sandbox-a-still-ready-after-b-uninstall",
   );
-  expect(["Ready", "Running"]).toContain(phaseAAfterDestroyB);
+  expect(["Ready", "Running"]).toContain(phaseAAfterUninstallB);
   await expectPortListening(host, GATEWAY_PORT_A, "phase-4-gateway-port-a-still-listening");
+  await expectPortNotListening(host, GATEWAY_PORT_B, "phase-4-gateway-port-b-stopped");
+
+  const listAAfterUninstallB = await command(host, ["list"], {
+    artifactName: "phase-4-nemoclaw-list-a-after-b-uninstall",
+    env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_A }),
+    timeoutMs: 60_000,
+  });
+  expect(listAAfterUninstallB.exitCode, resultText(listAAfterUninstallB)).toBe(0);
+  expect(outputIncludesSandbox(listAAfterUninstallB.stdout, SANDBOX_A)).toBe(true);
+
+  const scopedStateRemoved = await host.command(
+    "bash",
+    ["-lc", `test ! -e "$HOME/.nemoclaw/gateways/${GATEWAY_PORT_B}"`],
+    {
+      artifactName: "phase-4-gateway-b-state-removed",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(scopedStateRemoved.exitCode, resultText(scopedStateRemoved)).toBe(0);
 
   await artifacts.target.complete({
     id: "concurrent-gateway-ports",
@@ -451,8 +502,15 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
       sandboxBOnboarded: onboardB.exitCode === 0,
       sandboxAPreserved: ["Ready", "Running"].includes(phaseAAfterB),
       sandboxBReady: ["Ready", "Running"].includes(phaseBAfterB),
+      registryScopesIsolated:
+        outputIncludesSandbox(listGatewayA.stdout, SANDBOX_A) &&
+        !outputIncludesSandbox(listGatewayA.stdout, SANDBOX_B) &&
+        outputIncludesSandbox(listGatewayB.stdout, SANDBOX_B) &&
+        !outputIncludesSandbox(listGatewayB.stdout, SANDBOX_A),
       dashboardPortsDistinct: Boolean(dashboardA && dashboardB && dashboardA !== dashboardB),
-      sandboxAPreservedAfterDestroyB: ["Ready", "Running"].includes(phaseAAfterDestroyB),
+      gatewayBUninstalled: uninstallB.exitCode === 0 && scopedStateRemoved.exitCode === 0,
+      sandboxAPreservedAfterUninstallB: ["Ready", "Running"].includes(phaseAAfterUninstallB),
+      sharedCliPreserved: listAAfterUninstallB.exitCode === 0,
     },
   });
 });

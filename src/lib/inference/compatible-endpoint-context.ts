@@ -4,11 +4,12 @@
 import { createOpenAiLikeAuthConfig } from "../adapters/http/auth-config";
 import { runCurlProbe } from "../adapters/http/probe";
 import { getCredential } from "../credentials/store";
-import { isLoopbackHostname, isPrivateHostname } from "../private-networks";
 import {
   assertEndpointResolvesPublic,
   buildResolvePinArgs,
   type EndpointDnsLookupFn,
+  parseTrustedPrivateInferenceHosts,
+  type TrustedPrivateEndpointCapability,
 } from "./endpoint-ssrf-preflight";
 import {
   hasExplicitContextWindow,
@@ -36,29 +37,6 @@ function isHostProbeableEndpoint(endpointUrl: string): boolean {
   }
 }
 
-// SSRF source boundary: true when the endpoint host is a private/internal
-// address (and not one of the allowed sandbox-internal aliases, which are
-// screened separately by isHostProbeableEndpoint). Reuses the shared
-// isPrivateHostname validator so the /v1/models context probe never issues a
-// host-side GET to an attacker-reachable private address.
-//
-// Loopback (127.0.0.0/8, ::1, localhost) is exempt, mirroring the same
-// exemption in probeOpenAiLikeEndpoint: a locally-run vLLM/Ollama custom
-// endpoint is reached host-side on loopback, and loopback only targets the
-// probing host itself, not a pivot to other internal infrastructure. Without
-// this the two probes disagreed — the chat-completions validation probe
-// allowed the localhost endpoint but this context probe skipped it, so a
-// localhost vLLM never propagated its max_model_len (#6177). See PR #6293
-// PRA-5 / PRA-19.
-function isPrivateEndpoint(endpointUrl: string): boolean {
-  try {
-    const { hostname } = new URL(endpointUrl);
-    return isPrivateHostname(hostname) && !isLoopbackHostname(hostname);
-  } catch {
-    return false;
-  }
-}
-
 /** Injectable `/v1/models` fetcher; returns parsed JSON, or null when unavailable. */
 export type CompatibleEndpointModelsFetcher = (
   endpointUrl: string,
@@ -69,6 +47,8 @@ export type CompatibleEndpointModelsFetcher = (
    * fakes can ignore it.
    */
   pinnedAddresses?: string[],
+  /** Non-forgeable proof of the exact private subset admitted by the SSRF preflight. */
+  trustedPrivateCapability?: TrustedPrivateEndpointCapability,
 ) => unknown | null;
 
 export interface ApplyCompatibleEndpointContextWindowOptions {
@@ -84,9 +64,8 @@ export interface ApplyCompatibleEndpointContextWindowOptions {
   resolveCredential?: (credentialEnv: string) => string | null | undefined;
   /**
    * Injectable DNS resolver for the SSRF preflight run before the host-side
-   * `/v1/models` curl. When omitted under the unit-test runner the DNS
-   * preflight is skipped (the string-level private check still applies);
-   * production uses the real `dns/promises` resolver.
+   * `/v1/models` curl. Production uses the real `dns/promises` resolver;
+   * tests inject deterministic results.
    */
   resolveHost?: EndpointDnsLookupFn;
 }
@@ -104,18 +83,16 @@ export interface ApplyCompatibleEndpointContextWindowOptions {
  * reached — so it adds no egress surface beyond that validation. The credential
  * travels in a curl `--config` temp file (0600), never on the argv.
  *
- * SSRF: private/internal endpoints are rejected by the caller
- * (`applyCompatibleEndpointContextWindow`) at the source boundary, before this
- * fetch runs, using the shared `isPrivateHostname` validator — the same guard
- * `probeOpenAiLikeEndpoint` applies. A self-hosted vLLM is reached through the
- * sandbox-internal alias (`host.openshell.internal`), which is skipped
- * separately, not via a raw private-LAN URL. This fetcher therefore only ever
- * sees an already-validated, routable endpoint URL.
+ * SSRF: the caller runs the shared endpoint preflight before this fetch.
+ * Public destinations are pinned as before; an operator-trusted private
+ * destination also carries the exact private-address capability required by
+ * the curl validator. Sandbox-internal aliases remain skipped separately.
  */
 export function fetchCompatibleEndpointModels(
   endpointUrl: string,
   apiKey: string,
   pinnedAddresses?: string[],
+  trustedPrivateCapability?: TrustedPrivateEndpointCapability,
 ): unknown | null {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
   const authConfig = createOpenAiLikeAuthConfig(apiKey || "");
@@ -131,7 +108,11 @@ export function fetchCompatibleEndpointModels(
         ...authConfig.args,
         `${baseUrl}/models`,
       ],
-      { trustedConfigFiles: authConfig.trustedConfigFiles, pinnedAddresses },
+      {
+        trustedConfigFiles: authConfig.trustedConfigFiles,
+        pinnedAddresses,
+        trustedPrivateCapability,
+      },
     );
     if (!result.ok || !result.body) return null;
     try {
@@ -255,31 +236,20 @@ export async function applyCompatibleEndpointContextWindow(
     return;
   }
 
-  // SSRF source boundary: refuse to probe /v1/models on a private/internal
-  // endpoint. This path issues its own host-side GET independent of the
-  // chat-completions validation probe, so it must screen the URL itself with
-  // the shared isPrivateHostname validator (defense-in-depth alongside the
-  // DNS-pinning config-write boundary). See PR #6293 PRA-1/PRA-3.
-  if (isPrivateEndpoint(endpointUrl)) {
-    logger.warn(
-      "  ⚠ Endpoint host is a private/internal address; skipping the /v1/models " +
-        "context probe. Use a routable public URL to auto-detect the context window.",
-    );
-    clearPreviousAuto();
-    return;
-  }
-
   const fetchModels = options.fetchModels;
 
-  // DNS-backed SSRF: the string-level isPrivateEndpoint check above only sees
-  // literal IPs and reserved names. This host-side GET is its own curl boundary
-  // (independent of the chat-completions validation probe), so always run the
-  // resolver preflight — a public-looking name that resolves to loopback/
-  // link-local/RFC1918 is refused before the fetch. It defaults to the real
-  // dns/promises resolver (assertEndpointResolvesPublic); tests inject
+  // DNS-backed SSRF: this host-side GET is its own curl boundary (independent
+  // of the chat-completions validation probe), so always run the resolver
+  // preflight. A public-looking name that resolves to loopback/link-local or
+  // untrusted RFC1918 space is refused before the fetch. It defaults to the
+  // real dns/promises resolver (assertEndpointResolvesPublic); tests inject
   // options.resolveHost. No env-gated bypass: an ambient VITEST flag must never
   // disable SSRF enforcement (cv review, PR #6293).
-  const preflight = await assertEndpointResolvesPublic(endpointUrl, options.resolveHost);
+  const preflight = await assertEndpointResolvesPublic(endpointUrl, options.resolveHost, {
+    trustedPrivateHosts: parseTrustedPrivateInferenceHosts(
+      env.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS,
+    ),
+  });
   if (!preflight.ok) {
     logger.warn(
       `  ⚠ ${preflight.reason}; skipping the /v1/models context probe. ` +
@@ -296,11 +266,10 @@ export async function applyCompatibleEndpointContextWindow(
   // Pin the /v1/models fetch to the address(es) the preflight just validated so
   // a second DNS lookup in the fetch curl cannot rebind the host to a private
   // address after the public preflight passed (TOCTOU — cv review, #6293).
-  const models = (fetchModels ?? fetchCompatibleEndpointModels)(
-    endpointUrl,
-    apiKey,
-    preflight.addresses,
-  );
+  const modelsFetcher = fetchModels ?? fetchCompatibleEndpointModels;
+  const models = preflight.trustedPrivateCapability
+    ? modelsFetcher(endpointUrl, apiKey, preflight.addresses, preflight.trustedPrivateCapability)
+    : modelsFetcher(endpointUrl, apiKey, preflight.addresses);
   if (models === null || models === undefined) {
     logger.warn(
       "  ⚠ Could not read the endpoint's /v1/models max_model_len; using the default context " +

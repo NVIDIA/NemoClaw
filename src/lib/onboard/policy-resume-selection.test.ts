@@ -87,6 +87,69 @@ describe("preparePolicyPresetResumeSelection web search reconciliation", () => {
   });
 });
 
+describe("preparePolicyPresetResumeSelection tier-default preservation (#6844)", () => {
+  // These exercise the real tiers.yaml through classifyPresetProvenance (no tier
+  // stub): `brave` is a Balanced default, and Restricted lists no such default.
+
+  it("preserves brave on reuse when it is a Balanced-tier default and web search is off", () => {
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm", "brave"],
+      agent: "openclaw",
+      webSearchConfig: null,
+      webSearchSupported: true,
+      tierName: "balanced",
+    });
+
+    // brave is a Balanced default (an egress preset), not a stale web-search
+    // leftover — it must survive reuse just like npm, and no reconcile is needed.
+    expect(result.policyPresets).toEqual(["npm", "brave"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(false);
+  });
+
+  it("still prunes a stale brave on the Restricted tier (no brave default)", () => {
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm", "brave"],
+      agent: "openclaw",
+      webSearchConfig: null,
+      webSearchSupported: true,
+      tierName: "restricted",
+    });
+
+    expect(result.policyPresets).toEqual(["npm"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+
+  it("keeps brave on Balanced even when web search is set to a different provider", () => {
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm", "brave"],
+      agent: "openclaw",
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      webSearchConfigChanged: true,
+      webSearchSupported: true,
+      tierName: "balanced",
+    });
+
+    // brave stays as the tier egress default; tavily is added as the active provider.
+    expect(result.policyPresets).toEqual(["npm", "brave", "tavily"]);
+  });
+
+  it("still prunes tavily on Balanced when it is not a tier default and web search is off", () => {
+    // Boundary: the exemption is scoped to real tier defaults. tavily is NOT a
+    // Balanced default (brave is), so a leftover tavily with no matching provider
+    // is still a stale web-search preset and must be pruned.
+    const result = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {
+      recordedPolicyPresets: ["npm", "tavily"],
+      agent: "openclaw",
+      webSearchConfig: null,
+      webSearchSupported: true,
+      tierName: "balanced",
+    });
+
+    expect(result.policyPresets).toEqual(["npm"]);
+    expect(result.recordedPolicyPresetsNeedReconcile).toBe(true);
+  });
+});
+
 describe("preparePolicyPresetResumeSelection observability reconciliation", () => {
   it("adds the local OTLP preset only while Deep Agents Code observability is enabled", () => {
     const enabled = preparePolicyPresetResumeSelection({ policies: policies() }, "alpha", {

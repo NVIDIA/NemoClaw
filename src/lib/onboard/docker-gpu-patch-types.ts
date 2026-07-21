@@ -94,12 +94,19 @@ export type DockerGpuPatchResult = {
   backupRemoved: boolean;
 };
 
+export type DockerUlimit = {
+  name: string;
+  soft: number;
+  hard: number;
+};
+
 export type DockerGpuCloneRunOptions = {
   image?: string | null;
   networkMode?: string | null;
   openshellEndpoint?: string | null;
   sandboxFallbackDns?: string | null;
   openshellSandboxCommand?: readonly string[] | null;
+  requiredUlimits?: readonly DockerUlimit[] | null;
   /**
    * Extra supplementary group IDs to add to the recreated container via
    * `--group-add`. On Jetson these are the host group(s) owning the Tegra GPU
@@ -181,6 +188,25 @@ export type DockerContainerInspect = {
   } | null;
   HostConfig?: {
     Binds?: string[] | null;
+    Mounts?: Array<{
+      Type?: string;
+      Source?: string;
+      Target?: string;
+      ReadOnly?: boolean;
+      Consistency?: string;
+      BindOptions?: unknown;
+      VolumeOptions?: {
+        NoCopy?: boolean;
+        Labels?: Record<string, string> | null;
+        Subpath?: string;
+        DriverConfig?: unknown;
+      } | null;
+      TmpfsOptions?: {
+        SizeBytes?: number;
+        Mode?: number;
+        Options?: string[][] | null;
+      } | null;
+    }> | null;
     NetworkMode?: string;
     RestartPolicy?: { Name?: string; MaximumRetryCount?: number } | null;
     CapAdd?: string[] | null;
@@ -201,6 +227,11 @@ export type DockerContainerInspect = {
     IpcMode?: string;
     PidMode?: string;
     GroupAdd?: string[] | null;
+    Ulimits?: Array<{
+      Name?: string;
+      Soft?: number;
+      Hard?: number;
+    }> | null;
     Dns?: string[] | null;
     DnsSearch?: string[] | null;
     DeviceRequests?: Array<{

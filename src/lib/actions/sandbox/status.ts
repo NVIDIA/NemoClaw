@@ -43,6 +43,7 @@ export {
   resolveSandboxStatusDcodeAutoApprovalMode,
   type SandboxStatusReport,
   type SandboxStatusSnapshot,
+  type ServingProcessHealth,
 } from "./status-snapshot";
 
 function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): void {
@@ -81,6 +82,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
+    servingProcessHealth,
   } = snapshot;
   // Resolve the docker-driver container once: reused for the paused-container
   // recovery hint (#4495) and the Docker health line below (#3975).
@@ -109,6 +111,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     routeDrift,
     inferenceHealth,
     terminalRuntimeHealth,
+    servingProcessHealth,
     statusAgent,
   };
   const textOutcome = printSandboxDetails(textContext);

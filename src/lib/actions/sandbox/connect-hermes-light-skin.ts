@@ -42,14 +42,12 @@ function writeHermesLightSkinFile(sandboxName: string): boolean {
     'mv -f "$tmp" "$skin_dir/nemoclaw-light.yaml"',
     'chown sandbox:sandbox "$skin_dir/nemoclaw-light.yaml" 2>/dev/null || true',
   ].join("\n");
-  const result = runOpenshell(
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
-    {
-      ignoreError: true,
-      stdio: "ignore",
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    },
-  );
+  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "sh", "-s"], {
+    ignoreError: true,
+    input: script,
+    stdio: ["pipe", "ignore", "ignore"],
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
   if (result.status === 0 && !result.error && !result.signal) return true;
   warnHermesLightSkinFailure("write", result.error ?? `exit ${result.status ?? result.signal}`);
   return false;
@@ -62,14 +60,12 @@ function removeHermesLightSkinFile(sandboxName: string): boolean {
     'skin_dir="$hermes_home/skins"',
     'rm -f "$skin_dir/nemoclaw-light.yaml"',
   ].join("\n");
-  const result = runOpenshell(
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
-    {
-      ignoreError: true,
-      stdio: "ignore",
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    },
-  );
+  const result = runOpenshell(["sandbox", "exec", "--name", sandboxName, "--", "sh", "-s"], {
+    ignoreError: true,
+    input: script,
+    stdio: ["pipe", "ignore", "ignore"],
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
   if (result.status === 0 && !result.error && !result.signal) return true;
   warnHermesLightSkinFailure("remove", result.error ?? `exit ${result.status ?? result.signal}`);
   return false;

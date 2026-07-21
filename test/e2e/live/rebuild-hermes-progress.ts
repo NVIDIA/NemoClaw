@@ -4,8 +4,14 @@
 import fs from "node:fs";
 import os from "node:os";
 
+import {
+  appendResourcePhaseBaseline,
+  collectResourceSnapshot,
+} from "../../../tools/e2e/runner-pressure.mts";
+import { renderSnapshotLine } from "../../../tools/e2e/runner-pressure-core.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeOutputEvent } from "../fixtures/shell-probe.ts";
+import type { RebuildHermesTimeline, RebuildHermesTimingPhase } from "./rebuild-hermes-timing.ts";
 
 interface RebuildHermesResourceSnapshot {
   freeMemoryBytes: number;
@@ -26,12 +32,15 @@ export interface RebuildHermesProgressOptions {
   clearTimer?: (timer: TimerHandle) => void;
   logLine?: (line: string) => void;
   sampleResources?: () => RebuildHermesResourceSnapshot;
+  sampleResourceEvidence?: (phase: string) => string;
+  recordResourceBaseline?: (phase: string) => void;
 }
 
 export interface RebuildHermesProgress {
   onOutput: (event: ShellProbeOutputEvent) => void;
   phase: (label: string) => void;
   stop: () => void;
+  timeline: () => RebuildHermesTimeline;
 }
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 60_000;
@@ -65,6 +74,14 @@ function formatResources(sampleResources: () => RebuildHermesResourceSnapshot): 
   }
 }
 
+function resourcePhaseLabel(label: string): string {
+  const suffix = label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-|-$/gu, "");
+  return `rebuild-hermes.${suffix}`;
+}
+
 /**
  * Keep the long Hermes scenario visible without forwarding command output,
  * which may contain credentials. The timestamp-only output observer records
@@ -80,10 +97,35 @@ export function startRebuildHermesProgress(
   const clearTimer = options.clearTimer ?? ((timer) => clearInterval(timer as NodeJS.Timeout));
   const logLine = options.logLine ?? ((line) => process.stdout.write(`${line}\n`));
   const sampleResources = options.sampleResources ?? defaultResourceSnapshot;
+  const sampleResourceEvidence =
+    options.sampleResourceEvidence ??
+    ((phase) => renderSnapshotLine(collectResourceSnapshot(resourcePhaseLabel(phase))));
+  const recordResourceBaseline =
+    options.recordResourceBaseline ??
+    ((phase) => {
+      const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
+      if (baselinePath) appendResourcePhaseBaseline(baselinePath, resourcePhaseLabel(phase));
+    });
+  const overallStartedAt = now();
+  const completedPhases: RebuildHermesTimingPhase[] = [];
   let phaseLabel = initialPhase;
-  let phaseStartedAt = now();
+  let phaseStartedAt = overallStartedAt;
   let lastOutputAt: number | null = null;
   let stopped = false;
+  let stoppedAt = overallStartedAt;
+
+  const completeActivePhase = (completedAt = now()) => {
+    completedPhases.push({ label: phaseLabel, elapsedMs: completedAt - phaseStartedAt });
+  };
+
+  const recordBaselineBestEffort = () => {
+    try {
+      recordResourceBaseline(phaseLabel);
+    } catch {
+      // Diagnostics must not change the live result. Classification retains
+      // the immutable pre-test baseline when the phase ledger is unavailable.
+    }
+  };
 
   const logBestEffort = (state: "started" | "running" | "finished") => {
     try {
@@ -96,11 +138,13 @@ export function startRebuildHermesProgress(
       logLine(
         `[rebuild-hermes] ${phaseLabel} ${state} (${elapsedSeconds}s elapsed; ${outputAge}; ${formatResources(sampleResources)})`,
       );
+      logLine(sampleResourceEvidence(phaseLabel));
     } catch {
       // Diagnostics must not change the live test result.
     }
   };
 
+  recordBaselineBestEffort();
   logBestEffort("started");
   const timer = setTimer(
     () => logBestEffort("running"),
@@ -115,16 +159,27 @@ export function startRebuildHermesProgress(
     phase(label) {
       if (stopped) return;
       logBestEffort("finished");
+      completeActivePhase();
       phaseLabel = label;
       phaseStartedAt = now();
       lastOutputAt = null;
+      recordBaselineBestEffort();
       logBestEffort("started");
     },
     stop() {
       if (stopped) return;
       stopped = true;
+      stoppedAt = now();
+      completeActivePhase(stoppedAt);
       clearTimer(timer);
       logBestEffort("finished");
+    },
+    timeline() {
+      const current = now();
+      const phases = stopped
+        ? [...completedPhases]
+        : [...completedPhases, { label: phaseLabel, elapsedMs: current - phaseStartedAt }];
+      return { phases, totalMs: (stopped ? stoppedAt : current) - overallStartedAt };
     },
   };
 }

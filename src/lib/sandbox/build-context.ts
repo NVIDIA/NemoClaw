@@ -73,6 +73,7 @@ function stageLegacySandboxBuildContext(
   fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), {
     recursive: true,
   });
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "scripts"));
   fs.cpSync(
     path.join(rootDir, "src", "lib", "messaging"),
     path.join(buildCtx, "src", "lib", "messaging"),
@@ -231,12 +232,12 @@ function stageOptimizedSandboxBuildContext(
   );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.js"),
-    path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.js"),
+    path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.mts"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "patch-openclaw-chat-send.js"),
-    path.join(stagedScriptsDir, "patch-openclaw-chat-send.js"),
+    path.join(rootDir, "scripts", "patch-openclaw-chat-send.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-chat-send.mts"),
   );
   // Dockerfile copies this OpenClaw MCP patch into the optimized build context.
   fs.copyFileSync(
@@ -244,12 +245,12 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-mcp-npx.mts"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "patch-openclaw-issue-4434-diagnostics.ts"),
-    path.join(stagedScriptsDir, "patch-openclaw-issue-4434-diagnostics.ts"),
+    path.join(rootDir, "scripts", "patch-openclaw-issue-4434-diagnostics.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-issue-4434-diagnostics.mts"),
   );
   fs.copyFileSync(
-    path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.ts"),
-    path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.ts"),
+    path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "verify-wechat-runtime-lock.mts"),
@@ -260,6 +261,7 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
   );
+  normalizeReadModesForDockerCopy(stagedScriptsDir);
 
   return { buildCtx, stagedDockerfile };
 }

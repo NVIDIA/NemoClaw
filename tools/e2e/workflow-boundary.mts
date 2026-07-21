@@ -1,28 +1,73 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import {
   CREDENTIAL_FREE_TEST_TAG,
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
 } from "./credential-free-tests.mts";
-import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
-import { validateHermesGpuStartupWorkflowBoundary } from "./hermes-gpu-startup-workflow-boundary.mts";
-import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
-import { validateOpenClawPluginRuntimeExdevWorkflowBoundary } from "./openclaw-plugin-runtime-exdev-workflow-boundary.mts";
-import { validateOpenShellGatewayAuthContractWorkflowBoundary } from "./openshell-gateway-auth-contract-workflow-boundary.mts";
-import { validateE2eOperationsWorkflowBoundary } from "./operations-workflow-boundary.mts";
+import {
+  type HermesDashboardWorkflow,
+  validateHermesDashboardWorkflow,
+} from "./hermes-dashboard-workflow-boundary.mts";
+import { validateHermesGpuStartupWorkflow } from "./hermes-gpu-startup-workflow-boundary.mts";
+import {
+  type InferenceSwitchWorkflow,
+  validateInferenceSwitchWorkflow,
+} from "./inference-switch-workflow-boundary.mts";
+import {
+  type OpenClawPluginRuntimeExdevWorkflow,
+  validateOpenClawPluginRuntimeExdevWorkflow,
+} from "./openclaw-plugin-runtime-exdev-workflow-boundary.mts";
+import {
+  type OpenShellGatewayAuthContractWorkflow,
+  validateOpenShellGatewayAuthContractWorkflow,
+} from "./openshell-gateway-auth-contract-workflow-boundary.mts";
+import { validateOpenShellGatewayUpgradeWorkflow } from "./openshell-gateway-upgrade-workflow-boundary.mts";
+import {
+  type OperationsWorkflow,
+  validateE2eOperationsWorkflow,
+} from "./operations-workflow-boundary.mts";
 import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
+import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
-import { validateSecurityPostureWorkflowBoundary } from "./security-posture-workflow-boundary.mts";
+import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
 import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
+const DEFAULT_DOCKER_HUB_AUTH_ACTION_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "docker-auth-setup",
+  "action.yaml",
+);
+const DEFAULT_DOCKER_HUB_AUTH_SCRIPT_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "scripts",
+  "docker-auth-setup.sh",
+);
+const DEFAULT_HOST_DEPENDENCY_ACTION_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "host-dependency-setup",
+  "action.yaml",
+);
+const DEFAULT_HOST_DEPENDENCY_SCRIPT_PATH = join(
+  REPO_ROOT,
+  ".github",
+  "scripts",
+  "host-dependency-setup.sh",
+);
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -67,6 +112,7 @@ const COMMON_SECRET_ENV_NAMES = [
   "GITHUB_TOKEN",
 ];
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e", "hermes-gpu-startup"]);
+const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
@@ -75,19 +121,161 @@ const NO_IMAGE_E2E_JOBS = new Set(["gateway-health-honest", SHARED_E2E_JOB_ID]);
 const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
+const DOCKER_HUB_AUTH_PROVENANCE = {
+  reference:
+    "NVIDIA/NemoClaw/.github/actions/docker-auth-setup@78091da47e290f49b8fe3f3e70b72362a0853928",
+  actionSha256: "cf93dcbd19589a56d1d58225fd6b3f8ad2180705662ff79a3407f340b5dba4c0",
+  scriptSha256: "853a3f742f057c29ed465b63bed1ec8d8f306a1c046877a8556cadf290ef0cb6",
+} as const;
+const DOCKER_HUB_AUTH_USES = DOCKER_HUB_AUTH_PROVENANCE.reference;
+const HOST_DEPENDENCY_ACTION_PROVENANCE = {
+  reference:
+    "NVIDIA/NemoClaw/.github/actions/host-dependency-setup@4def1501b34ce586f83b91af50a66b5d22b31d75",
+  actionSha256: "1ac05a0e0a0159fa0850eb82fccb0704d0e49b15bc6f2d6e3b6bb04c7ab94923",
+  scriptSha256: "2e910ed80b5dcf9aaf94230371fe586376c46f6df8fcbd76229063cbda1852c8",
+} as const;
+const HOST_DEPENDENCY_ACTION_USES = HOST_DEPENDENCY_ACTION_PROVENANCE.reference;
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
 // The general E2E workflow runs on schedule/manual dispatch. Its event set is
 // intentionally distinct from the reusable image workflow's push/manual boundary.
 const TRUSTED_DOCKER_HUB_PREDICATE =
-  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')";
+  "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.checkout_sha == ''";
 const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && '1' || '0' }}`;
 const GUARDED_DOCKER_HUB_USERNAME = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_USERNAME || '' }}`;
 const GUARDED_DOCKER_HUB_TOKEN = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`;
+const GUARDED_HERMES_E2E_INFERENCE_KEY = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as WorkflowRecord)
     : {};
+}
+
+export function validateDockerHubAuthAction(
+  actionPath = DEFAULT_DOCKER_HUB_AUTH_ACTION_PATH,
+  scriptPath = DEFAULT_DOCKER_HUB_AUTH_SCRIPT_PATH,
+): string[] {
+  const actionSource = readFileSync(actionPath, "utf8");
+  const scriptSource = readFileSync(scriptPath, "utf8");
+  const errors: string[] = [];
+
+  if (
+    createHash("sha256").update(actionSource).digest("hex") !==
+    DOCKER_HUB_AUTH_PROVENANCE.actionSha256
+  ) {
+    errors.push(
+      "docker-auth-setup action content must match the action reviewed at its immutable commit pin",
+    );
+  }
+  if (
+    createHash("sha256").update(scriptSource).digest("hex") !==
+    DOCKER_HUB_AUTH_PROVENANCE.scriptSha256
+  ) {
+    errors.push(
+      "docker-auth-setup script content must match the helper reviewed at its immutable commit pin",
+    );
+  }
+
+  const expectedAction = {
+    name: "docker-auth-setup",
+    description: "Authenticate to Docker Hub from an isolated per-job Docker config, fail closed.",
+    inputs: {
+      "auth-required": {
+        description: "Whether trusted Docker Hub credentials are present for this run.",
+        required: true,
+      },
+      username: {
+        description: "Docker Hub username; only populated for trusted runs.",
+        required: false,
+        default: "",
+      },
+      token: {
+        description: "Docker Hub token; only populated for trusted runs.",
+        required: false,
+        default: "",
+      },
+    },
+    runs: {
+      using: "composite",
+      steps: [
+        {
+          name: "Authenticate to Docker Hub",
+          shell: "bash",
+          env: {
+            DOCKERHUB_AUTH_REQUIRED: "${{ inputs.auth-required }}",
+            DOCKERHUB_USERNAME: "${{ inputs.username }}",
+            DOCKERHUB_TOKEN: "${{ inputs.token }}",
+          },
+          run: 'bash "${{ github.action_path }}/../../scripts/docker-auth-setup.sh"',
+        },
+      ],
+    },
+  };
+  if (!isDeepStrictEqual(asRecord(YAML.parse(actionSource)), expectedAction)) {
+    errors.push(
+      "docker-auth-setup action must preserve its exact three-input environment mapping and pinned helper invocation",
+    );
+  }
+
+  return errors;
+}
+
+export function validateHostDependencyAction(
+  actionPath = DEFAULT_HOST_DEPENDENCY_ACTION_PATH,
+  scriptPath = DEFAULT_HOST_DEPENDENCY_SCRIPT_PATH,
+): string[] {
+  const actionSource = readFileSync(actionPath, "utf8");
+  const scriptSource = readFileSync(scriptPath, "utf8");
+  const errors: string[] = [];
+
+  if (
+    createHash("sha256").update(actionSource).digest("hex") !==
+    HOST_DEPENDENCY_ACTION_PROVENANCE.actionSha256
+  ) {
+    errors.push(
+      "host-dependency-setup action content must match the action reviewed at its immutable commit pin",
+    );
+  }
+  if (
+    createHash("sha256").update(scriptSource).digest("hex") !==
+    HOST_DEPENDENCY_ACTION_PROVENANCE.scriptSha256
+  ) {
+    errors.push(
+      "host-dependency-setup script content must match the helper reviewed at its immutable commit pin",
+    );
+  }
+
+  const expectedAction = {
+    name: "host-dependency-setup",
+    description:
+      "Install reviewed apt host dependencies with bounded retries from a trusted pinned action.",
+    inputs: {
+      packages: {
+        description: "Space-separated apt packages from the reviewed allowlist (expect, iptables).",
+        required: true,
+      },
+    },
+    runs: {
+      using: "composite",
+      steps: [
+        {
+          name: "Install host dependencies",
+          shell: "bash",
+          env: {
+            HOST_DEPENDENCY_PACKAGES: "${{ inputs.packages }}",
+          },
+          run: 'bash "${{ github.action_path }}/../../scripts/host-dependency-setup.sh"',
+        },
+      ],
+    },
+  };
+  if (!isDeepStrictEqual(asRecord(YAML.parse(actionSource)), expectedAction)) {
+    errors.push(
+      "host-dependency-setup action must preserve its exact single-input package mapping and pinned helper invocation",
+    );
+  }
+
+  return errors;
 }
 
 function collectLiveTestFiles(value: unknown): string[] {
@@ -304,6 +492,20 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function extractCallArguments(script: string, callStart: number): string {
+  const openIndex = script.indexOf("(", callStart);
+  if (openIndex < 0) return "";
+  let depth = 0;
+  for (let index = openIndex; index < script.length; index += 1) {
+    if (script[index] === "(") depth += 1;
+    else if (script[index] === ")") {
+      depth -= 1;
+      if (depth === 0) return script.slice(openIndex + 1, index);
+    }
+  }
+  return script.slice(openIndex + 1);
+}
+
 function splitSelector(value: string): string[] {
   return value
     .split(",")
@@ -322,9 +524,6 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
   const targets = input.targets ?? "";
   const errors: string[] = [];
 
-  if (jobs && targets) {
-    errors.push("Use either targets or jobs, not both");
-  }
   if (targets && !SELECTOR_PATTERN.test(targets)) {
     errors.push("Invalid target input");
   }
@@ -361,17 +560,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
     };
   }
 
-  if (jobs) {
-    return {
-      valid: true,
-      errors: [],
-      selectedFreeStandingJobs: splitSelector(jobs).sort(),
-      registryTargets: [],
-      liveTargetsRun: false,
-    };
-  }
-
-  const selectedFreeStandingJobs = new Set<string>();
+  const selectedFreeStandingJobs = new Set(splitSelector(jobs));
   const registryTargets: string[] = [];
   for (const target of splitSelector(targets)) {
     const job = freeStandingTargetToJob.get(target);
@@ -419,6 +608,35 @@ function requireJobStep(
   const step = namedStep(steps, name);
   if (!step) errors.push(`${jobName} job missing step: ${name}`);
   return step;
+}
+
+function requireDockerEngineRebuilds(
+  errors: string[],
+  jobName: string,
+  jobEnv: WorkflowRecord,
+  steps: readonly WorkflowStep[],
+): void {
+  const hasSeparateCacheBuilder = steps.some((step) => {
+    const uses = stringValue(step.uses);
+    return (
+      uses.startsWith("docker/setup-buildx-action@") || uses.startsWith("docker/build-push-action@")
+    );
+  });
+  const routesBuildsAwayFromDocker = steps.some((step) => {
+    const run = stringValue(step.run);
+    return (
+      Object.hasOwn(asRecord(step.env), "BUILDX_BUILDER") ||
+      /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
+      /docker\s+buildx\s+use(?:\s|$)/u.test(run)
+    );
+  });
+  if (
+    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
+    hasSeparateCacheBuilder ||
+    routesBuildsAwayFromDocker
+  ) {
+    errors.push(`${jobName} must keep rebuild builds on the Docker engine cache`);
+  }
 }
 
 function requireRunContains(
@@ -477,7 +695,7 @@ function requireUploadPathDoesNotContain(
   }
 }
 
-function validateInlineHostDependencyInstall(
+function validateHostDependencyActionStep(
   errors: string[],
   jobName: string,
   steps: readonly WorkflowStep[],
@@ -485,27 +703,27 @@ function validateInlineHostDependencyInstall(
   expectedPackages: readonly string[],
 ): void {
   const step = requireJobStep(errors, jobName, steps, stepName);
-  if (step?.uses) {
-    errors.push(`${jobName} host dependency setup must stay inline in trusted workflow YAML`);
+  if (!step) return;
+  if (step.uses !== HOST_DEPENDENCY_ACTION_USES) {
+    errors.push(`${jobName} host dependency setup must invoke only ${HOST_DEPENDENCY_ACTION_USES}`);
   }
-  for (const fragment of [
-    "for attempt in 1 2 3",
-    "sudo apt-get update",
-    'if [ "$attempt" -eq 3 ]; then',
-    "apt-get update failed after 3 attempts",
-    "sleep $((attempt * 5))",
-  ]) {
-    requireRunContains(errors, step, fragment);
+  if (step.run !== undefined || step.shell !== undefined || step.env !== undefined) {
+    errors.push(
+      `${jobName} host dependency setup must invoke the pinned action, not an inline script`,
+    );
+  }
+  if (step["continue-on-error"] !== undefined) {
+    errors.push(`${jobName} host dependency setup must fail closed`);
   }
 
-  const installPrefix = "sudo apt-get install -y --no-install-recommends ";
-  const installLines = stringValue(step?.run)
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("sudo apt-get install "));
-  const expectedInstall = `${installPrefix}${expectedPackages.join(" ")}`;
-  if (installLines.length !== 1 || installLines[0] !== expectedInstall) {
-    errors.push(`${jobName} host dependency install must be exactly '${expectedInstall}'`);
+  const withInputs = asRecord(step.with);
+  const expectedPackagesValue = expectedPackages.join(" ");
+  if (withInputs.packages !== expectedPackagesValue) {
+    errors.push(`${jobName} host dependency install must map only '${expectedPackagesValue}'`);
+  }
+  const unexpectedWith = Object.keys(withInputs).filter((name) => name !== "packages");
+  if (unexpectedWith.length > 0) {
+    errors.push(`${jobName} host dependency setup must expose only the packages input`);
   }
 }
 
@@ -633,7 +851,9 @@ function validateHostedCompatibleInferenceFlag(
   jobName: string,
   jobEnv: WorkflowRecord,
 ): void {
-  if (PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName)) return;
+  if (PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName) || ADAPTER_MANAGED_INFERENCE_JOBS.has(jobName)) {
+    return;
+  }
   if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
     errors.push(`${jobName} job must enable hosted-compatible inference mode`);
   }
@@ -878,7 +1098,7 @@ function validateSkillAgentJob(errors: string[], jobs: WorkflowRecord): void {
   );
   requireRunContains(errors, runVitest, 'OPENSHELL_BIN="$(command -v openshell)"');
   requireRunContains(errors, runVitest, "export OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/skill-agent.test.ts");
 }
 
@@ -963,7 +1183,7 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("network-policy checkout step must set persist-credentials=false");
   }
 
-  validateInlineHostDependencyInstall(
+  validateHostDependencyActionStep(
     errors,
     jobName,
     steps,
@@ -984,7 +1204,7 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("network-policy live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/network-policy.test.ts");
 }
 
@@ -995,7 +1215,7 @@ function validateIssue4434HostDependencies(errors: string[], jobs: WorkflowRecor
     errors.push(`workflow missing ${jobName} job`);
     return;
   }
-  validateInlineHostDependencyInstall(
+  validateHostDependencyActionStep(
     errors,
     jobName,
     asSteps(job.steps),
@@ -1015,7 +1235,7 @@ function validateOpenclawTuiChatCorrelationHostDependencies(
     return;
   }
   const steps = asSteps(job.steps);
-  validateInlineHostDependencyInstall(
+  validateHostDependencyActionStep(
     errors,
     jobName,
     steps,
@@ -1128,7 +1348,7 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("common-egress-agent step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/common-egress-agent.test.ts");
 }
 
@@ -1211,7 +1431,7 @@ function validateShieldsConfigJob(errors: string[], jobs: WorkflowRecord): void 
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("shields-config step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/shields-config.test.ts");
 }
 
@@ -1246,6 +1466,7 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
+  requireDockerEngineRebuilds(errors, jobName, jobEnv, steps);
   for (const step of steps) {
     if (step.name !== "Run OpenClaw rebuild live test") {
       requireEnvDoesNotExposeSecret(
@@ -1284,7 +1505,7 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
     errors.push("rebuild-openclaw step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-openclaw.test.ts");
 }
 
@@ -1357,6 +1578,7 @@ function validateRebuildHermesJob(
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
+  requireDockerEngineRebuilds(errors, jobName, jobEnv, steps);
   for (const step of steps) {
     const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
     const stepEnv = asRecord(step.env);
@@ -1388,7 +1610,7 @@ function validateRebuildHermesJob(
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
 }
 
@@ -1469,7 +1691,7 @@ function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void
     errors.push("sandbox-rebuild step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/sandbox-rebuild.test.ts");
 }
 
@@ -1561,7 +1783,7 @@ function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): 
     errors.push("state-backup-restore step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/state-backup-restore.test.ts");
 }
 
@@ -1652,7 +1874,7 @@ function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord):
     errors.push("upgrade-stale-sandbox step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/upgrade-stale-sandbox.test.ts");
 }
 
@@ -1733,7 +1955,7 @@ function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void 
       errors.push(`token-rotation step must set ${tokenName}`);
     }
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/token-rotation.test.ts");
 }
 
@@ -1854,7 +2076,7 @@ function validateMessagingCompatibleEndpointJob(errors: string[], jobs: Workflow
   if (runVitestEnv.TELEGRAM_ALLOWED_IDS !== "123456789") {
     errors.push("messaging-compatible-endpoint step must set fake Telegram allowed ids");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/messaging-compatible-endpoint.test.ts");
 }
 
@@ -1919,7 +2141,7 @@ function validateCloudInferenceJob(errors: string[], jobs: WorkflowRecord): void
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("cloud-inference run step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/cloud-inference.test.ts");
 }
 
@@ -1942,11 +2164,10 @@ function requireCanonicalDockerHubAuthRun(
       "canonical Docker Hub auth step must always run so untrusted refs receive an isolated empty Docker config",
     );
   }
-  if (authStep.shell !== "bash") {
-    errors.push("canonical Docker Hub auth step must use bash");
-  }
-  if (authStep.uses !== undefined) {
-    errors.push("canonical Docker Hub auth step must use the audited inline retry script");
+  if (authStep.run !== undefined || authStep.shell !== undefined || authStep.env !== undefined) {
+    errors.push(
+      "canonical Docker Hub auth step must invoke the pinned composite action, not an inline script",
+    );
   }
   if (authStep["continue-on-error"] !== undefined) {
     errors.push(
@@ -1954,108 +2175,31 @@ function requireCanonicalDockerHubAuthRun(
     );
   }
 
-  const authEnv = asRecord(authStep.env);
-  if (authEnv.DOCKERHUB_AUTH_REQUIRED !== GUARDED_DOCKER_HUB_AUTH_REQUIRED) {
+  if (authStep.uses !== DOCKER_HUB_AUTH_USES) {
+    errors.push(`canonical Docker Hub auth step must invoke only ${DOCKER_HUB_AUTH_USES}`);
+  }
+
+  const authWith = asRecord(authStep.with);
+  if (authWith["auth-required"] !== GUARDED_DOCKER_HUB_AUTH_REQUIRED) {
     errors.push(
-      "canonical Docker Hub auth must gate DOCKERHUB_AUTH_REQUIRED on the trusted repository, main ref, and scheduled/manual events",
+      "canonical Docker Hub auth must gate auth-required on the trusted repository, main ref, and scheduled/manual events",
     );
   }
-  if (authEnv.DOCKERHUB_USERNAME !== GUARDED_DOCKER_HUB_USERNAME) {
+  if (authWith.username !== GUARDED_DOCKER_HUB_USERNAME) {
     errors.push(
-      "canonical Docker Hub auth must gate DOCKERHUB_USERNAME on the trusted repository, main ref, and scheduled/manual events",
+      "canonical Docker Hub auth must gate username on the trusted repository, main ref, and scheduled/manual events",
     );
   }
-  if (authEnv.DOCKERHUB_TOKEN !== GUARDED_DOCKER_HUB_TOKEN) {
+  if (authWith.token !== GUARDED_DOCKER_HUB_TOKEN) {
     errors.push(
-      "canonical Docker Hub auth must gate DOCKERHUB_TOKEN on the trusted repository, main ref, and scheduled/manual events",
+      "canonical Docker Hub auth must gate token on the trusted repository, main ref, and scheduled/manual events",
     );
   }
-  const unexpectedEnv = Object.keys(authEnv).filter(
-    (name) => !["DOCKERHUB_AUTH_REQUIRED", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"].includes(name),
+  const unexpectedWith = Object.keys(authWith).filter(
+    (name) => !["auth-required", "username", "token"].includes(name),
   );
-  if (unexpectedEnv.length > 0) {
+  if (unexpectedWith.length > 0) {
     errors.push("canonical Docker Hub auth step must expose only its three guarded inputs");
-  }
-
-  const runScript = stringValue(authStep.run);
-  for (const fragment of [
-    'mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX"',
-    'chmod 700 "${docker_config}"',
-    'export DOCKER_CONFIG="${docker_config}"',
-    'if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then',
-    "continuing with anonymous pulls",
-    'if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then',
-    'auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"',
-    ': > "${auth_marker}"',
-    'chmod 600 "${auth_marker}"',
-    "for attempt in 1 2 3; do",
-    "timeout 30s docker login docker.io",
-    '--username "${DOCKERHUB_USERNAME}"',
-    "--password-stdin",
-    "Docker Hub login failed after 3 attempts",
-  ]) {
-    if (!runScript.includes(fragment)) {
-      errors.push(`canonical Docker Hub auth run script must include ${fragment}`);
-    }
-  }
-  if (
-    !runScript.includes("printf 'DOCKER_CONFIG=%s\\n'") ||
-    !runScript.includes('"${DOCKER_CONFIG}"') ||
-    !runScript.includes('>> "${GITHUB_ENV}"')
-  ) {
-    errors.push(
-      "canonical Docker Hub auth run script must persist the isolated DOCKER_CONFIG through GITHUB_ENV",
-    );
-  }
-  if (runScript.includes("${{ github.workspace }}") || runScript.includes("GITHUB_WORKSPACE")) {
-    errors.push("canonical Docker Hub auth directory must not use the checkout workspace");
-  }
-  if (/--password(?:=|\s)(?!-stdin\b)/u.test(runScript)) {
-    errors.push("canonical Docker Hub auth must pass the token only through --password-stdin");
-  }
-
-  const configIndex = runScript.indexOf(
-    'mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX"',
-  );
-  const trustIndex = runScript.indexOf('if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then');
-  const loginIndex = runScript.indexOf("docker login docker.io");
-  if (configIndex < 0 || trustIndex <= configIndex || loginIndex <= trustIndex) {
-    errors.push(
-      "canonical Docker Hub auth must isolate Docker config before evaluating trust and authenticating",
-    );
-  }
-  const missingCredentialsIndex = runScript.indexOf(
-    'if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then',
-  );
-  const missingCredentialsEndIndex = runScript.indexOf("\nfi", missingCredentialsIndex);
-  const markerPathIndex = runScript.indexOf(
-    'auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"',
-  );
-  const markerCreateIndex = runScript.indexOf(': > "${auth_marker}"');
-  const markerChmodIndex = runScript.indexOf('chmod 600 "${auth_marker}"');
-  const retryIndex = runScript.indexOf("for attempt in 1 2 3; do");
-  const missingCredentialsBlock =
-    missingCredentialsIndex >= 0 && retryIndex > missingCredentialsIndex
-      ? runScript.slice(missingCredentialsIndex, retryIndex)
-      : "";
-  if (!missingCredentialsBlock.includes("exit 1")) {
-    errors.push("canonical Docker Hub auth must fail when trusted credentials are missing");
-  }
-  if (
-    missingCredentialsEndIndex < 0 ||
-    markerPathIndex <= missingCredentialsEndIndex ||
-    markerCreateIndex <= markerPathIndex ||
-    markerChmodIndex <= markerCreateIndex ||
-    retryIndex <= markerChmodIndex ||
-    loginIndex <= retryIndex
-  ) {
-    errors.push(
-      "canonical Docker Hub auth must create and protect its login-attempt marker after trusted credential validation and before login",
-    );
-  }
-  const exhaustedLoginIndex = runScript.indexOf("Docker Hub login failed after 3 attempts");
-  if (exhaustedLoginIndex < 0 || !runScript.slice(exhaustedLoginIndex).includes("exit 1")) {
-    errors.push("canonical Docker Hub auth must fail after exhausting login retries");
   }
 }
 
@@ -2258,7 +2402,7 @@ function validateDoubleOnboardJob(errors: string[], jobs: WorkflowRecord): void 
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run double-onboard live Vitest test");
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/double-onboard.test.ts");
 }
 function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2295,6 +2439,12 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   if (jobEnv.NEMOCLAW_AGENT !== "hermes") {
     errors.push("hermes-e2e job must set NEMOCLAW_AGENT=hermes");
   }
+  if (jobEnv.NEMOCLAW_E2E_INFERENCE_MODE !== "${{ inputs.inference_mode || 'mock' }}") {
+    errors.push("hermes-e2e job must consume the defaulted inference mode input");
+  }
+  if ("NEMOCLAW_E2E_USE_HOSTED_INFERENCE" in jobEnv) {
+    errors.push("hermes-e2e job must leave hosted inference selection to the adapter");
+  }
   if (jobEnv.NEMOCLAW_MODEL !== undefined) {
     errors.push("hermes-e2e job must use the shared hosted-compatible model default");
   }
@@ -2325,10 +2475,12 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
   const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("hermes-e2e live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== GUARDED_HERMES_E2E_INFERENCE_KEY) {
+    errors.push(
+      "hermes-e2e run step must guard NVIDIA_INFERENCE_API_KEY behind a trusted main-branch dispatch without a PR checkout and the inference mode condition",
+    );
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/hermes-e2e.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
 }
@@ -2412,7 +2564,7 @@ function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("diagnostics live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/diagnostics.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
 }
@@ -2496,7 +2648,7 @@ function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
     errors.push("spark-install live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
   requireRunContains(errors, runVitest, "set -euo pipefail");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/spark-install.test.ts");
 }
 
@@ -2580,7 +2732,7 @@ function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): vo
   }
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run snapshot commands live test");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/snapshot-commands.test.ts");
 }
 
@@ -2681,7 +2833,7 @@ function validateModelRouterProviderRoutedInferenceJob(
       "model-router-provider-routed-inference live E2E step must receive NVIDIA_API_KEY from secrets",
     );
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(
     errors,
     runVitest,
@@ -2822,7 +2974,7 @@ function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): voi
       "tunnel-lifecycle live E2E step must not run cloudflared APT installation with NVIDIA_INFERENCE_API_KEY in scope",
     );
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/tunnel-lifecycle.test.ts");
 }
 
@@ -2907,7 +3059,7 @@ function validateIssue2478CrashLoopRecoveryJob(errors: string[], jobs: WorkflowR
     runVitestEnv,
     "NVIDIA_INFERENCE_API_KEY",
   );
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/issue-2478-crash-loop-recovery.test.ts");
 }
 
@@ -3019,7 +3171,7 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("channels-add-remove step must set TELEGRAM_REQUIRE_MENTION");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/channels-add-remove.test.ts");
 }
 
@@ -3092,7 +3244,7 @@ function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecor
   if (runVitestEnv.DISCORD_BOT_TOKEN !== "test-fake-discord-pairing-e2e") {
     errors.push("openclaw-discord-pairing step must use fake Discord token");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/openclaw-discord-pairing.test.ts");
 }
 
@@ -3163,7 +3315,7 @@ function validateOpenClawSlackPairingJob(errors: string[], jobs: WorkflowRecord)
   if (runVitestEnv.SLACK_APP_TOKEN !== "xapp-fake-slack-pairing-e2e") {
     errors.push("openclaw-slack-pairing step must use fake Slack app token");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/openclaw-slack-pairing.test.ts");
 }
 
@@ -3292,7 +3444,7 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("channels-stop-start step must set the fake WeChat token");
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/channels-stop-start.test.ts");
 }
 
@@ -3351,7 +3503,7 @@ function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): v
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("telegram-injection step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/telegram-injection.test.ts");
 }
 
@@ -3420,6 +3572,11 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
       "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_AGENT",
     );
   }
+  if (jobEnv.NEMOCLAW_E2E_SHARD !== "${{ matrix.agent }}") {
+    errors.push(
+      "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_E2E_SHARD",
+    );
+  }
   if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-bedrock-${{ matrix.agent }}") {
     errors.push(
       "bedrock-runtime-compatible-anthropic job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent",
@@ -3473,7 +3630,7 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     steps,
     "Run Bedrock Runtime compatible Anthropic live test",
   );
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(
     errors,
     runVitest,
@@ -3556,6 +3713,17 @@ function validateJetsonRunnerDispatchGuard(errors: string[], jobs: WorkflowRecor
   requireRunDoesNotContain(errors, guard, "linux-arm64-gpu-jetson-orin-latest-1");
 }
 
+export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[] {
+  const workflowRecord = asRecord(workflow);
+  const triggers = asRecord(workflowRecord.on ?? workflowRecord[true as unknown as string]);
+  const workflowDispatch = asRecord(triggers.workflow_dispatch);
+  const errors: string[] = [];
+
+  validateAllowJetsonRunnerQueueInput(errors, asRecord(workflowDispatch.inputs));
+  validateJetsonRunnerDispatchGuard(errors, asRecord(workflowRecord.jobs));
+  return errors;
+}
+
 function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "sandbox-rlimits-connect";
   const job = asRecord(jobs[jobName]);
@@ -3604,18 +3772,57 @@ function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord)
   }
 }
 
-export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
-  const workflow = readWorkflowRecord(workflowPath);
+function validateInferenceModeInput(
+  errors: string[],
+  workflow: WorkflowRecord,
+  dispatchInputs: WorkflowRecord,
+): void {
+  const input = requireInput(errors, dispatchInputs, "inference_mode");
+  if (
+    input.type !== "choice" ||
+    input.default !== "mock" ||
+    JSON.stringify(input.options) !== JSON.stringify(["mock", "internal-nvidia", "public-nvidia"])
+  ) {
+    errors.push("workflow_dispatch inference_mode must be the canonical three-mode choice");
+  }
+  if ("NEMOCLAW_E2E_INFERENCE_MODE" in asRecord(workflow.env)) {
+    errors.push("workflow env must leave inference mode scoped to adapter-consuming jobs");
+  }
+}
+
+function validateInferenceModeGeneration(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  env: WorkflowRecord,
+): void {
+  if (env.INFERENCE_MODE !== "${{ inputs.inference_mode || 'mock' }}") {
+    errors.push("matrix generation step must pass the defaulted inference mode through env");
+  }
+  requireRunContains(errors, step, "--ci-output");
+}
+
+export function validateE2eWorkflow(workflowValue: unknown): string[] {
+  const workflow = asRecord(workflowValue);
   const errors: string[] = [];
   errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
   errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
-  errors.push(...validateHermesDashboardWorkflowBoundary(workflowPath));
-  errors.push(...validateHermesGpuStartupWorkflowBoundary(workflowPath));
-  errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
-  errors.push(...validateOpenClawPluginRuntimeExdevWorkflowBoundary(workflowPath));
-  errors.push(...validateOpenShellGatewayAuthContractWorkflowBoundary(workflowPath));
-  errors.push(...validateE2eOperationsWorkflowBoundary(workflowPath));
-  errors.push(...validateSecurityPostureWorkflowBoundary(workflowPath));
+  errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
+  errors.push(...validateHermesGpuStartupWorkflow(workflow));
+  errors.push(...validateInferenceSwitchWorkflow(workflow as unknown as InferenceSwitchWorkflow));
+  errors.push(
+    ...validateOpenClawPluginRuntimeExdevWorkflow(
+      workflow as unknown as OpenClawPluginRuntimeExdevWorkflow,
+    ),
+  );
+  errors.push(
+    ...validateOpenShellGatewayAuthContractWorkflow(
+      workflow as unknown as OpenShellGatewayAuthContractWorkflow,
+    ),
+  );
+  errors.push(...validateOpenShellGatewayUpgradeWorkflow(workflow));
+  errors.push(...validateE2eOperationsWorkflow(workflow as unknown as OperationsWorkflow));
+  errors.push(...validateSecurityPostureWorkflow(workflow));
+  errors.push(...validateRunnerPressureWorkflow(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
@@ -3624,7 +3831,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "targets");
-  validateAllowJetsonRunnerQueueInput(errors, dispatchInputs);
+  validateInferenceModeInput(errors, workflow, dispatchInputs);
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("default-enabled tests")) {
@@ -3645,6 +3852,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");
 
   const jobs = asRecord(workflow.jobs);
+  errors.push(...validateJetsonRunnerDispatchBoundary(workflow));
   const { errors: inventoryErrors, inventory: freeStandingInventory } =
     deriveFreeStandingJobsInventoryFromJobs(jobs);
   errors.push(...inventoryErrors);
@@ -3656,8 +3864,11 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     errors.push("generate-matrix job must run on ubuntu-latest");
   }
   const generateOutputs = asRecord(generateMatrix.outputs);
-  if (generateOutputs.matrix !== "${{ steps.matrix.outputs.matrix }}") {
-    errors.push("generate-matrix job must expose matrix output");
+  if (
+    generateOutputs.matrix !==
+    "${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}"
+  ) {
+    errors.push("generate-matrix job must expose trusted controller matrix output");
   }
   if (generateOutputs.test_matrix !== "${{ steps.matrix.outputs.test_matrix }}") {
     errors.push("generate-matrix job must expose test_matrix output");
@@ -3670,58 +3881,83 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);
+  const controllerMatrix = requireJobStep(
+    errors,
+    "generate-matrix",
+    generateSteps,
+    "Build trusted controller target matrix",
+  );
+  if (controllerMatrix?.id !== "controller_matrix") {
+    errors.push("trusted controller matrix step must use id controller_matrix");
+  }
+  if (controllerMatrix?.if !== "${{ inputs.checkout_sha != '' }}") {
+    errors.push("trusted controller matrix step must run only for controller dispatches");
+  }
+  if (controllerMatrix?.shell !== "bash") {
+    errors.push("trusted controller matrix step must use bash");
+  }
+  const controllerMatrixEnv = asRecord(controllerMatrix?.env);
+  if (controllerMatrixEnv.TARGETS !== "${{ inputs.targets }}") {
+    errors.push("trusted controller matrix step must bind targets through TARGETS env");
+  }
+  requireRunContains(errors, controllerMatrix, 'case "${TARGETS}" in');
+  requireRunContains(errors, controllerMatrix, "matrix='[]'");
+  requireRunContains(errors, controllerMatrix, "ubuntu-repo-cloud-langchain-deepagents-code");
+  if (!stringValue(controllerMatrix?.run).includes('"runner":"ubuntu-latest"')) {
+    errors.push("trusted controller matrix must pin typed target runner to ubuntu-latest");
+  }
+  requireRunContains(
+    errors,
+    controllerMatrix,
+    "PR E2E target is not approved by the trusted controller",
+  );
+  requireRunContains(
+    errors,
+    controllerMatrix,
+    `printf 'matrix=%s\\n' "\${matrix}" >> "\${GITHUB_OUTPUT}"`,
+  );
   const generateCheckout = generateSteps.find((step) =>
     stringValue(step.uses).startsWith("actions/checkout@"),
   );
   if (!generateCheckout) errors.push("generate-matrix job missing checkout step");
+  if (
+    controllerMatrix &&
+    generateCheckout &&
+    generateSteps.indexOf(controllerMatrix) >= generateSteps.indexOf(generateCheckout)
+  ) {
+    errors.push("trusted controller matrix step must run before PR checkout");
+  }
   requireFullShaAction(errors, generateCheckout, "generate-matrix checkout");
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
     errors.push("generate-matrix checkout step must set persist-credentials=false");
   }
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   const generateEnv = asRecord(generate?.env);
+  if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
+    errors.push("matrix generation step must bind controller checkout through CHECKOUT_SHA env");
+  }
+  if (generateEnv.CONTROLLER_MATRIX !== "${{ steps.controller_matrix.outputs.matrix }}") {
+    errors.push("matrix generation step must receive the trusted controller matrix");
+  }
   if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
     errors.push("matrix generation step must pass jobs through JOBS env");
   }
   if (generateEnv.TARGETS !== "${{ inputs.targets }}") {
     errors.push("matrix generation step must pass targets through TARGETS env");
   }
+  validateInferenceModeGeneration(errors, generate, generateEnv);
   requireRunContains(errors, generate, "npx tsx tools/e2e/workflow-plan.mts");
-  requireRunContains(errors, generate, "Use either targets or jobs, not both");
-  requireRunContains(errors, generate, "for selector_name in JOBS TARGETS");
-  requireRunContains(errors, generate, "Invalid ${selector_name,,} input; use comma-separated ids");
-  requireRunContains(errors, generate, 'planner_args+=(--jobs "${JOBS}")');
-  requireRunContains(errors, generate, 'planner_args+=(--targets "${TARGETS}")');
-  requireRunContains(errors, generate, "--targets");
-  requireRunContains(errors, generate, "^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$");
-  requireRunDoesNotContain(errors, generate, "Invalid jobs input: ${JOBS}");
-  requireRunDoesNotContain(errors, generate, "Invalid target input: ${TARGETS}");
-  requireRunDoesNotContain(errors, generate, "^[A-Za-z0-9._-]+");
+  requireRunContains(errors, generate, "--ci-output");
+  requireRunContains(errors, generate, 'if [ -n "${CHECKOUT_SHA}" ]');
+  requireRunContains(errors, generate, "GITHUB_OUTPUT");
+  requireRunContains(errors, generate, "expected_controller_matrix=");
+  requireRunContains(errors, generate, "actual_controller_matrix=");
+  requireRunContains(errors, generate, ': > "${GITHUB_OUTPUT}"');
   requireRunContains(
     errors,
     generate,
-    '(keys | sort) == ["explicitOnlyJobs", "hermesSelected", "matrix", "testMatrix"]',
+    "E2E planner matrix does not match controller-selected targets",
   );
-  requireRunContains(errors, generate, "([.matrix[].id] | unique | length)");
-  requireRunContains(errors, generate, '(keys | sort) == ["file", "id", "project"]');
-  requireRunContains(errors, generate, "([.testMatrix[].id] | unique | length)");
-  requireRunContains(errors, generate, "E2E planner returned an invalid output schema");
-  requireRunContains(errors, generate, "expected_hermes_selected=false");
-  requireRunContains(errors, generate, "expected_hermes_selected=true");
-  requireRunContains(errors, generate, "E2E planner changed the trusted Hermes selection");
-  requireRunContains(
-    errors,
-    generate,
-    'echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"',
-  );
-  requireRunContains(
-    errors,
-    generate,
-    'echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"',
-  );
-  requireRunContains(errors, generate, 'echo "test_matrix=${test_matrix}" >> "$GITHUB_OUTPUT"');
-  requireRunContains(errors, generate, "## E2E Execution Plan");
-  requireRunContains(errors, generate, "| Test | Execution | Runner |");
 
   const liveTargets = asRecord(jobs["live"]);
   if (Object.keys(liveTargets).length === 0) errors.push("workflow missing live job");
@@ -3731,11 +3967,8 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (liveTargets.needs !== "generate-matrix") {
     errors.push("live job must depend on generate-matrix");
   }
-  if (
-    liveTargets.if !==
-    "${{ (github.event_name != 'workflow_dispatch' || inputs.jobs == '') && needs.generate-matrix.outputs.matrix != '[]' }}"
-  ) {
-    errors.push("live job must not run when a free-standing jobs selector is supplied");
+  if (liveTargets.if !== "${{ needs.generate-matrix.outputs.matrix != '[]' }}") {
+    errors.push("live job must run whenever the trusted planner emits typed targets");
   }
   const strategy = asRecord(liveTargets.strategy);
   if (strategy["fail-fast"] !== false) {
@@ -3782,6 +4015,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     errors.push("checkout step must set persist-credentials=false");
   }
 
+  const dcodeTargetIf = "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}";
   const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
   const configureTraceEnv = asRecord(configureTrace?.env);
   if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
@@ -3802,17 +4036,14 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     steps,
     "Install Deep Agents Code TUI host dependencies",
   );
-  validateInlineHostDependencyInstall(
+  validateHostDependencyActionStep(
     errors,
     "live",
     steps,
     "Install Deep Agents Code TUI host dependencies",
     ["expect"],
   );
-  if (
-    dcodeHostDependencies?.if !==
-    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
-  ) {
+  if (dcodeHostDependencies?.if !== dcodeTargetIf) {
     errors.push("live DCode TUI host dependencies must be scoped to the typed DCode target");
   }
 
@@ -3837,10 +4068,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
       "live DCode profile import gate must build the reviewed repository base without an override",
     );
   }
-  if (
-    dcodeProfileImportGate?.["if"] !==
-    "${{ matrix.id == 'ubuntu-repo-cloud-langchain-deepagents-code' }}"
-  ) {
+  if (dcodeProfileImportGate?.["if"] !== dcodeTargetIf) {
     errors.push("live DCode profile import gate must be scoped to the typed DCode target");
   }
   if (dcodeProfileImportGate?.shell !== "bash") {
@@ -3851,6 +4079,28 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     "bash scripts/check-dcode-profile-import-gate.sh"
   ) {
     errors.push("live DCode profile import gate must run the reviewed negative-build script");
+  }
+  const dcodeGateIndex = dcodeProfileImportGate
+    ? steps.indexOf(dcodeProfileImportGate)
+    : steps.length;
+  const routesDcodeBuildsThroughBuildx = steps.slice(0, dcodeGateIndex).some((step) => {
+    const stepCanRunForDcode = step["if"] === undefined || step["if"] === dcodeTargetIf;
+    const run = stringValue(step.run);
+    return (
+      stepCanRunForDcode &&
+      (stringValue(step.uses).startsWith("docker/setup-buildx-action@") ||
+        /BUILDX_BUILDER(?:=|<<)/u.test(run) ||
+        /docker\s+buildx\s+use(?:\s|$)/u.test(run))
+    );
+  });
+  if (
+    Object.hasOwn(jobEnv, "BUILDX_BUILDER") ||
+    Object.hasOwn(asRecord(dcodeProfileImportGate?.env), "BUILDX_BUILDER") ||
+    routesDcodeBuildsThroughBuildx
+  ) {
+    errors.push(
+      "live DCode profile import gate must keep its local image chain on the Docker engine",
+    );
   }
 
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
@@ -3869,13 +4119,16 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     errors.push("live DCode profile import gate must run before live E2E tests");
   }
   const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.E2E_TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live E2E step must bind risk-signal identity to matrix.id");
+  }
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
     errors.push("live E2E step must pass matrix.id through TARGET_ID env");
   }
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push("live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets");
   }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
   requireRunContains(errors, runVitest, '"^${TARGET_ID}$"');
 
@@ -3998,6 +4251,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     uploadPath,
     "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
   );
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/risk-signal.json");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/actions/");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/logs/");
   requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/shell/");
@@ -4010,7 +4264,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   }
 
   const cloudOnboardSteps = asSteps(asRecord(jobs["cloud-onboard"]).steps);
-  validateInlineHostDependencyInstall(
+  validateHostDependencyActionStep(
     errors,
     "cloud-onboard",
     cloudOnboardSteps,
@@ -4087,7 +4341,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
 
   validateFreeStandingJobSelector(errors, jobs, "gateway-health-honest", "gateway-health-honest");
 
-  validateJetsonRunnerDispatchGuard(errors, jobs);
   validateSandboxRlimitConnectJob(errors, jobs);
 
   validateFreeStandingJobSelector(
@@ -4138,126 +4391,84 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
       errors.push("report-to-pr must derive explicit-only jobs from workflow inventory");
     }
     const reportScript = stringValue(asRecord(report?.with).script ?? report?.run);
-    if (!reportScript.includes("process.env.JOBS")) {
-      errors.push("step 'Post E2E target results to PR' run script must include process.env.JOBS");
-    }
-    if (!reportScript.includes("process.env.JOB_TARGETS")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must include process.env.JOB_TARGETS",
-      );
-    }
-    if (reportScript.includes("Number.parseInt(prNumberInput")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must not parse JOB_PR_NUMBER with Number.parseInt",
-      );
-    }
-    if (!reportScript.includes("/^[1-9][0-9]*$/.test(prNumberInput)")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must validate JOB_PR_NUMBER with an all-digits regex before parsing",
-      );
-    }
-    if (!reportScript.includes("Number.isSafeInteger(prNumber)")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must reject unsafe JOB_PR_NUMBER values before commenting",
-      );
-    }
     if (
-      !reportScript.includes("github.rest.pulls.get") ||
-      !reportScript.includes("pull_number: prNumber")
+      !reportScript.includes("tools/e2e/report-e2e-results.mts") ||
+      !reportScript.includes("process.env.GITHUB_WORKSPACE")
     ) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must verify JOB_PR_NUMBER identifies a pull request before commenting",
+        "step 'Post E2E target results to PR' run script must load the trusted report helper from the checked-out workspace",
       );
     }
-    if (
-      !reportScript.includes("github.rest.pulls.list") ||
-      !reportScript.includes("head: `${context.repo.owner}:${workflowBranch}`")
-    ) {
+    const prNumberAssignment = /\b(?:const|let)\s+(\w+)\s*=\s*await\s+resolveReportPr\(/.exec(
+      reportScript,
+    );
+    if (!prNumberAssignment) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must fall back to branch PR lookup when JOB_PR_NUMBER is empty",
+        "step 'Post E2E target results to PR' run script must assign resolveReportPr's result before use",
       );
-    }
-    if (!reportScript.includes("selectorValidationPassed")) {
+    } else if (!new RegExp(`issue_number:\\s*${prNumberAssignment[1]}\\b`).test(reportScript)) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must check selector validation before echoing selectors",
+        "step 'Post E2E target results to PR' run script must pass resolveReportPr's result as the comment issue_number",
       );
     }
-    if (!reportScript.includes("testIdsRejected")) {
+    const loadJobsAssignment = /\{\s*([^}]+)\}\s*=\s*await\s+loadReportJobs\(/.exec(reportScript);
+    if (!loadJobsAssignment) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must omit rejected test ID selectors",
+        "step 'Post E2E target results to PR' run script must destructure loadReportJobs's result before use",
       );
+    } else {
+      const renderCallIndex = reportScript.indexOf("renderE2eReport(");
+      const renderArguments =
+        renderCallIndex >= 0 ? extractCallArguments(reportScript, renderCallIndex) : "";
+      const loadedNames = loadJobsAssignment[1]
+        .split(",")
+        .map((name) => name.split(":").pop()?.trim())
+        .filter((name): name is string => Boolean(name));
+      if (!loadedNames.some((name) => new RegExp(`\\b${name}\\b`).test(renderArguments))) {
+        errors.push(
+          "step 'Post E2E target results to PR' run script must pass loadReportJobs's result into renderE2eReport",
+        );
+      }
     }
-    if (!reportScript.includes("targetsRejected")) {
+    const reportAssignment = /\b(?:const|let)\s+(\w+)\s*=\s*renderE2eReport\(/.exec(reportScript);
+    if (!reportAssignment) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must omit rejected target selectors",
+        "step 'Post E2E target results to PR' run script must assign renderE2eReport's result before use",
       );
-    }
-    if (!reportScript.includes("reportedEntries")) {
+    } else if (!new RegExp(`body:\\s*${reportAssignment[1]}\\.body\\b`).test(reportScript)) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must filter reported entries for selective dispatches",
+        "step 'Post E2E target results to PR' run script must pass renderE2eReport's result body as the comment body",
       );
     }
-    if (!reportScript.includes("missingRequested")) {
+    if (reportScript.includes("checkout_sha")) {
       errors.push(
-        "step 'Post E2E target results to PR' run script must report missing requested jobs",
+        "step 'Post E2E target results to PR' run script must not reference checkout_sha",
       );
     }
-    if (
-      !reportScript.includes("github.rest.actions.listJobsForWorkflowRun") ||
-      !reportScript.includes("Shared E2E") ||
-      !reportScript.includes("testResults")
-    ) {
-      errors.push(
-        "step 'Post E2E target results to PR' must resolve discovered matrix test results from the jobs API",
+    const reportCheckout = reportSteps.find((step) =>
+      stringValue(asRecord(step).uses).startsWith("actions/checkout@"),
+    );
+    if (!reportCheckout) {
+      errors.push("report-to-pr must check out the trusted workflow revision before reporting");
+    } else {
+      const checkoutWith = asRecord(asRecord(reportCheckout).with);
+      if (checkoutWith.ref !== "${{ github.workflow_sha }}") {
+        errors.push("report-to-pr must pin the report helper checkout to github.workflow_sha");
+      }
+      if (checkoutWith["persist-credentials"] !== false) {
+        errors.push("report-to-pr report helper checkout must not persist credentials");
+      }
+      if (
+        !stringValue(checkoutWith["sparse-checkout"]).includes("tools/e2e/report-e2e-results.mts")
+      ) {
+        errors.push("report-to-pr report helper checkout must sparse-checkout the report helper");
+      }
+      const reportStepIndex = reportSteps.findIndex(
+        (step) => asRecord(step).name === "Post E2E target results to PR",
       );
-    }
-    if (!reportScript.includes("cancelled")) {
-      errors.push("step 'Post E2E target results to PR' run script must count cancelled jobs");
-    }
-    if (!reportScript.includes("**Requested test IDs:**")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must include **Requested test IDs:**",
-      );
-    }
-    if (!reportScript.includes("**Requested targets:**")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must include **Requested targets:**",
-      );
-    }
-    if (!reportScript.includes("All default tests passed")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must label empty dispatch as default tests passed",
-      );
-    }
-    if (!reportScript.includes("default-enabled tests")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must say empty dispatch uses default-enabled tests",
-      );
-    }
-    if (!reportScript.includes("Explicit-only jobs skipped")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must list explicit-only skipped jobs on default dispatch",
-      );
-    }
-    if (!reportScript.includes("jobs=${job}") || !reportScript.includes("jetson-nvmap-gpu")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must document the explicit Jetson jobs selector",
-      );
-    }
-    if (!reportScript.includes("targets=${target}") || !reportScript.includes("jetson-nvmap-gpu")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must document the explicit Jetson target selector",
-      );
-    }
-    if (!reportScript.includes("sandbox-rlimits-connect")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must document the explicit rlimit jobs selector",
-      );
-    }
-    if (!reportScript.includes("sandbox-rlimits-connect")) {
-      errors.push(
-        "step 'Post E2E target results to PR' run script must document the explicit rlimit target selector",
-      );
+      if (reportStepIndex >= 0 && reportSteps.indexOf(reportCheckout) >= reportStepIndex) {
+        errors.push("report-to-pr must check out the report helper before the reporting step");
+      }
     }
     for (const forbidden of ["toJSON(inputs.pr_number)", "toJSON(inputs.targets)"]) {
       if (reportScript.includes(forbidden)) {
@@ -4269,4 +4480,12 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   }
 
   return errors;
+}
+
+export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
+  return [
+    ...validateDockerHubAuthAction(),
+    ...validateHostDependencyAction(),
+    ...validateE2eWorkflow(readWorkflowRecord(workflowPath)),
+  ];
 }

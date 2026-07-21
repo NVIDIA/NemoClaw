@@ -68,8 +68,8 @@ describe("GATEWAY_STOP_SCRIPT (executed)", () => {
     const scopedScript = `
 allowed_test_pids="${allowedPids.join(" ")}"
 ps() {
-  if [ "$*" = "-eo user=,pid=,args=" ]; then
-    command ps -eo user=,pid=,args= | awk -v allowed="$allowed_test_pids" '
+  if [ "$*" = "-eo uid=,pid=,args=" ]; then
+    command ps -eo uid=,pid=,args= | awk -v allowed="$allowed_test_pids" '
       BEGIN {
         split(allowed, pids, " ")
         for (i in pids) if (pids[i] != "") keep[pids[i]] = 1
@@ -107,6 +107,8 @@ ${script}`;
     mode = 0o600,
     pidContent = `${pid} ${processStartTime(pid)}\n`,
   ): { script: string; pidFile: string; markerFile: string } {
+    const currentUid = process.getuid?.();
+    assert(currentUid !== undefined, "gateway stop identity tests require a numeric UID");
     const dir = mkdtempSync(join(tmpdir(), "nemoclaw-gateway-stop-identity-"));
     identityDirs.push(dir);
     const pidFile = join(dir, "nemoclaw-gateway.pid");
@@ -117,11 +119,7 @@ ${script}`;
     chmodSync(markerFile, mode);
     const script = GATEWAY_STOP_SCRIPT.replaceAll("/tmp/nemoclaw-gateway.pid", pidFile)
       .replaceAll("/tmp/nemoclaw-gateway-local", markerFile)
-      .replace(
-        'allowed_bare_users="gateway,sandbox"',
-        `allowed_bare_users="gateway,sandbox,${process.env.USER ?? ""}"`,
-      )
-      .replace("root|gateway|sandbox) ;;", `root|gateway|sandbox|${process.env.USER ?? ""}) ;;`);
+      .replace('allowed_bare_uids=","', `allowed_bare_uids=",${currentUid},"`);
     return { script, pidFile, markerFile };
   }
 
@@ -218,12 +216,12 @@ ${script}`;
       const decoy = spawnWithArgv0("openclaw");
       const { script, pidFile } = identityFixture(intended);
       const replacement = `${decoy} ${processStartTime(decoy)}`;
-      const replaceAfterOpen = `marker_owner="$(trusted_identity_fd "/proc/$$/fd/4" || true)"
+      const replaceAfterOpen = `marker_owner_uid="$(trusted_identity_fd "/proc/$$/fd/4" || true)"
   mv "${pidFile}" "${pidFile}.opened"
   printf '%s\\n' '${replacement}' >"${pidFile}"
   chmod 600 "${pidFile}"`;
       const racedScript = script.replace(
-        'marker_owner="$(trusted_identity_fd "/proc/$$/fd/4" || true)"',
+        'marker_owner_uid="$(trusted_identity_fd "/proc/$$/fd/4" || true)"',
         replaceAfterOpen,
       );
 
@@ -253,12 +251,13 @@ ${script}`;
   );
 
   it.runIf(process.platform === "linux")(
-    "spares bare openclaw when gateway identity owner mismatches the process user",
-    () => {
+    "spares bare openclaw when gateway identity owner UID mismatches the process UID",
+    async () => {
       const decoy = spawnWithArgv0("openclaw");
+      await waitForArgv0(decoy, "openclaw");
       const script = stopScriptWithGatewayIdentity(decoy).replace(
-        '-v identity_owner="$pidfile_owner"',
-        '-v identity_owner="sandbox"',
+        '-v identity_owner_uid="$pidfile_owner_uid"',
+        '-v identity_owner_uid="99999999"',
       );
       expect(runStopScript(script)).toBe(1);
       expect(isAlive(decoy)).toBe(true);

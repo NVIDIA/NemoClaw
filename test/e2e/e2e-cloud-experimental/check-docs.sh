@@ -723,7 +723,8 @@ load_fern_route_index() {
   # Build a lightweight route index from Fern navigation without requiring npm
   # dependencies. Each emitted row is: <docs source path> TAB <canonical route>.
   # The parser intentionally handles the subset used by docs/index.yml:
-  # variants, nested sections with slugs, and pages/sections with path+slug.
+  # variants, native changelogs, nested sections with slugs, and pages/sections
+  # with path+slug.
   local _fern_route_index_err
   _fern_route_index_err="$(mktemp)"
   if ! FERN_ROUTE_INDEX="$(
@@ -748,8 +749,15 @@ function clean(value) {
 }
 
 function maybeEmit(item) {
-  if (!item || item.emitted || !variant || !item.path || !item.slug || item.indent <= 6) return;
+  if (!item || item.emitted || !variant || !item.slug || item.indent <= 6) return;
   const route = ["user-guide", variant, ...item.parent, item.slug].join("/");
+  if (item.type === "changelog") {
+    const changelogPath = item.path.replace(/^\.\//, "").replace(/\/$/, "");
+    rows.push(`${changelogPath}/overview.mdx\t${route}`);
+    item.emitted = true;
+    return;
+  }
+  if (!item.path) return;
   rows.push(`${item.path}\t${route}`);
   const sourcePath = agentVariantSourcePath(item.path);
   if (sourcePath && sourcePath !== item.path) {
@@ -770,7 +778,7 @@ function maybePushSection(item) {
 }
 
 for (const line of lines) {
-  const itemMatch = line.match(/^(\s*)-\s+(page|section|link|title):/);
+  const itemMatch = line.match(/^(\s*)-\s+(page|section|link|title|changelog):(?:\s*(.*?))?\s*$/);
   if (itemMatch) {
     const indent = itemMatch[1].length;
     const type = itemMatch[2];
@@ -783,7 +791,7 @@ for (const line of lines) {
       indent,
       type,
       parent: stack.map((part) => part.slug),
-      path: "",
+      path: type === "changelog" ? clean(itemMatch[3] || "") : "",
       slug: "",
       emitted: false,
       pushed: false,

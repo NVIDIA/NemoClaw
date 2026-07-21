@@ -458,8 +458,12 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
     "prereq-nemoclaw",
   );
 
+  // OpenShell reaches this fixture from its gateway network namespace, where
+  // the runner's loopback address is not routable.
   const fake = await startFakeOpenAiCompatibleServer({
+    host: "0.0.0.0",
     port: Number(process.env.NEMOCLAW_FAKE_PORT ?? 0),
+    publicHost: "host.openshell.internal",
   });
   await artifacts.writeJson("fake-openai.json", { baseUrl: fake.baseUrl });
   cleanup.trackDisposable("close fake OpenAI-compatible endpoint", async () => {

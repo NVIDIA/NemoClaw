@@ -15,6 +15,7 @@ export function createDockerSandboxRecreator(options: {
   gpuEnabled: boolean;
   gpuOptions: Parameters<RecreateGpuPatchFn>[0];
   startupCommand: readonly string[] | null | undefined;
+  requiredUlimits?: Parameters<RecreateStartupPatchFn>[0]["requiredUlimits"];
   recreateGpu?: RecreateGpuPatchFn;
   recreateStartup?: RecreateStartupPatchFn;
 }): (waitForSupervisor: boolean, deps: DockerGpuPatchDeps) => DockerGpuPatchResult {
@@ -29,6 +30,7 @@ export function createDockerSandboxRecreator(options: {
       {
         sandboxName: options.gpuOptions.sandboxName,
         openshellSandboxCommand: options.startupCommand || [],
+        requiredUlimits: options.requiredUlimits,
         timeoutSecs: options.gpuOptions.timeoutSecs,
         waitForSupervisor,
       },

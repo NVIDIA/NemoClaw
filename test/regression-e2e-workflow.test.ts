@@ -19,12 +19,14 @@ type RegressionWorkflow = {
       };
     };
   };
+  permissions?: Record<string, string>;
   jobs?: Record<
     string,
     {
       permissions?: Record<string, string>;
       steps?: WorkflowStep[];
       "timeout-minutes"?: number;
+      uses?: string;
     }
   >;
 };
@@ -42,6 +44,9 @@ function preparedVitestJobs(workflow: RegressionWorkflow) {
 
 describe("Regression E2E workflow contract", () => {
   const workflow = readYaml<RegressionWorkflow>(".github/workflows/regression-e2e.yaml");
+  const branchValidation = readYaml<RegressionWorkflow>(
+    ".github/workflows/e2e-branch-validation.yaml",
+  );
 
   // source-shape-contract: compatibility -- Keeps the executable WhatsApp regression on the supported Vitest live runner
   it("runs WhatsApp compact QR through Vitest instead of the retired shell script", () => {
@@ -54,12 +59,23 @@ describe("Regression E2E workflow contract", () => {
 
   // source-shape-contract: security -- Preserves the public NVIDIA credential boundary for Model Router regression execution
   it("stages the public NVIDIA key for the Model Router's NVIDIA credential", () => {
+    const branchValidationCallers = Object.values(workflow.jobs ?? {}).filter(
+      (job) => job.uses === "./.github/workflows/e2e-branch-validation.yaml",
+    );
     const job = workflow.jobs?.["model-router-provider-routed-inference-e2e"];
     const runStep = job?.steps?.find(
       (step) => step.name === "Run Model Router provider-routed inference E2E test",
     );
     expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
     expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(branchValidationCallers).toHaveLength(1);
+    expect(workflow.permissions).toEqual(branchValidation.permissions);
+    expect(workflow.permissions).toEqual({
+      actions: "read",
+      checks: "write",
+      contents: "read",
+      "pull-requests": "write",
+    });
   });
 
   // source-shape-contract: security -- Every discovered non-hermetic Vitest job must use immutable credential-free preparation

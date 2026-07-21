@@ -12,6 +12,7 @@ const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor a
 ) => (...args: unknown[]) => Promise<unknown>;
 
 type AutoLabelWorkflow = {
+  concurrency?: { group?: string; queue?: string };
   on?: {
     pull_request_target?: {
       branches?: string[];
@@ -24,24 +25,35 @@ type AutoLabelWorkflow = {
   jobs: Record<string, WorkflowJob>;
 };
 
+type ReleaseLatestWorkflow = {
+  concurrency?: { group?: string; queue?: string };
+  permissions?: Record<string, string>;
+  jobs: Record<string, WorkflowJob>;
+};
+
 type ComparisonStatus = "ahead" | "behind" | "diverged" | "identical";
 
 type TagFixture = {
   name: string;
   refType?: "commit" | "tag";
   peeledType?: "commit" | "tag";
-  taggedAt?: string;
   status?: ComparisonStatus;
   aheadBy?: number;
   behindBy?: number;
 };
 
 const WORKFLOW_PATH = ".github/workflows/label-merged-pr-release-target.yaml";
+const RELEASE_WORKFLOW_PATH = ".github/workflows/release-latest-tag.yaml";
 const MERGE_SHA = "f".repeat(40);
 const workflow = readYaml<AutoLabelWorkflow>(WORKFLOW_PATH);
 const job = workflow.jobs["label-release-target"];
 const actionStep = job.steps?.find((step) => step.name === "Apply release target to merged PRs");
 const script = actionStep?.with?.script;
+const releaseWorkflow = readYaml<ReleaseLatestWorkflow>(RELEASE_WORKFLOW_PATH);
+const releaseJob = releaseWorkflow.jobs["update-latest"];
+const retirementStep = releaseJob.steps?.find(
+  (step) => step.name === "Retire the released target label",
+);
 
 function sha(index: number): string {
   return index.toString(16).padStart(40, "0");
@@ -81,7 +93,6 @@ function createHarness(tags: TagFixture[], pullRequestLabels: string[] = []) {
           sha: fixture.commitSha,
           type: fixture.peeledType ?? "commit",
         },
-        tagger: { date: fixture.taggedAt ?? new Date().toISOString() },
       },
     };
   });
@@ -169,8 +180,12 @@ async function runScript(harness: ReturnType<typeof createHarness>): Promise<voi
 }
 
 describe("merged PR release target workflow", () => {
-  // source-shape-contract: security -- Pull-request-target labeling must never execute or checkout untrusted contributor code
+  // source-shape-contract: security -- Privileged label writes must stay metadata-only and serialize retirement with assignment
   it("keeps fork-safe labeling inside the trusted metadata boundary", () => {
+    const coordination = {
+      group: "release-target-label-operations",
+      queue: "max",
+    };
     expect(workflow.on?.pull_request_target).toEqual({
       branches: ["main"],
       types: ["closed"],
@@ -181,6 +196,13 @@ describe("merged PR release target workflow", () => {
       issues: "write",
       "pull-requests": "write",
     });
+    expect(workflow.concurrency).toEqual(coordination);
+    expect(releaseWorkflow.concurrency).toEqual(coordination);
+    expect(releaseWorkflow.permissions).toEqual({
+      contents: "write",
+      issues: "write",
+      "pull-requests": "write",
+    });
     expect(job.if).toBe(
       "${{ github.event_name != 'pull_request_target' || github.event.pull_request.merged == true }}",
     );
@@ -188,6 +210,20 @@ describe("merged PR release target workflow", () => {
     expect(job.steps).toHaveLength(1);
     expect(job.steps?.some((step) => step.uses?.startsWith("actions/checkout@"))).toBe(false);
     expect(job.steps?.some((step) => typeof step.run === "string")).toBe(false);
+    expect(script).not.toContain("containing release");
+    expect(script).not.toContain("RECONCILIATION_WINDOW_MS");
+    expect(retirementStep?.env).toMatchObject({
+      GH_TOKEN: "${{ github.token }}",
+    });
+    expect(retirementStep?.run).toContain("scripts/retire-release-label.mts");
+    const latestIndex = releaseJob.steps?.findIndex(
+      (step) => step.name === "Move latest to the verified release tag object",
+    );
+    const retirementIndex = releaseJob.steps?.findIndex(
+      (step) => step.name === "Retire the released target label",
+    );
+    expect(latestIndex).toBeGreaterThanOrEqual(0);
+    expect(retirementIndex).toBeGreaterThan(latestIndex ?? -1);
   });
 
   it.each([
@@ -251,7 +287,7 @@ describe("merged PR release target workflow", () => {
     });
   });
 
-  it("assigns a PR at a tag boundary to that release", async () => {
+  it("does not label a PR already captured at the latest tag boundary", async () => {
     const harness = createHarness([
       { name: "v0.0.10", status: "identical" },
       { name: "v0.0.9", status: "ahead" },
@@ -259,24 +295,14 @@ describe("merged PR release target workflow", () => {
 
     await runScript(harness);
 
-    expect(harness.compareCommitsWithBasehead).toHaveBeenCalledTimes(2);
-    expect(harness.addLabels).toHaveBeenCalledWith(
-      expect.objectContaining({ labels: ["v0.0.10"] }),
+    expect(harness.compareCommitsWithBasehead).toHaveBeenCalledTimes(1);
+    expect(harness.addLabels).not.toHaveBeenCalled();
+    expect(harness.info).toHaveBeenCalledWith(
+      "PR #123 is already contained in v0.0.10; no release target label added",
     );
   });
 
-  it("assigns a non-patch release tag that contains the merge", async () => {
-    const harness = createHarness([
-      { name: "v1.0.0", status: "identical" },
-      { name: "v0.9.9", status: "ahead" },
-    ]);
-
-    await runScript(harness);
-
-    expect(harness.addLabels).toHaveBeenCalledWith(expect.objectContaining({ labels: ["v1.0.0"] }));
-  });
-
-  it("uses ancestry when a newer release tag appears after the merge", async () => {
+  it("does not recreate a label when the latest release contains the merge", async () => {
     const harness = createHarness([
       { name: "v0.0.11", status: "behind" },
       { name: "v0.0.10", status: "ahead" },
@@ -284,9 +310,10 @@ describe("merged PR release target workflow", () => {
 
     await runScript(harness);
 
-    expect(harness.compareCommitsWithBasehead).toHaveBeenCalledTimes(2);
-    expect(harness.addLabels).toHaveBeenCalledWith(
-      expect.objectContaining({ labels: ["v0.0.11"] }),
+    expect(harness.compareCommitsWithBasehead).toHaveBeenCalledTimes(1);
+    expect(harness.addLabels).not.toHaveBeenCalled();
+    expect(harness.info).toHaveBeenCalledWith(
+      "PR #123 is already contained in v0.0.11; no release target label added",
     );
   });
 
@@ -365,11 +392,10 @@ describe("merged PR release target workflow", () => {
     expect(harness.addLabels).not.toHaveBeenCalled();
   });
 
-  it("repairs missed labels across the current and latest completed releases", async () => {
+  it("repairs missed labels only in the current untagged interval", async () => {
     const harness = createHarness([{ name: "v0.0.10" }, { name: "v0.0.9" }]);
     const mainCommit = "e".repeat(40);
-    const completedReleaseCommit = "d".repeat(40);
-    const [latest, previous] = harness.fixtures;
+    const [latest] = harness.fixtures;
     harness.context.eventName = "schedule";
     harness.getBranch.mockResolvedValueOnce({ data: { commit: { sha: mainCommit } } });
     harness.compareCommitsWithBasehead.mockImplementation(
@@ -385,16 +411,6 @@ describe("merged PR release target workflow", () => {
                 commits: [{ sha: MERGE_SHA }],
               },
             };
-          case `${previous.commitSha}...${latest.commitSha}`:
-            return {
-              data: {
-                status: "ahead",
-                ahead_by: 1,
-                behind_by: 0,
-                total_commits: 1,
-                commits: [{ sha: completedReleaseCommit }],
-              },
-            };
           default:
             throw new Error(`Unexpected reconciliation comparison: ${basehead}`);
         }
@@ -402,42 +418,33 @@ describe("merged PR release target workflow", () => {
     );
     harness.listPullRequestsAssociatedWithCommit.mockImplementation(
       async ({ commit_sha: commitSha }: { commit_sha: string }) => ({
-        data: [
+        data:
           commitSha === MERGE_SHA
-            ? {
-                base: { ref: "main" },
-                labels: [],
-                merge_commit_sha: MERGE_SHA,
-                merged_at: "2026-07-04T00:00:00Z",
-                number: 123,
-              }
-            : {
-                base: { ref: "main" },
-                labels: [{ name: "v0.0.10" }],
-                merge_commit_sha: completedReleaseCommit,
-                merged_at: "2026-07-03T00:00:00Z",
-                number: 122,
-              },
-        ],
+            ? [
+                {
+                  base: { ref: "main" },
+                  labels: [],
+                  merge_commit_sha: MERGE_SHA,
+                  merged_at: "2026-07-04T00:00:00Z",
+                  number: 123,
+                },
+              ]
+            : [],
       }),
     );
 
     await runScript(harness);
 
-    expect(harness.listPullRequestsAssociatedWithCommit).toHaveBeenCalledTimes(2);
+    expect(harness.listPullRequestsAssociatedWithCommit).toHaveBeenCalledTimes(1);
     expect(harness.addLabels).toHaveBeenCalledTimes(1);
     expect(harness.addLabels).toHaveBeenCalledWith(
       expect.objectContaining({ issue_number: 123, labels: ["v0.0.11"] }),
     );
-    expect(harness.info).toHaveBeenCalledWith("Reconciled 2 merged PR release target(s)");
+    expect(harness.info).toHaveBeenCalledWith("Reconciled 1 merged PR release target(s)");
   });
 
-  it("does not recreate completed release labels outside the retention window", async () => {
-    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
-    const harness = createHarness([
-      { name: "v0.0.10", taggedAt: eightDaysAgo },
-      { name: "v0.0.9", taggedAt: eightDaysAgo },
-    ]);
+  it("never scans completed release intervals", async () => {
+    const harness = createHarness([{ name: "v0.0.10" }, { name: "v0.0.9" }]);
     const mainCommit = "e".repeat(40);
     const [latest] = harness.fixtures;
     harness.context.eventName = "schedule";
@@ -447,7 +454,7 @@ describe("merged PR release target workflow", () => {
         assert.equal(
           basehead,
           `${latest.commitSha}...${mainCommit}`,
-          `Unexpected expired release comparison: ${basehead}`,
+          `Unexpected release comparison: ${basehead}`,
         );
         return {
           data: {
@@ -464,7 +471,7 @@ describe("merged PR release target workflow", () => {
     await runScript(harness);
 
     expect(harness.compareCommitsWithBasehead).toHaveBeenCalledTimes(1);
-    expect(harness.getRef).toHaveBeenCalledTimes(3);
+    expect(harness.getRef).toHaveBeenCalledTimes(2);
     expect(harness.listPullRequestsAssociatedWithCommit).not.toHaveBeenCalled();
     expect(harness.addLabels).not.toHaveBeenCalled();
   });
@@ -493,8 +500,7 @@ describe("merged PR release target workflow", () => {
                 commits: [{ sha: MERGE_SHA }],
               },
             };
-          case `${v10.commitSha}...${v11.commitSha}`:
-          case `${v09.commitSha}...${v10.commitSha}`:
+          case `${v10.commitSha}...${mainCommit}`:
             return {
               data: {
                 status: "ahead",
@@ -537,27 +543,25 @@ describe("merged PR release target workflow", () => {
   });
 
   it("stops after two reconciliation restarts when release tags keep changing", async () => {
-    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
     const harness = createHarness(
-      ["v0.0.13", "v0.0.12", "v0.0.11", "v0.0.10", "v0.0.9"].map((name) => ({
-        name,
-        taggedAt: eightDaysAgo,
-      })),
+      ["v0.0.13", "v0.0.12", "v0.0.11", "v0.0.10", "v0.0.9"].map((name) => ({ name })),
     );
     const [v13, v12, v11, v10, v09] = harness.fixtures;
     harness.context.eventName = "schedule";
     harness.listTags
       .mockResolvedValueOnce({ data: [v10, v09] })
       .mockResolvedValueOnce({ data: [v11, v10, v09] })
+      .mockResolvedValueOnce({ data: [v11, v10, v09] })
+      .mockResolvedValueOnce({ data: [v12, v11, v10, v09] })
       .mockResolvedValueOnce({ data: [v12, v11, v10, v09] })
       .mockResolvedValueOnce({ data: [v13, v12, v11, v10, v09] });
 
     await expect(runScript(harness)).rejects.toThrow(
       "Newest release tag kept changing during reconciliation",
     );
-    expect(harness.listTags).toHaveBeenCalledTimes(4);
+    expect(harness.listTags).toHaveBeenCalledTimes(6);
     expect(harness.warning).toHaveBeenCalledTimes(2);
-    expect(harness.getBranch).not.toHaveBeenCalled();
+    expect(harness.getBranch).toHaveBeenCalledTimes(3);
     expect(harness.addLabels).not.toHaveBeenCalled();
   });
 });

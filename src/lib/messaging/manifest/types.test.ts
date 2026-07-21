@@ -292,6 +292,6 @@ describe("messaging manifest type contracts", () => {
   });
 
   // Import-layer isolation for the production manifest modules is enforced by
-  // scripts/checks/layer-import-boundaries.ts. Keep this unit test focused on
+  // scripts/checks/layer-import-boundaries.mts. Keep this unit test focused on
   // manifest serialization and type contracts rather than walking source files.
 });

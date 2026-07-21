@@ -64,6 +64,7 @@ type DockerGpuSandboxCreatePatchOptions = {
   sandboxName: string;
   gpuDevice?: string | null;
   openshellSandboxCommand?: readonly string[] | null;
+  requiredUlimits?: Parameters<RecreateStartupPatchFn>[0]["requiredUlimits"];
   timeoutSecs: number;
   backend?: DockerGpuPatchBackend;
   /**
@@ -139,6 +140,7 @@ export function createDockerGpuSandboxCreatePatch(
     sandboxName: options.sandboxName,
     gpuDevice: options.gpuDevice,
     openshellSandboxCommand: options.openshellSandboxCommand ?? null,
+    requiredUlimits: options.requiredUlimits ?? null,
     timeoutSecs: options.timeoutSecs,
     backend: options.backend,
     dockerDesktopWsl: options.dockerDesktopWsl ?? isDockerDesktopWslRuntime(),
@@ -149,6 +151,7 @@ export function createDockerGpuSandboxCreatePatch(
     gpuEnabled: routeAdapter.enabled,
     gpuOptions: applyOptions,
     startupCommand: options.openshellSandboxCommand,
+    requiredUlimits: options.requiredUlimits,
     recreateGpu: recreatePatch,
     recreateStartup: recreateStartupPatch,
   });

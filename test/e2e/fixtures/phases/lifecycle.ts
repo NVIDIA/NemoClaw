@@ -327,11 +327,15 @@ export class LifecyclePhaseFixture {
     );
     assertExitZero(pidFileStop, "stop Docker-driver gateway PID");
 
+    // Docker's name filter is a regular-expression substring match unless it
+    // is explicitly anchored. The unanchored form can select a sandbox whose
+    // name contains the gateway prefix; stopping that container remounts its
+    // tmpfs and turns a gateway-restart probe into a sandbox-restart probe.
     const containerStop = await this.host.command(
       "sh",
       [
         "-lc",
-        `cid="$(docker ps -qf 'name=openshell-cluster-nemoclaw' 2>/dev/null | head -1)"; ` +
+        `cid="$(docker ps --filter 'name=^/openshell-cluster-nemoclaw$' --format '{{.ID}}' 2>/dev/null)"; ` +
           `if [ -n "$cid" ]; then docker stop "$cid" >/dev/null; fi`,
       ],
       {

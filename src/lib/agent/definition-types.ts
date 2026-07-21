@@ -120,6 +120,7 @@ export interface AgentDefinition {
   inference?: AgentInference;
   mcp?: AgentMcpCapability;
   state_dirs?: string[];
+  runtime_auth_state_dirs?: string[];
   state_files?: AgentStateFile[];
   user_managed_files?: string[];
   _legacy_paths?: StringMap;
@@ -135,6 +136,7 @@ export interface AgentDefinition {
   readonly inferenceProviderOptions: string[];
   readonly mcpCapability: AgentMcpCapability;
   readonly stateDirs: string[];
+  readonly runtimeAuthStateDirs: string[];
   readonly stateFiles: AgentStateFile[];
   readonly userManagedFiles: string[];
   readonly versionCommand: string;

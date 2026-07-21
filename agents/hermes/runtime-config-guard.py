@@ -59,6 +59,7 @@ RESTART_ORPHAN_MARKER_NAME = ".nemoclaw-hermes-restart-seal"
 SHIELDS_TRANSITION_LEASE_SECONDS = 300
 STATE_WORKER_LEASE_SECONDS = 15 * 60
 HERMES_STARTUP_READY_FILE = "/run/nemoclaw/hermes-startup-ready"
+HERMES_ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle"
 NEMOCLAW_RUNTIME_DIR = "/run/nemoclaw"
 NEMOCLAW_RUNTIME_DIR_MODE = 0o711
 HERMES_RESTART_STATE_FILE = "/run/nemoclaw/hermes-restart-seal.json"
@@ -67,6 +68,7 @@ DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS = frozenset(
     {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}
 )
 _DIRECTORY_FSYNC_WARNING_EMITTED = False
+_DIRECTORY_METADATA_FSYNC_WARNING_EMITTED = False
 INSTALLED_RUNTIME_CONFIG_GUARD = (
     "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 )
@@ -585,7 +587,7 @@ def _pinned_process_matches_supervised_nonroot_start(
     supervisor_identity: tuple[str, int | None],
     expected_effective_uid: int,
 ) -> bool:
-    # OpenShell 0.0.72 keeps its supervisor at PID 1 and launches the non-root
+    # OpenShell 0.0.85 keeps its supervisor at PID 1 and launches the non-root
     # NemoClaw entrypoint as a child, so startup authority must be proved from
     # pinned procfs identity rather than a PID-1 equality check. Remove this
     # compatibility proof when #6256 provides authenticated supervisor/runtime
@@ -737,6 +739,65 @@ def _startup_ready_marker_absent() -> bool:
     except OSError:
         return False
     return False
+
+
+def _root_lifecycle_marker_state() -> str:
+    try:
+        opened = _open_regular(HERMES_ROOT_LIFECYCLE_MARKER)
+    except FileNotFoundError:
+        return "absent"
+    except (OSError, UnsafePathError) as exc:
+        raise UnsafePathError("Hermes root lifecycle marker is unsafe") from exc
+    try:
+        marker = opened.snapshot
+        if (
+            marker.uid != 0
+            or marker.gid != 0
+            or marker.mode != 0o444
+            or marker.nlink != 1
+            or not secrets.compare_digest(opened.read_bytes(64), b"root-separated\n")
+        ):
+            raise UnsafePathError("Hermes root lifecycle marker is unsafe")
+    finally:
+        opened.close()
+    return "root-separated"
+
+
+def _attested_shields_runtime_topology() -> str:
+    marker_state = _root_lifecycle_marker_state()
+    if marker_state == "root-separated":
+        if (
+            os.geteuid() == 0
+            and _pid1_is_nemoclaw_start()
+            and _process_effective_uid(1) == 0
+        ):
+            return marker_state
+        raise UnsafePathError(
+            "Hermes root lifecycle marker does not match the live PID 1 topology"
+        )
+
+    if (
+        os.path.abspath(__file__) != INSTALLED_RUNTIME_CONFIG_GUARD
+        or os.geteuid() != 0
+        or not _startup_ready_marker_absent()
+    ):
+        return "unknown"
+    try:
+        sandbox_uid = pwd.getpwnam("sandbox").pw_uid
+    except KeyError:
+        return "unknown"
+    if sandbox_uid <= 0:
+        return "unknown"
+    if _openshell_supervised_nonroot_start_is_live(0, sandbox_uid):
+        if (
+            _root_lifecycle_marker_state() != marker_state
+            or not _startup_ready_marker_absent()
+        ):
+            raise UnsafePathError(
+                "Hermes runtime topology changed during attestation"
+            )
+        return "same-uid-nonroot"
+    return "unknown"
 
 
 def _validate_action_readiness(action: str, startup_owner: bool) -> None:
@@ -1063,6 +1124,22 @@ def _fsync_directory_after_replace(dir_fd: int) -> None:
                 file=sys.stderr,
             )
             _DIRECTORY_FSYNC_WARNING_EMITTED = True
+
+
+def _fsync_directory_metadata(dir_fd: int) -> None:
+    global _DIRECTORY_METADATA_FSYNC_WARNING_EMITTED
+
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        if exc.errno not in DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS:
+            raise
+        if not _DIRECTORY_METADATA_FSYNC_WARNING_EMITTED:
+            print(
+                "[security] directory fsync is unsupported; the Hermes root metadata update completed without a directory durability barrier",
+                file=sys.stderr,
+            )
+            _DIRECTORY_METADATA_FSYNC_WARNING_EMITTED = True
 
 
 def _atomic_replace_preserving_flags(
@@ -3986,6 +4063,109 @@ def _freeze_shields_directories(state_data: dict[str, object], hermes_dir: str) 
         os.close(parent_fd)
 
 
+def _reconcile_private_mutable_shields_root(
+    hermes_fd: int,
+    hermes_st: os.stat_result,
+    hermes_meta: dict[str, object],
+    mode: str,
+) -> tuple[os.stat_result, str]:
+    if (
+        mode != "mutable"
+        or stat.S_IMODE(hermes_st.st_mode) != 0o700
+        or hermes_st.st_uid != hermes_meta.get("uid")
+        or hermes_st.st_gid != hermes_meta.get("gid")
+        or hermes_meta.get("mode") != 0o3770
+    ):
+        return hermes_st, "exact"
+
+    topology = _attested_shields_runtime_topology()
+    if topology == "same-uid-nonroot":
+        # The pinned OpenShell supervisor/entrypoint proof establishes that the
+        # non-root entrypoint and every child it can launch share the sandbox
+        # uid. A private sandbox-owned root remains traversable to that gateway.
+        confirmed = os.fstat(hermes_fd)
+        if (
+            not _same_inode(confirmed, hermes_meta)
+            or confirmed.st_uid != hermes_meta.get("uid")
+            or confirmed.st_gid != hermes_meta.get("gid")
+            or stat.S_IMODE(confirmed.st_mode) != 0o700
+        ):
+            raise UnsafePathError(
+                "refusing shields finish because the private same-UID Hermes root drifted during attestation"
+            )
+        return confirmed, "same-uid-nonroot"
+    if topology == "root-separated":
+        # The root entrypoint launches Hermes as the dedicated gateway uid in
+        # the sandbox group. Restore the descriptor-pinned set-id/sticky root
+        # before committing the transaction so that gateway can traverse it.
+        os.fchmod(hermes_fd, 0o3770)
+        repaired = os.fstat(hermes_fd)
+        if (
+            not _same_inode(repaired, hermes_meta)
+            or repaired.st_uid != hermes_meta.get("uid")
+            or repaired.st_gid != hermes_meta.get("gid")
+            or stat.S_IMODE(repaired.st_mode) != 0o3770
+        ):
+            raise UnsafePathError(
+                "refusing shields finish because the root-separated Hermes root could not be restored"
+            )
+        return repaired, "root-separated"
+    raise UnsafePathError(
+        "refusing shields finish because private mutable .hermes lacks an attested same-UID topology"
+    )
+
+
+def _enforce_final_shields_root_posture(
+    hermes_fd: int,
+    hermes_meta: dict[str, object],
+    mode: str,
+    posture: str,
+) -> os.stat_result:
+    expected_mode = hermes_meta.get("mode")
+    if posture == "root-separated":
+        if mode != "mutable" or expected_mode != 0o3770:
+            raise UnsafePathError(
+                "refusing shields finish because the root-separated Hermes posture is inconsistent"
+            )
+        # The sandbox owner can chmod its root after the initial topology check.
+        # Repair the pinned descriptor again at the commit boundary, make the
+        # metadata update durable where directory fsync is supported, and only
+        # trust the fresh stat collected after both operations.
+        os.fchmod(hermes_fd, 0o3770)
+        _fsync_directory_metadata(hermes_fd)
+        allowed_modes = (0o3770,)
+    elif posture == "same-uid-nonroot":
+        if mode != "mutable" or expected_mode != 0o3770:
+            raise UnsafePathError(
+                "refusing shields finish because the same-UID Hermes posture is inconsistent"
+            )
+        # Both modes are intentional for a same-UID mutable runtime: 03770 is
+        # the canonical posture, while 0700 remains traversable by the gateway.
+        allowed_modes = (0o700, 0o3770)
+    elif posture == "exact":
+        if not isinstance(expected_mode, int):
+            raise UnsafePathError(
+                "refusing shields finish because the expected Hermes mode is malformed"
+            )
+        allowed_modes = (expected_mode,)
+    else:
+        raise UnsafePathError(
+            "refusing shields finish because the Hermes root posture is unknown"
+        )
+
+    current = os.fstat(hermes_fd)
+    if (
+        not _same_inode(current, hermes_meta)
+        or current.st_uid != hermes_meta.get("uid")
+        or current.st_gid != hermes_meta.get("gid")
+        or stat.S_IMODE(current.st_mode) not in allowed_modes
+    ):
+        raise UnsafePathError(
+            "refusing shields finish because the final .hermes metadata drifted"
+        )
+    return current
+
+
 def finish_shields_transition(
     hermes_dir: str, hash_file: str, state_file: str, lock_token: str
 ) -> tuple[str, bool]:
@@ -4023,10 +4203,16 @@ def finish_shields_transition(
         hermes_st = os.fstat(hermes_fd)
         if not _same_inode(hermes_st, hermes_meta):
             raise UnsafePathError("refusing shields finish because .hermes changed")
+        hermes_st, root_posture = _reconcile_private_mutable_shields_root(
+            hermes_fd, hermes_st, hermes_meta, mode
+        )
         if (
             hermes_st.st_uid != hermes_meta.get("uid")
             or hermes_st.st_gid != hermes_meta.get("gid")
-            or stat.S_IMODE(hermes_st.st_mode) != hermes_meta.get("mode")
+            or (
+                stat.S_IMODE(hermes_st.st_mode) != hermes_meta.get("mode")
+                and root_posture != "same-uid-nonroot"
+            )
         ):
             raise UnsafePathError(
                 "refusing shields finish because .hermes metadata drifted"
@@ -4084,6 +4270,9 @@ def finish_shields_transition(
         _verify_compat_hash(hash_file, os.path.join(hermes_dir, ".config-hash"))
         os.fchmod(parent_fd, parent_meta["mode"])
         _set_inode_flags(parent_fd, int(state_data.get("parent_flags", 0)))
+        _enforce_final_shields_root_posture(
+            hermes_fd, hermes_meta, mode, root_posture
+        )
         _remove_restart_orphan_marker(hermes_fd)
         # Parent ownership is the last persistent metadata change. Seal rejects
         # set-id parent modes, so this chown cannot clear a prepared mode bit.

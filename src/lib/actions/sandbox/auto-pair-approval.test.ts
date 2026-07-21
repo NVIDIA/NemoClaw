@@ -11,7 +11,6 @@ import {
   AUTO_PAIR_MAX_APPROVALS,
   buildAutoPairApprovalScript,
   readAutoPairApprovalPolicyModule,
-  wrapSandboxShellScript,
 } from "./auto-pair-approval";
 
 const SUMMARY_MARKER = "__NEMOCLAW_AUTO_PAIR_APPROVED__";
@@ -48,24 +47,6 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(module).toContain("def approval_request_decision");
     expect(module).toContain("def gateway_approval_env");
     expect(module).not.toContain("recover_failed_scope_approval");
-  });
-});
-
-describe("wrapSandboxShellScript (#4616)", () => {
-  it("encodes a multi-line payload onto a single newline-free line", () => {
-    const wrapped = wrapSandboxShellScript("echo one\necho two\n");
-    expect(wrapped).not.toMatch(/[\n\r]/);
-    expect(wrapped).toContain("base64 -d");
-    expect(wrapped).toContain("mktemp");
-  });
-
-  it("round-trips and preserves the inner exit status when run", () => {
-    const inner = "echo line-one\nprintf 'exit-then\\n'\nexit 3\n";
-    const wrapped = wrapSandboxShellScript(inner);
-    const result = spawnSync("sh", ["-c", wrapped], { encoding: "utf-8", timeout: 10_000 });
-    expect(result.stdout).toContain("line-one");
-    expect(result.stdout).toContain("exit-then");
-    expect(result.status).toBe(3);
   });
 });
 

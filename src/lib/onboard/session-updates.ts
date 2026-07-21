@@ -22,6 +22,8 @@ export interface OnboardSessionUpdateInput {
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
   hermesToolGateways?: string[] | null;
+  /** Ephemeral vLLM checkpoint proof consumed by Station provider binding; never persisted. */
+  stationExpressModelIdentity?: string;
 }
 
 // Preserve the nullable contract end-to-end: `null` means "clear this
@@ -68,5 +70,8 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
   if (updates.messagingPlan !== undefined) normalized.messagingPlan = updates.messagingPlan;
   if (updates.hermesToolGateways !== undefined)
     normalized.hermesToolGateways = updates.hermesToolGateways;
+  if (updates.stationExpressModelIdentity !== undefined) {
+    normalized.stationExpressModelIdentity = updates.stationExpressModelIdentity;
+  }
   return normalized;
 }

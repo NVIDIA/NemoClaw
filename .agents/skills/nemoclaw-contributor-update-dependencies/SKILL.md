@@ -436,7 +436,7 @@ Use these NemoClaw precedents for durable evidence shape, not as inherited concl
 - `docs/security/openclaw-2026.6.10-dependency-review.md` and
   `test/openclaw-dependency-review.test.ts` for a tracked dependency review with contract tests;
 - `docs/security/openshell-0.0.72-compatibility-review.mdx` for a runtime compatibility boundary;
-- `scripts/checks/dependency-pins.ts` and `test/dependency-pins-check.test.ts` for selector
+- `scripts/checks/dependency-pins.mts` and `test/dependency-pins-check.test.ts` for selector
   coherence; and
 - `scripts/check-installer-hash.sh` and `test/installer-hash-check.test.ts` for independently
   trusted release manifests and consumed artifacts.

@@ -53,7 +53,12 @@ vi.mock("../domain/lifecycle/options", () => ({
 // ../domain/maintenance/images is left unmocked so the gc tests run the real
 // orphan-detection helpers and can assert on gc's actual output.
 
-import { backupAll, garbageCollectImages, shouldSkipUnreachableSandboxBackup } from "./maintenance";
+import {
+  backupAll,
+  garbageCollectImages,
+  rebuildBackupsDirectory,
+  shouldSkipUnreachableSandboxBackup,
+} from "./maintenance";
 
 describe("backupAll", () => {
   beforeEach(() => {
@@ -73,6 +78,12 @@ describe("backupAll", () => {
     delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
     vi.restoreAllMocks();
+  });
+
+  it("reports the rebuild backup directory under the selected gateway state root", () => {
+    expect(rebuildBackupsDirectory("/home/tester", 9123)).toBe(
+      "/home/tester/.nemoclaw/gateways/9123/rebuild-backups",
+    );
   });
 
   it("returns before gateway preflight when no sandboxes are registered", async () => {

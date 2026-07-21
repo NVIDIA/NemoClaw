@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getSandboxInferenceConfig } from "../../inference/config";
+import { resolveMaxTokensField } from "../../inference/max-tokens-field";
 import { shellQuote } from "../../runner";
 import { executeSandboxExecCommand, type SandboxCommandResult } from "./process-recovery";
 
@@ -51,7 +52,7 @@ function buildProbeRequest(input: RebuildInferencePreflightInput): {
     headers: [],
     payload: {
       model: input.model,
-      max_tokens: 8,
+      [resolveMaxTokensField(input.model)]: 8,
       messages: [{ role: "user", content: "Reply with OK" }],
       stream: false,
     },

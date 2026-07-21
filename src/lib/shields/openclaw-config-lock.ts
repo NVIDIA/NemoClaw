@@ -19,6 +19,17 @@ export const OPENCLAW_CONFIG_HASH_PATH = `${OPENCLAW_CONFIG_DIR}/.config-hash`;
 const CONTAINER_HELPER = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
 const HOST_HELPER = path.resolve(__dirname, "../../../scripts/openclaw-config-guard.py");
 const CONTAINER_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "5m"];
+const SCHEMA_VALIDATION_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "30s"];
+const MAX_SCHEMA_CANDIDATE_BYTES = 16 * 1024 * 1024;
+// OpenClaw resolves relative includes from the config file's directory.
+const SCHEMA_VALIDATION_SCRIPT = `set -eu
+umask 077
+candidate="$(mktemp "${OPENCLAW_CONFIG_DIR}/.nemoclaw-openclaw-config.XXXXXX")"
+trap 'rm -f -- "$candidate"' EXIT HUP INT TERM
+head -c ${MAX_SCHEMA_CANDIDATE_BYTES + 1} > "$candidate"
+candidate_size="$(wc -c < "$candidate")"
+test "$candidate_size" -le ${MAX_SCHEMA_CANDIDATE_BYTES}
+HOME=/sandbox OPENCLAW_CONFIG_PATH="$candidate" /usr/local/bin/openclaw config validate --json`;
 
 export type OpenClawConfigGuardAction =
   | "preflight"
@@ -89,6 +100,86 @@ function executionFailure(label: string, result: PrivilegedExecResult): string {
 
 function stringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function schemaIssuePaths(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object") return [];
+  const issues = (payload as { issues?: unknown }).issues;
+  if (!Array.isArray(issues)) return [];
+  const paths: string[] = [];
+  for (const issue of issues.slice(0, 8)) {
+    if (!issue || typeof issue !== "object") continue;
+    const path = (issue as { path?: unknown }).path;
+    if (typeof path !== "string") continue;
+    const sanitized = [...path.slice(0, 256)]
+      .map((character) => (/^[\x20-\x7e]$/.test(character) ? character : " "))
+      .join("")
+      .trim();
+    if (sanitized && !paths.includes(sanitized)) paths.push(sanitized);
+  }
+  return paths;
+}
+
+function hasSchemaIssues(payload: unknown): boolean {
+  return (
+    !!payload &&
+    typeof payload === "object" &&
+    Array.isArray((payload as { issues?: unknown }).issues)
+  );
+}
+
+export function validateOpenClawConfigCandidate(
+  privileged: PrivilegedExec,
+  input: string,
+): string[] {
+  if (Buffer.byteLength(input, "utf8") > MAX_SCHEMA_CANDIDATE_BYTES) {
+    return [
+      "OpenClaw config candidate exceeds the 16 MiB size limit; existing config was not changed",
+    ];
+  }
+  const result = privileged.run(
+    [...SCHEMA_VALIDATION_TIMEOUT, "gosu", "gateway", "sh", "-c", SCHEMA_VALIDATION_SCRIPT],
+    input,
+  );
+  let payload: unknown;
+  try {
+    payload = JSON.parse(result.stdout.trim());
+  } catch {
+    payload = null;
+  }
+  const validatorCompleted = result.signal === null && !result.error;
+  if (
+    validatorCompleted &&
+    result.status === 0 &&
+    payload &&
+    typeof payload === "object" &&
+    (payload as { valid?: unknown }).valid === true
+  ) {
+    return [];
+  }
+
+  const paths = schemaIssuePaths(payload);
+  if (
+    validatorCompleted &&
+    result.status === 1 &&
+    payload &&
+    typeof payload === "object" &&
+    (payload as { valid?: unknown }).valid === false &&
+    hasSchemaIssues(payload)
+  ) {
+    const location = paths.length > 0 ? ` at ${paths.join(", ")}` : "";
+    return [
+      `OpenClaw config schema rejected the candidate${location}; existing config was not changed`,
+    ];
+  }
+
+  const reason =
+    result.signal !== null || result.status === 124 || result.status === 137
+      ? "timed out or was terminated"
+      : "could not run";
+  return [
+    `OpenClaw config schema validation ${reason}; existing config was not changed. Rebuild the sandbox if its OpenClaw runtime does not support config validate --json`,
+  ];
 }
 
 export function parseOpenClawConfigGuardOutput(

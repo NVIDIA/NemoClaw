@@ -115,6 +115,7 @@ export interface OnboardDashboardHelpers {
     provider: string,
     nimContainer?: string | null,
     agent?: AgentDefinition | null,
+    ready?: boolean,
   ): void;
   stopAllDashboardForwards(): void;
 }
@@ -439,6 +440,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     provider: string,
     nimContainer: string | null = null,
     agent: AgentDefinition | null = null,
+    ready = true,
   ): void {
     const nimStatus = deps.nimStatus ?? nim.nimStatus;
     const nimStatusByName = deps.nimStatusByName ?? nim.nimStatusByName;
@@ -471,7 +473,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
     console.log("");
     console.log(`  ${"─".repeat(50)}`);
-    console.log(`  ${deps.agentProductName()} is ready`);
+    console.log(`  ${deps.agentProductName()} is ${ready ? "ready" : "not ready"}`);
     console.log("");
     console.log(`  Sandbox:  ${sandboxName}`);
     console.log(`  Model:    ${model} (${providerLabel})`);

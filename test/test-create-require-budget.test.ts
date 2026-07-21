@@ -6,13 +6,20 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
+import ts from "typescript";
 
+import {
+  extractTrustedCreateRequireAllowlists,
+  trustedCreateRequireExpansionFailure,
+} from "../.github/actions/ci-static-checks/create-require-ratchet-core.mts";
 import {
   collectProductionCreateRequireSources,
   collectTestSupportCreateRequireSources,
   containsCreateRequireIdentifier,
+  createRequireAllowlistExpansionFailure,
   createRequireBudgetFailure,
-} from "../scripts/checks/test-create-require-budget";
+  extractCreateRequireAllowlists,
+} from "../scripts/checks/test-create-require-budget.mts";
 
 const tempDirs = new Set<string>();
 
@@ -123,5 +130,72 @@ describe("CLI createRequire budget", () => {
 
     expect(failure).toContain("src/new.test.ts");
     expect(failure).toContain("src/retired.test.ts");
+  });
+
+  it("rejects allowlist additions relative to the merge base while permitting removals (#6245)", () => {
+    expect(
+      createRequireAllowlistExpansionFailure(
+        { cli: ["src/a.test.ts"], testSupport: [] },
+        { cli: ["src/a.test.ts", "src/retired.test.ts"], testSupport: ["test/retired.ts"] },
+      ),
+    ).toBeNull();
+
+    expect(
+      createRequireAllowlistExpansionFailure(
+        { cli: ["src/a.test.ts", "src/new.test.ts"], testSupport: ["test/new.ts"] },
+        { cli: ["src/a.test.ts"], testSupport: [] },
+      ),
+    ).toBe(
+      [
+        "createRequire allowlists must not expand relative to the merge base.",
+        "- CLI_CREATE_REQUIRE_FILES: src/new.test.ts",
+        "- TEST_SUPPORT_CREATE_REQUIRE_FILES: test/new.ts",
+      ].join("\n"),
+    );
+  });
+
+  it("extracts only literal reviewed allowlists from the merge-base source (#6245)", () => {
+    const source = [
+      'export const CLI_CREATE_REQUIRE_FILES = ["src/a.test.ts"] as const;',
+      'export const TEST_SUPPORT_CREATE_REQUIRE_FILES = ["test/helper.ts"] as const;',
+    ].join("\n");
+
+    expect(extractCreateRequireAllowlists(source)).toEqual({
+      cli: ["src/a.test.ts"],
+      testSupport: ["test/helper.ts"],
+    });
+    expect(() =>
+      extractCreateRequireAllowlists(
+        [
+          "const dynamicPath = getPath();",
+          "export const CLI_CREATE_REQUIRE_FILES = [dynamicPath] as const;",
+          "export const TEST_SUPPORT_CREATE_REQUIRE_FILES = [] as const;",
+        ].join("\n"),
+      ),
+    ).toThrow("CLI_CREATE_REQUIRE_FILES must be a literal string array");
+  });
+
+  it("duplicates the ratchet in base-trusted CI code that rejects PR additions (#6245)", () => {
+    const baselineSource = [
+      'export const CLI_CREATE_REQUIRE_FILES = ["src/a.test.ts"] as const;',
+      "export const TEST_SUPPORT_CREATE_REQUIRE_FILES = [] as const;",
+    ].join("\n");
+    const currentSource = [
+      'export const CLI_CREATE_REQUIRE_FILES = ["src/a.test.ts", "src/new.test.ts"] as const;',
+      'export const TEST_SUPPORT_CREATE_REQUIRE_FILES = ["test/new.ts"] as const;',
+    ].join("\n");
+
+    expect(
+      trustedCreateRequireExpansionFailure(
+        extractTrustedCreateRequireAllowlists(ts, currentSource, "current-checker.mts"),
+        extractTrustedCreateRequireAllowlists(ts, baselineSource, "baseline-checker.mts"),
+      ),
+    ).toContain("src/new.test.ts");
+    expect(
+      trustedCreateRequireExpansionFailure(
+        extractTrustedCreateRequireAllowlists(ts, currentSource, "current-checker.mts"),
+        extractTrustedCreateRequireAllowlists(ts, baselineSource, "baseline-checker.mts"),
+      ),
+    ).toContain("test/new.ts");
   });
 });

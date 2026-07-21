@@ -48,10 +48,12 @@ describe("MessagingHookRegistry", () => {
       "telegram.allowlistAliases",
       "telegram.openclawBridgeHealth",
       "telegram.gatewayConflictStatus",
+      "telegram.statusHealth",
       "telegram.getMeReachability",
       "wechat.ilinkLogin",
       "wechat.seedOpenClawAccount",
       "wechat.healthCheck",
+      "whatsapp.statusHealth",
     ]);
   });
 

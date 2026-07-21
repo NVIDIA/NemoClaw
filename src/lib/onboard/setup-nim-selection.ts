@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
+import type { TrustedPrivateEndpointCapability } from "../inference/endpoint-ssrf-preflight";
 import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import { getProbeExtraHeaders } from "../inference/onboard-probes";
 import type { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
@@ -10,6 +11,17 @@ import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selecti
 export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
 
 export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
+
+/** Defaults passed into Ollama model selection and runtime context adoption. */
+export type OllamaModelSelectionDefaults = {
+  requestedModel: string | null;
+  recoveredModel: string | null;
+  lockedModel?: string | null;
+  /** Minimum runtime context window required by the selected agent. */
+  contextWindowFloor?: number;
+  /** Interactive prompt default from provider/model environment variables. */
+  promptDefaultModel?: string | null;
+};
 
 export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   model: string | SetupNimSelectionBackNavigation | null;
@@ -22,12 +34,18 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   compatibleEndpointReasoning?: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
+  /** Minimum Ollama daemon context length to request for this agent. */
+  ollamaContextWindowFloor?: number;
   skipHostInferenceSmoke?: boolean;
   /** Public addresses approved for the selected custom endpoint. */
   endpointPinnedAddresses?: string[];
+  /** Non-forgeable proof of the exact private subset admitted by the selected preflight. */
+  endpointTrustedPrivateCapability?: TrustedPrivateEndpointCapability;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
   /** Ephemeral selection-to-smoke validation cache; never written to session state. */
   inferenceCapabilityCache?: OnboardInferenceCapabilityCache;
+  /** Route-validated vLLM checkpoint identity; ephemeral and never persisted directly. */
+  vllmModelIdentity?: string;
   nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
   openRouterFeaturedModels?: NvidiaFeaturedModelSession;
   /** Attempt-wide shared-gateway guard, invoked after identity selection and before probes. */
@@ -57,7 +75,9 @@ export function applyCloudFallbackSelection(
   state.allowToolsIncompatible = false;
   state.skipHostInferenceSmoke = false;
   state.reuseGatewayCredentialWithoutLocalKey = false;
+  delete state.vllmModelIdentity;
   delete state.endpointPinnedAddresses;
+  delete state.endpointTrustedPrivateCapability;
 }
 
 export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {
@@ -117,7 +137,13 @@ type ProbeOptions = {
 };
 
 type ValidationResult =
-  | { ok: true; api: string | null; retry?: never; pinnedAddresses?: string[] }
+  | {
+      ok: true;
+      api: string | null;
+      retry?: never;
+      pinnedAddresses?: string[];
+      trustedPrivateCapability?: TrustedPrivateEndpointCapability;
+    }
   | { ok: false; api?: string; retry?: "credential" | "retry" | "model" | "selection" | string };
 
 type RemoteModelValidationResult = "selected" | "retry-model" | "retry-selection";
@@ -207,6 +233,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
       intendedInferenceApi = "anthropic-messages",
     }) => {
       delete state.endpointPinnedAddresses;
+      delete state.endpointTrustedPrivateCapability;
       const selectedModel = deps.requireValue(
         deps.isBackToSelection(state.model) ? null : state.model,
         `Missing model for ${remoteConfig.label}`,
@@ -233,6 +260,9 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           if (validation.pinnedAddresses)
             state.endpointPinnedAddresses = validation.pinnedAddresses;
           else delete state.endpointPinnedAddresses;
+          if (validation.trustedPrivateCapability)
+            state.endpointTrustedPrivateCapability = validation.trustedPrivateCapability;
+          else delete state.endpointTrustedPrivateCapability;
           // Probe the endpoint's runtime max_model_len so a custom vLLM endpoint
           // gets its real context window baked in instead of a small
           // architecture default; an explicit override always wins (#6177).
@@ -278,6 +308,9 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           if (validation.pinnedAddresses)
             state.endpointPinnedAddresses = validation.pinnedAddresses;
           else delete state.endpointPinnedAddresses;
+          if (validation.trustedPrivateCapability)
+            state.endpointTrustedPrivateCapability = validation.trustedPrivateCapability;
+          else delete state.endpointTrustedPrivateCapability;
           state.preferredInferenceApi = validation.api;
           return "selected";
         }

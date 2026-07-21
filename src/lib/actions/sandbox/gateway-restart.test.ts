@@ -19,6 +19,10 @@ describe("gateway restart failure markers", () => {
     > = [
       ["PRIVILEGED_CONTROL_UNAVAILABLE", "privileged control unavailable"],
       ["SUPERVISOR_UNAVAILABLE", "privileged control unavailable"],
+      [
+        "SUPERVISOR_UNAVAILABLE\nNEMOCLAW_CONTROL_STAGE=await-replacement",
+        "privileged control unavailable",
+      ],
       ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
       ["SUPERVISOR_REBUILD_REQUIRED", "privileged control unavailable"],
       ["SUPERVISOR_BUSY", "privileged control unavailable"],
@@ -121,7 +125,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
-  it("uses the injected supervisor action for the managed settle probe", () => {
+  it("uses the injected supervisor action for managed settle probes", () => {
     const restore = silenceConsole();
     const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0.001";
@@ -146,6 +150,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       expect(result).toMatchObject({ ok: true, restarted: true, healthPassed: true });
       expect(requestGatewaySupervisorAction.mock.calls).toEqual([
         ["alpha", "restart", 210000],
+        ["alpha", "probe"],
         ["alpha", "probe"],
       ]);
     } finally {

@@ -201,7 +201,7 @@ installed_copy_schema_error() {
       "COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py" \
       "/opt/hermes/.venv/bin/python -I /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py --guard /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py" \
       "hermes-mcp-config-transaction.py" \
-      "openshell-child-visible-credentials.v0.0.72.json" \
+      "openshell-child-visible-credentials.v0.0.85.json" \
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix" \
       "node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts" \
       "/sandbox/.hermes/dashboard-home"; do

@@ -26,6 +26,8 @@ export interface ShellProbeRunOptions {
   killGraceMs?: number;
   artifactName?: string;
   redactionValues?: string[];
+  /** Retain at most the last N bytes from each output stream. */
+  captureLimitBytes?: number;
   /** Timestamp-only output observer; chunk contents never cross this boundary. */
   onOutput?: (event: ShellProbeOutputEvent) => void;
 }
@@ -40,6 +42,8 @@ export { trustedShellCommand } from "./shell/trusted-command.ts";
 
 export interface ShellProbeResult {
   command: string[];
+  /** Wall-clock command duration, persisted for CI bottleneck analysis. */
+  durationMs?: number;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
@@ -82,6 +86,69 @@ function redactedError(error: unknown, message: string): Error {
   return next;
 }
 
+interface TextCapture {
+  append(chunk: string): void;
+  value(): {
+    droppedBytes: number;
+    limitBytes?: number;
+    text: string;
+  };
+}
+
+function createTextCapture(limitBytes: number | undefined): TextCapture {
+  if (limitBytes === undefined) {
+    let text = "";
+    return {
+      append(chunk) {
+        text += chunk;
+      },
+      value() {
+        return { droppedBytes: 0, text };
+      },
+    };
+  }
+  if (!Number.isSafeInteger(limitBytes) || limitBytes <= 0) {
+    throw new Error("captureLimitBytes must be a positive safe integer");
+  }
+
+  let droppedBytes = 0;
+  let tail = Buffer.alloc(0);
+  return {
+    append(chunk) {
+      const incoming = Buffer.from(chunk, "utf8");
+      const combined = tail.length === 0 ? incoming : Buffer.concat([tail, incoming]);
+      if (combined.length <= limitBytes) {
+        tail = combined;
+        return;
+      }
+      const overflow = combined.length - limitBytes;
+      let retainedStart = overflow;
+      while (retainedStart < combined.length && (combined[retainedStart]! & 0xc0) === 0x80) {
+        retainedStart += 1;
+      }
+      droppedBytes += retainedStart;
+      tail = Buffer.from(combined.subarray(retainedStart));
+    },
+    value() {
+      return { droppedBytes, limitBytes, text: tail.toString("utf8") };
+    },
+  };
+}
+
+function redactTruncatedSecretPrefix(text: string, redactionValues: string[]): string {
+  let fragmentLength = 0;
+  for (const value of redactionValues) {
+    const maxLength = Math.min(value.length - 1, text.length);
+    for (let length = maxLength; length > fragmentLength; length -= 1) {
+      if (text.startsWith(value.slice(-length))) {
+        fragmentLength = length;
+        break;
+      }
+    }
+  }
+  return fragmentLength > 0 ? `[REDACTED]${text.slice(fragmentLength)}` : text;
+}
+
 export class ShellProbe {
   private readonly artifacts: ArtifactSink;
   private readonly redact: (text: string, extraValues?: string[]) => string;
@@ -114,6 +181,15 @@ export class ShellProbe {
     };
     const redactProbeText = (text: string) =>
       this.redact(enforcedValues.length > 0 ? enforceLocalRedaction(text) : text, redactionValues);
+    const renderCapturedText = (capture: TextCapture): string => {
+      const { droppedBytes, limitBytes, text } = capture.value();
+      const boundarySafeText =
+        droppedBytes > 0 ? redactTruncatedSecretPrefix(text, enforcedValues) : text;
+      const redacted = redactProbeText(boundarySafeText);
+      return droppedBytes > 0
+        ? `[shell-probe omitted ${droppedBytes} earlier bytes; showing up to the last ${limitBytes} bytes]\n${redacted}`
+        : redacted;
+    };
     const redactedCommand = [command, ...args].map(redactProbeText);
     const artifactBase = `shell/${safeArtifactBase(redactProbeText(options.artifactName ?? command))}`;
     const writeArtifacts = async (
@@ -124,8 +200,9 @@ export class ShellProbe {
       result: await this.artifacts.writeJson(`${artifactBase}.result.json`, result),
     });
 
-    let stdout = "";
-    let stderr = "";
+    const stdout = createTextCapture(options.captureLimitBytes);
+    const stderr = createTextCapture(options.captureLimitBytes);
+    const startedAtMs = Date.now();
     const child = spawn(command, args, {
       cwd: options.cwd,
       detached: true,
@@ -137,7 +214,7 @@ export class ShellProbe {
       killGraceMs,
       signal: this.signal,
       onStdout: (chunk) => {
-        stdout += chunk;
+        stdout.append(chunk);
         try {
           options.onOutput?.({ stream: "stdout", atMs: Date.now() });
         } catch {
@@ -145,7 +222,7 @@ export class ShellProbe {
         }
       },
       onStderr: (chunk) => {
-        stderr += chunk;
+        stderr.append(chunk);
         try {
           options.onOutput?.({ stream: "stderr", atMs: Date.now() });
         } catch {
@@ -154,24 +231,27 @@ export class ShellProbe {
       },
     });
 
-    const redactedStdout = redactProbeText(stdout);
+    const redactedStdout = renderCapturedText(stdout);
+    const redactedStderr = renderCapturedText(stderr);
+    const durationMs = Date.now() - startedAtMs;
     if (supervised.spawnError) {
       const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
-      const redactedStderr = redactProbeText([stderr, redactedMessage].filter(Boolean).join("\n"));
+      const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
       await writeArtifacts({
         command: redactedCommand,
+        durationMs,
         exitCode: null,
         signal: null,
         timedOut: supervised.timedOut,
         stdout: redactedStdout,
-        stderr: redactedStderr,
+        stderr: stderrWithError,
       });
       throw redactedError(supervised.spawnError, redactedMessage);
     }
 
-    const redactedStderr = redactProbeText(stderr);
     const result: Omit<ShellProbeResult, "artifacts"> = {
       command: redactedCommand,
+      durationMs,
       exitCode: supervised.exitCode,
       signal: supervised.signal,
       timedOut: supervised.timedOut,

@@ -23,7 +23,7 @@ import {
   SANDBOX_PHASE_SPAN,
   SANDBOX_READINESS_SPAN,
   unsupportedTraceMetric,
-} from "../../scripts/bench/lib";
+} from "../../scripts/bench/lib.mts";
 import {
   finishOnboardTrace,
   startOnboardTrace,

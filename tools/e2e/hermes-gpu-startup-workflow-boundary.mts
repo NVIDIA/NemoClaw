@@ -93,11 +93,10 @@ function trustedEnv(step: WorkflowStep | undefined): boolean {
   );
 }
 
-export function validateHermesGpuStartupWorkflowBoundary(
-  workflowPath = DEFAULT_WORKFLOW_PATH,
+export function validateHermesGpuStartupWorkflow(
+  workflow: WorkflowRecord,
   fixtureFile = FIXTURE,
 ): string[] {
-  const workflow = asRecord(YAML.parse(readFileSync(workflowPath, "utf8")));
   const job = asRecord(asRecord(workflow.jobs)[JOB_NAME]);
   const errors: string[] = [];
   if (Object.keys(job).length === 0) {
@@ -296,7 +295,7 @@ removalCondition:`,
       true,
     ) ||
     /\b(?:install\s+-m|chmod)\s+0?644\b/u.test(run) ||
-    !run.includes("npx vitest run --project e2e-live") ||
+    !run.includes("tools/e2e/live-vitest-invocation.mts run --test-path") ||
     !run.includes("test/e2e/live/hermes-gpu-startup.test.ts")
   ) {
     errors.push(`${JOB_NAME} trusted runtime boundary failed`);
@@ -409,4 +408,14 @@ rm -rf -- @state`,
   }
 
   return errors;
+}
+
+export function validateHermesGpuStartupWorkflowBoundary(
+  workflowPath = DEFAULT_WORKFLOW_PATH,
+  fixtureFile = FIXTURE,
+): string[] {
+  return validateHermesGpuStartupWorkflow(
+    asRecord(YAML.parse(readFileSync(workflowPath, "utf8"))),
+    fixtureFile,
+  );
 }

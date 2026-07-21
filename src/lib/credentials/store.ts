@@ -14,9 +14,11 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { isErrnoException } from "../core/errno";
+import { GATEWAY_PORT } from "../core/ports";
 import { createPromptActivityCleanup } from "../core/prompt-activity";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { rejectSymlinksOnPath } from "../state/config-io";
+import { nemoclawStateRoot } from "../state/state-root";
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
 
@@ -127,10 +129,10 @@ export function getCredsDir(): string {
   const home = resolveHomeDir();
   if (_cachedHome !== home) {
     _cachedHome = home;
-    _credsDir = path.join(home, ".nemoclaw");
+    _credsDir = nemoclawStateRoot(home, GATEWAY_PORT);
     _legacyCredsFile = null;
   }
-  return _credsDir || path.join(home, ".nemoclaw");
+  return _credsDir || nemoclawStateRoot(home, GATEWAY_PORT);
 }
 
 /**

@@ -250,7 +250,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
   });
 
-  it("keeps Deep Agents Python egress probe commands single-line for OpenShell exec", () => {
+  it("passes Deep Agents Python egress probes as native multiline argv", () => {
     const result = spawnSync(
       "bash",
       [
@@ -271,13 +271,10 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(result.status).toBe(0);
     const commands = result.stdout.trim().split("\n");
     expect(commands).toHaveLength(2);
-    expect(commands[0]).toMatch(/^SINGLE_LINE_COMMAND:python3 -c /);
-    expect(commands[1]).toMatch(
-      /^SINGLE_LINE_COMMAND:\/usr\/local\/lib\/nemoclaw\/dcode-managed-exec \/opt\/venv\/bin\/python3 -c /,
-    );
+    expect(commands).toEqual(["NATIVE_MULTILINE_ARGV", "NATIVE_MULTILINE_ARGV"]);
   });
 
-  it("keeps Deep Agents fetch_url probe command single-line for OpenShell exec", () => {
+  it("passes the Deep Agents fetch_url probe as native multiline argv", () => {
     const result = spawnSync(
       "bash",
       [
@@ -296,7 +293,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("NO_NEWLINE_IN_FETCH_COMMAND");
+    expect(result.stdout.trim()).toBe("NATIVE_MULTILINE_ARGV");
   });
 
   it.each([
@@ -344,7 +341,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(`${result.stdout}\n${result.stderr}`).toContain(expected);
   });
 
-  it("keeps Deep Agents secret-boundary probe command single-line for OpenShell exec", () => {
+  it("keeps the Deep Agents secret-boundary probe as one atomic shell expression", () => {
     const result = spawnSync(
       "bash",
       [
@@ -363,10 +360,10 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
+    expect(result.stdout).toContain("ATOMIC_COMMAND");
   });
 
-  it("keeps Deep Agents Tavily opt-in probe command single-line for OpenShell exec", () => {
+  it("passes the Deep Agents Tavily probe as native multiline argv", () => {
     const result = spawnSync("bash", [dcodeTavilyCheck], {
       encoding: "utf8",
       env: {
@@ -376,7 +373,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     });
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("NO_NEWLINE_IN_COMMAND");
+    expect(result.stdout).toContain("NATIVE_MULTILINE_ARGV");
   });
 
   it.each([

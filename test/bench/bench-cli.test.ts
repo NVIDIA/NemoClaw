@@ -12,7 +12,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
-const RUNNER = path.join(REPO_ROOT, "scripts", "bench", "run.ts");
+const RUNNER = path.join(REPO_ROOT, "scripts", "bench", "run.mts");
 const VALID_COMPLETION = JSON.stringify({
   choices: [{ message: { role: "assistant", content: "PONG" } }],
 });

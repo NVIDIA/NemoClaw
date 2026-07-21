@@ -165,7 +165,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
   afterPoliciesResultApplied?(): void;
   onContextUpdated?(context: Context): void;
-}): Promise<void> {
+}) {
   // Recompute plan for live resume repair when durable machine snapshots
   // are already downstream of this slice even though branch setup/readiness,
   // policy reconciliation, and final verification must still re-run. Those
@@ -180,7 +180,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   // tests cover ahead-state resume and terminal-state rejection; remove this
   // fallback once final-phase repair checks are first-class FSM recovery states
   // and legacy machine step mutation is gone.
-  await runLiveOnboardFlowSlice({
+  return runLiveOnboardFlowSlice({
     context: options.context,
     runtime: withAfterPoliciesResultApplied(options.runtime, options.afterPoliciesResultApplied),
     phases: withContextObserver(options.phases, options.onContextUpdated),

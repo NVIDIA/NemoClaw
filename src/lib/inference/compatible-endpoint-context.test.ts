@@ -202,6 +202,27 @@ describe("compatible-endpoint context window", () => {
     expect(messages.some((m) => m.includes("private/internal address"))).toBe(true);
   });
 
+  it("probes an exactly allowlisted private endpoint with its address capability (#6861)", async () => {
+    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: "llm.corp.example",
+    };
+    await applyCompatibleEndpointContextWindow("https://llm.corp.example/v1", "model-a", {
+      env,
+      fetchModels,
+      resolveHost: async () => [{ address: "10.0.0.8", family: 4 }],
+      logger: { log: () => undefined, warn: () => undefined },
+    });
+
+    expect(fetchModels).toHaveBeenCalledWith(
+      "https://llm.corp.example/v1",
+      "",
+      ["10.0.0.8"],
+      expect.objectContaining({ addresses: ["10.0.0.8"] }),
+    );
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+  });
+
   it.each([
     "http://127.0.0.1:8000/v1",
     "http://localhost:8000/v1",

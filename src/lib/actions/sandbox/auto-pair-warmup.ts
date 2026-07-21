@@ -37,7 +37,6 @@
 import { spawnSync } from "node:child_process";
 
 import { ROOT } from "../../state/paths";
-import { wrapSandboxShellScript } from "./auto-pair-approval";
 import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
 // Outer spawnSync cap (ms) for the throwaway warm-up agent run. The `-m`
@@ -147,16 +146,7 @@ export function runSandboxScopeWarmupRun(sandboxName: string): void {
     if (!openshellBinary) return;
     spawnSync(
       openshellBinary,
-      [
-        "sandbox",
-        "exec",
-        "--name",
-        sandboxName,
-        "--",
-        "sh",
-        "-c",
-        wrapSandboxShellScript(WARMUP_SCRIPT),
-      ],
+      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", WARMUP_SCRIPT],
       {
         cwd: ROOT,
         env: process.env,

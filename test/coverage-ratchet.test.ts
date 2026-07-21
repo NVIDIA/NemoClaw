@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { findCoverageFailures } from "../scripts/check-coverage-ratchet";
+import { findCoverageFailures } from "../scripts/check-coverage-ratchet.mts";
 
 const thresholds = {
   lines: 71.2,
@@ -51,7 +51,7 @@ describe("coverage ratchet", () => {
         [
           "--import",
           "tsx",
-          "scripts/check-coverage-ratchet.ts",
+          "scripts/check-coverage-ratchet.mts",
           relative(process.cwd(), summaryPath),
           relative(process.cwd(), thresholdPath),
           "Test coverage",
@@ -65,5 +65,18 @@ describe("coverage ratchet", () => {
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
+  });
+
+  it("reports the .mts usage path when required arguments are missing (#6922)", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "scripts/check-coverage-ratchet.mts"],
+      { cwd: process.cwd(), encoding: "utf8" },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Usage: check-coverage-ratchet.mts <coverage-summary.json> <coverage-threshold.json> [label]",
+    );
   });
 });

@@ -161,7 +161,7 @@ repos:
     hooks:
       - id: validate-config-schemas
         name: Validate config files against JSON schemas
-        entry: npx tsx scripts/validate-configs.ts
+        entry: npx tsx scripts/validate-configs.mts
         language: system
         pass_filenames: false
         files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
@@ -171,18 +171,18 @@ repos:
         name: Repository checks
         entry: npm run checks
         language: system
-        files: ^(\.pre-commit-config\.yaml$|\.github/workflows/e2e\.yaml$|Dockerfile(?:\.base)?$|agents/openclaw/manifest\.yaml$|agents/hermes/(?:Dockerfile(?:\.base)?|manifest\.yaml|mcp-config-transaction\.py)$|nemoclaw-blueprint/blueprint\.yaml$|nemoclaw/package\.json$|scripts/(?:brev-launchable-ci-cpu|check-installer-hash|install-openshell|update-hermes-agent)\.sh$|src/lib/actions/sandbox/openshell-child-visible-credentials\.v[0-9]+\.[0-9]+\.[0-9]+\.json$|bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
+        files: ^(\.pre-commit-config\.yaml$|\.github/workflows/e2e\.yaml$|Dockerfile(?:\.base)?$|agents/openclaw/manifest\.yaml$|agents/hermes/(?:Dockerfile(?:\.base)?|manifest\.yaml|mcp-config-transaction\.py)$|docs/resources/starter-prompt\.md$|nemoclaw-blueprint/blueprint\.yaml$|nemoclaw/package\.json$|scripts/(?:brev-launchable-ci-cpu|check-installer-hash|install-openshell|update-hermes-agent)\.sh$|src/lib/actions/sandbox/openshell-child-visible-credentials\.v[0-9]+\.[0-9]+\.[0-9]+\.json$|bin/.*\.(cjs|js|mjs)$|src/.*\.(cts|mts|ts|tsx)$|scripts/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|test/.*\.(cjs|cts|js|mjs|mts|ts|tsx)$|nemoclaw/src/.*\.(cts|mts|ts|tsx)$)
         pass_filenames: false
         priority: 10
 
       - id: env-var-docs
         name: NEMOCLAW_* env-var documentation gate
-        entry: npx tsx scripts/check-env-var-docs.ts
+        entry: npx tsx scripts/check-env-var-docs.mts
         language: system
         # Triggers the audit when src/, bin/, the docs file, the allowlist,
         # or the gate script itself changes. The script always rescans the
         # whole repo so pass_filenames is false. See #3184.
-        files: ^(src/.*\.(ts|tsx|js)|bin/.*\.(ts|js)|docs/reference/commands\.mdx|ci/env-var-doc-allowlist\.json|scripts/check-env-var-docs\.ts)$
+        files: ^(src/.*\.(ts|tsx|js)|bin/.*\.(ts|js)|docs/reference/commands\.mdx|ci/env-var-doc-allowlist\.json|scripts/check-env-var-docs\.mts)$
         pass_filenames: false
         priority: 10
 
@@ -272,7 +272,7 @@ repos:
     hooks:
       - id: stale-dist-check
         name: Warn if dist/ is older than src/
-        entry: npx tsx scripts/check-stale-dist.ts
+        entry: node --experimental-strip-types scripts/check-stale-dist.mts
         language: system
         always_run: true
         pass_filenames: false
@@ -306,7 +306,7 @@ repos:
         entry: npm run source-shape:check
         language: system
         pass_filenames: false
-        files: ^(.+\.(test|spec)\.(js|ts|mjs|mts|cjs|cts)|scripts/find-source-shape-tests\.ts|ci/source-shape-test-budget\.json)$
+        files: ^(.+\.(test|spec)\.(js|ts|mjs|mts|cjs|cts)|scripts/find-source-shape-tests\.mts|ci/source-shape-test-budget\.json)$
         priority: 20
 
       - id: test-file-size-budget
@@ -314,7 +314,7 @@ repos:
         entry: npm run test-size:check
         language: system
         pass_filenames: false
-        files: ^(test/|src/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$|nemoclaw/src/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$|scripts/check-test-file-size-budget\.ts$|ci/test-file-size-budget\.json$)
+        files: ^(test/|src/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$|nemoclaw/src/.*\.(test|spec)\.(ts|js|mts|mjs|cts|cjs)$|scripts/check-test-file-size-budget\.mts$|ci/test-file-size-budget\.json$)
         priority: 20
 
       - id: test-skills-yaml

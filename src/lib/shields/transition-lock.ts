@@ -16,6 +16,7 @@ const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const DEFAULT_POLL_INTERVAL_MS = 50;
 const DEFAULT_MALFORMED_STALE_MS = 30_000;
 const TAKEOVER_TOKEN_PATTERN = /^[0-9a-f]{32}$/;
+const UNVERIFIED_SELF_IDENTITY_PREFIX = "unverified-self:";
 
 const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
 
@@ -123,6 +124,13 @@ export interface ShieldsTransitionTakeoverResult {
   quarantinePath?: string;
 }
 
+interface StaleOwnerRemovalExpectation {
+  expectedOwnerPid: number;
+  expectedOwnerStartIdentity: string;
+  quarantineLabel: string;
+  matches: (owner: ShieldsTransitionLockOwner) => boolean;
+}
+
 function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
@@ -196,6 +204,25 @@ function parseOwner(raw: string, sandboxName: string): ShieldsTransitionLockOwne
     return null;
   }
   return owner as unknown as ShieldsTransitionLockOwner;
+}
+
+function sameOwnerRecord(
+  left: ShieldsTransitionLockOwner,
+  right: ShieldsTransitionLockOwner,
+): boolean {
+  return (
+    left.version === right.version &&
+    left.sandboxName === right.sandboxName &&
+    left.pid === right.pid &&
+    left.processStartIdentity === right.processStartIdentity &&
+    left.command === right.command &&
+    left.acquiredAtMs === right.acquiredAtMs &&
+    left.takeoverToken === right.takeoverToken
+  );
+}
+
+function isUnverifiedSelfIdentity(identity: string): boolean {
+  return identity.startsWith(UNVERIFIED_SELF_IDENTITY_PREFIX);
 }
 
 function unsafeLockPathError(lockPath: string, reason: string): Error {
@@ -279,8 +306,16 @@ function defaultSleepAsync(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function staleRecovery(lockPath: string): string {
+function manualRecovery(lockPath: string): string {
+  return `Verify that no shields transition is active, remove '${lockPath}' manually, and retry.`;
+}
+
+function malformedStaleRecovery(lockPath: string): string {
   return `NemoClaw will not remove a stale lock pathname automatically because another process could replace it after inspection. Verify that no shields transition is active, remove '${lockPath}' manually, and retry.`;
+}
+
+function staleOwnerRecovery(lockPath: string): string {
+  return `NemoClaw could not safely recover the stale lock automatically. ${manualRecovery(lockPath)}`;
 }
 
 function formatWaitReason(reason: WaitReason | null, lockPath: string): string {
@@ -289,14 +324,14 @@ function formatWaitReason(reason: WaitReason | null, lockPath: string): string {
     return `the owner record is incomplete and only ${Math.max(0, Math.floor(reason.ageMs))}ms old. Retry after the writer finishes`;
   }
   if (reason.kind === "stale-malformed") {
-    return `the owner record is incomplete and ${Math.max(0, Math.floor(reason.ageMs))}ms old. ${staleRecovery(lockPath)}`;
+    return `the owner record is incomplete and ${Math.max(0, Math.floor(reason.ageMs))}ms old. ${malformedStaleRecovery(lockPath)}`;
   }
   const owner = reason.owner;
   if (reason.kind === "dead") {
-    return `recorded owner PID ${String(owner.pid)} is not running (${owner.command}). ${staleRecovery(lockPath)}`;
+    return `recorded owner PID ${String(owner.pid)} is not running (${owner.command}). ${staleOwnerRecovery(lockPath)}`;
   }
   if (reason.kind === "pid-reused") {
-    return `recorded owner PID ${String(owner.pid)} now has process-start identity '${reason.currentProcessStartIdentity}' instead of '${owner.processStartIdentity}' (${owner.command}). ${staleRecovery(lockPath)}`;
+    return `recorded owner PID ${String(owner.pid)} now has process-start identity '${reason.currentProcessStartIdentity}' instead of '${owner.processStartIdentity}' (${owner.command}). ${staleOwnerRecovery(lockPath)}`;
   }
   if (reason.kind === "identity-unavailable") {
     return `PID ${String(owner.pid)} is alive but its process-start identity cannot be verified (${owner.command}). Verify the active process and retry`;
@@ -323,6 +358,7 @@ export class ShieldsTransitionLockManager {
   private readonly sleepAsync: (milliseconds: number) => Promise<void>;
   private readonly processIsAlive: (pid: number) => boolean;
   private readonly processStartIdentity: (pid: number) => string | null;
+  private readonly ownerStartIdentityFallback: string;
   private readonly held = new Map<string, HeldLock>();
   private readonly ownership = new AsyncLocalStorage<ReadonlyMap<string, symbol>>();
 
@@ -334,6 +370,7 @@ export class ShieldsTransitionLockManager {
     this.sleepAsync = deps.sleepAsync ?? defaultSleepAsync;
     this.processIsAlive = deps.isProcessAlive ?? isProcessAlive;
     this.processStartIdentity = deps.readProcessStartIdentity ?? readProcessStartIdentity;
+    this.ownerStartIdentityFallback = `${UNVERIFIED_SELF_IDENTITY_PREFIX}${String(this.pid)}:${randomBytes(16).toString("hex")}`;
   }
 
   withShieldsTransitionLock<T>(
@@ -465,17 +502,32 @@ export class ShieldsTransitionLockManager {
       throw new Error("expectedOwnerStartIdentity is required");
     }
     const validToken = requireTakeoverToken(takeoverToken);
-    const lockPath = shieldsTransitionLockPath(validName, this.stateDir);
-    const snapshot = readExistingLock(lockPath, validName);
+    return this.removeStaleTransitionLockOwner(validName, {
+      expectedOwnerPid,
+      expectedOwnerStartIdentity,
+      quarantineLabel: `takeover-${validToken}`,
+      matches: (owner) =>
+        owner.pid === expectedOwnerPid &&
+        owner.processStartIdentity === expectedOwnerStartIdentity &&
+        owner.takeoverToken === validToken,
+    });
+  }
+
+  private removeStaleTransitionLockOwner(
+    sandboxName: string,
+    expectation: StaleOwnerRemovalExpectation,
+  ): ShieldsTransitionTakeoverResult {
+    const lockPath = shieldsTransitionLockPath(sandboxName, this.stateDir);
+    const snapshot = readExistingLock(lockPath, sandboxName);
     if (!snapshot) return { removed: false, reason: "missing" };
 
     try {
       const owner = snapshot.owner;
       if (
         !owner ||
-        owner.pid !== expectedOwnerPid ||
-        owner.processStartIdentity !== expectedOwnerStartIdentity ||
-        owner.takeoverToken !== validToken
+        owner.pid !== expectation.expectedOwnerPid ||
+        owner.processStartIdentity !== expectation.expectedOwnerStartIdentity ||
+        !expectation.matches(owner)
       ) {
         return { removed: false, reason: "owner-mismatch" };
       }
@@ -491,59 +543,196 @@ export class ShieldsTransitionLockManager {
         if (!currentIdentity) {
           return { removed: false, reason: "owner-identity-unavailable" };
         }
+        if (isUnverifiedSelfIdentity(owner.processStartIdentity)) {
+          return { removed: false, reason: "owner-identity-unavailable" };
+        }
         if (currentIdentity === owner.processStartIdentity) {
           return { removed: false, reason: "owner-live" };
         }
         removalReason = "removed-reused-pid";
       }
 
-      const current = this.currentRegularLockIdentity(lockPath);
-      if (!current || !sameInode(current, snapshot.identity)) {
-        return { removed: false, reason: "path-changed" };
+      const guard = this.enterStaleRecoveryGuard(lockPath, sandboxName);
+      if (!guard) return { removed: false, reason: "path-changed" };
+      try {
+        this.assertHeldPath(guard);
+        const current = this.currentRegularLockIdentity(lockPath);
+        if (!current || !sameInode(current, snapshot.identity)) {
+          return { removed: false, reason: "path-changed" };
+        }
+
+        const quarantineDir = fs.mkdtempSync(`${lockPath}.${expectation.quarantineLabel}-`);
+        fs.chmodSync(quarantineDir, 0o700);
+        const quarantinePath = path.join(quarantineDir, "owner.json");
+        try {
+          fs.linkSync(lockPath, quarantinePath);
+        } catch (error) {
+          this.removeEmptyQuarantine(quarantineDir);
+          if (isErrnoException(error) && error.code === "ENOENT") {
+            return { removed: false, reason: "path-changed" };
+          }
+          throw error;
+        }
+
+        const moved = readExistingLock(quarantinePath, sandboxName);
+        if (!moved) {
+          this.removeEmptyQuarantine(quarantineDir);
+          return { removed: false, reason: "path-changed" };
+        }
+        try {
+          const movedOwner = moved.owner;
+          const movedMatches =
+            sameInode(moved.identity, snapshot.identity) &&
+            movedOwner !== null &&
+            expectation.matches(movedOwner);
+          if (!movedMatches) {
+            this.removeLinkedQuarantine(quarantinePath);
+            this.removeEmptyQuarantine(quarantineDir);
+            return { removed: false, reason: "path-changed" };
+          }
+
+          const current = this.currentRegularLockIdentity(lockPath);
+          if (!current || !sameInode(current, snapshot.identity)) {
+            this.removeLinkedQuarantine(quarantinePath);
+            this.removeEmptyQuarantine(quarantineDir);
+            return { removed: false, reason: "path-changed" };
+          }
+          this.assertHeldPath(guard);
+          try {
+            fs.unlinkSync(lockPath);
+          } catch (error) {
+            this.removeLinkedQuarantine(quarantinePath);
+            this.removeEmptyQuarantine(quarantineDir);
+            if (isErrnoException(error) && error.code === "ENOENT") {
+              return { removed: false, reason: "path-changed" };
+            }
+            throw error;
+          }
+          fs.unlinkSync(quarantinePath);
+        } finally {
+          closeSnapshot(moved);
+        }
+        this.removeEmptyQuarantine(quarantineDir);
+        return { removed: true, reason: removalReason };
+      } finally {
+        this.removeHeldLockPath(guard, sandboxName, "recovery-release");
+      }
+    } finally {
+      closeSnapshot(snapshot);
+    }
+  }
+
+  private staleRecoveryGuardPath(lockPath: string): string {
+    return `${lockPath}.recovering`;
+  }
+
+  private staleRecoveryGuardOwner(sandboxName: string): ShieldsTransitionLockOwner {
+    return {
+      version: LOCK_VERSION,
+      sandboxName,
+      pid: this.pid,
+      processStartIdentity: this.processStartIdentity(this.pid) ?? this.ownerStartIdentityFallback,
+      command: "shields stale recovery",
+      acquiredAtMs: this.now(),
+    };
+  }
+
+  private staleRecoveryInProgress(lockPath: string, sandboxName: string): boolean {
+    const guardPath = this.staleRecoveryGuardPath(lockPath);
+    const snapshot = readExistingLock(guardPath, sandboxName);
+    if (!snapshot) return false;
+    let guardIsStale = false;
+    try {
+      const owner = snapshot.owner;
+      if (!owner) return true;
+      if (!this.processIsAlive(owner.pid)) {
+        guardIsStale = true;
+      } else if (!isUnverifiedSelfIdentity(owner.processStartIdentity)) {
+        const currentIdentity = this.processStartIdentity(owner.pid);
+        guardIsStale = currentIdentity !== null && currentIdentity !== owner.processStartIdentity;
+      }
+      if (!guardIsStale) return true;
+      if (!this.removeObservedStaleRecoveryGuard(guardPath, snapshot, sandboxName)) return true;
+    } finally {
+      closeSnapshot(snapshot);
+    }
+    return this.currentRegularLockIdentity(guardPath) !== null;
+  }
+
+  private enterStaleRecoveryGuard(lockPath: string, sandboxName: string): HeldLock | null {
+    const guardPath = this.staleRecoveryGuardPath(lockPath);
+    const owner = this.staleRecoveryGuardOwner(sandboxName);
+    const created = this.tryCreate(guardPath, owner);
+    if (created) return created;
+    if (this.staleRecoveryInProgress(lockPath, sandboxName)) return null;
+    return this.tryCreate(guardPath, owner);
+  }
+
+  private removeObservedStaleRecoveryGuard(
+    guardPath: string,
+    snapshot: ExistingLockSnapshot,
+    sandboxName: string,
+  ): boolean {
+    const cleanupGuard = this.enterStaleRecoveryGuard(guardPath, sandboxName);
+    if (!cleanupGuard) return false;
+    try {
+      this.assertHeldPath(cleanupGuard);
+      const current = readExistingLock(guardPath, sandboxName);
+      if (!current) return true;
+      try {
+        if (
+          !sameInode(current.identity, snapshot.identity) ||
+          current.owner === null ||
+          snapshot.owner === null ||
+          !sameOwnerRecord(current.owner, snapshot.owner)
+        ) {
+          return false;
+        }
+      } finally {
+        closeSnapshot(current);
       }
 
-      const quarantineDir = fs.mkdtempSync(`${lockPath}.takeover-${validToken}-`);
+      this.assertHeldPath(cleanupGuard);
+      const quarantineDir = fs.mkdtempSync(`${guardPath}.stale-`);
       fs.chmodSync(quarantineDir, 0o700);
       const quarantinePath = path.join(quarantineDir, "owner.json");
       try {
-        fs.renameSync(lockPath, quarantinePath);
+        fs.renameSync(guardPath, quarantinePath);
       } catch (error) {
         this.removeEmptyQuarantine(quarantineDir);
-        if (isErrnoException(error) && error.code === "ENOENT") {
-          return { removed: false, reason: "path-changed" };
-        }
+        if (isErrnoException(error) && error.code === "ENOENT") return true;
         throw error;
       }
 
-      const moved = readExistingLock(quarantinePath, validName);
-      if (!moved) {
-        return { removed: false, reason: "replacement-preserved", quarantinePath };
-      }
+      let moved: ExistingLockSnapshot | null = null;
       try {
-        const movedOwner = moved.owner;
-        const movedMatches =
-          sameInode(moved.identity, snapshot.identity) &&
-          movedOwner?.pid === expectedOwnerPid &&
-          movedOwner.processStartIdentity === expectedOwnerStartIdentity &&
-          movedOwner.takeoverToken === validToken;
-        if (!movedMatches) {
-          this.restoreQuarantinedReplacement(lockPath, quarantinePath);
-          return { removed: false, reason: "replacement-preserved", quarantinePath };
-        }
-
-        const currentQuarantine = this.currentRegularLockIdentity(quarantinePath);
-        if (!currentQuarantine || !sameInode(currentQuarantine, moved.identity)) {
-          this.restoreQuarantinedReplacement(lockPath, quarantinePath);
-          return { removed: false, reason: "replacement-preserved", quarantinePath };
+        moved = readExistingLock(quarantinePath, sandboxName);
+        if (
+          !moved ||
+          !sameInode(moved.identity, snapshot.identity) ||
+          moved.owner === null ||
+          snapshot.owner === null ||
+          !sameOwnerRecord(moved.owner, snapshot.owner)
+        ) {
+          this.restoreQuarantinedReplacement(guardPath, quarantinePath);
+          return false;
         }
         fs.unlinkSync(quarantinePath);
+        this.removeEmptyQuarantine(quarantineDir);
+        return true;
       } finally {
-        closeSnapshot(moved);
+        if (moved) closeSnapshot(moved);
       }
-      this.removeEmptyQuarantine(quarantineDir);
-      return { removed: true, reason: removalReason };
     } finally {
-      closeSnapshot(snapshot);
+      this.removeHeldLockPath(cleanupGuard, sandboxName, "recovery-release");
+    }
+  }
+
+  private removeLinkedQuarantine(quarantinePath: string): void {
+    try {
+      fs.unlinkSync(quarantinePath);
+    } catch (error) {
+      if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
     }
   }
 
@@ -609,8 +798,11 @@ export class ShieldsTransitionLockManager {
   ): HeldLock {
     const state = this.acquisitionState(sandboxName, command, options);
     let lastWaitReason: WaitReason | null = null;
+    let retrying = false;
 
     while (true) {
+      this.enforceWaitTimeoutBeforeRetry(state, lastWaitReason, retrying);
+      retrying = true;
       const inProcess = this.held.get(sandboxName);
       if (inProcess) {
         lastWaitReason = { kind: "same-process", owner: inProcess.owner };
@@ -624,6 +816,7 @@ export class ShieldsTransitionLockManager {
         );
         if (!observed) continue;
         lastWaitReason = observed;
+        if (this.recoveredObservedStaleOwner(sandboxName, observed)) continue;
       }
       this.sleep(this.waitDuration(state, lastWaitReason));
     }
@@ -636,8 +829,11 @@ export class ShieldsTransitionLockManager {
   ): Promise<HeldLock> {
     const state = this.acquisitionState(sandboxName, command, options);
     let lastWaitReason: WaitReason | null = null;
+    let retrying = false;
 
     while (true) {
+      this.enforceWaitTimeoutBeforeRetry(state, lastWaitReason, retrying);
+      retrying = true;
       const inProcess = this.held.get(sandboxName);
       if (inProcess) {
         lastWaitReason = { kind: "same-process", owner: inProcess.owner };
@@ -651,6 +847,7 @@ export class ShieldsTransitionLockManager {
         );
         if (!observed) continue;
         lastWaitReason = observed;
+        if (this.recoveredObservedStaleOwner(sandboxName, observed)) continue;
       }
       await this.sleepAsync(this.waitDuration(state, lastWaitReason));
     }
@@ -673,12 +870,12 @@ export class ShieldsTransitionLockManager {
       options.malformedStaleMs ?? DEFAULT_MALFORMED_STALE_MS,
       "malformedStaleMs",
     );
-    const ownerStartIdentity = this.processStartIdentity(this.pid);
-    if (!ownerStartIdentity) {
-      throw new Error(
-        `Cannot acquire shields transition lock: process-start identity for PID ${String(this.pid)} is unavailable`,
-      );
-    }
+    // Windows developer and CI hosts can lack both /proc and a ps lstart
+    // identity. Keep this fallback only until timer-control has a stable
+    // Windows start-time reader; live observers fail closed instead of
+    // reclaiming this owner.
+    const ownerStartIdentity =
+      this.processStartIdentity(this.pid) ?? this.ownerStartIdentityFallback;
 
     fs.mkdirSync(this.stateDir, { recursive: true, mode: 0o700 });
     const lockPath = shieldsTransitionLockPath(sandboxName, this.stateDir);
@@ -702,6 +899,28 @@ export class ShieldsTransitionLockManager {
     };
   }
 
+  private recoveredObservedStaleOwner(sandboxName: string, reason: WaitReason): boolean {
+    if (reason.kind !== "dead" && reason.kind !== "pid-reused") return false;
+    const recovery = this.removeStaleTransitionLockOwner(sandboxName, {
+      expectedOwnerPid: reason.owner.pid,
+      expectedOwnerStartIdentity: reason.owner.processStartIdentity,
+      quarantineLabel: "takeover-stale",
+      matches: (owner) => sameOwnerRecord(owner, reason.owner),
+    });
+    if (recovery.removed) return true;
+    if (recovery.reason === "replacement-preserved") {
+      const lockPath = shieldsTransitionLockPath(sandboxName, this.stateDir);
+      throw new Error(
+        `Cannot recover stale shields transition lock '${lockPath}': a replacement was preserved during recovery. ${manualRecovery(lockPath)}`,
+      );
+    }
+    return (
+      recovery.reason === "missing" ||
+      recovery.reason === "owner-mismatch" ||
+      recovery.reason === "path-changed"
+    );
+  }
+
   private observeWaitReason(
     lockPath: string,
     sandboxName: string,
@@ -720,6 +939,9 @@ export class ShieldsTransitionLockManager {
       if (!this.processIsAlive(owner.pid)) return { kind: "dead", owner };
       const currentIdentity = this.processStartIdentity(owner.pid);
       if (!currentIdentity) return { kind: "identity-unavailable", owner };
+      if (isUnverifiedSelfIdentity(owner.processStartIdentity)) {
+        return { kind: "identity-unavailable", owner };
+      }
       if (currentIdentity !== owner.processStartIdentity) {
         return { kind: "pid-reused", owner, currentProcessStartIdentity: currentIdentity };
       }
@@ -729,13 +951,26 @@ export class ShieldsTransitionLockManager {
     }
   }
 
-  private waitDuration(state: AcquisitionState, reason: WaitReason | null): number {
+  private enforceWaitTimeout(state: AcquisitionState, reason: WaitReason | null): void {
     const elapsedMs = Math.max(0, this.now() - state.startedAtMs);
     if (elapsedMs >= state.waitTimeoutMs) {
       throw new Error(
         `Timed out after ${String(state.waitTimeoutMs)}ms waiting for shields transition lock '${state.lockPath}': ${formatWaitReason(reason, state.lockPath)}`,
       );
     }
+  }
+
+  private enforceWaitTimeoutBeforeRetry(
+    state: AcquisitionState,
+    reason: WaitReason | null,
+    retrying: boolean,
+  ): void {
+    if (retrying) this.enforceWaitTimeout(state, reason);
+  }
+
+  private waitDuration(state: AcquisitionState, reason: WaitReason | null): number {
+    this.enforceWaitTimeout(state, reason);
+    const elapsedMs = Math.max(0, this.now() - state.startedAtMs);
     return Math.min(state.pollIntervalMs, state.waitTimeoutMs - elapsedMs);
   }
 
@@ -748,6 +983,7 @@ export class ShieldsTransitionLockManager {
     } catch (error) {
       if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
     }
+    if (this.staleRecoveryInProgress(lockPath, owner.sandboxName)) return null;
     const tempPath = `${lockPath}.acquire-${String(this.pid)}-${randomBytes(16).toString("hex")}.tmp`;
     let fd: number;
     try {
@@ -837,15 +1073,10 @@ export class ShieldsTransitionLockManager {
     }
   }
 
-  private release(sandboxName: string, held: HeldLock): void {
-    if (this.held.get(sandboxName) !== held) return;
-    held.depth -= 1;
-    if (held.depth > 0) return;
-    this.held.delete(sandboxName);
-
+  private removeHeldLockPath(held: HeldLock, sandboxName: string, quarantineLabel: string): void {
     try {
       const heldIdentity = inodeIdentity(fs.fstatSync(held.fd, { bigint: true }));
-      const quarantineDir = fs.mkdtempSync(`${held.lockPath}.release-`);
+      const quarantineDir = fs.mkdtempSync(`${held.lockPath}.${quarantineLabel}-`);
       fs.chmodSync(quarantineDir, 0o700);
       const quarantinePath = path.join(quarantineDir, "owner.json");
       try {
@@ -871,6 +1102,14 @@ export class ShieldsTransitionLockManager {
     } finally {
       fs.closeSync(held.fd);
     }
+  }
+
+  private release(sandboxName: string, held: HeldLock): void {
+    if (this.held.get(sandboxName) !== held) return;
+    held.depth -= 1;
+    if (held.depth > 0) return;
+    this.held.delete(sandboxName);
+    this.removeHeldLockPath(held, sandboxName, "release");
   }
 }
 

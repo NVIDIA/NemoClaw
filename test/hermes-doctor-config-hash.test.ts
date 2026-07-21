@@ -69,7 +69,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const mcpConfigTransactionPath = path.join(libDir, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundaryPath = path.join(
       libDir,
-      "openshell-child-visible-credentials.v0.0.72.json",
+      "openshell-child-visible-credentials.v0.0.85.json",
     );
     const nestedDir = path.join(preloadsDir, "nested");
     const profileDir = path.join(tmp, "etc-profile.d");
@@ -232,7 +232,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(fs.readFileSync(envPath, "utf-8")).not.toContain("DOCTOR_MIGRATED");
 
       const lock = runDockerShell(lockCommand, sandboxRoot);
-      expect(lock.result.status).toBe(0);
+      expect(lock.result.status, lock.result.stderr).toBe(0);
       expect(lock.result.stderr).toBe("");
       expect([mode(configPath), mode(envPath)]).toEqual(["640", "640"]);
 

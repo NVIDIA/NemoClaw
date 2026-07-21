@@ -121,7 +121,9 @@ describe("addSandboxPolicy refresh contract", () => {
   it("refreshes the in-sandbox POLICY.md after a successful built-in apply", async () => {
     await addSandboxPolicy("alpha", { preset: "pypi", yes: true });
 
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "pypi");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "pypi", {
+      suppressDisclosure: true,
+    });
     expect(refreshSpy).toHaveBeenCalledTimes(1);
     expect(refreshSpy).toHaveBeenCalledWith("alpha");
   });
@@ -149,7 +151,9 @@ describe("addSandboxPolicy refresh contract", () => {
       captureExit(() => addSandboxPolicy("alpha", { preset: "pypi", yes: true })),
     ).resolves.toBe(1);
 
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "pypi");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "pypi", {
+      suppressDisclosure: true,
+    });
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 

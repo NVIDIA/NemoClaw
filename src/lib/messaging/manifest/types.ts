@@ -46,6 +46,13 @@ export interface ChannelManifest {
   readonly runtime?: ChannelRuntimeByAgentSpec;
   readonly agentPackages?: readonly ChannelAgentPackageSpec[];
   readonly hooks: readonly ChannelHookSpec[];
+  /**
+   * Opt-in host-side health probe for `channels status --channel <id>`.
+   * "log-tail": the channel ships a runtime preload that writes classified
+   * `[<id>] [default] …` breadcrumbs to the gateway log and has an evaluator
+   * in `sandbox/<id>-diagnostics.ts`. Absent → basic report only.
+   */
+  readonly diagnosticsProbe?: "log-tail";
 }
 
 /** Manifest-owned network policy preset metadata. */

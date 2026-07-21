@@ -17,16 +17,22 @@ import { refreshMutableOpenClawConfigHashAfterPostRestoreWrites } from "./rebuil
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import {
+  ensureHermesGatewayAfterStateRestore,
+  printHermesGatewayRestoreRecovery,
+} from "./rebuild-hermes-post-restore";
+import {
   type McpRebuildPreparation,
   postRestoreCompleted,
   printMcpRestoreRecovery,
   restoreMcpAfterRebuild,
 } from "./rebuild-mcp-phase";
 import { reapplyMessagingManifestAfterOpenClawDoctor } from "./rebuild-messaging-phase";
+import { reconcileStalePinnedSessionModelsAfterRebuild } from "./reconcile-session-models";
 
 export interface RebuildPostRestorePhaseInput {
   sandboxName: string;
   sandboxEntry: RebuildSandboxEntry;
+  targetAgentName: string;
   messagingPlan: SandboxMessagingPlan | null;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
@@ -102,6 +108,7 @@ export async function runRebuildPostRestorePhase(
   const {
     sandboxName,
     sandboxEntry: sb,
+    targetAgentName,
     messagingPlan,
     backupManifest,
     mcpEntries,
@@ -120,9 +127,24 @@ export async function runRebuildPostRestorePhase(
     log,
     bail,
   } = input;
-  const rebuiltAgent = agentRuntime.getSessionAgent(sandboxName);
-  const rebuiltAgentName = agentRuntime.getAgentDisplayName(rebuiltAgent);
-  const agentDef = rebuiltAgent ? loadAgent(rebuiltAgent.name) : loadAgent("openclaw");
+  const recreatedEntry = registry.getSandbox(sandboxName);
+  const recreatedAgent = agentRuntime.getSessionAgent(sandboxName);
+  // OpenClaw is represented by a null registry agent and a null runtime definition.
+  const recreatedRegistryAgentName = recreatedEntry?.agent ?? "openclaw";
+  const recreatedRuntimeAgentName = recreatedAgent?.name ?? "openclaw";
+  if (
+    !recreatedEntry ||
+    recreatedRegistryAgentName !== targetAgentName ||
+    recreatedRuntimeAgentName !== targetAgentName
+  ) {
+    console.error(
+      `  ${YW}\u26a0${R} Recreated sandbox agent identity could not be verified against the rebuild target.`,
+    );
+    bail("Recreated sandbox agent identity did not match the authoritative rebuild target.");
+    return;
+  }
+  const agentDef = loadAgent(targetAgentName);
+  const rebuiltAgentName = agentDef.displayName;
   let mutablePermsRepairUnverified = false;
   let mutableConfigHashRefreshUnverified = false;
   let messagingHostForwardUnverified = false;
@@ -131,7 +153,7 @@ export async function runRebuildPostRestorePhase(
     failedPresetRemovals.length > 0 ||
     !policyPresetReconciliationVerified;
 
-  if (agentDef.name === "openclaw") {
+  if (targetAgentName === "openclaw") {
     log("Running openclaw doctor --fix inside sandbox for post-upgrade structure repair");
     const doctorResult = executeSandboxCommand(sandboxName, "openclaw doctor --fix");
     log(
@@ -144,6 +166,10 @@ export async function runRebuildPostRestorePhase(
         `  ${D}Post-upgrade structure check skipped (doctor returned ${doctorResult?.status ?? "null"})${R}`,
       );
     }
+
+    // #7102: clear stale per-session pinned models left over from an
+    // `inference set` before this rebuild, while the gateway is still down.
+    reconcileStalePinnedSessionModelsAfterRebuild(sandboxName, log);
 
     await reapplyMessagingManifestAfterOpenClawDoctor(sandboxName, messagingPlan, log);
     log("Refreshing mutable OpenClaw config hash after post-restore config writes");
@@ -183,6 +209,16 @@ export async function runRebuildPostRestorePhase(
   }
 
   const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, mcpEntries));
+  const hermesGatewayRestoreState = ensureHermesGatewayAfterStateRestore(
+    sandboxName,
+    targetAgentName,
+  );
+  const hermesGatewayRestoreUnverified = hermesGatewayRestoreState === "unverified";
+  if (hermesGatewayRestoreState === "healthy") {
+    console.log(`  ${G}\u2713${R} Hermes gateway health verified after state restore`);
+  } else if (hermesGatewayRestoreState === "recovered") {
+    console.log(`  ${G}\u2713${R} Hermes gateway recovered after state restore`);
+  }
   const { policies: restoredBuiltinPresets, policyPresetsFinalized } =
     resolveRestoredPolicyRegistryState(
       {
@@ -212,6 +248,7 @@ export async function runRebuildPostRestorePhase(
 
   console.log("");
   const postRestoreComplete = postRestoreCompleted({
+    hermesGatewayRestoreUnverified,
     messagingHostForwardUnverified,
     mcpBridgeRestoreUnverified,
     mutableConfigHashRefreshUnverified,
@@ -252,6 +289,7 @@ export async function runRebuildPostRestorePhase(
         `    Messaging webhook forward was not verified \u2014 run \`${CLI_NAME} ${sandboxName} connect\` after resolving the port conflict`,
       );
     }
+    printHermesGatewayRestoreRecovery(sandboxName, hermesGatewayRestoreState);
     printMcpRestoreRecovery(sandboxName, mcpBridgeRestoreUnverified);
     if (policyPresetRestoreIncomplete) {
       if (failedPresets.length > 0) {
@@ -273,6 +311,13 @@ export async function runRebuildPostRestorePhase(
   }
   if (failedPresetRemovals.length > 0 || !policyPresetReconciliationVerified) {
     bail(`Rebuild completed with unverified live policy reconciliation for '${sandboxName}'.`);
+    return;
+  }
+  if (
+    targetAgentName === "hermes" &&
+    (hermesGatewayRestoreUnverified || mcpBridgeRestoreUnverified)
+  ) {
+    bail(`Hermes post-restore verification failed for '${sandboxName}'.`);
     return;
   }
   if (preparedBackupRecovery && !postRestoreComplete) {

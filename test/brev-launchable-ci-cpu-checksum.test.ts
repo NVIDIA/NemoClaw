@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "brev-launchable-ci-cpu.sh");
 const BREV_LIFECYCLE_SCRIPT_MAX_BYTES = 16 * 1024;
 const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
-const PINNED_ASSET_SHA256 = "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4";
+const PINNED_ASSET_SHA256 = "078fa086f506832c3d47d992e6109f26074bdd55916ce268e47c3971423459eb";
 
 type FakeSystemOptions = {
   archiveShape?:
@@ -205,7 +205,7 @@ done
 case "$(basename "$out")" in
   ${ASSET})
     tmp="$(mktemp -d)"
-    printf '#!/usr/bin/env bash\\nprintf "openshell 0.0.72\\\\n"\\n' > "$tmp/openshell"
+    printf '#!/usr/bin/env bash\\nprintf "openshell 0.0.85\\\\n"\\n' > "$tmp/openshell"
     chmod +x "$tmp/openshell"
     /usr/bin/tar -czf "$out" -C "$tmp" openshell
     rm -rf "$tmp"
@@ -264,7 +264,7 @@ function runLaunchable(options: FakeSystemOptions) {
       ...process.env,
       LAUNCH_LOG: fake.launchLog,
       NEMOCLAW_CLONE_DIR: fake.cloneDir,
-      OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.72",
+      OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.85",
       PATH:
         options.nodeSourceChecksumTool === false ? fake.fakeBin : `${fake.fakeBin}:/usr/bin:/bin`,
       SUDO_USER: "tester",
@@ -327,7 +327,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       const out = combinedLaunchableOutput(result, fake.launchLog);
       expect(result.status, out).toBe(1);
       expect(out).toContain(
-        `OpenShell release checksum for ${ASSET} does not match NemoClaw-pinned v0.0.72 digest`,
+        `OpenShell release checksum for ${ASSET} does not match NemoClaw-pinned v0.0.85 digest`,
       );
       expect(fs.existsSync(fake.tarLog) ? fs.readFileSync(fake.tarLog, "utf-8") : "").toBe("");
       expect(fs.existsSync(fake.sudoLog) ? fs.readFileSync(fake.sudoLog, "utf-8") : "").not.toMatch(
@@ -363,7 +363,7 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     try {
       const out = combinedLaunchableOutput(result, fake.launchLog);
       expect(result.status, out).toBe(0);
-      expect(out).toContain("OpenShell CLI installed: openshell 0.0.72");
+      expect(out).toContain("OpenShell CLI installed: openshell 0.0.85");
       expect(fs.readFileSync(fake.tarLog, "utf-8")).toContain(`xzf`);
       const sudoLog = fs.readFileSync(fake.sudoLog, "utf-8");
       expect(sudoLog).toMatch(/^install -m 755 .*openshell/m);

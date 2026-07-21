@@ -167,7 +167,7 @@ export function validateSandboxOperationsWorkflow(workflow: {
       errors.push(`${JOB_NAME} exposes the inference key outside the live test step`);
     }
   }
-  requireRunContains(errors, run, "npx vitest run --project e2e-live");
+  requireRunContains(errors, run, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, run, "test/e2e/live/sandbox-operations.test.ts");
 
   const cleanup = findStep(job, "Clean up Docker auth");

@@ -3,11 +3,14 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { validateCurlProbeArgs } from "../adapters/http/curl-args";
 import {
   assertEndpointResolvesPublic,
   buildResolvePinArgs,
   type EndpointDnsLookupFn,
   isOpenShellManagedHost,
+  isTrustedPrivateEndpointCapability,
+  parseTrustedPrivateInferenceHosts,
 } from "./endpoint-ssrf-preflight";
 
 const resolverTo = (address: string): EndpointDnsLookupFn =>
@@ -45,6 +48,123 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     const result = await assertEndpointResolvesPublic("http://10.0.0.1/v1", lookup);
     expect(result.ok).toBe(false);
     expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("admits only an exact operator-trusted private hostname and pins its address (#6861)", async () => {
+    const lookup = resolverTo("10.0.0.8");
+    const result = await assertEndpointResolvesPublic("https://LLM.CORP.EXAMPLE./v1", lookup, {
+      trustedPrivateHosts: ["llm.corp.example"],
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      addresses: ["10.0.0.8"],
+      trustedPrivateEndpoint: true,
+    });
+    expect(result.trustedPrivateCapability?.addresses).toEqual(["10.0.0.8"]);
+    expect(isTrustedPrivateEndpointCapability(result.trustedPrivateCapability)).toBe(true);
+    expect(lookup).toHaveBeenCalledWith("llm.corp.example", { all: true });
+  });
+
+  it("does not treat a trusted hostname as a suffix or wildcard allowlist (#6861)", async () => {
+    const result = await assertEndpointResolvesPublic(
+      "https://attacker.llm.corp.example/v1",
+      resolverTo("10.0.0.8"),
+      { trustedPrivateHosts: ["llm.corp.example"] },
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("keeps private and metadata addresses blocked when the trust list is empty (#6861)", async () => {
+    for (const address of ["10.0.0.8", "169.254.169.254"]) {
+      const result = await assertEndpointResolvesPublic(
+        "https://llm.corp.example/v1",
+        resolverTo(address),
+        { trustedPrivateHosts: [] },
+      );
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  it("keeps link-local metadata blocked even when its hostname is allowlisted (#6861)", async () => {
+    const result = await assertEndpointResolvesPublic(
+      "https://metadata.corp.example/v1",
+      resolverTo("169.254.169.254"),
+      { trustedPrivateHosts: ["metadata.corp.example"] },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("169.254.169.254");
+  });
+
+  it("admits an exactly allowlisted RFC1918 IP literal without DNS (#6861)", async () => {
+    const lookup = vi.fn<EndpointDnsLookupFn>();
+    const result = await assertEndpointResolvesPublic("http://10.0.0.8/v1", lookup, {
+      trustedPrivateHosts: ["10.0.0.8"],
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      addresses: [],
+      trustedPrivateEndpoint: true,
+    });
+    expect(result.trustedPrivateCapability?.addresses).toEqual(["10.0.0.8"]);
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "100.64.0.0",
+    "100.127.255.255",
+    "fc00::1",
+    "fdff:ffff::1",
+  ])("admits the operator-trustable private boundary address %s (#6861)", async (address) => {
+    const result = await assertEndpointResolvesPublic(
+      "https://llm.corp.example/v1",
+      resolverTo(address),
+      { trustedPrivateHosts: ["llm.corp.example"] },
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      addresses: [address],
+      trustedPrivateEndpoint: true,
+    });
+    expect(result.trustedPrivateCapability?.addresses).toEqual([address]);
+  });
+
+  it("carries an allowlisted private DNS result through curl argument validation (#6861)", async () => {
+    const endpointUrl = "https://llm.corp.example/v1/models";
+    const preflight = await assertEndpointResolvesPublic(endpointUrl, resolverTo("10.0.0.8"), {
+      trustedPrivateHosts: ["llm.corp.example"],
+    });
+    expect(preflight.ok).toBe(true);
+    const args = ["-sS", ...buildResolvePinArgs(endpointUrl, preflight.addresses), endpointUrl];
+    expect(() =>
+      validateCurlProbeArgs(args, {
+        pinnedAddresses: preflight.addresses,
+        trustedPrivateCapability: preflight.trustedPrivateCapability,
+      }),
+    ).not.toThrow();
+    expect(() => validateCurlProbeArgs(args, { pinnedAddresses: preflight.addresses })).toThrow(
+      /unauthorized private address/,
+    );
+  });
+
+  it.each([
+    "169.254.0.1",
+    "198.18.0.1",
+    "fe80::1",
+    "ff00::1",
+  ])("keeps the reserved address %s blocked for an allowlisted host (#6861)", async (address) => {
+    const result = await assertEndpointResolvesPublic(
+      "https://llm.corp.example/v1",
+      resolverTo(address),
+      { trustedPrivateHosts: ["llm.corp.example"] },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain(address);
+  });
+
+  it("parses and canonicalizes the private inference host allowlist (#6861)", () => {
+    expect(
+      parseTrustedPrivateInferenceHosts(" LLM.CORP.EXAMPLE.,10.0.0.8,llm.corp.example "),
+    ).toEqual(["llm.corp.example", "10.0.0.8"]);
   });
 
   it.each([

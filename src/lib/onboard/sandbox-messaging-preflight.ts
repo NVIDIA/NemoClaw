@@ -17,6 +17,7 @@ import {
 export interface SandboxMessagingPreflightInput {
   sandboxName: string;
   agentName?: string | null;
+  requireExactProviderBinding?: boolean;
   channels: readonly NamedMessagingChannel[];
   enabledChannels: readonly string[] | null;
   webSearchConfig: WebSearchConfig | null;
@@ -29,6 +30,7 @@ export interface SandboxMessagingPreflightDeps {
   gatewayName(): string;
   registry: MessagingConflictGuardDeps["registry"];
   providerExistsInGateway(name: string): boolean;
+  providerMatchesGatewayCredential(name: string, type: string, credentialEnv: string): boolean;
   isNonInteractive(): boolean;
   promptYesNoOrDefault(
     message: string,
@@ -70,6 +72,7 @@ export async function prepareSandboxMessagingPreflight(
   const result = (deps.prepareCreateSandboxMessaging ?? defaultPrepareCreateSandboxMessaging)({
     sandboxName: input.sandboxName,
     agentName: input.agentName,
+    requireExactProviderBinding: input.requireExactProviderBinding,
     channels: input.channels,
     enabledChannels: input.enabledChannels,
     disabledChannels,
@@ -81,6 +84,7 @@ export async function prepareSandboxMessagingPreflight(
     registerExtraPlaceholderProviders: deps.registerExtraPlaceholderProviders,
     getMessagingChannelForEnvKey: deps.getMessagingChannelForEnvKey,
     providerExistsInGateway: deps.providerExistsInGateway,
+    providerMatchesGatewayCredential: deps.providerMatchesGatewayCredential,
   });
 
   if (result.missingWebSearchCredentialEnv) {

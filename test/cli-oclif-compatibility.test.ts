@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import SandboxConfigSetCommand from "../src/commands/sandbox/config/set";
 import SandboxStatusCommand from "../src/commands/sandbox/status";
 import StatusCommand from "../src/commands/status";
 import { withDirectPublicDispatch } from "./support/public-dispatch-test-harness.js";
@@ -596,6 +597,13 @@ describe("oclif compatibility dispatch", () => {
         "<%= config.bin %> sandbox status alpha --json",
       ]),
     );
+  });
+
+  it("uses schema-valid OpenClaw paths in config set examples (#6868)", () => {
+    expect(SandboxConfigSetCommand.examples).toEqual([
+      "<%= config.bin %> alpha config set --key agents.defaults.model.primary --value nvidia/nemotron",
+      "<%= config.bin %> alpha config set --key agents.defaults.timeoutSeconds --value 600 --restart",
+    ]);
   });
 
   it("uses the alias binary name in native oclif help", () => {

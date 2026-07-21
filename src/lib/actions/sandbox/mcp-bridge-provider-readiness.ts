@@ -25,17 +25,10 @@ function executeMcpCredentialProofCommand(
   sandboxName: string,
   command: string,
 ): ReturnType<typeof executeSandboxExecCommand> {
-  // OpenShell current main rejects CR/LF in each sandbox-exec argv element.
-  // Transport the proof as base64 so the `sh -c` argument remains one line;
-  // the decoded script still runs only inside the sandbox and contains no raw
-  // credential value.
-  const encodedCommand = Buffer.from(command, "utf8").toString("base64");
-  const transportCommand = [
-    "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
-    `decoded="$(printf '%s' '${encodedCommand}' | base64 -d)" || exit 1`,
-    `printf '%s' "$decoded" | sh`,
-  ].join("; ");
-  return executeSandboxExecCommand(sandboxName, transportCommand, undefined, {
+  // OpenShell preserves the proof as one multiline command argument. The
+  // script classifies placeholder shape/revision only and never prints a raw
+  // credential value or writes sandbox state.
+  return executeSandboxExecCommand(sandboxName, command, undefined, {
     allowLocalDockerFallback: false,
   });
 }

@@ -99,6 +99,14 @@ state_files:
   - path: .hermes_history
   - path: runtime/state.db
     strategy: sqlite_backup
+  # Hermes' backward-compatible default board lives in this SQLite database.
+  # Capture it with the online backup API like runtime/state.db; the zero-byte
+  # kanban.db.*.lock files are intentionally omitted. This does not cover named
+  # boards, attachments, worker logs, or scratch workspaces under kanban/, nor
+  # external dir/worktree workspace targets. Those need a separate durability
+  # design before the sibling kanban/ tree can safely enter the state contract.
+  - path: kanban.db
+    strategy: sqlite_backup
 user_managed_files:
   # Relative to /sandbox, not config.dir. Hermes stores user-edited API-key
   # values in /sandbox/.hermes/.env, and rebuild should warn before dropping it.

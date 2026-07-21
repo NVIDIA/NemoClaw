@@ -158,9 +158,9 @@ if len(errors) != 3:
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual([
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.72",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.72",
-      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.72",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.85",
     ]);
   });
 
@@ -185,12 +185,18 @@ print(json.dumps({"ok": True}))
     expect(JSON.parse(result.stdout)).toEqual({ ok: true });
   });
 
-  it("shares the host credential-name boundary while preserving exact cleanup", () => {
-    // One representative from each production category: OpenShell raw child
-    // value, OpenShell rewritten child value, exact process control, and
-    // process-control prefix. The exhaustive manifest-driven matrix lives at
-    // the shared TypeScript validator boundary.
-    const blockedNames = ["GCP_PROJECT_ID", "GCE_METADATA_HOST", "PATH", "NEMOCLAW_MCP_TOKEN"];
+  it("shares the host credential-name boundary while preserving exact cleanup (#6379)", () => {
+    // Representatives cover every manifest category and the revisioned placeholder namespace.
+    // The exhaustive manifest-driven matrix lives at the shared TypeScript validator boundary.
+    const blockedNames = [
+      "GCP_PROJECT_ID",
+      "GCE_METADATA_HOST",
+      "PATH",
+      "NEMOCLAW_MCP_TOKEN",
+      "v1_TOKEN",
+      "v999999_very_unlikely",
+      "v0_1",
+    ];
     const result = runPython(
       `
 import importlib.util, json, sys
@@ -230,7 +236,7 @@ print(json.dumps({
 `,
       [JSON.stringify(blockedNames)],
     );
-
+    for (const name of blockedNames) expect(() => validateMcpCredentialEnvName(name)).toThrow();
     expect(() => validateMcpCredentialEnvName("MY_SERVICE_MCP_TOKEN")).not.toThrow();
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({

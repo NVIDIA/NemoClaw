@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  matchesGatewayCredentialOnlyProviderBinding,
   matchesGatewayProviderBinding,
   parseGatewayProviderMetadata,
   readGatewayProviderMetadata,
@@ -38,6 +39,53 @@ describe("gateway provider metadata", () => {
     expect(
       matchesGatewayProviderBinding(
         { ...metadata!, configKeys: ["OPENAI_BASE_URL", "EXTRA_FLAG"] },
+        expected,
+      ),
+    ).toBe(false);
+  });
+
+  it("matches only an exact credential-only provider binding", () => {
+    const metadata = {
+      name: "alpha-telegram-bridge",
+      type: "generic",
+      credentialKeys: ["TELEGRAM_BOT_TOKEN"],
+      configKeys: [],
+    };
+    const expected = {
+      name: "alpha-telegram-bridge",
+      type: "generic",
+      credentialKey: "TELEGRAM_BOT_TOKEN",
+    };
+
+    expect(matchesGatewayCredentialOnlyProviderBinding(metadata, expected)).toBe(true);
+    expect(matchesGatewayCredentialOnlyProviderBinding(null, expected)).toBe(false);
+    expect(
+      matchesGatewayCredentialOnlyProviderBinding(
+        { ...metadata, name: "other-provider" },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      matchesGatewayCredentialOnlyProviderBinding({ ...metadata, type: "brave" }, expected),
+    ).toBe(false);
+    expect(
+      matchesGatewayCredentialOnlyProviderBinding(
+        { ...metadata, credentialKeys: ["OTHER_TOKEN"] },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      matchesGatewayCredentialOnlyProviderBinding({ ...metadata, credentialKeys: [] }, expected),
+    ).toBe(false);
+    expect(
+      matchesGatewayCredentialOnlyProviderBinding(
+        { ...metadata, credentialKeys: ["TELEGRAM_BOT_TOKEN", "OTHER_TOKEN"] },
+        expected,
+      ),
+    ).toBe(false);
+    expect(
+      matchesGatewayCredentialOnlyProviderBinding(
+        { ...metadata, configKeys: ["EXTRA_CONFIG"] },
         expected,
       ),
     ).toBe(false);

@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { entry, makeDeps, showSandboxChannelStatus } from "./channel-status.test-helpers";
+import {
+  entry,
+  makeDeps,
+  reportSignals,
+  showSandboxChannelStatus,
+  withTelegramProbe,
+} from "./channel-status.test-helpers";
 
 describe("showSandboxChannelStatus config comparison", () => {
   it("marks rendered config ok when the sandbox config matches the sandbox entry", async () => {
     const { deps, out_lines } = makeDeps({
-      exec: (_sandbox, command) =>
+      exec: withTelegramProbe((_sandbox, command) =>
         command.includes("/sandbox/.openclaw/openclaw.json")
           ? {
               status: 0,
@@ -30,6 +36,7 @@ describe("showSandboxChannelStatus config comparison", () => {
               stderr: "",
             }
           : { status: 1, stdout: "", stderr: "" },
+      ),
       sandbox: entry(["telegram"], [], {
         telegram: [
           {
@@ -61,14 +68,15 @@ describe("showSandboxChannelStatus config comparison", () => {
         ],
       }),
       appliedPresets: ["telegram"],
+      gatewayPresets: ["telegram"],
     });
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "telegram",
     });
 
-    expect(result && "verdict" in result && result.verdict).toBe("info");
-    const signals = result && "signals" in result ? result.signals : [];
+    expect(result && "report" in result && result.report.verdict).toBe("unknown");
+    const signals = reportSignals(result);
     expect(
       signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
     ).toMatchObject({
@@ -92,7 +100,7 @@ describe("showSandboxChannelStatus config comparison", () => {
 
   it("marks Telegram all-message mode ok when OpenClaw omits the groups stanza (#5691)", async () => {
     const { deps } = makeDeps({
-      exec: () => ({
+      exec: withTelegramProbe(() => ({
         status: 0,
         stdout: JSON.stringify({
           channels: {
@@ -106,7 +114,7 @@ describe("showSandboxChannelStatus config comparison", () => {
           },
         }),
         stderr: "",
-      }),
+      })),
       sandbox: entry(["telegram"], [], {
         telegram: [
           {
@@ -130,13 +138,14 @@ describe("showSandboxChannelStatus config comparison", () => {
         ],
       }),
       appliedPresets: ["telegram"],
+      gatewayPresets: ["telegram"],
     });
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "telegram",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = reportSignals(result);
     expect(
       signals.find(
         (signal) => signal.label === "Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)",
@@ -149,7 +158,7 @@ describe("showSandboxChannelStatus config comparison", () => {
 
   it("does not compare Hermes Telegram group policy when the manifest does not render it", async () => {
     const { deps } = makeDeps({
-      exec: (_sandbox, command) =>
+      exec: withTelegramProbe((_sandbox, command) =>
         command.includes("/sandbox/.hermes/.env")
           ? {
               status: 0,
@@ -167,6 +176,7 @@ describe("showSandboxChannelStatus config comparison", () => {
                 stdout: "",
                 stderr: "",
               },
+      ),
       agentName: "hermes",
       sandbox: entry(
         ["telegram"],
@@ -205,13 +215,14 @@ describe("showSandboxChannelStatus config comparison", () => {
         "hermes",
       ),
       appliedPresets: ["telegram"],
+      gatewayPresets: ["telegram"],
     });
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "telegram",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = reportSignals(result);
     expect(
       signals.find(
         (signal) => signal.label === "Telegram User ID (for DM access) (TELEGRAM_ALLOWED_IDS)",
@@ -260,7 +271,7 @@ describe("showSandboxChannelStatus config comparison", () => {
       channel: "teams",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = reportSignals(result);
     expect(signals.filter((signal) => signal.label === "Rendered config source")).toEqual([
       expect.objectContaining({
         severity: "warn",
@@ -278,7 +289,7 @@ describe("showSandboxChannelStatus config comparison", () => {
 
   it("warns when rendered config differs from the sandbox entry", async () => {
     const { deps } = makeDeps({
-      exec: () => ({
+      exec: withTelegramProbe(() => ({
         status: 0,
         stdout: JSON.stringify({
           channels: {
@@ -292,7 +303,7 @@ describe("showSandboxChannelStatus config comparison", () => {
           },
         }),
         stderr: "",
-      }),
+      })),
       sandbox: entry(["telegram"], [], {
         telegram: [
           {
@@ -307,13 +318,14 @@ describe("showSandboxChannelStatus config comparison", () => {
         ],
       }),
       appliedPresets: ["telegram"],
+      gatewayPresets: ["telegram"],
     });
     const result = await showSandboxChannelStatus("alpha", {
       deps,
       channel: "telegram",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = reportSignals(result);
     expect(
       signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
     ).toMatchObject({
@@ -385,7 +397,7 @@ describe("showSandboxChannelStatus config comparison", () => {
       channel: "teams",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = reportSignals(result);
     const sourceWarnings = signals.filter((signal) => signal.label === "Rendered config source");
     expect(sourceWarnings).toHaveLength(1);
     expect(sourceWarnings[0]).toMatchObject({
@@ -458,7 +470,7 @@ describe("showSandboxChannelStatus config comparison", () => {
       channel: "teams",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = reportSignals(result);
     expect(signals.filter((signal) => signal.label === "Rendered config source")).toEqual([
       expect.objectContaining({
         severity: "warn",
@@ -506,7 +518,7 @@ describe("showSandboxChannelStatus config comparison", () => {
       channel: "teams",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = reportSignals(result);
     expect(
       signals.find(
         (signal) => signal.label === "Microsoft Teams mention mode (TEAMS_REQUIRE_MENTION)",
@@ -550,7 +562,7 @@ describe("showSandboxChannelStatus config comparison", () => {
       channel: "teams",
     });
 
-    const signals = result && "signals" in result ? result.signals : [];
+    const signals = reportSignals(result);
     expect(
       signals.find(
         (signal) =>

@@ -159,6 +159,43 @@ describe("preflightRebuildImage", () => {
     }
   });
 
+  it("surfaces redacted Buffer diagnostics when the replacement image build fails (#7111)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-preflight-diagnostic-"));
+    const dockerfile = path.join(dir, "Dockerfile.custom");
+    const credential = ["release", "diagnostic", "credential"].join("-");
+    fs.writeFileSync(dockerfile, "FROM scratch\n");
+    try {
+      const result = await preflightRebuildImage(input(dockerfile), {
+        prepareDockerfilePatch: vi.fn(async () => ({
+          buildId: "1",
+          dashboardRemoteBindPrepared: false,
+          resolvedBaseImage: null,
+        })),
+        buildImage: vi.fn(
+          () =>
+            ({
+              status: 1,
+              stderr: Buffer.from(
+                `failed to solve: build context unavailable at ${os.homedir()}/private-context\n` +
+                  `Authorization: Bearer ${credential}`,
+              ),
+            }) as never,
+        ),
+        removeImage: vi.fn(() => ({ status: 0 }) as never),
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        detail:
+          "failed to solve: build context unavailable at ~/private-context\n" +
+          "Authorization: Bearer <REDACTED>",
+      });
+      expect(JSON.stringify(result)).not.toContain(credential);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("builds and removes the exact staged custom context on success", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-preflight-"));
     const dockerfile = path.join(dir, "Dockerfile.custom");

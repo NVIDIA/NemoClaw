@@ -38,6 +38,9 @@ function runTerminalDashboardScenario(scenario: "create" | "reuse") {
   const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
   const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));
   const agentOnboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "onboard.ts"));
+  const dockerGpuSandboxCreatePath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
+  );
 
   fs.mkdirSync(fakeBin, { recursive: true });
   writeExecutable(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n");
@@ -50,6 +53,7 @@ const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const agentDefs = require(${agentDefsPath});
 const agentOnboard = require(${agentOnboardPath});
+const dockerGpuSandboxCreate = require(${dockerGpuSandboxCreatePath});
 const childProcess = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const scenario = ${JSON.stringify(scenario)};
@@ -59,6 +63,17 @@ const registerCalls = [];
 const updateCalls = [];
 const keepAlive = setInterval(() => {}, 1000);
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+
+dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
+  maybeApplyDuringCreate: () => {},
+  createFailureMessage: () => null,
+  exitOnPatchError: () => {},
+  ensureApplied: () => {},
+  waitForSupervisorReconnectIfNeeded: () => {},
+  selectedMode: () => null,
+  printReadinessFailureIfEnabled: () => {},
+  verifyGpuOrExit: (verify) => verify(sandboxName),
+});
 
 agentOnboard.createAgentSandbox = () => {
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-terminal-agent-"));

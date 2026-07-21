@@ -26,6 +26,12 @@ export const GATEWAY_AUTH_REVIEW_NOTE = path.join(
   "security",
   "openshell-0.0.72-compatibility-review.mdx",
 );
+export const GATEWAY_MIGRATION_REVIEW_NOTE = path.join(
+  REPO_ROOT,
+  "docs",
+  "security",
+  "openshell-0.0.85-migration-review.md",
+);
 const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";
 
 export type JwtBundlePaths = {
@@ -40,7 +46,7 @@ export function baseGatewayEnv(stateDir: string): Record<string, string> {
     OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
     OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
-      "ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
+      "ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9",
   };
 }
 

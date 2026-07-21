@@ -125,7 +125,7 @@ describe("config set helpers", () => {
     it("routes --restart through the managed gateway supervisor flow", () => {
       const calls: string[] = [];
 
-      restartSandboxAgentAfterConfigSet("alpha", (sandboxName: string) => {
+      restartSandboxAgentAfterConfigSet("alpha", "openclaw", (sandboxName: string) => {
         calls.push(sandboxName);
         return { ok: true };
       });
@@ -133,10 +133,18 @@ describe("config set helpers", () => {
       expect(calls).toEqual(["alpha"]);
     });
 
-    it("fails the config command when the managed restart fails", () => {
-      expect(() => restartSandboxAgentAfterConfigSet("alpha", () => ({ ok: false }))).toThrow(
-        "Config was updated, but the managed gateway restart failed for 'alpha'.",
-      );
+    it("fails with a written-but-not-applied message and a retry hint when the restart fails", () => {
+      let thrown: unknown;
+      try {
+        restartSandboxAgentAfterConfigSet("alpha", "openclaw", () => ({ ok: false }));
+      } catch (error) {
+        thrown = error;
+      }
+
+      const message = thrown instanceof Error ? thrown.message : String(thrown);
+      expect(message).toContain("written to disk but NOT applied to the running agent");
+      expect(message).toContain("openclaw gateway restart did not complete for 'alpha'");
+      expect(message).toContain("nemoclaw 'alpha' gateway restart");
     });
   });
 

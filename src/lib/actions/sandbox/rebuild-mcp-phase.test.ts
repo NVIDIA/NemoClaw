@@ -36,8 +36,17 @@ describe("MCP rebuild retry guidance", () => {
     });
 
     expect(error.mock.calls.flat().join("\n")).toContain(
-      "nemoclaw onboard --resume --tool-disclosure direct --no-observability",
+      "nemoclaw onboard --resume --name alpha --tool-disclosure direct --no-observability",
     );
+  });
+
+  it("names the sandbox on the resume retry form so the printed command is runnable", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    printMcpRebuildRetryCommand("alpha", [], "progressive");
+
+    const command = error.mock.calls.flat().find((line) => line.includes("onboard --resume"));
+    expect(command).toContain("nemoclaw onboard --resume --name alpha");
   });
 
   it("does not turn inherited observability state into an explicit retry override", () => {

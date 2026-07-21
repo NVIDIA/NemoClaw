@@ -1,0 +1,71 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Use Shared Gateway Routes"
+sidebar-title: "Use Shared Gateway Routes"
+description: "Understand how multiple NemoClaw sandboxes safely share one live OpenShell inference route."
+description-agent: "Explains shared gateway inference routes, recorded route drift, safe route changes, and provider-global compatibility. Use when multiple sandboxes use one OpenShell gateway."
+keywords: ["nemoclaw shared gateway", "shared inference route", "route drift"]
+content:
+  type: "how_to"
+---
+
+OpenShell exposes one live inference route per gateway.
+NemoClaw records each sandbox's intended provider and model so compatible sandboxes can take turns using that route.
+
+## Change the Live Route During Onboarding
+
+Onboarding a sandbox with another valid provider or model warns immediately before it re-points the shared route.
+The warning names every affected registered sandbox and its recorded provider and model.
+Those sandboxes use the new live route until another onboarding run or connection re-points it again.
+
+When multiple sandboxes use the same provider name, their provider-global identity must match.
+For a custom provider, NemoClaw compares the normalized endpoint and API family.
+It also compares the credential environment-variable name for every provider.
+Onboarding exits before provider or route mutation when those fields differ.
+
+Do not run `openshell inference set` directly on a shared NemoClaw gateway because that bypasses the registry compatibility checks.
+
+## Restore a Sandbox Route When You Connect
+
+Connect to a sandbox when you want its recorded provider and model to become live again.
+
+```bash
+$$nemoclaw <name> connect
+```
+
+Before changing the route, `connect` verifies the same provider-global identity used during onboarding.
+When the identity is compatible, `connect` warns and re-points the route to the sandbox's recorded provider and model.
+When the identity differs or required metadata is incomplete, `connect` stops because a provider-and-model-only route change cannot safely reconstruct that configuration.
+
+## Inspect Recorded and Live Routes
+
+Run sandbox status to compare the sandbox's recorded route with the gateway's live route.
+
+```bash
+$$nemoclaw <name> status
+$$nemoclaw <name> status --json
+```
+
+Text output shows the provider and model recorded for the sandbox and adds a warning when the live route differs.
+JSON output exposes the two sources as `recordedRoute` and `liveRoute` and adds `routeDrift` when they differ.
+The schema-version `1` `provider` and `model` fields remain live-first when the gateway route is readable and fall back to the recorded route otherwise.
+When `routeDrift.canConnect` is `false`, `connect` cannot safely restore the recorded route because provider-global identity differs or required route or gateway metadata is incomplete.
+
+## Handle a Hard Route Conflict
+
+NemoClaw fails closed when it cannot prove that a route change preserves the provider and sandbox contracts.
+
+- For a provider-global identity conflict, align the endpoint, API family, and credential environment-variable name, or remove a sandbox you no longer need.
+- For incomplete legacy custom-route metadata, back up and remove the affected sandbox, then re-onboard it with an explicit endpoint and API family.
+- For an invalid gateway binding, restore known-good `gatewayName` and `gatewayPort` metadata from a trusted backup, or back up and remove the sandbox before re-onboarding it.
+- For a runtime `inference set` conflict, align the registered sandbox routes or remove the conflicting sandbox before retrying.
+
+Refer to [Troubleshooting a Shared Inference Route Conflict](../../reference/troubleshooting#a-shared-inference-route-conflicts-with-another-sandbox) for the recovery commands.
+
+## Related Topics
+
+- [View the Active Inference Route](view-active-inference-route) to read the gateway's live provider and model.
+- [Switch Models](switch-models) to change a model through NemoClaw.
+- [Switch Providers](switch-providers) to move to another provider family.
+- [Verify the Sandbox Inference Route](../validate-inference/verify-inference-route) to test the agent traffic path.

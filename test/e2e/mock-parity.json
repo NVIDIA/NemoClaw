@@ -33,6 +33,26 @@
       ]
     },
     {
+      "live": "test/e2e/live/bootstrap-install-smoke.test.ts",
+      "fast": [
+        "test/brev-launchable-ci-cpu-checksum.test.ts",
+        "test/e2e/support/e2e-live-target-gating.test.ts",
+        "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
+        "test/installer-hash-check.test.ts",
+        "test/runner.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/launchable-smoke.test.ts",
+      "fast": [
+        "test/brev-launchable-ci-cpu-checksum.test.ts",
+        "test/e2e/support/e2e-live-target-gating.test.ts",
+        "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
+        "test/installer-hash-check.test.ts",
+        "test/runner.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",
@@ -55,6 +75,15 @@
       "live": "test/e2e/live/openshell-gateway-auth-source-contract.test.ts",
       "fast": [
         "test/e2e/support/openshell-gateway-auth-source-contract-helpers.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/openshell-credential-generation-window.test.ts",
+      "fast": [
+        "test/openshell-credential-generation-window.test.ts",
+        "test/mcp-artifact-secret-scan.test.ts",
+        "test/mcp-agent-matrix-artifact-proof.test.ts",
+        "test/e2e/support/mcp-workflow-boundary.test.ts"
       ]
     },
     {
@@ -248,7 +277,8 @@
       "live": "test/e2e/live/hermes-e2e.test.ts",
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
+        "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/inference-adapter.test.ts"
       ]
     },
     {
@@ -373,6 +403,9 @@
     {
       "live": "test/e2e/live/openshell-version-pin.test.ts",
       "fast": [
+        "test/e2e/support/e2e-workflow.test.ts",
+        "test/install-openshell-version-check.test.ts",
+        "test/installer-hash-check.test.ts",
         "test/onboard-openshell-version.test.ts",
         "test/runner.test.ts"
       ]
@@ -390,6 +423,7 @@
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/rebuild-hermes-image-state.test.ts",
         "test/e2e/support/rebuild-hermes-progress.test.ts"
       ]
     },

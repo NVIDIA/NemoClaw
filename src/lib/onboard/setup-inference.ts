@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
+import { canonicalEndpoint } from "../core/url-utils";
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
+  parseTrustedPrivateInferenceHosts,
 } from "../inference/endpoint-ssrf-preflight";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
+  formatGatewayRouteImpactWarning,
+  isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
 import {
@@ -21,6 +25,17 @@ import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 export { assertNoOpenShellGatewayEndpointOverride };
 
 import type { HermesAuthMethod } from "./hermes-auth";
+
+function matchesOnboardEndpoint(
+  provider: string,
+  endpointUrl: string | null,
+  onboardEndpointUrl: string | undefined,
+): boolean {
+  if (!endpointUrl || !onboardEndpointUrl) return false;
+  const flavor = provider === "compatible-anthropic-endpoint" ? "anthropic" : "openai";
+  const selected = canonicalEndpoint(endpointUrl, flavor);
+  return selected !== null && selected === canonicalEndpoint(onboardEndpointUrl, flavor);
+}
 import type {
   CommonDeps,
   HermesDeps,
@@ -80,6 +95,8 @@ type ProviderBranchDeps = Pick<
 export type SetupInferenceDeps = ProviderBranchDeps & {
   /** Injectable resolver for resumed custom-endpoint SSRF preflight tests. */
   resolveEndpointHost?: EndpointDnsLookupFn;
+  /** Exact private endpoint hosts trusted by the operator (tests may inject this). */
+  trustedPrivateEndpointHosts?: readonly string[];
   checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
   withGatewayRouteMutationLock: typeof withGatewayRouteMutationLock;
   withSandboxMutationLock: typeof withSandboxMutationLock;
@@ -226,6 +243,8 @@ export function createSetupInference(
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
     const gatewayName = options.gatewayName ?? deps.getGatewayName();
+    const endpointSource =
+      options.endpointSource === undefined ? "onboard" : options.endpointSource;
     const mutateGatewayRoute = (): Promise<SetupInferenceResult> =>
       deps.withGatewayRouteMutationLock(gatewayName, async () => {
         if (
@@ -244,30 +263,48 @@ export function createSetupInference(
             provider,
             model,
             endpointUrl,
+            credentialEnv,
             preferredInferenceApi: options.preferredInferenceApi ?? null,
           },
         });
         if (!compatibility.ok) {
-          deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
-          return deps.exitProcess(1);
+          if (!isAdvisoryGatewayRouteConflict(compatibility)) {
+            deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+            return deps.exitProcess(1);
+          }
+          deps.error(`  ${formatGatewayRouteImpactWarning(compatibility)}`);
         }
         deps.step(4, 8, "Setting up inference provider");
         let endpointPinnedAddresses = options.endpointPinnedAddresses;
+        let endpointTrustedPrivateCapability = options.endpointTrustedPrivateCapability;
         // Strictly classified AWS Bedrock Runtime hostnames use the dedicated
         // SigV4/bearer adapter rather than the generic curl probe path. Their
         // hostname is constrained to AWS-owned suffixes by the classifier, so
         // do not apply the custom-origin curl pinning contract here.
         const usesBedrockRuntimeAdapter =
           provider === "compatible-anthropic-endpoint" && isBedrockRuntimeEndpoint(endpointUrl);
+        const usesOnboardEndpoint = matchesOnboardEndpoint(
+          provider,
+          endpointUrl,
+          options.onboardEndpointUrl,
+        );
         if (
           (provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint") &&
           endpointUrl &&
           !usesBedrockRuntimeAdapter &&
+          !usesOnboardEndpoint &&
           !endpointPinnedAddresses
         ) {
           const preflight = await assertEndpointResolvesPublic(
             endpointUrl,
             deps.resolveEndpointHost,
+            {
+              trustedPrivateHosts:
+                deps.trustedPrivateEndpointHosts ??
+                parseTrustedPrivateInferenceHosts(
+                  process.env.NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS,
+                ),
+            },
           );
           if (!preflight.ok) {
             deps.error(
@@ -277,6 +314,7 @@ export function createSetupInference(
             return { retry: "selection" };
           }
           endpointPinnedAddresses = preflight.addresses;
+          endpointTrustedPrivateCapability = preflight.trustedPrivateCapability;
         }
         const runGatewayOpenshell = createGatewayScopedOpenshellRunner(
           deps.runOpenshell,
@@ -289,6 +327,7 @@ export function createSetupInference(
             provider: selectedProvider,
             model: selectedModel,
             endpointUrl,
+            endpointSource,
             credentialEnv,
             preferredInferenceApi: options.preferredInferenceApi ?? null,
             gatewayName,
@@ -311,6 +350,7 @@ export function createSetupInference(
             deps.verifyOnboardInferenceSmoke({
               ...input,
               pinnedAddresses: endpointPinnedAddresses,
+              trustedPrivateCapability: endpointTrustedPrivateCapability,
               capabilityCache: options.inferenceCapabilityCache,
             }),
           isNonInteractive: deps.isNonInteractive,
@@ -365,6 +405,7 @@ export function createSetupInference(
               skipHostInferenceSmoke: options.skipHostInferenceSmoke === true,
               preferredInferenceApi: options.preferredInferenceApi ?? null,
               pinnedAddresses: endpointPinnedAddresses,
+              trustedPrivateCapability: endpointTrustedPrivateCapability,
               capabilityCache: options.inferenceCapabilityCache,
             },
             {
@@ -451,6 +492,7 @@ export function createSetupInference(
             endpointUrl,
             credentialEnv,
             pinnedAddresses: endpointPinnedAddresses,
+            trustedPrivateCapability: endpointTrustedPrivateCapability,
             capabilityCache: options.inferenceCapabilityCache,
           });
         if (sandboxName) {

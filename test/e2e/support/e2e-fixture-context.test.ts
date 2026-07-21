@@ -223,6 +223,7 @@ describe("E2E fixture primitives", () => {
       );
 
       expect(result.exitCode).toBe(0);
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
       expect(result.stdout).toContain("[REDACTED]");
       expect(result.stderr).toContain("[REDACTED]");
       expect(result.stdout).not.toContain(secret);
@@ -231,6 +232,7 @@ describe("E2E fixture primitives", () => {
         artifacts.pathFor("shell/options-redaction-enforced.result.json"),
         "utf8",
       );
+      expect(JSON.parse(written).durationMs).toBe(result.durationMs);
       expect(written).not.toContain(secret);
       expect(
         fs.readFileSync(artifacts.pathFor("shell/options-redaction-enforced.stdout.txt"), "utf8"),
@@ -360,9 +362,12 @@ describe("E2E fixture primitives", () => {
       expect(message).not.toContain(secret);
       expect(abortAdds).toBe(1);
       expect(abortRemoves).toBe(1);
-      expect(
-        fs.readFileSync(artifacts.pathFor("shell/spawn-error.result.json"), "utf8"),
-      ).not.toContain(secret);
+      const spawnArtifact = fs.readFileSync(
+        artifacts.pathFor("shell/spawn-error.result.json"),
+        "utf8",
+      );
+      expect(spawnArtifact).not.toContain(secret);
+      expect(JSON.parse(spawnArtifact).durationMs).toBeGreaterThanOrEqual(0);
       expect(fs.readFileSync(artifacts.pathFor("shell/spawn-error.stderr.txt"), "utf8")).toContain(
         "[REDACTED]",
       );

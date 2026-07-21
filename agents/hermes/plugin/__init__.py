@@ -1395,16 +1395,17 @@ def register(ctx):
     ctx.register_tool(
         name="nemoclaw_status",
         toolset="nemoclaw",
+        # Pass the bare function object; Hermes wraps it in the
+        # {"type":"function","function":{...}} envelope at request-build time.
+        # Pre-wrapping here double-wraps the tool, which strict providers
+        # (Gemini) reject with HTTP 400 (#7067).
         schema={
-            "type": "function",
-            "function": {
-                "name": "nemoclaw_status",
-                "description": (
-                    "Show NemoClaw sandbox status: agent type, gateway health, "
-                    "model, provider, and inference endpoint."
-                ),
-                "parameters": {"type": "object", "properties": {}},
-            },
+            "name": "nemoclaw_status",
+            "description": (
+                "Show NemoClaw sandbox status: agent type, gateway health, "
+                "model, provider, and inference endpoint."
+            ),
+            "parameters": {"type": "object", "properties": {}},
         },
         handler=_handle_status,
         description="NemoClaw sandbox status",
@@ -1415,12 +1416,9 @@ def register(ctx):
         name="nemoclaw_info",
         toolset="nemoclaw",
         schema={
-            "type": "function",
-            "function": {
-                "name": "nemoclaw_info",
-                "description": "Get NemoClaw sandbox info as structured JSON.",
-                "parameters": {"type": "object", "properties": {}},
-            },
+            "name": "nemoclaw_info",
+            "description": "Get NemoClaw sandbox info as structured JSON.",
+            "parameters": {"type": "object", "properties": {}},
         },
         handler=_handle_info,
         description="NemoClaw sandbox info (JSON)",
@@ -1430,28 +1428,25 @@ def register(ctx):
         name="transcribe_audio",
         toolset="audio",
         schema={
-            "type": "function",
-            "function": {
-                "name": "transcribe_audio",
-                "description": (
-                    "Transcribe an audio file that already exists in the Hermes "
-                    "sandbox. In NemoClaw broker mode this uses the managed "
-                    "OpenAI-audio gateway instead of direct OpenAI credentials."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": "Path to an audio file inside the Hermes sandbox.",
-                        },
-                        "model": {
-                            "type": "string",
-                            "description": "Optional transcription model override.",
-                        },
+            "name": "transcribe_audio",
+            "description": (
+                "Transcribe an audio file that already exists in the Hermes "
+                "sandbox. In NemoClaw broker mode this uses the managed "
+                "OpenAI-audio gateway instead of direct OpenAI credentials."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to an audio file inside the Hermes sandbox.",
                     },
-                    "required": ["file_path"],
+                    "model": {
+                        "type": "string",
+                        "description": "Optional transcription model override.",
+                    },
                 },
+                "required": ["file_path"],
             },
         },
         handler=_handle_transcribe_audio,
@@ -1463,16 +1458,13 @@ def register(ctx):
         name="nemoclaw_reload_skills",
         toolset="nemoclaw",
         schema={
-            "type": "function",
-            "function": {
-                "name": "nemoclaw_reload_skills",
-                "description": (
-                    "Reload and re-discover skills from the skill directories. "
-                    "Call this after new skills have been installed to make them "
-                    "available as slash commands without restarting the gateway."
-                ),
-                "parameters": {"type": "object", "properties": {}},
-            },
+            "name": "nemoclaw_reload_skills",
+            "description": (
+                "Reload and re-discover skills from the skill directories. "
+                "Call this after new skills have been installed to make them "
+                "available as slash commands without restarting the gateway."
+            ),
+            "parameters": {"type": "object", "properties": {}},
         },
         handler=_handle_reload_skills,
         description="Reload skills from disk without gateway restart",

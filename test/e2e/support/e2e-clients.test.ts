@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Buffer } from "node:buffer";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -26,6 +24,7 @@ import type {
   ShellProbeRunOptions,
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
+import { sandboxShWithArgs } from "../live/phase6-messaging-helpers.ts";
 
 interface RunnerCall {
   command: string;
@@ -527,11 +526,10 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
-  it("sandbox client wraps shell scripts with the named sandbox exec form", async () => {
+  it("sandbox client passes trusted shell scripts through the named sandbox exec form", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
     const script = trustedSandboxShellScript("echo ready");
-    const encodedScript = Buffer.from(script, "utf8").toString("base64");
 
     expectTypeOf<
       Parameters<SandboxClient["execShell"]>[1]
@@ -544,20 +542,7 @@ describe("E2E fixture clients", () => {
 
     expect(runner.calls[0]).toEqual({
       command: "openshell",
-      args: [
-        "sandbox",
-        "exec",
-        "-n",
-        "assistant",
-        "--",
-        "sh",
-        "-lc",
-        [
-          "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
-          `_NEMOCLAW_E2E_SCRIPT="$(printf '%s' '${encodedScript}' | base64 -d)" || exit $?`,
-          `eval "$_NEMOCLAW_E2E_SCRIPT"`,
-        ].join("; "),
-      ],
+      args: ["sandbox", "exec", "-n", "assistant", "--", "sh", "-lc", script],
       options: {
         artifactName: "custom-exec-shell",
         timeoutMs: 123,
@@ -565,7 +550,7 @@ describe("E2E fixture clients", () => {
     });
   });
 
-  it("sandbox client keeps multiline shell scripts out of OpenShell argv", async () => {
+  it("sandbox client preserves multiline shell bytes in one OpenShell argv element", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
     const script = trustedSandboxShellScript("set -eu\nprintf '%s\\n' ready\r\n");
@@ -573,25 +558,53 @@ describe("E2E fixture clients", () => {
     await sandbox.execShell("assistant", script);
 
     const payload = runner.calls[0]?.args.at(-1) ?? "";
-    expect(payload).not.toMatch(/[\r\n]/);
-    const encodedScript = payload.match(/'([A-Za-z0-9+/=]+)'/)?.[1] ?? "";
-    expect(Buffer.from(encodedScript, "base64").toString("utf8")).toBe(script);
+    expect(payload).toBe(script);
+    expect(payload).toContain("\n");
+    expect(payload).toContain("\r\n");
   });
 
-  it("sandbox client fails closed when the sandbox has no base64 decoder", async () => {
+  it("sandbox client does not add an eval or decoder transport", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
 
-    await sandbox.execShell("assistant", trustedSandboxShellScript("echo should-not-run"));
+    const script = trustedSandboxShellScript("echo should-run-directly");
+    await sandbox.execShell("assistant", script);
 
     const payload = runner.calls[0]?.args.at(-1) ?? "";
-    const result = spawnSync("/bin/sh", ["-c", payload], {
-      encoding: "utf8",
-      env: { PATH: "" },
+    expect(payload).toBe(script);
+    expect(payload).not.toContain("base64");
+    expect(payload).not.toContain("eval");
+  });
+
+  it("phase-six shell helpers preserve multiline source and positional arguments", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+    const script = "set -eu\nprintf '%s\\n' \"$1\"";
+    const argument = "line one\r\nline two";
+
+    await sandboxShWithArgs(sandbox, "assistant", script, [argument], {
+      artifactName: "phase-six-native-argv",
+      redactionValues: ["sensitive-marker"],
+      timeoutMs: 321,
     });
-    expect(result.status).toBe(127);
-    expect(result.stderr).toContain("NEMOCLAW_BASE64_MISSING");
-    expect(result.stdout).not.toContain("should-not-run");
+
+    expect(runner.calls[0]?.args).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "assistant",
+      "--",
+      "sh",
+      "-c",
+      script,
+      "nemoclaw-e2e-script",
+      argument,
+    ]);
+    expect(runner.calls[0]?.options).toMatchObject({
+      artifactName: "phase-six-native-argv",
+      redactionValues: ["sensitive-marker"],
+      timeoutMs: 321,
+    });
   });
 
   it("sandbox client requires trusted non-empty shell scripts", () => {

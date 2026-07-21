@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,55 +11,15 @@ import {
   evaluateE2eWorkflowDispatchSelectors,
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
+  validateE2eWorkflow,
   validateE2eWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
 } from "../../../tools/e2e/workflow-boundary.mts";
+import { buildE2eWorkflowPlan } from "../../../tools/e2e/workflow-plan.mts";
 import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
-
-function generateMatrixScript(): string {
-  const workflow = readWorkflow();
-  const jobs = workflow.jobs as Record<string, { steps?: Array<Record<string, unknown>> }>;
-  const generateStep = jobs["generate-matrix"]?.steps?.find(
-    (step) => step.name === "Generate E2E target matrix",
-  );
-  expect(generateStep?.run).toEqual(expect.any(String));
-  return generateStep?.run as string;
-}
-
-function generateMatrixForDispatch(env: { JOBS: string; TARGETS: string }): Record<string, string> {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-matrix-"));
-  const outputPath = path.join(tmp, "github-output");
-  const summaryPath = path.join(tmp, "github-summary");
-  try {
-    const result = spawnSync("bash", ["-c", generateMatrixScript()], {
-      cwd: process.cwd(),
-      encoding: "utf-8",
-      timeout: 120_000,
-      killSignal: "SIGKILL",
-      env: {
-        ...process.env,
-        GITHUB_OUTPUT: outputPath,
-        GITHUB_STEP_SUMMARY: summaryPath,
-        JOBS: env.JOBS,
-        TARGETS: env.TARGETS,
-      },
-    });
-    expect(result.signal).toBeNull();
-    expect(result.stderr).toBe("");
-    expect(result.status).toBe(0);
-    return Object.fromEntries(
-      fs
-        .readFileSync(outputPath, "utf-8")
-        .trim()
-        .split("\n")
-        .map((line) => line.split(/=(.*)/s).slice(0, 2)),
-    );
-  } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
-  }
-}
+import { requireFixture } from "./require-fixture";
 
 describe("e2e workflow boundary", () => {
   it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
@@ -77,6 +36,201 @@ describe("e2e workflow boundary", () => {
 
   it("keeps the live E2E target workflow scheduled, dispatchable, pinned, and artifact-safe", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
+  });
+
+  it("binds typed-target evidence identity and upload to the live matrix entry", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env?: Record<string, string>;
+          steps?: Array<{
+            env?: Record<string, string>;
+            name?: string;
+            with?: Record<string, string>;
+          }>;
+        }
+      >;
+    };
+    const live = workflow.jobs.live!;
+    const run = live.steps!.find((step) => step.name === "Run live E2E tests")!;
+    run.env!.E2E_TARGET_ID = "unbound-target";
+    const upload = live.steps!.find((step) => step.name === "Upload E2E artifacts")!;
+    upload.with!.path = upload.with!.path.replace("e2e-artifacts/live/risk-signal.json\n", "");
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "live E2E step must bind risk-signal identity to matrix.id",
+        "artifact upload path must include e2e-artifacts/live/risk-signal.json",
+      ]),
+    );
+  });
+
+  it("rejects Bedrock matrix shard identity drift (#6938)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-bedrock-shard-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { env: Record<string, unknown> }>;
+    };
+    delete workflow.jobs["bedrock-runtime-compatible-anthropic"].env.NEMOCLAW_E2E_SHARD;
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        "bedrock-runtime-compatible-anthropic job must pass matrix.agent through NEMOCLAW_E2E_SHARD",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("requires matrix generation to use the planner CI-output mode", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps?: Array<{ name?: string; run?: string }> }>;
+    };
+    const generate = workflow.jobs["generate-matrix"]?.steps?.find(
+      (step) => step.name === "Generate E2E target matrix",
+    );
+    const generateRun =
+      generate?.run ??
+      (() => {
+        throw new Error("workflow missing Generate E2E target matrix script");
+      })();
+    requireFixture(generateRun.includes("--ci-output"), "planner fixture missing --ci-output");
+    const invalidRun = generateRun.replace("--ci-output", "--plain-output");
+    requireFixture(invalidRun !== generateRun, "planner fixture mutation did not apply");
+    generate!.run = invalidRun;
+
+    expect(validateE2eWorkflow(workflow)).toContain(
+      "step 'Generate E2E target matrix' run script must include --ci-output",
+    );
+  });
+
+  it("keeps controller target selection bound to the generated matrix (#7031)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        { steps?: Array<{ env?: Record<string, string>; name?: string; run?: string }> }
+      >;
+    };
+    const generate = workflow.jobs["generate-matrix"]?.steps?.find(
+      (step) => step.name === "Generate E2E target matrix",
+    )!;
+    delete generate.env!.CHECKOUT_SHA;
+    generate.run = generate.run!.replace(
+      "E2E planner matrix does not match controller-selected targets",
+      "unchecked planner matrix",
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "matrix generation step must bind controller checkout through CHECKOUT_SHA env",
+        "step 'Generate E2E target matrix' run script must include E2E planner matrix does not match controller-selected targets",
+      ]),
+    );
+  });
+
+  it("keeps controller runner selection in a trusted pre-checkout matrix (#7031)", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          outputs: Record<string, string>;
+          steps: Array<{ id?: string; name?: string; run?: string; uses?: string }>;
+        }
+      >;
+    };
+    const generateMatrix = workflow.jobs["generate-matrix"]!;
+    generateMatrix.outputs.matrix = "${{ steps.matrix.outputs.matrix }}";
+    const [trusted] = generateMatrix.steps.splice(
+      generateMatrix.steps.findIndex((step) => step.id === "controller_matrix"),
+      1,
+    );
+    trusted!.run = trusted!.run!.replace('"runner":"ubuntu-latest"', '"runner":"self-hosted"');
+    generateMatrix.steps.splice(
+      generateMatrix.steps.findIndex((step) => step.uses?.startsWith("actions/checkout@")) + 1,
+      0,
+      trusted!,
+    );
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "generate-matrix job must expose trusted controller matrix output",
+        "trusted controller matrix must pin typed target runner to ubuntu-latest",
+        "trusted controller matrix step must run before PR checkout",
+      ]),
+    );
+  });
+
+  type RebuildWorkflowStep = {
+    env?: Record<string, string>;
+    name?: string;
+    run?: string;
+    uses?: string;
+  };
+  const rebuildCacheMutations = [
+    [
+      "an isolated builder",
+      {
+        name: "Set up rebuild Buildx",
+        uses: "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c",
+      },
+    ],
+    [
+      "a separate cache warm",
+      {
+        name: "Warm current base build cache",
+        uses: "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+      },
+    ],
+    [
+      "a step-level builder selection",
+      {
+        env: { BUILDX_BUILDER: "external" },
+        name: "Run rebuild live test",
+      },
+    ],
+    [
+      "a persistent builder selection",
+      {
+        name: "Select rebuild Buildx",
+        run: "docker buildx use external",
+      },
+    ],
+    [
+      "a multiline environment-file builder selection",
+      {
+        name: "Persist rebuild Buildx through the environment file",
+        run: "printf '%s\\n' 'BUILDX_BUILDER<<EOF' 'external' 'EOF' >> \"$GITHUB_ENV\"",
+      },
+    ],
+  ] satisfies ReadonlyArray<readonly [string, RebuildWorkflowStep]>;
+  const rebuildCacheCases = [
+    "rebuild-openclaw",
+    "rebuild-hermes",
+    "rebuild-hermes-stale-base",
+  ].flatMap((jobName) =>
+    rebuildCacheMutations.map(
+      ([caseName, injectedStep]) => [jobName, caseName, injectedStep] as const,
+    ),
+  );
+
+  it.each(rebuildCacheCases)("rejects %s with %s", (jobName, _case, injectedStep) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-cache-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: RebuildWorkflowStep[] }>;
+    };
+    workflow.jobs[jobName].steps.splice(2, 0, injectedStep);
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        `${jobName} must keep rebuild builds on the Docker engine cache`,
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   // source-shape-contract: security -- Mutates the shipped workflow to prove PR-safe routing rejects credential-backed smokes
@@ -189,9 +343,21 @@ describe("e2e workflow boundary", () => {
           targets: "network-policy",
         }),
       ).toMatchObject({
-        valid: false,
+        valid: true,
         liveTargetsRun: false,
-        selectedFreeStandingJobs: [],
+        selectedFreeStandingJobs: ["network-policy"],
+        registryTargets: [],
+      });
+      expect(
+        evaluateE2eWorkflowDispatchSelectors({
+          jobs: "network-policy",
+          targets: "ubuntu-repo-cloud-langchain-deepagents-code",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveTargetsRun: true,
+        selectedFreeStandingJobs: ["network-policy"],
+        registryTargets: ["ubuntu-repo-cloud-langchain-deepagents-code"],
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({
@@ -221,9 +387,10 @@ describe("e2e workflow boundary", () => {
     timeout: 60_000,
   }, () => {
     const inventory = readFreeStandingJobsInventory();
-    const workflowJobs = new Set(
-      Object.keys((readWorkflow().jobs as Record<string, unknown>) ?? {}),
-    );
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { env?: Record<string, string> }>;
+    };
+    const workflowJobs = new Set(Object.keys(workflow.jobs));
 
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(inventory.allowedJobs).not.toHaveLength(0);
@@ -236,6 +403,8 @@ describe("e2e workflow boundary", () => {
     expect(inventory.liveTestToJobs.get("test/e2e/live/full-e2e.test.ts")).toEqual(
       expect.arrayContaining(["full-e2e", "security-posture"]),
     );
+    expect(workflow.jobs["gpu-e2e"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
+    expect(workflow.jobs["gpu-double-onboard"]?.env?.NEMOCLAW_MODEL).toBe("qwen3.5:9b");
     expect(
       focusedE2eJobsForChangedFiles(
         [
@@ -346,25 +515,21 @@ jobs:
         inventory.allowedJobs.filter((job) => !inventory.explicitOnlyJobs.includes(job)).sort(),
       );
 
-      expect(
-        generateMatrixForDispatch({ JOBS: nonHermesJobs.join(","), TARGETS: "" }),
-      ).toMatchObject({
-        hermes_selected: "false",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ jobs: nonHermesJobs.join(",") })).toMatchObject({
+        hermesSelected: false,
+        matrix: [],
       });
-      expect(generateMatrixForDispatch({ JOBS: hermesSelector, TARGETS: "" })).toMatchObject({
-        hermes_selected: "true",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ jobs: hermesSelector })).toMatchObject({
+        hermesSelected: true,
+        matrix: [],
       });
-      expect(
-        generateMatrixForDispatch({ JOBS: "", TARGETS: nonHermesTargets.join(",") }),
-      ).toMatchObject({
-        hermes_selected: "false",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ targets: nonHermesTargets.join(",") })).toMatchObject({
+        hermesSelected: false,
+        matrix: [],
       });
-      expect(generateMatrixForDispatch({ JOBS: "", TARGETS: hermesSelector })).toMatchObject({
-        hermes_selected: "true",
-        matrix: "[]",
+      expect(buildE2eWorkflowPlan({ targets: hermesSelector })).toMatchObject({
+        hermesSelected: true,
+        matrix: [],
       });
 
       for (const job of inventory.allowedJobs) {
@@ -619,11 +784,11 @@ jobs:
           "workflow missing snapshot-commands job",
           "report-to-pr job must wait for live",
           "report-to-pr step must pass jobs through JOBS env",
-          "step 'Post E2E target results to PR' run script must check selector validation before echoing selectors",
-          "step 'Post E2E target results to PR' run script must omit rejected test ID selectors",
-          "step 'Post E2E target results to PR' run script must filter reported entries for selective dispatches",
-          "step 'Post E2E target results to PR' run script must report missing requested jobs",
-          "step 'Post E2E target results to PR' run script must count cancelled jobs",
+          "step 'Post E2E target results to PR' run script must load the trusted report helper from the checked-out workspace",
+          "step 'Post E2E target results to PR' run script must assign resolveReportPr's result before use",
+          "step 'Post E2E target results to PR' run script must destructure loadReportJobs's result before use",
+          "step 'Post E2E target results to PR' run script must assign renderE2eReport's result before use",
+          "report-to-pr must check out the trusted workflow revision before reporting",
         ]),
       );
     } finally {
@@ -1016,27 +1181,23 @@ jobs:
     }
   });
 
-  it("rejects raw jobs selector echo from matrix generation", () => {
+  it("rejects matrix generation that bypasses the planner CI-output mode", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = fs.readFileSync(
       path.join(process.cwd(), ".github/workflows/e2e.yaml"),
       "utf8",
     );
-    fs.writeFileSync(
-      workflowPath,
-      workflow.replace(
-        'echo "::error::Invalid ${selector_name,,} input; use comma-separated ids" >&2',
-        'echo "::error::Invalid jobs input: ${JOBS}" >&2',
-      ),
-    );
+    requireFixture(workflow.includes("--ci-output"), "workflow fixture missing --ci-output");
+    const invalidWorkflow = workflow.replace("--ci-output", "--plain-output");
+    requireFixture(invalidWorkflow !== workflow, "workflow fixture mutation did not apply");
+    fs.writeFileSync(workflowPath, invalidWorkflow);
 
     try {
       const errors = validateE2eWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
-          "step 'Generate E2E target matrix' run script must include Invalid ${selector_name,,} input; use comma-separated ids",
-          "step 'Generate E2E target matrix' run script must not include Invalid jobs input: ${JOBS}",
+          "step 'Generate E2E target matrix' run script must include --ci-output",
         ]),
       );
     } finally {

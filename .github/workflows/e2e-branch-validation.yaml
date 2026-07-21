@@ -22,9 +22,8 @@ name: E2E / Branch Validation
 #   - To run security regression suites (credential-sanitization, injection)
 #   - Manually via workflow_dispatch, or called from other workflows
 #
-# NOTE: This does NOT test the community install path (launch-plugin.sh).
-# For validating what Brev Launchable users actually get, run the
-# e2e-launchable-smoke job in e2e.yaml.
+# NOTE: This does NOT test a published Brev Launchable image. It bootstraps a
+# generic Brev VM, overlays the selected source revision, and rebuilds NemoClaw.
 #
 # Test suites:
 #   full                     — Install → onboard → sandbox verify → live inference
@@ -75,11 +74,6 @@ on:
           - dashboard-remote-bind
           - gpu
           - all
-      use_launchable:
-        description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
-        required: false
-        type: boolean
-        default: true
       keep_alive:
         description: "Keep Brev instance alive after tests (for SSH debugging)"
         required: false
@@ -118,10 +112,6 @@ on:
         required: false
         type: string
         default: "full"
-      use_launchable:
-        required: false
-        type: boolean
-        default: true
       keep_alive:
         required: false
         type: boolean
@@ -157,6 +147,7 @@ on:
         required: true
 
 permissions:
+  actions: read
   contents: read
   checks: write
   pull-requests: write
@@ -276,7 +267,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: ${{ env.BREV_E2E_INSTANCE_NAME }}
           TEST_SUITE: ${{ inputs.test_suite }}
-          USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
           BREV_PROVIDER: ${{ inputs.brev_provider || vars.BREV_PROVIDER || '' }}
           BREV_GPU_TYPE: ${{ inputs.brev_gpu_type || vars.BREV_GPU_TYPE || '' }}
           BREV_GPU_NAME: ${{ inputs.brev_gpu_name || vars.BREV_GPU_NAME || '' }}
@@ -387,6 +377,7 @@ jobs:
     # This job receives no Brev/inference secret and checks out no target code,
     # keeping its write token outside the validation data plane.
     permissions:
+      actions: read
       contents: read
       checks: write
       pull-requests: write
@@ -400,18 +391,20 @@ jobs:
           TESTED_SHA: ${{ needs.e2e-branch-validation.outputs.tested_sha }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
           INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ inputs.test_suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
           if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::pr_number must be a positive integer"
+            echo "::error::pr_number must be a positive integer. See $RUN_URL"
             exit 1
           fi
           pr_json="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName,headRefOid)"
           branch="$(jq -r '.headRefName' <<<"$pr_json")"
           current_sha="$(jq -r '.headRefOid' <<<"$pr_json")"
           if [[ "$current_sha" != "$TESTED_SHA" ]]; then
-            echo "::error::PR head moved after Brev validation; refusing to report stale evidence"
+            echo "::error::PR head moved after Brev validation; refusing to report stale evidence. See $RUN_URL"
             exit 1
           fi
           case "$VALIDATION_RESULT" in
@@ -436,16 +429,59 @@ jobs:
               emoji="❌"
               ;;
           esac
+          validation_url="$RUN_URL"
+          validation_link_text="workflow run"
+          if [[ "$RUN_ID" =~ ^[1-9][0-9]*$ && "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            jobs_json=""
+            if jobs_json="$(gh api \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/attempts/$RUN_ATTEMPT/jobs?per_page=100" \
+              2>/dev/null)"; then
+              validation_job_id="$(jq -er \
+                --arg suite "$TEST_SUITE" \
+                --arg result "$VALIDATION_RESULT" \
+                --argjson run_id "$RUN_ID" \
+                --argjson run_attempt "$RUN_ATTEMPT" '
+                  if ((.total_count | type) == "number"
+                    and (.total_count | floor) == .total_count
+                    and .total_count >= 0
+                    and .total_count <= 100
+                    and (.jobs | type) == "array"
+                    and (.jobs | length) == .total_count)
+                  then
+                    [.jobs[] | select(
+                      (.id | type) == "number"
+                      and (.id | floor) == .id
+                      and .id > 0
+                      and .id <= 9007199254740991
+                      and .run_id == $run_id
+                      and .run_attempt == $run_attempt
+                      and (.name == "e2e-branch-validation"
+                        or .name == ("brev-nightly-e2e (" + $suite + ") / e2e-branch-validation")
+                        or ($suite == "dashboard-remote-bind"
+                          and .name == "dashboard-remote-bind-e2e / e2e-branch-validation"))
+                      and .status == "completed"
+                      and .conclusion == $result
+                    )]
+                    | if length == 1 then .[0].id else empty end
+                  else empty end
+                ' <<<"$jobs_json" 2>/dev/null)" || validation_job_id=""
+              if [[ "$validation_job_id" =~ ^[1-9][0-9]*$ ]]; then
+                validation_url="$RUN_URL/job/$validation_job_id"
+                validation_link_text="validation job"
+              fi
+            fi
+          fi
           gh api "repos/$GITHUB_REPOSITORY/check-runs" \
             -f "name=Brev E2E ($TEST_SUITE)" \
             -f "head_sha=$TESTED_SHA" \
             -f status="completed" \
             -f "conclusion=$conclusion" \
+            -f "details_url=$validation_url" \
             -f "output[title]=Brev E2E ($TEST_SUITE): $conclusion" \
-            -f "output[summary]=See workflow run for details."
+            -f "output[summary]=[Open the $validation_link_text]($validation_url) for details."
           body_file="$(mktemp)"
-          printf "%s **Brev E2E** (%s): **%s** on branch \`%s\` — [See logs](%s)\n" \
-            "$emoji" "$TEST_SUITE" "$status" "$branch" "$RUN_URL" >"$body_file"
+          printf "%s **Brev E2E** (%s): **%s** on branch \`%s\` — [See %s](%s)\n" \
+            "$emoji" "$TEST_SUITE" "$status" "$branch" "$validation_link_text" "$validation_url" >"$body_file"
           if [[ "$KEEP_ALIVE" == "true" ]]; then
             cat >>"$body_file" <<EOF
 

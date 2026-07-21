@@ -8,7 +8,7 @@
 // separator-free provider parameters such as `clientSecret`, browser/session
 // material such as cookies, and connection strings cannot slip past the
 // validator. The standalone local credential helper and browser form embed this
-// literal pattern; scripts/checks/local-credential-helper-pin.ts enforces exact
+// literal pattern; scripts/checks/local-credential-helper-pin.mts enforces exact
 // parity because those reviewed artifacts cannot import this module at runtime.
 export const CREDENTIAL_SHAPED_NAME_PATTERN =
   /(?:^|[_-])(?:api[_-]?key|access[_-]?key|secret[_-]?key|auth[_-]?token|refresh[_-]?token|access[_-]?token|client[_-]?secret|private[_-]?key|pass[_-]?code|personal[_-]?access[_-]?token|connection[_-]?string|webhook(?:[_-]?url)?|key|secret|token|password|passwd|passcode|auth|authorization|credential|credentials|bearer|bearer[_-]?token|cookie|cookies|pat|private|privatekey|pin|webhookurl|dsn|connectionstring)(?:$|[_-])/i;

@@ -166,36 +166,40 @@ export class GatewayClient {
   // ─── Guard-chain recovery probes (#2478, #2701) ────────────────────
 
   /**
-   * Resolve the running openclaw gateway PID inside the sandbox by parsing
-   * `ps`. Returns the lowest matching PID, or null if no gateway process is
-   * running. Mirrors the legacy bash `gateway_pid()` helper.
-   *
-   * Two-pass match: first prefer rows whose argv contains "gateway" alongside
-   * comm "openclaw"; fall back to any "openclaw" comm. The two-pass shape
-   * tolerates older builds that exposed gateway under a slightly different
-   * argv but the same comm.
+   * Resolve the supervisor-owned gateway PID record inside the sandbox.
+   * The PID is accepted only while the process exists and its `/proc` start
+   * identity still matches the second field recorded by the supervisor.
    */
   async resolveGatewayPid(instance: NemoClawInstance): Promise<number | null> {
     const script =
       "set -e; " +
-      // Primary: argv contains "gateway" and comm is "openclaw".
-      'pid="$(ps -eo pid=,comm=,args= 2>/dev/null | ' +
-      "awk '($2 == \"openclaw\" && $0 ~ /gateway/) || $0 ~ /openclaw[ -]gateway/ { print $1 }' | " +
-      'sort -n | head -n 1)"; ' +
-      // Fallback: any process with comm "openclaw".
-      'if [ -z "$pid" ]; then ' +
-      'pid="$(ps -eo pid=,comm=,args= 2>/dev/null | ' +
-      'awk \'$2 == "openclaw" { print $1 }\' | sort -n | head -n 1)"; ' +
-      "fi; " +
-      'printf "%s\\n" "$pid"';
+      'record="$(cat /tmp/nemoclaw-gateway.pid 2>/dev/null || true)"; ' +
+      'set -- $record; [ "$#" -eq 2 ] || exit 0; ' +
+      'pid="$1"; expected_start="$2"; ' +
+      'case "$pid" in ""|*[!0-9]*) exit 0 ;; esac; ' +
+      'case "$expected_start" in ""|*[!0-9]*) exit 0 ;; esac; ' +
+      'kill -0 "$pid" 2>/dev/null || exit 0; ' +
+      'stat="$(cat "/proc/$pid/stat" 2>/dev/null || true)"; ' +
+      '[ -n "$stat" ] || exit 0; rest="${stat##*) }"; ' +
+      '[ "$rest" != "$stat" ] || exit 0; set -- $rest; ' +
+      'case "$1" in Z|X) exit 0 ;; esac; state="$1"; ' +
+      '[ "$#" -ge 20 ] || exit 0; actual_start="${20}"; ' +
+      'printf "%s %s %s %s\\n" "$pid" "$expected_start" "$actual_start" "$state"';
 
     const result = await this.sandbox.exec(instance.sandboxName, ["sh", "-c", script], {
       artifactName: `gateway-resolve-pid-${instance.sandboxName}`,
       env: probeEnv(),
     });
-    const trimmed = result.stdout.trim();
-    if (!/^[0-9]+$/.test(trimmed)) return null;
-    const pid = Number(trimmed);
+    const identity = result.stdout.trim().match(/^([0-9]+) ([0-9]+) ([0-9]+) ([A-Za-z])$/);
+    if (
+      result.exitCode !== 0 ||
+      !identity ||
+      identity[2] !== identity[3] ||
+      /^(?:X|Z)$/.test(identity[4])
+    ) {
+      return null;
+    }
+    const pid = Number(identity[1]);
     return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
   }
 
@@ -285,10 +289,10 @@ export class GatewayClient {
     options: ExpectPidStableOptions,
   ): Promise<number> {
     const pollIntervalSeconds = options.pollIntervalSeconds ?? 3;
-    if (options.durationSeconds <= 0) {
+    if (!Number.isFinite(options.durationSeconds) || options.durationSeconds <= 0) {
       throw new Error("expectPidStable: durationSeconds must be > 0");
     }
-    if (pollIntervalSeconds <= 0) {
+    if (!Number.isFinite(pollIntervalSeconds) || pollIntervalSeconds <= 0) {
       throw new Error("expectPidStable: pollIntervalSeconds must be > 0");
     }
 

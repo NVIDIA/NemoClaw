@@ -19,8 +19,8 @@ export default class SandboxConfigSetCommand extends NemoClawCommand {
   static description = "Set sandbox agent configuration with new-path and SSRF validation.";
   static usage = ["<name> --key <dotpath> --value <value> [--restart] [--config-accept-new-path]"];
   static examples = [
-    "<%= config.bin %> alpha config set --key model --value nvidia/nemotron",
-    "<%= config.bin %> alpha config set --key web_search --value true --restart",
+    "<%= config.bin %> alpha config set --key agents.defaults.model.primary --value nvidia/nemotron",
+    "<%= config.bin %> alpha config set --key agents.defaults.timeoutSeconds --value 600 --restart",
   ];
   static args = {
     sandboxName: sandboxNameArg,

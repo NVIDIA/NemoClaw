@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
 import { CLI_NAME } from "../cli/branding";
+import { GATEWAY_PORT } from "../core/ports";
 import { prompt as askPrompt } from "../credentials/store";
 import { formatFailedBackupItems } from "../domain/backup-failure";
 import {
@@ -15,6 +18,7 @@ import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandb
 import { parseReadySandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
+import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import {
   backupStartedSandboxState,
   returnSandboxContainerToStopped,
@@ -33,6 +37,10 @@ const YW = useColor ? "\x1b[1;33m" : "";
 
 export function shouldSkipUnreachableSandboxBackup(env: NodeJS.ProcessEnv): boolean {
   return env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP === "1";
+}
+
+export function rebuildBackupsDirectory(home: string, gatewayPort: number): string {
+  return path.join(nemoclawStateRoot(home, gatewayPort), "rebuild-backups");
 }
 
 function notRunningBackupSkipMessage(name: string): string {
@@ -171,7 +179,7 @@ export async function backupAll(): Promise<void> {
   console.log("");
   console.log(`  Pre-upgrade backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`);
   if (backed > 0) {
-    console.log(`  Backups stored in: ~/.nemoclaw/rebuild-backups/`);
+    console.log(`  Backups stored in: ${rebuildBackupsDirectory(resolveHome(), GATEWAY_PORT)}`);
   }
   if (failed > 0) {
     if (unreachableRunning > 0) {

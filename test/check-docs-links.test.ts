@@ -173,6 +173,44 @@ describe("check-docs link validation", () => {
     }
   });
 
+  it("resolves the native changelog root by its published slug", () => {
+    const tempDir = fs.mkdtempSync(path.join(REPO_ROOT, "docs", "check-docs-changelog-"));
+    const sourcePath = path.join(tempDir, "source.mdx");
+    const navPath = path.join(tempDir, "index.yml");
+    const sourceRel = path.relative(path.join(REPO_ROOT, "docs"), sourcePath);
+    try {
+      fs.writeFileSync(sourcePath, "# Reference\n\n[Release Notes](../release-notes)\n");
+      fs.writeFileSync(
+        navPath,
+        [
+          "navigation:",
+          "  - tab: user-guide",
+          "    variants:",
+          '      - title: "OpenClaw"',
+          "        slug: openclaw",
+          "        layout:",
+          "          - changelog: ./changelog",
+          '            title: "Release Notes"',
+          "            slug: release-notes",
+          '          - section: "Reference"',
+          "            slug: reference",
+          "            contents:",
+          '              - page: "Source"',
+          `                path: ${sourceRel}`,
+          "                slug: source",
+          "",
+        ].join("\n"),
+      );
+
+      const result = runCheckDocs(sourcePath, { CHECK_DOCS_FERN_NAV_YML: navPath });
+
+      expect(`${result.stdout}${result.stderr}`).not.toContain("../release-notes");
+      expect(result.status).toBe(0);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects .md/.mdx suffixes for links that resolve as Fern routes", () => {
     const tempDir = fs.mkdtempSync(path.join(REPO_ROOT, "docs", "check-docs-route-suffix-"));
     const tempPath = path.join(tempDir, "temp.mdx");

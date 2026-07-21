@@ -77,14 +77,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function shellEvalArg(script: string): string {
-  if (script.length === 0) {
-    return "";
-  }
-  const encoded = Buffer.from(script, "utf8").toString("base64");
-  return `printf %s ${encoded} | base64 -d | sh`;
-}
-
 async function runNemoclaw(
   host: HostCliClient,
   args: string[],
@@ -103,7 +95,7 @@ async function sandboxBash(
   script: string,
   options: { artifactName: string; timeoutMs?: number } = { artifactName: "sandbox-bash" },
 ): Promise<ShellProbeResult> {
-  return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(shellEvalArg(script)), {
+  return sandbox.execShell(SANDBOX_NAME, trustedSandboxShellScript(script), {
     artifactName: options.artifactName,
     env: baseEnv(),
     timeoutMs: options.timeoutMs ?? SANDBOX_EXEC_TIMEOUT_MS,
@@ -512,7 +504,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     boundary: "live-sandbox-network-policy",
     contracts: [
       "deny-by-default egress",
-      "OpenShell 0.0.72 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
+      "OpenShell 0.0.85 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
       "read-only preset allowlist behavior",
       "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
       "live policy-add and dry-run behavior",
@@ -549,7 +541,7 @@ test("network-policy: restricted sandbox enforces live allow/deny policy probes"
     timeoutMs: 30_000,
   });
   expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
-  expect(text(openshellVersion)).toContain("0.0.72");
+  expect(text(openshellVersion)).toContain("0.0.85");
 
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   cleanup.trackDisposable(`delete OpenShell sandbox ${SANDBOX_NAME}`, () =>
@@ -1003,11 +995,11 @@ printf '\n'
       /STATUS_403|ERROR_|denied|policy|forbidden|not allowed|not permitted/i,
     );
 
-    const webFetchScriptB64 = Buffer.from(buildWebFetchProbeScript(), "utf8").toString("base64");
     const webFetch = await sandboxBash(
       sandbox,
-      `printf '%s' '${webFetchScriptB64}' | base64 -d > /tmp/nemoclaw-web-fetch-e2e.mjs
-nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.internal:${approvedServer.port}/' 'http://host.openshell.internal:${deniedServer.port}/' '${marker}' '${denyMarker}'`,
+      `nemoclaw-start node --input-type=module - 'http://host.openshell.internal:${approvedServer.port}/' 'http://host.openshell.internal:${deniedServer.port}/' '${marker}' '${denyMarker}' <<'NEMOCLAW_WEB_FETCH_PROBE'
+${buildWebFetchProbeScript()}
+NEMOCLAW_WEB_FETCH_PROBE`,
       { artifactName: "tc-net-10-openclaw-web-fetch", timeoutMs: SANDBOX_EXEC_TIMEOUT_MS },
     );
     const webFetchText = text(webFetch);

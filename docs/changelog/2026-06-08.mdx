@@ -1,0 +1,25 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.61
+
+NemoClaw v0.0.61 improves sandbox network visibility, onboarding recovery, Hermes isolation, local inference restart behavior, and release validation:
+
+- Agents and operators can inspect a redacted policy context that lists active presets, allowed host categories, approval paths, and policy drift states.
+  Strict SSRF fetches now route through the sandbox proxy, stale `sandboxes.json` locks held by recycled PIDs are reclaimed, and dashboard tool-scope approvals can recover through doctor after sandbox startup.
+  For more information, refer to [Customize the Network Policy](/user-guide/openclaw/network-policy/customize-network-policy).
+- Sandbox hardening now caps open file descriptors at entrypoint, preserves the tunnel service PID directory across restarts, and keeps build-time plugin install state from forcing runtime npm calls offline.
+  NemoClaw also closed coordinated code-scanning findings and consolidated HTTP probe policy handling without changing the operator contract.
+  For more information, refer to [Security Best Practices](/user-guide/openclaw/security/best-practices).
+- Onboarding and rebuild paths recover more reliably across host and provider drift.
+  ARM64 image-tar upload failures receive a clear classification with an image-reference workaround, rebuild detaches sandbox providers before delete, rebuilt resume snapshots keep session state, and messaging selector key sequences work during onboarding.
+  For more information, refer to [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Local inference and Hermes setup cover more restart and configuration edge cases.
+  Managed inference hostnames bypass host proxies, managed vLLM restarts after host reboot, DGX Station managed vLLM defaults to `Qwen/Qwen3.6-27B-FP8`, Hermes rejects dashboard port collisions during configuration, and Hermes recovery enforces the environment-secret boundary.
+  For more information, refer to [Choose a Local Inference Server](/user-guide/openclaw/inference/local-inference/choose-local-inference-server).
+- Messaging setup gives clearer feedback and stores more deterministic state.
+  Slack now notifies the sender when a channel `@mention` is denied, operator-supplied placeholder keys can be registered during onboarding, `messagingPlan` persists into resume state, and channel conflict detection now uses the manifest-plan architecture.
+  For more information, refer to [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels).
+- Release validation now runs real shell-boundary assertions through E2E support, includes an opt-in live project, shards CLI coverage, adds a docs-only PR fast path, and trims slow CLI subprocess coverage.

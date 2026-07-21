@@ -41,7 +41,8 @@ NemoClaw validates the selected provider and model before creating the sandbox.
 
 ## Validation
 
-NemoClaw validates Gemini through its OpenAI-compatible Chat Completions path only.
+NemoClaw validates Gemini inference through its OpenAI-compatible Chat Completions path.
+When you enter a custom Gemini model ID, NemoClaw checks Google's native model catalog and accepts IDs with or without the `models/` prefix.
 It skips the Responses API probe because Gemini does not support `/v1/responses`.
 
 ## Related Topics

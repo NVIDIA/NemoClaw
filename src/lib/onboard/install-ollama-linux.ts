@@ -7,6 +7,10 @@ import nodePath from "node:path";
 
 import { OLLAMA_PORT } from "../core/ports";
 import { sleepSeconds, waitForHttp } from "../core/wait";
+import {
+  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  resolveOllamaContextWindowFloor,
+} from "../inference/ollama-runtime-context";
 import { cliName } from "./branding";
 import {
   decideInstallOllamaLinuxMode,
@@ -55,6 +59,8 @@ export type InstallOllamaLinuxOptions = InstallOllamaLinuxModeOptions & {
   runShellImpl?: typeof runShell;
   /** Test seam: override systemd loopback override. */
   ensureManagedOllamaLoopbackSystemdOverrideImpl?: typeof ensureManagedOllamaLoopbackSystemdOverride;
+  /** Minimum daemon context length to request for the selected agent. */
+  contextWindowFloor?: number;
   /** Test seam: override `waitForHttp`. */
   waitForHttpImpl?: typeof waitForHttp;
   /** Test seam: override `sleepSeconds`. */
@@ -249,16 +255,25 @@ function installOllamaUserLocal(opts: InstallOllamaLinuxOptions): InstallOllamaL
   return { ok: true, mode: "user-local", binPath };
 }
 
+/** Start the user-local Ollama daemon with the selected agent context floor. */
 function startUserLocalOllamaDaemon(binPath: string, opts: InstallOllamaLinuxOptions): boolean {
   const log = opts.log ?? ((m: string) => console.log(m));
   const runShellImpl = opts.runShellImpl ?? runShell;
   const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
   log("  Starting Ollama...");
   runShellImpl(
-    `OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} nohup ${shellQuote(binPath)} serve > /dev/null 2>&1 &`,
+    `${ollamaContextLengthEnvPrefix(opts)}OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} nohup ${shellQuote(binPath)} serve > /dev/null 2>&1 &`,
     { ignoreError: true },
   );
   return waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 10);
+}
+
+/** Return the `OLLAMA_CONTEXT_LENGTH` prefix only when the agent needs a higher floor. */
+function ollamaContextLengthEnvPrefix(
+  opts: Pick<InstallOllamaLinuxOptions, "contextWindowFloor">,
+): string {
+  const floor = resolveOllamaContextWindowFloor(opts.contextWindowFloor);
+  return floor > MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW ? `OLLAMA_CONTEXT_LENGTH=${floor} ` : "";
 }
 
 /**
@@ -298,6 +313,7 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
 
   const overrideState: OllamaLoopbackSystemdOverrideState = ensureOverrideImpl({
     isNonInteractive: opts.isNonInteractive,
+    contextWindowFloor: opts.contextWindowFloor,
   });
   if (overrideState === "failed") {
     errorLog("  Ollama systemd restart did not recover after applying the loopback override.");
@@ -322,9 +338,12 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
       !opts.isUpgrade && waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 1);
     if (!localDaemonReachable) {
       log("  Starting Ollama...");
-      runShellImpl(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-        ignoreError: true,
-      });
+      runShellImpl(
+        `${ollamaContextLengthEnvPrefix(opts)}OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`,
+        {
+          ignoreError: true,
+        },
+      );
       if (!waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
         errorLog(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
         return { ok: false, mode: "system", binPath: "/usr/local/bin/ollama" };

@@ -12,6 +12,7 @@ const port = Number(process.env.NEMOCLAW_FAKE_OPENAI_PORT || "0");
 const portFile = process.env.NEMOCLAW_FAKE_OPENAI_PORT_FILE || "";
 const logFile = process.env.NEMOCLAW_FAKE_OPENAI_LOG_FILE || "";
 const requestsFile = process.env.NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE || "";
+const environmentFile = process.env.NEMOCLAW_FAKE_OPENAI_ENVIRONMENT_FILE || "";
 const model = process.env.NEMOCLAW_FAKE_OPENAI_MODEL || "test-model";
 // Optional runtime context window advertised on /v1/models, mirroring vLLM's
 // max_model_len so onboarding can probe a real endpoint's context (#6177).
@@ -37,6 +38,10 @@ const forbiddenMarkers = (() => {
     return [];
   }
 })();
+
+if (environmentFile) {
+  writeFileSync(environmentFile, JSON.stringify(Object.keys(process.env).sort()));
+}
 
 function log(message: string): void {
   if (logFile) {

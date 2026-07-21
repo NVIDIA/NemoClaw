@@ -312,6 +312,7 @@ async function rebuildSandboxUnlocked(
       await runRebuildPostRestorePhase({
         sandboxName,
         sandboxEntry,
+        targetAgentName: rebuildAgent || "openclaw",
         messagingPlan,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,

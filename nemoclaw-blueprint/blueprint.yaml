@@ -3,8 +3,8 @@
 
 version: "0.1.0"
 # Requires OpenShell MCP/JSON-RPC L7 policy support from NVIDIA/OpenShell#1865.
-min_openshell_version: "0.0.72"
-max_openshell_version: "0.0.72"
+min_openshell_version: "0.0.85"
+max_openshell_version: "0.0.85"
 min_openclaw_version: "2026.3.11"
 # Mirrors the components.sandbox.image manifest digest below. Lets a
 # downstream consumer (or release tooling) verify the blueprint declares

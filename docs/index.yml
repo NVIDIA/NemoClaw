@@ -30,18 +30,23 @@ navigation:
               - page: "Ecosystem"
                 path: about/ecosystem.mdx
                 slug: ecosystem
-              - page: "Release Notes"
-                path: _build/agent-variants/about/release-notes.openclaw.generated.mdx
-                slug: release-notes
+          - changelog: ./changelog
+            title: Release Notes
+            slug: release-notes
           - section: "Get Started"
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.openclaw.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
-                  - page: "(Windows Only) Windows Prerequisites"
+                  - page: "Additional Setup for DGX Station"
+                    path: _build/agent-variants/get-started/dgx-station-preparation.openclaw.generated.mdx
+                    slug: dgx-station-preparation
+                  - page: "Additional Setup for Windows Machines"
                     path: _build/agent-variants/get-started/windows-preparation.openclaw.generated.mdx
                     slug: windows-preparation
               - page: "Quickstart with OpenClaw"
@@ -117,6 +122,9 @@ navigation:
               - section: "Manage Inference"
                 slug: manage-inference
                 contents:
+                  - page: "Use Shared Gateway Routes"
+                    path: _build/agent-variants/inference/use-shared-gateway-routes.openclaw.generated.mdx
+                    slug: use-shared-gateway-routes
                   - page: "View the Active Inference Route"
                     path: _build/agent-variants/inference/view-active-inference-route.openclaw.generated.mdx
                     slug: view-active-inference-route
@@ -300,6 +308,9 @@ navigation:
               - page: "Security Best Practices"
                 path: _build/agent-variants/security/best-practices.openclaw.generated.mdx
                 slug: best-practices
+              - page: "Configure Corporate CA Trust"
+                path: _build/agent-variants/security/configure-corporate-ca-trust.openclaw.generated.mdx
+                slug: configure-corporate-ca-trust
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.openclaw.generated.mdx
                 slug: credential-storage
@@ -356,7 +367,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "AI Agent Docs"
+              - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
               - page: "Community Solutions"
@@ -389,18 +400,23 @@ navigation:
               - page: "Ecosystem"
                 path: about/ecosystem-deepagents.mdx
                 slug: ecosystem
-              - page: "Release Notes"
-                path: _build/agent-variants/about/release-notes.deepagents.generated.mdx
-                slug: release-notes
+          - changelog: ./changelog
+            title: Release Notes
+            slug: release-notes
           - section: "Get Started"
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.deepagents.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
-                  - page: "(Windows Only) Windows Prerequisites"
+                  - page: "Additional Setup for DGX Station"
+                    path: _build/agent-variants/get-started/dgx-station-preparation.deepagents.generated.mdx
+                    slug: dgx-station-preparation
+                  - page: "Additional Setup for Windows Machines"
                     path: _build/agent-variants/get-started/windows-preparation.deepagents.generated.mdx
                     slug: windows-preparation
               - page: "Quickstart with Deep Agents"
@@ -473,6 +489,9 @@ navigation:
               - section: "Manage Inference"
                 slug: manage-inference
                 contents:
+                  - page: "Use Shared Gateway Routes"
+                    path: _build/agent-variants/inference/use-shared-gateway-routes.deepagents.generated.mdx
+                    slug: use-shared-gateway-routes
                   - page: "View the Active Inference Route"
                     path: _build/agent-variants/inference/view-active-inference-route.deepagents.generated.mdx
                     slug: view-active-inference-route
@@ -601,7 +620,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "AI Agent Docs"
+              - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.deepagents.generated.mdx
                 slug: agent-skills
               - page: "Community Solutions"
@@ -634,18 +653,23 @@ navigation:
               - page: "Ecosystem"
                 path: about/ecosystem-hermes.mdx
                 slug: ecosystem
-              - page: "Release Notes"
-                path: _build/agent-variants/about/release-notes.hermes.generated.mdx
-                slug: release-notes
+          - changelog: ./changelog
+            title: Release Notes
+            slug: release-notes
           - section: "Get Started"
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.hermes.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
-                  - page: "(Windows Only) Windows Prerequisites"
+                  - page: "Additional Setup for DGX Station"
+                    path: _build/agent-variants/get-started/dgx-station-preparation.hermes.generated.mdx
+                    slug: dgx-station-preparation
+                  - page: "Additional Setup for Windows Machines"
                     path: _build/agent-variants/get-started/windows-preparation.hermes.generated.mdx
                     slug: windows-preparation
               - page: "Quickstart with Hermes"
@@ -724,6 +748,9 @@ navigation:
               - section: "Manage Inference"
                 slug: manage-inference
                 contents:
+                  - page: "Use Shared Gateway Routes"
+                    path: _build/agent-variants/inference/use-shared-gateway-routes.hermes.generated.mdx
+                    slug: use-shared-gateway-routes
                   - page: "View the Active Inference Route"
                     path: _build/agent-variants/inference/view-active-inference-route.hermes.generated.mdx
                     slug: view-active-inference-route
@@ -876,6 +903,9 @@ navigation:
               - page: "Security Best Practices"
                 path: _build/agent-variants/security/best-practices.hermes.generated.mdx
                 slug: best-practices
+              - page: "Configure Corporate CA Trust"
+                path: _build/agent-variants/security/configure-corporate-ca-trust.hermes.generated.mdx
+                slug: configure-corporate-ca-trust
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.hermes.generated.mdx
                 slug: credential-storage
@@ -929,7 +959,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "AI Agent Docs"
+              - page: "Use Docs with Agents"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
               - page: "Community Solutions"

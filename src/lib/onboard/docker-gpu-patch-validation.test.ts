@@ -143,6 +143,88 @@ describe("Docker GPU startup command validation (#6110)", () => {
     expect(dockerRunDetached).not.toHaveBeenCalled();
   });
 
+  it("rejects unsupported structured mounts before touching the original container", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.Mounts = [{ Type: "bind", Source: "/host/path", Target: "/sandbox/path" }];
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRename = vi.fn(() => ({ status: 0 }));
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+
+    expect(() =>
+      recreateOpenShellDockerSandboxWithGpu(
+        {
+          sandboxName: "alpha",
+          timeoutSecs: 1,
+          openshellSandboxCommand: ["env", "nemoclaw-start"],
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) =>
+            args[0] === "ps"
+              ? "old-container-id\n"
+              : args[0] === "inspect"
+                ? JSON.stringify([inspect])
+                : "",
+          ),
+          detectSandboxFallbackDns: vi.fn(() => null),
+          dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+          dockerRunDetached,
+          dockerRename,
+          dockerRm: vi.fn(() => ({ status: 0 })),
+          dockerStop,
+          readDir: vi.fn(() => null),
+          readFile: vi.fn(() => null),
+        },
+      ),
+    ).toThrow("Unsupported Docker structured mount type 'bind'");
+    expect(dockerStop).not.toHaveBeenCalled();
+    expect(dockerRename).not.toHaveBeenCalled();
+    expect(dockerRunDetached).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-default structured tmpfs options before touching the original container", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.Mounts = [
+      {
+        Type: "tmpfs",
+        Target: "/tmp/sandbox",
+        TmpfsOptions: { Options: [["exec"]] },
+      },
+    ];
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRename = vi.fn(() => ({ status: 0 }));
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+
+    expect(() =>
+      recreateOpenShellDockerSandboxWithGpu(
+        {
+          sandboxName: "alpha",
+          timeoutSecs: 1,
+          openshellSandboxCommand: ["env", "nemoclaw-start"],
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) =>
+            args[0] === "ps"
+              ? "old-container-id\n"
+              : args[0] === "inspect"
+                ? JSON.stringify([inspect])
+                : "",
+          ),
+          detectSandboxFallbackDns: vi.fn(() => null),
+          dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+          dockerRunDetached,
+          dockerRename,
+          dockerRm: vi.fn(() => ({ status: 0 })),
+          dockerStop,
+          readDir: vi.fn(() => null),
+          readFile: vi.fn(() => null),
+        },
+      ),
+    ).toThrow("Docker structured tmpfs option 'exec' cannot be preserved during recreation");
+    expect(dockerStop).not.toHaveBeenCalled();
+    expect(dockerRename).not.toHaveBeenCalled();
+    expect(dockerRunDetached).not.toHaveBeenCalled();
+  });
+
   it.each([
     ";",
     "&&",
@@ -183,6 +265,42 @@ describe("Docker GPU startup command validation (#6110)", () => {
     ).toThrow("OpenShell sandbox startup command tokens contain unsupported shell metacharacters");
     expect(dockerStop).not.toHaveBeenCalled();
     expect(dockerRename).not.toHaveBeenCalled();
+    expect(dockerRunDetached).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed required ulimits before touching the original container", () => {
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id\n" }));
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+
+    expect(() =>
+      recreateOpenShellDockerSandboxWithGpu(
+        {
+          sandboxName: "alpha",
+          timeoutSecs: 1,
+          requiredUlimits: [{ name: "nofile;id", soft: 65_536, hard: 65_536 }],
+        },
+        {
+          dockerCapture: vi.fn((args: readonly string[]) =>
+            args[0] === "ps"
+              ? "old-container-id\n"
+              : args[0] === "inspect"
+                ? JSON.stringify([inspectFixture()])
+                : "",
+          ),
+          detectSandboxFallbackDns: vi.fn(() => null),
+          dockerRun,
+          dockerRunDetached,
+          dockerRename: vi.fn(() => ({ status: 0 })),
+          dockerRm: vi.fn(() => ({ status: 0 })),
+          dockerStop,
+          readDir: vi.fn(() => null),
+          readFile: vi.fn(() => null),
+        },
+      ),
+    ).toThrow("Invalid Docker ulimit name");
+    expect(dockerRun).not.toHaveBeenCalled();
+    expect(dockerStop).not.toHaveBeenCalled();
     expect(dockerRunDetached).not.toHaveBeenCalled();
   });
 });

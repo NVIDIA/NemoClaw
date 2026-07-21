@@ -17,6 +17,7 @@ import {
   branchTo,
   completeOnboardMachine,
   failOnboardMachine,
+  pauseOnboardMachine,
   retryTo,
 } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
@@ -346,6 +347,7 @@ describe("OnboardRuntimeBoundary", () => {
   });
 
   it.each([
+    { label: "pause", result: () => pauseOnboardMachine() },
     { label: "complete", result: () => completeOnboardMachine() },
     { label: "failed", result: () => failOnboardMachine("boom") },
   ] as const)("rejects non-transition $label results before emitting invalidation (#6227)", async ({

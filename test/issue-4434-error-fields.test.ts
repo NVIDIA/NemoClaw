@@ -76,7 +76,7 @@ describe("full OpenClaw TUI error guard (#4434)", () => {
     const review = fs.readFileSync(DEPENDENCY_REVIEW, "utf-8");
     const vitestGuard = fs.readFileSync(LIVE_VITEST_GUARD, "utf-8");
     expect(review).toContain("test/issue-4434-error-fields.test.ts");
-    expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.ts");
+    expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.mts");
     expect(review).toContain("Issue #4434 full live acceptance");
     expect(review).toContain("The #4434 compatibility-shim disposition is explicitly accepted");
     expect(review).not.toContain("`PRA-5`");

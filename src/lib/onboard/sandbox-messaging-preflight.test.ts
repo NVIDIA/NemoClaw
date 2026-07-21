@@ -111,6 +111,7 @@ function createDeps(
       listSandboxes: vi.fn(() => ({ sandboxes: [] })),
     },
     providerExistsInGateway: vi.fn(() => false),
+    providerMatchesGatewayCredential: vi.fn(() => false),
     isNonInteractive: vi.fn(() => false),
     promptYesNoOrDefault: vi.fn(async () => true),
     cliName: vi.fn(() => "nemoclaw"),

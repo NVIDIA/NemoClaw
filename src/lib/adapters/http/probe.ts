@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { isErrnoException } from "../../core/errno";
 import { compactText } from "../../core/url-utils";
+import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-ssrf-preflight";
 import type { ProbeResult } from "../../onboard/types";
 import { buildScrubbedCurlProbeEnv, scrubCredentialEnv } from "../../security/credential-env";
 import { ROOT } from "../../state/paths";
@@ -32,6 +33,8 @@ export interface CurlProbeOptions {
    * connection with ambient proxies disabled.
    */
   pinnedAddresses?: readonly string[];
+  /** Non-forgeable proof of the exact private subset admitted by the SSRF preflight. */
+  trustedPrivateCapability?: TrustedPrivateEndpointCapability;
   spawnSyncImpl?: (
     command: string,
     args: readonly string[],

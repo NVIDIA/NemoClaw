@@ -28,7 +28,9 @@ export function readAuthConfigContents(argv: readonly string[]): string {
   // flagged in PR #5975 review.
   const contents = fs.readFileSync(configPath, "utf8");
   const stat = fs.statSync(configPath);
-  expect(stat.mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect(stat.mode & 0o777).toBe(0o600);
+  }
   return contents;
 }
 

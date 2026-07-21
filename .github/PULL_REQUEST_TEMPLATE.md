@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 ## Summary
-<!-- 1-3 plain sentences: what changes and why. Describe before-and-after behavior when it applies. Use existing repository terms; do not invent a label for this PR. -->
+<!-- 1-3 plain sentences: what changes and why. Describe before-and-after behavior when it applies. Use the NemoClaw Technical English profile: https://github.com/NVIDIA/NemoClaw/blob/main/CONTRIBUTING.md#nemoclaw-technical-english. During the changed-text pilot, do not expand this PR to clean up unrelated prose. -->
 
 ## Related Issue
 <!-- Fixes #NNN or Closes #NNN. Remove this section if none. -->
@@ -25,6 +25,14 @@
 - [ ] Sensitive paths changed (security, policy, credentials, preflight, onboarding, inference, runner, sandbox, or messaging)
 - [ ] Sensitive-path review completed or maintainer-approved waiver recorded — reviewer/approval link/justification:
 - [ ] Non-success, skipped, or missing CI check accepted by maintainer — check name, approval link, and follow-up issue:
+
+## DGX Station Hardware Evidence
+<!-- Required only when scripts/prepare-dgx-station-host.sh changes. Maintainers must review the linked evidence before approving or merging. This is human-reviewed evidence, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must be documented on the PR. -->
+- [ ] Tested on DGX Station
+- Tested commit:
+- Station profile/scenario:
+- Result:
+- Supporting evidence:
 
 ## Verification
 <!-- Check each applicable item only when supported by the requested evidence. Run targeted tests once per relevant change set and rerun after later edits or hook autofixes that can affect the tested behavior. Do not rerun hook-covered checks. -->

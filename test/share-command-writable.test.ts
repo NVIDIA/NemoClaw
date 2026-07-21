@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "fs";
+import os from "os";
+import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { checkLocalMountWritable } from "../src/lib/share-command.js";
@@ -9,6 +11,7 @@ import { checkLocalMountWritable } from "../src/lib/share-command.js";
 describe("checkLocalMountWritable (#3192)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("returns writable=true when mkdirSync and accessSync both succeed", () => {
@@ -167,5 +170,35 @@ describe("checkLocalMountWritable (#3192)", () => {
       });
       expect(accessSpy).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe.skipIf(process.platform === "win32")("checkLocalMountWritable symlink safety", () => {
+  it.each([
+    ["gateways", 1],
+    ["selected port", 2],
+    ["mounts", 3],
+    ["mount target", 4],
+  ] as const)("rejects a symlinked %s path component", (_label, symlinkIndex) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-share-home-"));
+    const controlled = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-share-target-"));
+    const components = [".nemoclaw", "gateways", "9123", "mounts", "alpha"];
+    const localMount = path.join(home, ...components);
+    const symlinkPath = path.join(home, ...components.slice(0, symlinkIndex + 1));
+    vi.stubEnv("HOME", home);
+
+    try {
+      fs.mkdirSync(path.dirname(symlinkPath), { recursive: true });
+      fs.symlinkSync(controlled, symlinkPath, "dir");
+
+      expect(checkLocalMountWritable(localMount)).toMatchObject({
+        writable: false,
+        reason: expect.stringMatching(/symbolic link/i),
+      });
+      expect(fs.readdirSync(controlled)).toEqual([]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(controlled, { recursive: true, force: true });
+    }
   });
 });

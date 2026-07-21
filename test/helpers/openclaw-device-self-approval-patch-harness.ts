@@ -8,7 +8,7 @@ import vm from "node:vm";
 
 const PATCH_SCRIPT = path.resolve(
   import.meta.dirname,
-  "../../scripts/patch-openclaw-device-self-approval.ts",
+  "../../scripts/patch-openclaw-device-self-approval.mts",
 );
 
 function compiledIndent(source: string): string {

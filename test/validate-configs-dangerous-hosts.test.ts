@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Tests for the dangerous-host semantic check added to scripts/validate-configs.ts.
+// Tests for the dangerous-host semantic check added to scripts/validate-configs.mts.
 //
 // JSON Schema already handles structural validation for the policy YAML files.
 // This suite covers the additional semantic check that rejects catch-all hosts
@@ -17,7 +17,7 @@ import {
   isDangerousHost,
   ROUTER_API_BASE_HOST_ALLOWLIST,
   runConfigSemanticChecks,
-} from "../scripts/validate-configs";
+} from "../scripts/validate-configs.mts";
 import {
   DANGEROUS_HOST_CHECK,
   runSemanticChecks,

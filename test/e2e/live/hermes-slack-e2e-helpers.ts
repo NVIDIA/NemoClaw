@@ -16,8 +16,8 @@ import {
   phase6Env,
   precleanSandbox,
   resultText,
-  sandboxEncodedSh,
   sandboxSh,
+  sandboxShWithArgs,
   shellQuote,
   trackPreinstallSandboxCleanup,
 } from "./phase6-messaging-helpers.ts";
@@ -368,7 +368,7 @@ export async function runHermesSlackE2E({
 
   await waitForHermesHealth({ sandbox, apiKey });
 
-  const configProbe = await sandboxEncodedSh(
+  const configProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     String.raw`python3 - <<'PY'
@@ -414,7 +414,7 @@ PY`,
   expectExitZero(configProbe, "Hermes Slack config shape probe");
   expect(configProbe.stdout.trim()).toBe("OK");
 
-  const rendererProbe = await sandboxEncodedSh(
+  const rendererProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     String.raw`python3 - <<'PY'
@@ -451,7 +451,7 @@ PY`,
   expectExitZero(rendererProbe, "Hermes Slack Block Kit renderer probe");
   expect(rendererProbe.stdout.trim()).toBe("OK");
 
-  const envProbe = await sandboxEncodedSh(
+  const envProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     String.raw`python3 - <<'PY'
@@ -479,7 +479,7 @@ PY`,
   expectExitZero(envProbe, "Hermes Slack .env placeholder probe");
   expect(envProbe.stdout.trim()).toBe("OK");
 
-  const secretBoundaryProbe = await sandboxEncodedSh(
+  const secretBoundaryProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     String.raw`python3 - <<'PY'
@@ -600,7 +600,7 @@ else:
   expect(slackBlock).toContain("wss-backup.slack.com");
   expect(slackBlock).toContain("request_body_credential_rewrite: true");
 
-  const bridgeResidue = await sandboxEncodedSh(
+  const bridgeResidue = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     String.raw`set +e
@@ -626,7 +626,7 @@ done`,
   expectExitZero(bridgeResidue, "Hermes Slack bridge residue probe");
   expect(resultText(bridgeResidue).trim()).toBe("");
 
-  const slackProbe = await sandboxEncodedSh(
+  const slackProbe = await sandboxShWithArgs(
     sandbox,
     SANDBOX_NAME,
     String.raw`sh -lc '. /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; if [ -x /opt/hermes/.venv/bin/python ]; then exec /opt/hermes/.venv/bin/python -; fi; exec python3 -' <<'PY'

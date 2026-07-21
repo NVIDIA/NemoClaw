@@ -14,7 +14,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { findDirectCredentialEnvReads } from "../scripts/checks/direct-credential-env";
+import { findDirectCredentialEnvReads } from "../scripts/checks/direct-credential-env.mts";
 
 describe("direct credential env guard", () => {
   it.each([
@@ -96,7 +96,7 @@ describe("direct credential env guard", () => {
       "npx",
       [
         "tsx",
-        "scripts/checks/direct-credential-env.ts",
+        "scripts/checks/direct-credential-env.mts",
         "src/lib/onboard.ts",
         "src/lib/onboard/provider-key-bridge.ts",
         "src/lib/onboard/providers.ts",

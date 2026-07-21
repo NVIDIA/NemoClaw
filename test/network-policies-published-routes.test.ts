@@ -6,7 +6,7 @@ import {
   buildPublishedRouteIndex,
   findBrokenPublishedRoutes,
   resolvePageLinksByText,
-} from "../scripts/check-docs-published-routes.ts";
+} from "../scripts/check-docs-published-routes.mts";
 
 const NETWORK_POLICIES_SOURCE = "reference/network-policies.mdx";
 const APPROVAL_LINK_TEXT = "Approve or Deny Agent Network Requests";

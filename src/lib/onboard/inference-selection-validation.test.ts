@@ -160,6 +160,192 @@ describe("inference selection validation", () => {
     }
   });
 
+  it("probes an exactly allowlisted private endpoint with DNS pinning (#6861)", async () => {
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "llm.corp.example");
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "10.0.0.8", family: 4 }],
+    });
+
+    try {
+      const result = await helpers.validateCustomOpenAiLikeSelection(
+        "Custom endpoint",
+        "https://llm.corp.example/v1",
+        "model-a",
+        "COMPATIBLE_API_KEY",
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        api: "openai-completions",
+        pinnedAddresses: ["10.0.0.8"],
+      });
+      expect(result.ok && result.trustedPrivateCapability?.addresses).toEqual(["10.0.0.8"]);
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+        "https://llm.corp.example/v1",
+        "model-a",
+        "test-key",
+        expect.objectContaining({
+          pinnedAddresses: ["10.0.0.8"],
+          trustedPrivateCapability: expect.objectContaining({ addresses: ["10.0.0.8"] }),
+        }),
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("operator-trusted private"));
+    } finally {
+      warn.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    {
+      runtimeSurface: "native Anthropic Messages",
+      intendedApi: "anthropic-messages" as const,
+      expectedEndpointUrl: "https://anthropic.corp.example",
+      expectedProbeOptions: { probeStreaming: true },
+    },
+    {
+      runtimeSurface: "managed Chat Completions (Hermes/DCode)",
+      intendedApi: "openai-completions" as const,
+      expectedEndpointUrl: "https://anthropic.corp.example/v1",
+      expectedProbeOptions: { calibrateTimeouts: true, skipResponsesProbe: true },
+    },
+  ])("probes an exactly allowlisted private Anthropic endpoint on its $runtimeSurface surface (#7037)", async ({
+    intendedApi,
+    expectedEndpointUrl,
+    expectedProbeOptions,
+  }) => {
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "anthropic.corp.example");
+    vi.stubEnv("NEMOCLAW_REASONING", "false");
+    const probeEndpoint = vi.fn(() => ({
+      ok: true,
+      api: intendedApi,
+      label: "Compatible API",
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "NemoClaw agent",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint: probeEndpoint,
+      probeOpenAiLikeEndpoint: probeEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "10.0.0.8", family: 4 }],
+    });
+
+    try {
+      const result = await helpers.validateCustomAnthropicSelection(
+        "Custom Anthropic endpoint",
+        "https://anthropic.corp.example",
+        "model-a",
+        "COMPATIBLE_ANTHROPIC_API_KEY",
+        null,
+        { intendedApi },
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        api: intendedApi,
+        pinnedAddresses: ["10.0.0.8"],
+        trustedPrivateCapability: { addresses: ["10.0.0.8"] },
+      });
+      expect(probeEndpoint).toHaveBeenCalledOnce();
+      expect(probeEndpoint).toHaveBeenCalledWith(
+        expectedEndpointUrl,
+        "model-a",
+        "test-key",
+        expect.objectContaining({
+          ...expectedProbeOptions,
+          pinnedAddresses: ["10.0.0.8"],
+          trustedPrivateCapability: expect.objectContaining({ addresses: ["10.0.0.8"] }),
+        }),
+      );
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("operator-trusted private"));
+    } finally {
+      log.mockRestore();
+      warn.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("honors an exactly allowlisted private endpoint during non-interactive validation (#6861)", async () => {
+    vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "llm.corp.example");
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "10.0.0.8", family: 4 }],
+    });
+
+    try {
+      const result = await helpers.validateCustomOpenAiLikeSelection(
+        "Custom endpoint",
+        "https://llm.corp.example/v1",
+        "model-a",
+        "COMPATIBLE_API_KEY",
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        api: "openai-completions",
+        pinnedAddresses: ["10.0.0.8"],
+      });
+      expect(result.ok && result.trustedPrivateCapability?.addresses).toEqual(["10.0.0.8"]);
+      expect(promptValidationRecovery).not.toHaveBeenCalled();
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledOnce();
+    } finally {
+      warn.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("routes an unreachable custom endpoint through transport recovery, not a silent loop (#6854)", async () => {
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    const promptValidationRecovery = vi.fn(async () => "retry" as const);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery,
+      resolveEndpointHost: async () => {
+        throw new Error("getaddrinfo ENOTFOUND example.invalid");
+      },
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomOpenAiLikeSelection(
+          "Custom endpoint",
+          "https://example.invalid/v1",
+          "model-a",
+          "COMPATIBLE_API_KEY",
+        ),
+      ).resolves.toEqual({ ok: false, retry: "retry" });
+      expect(probeOpenAiLikeEndpoint).not.toHaveBeenCalled();
+      expect(promptValidationRecovery).toHaveBeenCalledWith(
+        "Custom endpoint",
+        expect.objectContaining({ kind: "transport", retry: "retry" }),
+        "COMPATIBLE_API_KEY",
+        null,
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it.each([
     "http://127.0.0.1:8000/v1",
     "https://inference.local/v1",

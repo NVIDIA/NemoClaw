@@ -42,7 +42,6 @@
  * #2701 guard-chain assertion.
  */
 
-import { Buffer } from "node:buffer";
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -105,10 +104,6 @@ assert len(rows) == 1, rows
 uid_line=next(line for line in rows[0][1].splitlines() if line.startswith("Uid:"))
 assert uid_line.split()[1:] == [expected_uid] * 4, uid_line
 print("MANAGED_SUPERVISOR=" + rows[0][0] + ":PPID1")`;
-
-const SUPERVISOR_TOPOLOGY_COMMAND = `import base64;exec(base64.b64decode("${Buffer.from(
-  SUPERVISOR_TOPOLOGY_SCRIPT,
-).toString("base64")}"))`;
 
 async function findSandboxContainer(host: HostCliClient, artifactName: string): Promise<string> {
   const result = await host.command(
@@ -317,10 +312,9 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   expect(recoveredStartupCommand).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
   expect(recoveredStartupCommand).not.toContain(credentialCanary);
 
-  expect(SUPERVISOR_TOPOLOGY_COMMAND).not.toMatch(/[\r\n]/);
   const topology = await sandbox.exec(
     instance.sandboxName,
-    ["python3", "-c", SUPERVISOR_TOPOLOGY_COMMAND],
+    ["python3", "-c", SUPERVISOR_TOPOLOGY_SCRIPT],
     {
       artifactName: "legacy-restart-managed-supervisor-topology",
       env: buildAvailabilityProbeEnv(),

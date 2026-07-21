@@ -7,14 +7,21 @@ import { describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
 
-type MockGuardRestore = (() => void) & { guardSpy: ReturnType<typeof vi.fn> };
+type MockGuardRestore = (() => void) & {
+  guardSpy: ReturnType<typeof vi.fn>;
+  validatorSpy: ReturnType<typeof vi.fn>;
+};
 
 function restoreCachedModule(modulePath: string, previous: unknown): void {
   Reflect.deleteProperty(requireCache, modulePath);
   Object.assign(requireCache, previous === undefined ? {} : { [modulePath]: previous });
 }
 
-function installMockPrivilegedExec(privilegedExecPath: string): MockGuardRestore {
+function installMockPrivilegedExec(
+  privilegedExecPath: string,
+  validationIssues: string[] = [],
+  events?: string[],
+): MockGuardRestore {
   const priorPrivilegedExec = require.cache[privilegedExecPath];
   const timerBoundLockPath = require.resolve("../src/lib/shields/timer-bound-lock");
   const priorTimerBoundLock = require.cache[timerBoundLockPath];
@@ -28,6 +35,7 @@ function installMockPrivilegedExec(privilegedExecPath: string): MockGuardRestore
       // Routing is covered by privileged-exec tests; this suite exercises
       // config validation and write behavior without requiring real Docker.
       privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
+      resolveDirectSandboxContainer: () => "container-id",
     },
   } as any;
   requireCache[timerBoundLockPath] = {
@@ -41,7 +49,14 @@ function installMockPrivilegedExec(privilegedExecPath: string): MockGuardRestore
         _sandboxName: string,
         _command: string,
         callback: () => unknown,
-      ) => callback(),
+      ) => {
+        events?.push("lock-enter");
+        try {
+          return callback();
+        } finally {
+          events?.push("lock-exit");
+        }
+      },
       withTimerBoundShieldsMutationLockAsync: async (
         _sandboxName: string,
         _command: string,
@@ -49,14 +64,21 @@ function installMockPrivilegedExec(privilegedExecPath: string): MockGuardRestore
       ) => callback(),
     },
   } as any;
-  const guardSpy = vi.fn((_privileged: unknown, _action: string, options: { input?: string }) => ({
-    issues: [],
-    chattrApplied: true,
-    configSha256: require("node:crypto")
-      .createHash("sha256")
-      .update(options.input ?? "")
-      .digest("hex"),
-  }));
+  const guardSpy = vi.fn((_privileged: unknown, _action: string, options: { input?: string }) => {
+    events?.push("write");
+    return {
+      issues: [],
+      chattrApplied: true,
+      configSha256: require("node:crypto")
+        .createHash("sha256")
+        .update(options.input ?? "")
+        .digest("hex"),
+    };
+  });
+  const validatorSpy = vi.fn(() => {
+    events?.push("validate");
+    return validationIssues;
+  });
   requireCache[openClawConfigLockPath] = {
     id: openClawConfigLockPath,
     filename: openClawConfigLockPath,
@@ -65,6 +87,7 @@ function installMockPrivilegedExec(privilegedExecPath: string): MockGuardRestore
       // Config-guard protocol and transaction behavior have dedicated tests.
       // This suite only needs a successful digest-bound write boundary.
       runOpenClawConfigGuard: guardSpy,
+      validateOpenClawConfigCandidate: validatorSpy,
     },
   } as any;
 
@@ -74,6 +97,7 @@ function installMockPrivilegedExec(privilegedExecPath: string): MockGuardRestore
     restoreCachedModule(openClawConfigLockPath, priorOpenClawConfigLock);
   }) as MockGuardRestore;
   restore.guardSpy = guardSpy;
+  restore.validatorSpy = validatorSpy;
   return restore;
 }
 
@@ -251,7 +275,8 @@ describe("config set nested URL SSRF enforcement", () => {
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
     const priorShieldsAudit = require.cache[shieldsAuditPath];
-    const restorePrivilegedExec = installMockPrivilegedExec(privilegedExecPath);
+    const events: string[] = [];
+    const restorePrivilegedExec = installMockPrivilegedExec(privilegedExecPath, [], events);
 
     const childProcess = require("node:child_process");
     const originalExecFileSync = childProcess.execFileSync;
@@ -309,6 +334,14 @@ describe("config set nested URL SSRF enforcement", () => {
         "write-config",
         expect.objectContaining({ input: expect.any(String) }),
       );
+      expect(restorePrivilegedExec.validatorSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(String),
+      );
+      expect(restorePrivilegedExec.validatorSpy.mock.calls[0]?.[1]).toBe(
+        restorePrivilegedExec.guardSpy.mock.calls[0]?.[2].input,
+      );
+      expect(events).toEqual(["validate", "lock-enter", "write", "lock-exit"]);
       expect(appendAuditEntry).toHaveBeenCalledWith(
         expect.objectContaining({
           action: "config_set",
@@ -331,6 +364,73 @@ describe("config set nested URL SSRF enforcement", () => {
       if (priorShieldsAudit) requireCache[shieldsAuditPath] = priorShieldsAudit;
       else delete requireCache[shieldsAuditPath];
 
+      restorePrivilegedExec();
+    }
+  });
+
+  it("surfaces an OpenClaw schema rejection as clean SandboxConfigError lines", async () => {
+    const sandboxConfigPath = require.resolve("../src/lib/sandbox/config");
+    const openshellPath = require.resolve("../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec");
+    const priorSandboxConfig = require.cache[sandboxConfigPath];
+    const priorOpenshell = require.cache[openshellPath];
+    const priorShieldsAudit = require.cache[shieldsAuditPath];
+    const rejection =
+      "OpenClaw config schema rejected the candidate at <root>; existing config was not changed";
+    const events: string[] = [];
+    const restorePrivilegedExec = installMockPrivilegedExec(
+      privilegedExecPath,
+      [rejection],
+      events,
+    );
+
+    delete require.cache[sandboxConfigPath];
+    requireCache[openshellPath] = {
+      id: openshellPath,
+      filename: openshellPath,
+      loaded: true,
+      exports: {
+        captureOpenshellCommand: () => ({
+          status: 0,
+          output: JSON.stringify({ agents: { defaults: { timeoutSeconds: 300 } } }),
+        }),
+        runOpenshellCommand: () => ({ status: 0 }),
+      },
+    } as any;
+    const appendAuditEntry = vi.fn();
+    requireCache[shieldsAuditPath] = {
+      id: shieldsAuditPath,
+      filename: shieldsAuditPath,
+      loaded: true,
+      exports: { appendAuditEntry },
+    } as any;
+
+    try {
+      const { configSet, SandboxConfigError } = require("../src/lib/sandbox/config");
+      let thrown: unknown;
+      try {
+        await configSet("sandbox-schema-test", {
+          key: "agents.defaults.timeoutSeconds",
+          value: "600",
+          restart: true,
+        });
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(SandboxConfigError);
+      expect((thrown as { lines: string[] }).lines).toEqual([`  ${rejection}`]);
+      // The rejection must land before any write or restart: validation ran and
+      // nothing after it did — no lock entry and no config-guard write — so the
+      // post-write gateway restart requested above is never reached.
+      expect(events).toEqual(["validate"]);
+      expect(restorePrivilegedExec.guardSpy).not.toHaveBeenCalled();
+      expect(appendAuditEntry).not.toHaveBeenCalled();
+    } finally {
+      restoreCachedModule(sandboxConfigPath, priorSandboxConfig);
+      restoreCachedModule(openshellPath, priorOpenshell);
+      restoreCachedModule(shieldsAuditPath, priorShieldsAudit);
       restorePrivilegedExec();
     }
   });

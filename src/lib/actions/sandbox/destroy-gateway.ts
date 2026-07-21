@@ -143,7 +143,7 @@ export function cleanupGatewayAfterLastSandbox(
    * remove and remove-nonzero fallback while preserving Docker-volume cleanup.
    * Removal condition: remove the fallback when every supported recovery and
    * teardown entry point upgrades OpenShell to the blueprint minimum (currently
-   * 0.0.72) before this function can run.
+   * 0.0.85) before this function can run.
    *
    * macOS previously ran only `gateway destroy`, which current OpenShell
    * rejects as an unrecognized subcommand (#6569). The host-process stop above

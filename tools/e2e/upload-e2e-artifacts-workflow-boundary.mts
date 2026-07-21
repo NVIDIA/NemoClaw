@@ -66,6 +66,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
+        "e2e-artifacts/live/risk-signal.json",
         "e2e-artifacts/live/${{ matrix.id }}/actions/",
         "e2e-artifacts/live/${{ matrix.id }}/logs/",
         "e2e-artifacts/live/${{ matrix.id }}/shell/",
@@ -135,7 +136,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "openshell-gateway-upgrade",
     {
-      name: "e2e-openshell-gateway-upgrade-${{ matrix.legacy.id }}",
+      name: "e2e-openshell-gateway-upgrade-${{ matrix.id }}",
     },
   ],
   [
@@ -155,15 +156,15 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
     "mcp-bridge",
     {
-      name: "e2e-mcp-bridge",
-      path: "e2e-artifacts/live/mcp-bridge/",
+      name: "e2e-mcp-bridge-${{ matrix.agent }}",
+      path: "e2e-artifacts/live/mcp-bridge/${{ matrix.agent }}/",
     },
   ],
   [
     "mcp-bridge-dev",
     {
-      name: "e2e-mcp-bridge-dev",
-      path: "e2e-artifacts/live/mcp-bridge-dev/",
+      name: "e2e-mcp-bridge-dev-${{ matrix.agent }}",
+      path: "e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/",
     },
   ],
 ]);
@@ -280,7 +281,10 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||
           SHARED_E2E_JOBS.has(jobName) ||
           jobSteps.some(
-            (step) => typeof step.run === "string" && step.run.includes("--project e2e-live"),
+            (step) =>
+              typeof step.run === "string" &&
+              (step.run.includes("--project e2e-live") ||
+                step.run.includes("tools/e2e/live-vitest-invocation.mts run --test-path")),
           )
         );
       })

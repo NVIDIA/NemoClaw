@@ -157,6 +157,7 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
     localBin: null,
     futureShellPathHint: null,
   };
+  const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.85";
 
   if (!deps.isOpenshellInstalled()) {
     deps.log("  openshell CLI not found. Installing...");
@@ -177,7 +178,6 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
         deps.exit(1);
       }
     } else {
-      const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.72";
       const currentVersionOutput = deps.runCaptureOpenshell(["--version"], {
         ignoreError: true,
       });
@@ -224,7 +224,6 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
   });
   deps.log(`  \u2713 openshell CLI: ${openshellVersionOutput || "unknown"}`);
   const installedOpenshellVersion = deps.getInstalledOpenshellVersion(openshellVersionOutput);
-  const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion();
   if (
     installedOpenshellVersion &&
     minOpenshellVersion &&

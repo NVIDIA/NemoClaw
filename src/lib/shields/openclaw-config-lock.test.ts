@@ -6,6 +6,7 @@ import {
   OPENCLAW_CONFIG_DIR,
   parseOpenClawConfigGuardOutput,
   runOpenClawConfigGuard,
+  validateOpenClawConfigCandidate,
 } from "./openclaw-config-lock";
 import type { PrivilegedExec, PrivilegedExecResult } from "./state-dir-lock";
 
@@ -23,8 +24,29 @@ function success(action: string, chattrApplied = false): string {
   });
 }
 
-function createExec(installed: boolean): { calls: RunCall[]; privileged: PrivilegedExec } {
+function createExec(
+  installed: boolean,
+  validationResult: PrivilegedExecResult = {
+    status: 0,
+    signal: null,
+    stdout: '{"valid":true}\n',
+    stderr: "",
+  },
+): { calls: RunCall[]; privileged: PrivilegedExec } {
   const calls: RunCall[] = [];
+  const guardResult = (cmd: string[]): PrivilegedExecResult => {
+    const scriptIndex =
+      cmd.indexOf("-") >= 0
+        ? cmd.indexOf("-")
+        : cmd.indexOf(cmd.find((arg) => arg.endsWith("openclaw-config-guard.py")) ?? "");
+    const action = cmd[scriptIndex + 1];
+    return {
+      status: 0,
+      signal: null,
+      stdout: `${success(action, action === "lock")}\n`,
+      stderr: "",
+    };
+  };
   return {
     calls,
     privileged: {
@@ -34,17 +56,7 @@ function createExec(installed: boolean): { calls: RunCall[]; privileged: Privile
           case "test":
             return { status: installed ? 0 : 1, signal: null, stdout: "", stderr: "" };
         }
-        const scriptIndex =
-          cmd.indexOf("-") >= 0
-            ? cmd.indexOf("-")
-            : cmd.indexOf(cmd.find((arg) => arg.endsWith("openclaw-config-guard.py")) ?? "");
-        const action = cmd[scriptIndex + 1];
-        return {
-          status: 0,
-          signal: null,
-          stdout: `${success(action, action === "lock")}\n`,
-          stderr: "",
-        };
+        return cmd.includes("gosu") ? validationResult : guardResult(cmd);
       },
     },
   };
@@ -96,12 +108,29 @@ describe("OpenClaw top-config guard host wiring", () => {
     const { calls, privileged } = createExec(true);
     const digest = "a".repeat(64);
 
+    expect(validateOpenClawConfigCandidate(privileged, '{"gateway":{}}\n')).toEqual([]);
     expect(
       runOpenClawConfigGuard(privileged, "write-config", {
         expectedConfigSha256: digest,
         input: '{"gateway":{}}\n',
       }),
     ).toMatchObject({ issues: [], configSha256: "b".repeat(64) });
+    expect(calls.at(-3)?.cmd).toEqual([
+      "timeout",
+      "--signal=TERM",
+      "--kill-after=5s",
+      "30s",
+      "gosu",
+      "gateway",
+      "sh",
+      "-c",
+      expect.stringContaining("openclaw config validate --json"),
+    ]);
+    expect(calls.at(-3)?.cmd.at(-1)).toContain(
+      `candidate="$(mktemp "${OPENCLAW_CONFIG_DIR}/.nemoclaw-openclaw-config.XXXXXX")"`,
+    );
+    expect(calls.at(-3)?.cmd.at(-1)).toContain("head -c 16777217");
+    expect(calls.at(-3)?.input).toBe('{"gateway":{}}\n');
     expect(calls.at(-1)?.cmd).toEqual([
       "timeout",
       "--signal=TERM",
@@ -117,6 +146,104 @@ describe("OpenClaw top-config guard host wiring", () => {
       digest,
     ]);
     expect(calls.at(-1)?.input).toBe('{"gateway":{}}\n');
+    expect(calls.at(-1)?.cmd).not.toContain("--validate-schema");
+  });
+
+  it("rejects an invalid candidate before probing or invoking the config guard", () => {
+    const { calls, privileged } = createExec(true, {
+      status: 1,
+      signal: null,
+      stdout: JSON.stringify({ valid: false, issues: [{ path: "web_search" }] }),
+      stderr: "Error: noisy node stack\n    at validate (openclaw.js:1:1)",
+    });
+
+    const issues = validateOpenClawConfigCandidate(privileged, '{"web_search":true}\n');
+
+    expect(issues).toEqual([
+      expect.stringContaining("schema rejected the candidate at web_search"),
+    ]);
+    expect(issues.join("\n")).not.toContain("node stack");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("redacts validator stderr when schema validation cannot run", () => {
+    const { calls, privileged } = createExec(true, {
+      status: 1,
+      signal: null,
+      stdout: "",
+      stderr: "Error: raw node stack with /sandbox/secrets",
+    });
+
+    const issues = validateOpenClawConfigCandidate(privileged, "{}\n");
+
+    expect(issues).toEqual([expect.stringContaining("schema validation could not run")]);
+    expect(issues.join("\n")).not.toContain("raw node stack");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not present a validator execution error as a schema rejection", () => {
+    const { privileged } = createExec(true, {
+      status: 1,
+      signal: null,
+      stdout: JSON.stringify({ valid: false, error: "plugin loader exposed a secret path" }),
+      stderr: "",
+    });
+
+    const issues = validateOpenClawConfigCandidate(privileged, "{}\n");
+
+    expect(issues).toEqual([expect.stringContaining("schema validation could not run")]);
+    expect(issues.join("\n")).not.toContain("secret path");
+  });
+
+  it("reports the timeout utility exit code as a validation timeout", () => {
+    const { privileged } = createExec(true, {
+      status: 124,
+      signal: null,
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(validateOpenClawConfigCandidate(privileged, "{}\n")).toEqual([
+      expect.stringContaining("timed out or was terminated"),
+    ]);
+  });
+
+  it.each([
+    {
+      label: "times out",
+      result: { status: 124, signal: null, error: undefined },
+      reason: "timed out or was terminated",
+    },
+    {
+      label: "is terminated",
+      result: { status: null, signal: "SIGTERM" as const, error: undefined },
+      reason: "timed out or was terminated",
+    },
+    {
+      label: "has an execution error",
+      result: { status: 1, signal: null, error: "spawn failed" },
+      reason: "could not run",
+    },
+  ])("does not trust partial schema output when validation $label", ({ result, reason }) => {
+    const { privileged } = createExec(true, {
+      ...result,
+      stdout: JSON.stringify({ valid: false, issues: [{ path: "web_search" }] }),
+      stderr: "",
+    });
+
+    const issues = validateOpenClawConfigCandidate(privileged, "{}\n");
+
+    expect(issues).toEqual([expect.stringContaining(reason)]);
+    expect(issues.join("\n")).not.toContain("schema rejected");
+  });
+
+  it("rejects an oversized candidate before creating a sandbox temp file", () => {
+    const { calls, privileged } = createExec(true);
+
+    const issues = validateOpenClawConfigCandidate(privileged, "x".repeat(16 * 1024 * 1024 + 1));
+
+    expect(issues).toEqual([expect.stringContaining("exceeds the 16 MiB size limit")]);
+    expect(calls).toHaveLength(0);
   });
 
   it("refuses an unsafe old-image write fallback because stdin carries the helper source", () => {

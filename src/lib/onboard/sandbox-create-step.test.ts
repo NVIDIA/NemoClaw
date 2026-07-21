@@ -163,6 +163,39 @@ describe("runSandboxCreateStep", () => {
     );
   });
 
+  it("persists DCode startup with its exact Docker resource limits", async () => {
+    const launch = makeLaunch({
+      sandboxStartupCommand: ["env", "nemoclaw-start"],
+    });
+    const patch = makePatch();
+    const deps = makeDeps(launch, patch, { status: 0, output: "created" });
+
+    await runSandboxCreateStep(
+      makeContext({
+        agent: {
+          name: "langchain-deepagents-code",
+        } as SandboxCreateStepContext["agent"],
+        prebuild: {
+          buildCtx: "/tmp/ctx",
+          buildId: "b1",
+          dockerDriverGateway: true,
+          origin: "generated",
+        },
+      }),
+      deps,
+    );
+
+    expect(deps.createDockerGpuPatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        persistStartupCommand: true,
+        requiredUlimits: [
+          { name: "nproc", soft: 512, hard: 512 },
+          { name: "nofile", soft: 65_536, hard: 65_536 },
+        ],
+      }),
+    );
+  });
+
   it("separates readiness detection from GPU patch polling", async () => {
     const launch = makeLaunch();
     const patch = makePatch();

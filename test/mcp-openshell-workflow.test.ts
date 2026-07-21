@@ -5,7 +5,7 @@ import fs from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json";
+import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json";
 import { validateMcpOpenShellWorkflowBoundary } from "../tools/e2e/mcp-workflow-boundary.mts";
 
 describe("MCP OpenShell workflow boundary", () => {
@@ -14,7 +14,7 @@ describe("MCP OpenShell workflow boundary", () => {
     const setupDocs = fs.readFileSync("docs/deployment/set-up-mcp-bridge.mdx", "utf8");
 
     expect(setupDocs).toContain(
-      `NemoClaw v0.0.74 defaults to the pinned stable OpenShell \`${credentialBoundaryManifest.openshellVersion}\` release`,
+      `Current NemoClaw builds default to the pinned stable OpenShell \`${credentialBoundaryManifest.openshellVersion}\` release`,
     );
     expect(setupDocs).toContain(
       "The optional OpenShell development channel is compatibility evidence only and is not a shipping target.",

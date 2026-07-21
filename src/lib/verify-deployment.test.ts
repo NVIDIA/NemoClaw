@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildChain } from "./dashboard/contract.js";
 import { formatVerificationDiagnostics, verifyDeployment } from "./verify-deployment.js";
 
@@ -179,7 +179,7 @@ describe("verifyDeployment", () => {
     expect(dashDiag?.hint).toContain("forward");
   });
 
-  it("inference failure is a warning, not a blocker", async () => {
+  it("reports unhealthy when the inference route is unreachable (#6849)", async () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("inference.local")) {
@@ -190,10 +190,31 @@ describe("verifyDeployment", () => {
       },
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
-    expect(result.healthy).toBe(true); // inference is non-blocking
+    expect(result.healthy).toBe(false);
     expect(result.verification.inferenceRouteWorking).toBe(false);
     const infDiag = result.diagnostics.find((d) => d.link === "inference");
-    expect(infDiag?.status).toBe("warn");
+    expect(infDiag?.status).toBe("fail");
+    expect(infDiag?.hint).toContain("unreachable");
+  });
+
+  it("reports unhealthy when only the inference route returns HTTP 5xx (#6849)", async () => {
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => ({
+        status: 0,
+        stdout: script.includes("inference.local") ? "503" : "200",
+        stderr: "",
+      }),
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.healthy).toBe(false);
+    expect(result.verification.gatewayReachable).toBe(true);
+    expect(result.verification.inferenceRouteWorking).toBe(false);
+    const infDiag = result.diagnostics.find((d) => d.link === "inference");
+    expect(infDiag?.status).toBe("fail");
+    expect(infDiag?.detail).toContain("503");
+    expect(infDiag?.hint).toContain("host.openshell.internal");
+    expect(infDiag?.hint).toContain("firewall");
+    expect(infDiag?.hint).not.toContain("0.0.0.0");
   });
 
   it("messaging failure is a warning, not a blocker", async () => {
@@ -500,6 +521,57 @@ describe("verifyDeployment", () => {
     expect(result.healthy).toBe(true);
     expect(result.verification.dashboardReachable).toBe(true);
     expect(dashboardCalls).toBe(2);
+  });
+
+  it("retries the inference probe and recovers when the route comes up late (#6849)", async () => {
+    const probeInference = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "000", stderr: "" })
+      .mockReturnValue({ status: 0, stdout: "200", stderr: "" });
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) =>
+        script.includes("inference.local")
+          ? probeInference()
+          : { status: 0, stdout: "200", stderr: "" },
+    });
+    const sleepCalls: number[] = [];
+    const result = await verifyDeployment("my-sandbox", chain, deps, {
+      retryDelaysMs: [10, 20],
+      sleep: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
+    expect(result.healthy).toBe(true);
+    expect(result.verification.inferenceRouteWorking).toBe(true);
+    expect(probeInference).toHaveBeenCalledTimes(2);
+    expect(sleepCalls).toEqual([10]);
+  });
+
+  it("does not retry inference after the gateway retry budget is exhausted (#6849)", async () => {
+    const scripts: string[] = [];
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => {
+        scripts.push(script);
+        return { status: 0, stdout: "000", stderr: "" };
+      },
+    });
+    const sleepCalls: number[] = [];
+    const result = await verifyDeployment("my-sandbox", chain, deps, {
+      retryDelaysMs: [10, 20],
+      sleep: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
+    expect(result.healthy).toBe(false);
+    expect(result.verification.gatewayReachable).toBe(false);
+    expect(result.verification.inferenceRouteWorking).toBe(false);
+    expect(
+      scripts.filter(
+        (script) => !script.includes("inference.local") && !script.includes("openclaw --version"),
+      ),
+    ).toHaveLength(3);
+    expect(scripts.filter((script) => script.includes("inference.local"))).toHaveLength(1);
+    expect(sleepCalls).toEqual([10, 20]);
   });
 
   it("gives up after retry budget is exhausted and surfaces the last failure detail", async () => {

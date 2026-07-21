@@ -8,6 +8,7 @@ import {
   type ValidationSessionOptions,
 } from "../adapters/http/validation-session";
 import { addTraceEvent, withTraceSpan } from "../trace";
+import type { TrustedPrivateEndpointCapability } from "./endpoint-ssrf-preflight";
 import { resolveMaxTokensField } from "./max-tokens-field";
 import { isDeepSeekV4ProModel } from "./openai-probe-models";
 
@@ -23,6 +24,7 @@ export interface OpenAiValidationOptions {
   probeStreaming?: boolean;
   isWsl?: boolean;
   pinnedAddresses?: readonly string[];
+  trustedPrivateCapability?: TrustedPrivateEndpointCapability;
   validationSessionOptions?: ValidationSessionOptions;
 }
 
@@ -243,7 +245,10 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
   // Custom-endpoint SSRF preflight pins approved addresses through curl's
   // reviewed --resolve boundary. Keep that security path authoritative until
   // native address pinning has equivalent end-to-end rebinding coverage.
-  if (options.pinnedAddresses && options.pinnedAddresses.length > 0) {
+  if (
+    (options.pinnedAddresses && options.pinnedAddresses.length > 0) ||
+    options.trustedPrivateCapability
+  ) {
     addTraceEvent("validation_transport_fallback", { reason: "preflight_address_pinning" });
     return deps.legacyProbe(endpointUrl, model, apiKey, options);
   }

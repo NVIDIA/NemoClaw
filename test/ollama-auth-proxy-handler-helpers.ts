@@ -17,7 +17,7 @@ export const PROXY_SCRIPT = path.resolve(
   import.meta.dirname,
   "..",
   "scripts",
-  "ollama-auth-proxy.js",
+  "ollama-auth-proxy.mts",
 );
 const proxyOwners = new WeakMap<ChildProcess, ChildProcessOwner>();
 
@@ -58,6 +58,11 @@ export function startBackend(): Promise<{
       resolve({ server, port: (server.address() as AddressInfo).port, captured });
     });
   });
+}
+
+export function closeServer(server: http.Server | undefined): Promise<void> {
+  if (!server) return Promise.resolve();
+  return new Promise((resolve) => server.close(() => resolve()));
 }
 
 /** Grab an ephemeral free TCP port, then release it for the proxy to bind. */
@@ -217,6 +222,7 @@ export function request(
           body += chunk;
         });
         res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+        res.on("error", reject);
       },
     );
     req.on("error", reject);

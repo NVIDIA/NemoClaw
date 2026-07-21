@@ -25,6 +25,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     inferenceProviderOptions: [],
     mcpCapability: { support: "disabled", reason: "test fixture" },
     stateDirs: [],
+    runtimeAuthStateDirs: [],
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "test-agent --version",

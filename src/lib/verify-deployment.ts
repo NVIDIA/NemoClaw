@@ -213,30 +213,49 @@ function fetchGatewayVersion(sandboxName: string, deps: VerifyDeploymentDeps): s
   return version && version !== "" ? version : null;
 }
 
-/**
- * Probe the inference route from inside the sandbox.
- * Sends a minimal request to inference.local to verify the proxy is working.
- */
-function verifyInferenceRoute(
+type InferenceRouteStatus = "ok" | "unreachable" | "unhealthy";
+
+function probeInferenceRouteOnce(
   sandboxName: string,
   deps: VerifyDeploymentDeps,
-): { working: boolean; detail: string } {
-  // Just check that inference.local resolves and the proxy responds.
-  // We don't send a real completion request — just hit /v1/models to confirm routing.
+): { status: InferenceRouteStatus; detail: string } {
   const script =
     `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 5 ` +
     `https://inference.local/v1/models 2>/dev/null || echo 000); echo $HTTP_CODE`;
   const result = deps.executeSandboxCommand(sandboxName, script);
   if (!result) {
-    return { working: false, detail: "sandbox unreachable" };
+    return { status: "unreachable", detail: "sandbox unreachable" };
   }
   const code = parseInt(result.stdout.trim(), 10) || 0;
-  // Any HTTP response (even 401/403) means the proxy is routing.
-  // 000 means DNS failed or connection refused.
-  if (code > 0) {
-    return { working: true, detail: `inference.local responded HTTP ${code}` };
+  if (code === 0) {
+    return {
+      status: "unreachable",
+      detail: "inference.local unreachable (DNS or proxy not running)",
+    };
   }
-  return { working: false, detail: "inference.local unreachable (DNS or proxy not running)" };
+  if (code >= 500) {
+    return {
+      status: "unhealthy",
+      detail: `inference.local returned HTTP ${code} (route reachable but endpoint unhealthy)`,
+    };
+  }
+  return { status: "ok", detail: `inference.local responded HTTP ${code}` };
+}
+
+async function verifyInferenceRoute(
+  sandboxName: string,
+  deps: VerifyDeploymentDeps,
+  retryDelaysMs: readonly number[],
+  sleep: (ms: number) => Promise<void>,
+): Promise<{ status: InferenceRouteStatus; detail: string }> {
+  let last = probeInferenceRouteOnce(sandboxName, deps);
+  if (last.status === "ok") return last;
+  for (const delayMs of retryDelaysMs) {
+    await sleep(delayMs);
+    last = probeInferenceRouteOnce(sandboxName, deps);
+    if (last.status === "ok") return last;
+  }
+  return last;
 }
 
 /**
@@ -515,14 +534,23 @@ export async function verifyDeployment(
   });
 
   // 4. Inference route
-  const inference = verifyInferenceRoute(sandboxName, deps);
+  const inference = await verifyInferenceRoute(
+    sandboxName,
+    deps,
+    gateway.reachable ? retryDelaysMs : [],
+    sleep,
+  );
+  const inferenceRouteWorking = inference.status === "ok";
   diagnostics.push({
     link: "inference",
-    status: inference.working ? "ok" : "warn",
+    status: inference.status === "ok" ? "ok" : "fail",
     detail: inference.detail,
-    hint: inference.working
-      ? ""
-      : "The inference proxy may not be ready yet. Try: nemoclaw <sandbox> status (it may take a few seconds after creation).",
+    hint:
+      inference.status === "ok"
+        ? ""
+        : inference.status === "unhealthy"
+          ? "The inference route is reachable but the endpoint returned a server error (HTTP 5xx). If the endpoint runs on the host, configure it to listen on a host address reachable through host.openshell.internal and restrict access with the host firewall or equivalent controls; a 127.0.0.1/localhost-only bind is not reachable from the sandbox. Then re-run: nemoclaw <sandbox> status."
+          : "The inference proxy is unreachable. Confirm the configured endpoint is running and reachable from the sandbox, then re-run: nemoclaw <sandbox> status.",
   });
 
   // 5. Messaging bridges (providers attached AND runtime config exposes
@@ -542,7 +570,7 @@ export async function verifyDeployment(
   const verification: DeploymentVerification = {
     gatewayReachable: gateway.reachable,
     gatewayVersion,
-    inferenceRouteWorking: inference.working,
+    inferenceRouteWorking,
     dashboardReachable: dashboard.reachable,
     messagingBridgesHealthy: messaging.healthy,
     messagingRuntimeChannelsMissing: messaging.runtimeMissing,
@@ -550,9 +578,7 @@ export async function verifyDeployment(
     accessMethod,
   };
 
-  // Healthy = gateway reachable AND dashboard reachable from host.
-  // Inference and messaging are warn-level (non-blocking).
-  const healthy = gateway.reachable && dashboard.reachable;
+  const healthy = gateway.reachable && dashboard.reachable && inference.status === "ok";
 
   return { healthy, verification, diagnostics };
 }
@@ -572,7 +598,9 @@ export function formatVerificationDiagnostics(result: VerifyDeploymentResult): s
   const RESET = "\x1b[0m";
 
   if (result.healthy) {
-    lines.push(`  ${G}✓${RESET} Deployment verified — gateway and dashboard are healthy.`);
+    lines.push(
+      `  ${G}✓${RESET} Deployment verified — gateway, dashboard, and inference route are healthy.`,
+    );
     if (result.verification.gatewayVersion) {
       lines.push(`    OpenClaw version: ${result.verification.gatewayVersion}`);
     }

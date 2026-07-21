@@ -3,6 +3,7 @@
 
 import http from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { assertEndpointResolvesPublic } from "./endpoint-ssrf-preflight";
 import {
   type OpenAiValidationSessionDeps,
   probeOpenAiLikeEndpointWithValidationSession,
@@ -250,6 +251,41 @@ describe("OpenAI validation curl fallback", () => {
 
     expect(result).toMatchObject({ ok: true, api: "openai-completions" });
     expect(legacyProbe).toHaveBeenCalledTimes(1);
+    expect(harness.sessionOptions!.lookup).not.toHaveBeenCalled();
+  });
+
+  it("keeps trusted private IP literals on curl without native DNS", async () => {
+    const legacyProbe: OpenAiValidationSessionDeps["legacyProbe"] = vi.fn(() => ({
+      ok: true,
+      api: "openai-completions",
+    }));
+    const harness = createOpenAiValidationTestDeps(legacyProbe);
+    const preflight = await assertEndpointResolvesPublic("http://10.0.0.8/v1", async () => [], {
+      trustedPrivateHosts: ["10.0.0.8"],
+    });
+
+    const result = await probeOpenAiLikeEndpointWithValidationSession(
+      "http://10.0.0.8/v1",
+      "test-model",
+      "test-key",
+      {
+        pinnedAddresses: preflight.addresses,
+        trustedPrivateCapability: preflight.trustedPrivateCapability,
+      },
+      harness,
+    );
+
+    expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+    expect(legacyProbe).toHaveBeenCalledTimes(1);
+    expect(legacyProbe).toHaveBeenCalledWith(
+      "http://10.0.0.8/v1",
+      "test-model",
+      "test-key",
+      expect.objectContaining({
+        pinnedAddresses: [],
+        trustedPrivateCapability: preflight.trustedPrivateCapability,
+      }),
+    );
     expect(harness.sessionOptions!.lookup).not.toHaveBeenCalled();
   });
 

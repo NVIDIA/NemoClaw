@@ -149,8 +149,8 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
       errors.push(`${JOB_NAME} exposes the inference key outside the live test step`);
     }
   }
-  requireRunContains(errors, run, "npx vitest run --project e2e-live");
-  requireRunContains(errors, run, '"${{ matrix.test_file }}"');
+  requireRunContains(errors, run, "tools/e2e/live-vitest-invocation.mts run");
+  requireRunContains(errors, run, '--test-path "${{ matrix.test_file }}"');
 
   return errors;
 }

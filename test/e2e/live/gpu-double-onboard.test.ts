@@ -19,6 +19,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-double-onboard";
 const PROXY_PORT = process.env.NEMOCLAW_OLLAMA_PROXY_PORT ?? "11435";
+const GPU_E2E_MODEL = process.env.NEMOCLAW_MODEL ?? "qwen3.5:9b";
 const TOKEN_FILE = path.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
 const LIVE_TIMEOUT_MS = 90 * 60_000;
 
@@ -31,6 +32,7 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_MODEL: GPU_E2E_MODEL,
     NEMOCLAW_OLLAMA_PROXY_PORT: PROXY_PORT,
     NEMOCLAW_PROVIDER: "ollama",
     NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -315,7 +317,7 @@ exit "$status"`,
   expect(tokenAfterFirst.length).toBeGreaterThan(10);
   expect(fileMode(TOKEN_FILE)).toBe("600");
 
-  const model = process.env.NEMOCLAW_MODEL ?? "llama3.2:1b";
+  const model = GPU_E2E_MODEL;
 
   const firstTokenStatus = await httpStatus(
     host,

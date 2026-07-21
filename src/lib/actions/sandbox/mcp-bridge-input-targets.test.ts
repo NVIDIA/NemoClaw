@@ -127,4 +127,15 @@ describe("MCP URL target validation", () => {
       );
     }
   });
+
+  it("explains managed-vs-agent-native parity in the https rejection (#6971)", () => {
+    // A plain-http URL an agent-native path (OpenClaw mcporter) accepts must not read as a
+    // Hermes-specific limitation; the managed rejection names the shared, every-agent boundary.
+    expect(() => normalizeMcpServerUrl("http://mcp.example.test/mcp")).toThrow(
+      /Managed mcp add enforces this for every agent/,
+    );
+    expect(() => normalizeMcpServerUrl("http://mcp.example.test/mcp")).toThrow(
+      /agent-native registration path/,
+    );
+  });
 });

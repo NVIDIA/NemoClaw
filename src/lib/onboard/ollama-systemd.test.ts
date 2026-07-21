@@ -4,7 +4,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OLLAMA_PORT } from "../core/ports";
-import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
+import {
+  MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+} from "../inference/ollama-runtime-context";
 import {
   ensureOllamaLoopbackSystemdOverride,
   mergeOllamaLoopbackSystemdOverride,
@@ -60,6 +63,24 @@ describe("mergeOllamaLoopbackSystemdOverride", () => {
       `Environment="OLLAMA_CONTEXT_LENGTH=${MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}"`,
     );
     expect(out).not.toContain('Environment="OLLAMA_CONTEXT_LENGTH=4096"');
+  });
+
+  it("uses the caller-supplied context floor when repairing the Ollama systemd override", () => {
+    const existing = [
+      "[Service]",
+      'Environment="OLLAMA_HOST=127.0.0.1:11434"',
+      `Environment="OLLAMA_CONTEXT_LENGTH=${MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}"`,
+      "",
+    ].join("\n");
+    const out = mergeOllamaLoopbackSystemdOverride(existing, {
+      contextWindowFloor: MIN_HERMES_OLLAMA_CONTEXT_WINDOW,
+    });
+    expect(out).toContain(
+      `Environment="OLLAMA_CONTEXT_LENGTH=${MIN_HERMES_OLLAMA_CONTEXT_WINDOW}"`,
+    );
+    expect(out).not.toContain(
+      `Environment="OLLAMA_CONTEXT_LENGTH=${MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}"`,
+    );
   });
 
   it("preserves unrelated variables sharing an Environment line with managed Ollama settings", () => {
