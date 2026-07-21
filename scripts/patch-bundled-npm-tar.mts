@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,
   constants,
@@ -20,10 +20,9 @@ import {
   renameSync,
   rmSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { packReviewedNpmArchive, removeReviewedNpmArchive } from "./lib/reviewed-npm-archive.mts";
 
 export const FIXED_TAR_VERSION = "7.5.20";
 export const FIXED_TAR_INTEGRITY =
@@ -190,6 +189,8 @@ export function patchBundledNpmTar(options: {
   }
 }
 
+export type BundledNpmTarCommandRunner = (command: string, args: readonly string[]) => void;
+
 function run(command: string, args: readonly string[]): void {
   const result = spawnSync(command, args, {
     encoding: "utf8",
@@ -202,39 +203,89 @@ function run(command: string, args: readonly string[]): void {
   }
 }
 
-export function patchBundledNpmTarFromRegistry(npmRoot: string): BundledNpmTarState {
-  const current = inspectBundledNpmTar(npmRoot);
-  if (current.state === "fixed") {
-    run("npm", ["--version"]);
-    run("npx", ["--version"]);
-    return current;
-  }
-  const archive = packReviewedNpmArchive({
-    expectedIntegrity: FIXED_TAR_INTEGRITY,
-    label: `npm bundled tar replacement ${FIXED_TAR_VERSION}`,
-    packageSpec: `tar@${FIXED_TAR_VERSION}`,
-    tarballUrl: FIXED_TAR_TARBALL,
-  });
-  const extractionRoot = join(archive.rootDirectory, "replacement");
+type PreparedReplacement = Readonly<{
+  cleanup: () => void;
+  replacementRoot: string;
+}>;
+
+export type BundledNpmTarRegistryDependencies = Readonly<{
+  commandRunner?: BundledNpmTarCommandRunner;
+  prepareReplacement?: (commandRunner: BundledNpmTarCommandRunner) => PreparedReplacement;
+}>;
+
+function prepareFixedTarReplacement(
+  commandRunner: BundledNpmTarCommandRunner,
+): PreparedReplacement {
+  const rootDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-npm-tar-bootstrap-"));
+  const archivePath = join(rootDirectory, `tar-${FIXED_TAR_VERSION}.tgz`);
+  const replacementRoot = join(rootDirectory, "replacement");
   try {
-    mkdirSync(extractionRoot, { mode: 0o700 });
-    run("tar", [
+    commandRunner("curl", [
+      "--proto",
+      "=https",
+      "--tlsv1.2",
+      "--fail",
+      "--silent",
+      "--show-error",
+      "--output",
+      archivePath,
+      FIXED_TAR_TARBALL,
+    ]);
+    const archive = lstatSync(archivePath);
+    if (!archive.isFile() || archive.isSymbolicLink()) {
+      throw new Error("npm bundled tar replacement download must be a real file");
+    }
+    const actualIntegrity = `sha512-${createHash("sha512").update(readFileSync(archivePath)).digest("base64")}`;
+    if (actualIntegrity !== FIXED_TAR_INTEGRITY) {
+      throw new Error(
+        `npm bundled tar replacement integrity mismatch\nExpected: ${FIXED_TAR_INTEGRITY}\nActual:   ${actualIntegrity}`,
+      );
+    }
+
+    mkdirSync(replacementRoot, { mode: 0o700 });
+    commandRunner("tar", [
       "--extract",
       "--gzip",
       "--file",
-      archive.archivePath,
+      archivePath,
       "--directory",
-      extractionRoot,
+      replacementRoot,
       "--strip-components=1",
       "--no-same-owner",
       "--no-same-permissions",
     ]);
-    const result = patchBundledNpmTar({ npmRoot, replacementRoot: extractionRoot });
-    run("npm", ["--version"]);
-    run("npx", ["--version"]);
+    return {
+      cleanup: () => rmSync(rootDirectory, { force: true, recursive: true }),
+      replacementRoot,
+    };
+  } catch (error) {
+    rmSync(rootDirectory, { force: true, recursive: true });
+    throw error;
+  }
+}
+
+export function patchBundledNpmTarFromRegistry(
+  npmRoot: string,
+  dependencies: BundledNpmTarRegistryDependencies = {},
+): BundledNpmTarState {
+  const commandRunner = dependencies.commandRunner ?? run;
+  const current = inspectBundledNpmTar(npmRoot);
+  if (current.state === "fixed") {
+    commandRunner("npm", ["--version"]);
+    commandRunner("npx", ["--version"]);
+    return current;
+  }
+  const prepared = (dependencies.prepareReplacement ?? prepareFixedTarReplacement)(commandRunner);
+  try {
+    const result = patchBundledNpmTar({
+      npmRoot,
+      replacementRoot: prepared.replacementRoot,
+    });
+    commandRunner("npm", ["--version"]);
+    commandRunner("npx", ["--version"]);
     return result;
   } finally {
-    removeReviewedNpmArchive(archive);
+    prepared.cleanup();
   }
 }
 

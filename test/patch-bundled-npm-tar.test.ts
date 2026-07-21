@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FIXED_TAR_VERSION,
   patchBundledNpmTar,
+  patchBundledNpmTarFromRegistry,
   verifyBundledNpmTar,
 } from "../scripts/patch-bundled-npm-tar.mts";
 
@@ -74,6 +75,31 @@ describe("npm bundled node-tar remediation", () => {
       fs.readFileSync(path.join(target.npmRoot, "node_modules", "tar", "lib", "fixed.js"), "utf8"),
     ).toBe("fixed\n");
     expect(verifyBundledNpmTar(target.npmRoot).tarVersion).toBe(FIXED_TAR_VERSION);
+  });
+
+  it("does not invoke npm or npx until the affected bundled tar is replaced and verified", () => {
+    const target = fixture("10.9.7", "7.5.11");
+    const commands: string[] = [];
+
+    const result = patchBundledNpmTarFromRegistry(target.npmRoot, {
+      commandRunner(command) {
+        commands.push(command);
+        if (command === "npm" || command === "npx") {
+          expect(verifyBundledNpmTar(target.npmRoot).tarVersion).toBe(FIXED_TAR_VERSION);
+        }
+      },
+      prepareReplacement(commandRunner) {
+        commandRunner("curl", []);
+        commandRunner("tar", []);
+        return {
+          cleanup: () => commands.push("cleanup"),
+          replacementRoot: target.replacementRoot,
+        };
+      },
+    });
+
+    expect(result).toMatchObject({ state: "fixed", tarVersion: FIXED_TAR_VERSION });
+    expect(commands).toEqual(["curl", "tar", "npm", "npx", "cleanup"]);
   });
 
   it("is idempotent when npm already bundles a safe release", () => {

@@ -518,7 +518,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
         expect(reviewNote).toContain("`0` high");
         expect(reviewNote).toContain("`0` critical");
-        expect(reviewNote).toContain("`766` total dependencies");
+        expect(reviewNote).toContain("`767` total dependencies");
         expect(reviewNote).toContain(
           "`dist/pipeline.runtime-*.js`, which exports `prepareSlackMessage`",
         );
