@@ -212,6 +212,86 @@ describe("checkAndRecoverSandboxProcesses supervisor relaunch", () => {
     expect(finalize).toHaveBeenCalledWith(true);
   });
 
+  it("retries a busy pinned managed probe before starting the replacement forward", () => {
+    mockOpenClawSandbox("busy-recovered-box");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "1");
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
+    const finalize = vi.fn((supervisorReady: boolean) =>
+      supervisorReady
+        ? { backupRemoved: true, rolledBack: false }
+        : { backupRemoved: false, rolledBack: true },
+    );
+    const relaunchManagedSupervisorSessionImpl = vi.fn(() => ({
+      containerId: "replacement-container-id",
+      finalize,
+    }));
+    const requestGatewaySupervisorAction = vi.fn((_name: string, action: string) =>
+      action === "recover" ? { status: 1, stdout: "", stderr: "SUPERVISOR_NOT_RUNNING" } : null,
+    );
+    const acceptedProbe = {
+      status: 0,
+      stdout: "GATEWAY_PID=4242\n",
+      stderr: "",
+    };
+    const requestPinnedGatewaySupervisorAction = vi
+      .fn()
+      .mockReturnValueOnce(acceptedProbe)
+      .mockReturnValueOnce({ status: 1, stdout: "", stderr: "SUPERVISOR_BUSY" })
+      .mockReturnValue(acceptedProbe);
+    let forwardStarted = false;
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(() => forwardStarted);
+    const captureOpenshell = vi
+      .spyOn(openshellRuntime, "captureOpenshell")
+      .mockImplementation((args) => {
+        const command = args.join(" ");
+        if (command === "sandbox exec --name busy-recovered-box -- true") {
+          return { status: 0, output: "", stdout: "", stderr: "" };
+        }
+        if (command === "forward list") {
+          return {
+            status: 0,
+            output: forwardStarted
+              ? "SANDBOX  BIND  PORT  PID  STATUS\nbusy-recovered-box  127.0.0.1  18789  12345  running"
+              : "SANDBOX  BIND  PORT  PID  STATUS",
+          };
+        }
+        return { status: 1, output: "", stdout: "", stderr: "unexpected openshell command" };
+      });
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
+      if (args.join(" ") === "forward start --background 18789 busy-recovered-box") {
+        forwardStarted = true;
+      }
+      return { status: 0 } as never;
+    });
+
+    const result = checkAndRecoverSandboxProcesses("busy-recovered-box", {
+      quiet: true,
+      isSandboxGatewayRunningImpl: () => false,
+      requestGatewaySupervisorAction,
+      requestPinnedGatewaySupervisorAction,
+      relaunchManagedSupervisorSessionImpl,
+    });
+
+    expect(result).toMatchObject({
+      checked: true,
+      wasRunning: false,
+      recovered: true,
+      forwardRecovered: true,
+    });
+    expect(requestPinnedGatewaySupervisorAction).toHaveBeenCalledTimes(5);
+    expect(captureOpenshell).toHaveBeenCalledWith(
+      ["sandbox", "exec", "--name", "busy-recovered-box", "--", "true"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(finalize).toHaveBeenCalledWith(true);
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "start", "--background", "18789", "busy-recovered-box"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
   it("retains a healthy replacement but does not start a forward when OpenShell stays unready", () => {
     mockOpenClawSandbox("unready-box");
     setImmediateRecoveryPolling();

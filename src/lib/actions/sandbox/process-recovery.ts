@@ -1110,19 +1110,21 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     let relaunchedIdentityRejected = false;
     const confirmRelaunchedManagedHealth = relaunch
       ? (timeout = OPENSHELL_PROBE_TIMEOUT_MS) => {
-          let confirmed = false;
           try {
-            confirmed =
-              confirmRecoveredSandboxGatewayManaged(sandboxName, {
-                requestGatewaySupervisorActionImpl: (name, action) =>
-                  requestManagedProbe(name, action, timeout),
-              }) === true;
+            const confirmed = confirmRecoveredSandboxGatewayManaged(sandboxName, {
+              requestGatewaySupervisorActionImpl: (name, action) =>
+                requestManagedProbe(name, action, timeout),
+            });
+            if (confirmed === false) relaunchedIdentityRejected = true;
+            return confirmed;
           } catch {
-            confirmed = false;
+            relaunchedIdentityRejected = true;
+            return false;
           }
-          relaunchedIdentityRejected ||= !confirmed;
-          return confirmed;
         }
+      : null;
+    const confirmRelaunchedManagedHealthForForward = relaunch
+      ? () => confirmRelaunchedManagedHealth?.() === true
       : null;
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
@@ -1219,8 +1221,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
     if (mcpRefusal) return mcpRefusal;
     const forwardRecovered = ensureSandboxPortForward(sandboxName, {
-      afterSuccess: confirmRelaunchedManagedHealth ?? undefined,
-      beforeStart: confirmRelaunchedManagedHealth ?? undefined,
+      afterSuccess: confirmRelaunchedManagedHealthForForward ?? undefined,
+      beforeStart: confirmRelaunchedManagedHealthForForward ?? undefined,
       isWsl: isWslOverride,
     });
     if (!forwardRecovered && relaunchedIdentityRejected) {
