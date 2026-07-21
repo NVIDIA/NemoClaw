@@ -24,25 +24,27 @@ function treeSnapshot(directory: string): object[] {
     for (const name of fs.readdirSync(current).sort()) {
       const child = path.join(current, name);
       const relative = path.relative(directory, child);
-      const metadata = fs.lstatSync(child);
-      switch (true) {
-        case metadata.isDirectory() && !metadata.isSymbolicLink():
-          snapshot.push({ mode: metadata.mode & 0o777, path: relative, type: "directory" });
-          visit(child);
-          break;
-        case metadata.isFile():
-          snapshot.push({
-            contents: fs.readFileSync(child).toString("base64"),
-            mode: metadata.mode & 0o777,
-            path: relative,
-            type: "file",
-          });
-          break;
-        case metadata.isSymbolicLink():
-          snapshot.push({ path: relative, target: fs.readlinkSync(child), type: "symlink" });
-          break;
-        default:
-          snapshot.push({ path: relative, type: "other" });
+      const descriptor = fs.openSync(child, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const metadata = fs.fstatSync(descriptor);
+        switch (true) {
+          case metadata.isDirectory():
+            snapshot.push({ mode: metadata.mode & 0o777, path: relative, type: "directory" });
+            visit(child);
+            break;
+          case metadata.isFile():
+            snapshot.push({
+              contents: fs.readFileSync(descriptor).toString("base64"),
+              mode: metadata.mode & 0o777,
+              path: relative,
+              type: "file",
+            });
+            break;
+          default:
+            snapshot.push({ path: relative, type: "other" });
+        }
+      } finally {
+        fs.closeSync(descriptor);
       }
     }
   };
@@ -166,12 +168,18 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
       ).toBe(version);
       expect(shrinkwrap.packages[`node_modules/${name}`].version).toBe(version);
     }
-    if (spec.startsWith("@openclaw/slack")) {
-      expect(shrinkwrap.packages["node_modules/ws"].peerDependenciesMeta).toEqual({
-        bufferutil: { optional: true },
-        "utf-8-validate": { optional: true },
-      });
-    }
+  });
+
+  it("preserves the remediated Slack ws optional peer metadata", () => {
+    const target = pluginFixture("@openclaw/slack@2026.6.10");
+    patchReviewedOpenClawPluginRoot(target.pluginRoot, target.replacements);
+    const shrinkwrap = JSON.parse(
+      fs.readFileSync(path.join(target.pluginRoot, "npm-shrinkwrap.json"), "utf8"),
+    );
+    expect(shrinkwrap.packages["node_modules/ws"].peerDependenciesMeta).toEqual({
+      bufferutil: { optional: true },
+      "utf-8-validate": { optional: true },
+    });
   });
 
   it("classifies all reviewed plugin families and rejects unknown revisions", () => {
