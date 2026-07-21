@@ -17,6 +17,32 @@ import {
 
 const tempDirectories: string[] = [];
 
+function treeSnapshot(root: string): object[] {
+  const entries: object[] = [];
+  const visit = (directory: string): void => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      const pathname = path.join(directory, name);
+      const relativePath = path.relative(root, pathname);
+      const metadata = fs.lstatSync(pathname);
+      if (metadata.isDirectory()) {
+        entries.push({ mode: metadata.mode & 0o7777, path: relativePath, type: "directory" });
+        visit(pathname);
+      } else if (metadata.isFile()) {
+        entries.push({
+          bytes: fs.readFileSync(pathname).toString("base64"),
+          mode: metadata.mode & 0o7777,
+          path: relativePath,
+          type: "file",
+        });
+      } else {
+        entries.push({ path: relativePath, type: "unsafe" });
+      }
+    }
+  };
+  visit(root);
+  return entries;
+}
+
 function writePackage(directory: string, manifest: object): void {
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify(manifest));
@@ -278,5 +304,53 @@ describe("historical OpenClaw plugin Axios security revisions", () => {
         replacementRoot: target.replacementRoot,
       }),
     ).toThrow("unexpected installed Axios");
+  });
+
+  it("patches candidates under an explicit OpenClaw state directory", () => {
+    const target = fixture();
+    expect(
+      patchInstalledOpenClawPlugins({
+        stateDirectory: path.join(target.homeDirectory, ".openclaw"),
+        replacementRoot: target.replacementRoot,
+        expectedPackageSpec: "@openclaw/slack@2026.6.10",
+      }),
+    ).toContain("@openclaw/slack@2026.6.10");
+  });
+
+  it("restores the Axios tree and package metadata when metadata commit fails", () => {
+    const target = fixture();
+    const before = treeSnapshot(target.homeDirectory);
+    expect(() =>
+      patchInstalledOpenClawPlugins({
+        homeDirectory: target.homeDirectory,
+        replacementRoot: target.replacementRoot,
+        transactionHook: (event) => {
+          if (
+            event.phase === "after-install" &&
+            event.label === "@openclaw/slack@2026.6.10 package metadata"
+          ) {
+            throw new Error("injected plugin metadata commit failure");
+          }
+        },
+      }),
+    ).toThrow("injected plugin metadata commit failure");
+    expect(treeSnapshot(target.homeDirectory)).toEqual(before);
+  });
+
+  it("restores the Axios tree and package metadata when final verification fails", () => {
+    const target = fixture();
+    const before = treeSnapshot(target.homeDirectory);
+    expect(() =>
+      patchInstalledOpenClawPlugins({
+        homeDirectory: target.homeDirectory,
+        replacementRoot: target.replacementRoot,
+        transactionHook: (event) => {
+          if (event.phase === "before-verify") {
+            throw new Error("injected plugin verification failure");
+          }
+        },
+      }),
+    ).toThrow("injected plugin verification failure");
+    expect(treeSnapshot(target.homeDirectory)).toEqual(before);
   });
 });

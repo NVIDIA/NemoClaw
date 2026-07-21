@@ -2,17 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  cpSync,
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
+  openSync,
   readdirSync,
   readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  commitStagedReplacementTransaction,
+  discardStagedReplacements,
+  type StagedReplacement,
+  type StagedReplacementTransactionHook,
+  stageDirectoryReplacement,
+  stageFileReplacement,
+} from "./lib/staged-replacement-transaction.mts";
 
 export const FIXED_TAR_VERSION = "7.5.19";
 export const FIXED_TAR_INTEGRITY =
@@ -43,10 +51,42 @@ function record(value: unknown, label: string): JsonRecord {
 }
 
 function readJson(file: string, label: string): JsonRecord {
+  let descriptor: number | undefined;
   try {
-    return record(JSON.parse(readFileSync(file, "utf8")), label);
+    descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile()) throw new Error(`${file} must be a regular file`);
+    return record(JSON.parse(readFileSync(descriptor, "utf8")), label);
   } catch (error) {
     throw new Error(`${label} is invalid: ${String(error)}`);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function jsonContents(value: JsonRecord): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function stageJsonReplacement(options: {
+  label: string;
+  livePath: string;
+  value: JsonRecord;
+}): StagedReplacement {
+  const replacement = stageFileReplacement({
+    contents: jsonContents(options.value),
+    label: options.label,
+    livePath: options.livePath,
+  });
+  try {
+    const staged = readJson(replacement.stagedPath, `staged ${options.label}`);
+    if (JSON.stringify(staged) !== JSON.stringify(options.value)) {
+      throw new Error(`staged ${options.label} does not match the prepared metadata`);
+    }
+    return replacement;
+  } catch (error) {
+    discardStagedReplacements([replacement]);
+    throw error;
   }
 }
 
@@ -115,6 +155,7 @@ export function patchOpenClawTar(options: {
   openClawRoot: string;
   replacementRoot: string;
   expectedOpenClawVersion: string;
+  transactionHook?: StagedReplacementTransactionHook;
 }): void {
   const openClawRoot = path.resolve(options.openClawRoot);
   const replacementRoot = path.resolve(options.replacementRoot);
@@ -208,22 +249,19 @@ export function patchOpenClawTar(options: {
         `${target.relativeRoot} must contain reviewed tar@${target.version}, found ${String(installedTar.version)}`,
       );
     }
-    const stagedTarRoot = `${installedTarRoot}.nemoclaw-cve-2026-59873`;
-    rmSync(stagedTarRoot, { recursive: true, force: true });
-    cpSync(replacementRoot, stagedTarRoot, { recursive: true, dereference: false });
-    rmSync(installedTarRoot, { recursive: true, force: true });
-    renameSync(stagedTarRoot, installedTarRoot);
   }
 
+  let fsSafeManifest: JsonRecord | undefined;
+  let fsSafeManifestPath: string | undefined;
   if (expectedTarLayout.fsSafe) {
-    const fsSafeManifestPath = path.join(
+    fsSafeManifestPath = path.join(
       openClawRoot,
       "node_modules",
       "@openclaw",
       "fs-safe",
       "package.json",
     );
-    const fsSafeManifest = readJson(fsSafeManifestPath, "@openclaw/fs-safe package manifest");
+    fsSafeManifest = readJson(fsSafeManifestPath, "@openclaw/fs-safe package manifest");
     const optionalDependencies = record(
       fsSafeManifest.optionalDependencies,
       "@openclaw/fs-safe optional dependencies",
@@ -252,10 +290,66 @@ export function patchOpenClawTar(options: {
       }
       fsSafeLockOptionalDependencies.tar = FIXED_TAR_VERSION;
     }
-    writeFileSync(fsSafeManifestPath, `${JSON.stringify(fsSafeManifest, null, 2)}\n`);
   }
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-  if (shrinkwrap) writeFileSync(shrinkwrapPath, `${JSON.stringify(shrinkwrap, null, 2)}\n`);
+
+  const replacements: StagedReplacement[] = [];
+  let commitStarted = false;
+  try {
+    for (const target of tarTargets) {
+      const replacement = stageDirectoryReplacement({
+        label: `${target.relativeRoot} package tree`,
+        livePath: path.join(openClawRoot, target.relativeRoot),
+        sourcePath: replacementRoot,
+      });
+      replacements.push(replacement);
+      const stagedTar = readJson(
+        path.join(replacement.stagedPath, "package.json"),
+        `staged ${target.relativeRoot} manifest`,
+      );
+      if (stagedTar.name !== "tar" || stagedTar.version !== FIXED_TAR_VERSION) {
+        throw new Error(`staged ${target.relativeRoot} is not tar@${FIXED_TAR_VERSION}`);
+      }
+    }
+    if (fsSafeManifest && fsSafeManifestPath) {
+      replacements.push(
+        stageJsonReplacement({
+          label: "@openclaw/fs-safe package metadata",
+          livePath: fsSafeManifestPath,
+          value: fsSafeManifest,
+        }),
+      );
+    }
+    replacements.push(
+      stageJsonReplacement({
+        label: "OpenClaw package metadata",
+        livePath: manifestPath,
+        value: manifest,
+      }),
+    );
+    if (shrinkwrap) {
+      replacements.push(
+        stageJsonReplacement({
+          label: "OpenClaw shrinkwrap metadata",
+          livePath: shrinkwrapPath,
+          value: shrinkwrap,
+        }),
+      );
+    }
+
+    commitStarted = true;
+    commitStagedReplacementTransaction({
+      injectFailure: options.transactionHook,
+      replacements,
+      verify: () =>
+        verifyOpenClawTarRevision({
+          openClawRoot,
+          expectedOpenClawVersion: options.expectedOpenClawVersion,
+        }),
+    });
+  } catch (error) {
+    if (!commitStarted) discardStagedReplacements(replacements);
+    throw error;
+  }
 }
 
 export function verifyOpenClawTarRevision(options: {
