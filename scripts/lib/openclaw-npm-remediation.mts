@@ -443,7 +443,7 @@ function createCanonicalArchive(
 ): void {
   normalizeArchiveTimestamps(sourcePackage);
   const tarPath = `${archivePath}.tar`;
-  const canonicalEnv = { ...env, LANG: "C", LC_ALL: "C", TZ: "UTC" };
+  const canonicalEnv: NodeJS.ProcessEnv = { ...env, LANG: "C", LC_ALL: "C", TZ: "UTC" };
   delete canonicalEnv.GZIP;
   delete canonicalEnv.TAR_OPTIONS;
   const tarVersion = run("tar", ["--version"], cwd, canonicalEnv);
