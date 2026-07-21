@@ -25,20 +25,24 @@ function treeSnapshot(directory: string): object[] {
       const child = path.join(current, name);
       const relative = path.relative(directory, child);
       const metadata = fs.lstatSync(child);
-      if (metadata.isDirectory() && !metadata.isSymbolicLink()) {
-        snapshot.push({ mode: metadata.mode & 0o777, path: relative, type: "directory" });
-        visit(child);
-      } else if (metadata.isFile()) {
-        snapshot.push({
-          contents: fs.readFileSync(child).toString("base64"),
-          mode: metadata.mode & 0o777,
-          path: relative,
-          type: "file",
-        });
-      } else if (metadata.isSymbolicLink()) {
-        snapshot.push({ path: relative, target: fs.readlinkSync(child), type: "symlink" });
-      } else {
-        snapshot.push({ path: relative, type: "other" });
+      switch (true) {
+        case metadata.isDirectory() && !metadata.isSymbolicLink():
+          snapshot.push({ mode: metadata.mode & 0o777, path: relative, type: "directory" });
+          visit(child);
+          break;
+        case metadata.isFile():
+          snapshot.push({
+            contents: fs.readFileSync(child).toString("base64"),
+            mode: metadata.mode & 0o777,
+            path: relative,
+            type: "file",
+          });
+          break;
+        case metadata.isSymbolicLink():
+          snapshot.push({ path: relative, target: fs.readlinkSync(child), type: "symlink" });
+          break;
+        default:
+          snapshot.push({ path: relative, type: "other" });
       }
     }
   };
@@ -188,11 +192,12 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
     const before = treeSnapshot(target.pluginRoot);
     expect(() =>
       patchReviewedOpenClawPluginRoot(target.pluginRoot, target.replacements, {
-        injectFailure: (event) => {
-          if (event.index === 0 && event.phase === "after-install") {
-            throw new Error("injected core-plugin transaction failure");
-          }
-        },
+        injectFailure: (event) =>
+          event.index === 0 && event.phase === "after-install"
+            ? (() => {
+                throw new Error("injected core-plugin transaction failure");
+              })()
+            : undefined,
       }),
     ).toThrow("injected core-plugin transaction failure");
     expect(treeSnapshot(target.pluginRoot)).toEqual(before);
