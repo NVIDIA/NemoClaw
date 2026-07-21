@@ -331,18 +331,14 @@ describe("agent setup session boundaries", () => {
   });
 
   it("retries a configured gateway probe through the supplied scheduler", async () => {
-    let healthAttempts = 0;
     let nowMs = 0;
     const sleepSeconds = vi.fn((seconds: number) => {
       nowMs += seconds * 1000;
     });
-    const runCaptureOpenshell = vi.fn((args: string[]) => {
-      if (args.includes("curl")) {
-        healthAttempts += 1;
-        return healthAttempts === 1 ? "" : "ok";
-      }
-      return "NEMOCLAW_AGENT_BINARY_CHECK:ok";
-    });
+    const runCaptureOpenshell = vi
+      .fn<OnboardContext["runCaptureOpenshell"]>(() => "ok")
+      .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok")
+      .mockReturnValueOnce("");
     const { context } = createAgentSetupContext(runCaptureOpenshell, {
       now: () => nowMs,
       sleepSeconds,
@@ -377,9 +373,9 @@ describe("agent setup session boundaries", () => {
     const sleepSeconds = vi.fn((seconds: number) => {
       nowMs += seconds * 1000;
     });
-    const runCaptureOpenshell = vi.fn((args: string[]) =>
-      args.includes("curl") ? "" : "NEMOCLAW_AGENT_BINARY_CHECK:ok",
-    );
+    const runCaptureOpenshell = vi
+      .fn<OnboardContext["runCaptureOpenshell"]>(() => "")
+      .mockReturnValueOnce("NEMOCLAW_AGENT_BINARY_CHECK:ok");
     const { context } = createAgentSetupContext(runCaptureOpenshell, {
       now: () => nowMs,
       sleepSeconds,
