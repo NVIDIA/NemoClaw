@@ -258,6 +258,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("direct `tar@7.5.19` and `jszip@3.10.1` dependencies");
     expect(review).toContain("`@modelcontextprotocol/sdk@1.29.0`");
     expect(review).toContain("exact `@hono/node-server@2.0.5`");
+    expect(review).toContain("lock-pinned `eventsource-parser@3.1.0` runtime dependency");
     expect(review).toContain("`@opentelemetry/propagator-jaeger@2.8.0` with `2.9.0`");
     expect(review).toContain("nested `@opentelemetry/core@2.9.0`");
     expect(review).toContain("`axios@1.16.0` with `axios@1.18.0`");
@@ -268,7 +269,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     );
     expect(review).toContain("committed SHA-512 metadata value");
     expect(review).toContain(
-      "core value also covers the bundled `@openclaw/fs-safe`, `@modelcontextprotocol/sdk`, and `@hono/node-server` package manifests",
+      "core value also covers the bundled `@openclaw/fs-safe`, `@modelcontextprotocol/sdk`, `@hono/node-server`, and `eventsource-parser` package manifests",
     );
     for (const integrity of [
       "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
@@ -276,12 +277,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==",
       "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==",
       "sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==",
+      "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
       "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==",
       "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==",
       "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
       "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",
       "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
-      "sha512-3B3INhrI5ki3O2/Tm2o8cupkAhaBRJO51xGa/i2Ou3IgKF5MNydNBe8RkOLvjtY9dXM7NH+aLqig+TGhcaJWHQ==",
+      "sha512-p9kAvBe2g+2m0me+Ns5e9mSLw9md2uYJuDxhEAErVTE8JmCnDuPhS+3/A2NDVYzCWIyNB89Fezv1y2neBtuGEQ==",
       "sha512-QmgyGI7AQJrNGoWAYolunc18wUr6Q4iOK4n9YXCOo3Cxh+e2GONtOAbeu+OFpQW8PsF6x/iGInDQmeKD+jnOug==",
       "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
@@ -294,6 +296,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz",
       "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz",
       "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz",
+      "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz",
       "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz",
       "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz",
       "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
@@ -445,7 +448,7 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_not_contains "$openclaw_block" 'pack_reviewed_npm_tarball' "$dockerfile inline pack helper"
   check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
   check_contains "$openclaw_block" 'ignore-scripts+reviewed-lifecycle+transitive-remediation-v2' "$dockerfile base provenance recipe"
-  check_contains "$openclaw_block" 'npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe tar jszip' "$dockerfile installed remediation graph guard"
+  check_contains "$openclaw_block" 'npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe eventsource-parser tar jszip' "$dockerfile installed remediation graph guard"
   check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
   check_contains "$openclaw_block" 'mcporter-integrity=' "$dockerfile mcporter provenance integrity"
   check_contains "$openclaw_block" 'mcporter-lock-sha256=' "$dockerfile mcporter provenance lock hash"

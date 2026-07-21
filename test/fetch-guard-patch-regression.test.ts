@@ -356,7 +356,7 @@ describe("fetch-guard patch regression guard", () => {
     );
     expect(stale.calls).toContain("postinstall-bundled-plugins.mjs");
     expect(stale.calls).toContain(
-      "npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe tar jszip",
+      "npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe eventsource-parser tar jszip",
     );
     expect(stale.calls).toContain(
       `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,
@@ -375,7 +375,7 @@ describe("fetch-guard patch regression guard", () => {
     );
     expect(current.calls).toContain("postinstall-bundled-plugins.mjs");
     expect(current.calls).toContain(
-      "npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe tar jszip",
+      "npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe eventsource-parser tar jszip",
     );
     expect(current.calls).toContain(
       `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,

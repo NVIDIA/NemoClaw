@@ -828,7 +828,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         for (const calls of [production.calls, base.calls]) {
           expect(calls).toContain(
-            "npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe tar jszip",
+            "npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe eventsource-parser tar jszip",
           );
         }
         for (const calls of [production.calls, base.calls]) {

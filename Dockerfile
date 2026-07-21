@@ -363,7 +363,7 @@ RUN set -eu; \
         rm -rf "$OPENCLAW_PACK_DIR"; \
     fi; \
     if [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then \
-        npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe tar jszip >/dev/null; \
+        npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe eventsource-parser tar jszip >/dev/null; \
     fi; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
         echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with exact lock provenance"; \

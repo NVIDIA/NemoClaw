@@ -87,6 +87,11 @@ const MODEL_CONTEXT_PROTOCOL_SDK_INTEGRITY =
   "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==";
 const MODEL_CONTEXT_PROTOCOL_SDK_TARBALL =
   "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz";
+const EVENTSOURCE_PARSER_VERSION = "3.1.0";
+const EVENTSOURCE_PARSER_INTEGRITY =
+  "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==";
+const EVENTSOURCE_PARSER_TARBALL =
+  "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz";
 const OTEL_PROPAGATOR_JAEGER_VERSION = "2.9.0";
 const OTEL_PROPAGATOR_JAEGER_INTEGRITY =
   "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==";
@@ -117,7 +122,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "openclaw@2026.6.10": {
     kind: "core",
     expectedPatchedMetadataIntegrity:
-      "sha512-3B3INhrI5ki3O2/Tm2o8cupkAhaBRJO51xGa/i2Ou3IgKF5MNydNBe8RkOLvjtY9dXM7NH+aLqig+TGhcaJWHQ==",
+      "sha512-p9kAvBe2g+2m0me+Ns5e9mSLw9md2uYJuDxhEAErVTE8JmCnDuPhS+3/A2NDVYzCWIyNB89Fezv1y2neBtuGEQ==",
   },
 });
 
@@ -207,6 +212,7 @@ function hashPatchedMetadata(packageDirectory: string): string {
     "node_modules/@hono/node-server/package.json",
     "node_modules/@modelcontextprotocol/sdk/package.json",
     "node_modules/@openclaw/fs-safe/package.json",
+    "node_modules/eventsource-parser/package.json",
     "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core/package.json",
     "node_modules/@opentelemetry/propagator-jaeger/package.json",
     "node_modules/@opentelemetry/sdk-node/package.json",
@@ -432,6 +438,7 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   const modelContextProtocolSdk = packages["node_modules/@modelcontextprotocol/sdk"] as
     | JsonObject
     | undefined;
+  const eventsourceParser = packages["node_modules/eventsource-parser"] as JsonObject | undefined;
   if (root.dependencies?.tar !== "7.5.16" || tar?.version !== "7.5.16") {
     throw new Error("openclaw@2026.6.10 tar shrinkwrap state changed after review");
   }
@@ -443,6 +450,10 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
     root.dependencies?.["@modelcontextprotocol/sdk"] !== "1.29.0" ||
     modelContextProtocolSdk?.version !== "1.29.0" ||
     modelContextProtocolSdk.dependencies?.["@hono/node-server"] !== "^1.19.9" ||
+    modelContextProtocolSdk.dependencies?.["eventsource-parser"] !== "^3.0.0" ||
+    eventsourceParser?.version !== EVENTSOURCE_PARSER_VERSION ||
+    eventsourceParser.resolved !== EVENTSOURCE_PARSER_TARBALL ||
+    eventsourceParser.integrity !== EVENTSOURCE_PARSER_INTEGRITY ||
     honoNodeServer?.version !== "1.19.14" ||
     honoNodeServer.resolved !==
       "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.14.tgz" ||
@@ -473,6 +484,7 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
     "@hono/node-server",
     "@modelcontextprotocol/sdk",
     "@openclaw/fs-safe",
+    "eventsource-parser",
   ];
   root.dependencies.tar = TAR_VERSION;
   root.bundleDependencies = [...packageJson.bundledDependencies];
@@ -480,6 +492,9 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   honoNodeServer.version = HONO_NODE_SERVER_VERSION;
   honoNodeServer.resolved = HONO_NODE_SERVER_TARBALL;
   honoNodeServer.integrity = HONO_NODE_SERVER_INTEGRITY;
+  eventsourceParser.version = EVENTSOURCE_PARSER_VERSION;
+  eventsourceParser.resolved = EVENTSOURCE_PARSER_TARBALL;
+  eventsourceParser.integrity = EVENTSOURCE_PARSER_INTEGRITY;
   tar.version = TAR_VERSION;
   tar.resolved = TAR_TARBALL;
   tar.integrity = TAR_INTEGRITY;
@@ -697,6 +712,13 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       remediationRoot,
       env,
     );
+    const eventsourceParserArchive = packReplacement(
+      `eventsource-parser@${EVENTSOURCE_PARSER_VERSION}`,
+      EVENTSOURCE_PARSER_INTEGRITY,
+      EVENTSOURCE_PARSER_TARBALL,
+      remediationRoot,
+      env,
+    );
     const modelContextProtocolSdkPackage = extractArchive(
       modelContextProtocolSdkArchive.archivePath,
       join(remediationRoot, "modelcontextprotocol-sdk"),
@@ -708,6 +730,18 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       join(remediationRoot, "hono-node-server"),
       remediationRoot,
       env,
+    );
+    const eventsourceParserPackage = extractArchive(
+      eventsourceParserArchive.archivePath,
+      join(remediationRoot, "eventsource-parser"),
+      remediationRoot,
+      env,
+    );
+    requirePackageIdentity(
+      readJson(join(eventsourceParserPackage, "package.json")),
+      "eventsource-parser",
+      EVENTSOURCE_PARSER_VERSION,
+      "OpenClaw MCP SDK eventsource parser remediation package",
     );
     patchFsSafePackageGraph(fsSafePackage);
     patchModelContextProtocolPackageGraph(modelContextProtocolSdkPackage);
@@ -722,6 +756,10 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
     copyReplacementPackage(
       honoNodeServerPackage,
       join(sourcePackage, "node_modules", "@hono", "node-server"),
+    );
+    copyReplacementPackage(
+      eventsourceParserPackage,
+      join(sourcePackage, "node_modules", "eventsource-parser"),
     );
     patchOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "otel-plugin") {

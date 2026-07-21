@@ -124,7 +124,17 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
           },
           "node_modules/@modelcontextprotocol/sdk": {
             version: "1.29.0",
-            dependencies: { "@hono/node-server": "^1.19.9" },
+            dependencies: {
+              "@hono/node-server": "^1.19.9",
+              "eventsource-parser": "^3.0.0",
+            },
+          },
+          "node_modules/eventsource-parser": {
+            version: "3.1.0",
+            resolved:
+              "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz",
+            integrity:
+              "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
           },
           "node_modules/brace-expansion": {
             version: "5.0.6",
@@ -268,7 +278,10 @@ function writeCoreArchiveFixtures(): {
       {
         name: "@modelcontextprotocol/sdk",
         version: "1.29.0",
-        dependencies: { "@hono/node-server": "^1.19.9" },
+        dependencies: {
+          "@hono/node-server": "^1.19.9",
+          "eventsource-parser": "^3.0.0",
+        },
       },
       null,
       2,
@@ -294,6 +307,23 @@ function writeCoreArchiveFixtures(): {
   const honoNodeServerArchive = path.join(root, "node-server-2.0.5-source.tgz");
   packFixture(honoNodeServerDirectory, honoNodeServerArchive);
 
+  const eventsourceParserDirectory = path.join(root, "eventsource-parser-package");
+  mkdirSync(eventsourceParserDirectory, { recursive: true });
+  writeFileSync(
+    path.join(eventsourceParserDirectory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "eventsource-parser",
+        version: "3.1.0",
+        engines: { node: ">=18.0.0" },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const eventsourceParserArchive = path.join(root, "eventsource-parser-3.1.0-source.tgz");
+  packFixture(eventsourceParserDirectory, eventsourceParserArchive);
+
   const npmExecutable = path.join(root, "npm-fixture.sh");
   writeFileSync(
     npmExecutable,
@@ -303,6 +333,7 @@ function writeCoreArchiveFixtures(): {
       `fs_safe_archive=${JSON.stringify(fsSafeArchive)}`,
       `modelcontextprotocol_sdk_archive=${JSON.stringify(modelContextProtocolSdkArchive)}`,
       `hono_node_server_archive=${JSON.stringify(honoNodeServerArchive)}`,
+      `eventsource_parser_archive=${JSON.stringify(eventsourceParserArchive)}`,
       'if [ "$1" = "view" ]; then',
       '  case "$2:$3" in',
       '    "@openclaw/fs-safe@0.3.0:dist.integrity") value="sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==" ;;',
@@ -311,6 +342,8 @@ function writeCoreArchiveFixtures(): {
       '    "@modelcontextprotocol/sdk@1.29.0:dist.tarball") value="https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz" ;;',
       '    "@hono/node-server@2.0.5:dist.integrity") value="sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" ;;',
       '    "@hono/node-server@2.0.5:dist.tarball") value="https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz" ;;',
+      '    "eventsource-parser@3.1.0:dist.integrity") value="sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==" ;;',
+      '    "eventsource-parser@3.1.0:dist.tarball") value="https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz" ;;',
       "    *) exit 1 ;;",
       "  esac",
       '  printf "%s\\n" "$value"',
@@ -321,6 +354,7 @@ function writeCoreArchiveFixtures(): {
       '    "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz") archive="$fs_safe_archive"; filename="fs-safe-0.3.0.tgz"; integrity="sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==" ;;',
       '    "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz") archive="$modelcontextprotocol_sdk_archive"; filename="sdk-1.29.0.tgz"; integrity="sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==" ;;',
       '    "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz") archive="$hono_node_server_archive"; filename="node-server-2.0.5.tgz"; integrity="sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" ;;',
+      '    "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz") archive="$eventsource_parser_archive"; filename="eventsource-parser-3.1.0.tgz"; integrity="sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==" ;;',
       "    *) exit 1 ;;",
       "  esac",
       '  destination=""',
@@ -561,9 +595,15 @@ describe("OpenClaw npm remediation", () => {
       "@hono/node-server",
       "@modelcontextprotocol/sdk",
       "@openclaw/fs-safe",
+      "eventsource-parser",
     ]);
     expect(shrinkwrap.packages[""]).toMatchObject({
-      bundleDependencies: ["@hono/node-server", "@modelcontextprotocol/sdk", "@openclaw/fs-safe"],
+      bundleDependencies: [
+        "@hono/node-server",
+        "@modelcontextprotocol/sdk",
+        "@openclaw/fs-safe",
+        "eventsource-parser",
+      ],
       dependencies: { tar: "7.5.19" },
     });
     expect(shrinkwrap.packages["node_modules/tar"]).toMatchObject({
@@ -586,6 +626,13 @@ describe("OpenClaw npm remediation", () => {
         "@hono/node-server"
       ],
     ).toBe("2.0.5");
+    expect(shrinkwrap.packages["node_modules/eventsource-parser"]).toMatchObject({
+      version: "3.1.0",
+      resolved:
+        "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz",
+      integrity:
+        "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
+    });
     expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
       version: "5.0.7",
       resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
@@ -663,8 +710,16 @@ describe("OpenClaw npm remediation", () => {
     const honoNodeServerPackageJson = readJson<{ name?: string; version?: string }>(
       path.join(extracted, "package", "node_modules", "@hono", "node-server", "package.json"),
     );
+    const eventsourceParserPackageJson = readJson<{ name?: string; version?: string }>(
+      path.join(extracted, "package", "node_modules", "eventsource-parser", "package.json"),
+    );
     expect(packageJson).toMatchObject({
-      bundledDependencies: ["@hono/node-server", "@modelcontextprotocol/sdk", "@openclaw/fs-safe"],
+      bundledDependencies: [
+        "@hono/node-server",
+        "@modelcontextprotocol/sdk",
+        "@openclaw/fs-safe",
+        "eventsource-parser",
+      ],
       dependencies: { jszip: "3.10.1", tar: "7.5.19" },
     });
     expect(fsSafePackageJson.optionalDependencies).toBeUndefined();
@@ -672,6 +727,10 @@ describe("OpenClaw npm remediation", () => {
     expect(honoNodeServerPackageJson).toMatchObject({
       name: "@hono/node-server",
       version: "2.0.5",
+    });
+    expect(eventsourceParserPackageJson).toMatchObject({
+      name: "eventsource-parser",
+      version: "3.1.0",
     });
     expect(readFileSync(path.join(extracted, "package", fixture.longMemberPath), "utf-8")).toBe(
       "long archive member\n",
