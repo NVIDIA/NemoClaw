@@ -98,8 +98,8 @@ function requireCondition(condition: boolean, message: string): void {
 function requireSafeImageReference(value: string): string {
   const image = value.trim();
   requireCondition(
-    /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,511}$/u.test(image),
-    `${IMAGE_ENV} must be a canonical Docker image reference`,
+    /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,438}@sha256:[0-9a-f]{64}$/iu.test(image),
+    `${IMAGE_ENV} must be an immutable named Docker image digest`,
   );
   return image;
 }
@@ -450,6 +450,13 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
     expect(resolveConfiguredImage({})).toBeUndefined();
     expect(() => resolveConfiguredImage({ [RUN_ENV]: "1" })).toThrow(IMAGE_ENV);
     expect(() => resolveConfiguredImage({ [IMAGE_ENV]: "candidate:local" })).toThrow(RUN_ENV);
+    expect(() =>
+      resolveConfiguredImage({ [RUN_ENV]: "1", [IMAGE_ENV]: "candidate:local" }),
+    ).toThrow("immutable named Docker image digest");
+    const immutableImage = `nemoclaw-production@sha256:${"a".repeat(64)}`;
+    expect(resolveConfiguredImage({ [RUN_ENV]: "1", [IMAGE_ENV]: immutableImage })).toBe(
+      immutableImage,
+    );
   });
 
   test("uses an offline read-only least-privilege Docker boundary", () => {
