@@ -16,7 +16,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
 
@@ -588,20 +588,25 @@ function packReplacement(
   });
 }
 
-function normalizeArchiveTimestamps(directory: string): void {
+function normalizeArchiveContents(directory: string, member: string): string[] {
+  const members = [member];
   const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
     left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
   );
   for (const entry of entries) {
     const target = join(directory, entry.name);
+    const childMember = `${member}/${entry.name}`;
     if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      normalizeArchiveTimestamps(target);
+      members.push(...normalizeArchiveContents(target, childMember));
     } else if (!entry.isFile()) {
       throw new Error(`remediated npm archive contains an unsafe member: ${target}`);
+    } else {
+      members.push(childMember);
     }
     utimesSync(target, CANONICAL_ARCHIVE_TIME, CANONICAL_ARCHIVE_TIME);
   }
   utimesSync(directory, CANONICAL_ARCHIVE_TIME, CANONICAL_ARCHIVE_TIME);
+  return members;
 }
 
 function createCanonicalArchive(
@@ -610,7 +615,7 @@ function createCanonicalArchive(
   cwd: string,
   env: NodeJS.ProcessEnv,
 ): void {
-  normalizeArchiveTimestamps(sourcePackage);
+  const archiveMembers = normalizeArchiveContents(sourcePackage, basename(sourcePackage));
   const tarPath = `${archivePath}.tar`;
   const canonicalEnv: NodeJS.ProcessEnv = { ...env, LANG: "C", LC_ALL: "C", TZ: "UTC" };
   delete canonicalEnv.GZIP;
@@ -633,27 +638,40 @@ function createCanonicalArchive(
       canonicalEnv,
     );
   } else if (tarVersion.includes("bsdtar")) {
-    run(
-      "tar",
-      [
-        "--format",
-        "paxr",
-        "--no-acls",
-        "--no-fflags",
-        "--no-xattrs",
-        "--uid",
-        "0",
-        "--gid",
-        "0",
-        "--uname",
-        "root",
-        "--gname",
-        "root",
-        ...common,
-      ],
-      cwd,
-      canonicalEnv,
-    );
+    const manifestPath = `${archivePath}.members`;
+    writeFileSync(manifestPath, Buffer.from(`${archiveMembers.join("\0")}\0`), { mode: 0o600 });
+    try {
+      run(
+        "tar",
+        [
+          "--format",
+          "paxr",
+          "--no-acls",
+          "--no-fflags",
+          "--no-xattrs",
+          "--uid",
+          "0",
+          "--gid",
+          "0",
+          "--uname",
+          "root",
+          "--gname",
+          "root",
+          "--no-recursion",
+          "--null",
+          "-T",
+          manifestPath,
+          "-cf",
+          tarPath,
+          "-C",
+          dirname(sourcePackage),
+        ],
+        cwd,
+        canonicalEnv,
+      );
+    } finally {
+      rmSync(manifestPath, { force: true });
+    }
   } else {
     throw new Error(`unsupported tar implementation for canonical npm archive: ${tarVersion}`);
   }

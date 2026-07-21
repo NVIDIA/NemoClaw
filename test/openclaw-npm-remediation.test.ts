@@ -628,8 +628,7 @@ describe("OpenClaw npm remediation", () => {
     ).toBe("2.0.5");
     expect(shrinkwrap.packages["node_modules/eventsource-parser"]).toMatchObject({
       version: "3.1.0",
-      resolved:
-        "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz",
+      resolved: "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz",
       integrity:
         "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
     });
@@ -682,6 +681,13 @@ describe("OpenClaw npm remediation", () => {
       expectedPatchedMetadataIntegrity: metadataIntegrity,
     });
     expect(rebuilt.integrity).toBe(remediated.integrity);
+    const listing = spawnSync("tar", ["-tzf", remediated.archivePath], { encoding: "utf-8" });
+    expect(listing.status, listing.stderr).toBe(0);
+    const archiveMembers = listing.stdout
+      .trimEnd()
+      .split("\n")
+      .map((member) => (member.endsWith("/") ? member.slice(0, -1) : member));
+    expect(archiveMembers).toEqual([...archiveMembers].sort());
     const extracted = path.join(fixture.workingDirectory, "asserted");
     mkdirSync(extracted, { recursive: true });
     const extraction = spawnSync("tar", ["-xzf", remediated.archivePath, "-C", extracted], {
