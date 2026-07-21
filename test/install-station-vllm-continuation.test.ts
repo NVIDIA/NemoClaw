@@ -80,7 +80,8 @@ detect_express_platform() { printf 'DGX Station'; }
 print_banner() { :; }
 preflight_usage_notice_prompt() { :; }
 load_station_vllm_conflict_helpers
-station_existing_vllm_model() { printf 'existing/model'; }
+ps() { printf '219655 1 docker-init docker-init -- /usr/bin/vllm serve hidden-model\n'; }
+station_existing_vllm_model() { return 1; }
 ensure_docker() {
   printf 'RESUMED no_express=%s force=%s args=%s gateway=%s vllm=%s\n' \
     "$NEMOCLAW_NO_EXPRESS" "\${FORCE_STATION_INSTALL:-}" "\${_NEMOCLAW_INSTALLER_ARGS[*]:-}" \
@@ -145,7 +146,7 @@ consume_station_local_vllm_resume
     expect(output).toContain("Local vLLM resume state must have mode 0600");
   });
 
-  it("offers Express when the saved Local vLLM endpoint is no longer available", () => {
+  it("offers Express when the saved Local vLLM workload is no longer active", () => {
     const { home, result, output } = runInstallerSourced(`
 load_station_vllm_conflict_helpers
 switch_station_express_to_local_vllm
@@ -157,7 +158,7 @@ switch_station_express_to_local_vllm
     const resumed = runInstallerSourced(
       `
 load_station_vllm_conflict_helpers
-station_existing_vllm_model() { return 1; }
+station_vllm_workload_active() { return 1; }
 if consume_station_local_vllm_resume; then
   printf 'UNEXPECTED_LOCAL_RESUME\n'
 else

@@ -88,6 +88,32 @@ activate_station_local_vllm_continuation() {
   STATION_DEEPSEEK=""
 }
 
+station_vllm_workload_active() {
+  local processes containers
+  processes="$(ps -eo pid=,ppid=,comm=,args= 2>/dev/null || true)"
+  if awk '
+    {
+      comm=tolower($3)
+      $1=$2=$3=""
+      args=tolower($0)
+      if (comm == "vllm" ||
+          args ~ /(^|[[:space:]\/])vllm([[:space:]:]|\.js([[:space:]]|$)|$)/) {
+        found=1
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' <<<"$processes"; then
+    return 0
+  fi
+
+  command -v docker >/dev/null 2>&1 || return 1
+  containers="$(docker ps --no-trunc --format '{{.Image}}|{{.Command}}' 2>/dev/null || true)"
+  awk -F '|' '
+    tolower($1 " " $2) ~ /(^|[^[:alnum:]_])vllm([^[:alnum:]_]|$)/ { found=1 }
+    END { exit found ? 0 : 1 }
+  ' <<<"$containers"
+}
+
 consume_station_local_vllm_resume() {
   local state_file version_line gateway_port_line vllm_port_line saved_gateway_port saved_vllm_port
   local current_gateway_port current_vllm_port line_count
@@ -110,9 +136,9 @@ consume_station_local_vllm_resume() {
   }; then
     error "DGX Station Local vLLM resume state is invalid. Remove ${state_file} and rerun the installer."
   fi
-  if ! NEMOCLAW_VLLM_PORT="$saved_vllm_port" station_existing_vllm_model >/dev/null 2>&1; then
+  if ! station_vllm_workload_active; then
     rm -f "$state_file"
-    info "The saved Local vLLM endpoint at port ${saved_vllm_port} is no longer available. Express setup is available."
+    info "The saved Local vLLM workload is no longer active. Express setup is available."
     return 1
   fi
   if [[ -n "${NEMOCLAW_GATEWAY_PORT:-}" ]]; then
