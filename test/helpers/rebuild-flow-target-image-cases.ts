@@ -433,5 +433,46 @@ export function registerRebuildFlowTargetImageTests(): void {
         restoreEnv();
       }
     });
+
+    it("runs every final cleanup when the base-image disposer throws", async () => {
+      const cleanupBuildCtx = vi.fn(() => true);
+      const preparedDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-cleanup-"));
+      const preparedDockerfile = path.join(preparedDir, "Dockerfile");
+      fs.writeFileSync(preparedDockerfile, "FROM scratch\n");
+      const harness = createRebuildFlowHarness({
+        baseImagePreflight: {
+          ok: true,
+          imageRef: "nemoclaw-hermes-sandbox-base-local:image-preflighted",
+          overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+          disposeImageRef: () => {
+            throw new Error("base cleanup boom");
+          },
+        },
+        customImagePreflight: {
+          ok: true,
+          imageTag: "nemoclaw-rebuild-preflight:test",
+          prepared: {
+            buildCtx: preparedDir,
+            stagedDockerfile: preparedDockerfile,
+            cleanupBuildCtx,
+            origin: "generated",
+            buildId: "rebuild-cleanup",
+            contextFingerprint: fingerprintBuildContext(preparedDir),
+            verifyBuildCtx: createBuildContextVerifier(
+              preparedDir,
+              fingerprintBuildContext(preparedDir),
+            ),
+            rebuildTarget: { agentName: "hermes", fromDockerfile: null },
+          },
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+      expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
+    });
   });
 }

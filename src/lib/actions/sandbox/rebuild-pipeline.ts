@@ -37,6 +37,14 @@ import { runRebuildShieldsPhase } from "./rebuild-shields-phase";
 
 export { buildRefreshMutableOpenClawConfigHashCommand, stageMessagingManifestPlanForRebuild };
 
+function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: string): void {
+  try {
+    if (cleanup() === false) console.warn(warning);
+  } catch {
+    console.warn(warning);
+  }
+}
+
 /**
  * Rebuild a live sandbox while preserving registered agent state and policies.
  *
@@ -336,12 +344,19 @@ async function rebuildSandboxUnlocked(
       if (!rebuildShieldsWindow.relocked) relockShieldsIfNeeded(sandboxStillExists);
     }
   } finally {
-    dcodePreflight.cleanup();
-    if (!disposeRebuildAgentBaseImagePreflight(baseImagePreflight)) {
-      console.warn("  Warning: temporary rebuild base-image handoff could not be removed.");
-    }
-    if (preparedImage && !disposePreparedBuildContext(preparedImage)) {
-      console.warn("  Warning: temporary rebuild image inputs could not be fully removed.");
+    runBestEffortRebuildCleanup(
+      dcodePreflight.cleanup,
+      "  Warning: temporary DCode rebuild inputs could not be fully removed.",
+    );
+    runBestEffortRebuildCleanup(
+      () => disposeRebuildAgentBaseImagePreflight(baseImagePreflight),
+      "  Warning: temporary rebuild base-image handoff could not be removed.",
+    );
+    if (preparedImage) {
+      runBestEffortRebuildCleanup(
+        () => disposePreparedBuildContext(preparedImage),
+        "  Warning: temporary rebuild image inputs could not be fully removed.",
+      );
     }
     process.removeListener("exit", releaseOnboardLock);
     releaseOnboardLock();
