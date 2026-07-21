@@ -867,7 +867,7 @@ async function installOldNemoclawAndClaw(
   );
   expect(
     oldLog.includes(
-      "INFO: Historical upgrade fixture retains npm audit at the reviewed high threshold",
+      "INFO: Historical upgrade fixture retains npm audit at the reviewed critical threshold",
     ),
   ).toBe(["v0.0.74", "v0.0.89"].includes(OLD_NEMOCLAW_REF));
 

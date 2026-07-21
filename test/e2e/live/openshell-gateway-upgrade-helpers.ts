@@ -58,15 +58,21 @@ export function currentGatewayUpgradeInstallerArgs(
 }
 
 export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
-  return (
-    env.NEMOCLAW_CURRENT_NEMOCLAW_REF ?? env.NEMOCLAW_E2E_EXPECTED_SHA ?? env.GITHUB_SHA ?? "HEAD"
-  );
+  for (const candidate of [
+    env.NEMOCLAW_CURRENT_NEMOCLAW_REF,
+    env.NEMOCLAW_E2E_EXPECTED_SHA,
+    env.GITHUB_SHA,
+  ]) {
+    if (candidate?.trim()) return candidate.trim();
+  }
+  return "HEAD";
 }
 
 // Frozen v0.0.74 and v0.0.89 sources run a live low-severity npm audit while
-// assembling their historical image. Inject a two-stage fixture hook that
-// changes only the cloned old Dockerfile to the repository's reviewed high
-// threshold; the current candidate image keeps its low threshold unchanged.
+// assembling their historical image. New non-critical advisories must not make
+// an immutable installed-base fixture impossible to create, so change only the
+// cloned old Dockerfile to the reviewed critical threshold. The current
+// candidate image keeps its low threshold unchanged.
 export function patchHistoricalInstallerAdvisoryThreshold(source: string): string {
   const needle = '  legacy_script="${source_root}/install.sh"\n';
   const hook =
@@ -85,11 +91,11 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 needle = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low"
-replacement = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=high"
+replacement = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=critical"
 if text.count(needle) != 1:
     raise SystemExit(f"{path}: expected exactly one historical mcporter audit threshold")
 path.write_text(text.replace(needle, replacement, 1), encoding="utf-8")
-print("INFO: Historical upgrade fixture retains npm audit at the reviewed high threshold", flush=True)
+print("INFO: Historical upgrade fixture retains npm audit at the reviewed critical threshold", flush=True)
 NEMOCLAW_OLD_AUDIT_THRESHOLD_DOCKERFILE_PY
 '''
 if hook not in text:

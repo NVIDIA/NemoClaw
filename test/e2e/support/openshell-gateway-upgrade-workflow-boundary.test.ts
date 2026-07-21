@@ -96,6 +96,9 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
       }),
     ).toBe("explicit-ref");
     expect(currentNemoclawUpgradeRef({ GITHUB_SHA: "workflow-sha" })).toBe("workflow-sha");
+    expect(
+      currentNemoclawUpgradeRef({ NEMOCLAW_E2E_EXPECTED_SHA: "", GITHUB_SHA: "workflow-sha" }),
+    ).toBe("workflow-sha");
     expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
   });
 
@@ -147,7 +150,7 @@ source_root=${JSON.stringify(tmp)}
       expect(patchDockerfile.status, patchDockerfile.stderr).toBe(0);
 
       const result = fs.readFileSync(dockerfile, "utf8");
-      expect(result).toContain("mcporter-runtime audit --omit=dev --audit-level=high");
+      expect(result).toContain("mcporter-runtime audit --omit=dev --audit-level=critical");
       expect(result).toContain("mcporter-runtime audit signatures");
       expect(result).not.toContain("mcporter-runtime audit --omit=dev --audit-level=low");
     } finally {

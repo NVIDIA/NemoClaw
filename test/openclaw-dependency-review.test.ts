@@ -153,6 +153,17 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("preexisting nested Core");
   });
 
+  it("records the active mcporter advisory remediations", () => {
+    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+
+    expect(review).toContain("GHSA-9mqv-5hh9-4cgg");
+    expect(review).toContain("@hono/node-server@^1.19.9");
+    expect(review).toContain("`2.0.10`");
+    expect(review).toContain("GHSA-v2hh-gcrm-f6hx");
+    expect(review).toContain("fast-uri@^3.0.1");
+    expect(review).toContain("`3.1.4`");
+  });
+
   it("keeps advisor disposition evidence in the dependency review note", () => {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
 
