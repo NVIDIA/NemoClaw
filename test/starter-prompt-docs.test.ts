@@ -766,6 +766,13 @@ describe("starter prompt docs CTA", () => {
     expect(stationSource).not.toContain("only supported next step");
     expect(stationSource).toContain("model-cache filesystem and Docker storage");
     expect(stationSource).toContain(
+      "DGX Station is tested with limitations on one physical DGX Station GB300.",
+    );
+    expect(stationSource).toContain(
+      "Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.",
+    );
+    expect(stationSource).not.toContain("deferred end-to-end validation on physical hardware");
+    expect(stationSource).toContain(
       "Do not run `scripts/prepare-dgx-station-host.sh --check`, `--verify`, or `--apply` separately",
     );
     expect(stationSource).toContain("For Nemotron Ultra, run the ordinary installer without");
@@ -786,8 +793,6 @@ describe("starter prompt docs CTA", () => {
     );
     expect(stationSource).toContain("Run the installer only in a secure interactive terminal");
     expect(stationSource).toContain("Keep each official confirmation visible");
-    expect(stationSource).toContain("evaluation path with deferred end-to-end validation");
-    expect(stationSource).toContain("startup may still fail after readiness checks");
     expect(stationSource).toContain("third-party-software notice");
     expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
     expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");
