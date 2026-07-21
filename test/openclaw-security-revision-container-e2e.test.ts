@@ -72,7 +72,12 @@ type ProbeEvidence = Readonly<{
 }>;
 
 function requireCondition(condition: boolean, message: string): void {
-  if (!condition) throw new Error(message);
+  switch (condition) {
+    case true:
+      return;
+    default:
+      throw new Error(message);
+  }
 }
 
 function requireSafeImageReference(value: string): string {
@@ -93,12 +98,17 @@ function resolveConfiguredImage(env: NodeJS.ProcessEnv): string | undefined {
   );
   const enabled = selected || explicit === "1";
   const image = env[IMAGE_ENV]?.trim();
-  if (!enabled) {
-    requireCondition(!image, `${IMAGE_ENV} requires ${RUN_ENV}=1`);
-    return undefined;
+  switch (enabled) {
+    case false:
+      requireCondition(!image, `${IMAGE_ENV} requires ${RUN_ENV}=1`);
+      return undefined;
+    default:
+      requireCondition(
+        Boolean(image),
+        `${IMAGE_ENV} is required when the container E2E is enabled`,
+      );
+      return requireSafeImageReference(image as string);
   }
-  requireCondition(Boolean(image), `${IMAGE_ENV} is required when the container E2E is enabled`);
-  return requireSafeImageReference(image as string);
 }
 
 const PROBE_SOURCE = String.raw`
