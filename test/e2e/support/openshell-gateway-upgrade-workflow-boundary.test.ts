@@ -16,6 +16,7 @@ import {
 } from "../../../tools/e2e/workflow-boundary.mts";
 import {
   currentGatewayUpgradeInstallerArgs,
+  currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
   patchHistoricalInstallerAdvisoryThreshold,
@@ -78,6 +79,24 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     expect(currentGatewayUpgradeInstallerArgs("current-install.sh", { interactive: true })).toEqual(
       ["current-install.sh"],
     );
+  });
+
+  it("installs the selected E2E checkout instead of the trusted workflow SHA", () => {
+    expect(
+      currentNemoclawUpgradeRef({
+        NEMOCLAW_E2E_EXPECTED_SHA: "candidate-sha",
+        GITHUB_SHA: "trusted-main-sha",
+      }),
+    ).toBe("candidate-sha");
+    expect(
+      currentNemoclawUpgradeRef({
+        NEMOCLAW_CURRENT_NEMOCLAW_REF: "explicit-ref",
+        NEMOCLAW_E2E_EXPECTED_SHA: "candidate-sha",
+        GITHUB_SHA: "trusted-main-sha",
+      }),
+    ).toBe("explicit-ref");
+    expect(currentNemoclawUpgradeRef({ GITHUB_SHA: "workflow-sha" })).toBe("workflow-sha");
+    expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
   });
 
   it("keeps frozen installer setup deterministic without weakening the candidate audit", () => {

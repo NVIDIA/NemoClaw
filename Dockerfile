@@ -44,7 +44,9 @@ FROM ${BASE_IMAGE}
 ARG BASE_IMAGE
 # Upgrade the final runtime even when an install or rebuild starts from a
 # published sandbox base with Node 22.22.2. OpenClaw 2026.7.1 requires the
-# SQLite WAL fix in Node 22.22.3 or newer.
+# SQLite WAL fix in Node 22.22.3 or newer. The trusted managed-image staging
+# path removes this one instruction when it has just built Dockerfile.base from
+# the same Node image, avoiding a redundant 125 MB layer in that local-only case.
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 # Dependency review evidence for this runtime pin lives in
 # docs/security/openclaw-2026.7.1-dependency-review.md.

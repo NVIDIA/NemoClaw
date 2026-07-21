@@ -37,6 +37,7 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   currentGatewayUpgradeInstallerArgs,
+  currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
   patchHistoricalInstallerAdvisoryThreshold,
@@ -991,7 +992,7 @@ async function installCurrentNemoclawUpgrade(
   currentInstallLog: string,
   hiddenOldOpenShellDir?: string,
 ): Promise<void> {
-  const currentRef = process.env.NEMOCLAW_CURRENT_NEMOCLAW_REF ?? process.env.GITHUB_SHA ?? "HEAD";
+  const currentRef = currentNemoclawUpgradeRef(process.env);
   const currentRefResult = await bash(
     host,
     currentRef === "HEAD" ? "git rev-parse HEAD" : `printf '%s' ${shellQuote(currentRef)}`,

@@ -57,6 +57,12 @@ export function currentGatewayUpgradeInstallerArgs(
   return options.interactive ? [installer] : [installer, ...NON_INTERACTIVE_INSTALLER_ARGS];
 }
 
+export function currentNemoclawUpgradeRef(env: NodeJS.ProcessEnv): string {
+  return (
+    env.NEMOCLAW_CURRENT_NEMOCLAW_REF ?? env.NEMOCLAW_E2E_EXPECTED_SHA ?? env.GITHUB_SHA ?? "HEAD"
+  );
+}
+
 // Frozen v0.0.74 and v0.0.89 sources run a live low-severity npm audit while
 // assembling their historical image. Inject a two-stage fixture hook that
 // changes only the cloned old Dockerfile to the repository's reviewed high
