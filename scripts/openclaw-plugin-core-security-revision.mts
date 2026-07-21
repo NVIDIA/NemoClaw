@@ -412,15 +412,20 @@ function contentSnapshot(directory: string, label: string): ContentEntry[] {
   rejectUnsafeTree(directory, label);
   const entries: ContentEntry[] = [];
   const visit = (current: string): void => {
-    for (const name of readdirSync(current).sort()) {
+    const children = readdirSync(current, { withFileTypes: true }).sort((left, right) => {
+      if (left.name < right.name) return -1;
+      if (left.name > right.name) return 1;
+      return 0;
+    });
+    for (const entry of children) {
+      const name = entry.name;
       if (name.includes("\n") || name.includes("\r") || name.includes("\\")) {
         throw new Error(`${label} contains an unsafe name: ${name}`);
       }
       const child = path.join(current, name);
-      const metadata = lstatSync(child);
-      if (metadata.isDirectory()) {
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
         visit(child);
-      } else if (metadata.isFile()) {
+      } else if (entry.isFile()) {
         const descriptor = openSync(child, constants.O_RDONLY | constants.O_NOFOLLOW);
         try {
           const openedMetadata = fstatSync(descriptor);
@@ -435,6 +440,8 @@ function contentSnapshot(directory: string, label: string): ContentEntry[] {
         } finally {
           closeSync(descriptor);
         }
+      } else {
+        throw new Error(`${label} contains an unsafe member: ${child}`);
       }
     }
   };
