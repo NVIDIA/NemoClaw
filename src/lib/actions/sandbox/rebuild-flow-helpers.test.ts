@@ -199,6 +199,43 @@ describe("rebuild agent base image preflight", () => {
     expect(disposeRebuildAgentBaseImagePreflight(result)).toBe(true);
   });
 
+  it("proves a caller alias before resolving it as the pinned remote image (#7144)", () => {
+    const callerAlias = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+    const remoteRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+    const resolutionMetadata = { key: "verified-remote" } as never;
+    process.env[overrideEnvVar] = callerAlias;
+    const { ensureAgentBaseImage, bindLocalAgentBaseImageToPinnedProvenance } =
+      mockBaseImagePreflight(remoteRef);
+    bindLocalAgentBaseImageToPinnedProvenance.mockReturnValue(resolutionMetadata);
+    const restoreTrust = vi.fn();
+    const pinTrust = vi
+      .spyOn(agentOnboard, "pinTrustedAgentRemoteBaseImageOverrideForOperation")
+      .mockReturnValue(restoreTrust);
+    ensureAgentBaseImage.mockImplementation(() => {
+      expect(pinTrust).toHaveBeenCalledWith(overrideEnvVar, {
+        ref: callerAlias,
+        resolutionMetadata,
+      });
+      expect(restoreTrust).not.toHaveBeenCalled();
+      return { imageTag: remoteRef, built: false, resolutionMetadata };
+    });
+
+    const result = ensureRebuildAgentBaseImage("hermes", makeBail());
+
+    expect(bindLocalAgentBaseImageToPinnedProvenance).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "hermes" }),
+      callerAlias,
+    );
+    expect(restoreTrust).toHaveBeenCalledOnce();
+    expect(result).toEqual({
+      ok: true,
+      imageRef: remoteRef,
+      overrideEnvVar,
+      resolutionMetadata,
+      trustedRemoteOverride: { ref: remoteRef, resolutionMetadata },
+    });
+  });
+
   it("retains a resolved platform digest for the immutable remote handoff (#7144)", () => {
     const platformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
     const { pinAgentSandboxBaseImageRef } = mockBaseImagePreflight(platformRef);

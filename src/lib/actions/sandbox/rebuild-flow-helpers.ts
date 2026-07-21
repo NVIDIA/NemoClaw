@@ -271,15 +271,31 @@ export function ensureRebuildAgentBaseImage(
   if (!rebuildAgent) return { ok: true, imageRef: null, overrideEnvVar: null };
   const agentDef = loadAgent(rebuildAgent);
   const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentDef.name);
-  const hasExplicitOverride = Boolean(process.env[overrideEnvVar]?.trim());
+  const explicitOverride = process.env[overrideEnvVar]?.trim();
+  const hasExplicitOverride = Boolean(explicitOverride);
   try {
-    const result = ensureAgentBaseImage(agentDef, {
-      forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
-      ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
-      ...(options.forceBaseImageRefresh !== undefined
-        ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
-        : {}),
-    });
+    const explicitOverrideResolution = explicitOverride
+      ? bindLocalAgentBaseImageToPinnedProvenance(agentDef, explicitOverride)
+      : null;
+    const restoreExplicitOverrideTrust =
+      explicitOverride && explicitOverrideResolution
+        ? pinTrustedAgentRemoteBaseImageOverrideForOperation(overrideEnvVar, {
+            ref: explicitOverride,
+            resolutionMetadata: explicitOverrideResolution,
+          })
+        : () => undefined;
+    let result: ReturnType<typeof ensureAgentBaseImage>;
+    try {
+      result = ensureAgentBaseImage(agentDef, {
+        forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
+        ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
+        ...(options.forceBaseImageRefresh !== undefined
+          ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
+          : {}),
+      });
+    } finally {
+      restoreExplicitOverrideTrust();
+    }
     const needsTemporaryHandoff =
       result.imageTag !== null &&
       !isCanonicalLocalBaseImageRef(agentDef.name, result.imageTag) &&
@@ -297,6 +313,7 @@ export function ensureRebuildAgentBaseImage(
         : undefined;
     const resolutionMetadata =
       result.resolutionMetadata ??
+      explicitOverrideResolution ??
       (hasExplicitOverride && imageRef
         ? bindLocalAgentBaseImageToPinnedProvenance(agentDef, imageRef)
         : null);
