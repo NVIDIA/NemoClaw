@@ -9,12 +9,6 @@ export interface OldHermesDockerfileOptions {
 export function buildOldHermesDockerfile(options: OldHermesDockerfileOptions): string {
   return [
     `FROM ${options.baseTag}`,
-    "USER root",
-    // The v0.14 console script is executable by root in the base-image probe but
-    // not by the sandbox user. Normalize the fixture before switching users so
-    // its pre-rebuild CLI state can be seeded through the real Hermes command.
-    'RUN test "$(readlink -f /usr/local/bin/hermes)" = "/opt/hermes/.venv/bin/hermes" \\',
-    "    && chmod 0755 /opt/hermes/.venv/bin/hermes",
     "USER sandbox",
     "WORKDIR /sandbox",
     "RUN mkdir -p /sandbox/.hermes/memories \\",

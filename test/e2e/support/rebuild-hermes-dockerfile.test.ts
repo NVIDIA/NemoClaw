@@ -6,20 +6,15 @@ import { describe, expect, it } from "vitest";
 import { buildOldHermesDockerfile } from "../live/rebuild-hermes-dockerfile.ts";
 
 describe("Hermes rebuild Docker fixture", () => {
-  it("makes the old Hermes console script executable before dropping to the sandbox user", () => {
+  it("renders legacy state as the sandbox user without broadening its policy", () => {
     const dockerfile = buildOldHermesDockerfile({
       baseTag: "example/hermes-old:fixture",
       discordPlaceholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
     });
-    const rootUser = dockerfile.indexOf("USER root");
-    const executable = dockerfile.indexOf("chmod 0755 /opt/hermes/.venv/bin/hermes");
-    const sandboxUser = dockerfile.indexOf("USER sandbox");
-
-    expect(rootUser).toBeGreaterThanOrEqual(0);
-    expect(executable).toBeGreaterThan(rootUser);
-    expect(sandboxUser).toBeGreaterThan(executable);
-    expect(dockerfile).toContain(
-      'test "$(readlink -f /usr/local/bin/hermes)" = "/opt/hermes/.venv/bin/hermes"',
-    );
+    expect(dockerfile).toContain("FROM example/hermes-old:fixture");
+    expect(dockerfile).toContain("USER sandbox");
+    expect(dockerfile).toContain("DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN");
+    expect(dockerfile).not.toContain("USER root");
+    expect(dockerfile).not.toContain("/etc/openshell/policy.yaml");
   });
 });
