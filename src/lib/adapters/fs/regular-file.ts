@@ -35,7 +35,17 @@ export function openRegularFileNoFollow(
   }
   return {
     close,
-    readUtf8: () => String(fs.readFileSync(descriptor, "utf-8")),
+    readUtf8: () => {
+      const size = fs.fstatSync(descriptor).size;
+      const bytes = Buffer.alloc(size);
+      let offset = 0;
+      while (offset < size) {
+        const read = fs.readSync(descriptor, bytes, offset, size - offset, offset);
+        if (read === 0) break;
+        offset += read;
+      }
+      return bytes.subarray(0, offset).toString("utf-8");
+    },
     replaceUtf8: (contents, mode) => {
       const bytes = Buffer.from(contents, "utf-8");
       const written = fs.writeSync(descriptor, bytes, 0, bytes.length, 0);

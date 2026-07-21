@@ -18,6 +18,7 @@ describe("regular file adapter", () => {
     try {
       const file = openRegularFileNoFollow(filePath, { writable: true });
       expect(file.readUtf8()).toBe("before\n");
+      expect(file.readUtf8()).toBe("before\n");
       file.replaceUtf8("after\n", 0o600);
       file.close();
 
