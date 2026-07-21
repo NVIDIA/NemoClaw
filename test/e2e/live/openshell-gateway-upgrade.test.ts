@@ -864,11 +864,11 @@ async function installOldNemoclawAndClaw(
   expect(oldLog, `old fixture must show pinned OpenClaw ${OLD_OPENCLAW_VERSION}`).toMatch(
     new RegExp(`OpenClaw ${oldOpenClawVersionPattern}|openclaw@${oldOpenClawVersionPattern}`),
   );
-  if (["v0.0.74", "v0.0.89"].includes(OLD_NEMOCLAW_REF)) {
-    expect(oldLog).toContain(
+  expect(
+    oldLog.includes(
       "INFO: Historical upgrade fixture retains npm audit at the reviewed high threshold",
-    );
-  }
+    ),
+  ).toBe(["v0.0.74", "v0.0.89"].includes(OLD_NEMOCLAW_REF));
 
   const openshellVersion = await bash(host, `openshell --version`, {
     artifactName: "old-openshell-version",
