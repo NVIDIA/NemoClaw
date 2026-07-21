@@ -20,11 +20,6 @@ import {
   snapshotFile,
   writeJsonFile,
 } from "../fixtures/file-state.ts";
-import {
-  HERMES_REBUILD_SWAP_BYTES,
-  needsHermesRebuildSwap,
-  parseActiveSwapBytes,
-} from "../fixtures/hermes-rebuild-swap.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -38,6 +33,7 @@ import {
 } from "./rebuild-hermes-image-state.ts";
 import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
+import { ensureHermesRebuildSwap } from "./rebuild-hermes-swap.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
 // The migrated scope is the legacy non-interactive shell regression: install.sh,
@@ -98,72 +94,6 @@ const LIVE_TIMEOUT_MS = 100 * 60_000;
 // generous diagnostic tail without letting a stuck child exhaust the hosted
 // runner by growing the fixture's in-memory stdout/stderr buffers forever.
 const LONG_COMMAND_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
-const HERMES_REBUILD_SWAP_FILE = "/mnt/nemoclaw-hermes-rebuild.swap";
-
-async function ensureHermesRebuildSwap(host: HostCliClient): Promise<void> {
-  const githubActions = process.env.GITHUB_ACTIONS === "true";
-  if (!githubActions) return;
-
-  const probeOptions = {
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  };
-  const current = await host.command(
-    "swapon",
-    ["--show", "--bytes", "--noheadings", "--output", "SIZE"],
-    {
-      ...probeOptions,
-      artifactName: "prereq-hermes-rebuild-swap-before",
-    },
-  );
-  expectExitZero(current, "inspect active swap before Hermes rebuild");
-  if (
-    !needsHermesRebuildSwap({
-      activeSwapBytes: parseActiveSwapBytes(current.stdout),
-      githubActions,
-    })
-  ) {
-    return;
-  }
-
-  const provision = await host.command(
-    "sudo",
-    [
-      "bash",
-      "-c",
-      `set -euo pipefail
-swap_file="$1"
-swap_size_bytes="$2"
-swapoff "$swap_file" 2>/dev/null || true
-rm -f "$swap_file"
-fallocate -l "$swap_size_bytes" "$swap_file"
-chmod 0600 "$swap_file"
-mkswap "$swap_file"
-swapon "$swap_file"`,
-      "hermes-rebuild-swap",
-      HERMES_REBUILD_SWAP_FILE,
-      String(HERMES_REBUILD_SWAP_BYTES),
-    ],
-    {
-      ...probeOptions,
-      artifactName: "prereq-hermes-rebuild-swap-provision",
-      timeoutMs: 2 * 60_000,
-    },
-  );
-  expectExitZero(provision, "provision swap for Hermes rebuild");
-
-  const verified = await host.command(
-    "swapon",
-    ["--show", "--bytes", "--noheadings", "--output", "SIZE"],
-    {
-      ...probeOptions,
-      artifactName: "prereq-hermes-rebuild-swap-after",
-    },
-  );
-  expectExitZero(verified, "inspect active swap after Hermes rebuild provisioning");
-  expect(parseActiveSwapBytes(verified.stdout)).toBeGreaterThanOrEqual(HERMES_REBUILD_SWAP_BYTES);
-}
-
 function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[] {
   // `openshell sandbox exec` intentionally runs inside Landlock, which cannot
   // read the immutable `/opt/hermes` runtime. The rebuild contract needs to
