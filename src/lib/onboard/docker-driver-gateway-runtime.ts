@@ -11,6 +11,8 @@ import {
   createDockerDriverGatewayPortListenerHelpers,
   type DockerDriverGatewayPortListenerOptions,
   type DockerDriverGatewayPortListenerScan,
+  type DockerDriverGatewayServicePortOwnership,
+  type DockerDriverGatewayServicePortOwnershipOptions,
 } from "./docker-driver-gateway-port-listener";
 import {
   getDockerDriverGatewayTargetIdentityDrift,
@@ -68,6 +70,10 @@ export interface DockerDriverGatewayRuntimeDeps {
 
 export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewayRuntimeDeps): {
   clearDockerDriverGatewayRuntimeFiles(): void;
+  createGatewayServicePortOwnership(
+    portCheck: PortProbeResult,
+    opts: DockerDriverGatewayServicePortOwnershipOptions,
+  ): DockerDriverGatewayServicePortOwnership;
   getDockerDriverGatewayEnv(
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
@@ -434,6 +440,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   // dependencies. Returning the configured methods keeps onboard on one
   // authoritative runtime instance rather than constructing a second factory.
   const {
+    createGatewayServicePortOwnership,
     getDockerDriverGatewayPortListenerPid,
     getDockerDriverGatewayPortListenerScan,
     isDockerDriverGatewayPortListener,
@@ -461,6 +468,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
 
   return {
     clearDockerDriverGatewayRuntimeFiles,
+    createGatewayServicePortOwnership,
     getDockerDriverGatewayEnv,
     getDockerDriverGatewayPid,
     getDockerDriverGatewayPidFile,

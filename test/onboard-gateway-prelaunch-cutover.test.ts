@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   type DockerDriverGatewayCutoverDeps,
   type DockerDriverGatewayCutoverInput,
+  readDockerDriverGatewayHealth,
   runDockerDriverGatewayCutover,
 } from "../src/lib/onboard/docker-driver-gateway-cutover";
 
@@ -103,6 +104,21 @@ function makeHarness(options: HarnessOptions) {
 }
 
 describe("Docker-driver gateway prelaunch cutover (#5968)", () => {
+  it("captures the named and active gateway health views", () => {
+    const calls: string[][] = [];
+    const health = readDockerDriverGatewayHealth((args) => {
+      calls.push(args);
+      return args.join(" ");
+    }, "nemoclaw");
+
+    expect(health).toEqual({
+      status: "status",
+      namedInfo: "gateway info -g nemoclaw",
+      activeInfo: "gateway info",
+    });
+    expect(calls).toEqual([["status"], ["gateway", "info", "-g", "nemoclaw"], ["gateway", "info"]]);
+  });
+
   it("reaps stale port listeners before allowing a fresh launch", async () => {
     const harness = makeHarness({
       listenerPids: [4242, 4343],

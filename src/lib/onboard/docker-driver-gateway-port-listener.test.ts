@@ -127,4 +127,49 @@ describe("Docker-driver gateway port listener discovery", () => {
     expect(runCaptureEx).toHaveBeenNthCalledWith(1, ["lsof", "-ti", ":18080", "-sTCP:LISTEN"]);
     expect(runCaptureEx).toHaveBeenNthCalledWith(2, ["lsof", "-ti", ":18081", "-sTCP:LISTEN"]);
   });
+
+  it("prepares and validates every verified service-port listener", () => {
+    const preparePort = vi.fn();
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => ({ stdout: "1234\n2345\n", exitCode: 0, timedOut: false })),
+    });
+    const ownership = helpers.createGatewayServicePortOwnership(
+      { ok: false, process: "openshell-gateway", pid: 1234 },
+      { exitOnFailure: false, preparePort },
+    );
+
+    expect(() => ownership.validatePortOwner()).not.toThrow();
+    ownership.preparePort();
+    expect(preparePort).toHaveBeenCalledWith([1234, 2345]);
+  });
+
+  it("rejects incomplete service-port ownership without preparing the port", () => {
+    const preparePort = vi.fn();
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => ({ stdout: "", exitCode: 127, timedOut: false })),
+    });
+    const ownership = helpers.createGatewayServicePortOwnership(
+      { ok: false, process: "openshell-gateway", pid: 1234 },
+      { exitOnFailure: false, preparePort },
+    );
+
+    expect(() => ownership.validatePortOwner()).toThrow(
+      "the gateway port has an unknown or incompletely observed listener",
+    );
+    expect(preparePort).not.toHaveBeenCalled();
+  });
+
+  it("rejects a listener that appears after the service-port bind probe", () => {
+    const { helpers } = makeHelpers({
+      runCaptureEx: vi.fn(() => ({ stdout: "1234\n", exitCode: 0, timedOut: false })),
+    });
+    const ownership = helpers.createGatewayServicePortOwnership(
+      { ok: true },
+      { exitOnFailure: false, preparePort: vi.fn() },
+    );
+
+    expect(() => ownership.validatePortOwner()).toThrow(
+      "the gateway port listener changed during ownership validation",
+    );
+  });
 });

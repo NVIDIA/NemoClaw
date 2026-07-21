@@ -643,9 +643,9 @@ let GATEWAY_PORT = DEFAULT_GATEWAY_PORT;
 let GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
 const {
   clearDockerDriverGatewayRuntimeFiles,
+  createGatewayServicePortOwnership,
   getDockerDriverGatewayEnv,
   getDockerDriverGatewayPid,
-  getDockerDriverGatewayPortListenerScan,
   getDockerDriverGatewayPortListenerPid,
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
@@ -1972,47 +1972,18 @@ async function startDockerDriverGateway({
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
-  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
-  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-    ignoreError: true,
-  });
-  const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
   const initialPortCheck = await checkGatewayPortAvailable();
-  const portListenerScan = getDockerDriverGatewayPortListenerScan(initialPortCheck, {
+  const servicePortOwnership = createGatewayServicePortOwnership(initialPortCheck, {
+    exitOnFailure,
     gatewayBin: identityGatewayBin,
+    preparePort: (extraPids) =>
+      reapHostGatewayBeforeLaunchOrFail({
+        stateDir,
+        gatewayBin: identityGatewayBin,
+        extraPids,
+        exitOnFailure,
+      }),
   });
-  const reportUntrustedGatewayPort = (message: string): never => {
-    const detail =
-      `Refusing to start a second OpenShell gateway: ${message}. ` +
-      `Inspect port ${GATEWAY_PORT} and stop only its owning process before retrying.`;
-    console.error(`  ${detail}`);
-    if (exitOnFailure) process.exit(1);
-    throw new Error(detail);
-  };
-  const validateServicePortOwner = () => {
-    if (!portListenerScan.complete || portListenerScan.unverifiedPids.length > 0) {
-      reportUntrustedGatewayPort(
-        "the gateway port has an unknown or incompletely observed listener",
-      );
-    }
-    if (initialPortCheck.ok) {
-      if (portListenerScan.pids.length > 0) {
-        reportUntrustedGatewayPort("the gateway port listener changed during ownership validation");
-      }
-      return;
-    }
-    const primaryPid = Number(initialPortCheck.pid);
-    if (
-      portListenerScan.pids.length === 0 ||
-      (Number.isInteger(primaryPid) &&
-        primaryPid > 0 &&
-        !portListenerScan.pids.includes(primaryPid))
-    ) {
-      reportUntrustedGatewayPort(
-        "the gateway port has an unknown or incompletely observed listener",
-      );
-    }
-  };
   if (
     await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({
       clearDockerDriverGatewayRuntimeFiles,
@@ -2023,17 +1994,10 @@ async function startDockerDriverGateway({
       isDockerDriverGatewayReady: () =>
         isDockerDriverGatewayHttpReady(undefined, undefined, driftGatewayEnv),
       registerDockerDriverGatewayEndpoint,
-      preparePortForOpenShellGatewayUserServiceStart: () => {
-        reapHostGatewayBeforeLaunchOrFail({
-          stateDir,
-          gatewayBin: identityGatewayBin,
-          extraPids: portListenerScan.pids,
-          exitOnFailure,
-        });
-      },
+      preparePortForOpenShellGatewayUserServiceStart: servicePortOwnership.preparePort,
       runCaptureOpenshell,
       skipSandboxBridgeReachability,
-      validatePortOwnerForOpenShellGatewayUserServiceStart: validateServicePortOwner,
+      validatePortOwnerForOpenShellGatewayUserServiceStart: servicePortOwnership.validatePortOwner,
       verifySandboxBridgeGatewayReachableOrExit: (fail, options) =>
         verifySandboxBridgeGatewayReachableOrExit(fail, {
           ...options,
@@ -2042,7 +2006,10 @@ async function startDockerDriverGateway({
     })
   )
     return;
-  // Cutover rechecks health, reaps duplicates, and requires strict bind proof before launch.
+  const initialHealth = dockerDriverGatewayCutover.readDockerDriverGatewayHealth(
+    runCaptureOpenshell,
+    GATEWAY_NAME,
+  );
   const cutover = await dockerDriverGatewayCutover.runDockerDriverGatewayCutover(
     {
       gatewayBin,
@@ -2052,13 +2019,9 @@ async function startDockerDriverGateway({
       exitOnFailure,
       skipSandboxBridgeReachability,
       stateDir,
-      portListenerScan,
+      portListenerScan: servicePortOwnership.portListenerScan,
       pidFileGatewayPid: getDockerDriverGatewayPid(),
-      initialHealth: {
-        status: gatewayStatus,
-        namedInfo: gwInfo,
-        activeInfo: activeGatewayInfo,
-      },
+      initialHealth,
     },
     {
       isDockerDriverGatewayProcessAlive,
@@ -2087,7 +2050,7 @@ async function startDockerDriverGateway({
         const probe = await checkGatewayPortAvailable();
         return probe.ok && !probe.warning;
       },
-      reportUntrustedGatewayPort,
+      reportUntrustedGatewayPort: servicePortOwnership.reportUntrustedGatewayPort,
       reportMissingGatewayBinary: () => {
         console.error("  OpenShell Docker-driver gateway binary not found.");
         console.error(
