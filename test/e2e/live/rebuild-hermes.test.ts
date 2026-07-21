@@ -26,7 +26,7 @@ import {
   needsHermesRebuildSwap,
   parseActiveSwapBytes,
 } from "../fixtures/hermes-rebuild-swap.ts";
-import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import { CLI_DIST_ENTRYPOINT, CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
@@ -53,9 +53,10 @@ import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
 // Protected PR E2E checks out the exact head while the trusted controller runs
-// the base workflow. Older controller revisions therefore cannot provide a
-// newly introduced job-level CLI override. Keep the test pinned to the exact
-// checked-out launcher in both that transition window and direct local runs.
+// the base workflow. Older controller revisions therefore cannot provide the
+// newly introduced CLI build and OpenShell install steps. Keep the test pinned
+// to the exact checked-out launcher and bootstrap only what that controller
+// revision omits; the PR workflow remains the canonical execution path.
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 
 // The rebuild regression invokes the checked-out CLI directly. Full install.sh
@@ -134,6 +135,29 @@ const LIVE_TIMEOUT_MS = 100 * 60_000;
 // runner by growing the fixture's in-memory stdout/stderr buffers forever.
 const LONG_COMMAND_CAPTURE_LIMIT_BYTES = 4 * 1024 * 1024;
 const HERMES_REBUILD_SWAP_FILE = "/mnt/nemoclaw-hermes-rebuild.swap";
+
+async function ensureRebuildHermesHostTools(host: HostCliClient): Promise<void> {
+  const bootstrapEnv = buildAvailabilityProbeEnv();
+  if (!fs.existsSync(CLI_DIST_ENTRYPOINT)) {
+    const build = await host.command("npm", ["run", "build:cli"], {
+      artifactName: "prereq-build-checked-out-cli",
+      cwd: REPO_ROOT,
+      env: bootstrapEnv,
+      timeoutMs: 10 * 60_000,
+    });
+    expectExitZero(build, "build checked-out NemoClaw CLI for protected E2E");
+  }
+
+  if (!(await host.isCommandAvailable("openshell", { env: bootstrapEnv }))) {
+    const install = await host.command("bash", ["scripts/install-openshell.sh"], {
+      artifactName: "prereq-install-openshell",
+      cwd: REPO_ROOT,
+      env: bootstrapEnv,
+      timeoutMs: 10 * 60_000,
+    });
+    expectExitZero(install, "install OpenShell for protected E2E");
+  }
+}
 
 async function ensureHermesRebuildSwap(host: HostCliClient): Promise<void> {
   const githubActions = process.env.GITHUB_ACTIONS === "true";
@@ -670,6 +694,7 @@ test(STALE_BASE_REBUILD
     path.resolve(host.commandPath),
     "rebuild-Hermes must invoke the checked-out CLI through NEMOCLAW_CLI_BIN",
   ).toBe(CLI_ENTRYPOINT);
+  await ensureRebuildHermesHostTools(host);
   await ensureHermesRebuildSwap(host);
 
   const dockerInfo = await host.command("docker", ["info"], {
