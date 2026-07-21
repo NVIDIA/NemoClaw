@@ -38,6 +38,8 @@ const LIVE_TIMEOUT_MS = 50 * 60_000;
 const FIRST_TURN_TIMEOUT_MS = 240_000;
 const MAX_SILENCE_SECS = 60;
 const EXPECTED_FIRST_REPLY = "NEMOCLAW_E2E_READY_6002";
+const AUTHORITATIVE_LOCAL_BASE_BUILD_OUTPUT =
+  "Building OpenClaw sandbox base image locally because no compatible published base image was found.";
 const MEASURE_COLD_ONBOARD = process.env.E2E_TARGET_ID === "full-e2e";
 
 interface ColdOnboardCapture {
@@ -173,6 +175,7 @@ async function assertColdOnboardPerformance(input: {
   ).toBeGreaterThanOrEqual(traceWindow.finishedAtMs);
   const ansiSgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
   const plain = resultText(input.install).replace(ansiSgr, "");
+  const usedAuthoritativeLocalBaseBuild = plain.includes(AUTHORITATIVE_LOCAL_BASE_BUILD_OUTPUT);
   const heartbeatCount = (plain.match(/Still working on /g) ?? []).length;
   const buildKitFallback = /Local BuildKit build [^\n]*using the gateway builder instead\./u.test(
     plain,
@@ -204,6 +207,7 @@ async function assertColdOnboardPerformance(input: {
     traceWindow,
     firstTurnCompletedAtMs,
     input.budget,
+    usedAuthoritativeLocalBaseBuild,
   );
   const rootStartToFirstTurnCompletionSecs = Math.ceil(
     performanceEvaluation.rootStartToFirstTurnCompletionMs / 1_000,
@@ -232,6 +236,9 @@ async function assertColdOnboardPerformance(input: {
     performance: {
       passed: performanceEvaluation.passed,
       violations: performanceEvaluation.violations,
+      usedAuthoritativeLocalBaseBuild,
+      appliedAuthoritativeLocalBaseBuildAllowanceMs:
+        performanceEvaluation.appliedAuthoritativeLocalBaseBuildAllowanceMs,
     },
     heartbeatCount,
     maxSilenceSecs,

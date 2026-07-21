@@ -318,6 +318,11 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "keeps the authoritative local-build allowance tied to same-head PR evidence",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/onboard-performance-config-schema.test.ts",
       "test": "records five independent successful samples for current main",
       "category": "compatibility"
     },
