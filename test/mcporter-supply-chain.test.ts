@@ -9,6 +9,10 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const runtimeDirectory = path.join(repoRoot, "agents", "openclaw", "mcporter-runtime");
+const dependencyReview = fs.readFileSync(
+  path.join(repoRoot, "agents", "openclaw", "dependency-review.md"),
+  "utf8",
+);
 const dockerfiles = ["Dockerfile.base", "Dockerfile"].map((name) => ({
   name,
   contents: fs.readFileSync(path.join(repoRoot, name), "utf8"),
@@ -18,6 +22,7 @@ const expectedIntegrity =
   "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
 const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
+const patchedHonoNodeServerVersion = "2.0.11";
 
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
@@ -63,6 +68,15 @@ function runIntegrityGate(contents: string, version: string) {
 }
 
 describe("mcporter image supply-chain controls", () => {
+  it("records the patched Hono Node server review boundary", () => {
+    expect(dependencyReview).toContain("a manifest override, or the locked graph changes");
+    expect(dependencyReview).toContain(
+      "`2.0.5` is the first patched release for `GHSA-frvp-7c67-39w9`",
+    );
+    expect(dependencyReview).toContain("any version other than exact `2.0.11`");
+    expect(dependencyReview).toContain("the `/vercel` adapter");
+  });
+
   it("resolves the committed production graph through npm's lockfile boundary", () => {
     const result = spawnSync(
       "npm",
@@ -71,11 +85,28 @@ describe("mcporter image supply-chain controls", () => {
     );
     expect(result.status, result.stderr).toBe(0);
     const graph = JSON.parse(result.stdout) as {
-      dependencies?: Record<string, { version?: string }>;
+      dependencies?: {
+        mcporter?: {
+          version?: string;
+          dependencies?: {
+            "@modelcontextprotocol/sdk"?: {
+              dependencies?: {
+                "@hono/node-server"?: { version?: string; overridden?: boolean };
+              };
+            };
+          };
+        };
+      };
       problems?: string[];
     };
     expect(graph.problems).toBeUndefined();
     expect(graph.dependencies?.mcporter?.version).toBe(expectedVersion);
+    const honoNodeServer =
+      graph.dependencies?.mcporter?.dependencies?.["@modelcontextprotocol/sdk"]?.dependencies?.[
+        "@hono/node-server"
+      ];
+    expect(honoNodeServer?.version).toBe(patchedHonoNodeServerVersion);
+    expect(honoNodeServer?.overridden).toBe(true);
   });
 
   it.each(dockerfiles)("pins and verifies the package in $name", ({ contents }) => {
@@ -119,7 +150,13 @@ describe("mcporter image supply-chain controls", () => {
   });
 
   it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
+    const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+
     expect(contents).toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).toContain(`${runtimePrefix} audit signatures`);
+    expect(flattenedContents).toContain(
+      `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter`,
+    );
+    expect(contents).toContain("StreamableHTTPServerTransport");
   });
 });

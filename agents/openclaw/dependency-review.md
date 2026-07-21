@@ -4,7 +4,7 @@
 # OpenClaw MCP Runtime Dependency Review
 
 This file records the reviewed `mcporter` baseline installed in the OpenClaw sandbox image.
-Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever `MCPORTER_VERSION` or its integrity value changes in `Dockerfile.base` or `Dockerfile`.
+Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever `MCPORTER_VERSION`, its integrity value, a manifest override, or the locked graph changes in `Dockerfile.base` or `Dockerfile`.
 
 - Package: `mcporter@0.7.3`
 - Purpose: in-sandbox OpenClaw MCP configuration and client adapter; it is not a host bridge, proxy, relay, or listener.
@@ -14,10 +14,12 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 - npm integrity: `sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==`
 - Registry metadata independently queried from npm: 2026-06-30.
 - Locked graph: `agents/openclaw/mcporter-runtime/package-lock.json` (npm lockfile version 3).
+- Transitive remediation revalidated from npm on 2026-07-21: the manifest overrides `@hono/node-server` to exact version `2.0.11`, and the lock resolves that version. `2.0.5` is the first patched release for `GHSA-frvp-7c67-39w9`.
+- Compatibility review: upstream `@hono/node-server` v2 retains its public API; its declared breaking changes remove Node 18 support and the `/vercel` adapter. NemoClaw requires Node `>=22.19.0`, the installed mcporter and MCP SDK sources do not import the removed adapter, and both image install paths instantiate and close the MCP SDK's Hono-backed `StreamableHTTPServerTransport` before accepting the graph.
 - Lock regeneration command: `npm --prefix agents/openclaw/mcporter-runtime install --package-lock-only --ignore-scripts --omit=dev`
 - Advisory command: `npm --prefix agents/openclaw/mcporter-runtime ci --ignore-scripts --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit signatures`
-- Advisory review date: 2026-06-30.
-- Advisory result: `0` known vulnerabilities across the resolved production dependency graph; npm verified registry signatures for all `120` resolved packages and attestations for `12` packages.
+- Advisory review date: 2026-07-21.
+- Advisory result: `0` known vulnerabilities across the resolved production dependency graph; npm verified registry signatures for all `120` resolved packages and attestations for `13` packages.
 
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.
 
@@ -38,7 +40,7 @@ The lock records the exact version, registry URL, and integrity for every transi
 
 ## Source-of-Truth Boundary
 
-- `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`.
+- `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`, or resolves `@hono/node-server` to any version other than exact `2.0.11`.
 - `sourceBoundary`: npm owns registry metadata, tarball integrity, provenance signatures, and advisory responses; NemoClaw owns the exact lock, script-disabled install, Docker integrity assertion, and review record.
 - `whyNotSourceFix`: a repository note cannot make external registry state trustworthy, so image builds execute `npm audit` and `npm audit signatures` against the locked production graph and reviewers compare the lock with the registry response.
 - `regressionTest`: `test/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, audit commands, and this review synchronized.

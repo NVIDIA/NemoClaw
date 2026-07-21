@@ -385,6 +385,10 @@ RUN set -eu; \
         rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
         npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
             --ignore-scripts --omit=dev --no-audit --no-fund --no-progress; \
+        npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ls \
+            --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter >/dev/null; \
+        node --input-type=module -e \
+            'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();'; \
         ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
         test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
         npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \

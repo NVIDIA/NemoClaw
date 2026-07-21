@@ -6,7 +6,7 @@ Advisory audit revalidated: 2026-07-21
 
 WeChat locked-graph audit revalidated: 2026-07-12
 
-Scope: NemoClaw runtime pin `openclaw@2026.6.10`, runtime helper pin `@zed-industries/codex-acp@0.11.1`, optional OpenClaw plugins, and built-in messaging OpenClaw plugins.
+Scope: NemoClaw runtime pin `openclaw@2026.6.10`, the locked `mcporter@0.7.3` runtime graph, runtime helper pin `@zed-industries/codex-acp@0.11.1`, optional OpenClaw plugins, and built-in messaging OpenClaw plugins.
 
 ## Issue #5591 Acceptance Mapping
 
@@ -56,7 +56,7 @@ NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
 Revalidated on 2026-07-21: the command exited `0` under Node `v22.22.2`.
 This runtime satisfies the OpenClaw engine requirement of `>=22.19.0`.
 The remediated reviewed-archive graph reported `0` info, `1` low, `1` moderate, `0` high, and `0` critical findings across `766` total dependencies.
-The mcporter locked graph reported no findings across `138` dependencies.
+The mcporter locked graph reported no findings across `138` dependencies after its manifest and lock remediated `GHSA-frvp-7c67-39w9` by overriding `@hono/node-server` from `1.19.14` to exact version `2.0.11`; `2.0.5` is the first patched release.
 The configured `high` threshold therefore passed.
 
 The retained low finding is `GHSA-v422-hmwv-36x6` in `body-parser@2.0.0` through `2.2.2`.
@@ -66,7 +66,7 @@ It remains in the reviewed diagnostics OTEL and WhatsApp plugin graphs.
 Both findings have upstream fixes, but applying them would change additional reviewed plugin shrinkwraps.
 The current remediation does not silently extend its authority to those graphs.
 
-This review is an advisory snapshot for the direct OpenClaw runtime package, Codex ACP runtime helper, optional plugins, messaging plugins, and their npm dependency graphs at review time. Default PR and main CI now rematerialize those exact direct packages from SRI-verified reviewed local archives under Node `22.22.2`, install with lifecycle scripts disabled, run `npm audit --omit=dev --json`, and upload the raw reports from `coverage/reviewed-npm-audit`. The configured threshold in `ci/reviewed-npm-audit.json` is `high`. The same job independently installs and audits the committed mcporter production lock. This gate complements, but does not replace, the committed npm integrity pins and install-time archive checks.
+This review is an advisory snapshot for the direct OpenClaw runtime package, the locked `mcporter@0.7.3` graph, Codex ACP runtime helper, optional plugins, messaging plugins, and their npm dependency graphs at review time. Default PR and main CI now rematerialize those exact direct packages from SRI-verified reviewed local archives under Node `22.22.2`, install with lifecycle scripts disabled, run `npm audit --omit=dev --json`, and upload the raw reports from `coverage/reviewed-npm-audit`. The configured threshold in `ci/reviewed-npm-audit.json` is `high`. The same job independently installs and audits the committed mcporter production lock. This gate complements, but does not replace, the committed npm integrity pins and install-time archive checks.
 
 ## Transitive Dependency Graph Rationale
 
