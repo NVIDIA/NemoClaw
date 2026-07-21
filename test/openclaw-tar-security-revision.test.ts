@@ -16,6 +16,32 @@ import {
 
 const tempDirs: string[] = [];
 
+function treeSnapshot(root: string): object[] {
+  const entries: object[] = [];
+  const visit = (directory: string): void => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      const pathname = path.join(directory, name);
+      const relativePath = path.relative(root, pathname);
+      const metadata = fs.lstatSync(pathname);
+      if (metadata.isDirectory()) {
+        entries.push({ mode: metadata.mode & 0o7777, path: relativePath, type: "directory" });
+        visit(pathname);
+      } else if (metadata.isFile()) {
+        entries.push({
+          bytes: fs.readFileSync(pathname).toString("base64"),
+          mode: metadata.mode & 0o7777,
+          path: relativePath,
+          type: "file",
+        });
+      } else {
+        entries.push({ path: relativePath, type: "unsafe" });
+      }
+    }
+  };
+  visit(root);
+  return entries;
+}
+
 function fixture(
   openClawVersion = "2026.6.10",
   tarVersion = "7.5.16",
@@ -191,5 +217,59 @@ describe("historical OpenClaw security revisions (#7272)", () => {
     expect(() => patchOpenClawTar({ ...target, expectedOpenClawVersion: "2026.6.10" })).toThrow(
       "unsafe member",
     );
+  });
+
+  it("restores both tar trees when the second package-tree swap fails", () => {
+    const target = fixture();
+    const before = treeSnapshot(target.openClawRoot);
+    expect(() =>
+      patchOpenClawTar({
+        ...target,
+        expectedOpenClawVersion: "2026.6.10",
+        transactionHook: (event) => {
+          if (
+            event.phase === "after-install" &&
+            event.label === "node_modules/@openclaw/fs-safe/node_modules/tar package tree"
+          ) {
+            throw new Error("injected second tar swap failure");
+          }
+        },
+      }),
+    ).toThrow("injected second tar swap failure");
+    expect(treeSnapshot(target.openClawRoot)).toEqual(before);
+  });
+
+  it("restores package trees and metadata when metadata commit fails", () => {
+    const target = fixture();
+    const before = treeSnapshot(target.openClawRoot);
+    expect(() =>
+      patchOpenClawTar({
+        ...target,
+        expectedOpenClawVersion: "2026.6.10",
+        transactionHook: (event) => {
+          if (event.phase === "after-install" && event.label === "OpenClaw package metadata") {
+            throw new Error("injected OpenClaw metadata commit failure");
+          }
+        },
+      }),
+    ).toThrow("injected OpenClaw metadata commit failure");
+    expect(treeSnapshot(target.openClawRoot)).toEqual(before);
+  });
+
+  it("restores package trees and metadata when final verification fails", () => {
+    const target = fixture();
+    const before = treeSnapshot(target.openClawRoot);
+    expect(() =>
+      patchOpenClawTar({
+        ...target,
+        expectedOpenClawVersion: "2026.6.10",
+        transactionHook: (event) => {
+          if (event.phase === "before-verify") {
+            throw new Error("injected OpenClaw verification failure");
+          }
+        },
+      }),
+    ).toThrow("injected OpenClaw verification failure");
+    expect(treeSnapshot(target.openClawRoot)).toEqual(before);
   });
 });
