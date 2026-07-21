@@ -62,22 +62,25 @@ describe("isGatewayTcpReady (#3111)", () => {
     // closes, so racing listener teardown is a non-portable fixture (#7250).
     // Drive the real error path deterministically by simulating the
     // ECONNREFUSED a refused socket emits — no timing sleep, no listener race.
+    // The probe registers its listeners synchronously, so capture them and fire
+    // the error callback directly (same seam as the minimum-timeout test).
+    const listeners = new Map<string, (arg?: unknown) => void>();
     const socket = {
       destroy: vi.fn(),
       setTimeout: vi.fn(() => socket),
       once: vi.fn((event: string, callback: (arg?: unknown) => void) => {
-        if (event === "error") {
-          const refused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1"), {
-            code: "ECONNREFUSED",
-          });
-          queueMicrotask(() => callback(refused));
-        }
+        listeners.set(event, callback);
         return socket;
       }),
     };
     vi.spyOn(net, "createConnection").mockReturnValue(socket as unknown as net.Socket);
 
-    await expect(isGatewayTcpReady(9, 500)).resolves.toBe(false);
+    const ready = isGatewayTcpReady(9, 500);
+    listeners.get("error")?.(
+      Object.assign(new Error("connect ECONNREFUSED 127.0.0.1"), { code: "ECONNREFUSED" }),
+    );
+
+    await expect(ready).resolves.toBe(false);
     expect(socket.destroy).toHaveBeenCalled();
   });
 
