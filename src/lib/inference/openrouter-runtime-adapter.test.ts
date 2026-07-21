@@ -192,8 +192,7 @@ describe("OpenRouter Runtime adapter", () => {
     const probeBaseUrl = await listen(probe);
     const refusedPort = Number(new URL(probeBaseUrl).port);
     await new Promise<void>((resolve) => {
-      const index = servers.indexOf(probe);
-      if (index >= 0) servers.splice(index, 1);
+      servers.splice(servers.indexOf(probe), 1);
       probe.close(() => resolve());
     });
 
