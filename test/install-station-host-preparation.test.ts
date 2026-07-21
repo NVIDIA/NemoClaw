@@ -454,28 +454,46 @@ check_agent_and_inference_conflicts
     const forced = runSourced(
       STATION_PREPARE,
       `
-STATION_HOST_PROFILE=forced-factory-runtime
+require_command() { :; }
+check_platform() { STATION_HOST_PROFILE=forced-factory-runtime; }
+check_package_managers_idle() { :; }
+check_dgx_os_docker_selection() { :; }
+check_capacity() { :; }
+check_network() { :; }
+check_failed_units() { :; }
+capture_docker_container_baseline() { printf 'DOCKER_BASELINE_CAPTURED\n'; }
 check_agent_and_inference_conflicts() { printf 'UNEXPECTED_AGENT_CHECK\n'; return 1; }
 require_no_running_docker_containers() { printf 'UNEXPECTED_DOCKER_CHECK\n'; return 1; }
-check_initial_workload_quiescence
+check_dgx_os_runtime_commands() { :; }
+run_check
 `,
     );
     expect(forced.result.status, forced.output).toBe(0);
+    expect(forced.output.indexOf("DOCKER_BASELINE_CAPTURED")).toBeLessThan(
+      forced.output.indexOf("Active agent, inference, and Docker workloads are permitted"),
+    );
     expect(forced.output).toMatch(/Active agent, inference, and Docker workloads are permitted/);
     expect(forced.output).not.toContain("UNEXPECTED_");
 
     const supported = runSourced(
       STATION_PREPARE,
       `
-STATION_HOST_PROFILE=stock-dgx-os
-check_agent_and_inference_conflicts() { printf 'AGENT_CHECK\n'; }
-require_no_running_docker_containers() { printf 'DOCKER_CHECK %s\n' "$1"; }
-check_initial_workload_quiescence
+require_command() { :; }
+check_platform() { STATION_HOST_PROFILE=stock-dgx-os; }
+check_package_managers_idle() { :; }
+check_dgx_os_docker_selection() { :; }
+check_capacity() { :; }
+check_network() { :; }
+check_failed_units() { :; }
+capture_docker_container_baseline() { printf 'DOCKER_BASELINE_CAPTURED\n'; }
+check_agent_and_inference_conflicts() { fatal 'Agent or inference workload is active: vllm'; }
+require_no_running_docker_containers() { fatal "Running Docker containers block $1"; }
+run_check
 `,
     );
-    expect(supported.result.status, supported.output).toBe(0);
-    expect(supported.output).toContain("AGENT_CHECK");
-    expect(supported.output).toContain("DOCKER_CHECK initial Station host preparation");
+    expect(supported.result.status, supported.output).not.toBe(0);
+    expect(supported.output).toContain("DOCKER_BASELINE_CAPTURED");
+    expect(supported.output).toMatch(/Agent or inference workload is active: vllm/);
   });
 
   it("refuses an installed CUDA keyring version that differs from the pin", () => {

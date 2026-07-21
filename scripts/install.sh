@@ -758,7 +758,7 @@ usage() {
   printf "    --yes-i-accept-third-party-software Accept the third-party software notice without prompting\n"
   printf "    --fresh              Discard any failed/interrupted onboarding session and start over\n"
   printf "    --station-deepseek   Use DeepSeek V4 Flash for DGX Station express install (interactive terminal required)\n"
-  printf "    --force-station-install Bypass the DGX release-metadata allowlist and active-workload block for Station GB300 express install\n"
+  printf "    --force-station-install Bypass DGX release metadata and permit active workloads during initial Station GB300 validation; host mutations still require workload quiescence\n"
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
@@ -3664,7 +3664,7 @@ ensure_station_express_host() {
       ;;
     *)
       if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-        warn "Proceeding with explicit --force-station-install intent; DGX release metadata qualification and the active-workload block are bypassed, but Station GB300 hardware and factory-runtime health checks remain required."
+        warn "Proceeding with explicit --force-station-install intent; DGX release metadata qualification is bypassed, and active workloads are permitted during initial factory-runtime validation. Required host mutations still require workload quiescence; Station GB300 hardware and factory-runtime health checks remain required."
         info "Validating the existing Station GPU and local container runtime. Host packages, the NVIDIA driver, and runtime configuration will not be changed."
       else
         info "Checking pinned DGX Station host prerequisites. Exact matches are reused."
@@ -3757,7 +3757,7 @@ describe_express_install() {
           ;;
         *)
           if [ "${FORCE_STATION_INSTALL:-}" = "1" ]; then
-            printf "  Explicit --force-station-install intent bypasses DGX release-metadata qualification and permits active workloads during factory-runtime validation. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
+            printf "  Explicit --force-station-install intent bypasses DGX release-metadata qualification and permits active workloads during initial factory-runtime validation. Required CDI, Docker runtime, service, or reboot mutations still require workload quiescence. Setup preserves the existing driver and container stack and proceeds only after Station GB300, GPU, ECC, Docker, Buildx, Toolkit, CDI, and container GPU-visibility checks pass.\n"
           else
             printf "  Station host setup reuses exact prerequisite versions, applies the reviewed factory DKMS transition when present, installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages, and may require one reboot.\n"
           fi
