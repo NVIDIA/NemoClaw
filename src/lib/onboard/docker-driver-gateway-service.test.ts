@@ -105,10 +105,11 @@ describe("docker-driver-gateway-service", () => {
     const existsSync = (candidate: string) =>
       candidate === "/usr/lib/systemd/user/openshell-gateway.service";
     const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      const command = args.join(" ");
-      if (command === "list --formula openshell") return spawnResult();
-      if (command === "info --json=v2 openshell") return homebrewFormulaInfoResult();
-      return spawnResult(1, "unexpected");
+      const results: Record<string, SpawnSyncLikeResult> = {
+        "list --formula openshell": spawnResult(),
+        "info --json=v2 openshell": homebrewFormulaInfoResult(),
+      };
+      return results[args.join(" ")] ?? spawnResult(1, "unexpected");
     });
 
     expect(hasOpenShellGatewayUserService({ existsSync, platform: "linux" })).toBe(true);
@@ -487,10 +488,11 @@ describe("docker-driver-gateway-service", () => {
     const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
       const command = args.join(" ");
       events.push(command);
-      if (command === "info --json=v2 openshell") return homebrewFormulaInfoResult();
-      return command === "services info --json openshell"
-        ? homebrewServiceStatusResult()
-        : spawnResult();
+      return command === "info --json=v2 openshell"
+        ? homebrewFormulaInfoResult()
+        : command === "services info --json openshell"
+          ? homebrewServiceStatusResult()
+          : spawnResult();
     });
 
     const result = startOpenShellGatewayUserService({
@@ -523,14 +525,17 @@ describe("docker-driver-gateway-service", () => {
     let statusChecks = 0;
     const sleepSeconds = vi.fn();
     const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      if (args.join(" ") === "info --json=v2 openshell") return homebrewFormulaInfoResult();
-      const isStatusCheck = args.join(" ") === "services info --json openshell";
+      const command = args.join(" ");
+      const isFormulaInfo = command === "info --json=v2 openshell";
+      const isStatusCheck = command === "services info --json openshell";
       const result = isStatusCheck
         ? homebrewServiceStatusResult({
             exitCode: statusChecks === 0 ? null : 0,
             running: statusChecks > 0,
           })
-        : spawnResult();
+        : isFormulaInfo
+          ? homebrewFormulaInfoResult()
+          : spawnResult();
       statusChecks += Number(isStatusCheck);
       return result;
     });
@@ -550,12 +555,13 @@ describe("docker-driver-gateway-service", () => {
   });
 
   it("rejects a macOS Homebrew service that exits after a successful restart", () => {
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      if (args.join(" ") === "info --json=v2 openshell") return homebrewFormulaInfoResult();
-      return args.join(" ") === "services info --json openshell"
-        ? homebrewServiceStatusResult({ exitCode: 1, running: false, status: "error" })
-        : spawnResult();
-    });
+    const spawnSyncImpl = vi.fn((_command: string, args: string[]) =>
+      args.join(" ") === "info --json=v2 openshell"
+        ? homebrewFormulaInfoResult()
+        : args.join(" ") === "services info --json openshell"
+          ? homebrewServiceStatusResult({ exitCode: 1, running: false, status: "error" })
+          : spawnResult(),
+    );
 
     const result = startOpenShellGatewayUserService({
       commandExists: (command) => command === "brew",
@@ -641,12 +647,13 @@ describe("docker-driver-gateway-service", () => {
       commandExists: (command) => command === "brew",
       env: {},
       platform: "darwin",
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
-        if (args.join(" ") === "info --json=v2 openshell") return homebrewFormulaInfoResult();
-        return args.join(" ") === "services restart openshell"
-          ? spawnResult(1, "launchctl failed")
-          : spawnResult();
-      }),
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
+        args.join(" ") === "info --json=v2 openshell"
+          ? homebrewFormulaInfoResult()
+          : args.join(" ") === "services restart openshell"
+            ? spawnResult(1, "launchctl failed")
+            : spawnResult(),
+      ),
     });
 
     expect(result).toMatchObject({

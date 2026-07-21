@@ -196,10 +196,11 @@ if [ -n "$state" ]; then
 fi
 exit 0`,
       );
-      if (options.homebrewAvailable ?? true) {
-        writeExecutable(
-          path.join(fakeBin, "brew"),
-          `#!/usr/bin/env bash
+      switch (options.homebrewAvailable ?? true) {
+        case true:
+          writeExecutable(
+            path.join(fakeBin, "brew"),
+            `#!/usr/bin/env bash
 case "$*" in
   "list --formula openshell")
     exit ${homebrewFormula ? "0" : "1"}
@@ -217,7 +218,8 @@ case "$*" in
     ;;
 esac
 exit 0`,
-        );
+          );
+          break;
       }
     }
 
