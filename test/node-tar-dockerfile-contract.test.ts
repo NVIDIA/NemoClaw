@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -17,8 +18,9 @@ const dockerfiles = [
 ] as const;
 
 function completedStage(source: string): string {
-  const finalBase = source.lastIndexOf("FROM ${BASE_IMAGE}");
-  return finalBase >= 0 ? source.slice(finalBase) : source;
+  const finalStageStart = [...source.matchAll(/^FROM\b/gmu)].at(-1)?.index;
+  assert(finalStageStart !== undefined, "Dockerfile must contain a completed image stage");
+  return source.slice(finalStageStart);
 }
 
 describe("node-tar image remediation contract", () => {
