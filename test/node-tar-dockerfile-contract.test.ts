@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH } from "../scripts/patch-bundled-npm-tar.mts";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const dockerfiles = [
@@ -24,6 +25,16 @@ function completedStage(source: string): string {
 }
 
 describe("node-tar image remediation contract", () => {
+  it("binds the remediation lifecycle to the affected upstream Node image pins", () => {
+    const pinnedBaseSources = ["Dockerfile.base", "agents/hermes/Dockerfile.base"]
+      .map((file) => fs.readFileSync(path.join(repoRoot, file), "utf8"))
+      .join("\n");
+
+    for (const base of NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH) {
+      expect(pinnedBaseSources, base).toContain(`FROM ${base}`);
+    }
+  });
+
   it.each(
     dockerfiles,
   )("patches npm before use and scans the completed $file filesystem", (entry) => {
