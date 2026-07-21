@@ -107,6 +107,7 @@ restore_held_credentials() {
 # shellcheck disable=SC2329
 rollback_openclaw_state() {
   local current_state=""
+  local restore_root=""
   if [[ -e "$state_directory" || -L "$state_directory" ]]; then
     if [[ -z "$rollback_root" ]]; then
       rollback_root="$(mktemp -d "$(dirname -- "$state_directory")/.nemoclaw-openclaw-state-rollback.XXXXXX")" || return 1
@@ -119,15 +120,23 @@ rollback_openclaw_state() {
   fi
   if [[ "$prior_state" == present ]]; then
     if ! mv -- "$rollback_root/prior-state" "$state_directory"; then
-      if cp -a -- "$rollback_root/prior-state" "$state_directory"; then
+      # Both temporary roots are siblings of the live state directory. If the
+      # direct rename fails, copy only into the private restore root and expose
+      # the completed copy with a same-filesystem rename. An interrupted or
+      # partial copy therefore never becomes the live OpenClaw state.
+      restore_root="$(mktemp -d "$(dirname -- "$state_directory")/.nemoclaw-openclaw-state-restore.XXXXXX")" || true
+      if [[ -n "$restore_root" ]] \
+        && cp -a -- "$rollback_root/prior-state" "$restore_root/completed-state" \
+        && mv -- "$restore_root/completed-state" "$state_directory"; then
+        rmdir "$restore_root" || true
         restore_held_credentials || return 1
-        echo "WARNING: restored the prior OpenClaw state after the atomic rollback rename failed" >&2
+        echo "WARNING: restored the prior OpenClaw state through an atomically staged copy after the direct rollback rename failed" >&2
         return 0
       fi
-      rm -rf -- "$state_directory" || true
-      if [[ -n "$current_state" ]]; then
-        mv -- "$current_state" "$state_directory" || true
+      if [[ -n "$restore_root" ]]; then
+        rm -rf -- "$restore_root" || true
       fi
+      rm -rf -- "$state_directory" || true
       restore_held_credentials || true
       return 1
     fi

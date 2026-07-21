@@ -226,15 +226,24 @@ exec /bin/mv "$@"
     fakeCp,
     `#!/usr/bin/env bash
 source_path=""
+destination_path=""
 for argument in "$@"; do
   case "$argument" in
     -a | --) ;;
-    *) source_path="$argument"; break ;;
+    *)
+      [[ -n "$source_path" ]] || source_path="$argument"
+      destination_path="$argument"
+      ;;
   esac
 done
-if [[ "\${FAKE_ROLLBACK_CP_FAILURE:-}" == 1 && "$source_path" == */prior-state ]]; then
-  exit 56
-fi
+case "\${FAKE_ROLLBACK_CP_FAILURE:-}:$source_path" in
+  1:*/prior-state) exit 56 ;;
+  partial:*/prior-state)
+    mkdir -p -- "$destination_path"
+    printf 'partial rollback copy\n' > "$destination_path/partial.txt"
+    exit 56
+    ;;
+esac
 exec /bin/cp "$@"
 `,
   );
@@ -555,11 +564,11 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
         .readdirSync(target.home)
         .filter((entry) => entry.startsWith(".nemoclaw-openclaw-credentials-hold.")),
     ).toEqual([]);
-    expect(result.stderr).toContain("atomic rollback rename failed");
+    expect(result.stderr).toContain("atomically staged copy");
     expect(result.stderr).not.toContain(credential);
   });
 
-  it("deletes the credential-safe snapshot when every rollback restore method fails", () => {
+  it("fails closed when the atomically staged rollback copy is partial", () => {
     const target = fixture();
     const stateDirectory = path.join(target.home, ".openclaw");
     const credentialPath = path.join(stateDirectory, "credentials", "auth.json");
@@ -571,7 +580,7 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
       env: {
         FAKE_MUTATE_STATE: "1",
         FAKE_OPENCLAW_EXIT: "23",
-        FAKE_ROLLBACK_CP_FAILURE: "1",
+        FAKE_ROLLBACK_CP_FAILURE: "partial",
         FAKE_ROLLBACK_MV_FAILURE: "1",
       },
       stateDirectory,
@@ -589,9 +598,16 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
     ).toEqual([]);
     expect(fs.readFileSync(credentialPath, "utf8")).toBe(credential);
     expect(fs.statSync(credentialPath).mode & 0o777).toBe(0o600);
+    expect(fs.existsSync(path.join(stateDirectory, "new-state.txt"))).toBe(false);
+    expect(fs.existsSync(path.join(stateDirectory, "partial.txt"))).toBe(false);
     expect(filesContaining(target.home, credential)).toEqual([
       path.relative(target.home, credentialPath),
     ]);
+    expect(
+      fs
+        .readdirSync(target.home)
+        .filter((entry) => entry.startsWith(".nemoclaw-openclaw-state-restore.")),
+    ).toEqual([]);
     expect(result.stderr).toContain("failed to restore the prior OpenClaw state");
     expect(result.stderr).not.toContain(credential);
   });
