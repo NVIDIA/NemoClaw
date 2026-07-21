@@ -121,6 +121,7 @@ Ask required model, endpoint, credential, and download questions one at a time.
 - Collect every choice before running the installer.
 - Ask one question at a time for model, endpoint, sandbox name, web search, messaging when the selected agent supports it, policy when no platform-asset install path is selected, credentials, administrator access, and downloads.
 - Use non-interactive environment variables whenever supported.
+- To install a specific release instead of the default maintained version, set `NEMOCLAW_INSTALL_TAG` to the wanted git ref before running the installer.
 - Never leave a command waiting at `Choose [1]:`.
 - If a choice cannot be supplied non-interactively, stop before starting and explain the supported alternative.
 - The DGX Station asset is the exception for the official third-party-software notice and Express confirmation. Keep those installer prompts visible, wait for the user's response, and do not pre-answer them.

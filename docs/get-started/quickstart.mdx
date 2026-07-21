@@ -100,6 +100,7 @@ Use these details when your first-run path needs more control.
 
     The example uses NVIDIA Endpoints.
     Set `NEMOCLAW_PROVIDER` and the matching credential variable for another provider, then use a sandbox name that does not depend on a previous onboarding session.
+    Set `NEMOCLAW_AGENT` (for example `openclaw`, `hermes`, or `langchain-deepagents-code`) to choose the agent, and set `NEMOCLAW_INSTALL_TAG=<git-ref>` to pin a specific release instead of the default last-known-good tag.
     Do not place `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before `curl`, because the installer process cannot read it there.
     Refer to the [Commands reference](../reference/commands#nemoclaw-onboard) for the full non-interactive configuration.
   </Accordion>
