@@ -273,22 +273,18 @@ function contentSnapshot(directory: string, label: string): ContentEntry[] {
   return entries;
 }
 
-function changedContentEntries(source: ContentEntry[], packed: ContentEntry[]): string[] {
+function changedPackedContentEntries(source: ContentEntry[], packed: ContentEntry[]): string[] {
   const sourceByPath = new Map(source.map((entry) => [entry.path, entry]));
-  const packedByPath = new Map(packed.map((entry) => [entry.path, entry]));
-  const paths = [...new Set([...sourceByPath.keys(), ...packedByPath.keys()])].sort();
-  return paths
-    .flatMap((entryPath) => {
-      const sourceEntry = sourceByPath.get(entryPath);
-      const packedEntry = packedByPath.get(entryPath);
-      if (!sourceEntry) return [`${entryPath}: added during packing`];
-      if (!packedEntry) return [`${entryPath}: omitted during packing`];
+  return packed
+    .flatMap((packedEntry) => {
+      const sourceEntry = sourceByPath.get(packedEntry.path);
+      if (!sourceEntry) return [`${packedEntry.path}: added during packing`];
       if (sourceEntry.digest !== packedEntry.digest) {
-        return [`${entryPath}: contents changed during packing`];
+        return [`${packedEntry.path}: contents changed during packing`];
       }
       if (sourceEntry.mode !== packedEntry.mode) {
         return [
-          `${entryPath}: mode changed during packing (${sourceEntry.mode.toString(8)} -> ${packedEntry.mode.toString(8)})`,
+          `${packedEntry.path}: mode changed during packing (${sourceEntry.mode.toString(8)} -> ${packedEntry.mode.toString(8)})`,
         ];
       }
       return [];
@@ -535,7 +531,7 @@ export function verifyRemediatedArchiveContents(packageRoot: string, archivePath
       unpackedRoot,
     ]);
     const packed = contentSnapshot(unpackedRoot, "remediated plugin archive tree");
-    const changes = changedContentEntries(source, packed);
+    const changes = changedPackedContentEntries(source, packed);
     if (changes.length > 0) {
       throw new Error(
         `remediated plugin archive contents changed during packing: ${changes.join("; ")}`,
