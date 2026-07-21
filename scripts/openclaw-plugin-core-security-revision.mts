@@ -421,11 +421,20 @@ function contentSnapshot(directory: string, label: string): ContentEntry[] {
       if (metadata.isDirectory()) {
         visit(child);
       } else if (metadata.isFile()) {
-        entries.push({
-          digest: createHash("sha512").update(readFileSync(child)).digest("base64"),
-          mode: metadata.mode & 0o777,
-          path: path.relative(directory, child),
-        });
+        const descriptor = openSync(child, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const openedMetadata = fstatSync(descriptor);
+          if (!openedMetadata.isFile()) {
+            throw new Error(`${label} contains an unsafe member: ${child}`);
+          }
+          entries.push({
+            digest: createHash("sha512").update(readFileSync(descriptor)).digest("base64"),
+            mode: openedMetadata.mode & 0o777,
+            path: path.relative(directory, child),
+          });
+        } finally {
+          closeSync(descriptor);
+        }
       }
     }
   };
