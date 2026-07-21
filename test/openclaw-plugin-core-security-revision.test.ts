@@ -276,7 +276,6 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
     const reportedPluginRoot = fs.realpathSync(target.pluginRoot);
     const report = {
       problems: [
-        `extraneous: @protobufjs/inquire@1.1.2 ${reportedPluginRoot}/node_modules/@protobufjs/inquire`,
         `invalid: @opentelemetry/core@2.9.0 ${reportedPluginRoot}/node_modules/@opentelemetry/core`,
         `invalid: @opentelemetry/propagator-jaeger@2.9.0 ${reportedPluginRoot}/node_modules/@opentelemetry/propagator-jaeger`,
       ],
