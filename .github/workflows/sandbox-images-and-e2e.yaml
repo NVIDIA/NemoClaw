@@ -109,9 +109,9 @@ jobs:
             --pids-limit 64 \
             --memory 256m \
             --entrypoint node \
-            -v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/tmp/node-tar-image-scan.mts:ro" \
+            -v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/scripts/checks/node-tar-image-scan.mts:ro" \
             nemoclaw-production \
-            --experimental-strip-types /tmp/node-tar-image-scan.mts \
+            --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
             --root / \
             --image "${image_id}" \
             | tee /tmp/openclaw-node-tar-inventory.json
@@ -206,9 +206,9 @@ jobs:
             --pids-limit 64 \
             --memory 256m \
             --entrypoint node \
-            -v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/tmp/node-tar-image-scan.mts:ro" \
+            -v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/scripts/checks/node-tar-image-scan.mts:ro" \
             nemoclaw-hermes-production \
-            --experimental-strip-types /tmp/node-tar-image-scan.mts \
+            --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
             --root / \
             --image "${image_id}" \
             | tee /tmp/hermes-node-tar-inventory.json
@@ -441,9 +441,9 @@ jobs:
             --pids-limit 64 \
             --memory 256m \
             --entrypoint node \
-            -v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/tmp/node-tar-image-scan.mts:ro" \
+            -v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/scripts/checks/node-tar-image-scan.mts:ro" \
             nemoclaw-production-arm64 \
-            --experimental-strip-types /tmp/node-tar-image-scan.mts \
+            --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
             --root / \
             --image "${image_id}" \
             | tee /tmp/openclaw-arm64-node-tar-inventory.json

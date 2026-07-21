@@ -125,7 +125,9 @@ describe("sandbox image workflow boundary", () => {
     const openclawScan = openclaw.steps!.find(
       (step) => step.name === "Scan completed OpenClaw image for node-tar",
     )!;
-    openclawScan.run = openclawScan.run!.replace("--network none", "--network host");
+    openclawScan.run = openclawScan
+      .run!.replace("--network none", "--network host")
+      .replaceAll("/scripts/checks/node-tar-image-scan.mts", "/tmp/node-tar-image-scan.mts");
 
     const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
     const hermesUpload = hermes.steps!.find(
@@ -147,6 +149,7 @@ describe("sandbox image workflow boundary", () => {
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
         "build-sandbox-images node-tar scan must include --network none",
+        expect.stringContaining("build-sandbox-images node-tar scan must include -v"),
         "build-hermes-sandbox-image must retain its node-tar inventory for 14 days",
         "build-sandbox-images-arm64 must scan and retain evidence before the completed image is handed off",
       ]),
