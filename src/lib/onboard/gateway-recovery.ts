@@ -25,6 +25,7 @@ import { isGatewayHealthy } from "../state/gateway";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import { envInt } from "./env";
 import { resolveGatewayName, resolveGatewayPortFromName } from "./gateway-binding";
+import { formatGatewayHealthWaitLimit } from "./gateway-health-wait";
 import { isGatewayHttpReady } from "./gateway-http-readiness";
 import { getContainerRuntime } from "./local-inference-topology";
 import {
@@ -227,13 +228,12 @@ async function startTargetGatewayForRecovery(
     return;
   }
 
-  // Pure deadline-based semantics per #3768: report the actual budget the
-  // loop was allowed to spend. Include the interval only as diagnostic
-  // context so an operator scanning the message understands the poll cadence.
+  const waitLimit =
+    recoveryPollInterval === 0 && recoveryPollCount > 0
+      ? formatGatewayHealthWaitLimit(recoveryPollCount, recoveryPollInterval)
+      : `${formatReadinessDeadline(waitBudgetMs)} recovery deadline (${recoveryPollInterval}s poll interval)`;
   throw new Error(
-    `Gateway '${gatewayName}' did not become ready within the configured ${formatReadinessDeadline(
-      waitBudgetMs,
-    )} recovery deadline (${recoveryPollInterval}s poll interval)`,
+    `Gateway '${gatewayName}' did not become ready within the configured ${waitLimit}`,
   );
 }
 

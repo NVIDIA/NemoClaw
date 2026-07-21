@@ -379,6 +379,7 @@ export function waitForDashboardReadyWithTrace(options: {
   sleep: (seconds: number) => void;
   timeoutSecs?: number;
   now?: () => number;
+  trace?: typeof addTraceEvent;
 }): boolean {
   const { sandboxName, port, runCaptureOpenshell, sleep } = options;
   const timeoutSecs = options.timeoutSecs ?? 30;
@@ -391,6 +392,10 @@ export function waitForDashboardReadyWithTrace(options: {
       now: options.now,
       sleep: (ms) => sleep(ms / 1000),
     });
+    const traceEvent = options.trace ?? addTraceEvent;
+    if (!waitOptions) {
+      traceEvent("not_ready", { attempts: 0, deadline_ms: budgetMs });
+    }
     const ready =
       waitOptions !== null &&
       waitUntil(() => {
@@ -414,7 +419,7 @@ export function waitForDashboardReadyWithTrace(options: {
           { ignoreError: true },
         );
         const readyCode = parseInt((readyOutput || "").trim(), 10) || 0;
-        addTraceEvent("dashboard_probe", { attempt, http_status: readyCode });
+        traceEvent("dashboard_probe", { attempt, http_status: readyCode });
         return readyCode === 200 || readyCode === 401;
       }, waitOptions);
     if (ready) {

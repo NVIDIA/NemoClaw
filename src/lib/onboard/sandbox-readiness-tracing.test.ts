@@ -297,6 +297,28 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 });
 
 describe("waitForDashboardReadyWithTrace", () => {
+  it("traces a zero-budget deadline without probing", () => {
+    const runCaptureOpenshell = vi.fn(() => "200");
+    const sleep = vi.fn();
+    const trace = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(
+      waitForDashboardReadyWithTrace({
+        sandboxName: NAME,
+        port: 18789,
+        runCaptureOpenshell,
+        sleep,
+        timeoutSecs: 0,
+        trace,
+      }),
+    ).toBe(false);
+    expect(trace).toHaveBeenCalledWith("not_ready", { attempts: 0, deadline_ms: 0 });
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+    expect(sleep).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("0ms deadline"));
+  });
+
   it("returns immediately when the dashboard is ready", () => {
     const runCaptureOpenshell = vi.fn(() => "200");
     const sleep = vi.fn();
