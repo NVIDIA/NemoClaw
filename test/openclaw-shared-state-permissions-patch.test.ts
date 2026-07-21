@@ -502,31 +502,31 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     }
   });
 
-  it.each(["1", "sandbox-name"])(
-    "retains owner-only per-agent database modes in same-UID OpenShell %s",
-    async (openShellMarker) => {
-      const fixture = makeFixture();
-      try {
-        patchOpenClawSharedStatePermissions(fixture.dist);
-        const runtime = await importAgentFixture(fixture.agentFiles[0]);
-        const agentDir = path.join(fixture.root, "openshell-agent-state");
-        const database = path.join(agentDir, "main.sqlite");
-        const options = {
-          agentId: "main",
-          env: { OPENCLAW_AGENT_DIR: agentDir, OPENSHELL_SANDBOX: openShellMarker },
-        };
+  it.each([
+    "1",
+    "sandbox-name",
+  ])("retains owner-only per-agent database modes in same-UID OpenShell %s", async (openShellMarker) => {
+    const fixture = makeFixture();
+    try {
+      patchOpenClawSharedStatePermissions(fixture.dist);
+      const runtime = await importAgentFixture(fixture.agentFiles[0]);
+      const agentDir = path.join(fixture.root, "openshell-agent-state");
+      const database = path.join(agentDir, "main.sqlite");
+      const options = {
+        agentId: "main",
+        env: { OPENCLAW_AGENT_DIR: agentDir, OPENSHELL_SANDBOX: openShellMarker },
+      };
 
-        runtime.ensureOpenClawAgentDatabasePermissions(database, options);
-        fs.writeFileSync(database, "");
-        runtime.ensureOpenClawAgentDatabasePermissions(database, options);
+      runtime.ensureOpenClawAgentDatabasePermissions(database, options);
+      fs.writeFileSync(database, "");
+      runtime.ensureOpenClawAgentDatabasePermissions(database, options);
 
-        expect(mode(agentDir)).toBe(0o700);
-        expect(mode(database)).toBe(0o600);
-      } finally {
-        fs.rmSync(fixture.root, { recursive: true, force: true });
-      }
-    },
-  );
+      expect(mode(agentDir)).toBe(0o700);
+      expect(mode(database)).toBe(0o600);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
 
   it("retains owner-only secret-file modes under the NemoClaw marker", async () => {
     const fixture = makeFixture();
@@ -683,7 +683,10 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
     }
   });
 
-  it.each(["1", "sandbox-name"])("retains the upstream generated-models mode in same-UID OpenShell %s", async (openShellMarker) => {
+  it.each([
+    "1",
+    "sandbox-name",
+  ])("retains the upstream generated-models mode in same-UID OpenShell %s", async (openShellMarker) => {
     const fixture = makeFixture();
     const previousShared = process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
     const previousOpenShell = process.env.OPENSHELL_SANDBOX;
