@@ -27,28 +27,33 @@ function writeJson(file: string, value: object): void {
 }
 
 function treeSnapshot(root: string): object[] {
-  if (!fs.existsSync(root)) return [];
-  const entries: object[] = [];
-  const visit = (directory: string): void => {
-    for (const name of fs.readdirSync(directory).sort()) {
-      const pathname = path.join(directory, name);
-      const relative = path.relative(root, pathname);
-      const metadata = fs.lstatSync(pathname);
-      if (metadata.isDirectory()) {
-        entries.push({ mode: metadata.mode & 0o7777, path: relative, type: "directory" });
-        visit(pathname);
-      } else {
-        entries.push({
-          contents: fs.readFileSync(pathname).toString("base64"),
-          mode: metadata.mode & 0o7777,
-          path: relative,
-          type: "file",
-        });
+  const missingSnapshot = (): object[] => [];
+  const existingSnapshot = (): object[] => {
+    const entries: object[] = [];
+    const visit = (directory: string): void => {
+      for (const name of fs.readdirSync(directory).sort()) {
+        const pathname = path.join(directory, name);
+        const relative = path.relative(root, pathname);
+        const metadata = fs.lstatSync(pathname);
+        const snapshotDirectory = (): void => {
+          entries.push({ mode: metadata.mode & 0o7777, path: relative, type: "directory" });
+          visit(pathname);
+        };
+        const snapshotFile = (): void => {
+          entries.push({
+            contents: fs.readFileSync(pathname).toString("base64"),
+            mode: metadata.mode & 0o7777,
+            path: relative,
+            type: "file",
+          });
+        };
+        (metadata.isDirectory() ? snapshotDirectory : snapshotFile)();
       }
-    }
+    };
+    visit(root);
+    return entries;
   };
-  visit(root);
-  return entries;
+  return (fs.existsSync(root) ? existingSnapshot : missingSnapshot)();
 }
 
 function writeFixedNemoClaw(root: string): void {
@@ -223,13 +228,14 @@ function originalArguments(target: ReturnType<typeof fixture>): string[] {
 }
 
 function remediationEvents(target: ReturnType<typeof fixture>): object[] {
-  if (!fs.existsSync(target.remediationLog)) return [];
-  return fs
-    .readFileSync(target.remediationLog, "utf8")
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
+  const readEvents = (): object[] =>
+    fs
+      .readFileSync(target.remediationLog, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  return fs.existsSync(target.remediationLog) ? readEvents() : [];
 }
 
 afterEach(() => {

@@ -21,19 +21,26 @@ function treeSnapshot(root: string): object[] {
       const pathname = path.join(directory, name);
       const relativePath = path.relative(root, pathname);
       const metadata = fs.lstatSync(pathname);
-      if (metadata.isDirectory()) {
+      const snapshotDirectory = (): void => {
         entries.push({ mode: metadata.mode & 0o7777, path: relativePath, type: "directory" });
         visit(pathname);
-      } else if (metadata.isFile()) {
+      };
+      const snapshotFile = (): void => {
         entries.push({
           bytes: fs.readFileSync(pathname).toString("base64"),
           mode: metadata.mode & 0o7777,
           path: relativePath,
           type: "file",
         });
-      } else {
+      };
+      const snapshotUnsafeEntry = (): void => {
         entries.push({ path: relativePath, type: "unsafe" });
-      }
+      };
+      (metadata.isDirectory()
+        ? snapshotDirectory
+        : metadata.isFile()
+          ? snapshotFile
+          : snapshotUnsafeEntry)();
     }
   };
   visit(root);
@@ -43,6 +50,10 @@ function treeSnapshot(root: string): object[] {
 function writePackage(directory: string, manifest: object): void {
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify(manifest));
+}
+
+function fail(message: string): never {
+  throw new Error(message);
 }
 
 function fixture(layout: "extension" | "managed" | "project" = "project") {
@@ -223,14 +234,11 @@ describe("historical OpenClaw plugin Axios security revisions", () => {
       patchInstalledOpenClawPlugins({
         homeDirectory: target.homeDirectory,
         replacementRoot: target.replacementRoot,
-        transactionHook: (event) => {
-          if (
-            event.phase === "after-install" &&
-            event.label === "@openclaw/slack@2026.6.10 package metadata"
-          ) {
-            throw new Error("injected plugin metadata commit failure");
-          }
-        },
+        transactionHook: (event) =>
+          event.phase === "after-install" &&
+          event.label === "@openclaw/slack@2026.6.10 package metadata"
+            ? fail("injected plugin metadata commit failure")
+            : undefined,
       }),
     ).toThrow("injected plugin metadata commit failure");
     expect(treeSnapshot(target.homeDirectory)).toEqual(before);
@@ -243,11 +251,10 @@ describe("historical OpenClaw plugin Axios security revisions", () => {
       patchInstalledOpenClawPlugins({
         homeDirectory: target.homeDirectory,
         replacementRoot: target.replacementRoot,
-        transactionHook: (event) => {
-          if (event.phase === "before-verify") {
-            throw new Error("injected plugin verification failure");
-          }
-        },
+        transactionHook: (event) =>
+          event.phase === "before-verify"
+            ? fail("injected plugin verification failure")
+            : undefined,
       }),
     ).toThrow("injected plugin verification failure");
     expect(treeSnapshot(target.homeDirectory)).toEqual(before);
