@@ -359,6 +359,10 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
       args: ["plugins", "install", "@openclaw/slack@2026.5.22", "--dev"],
       state: ".openclaw-dev",
     },
+    {
+      args: ["plugins", "install", "--force", "@openclaw/slack@2026.6.10"],
+      state: ".openclaw",
+    },
   ])("remediates reviewed installs in the selected profile state", ({ args, state }) => {
     const target = fixture();
     const stateDirectory = path.join(target.home, state);
