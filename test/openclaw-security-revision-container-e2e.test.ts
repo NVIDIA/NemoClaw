@@ -411,12 +411,16 @@ function requireExactRemediation(evidence: ProbeEvidence): void {
     tar: TAR_VERSION,
   });
   expect(evidence.shrinkwrap.tar).toMatchObject({
+    hasOptionalDependencies: false,
     integrity: TAR_INTEGRITY,
+    optionalDependencies: null,
     resolved: TAR_TARBALL,
     version: TAR_VERSION,
   });
   expect(evidence.shrinkwrap.braceExpansion).toMatchObject({
+    hasOptionalDependencies: false,
     integrity: BRACE_EXPANSION_INTEGRITY,
+    optionalDependencies: null,
     resolved: BRACE_EXPANSION_TARBALL,
     version: BRACE_EXPANSION_VERSION,
   });
@@ -428,7 +432,9 @@ function requireExactRemediation(evidence: ProbeEvidence): void {
     version: "0.3.0",
   });
   expect(evidence.shrinkwrap.jszip).toMatchObject({
+    hasOptionalDependencies: false,
     integrity: JSZIP_INTEGRITY,
+    optionalDependencies: null,
     resolved: JSZIP_TARBALL,
     version: JSZIP_VERSION,
   });
@@ -503,6 +509,25 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
           },
         }),
       ).toThrow();
+    }
+    for (const packageName of ["tar", "braceExpansion", "jszip"] as const) {
+      for (const optionalDependencyState of [
+        { hasOptionalDependencies: true },
+        { optionalDependencies: { unreviewed: "1.0.0" } },
+      ]) {
+        expect(() =>
+          requireExactRemediation({
+            ...good,
+            shrinkwrap: {
+              ...good.shrinkwrap,
+              [packageName]: {
+                ...good.shrinkwrap[packageName],
+                ...optionalDependencyState,
+              },
+            },
+          }),
+        ).toThrow();
+      }
     }
     expect(() =>
       requireExactRemediation({
