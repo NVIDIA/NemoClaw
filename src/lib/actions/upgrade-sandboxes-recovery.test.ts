@@ -71,6 +71,7 @@ function createRecoveryHarness(
   latestBackupSpy: ReturnType<typeof vi.spyOn>;
   managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
   liveListSpy: ReturnType<typeof vi.spyOn>;
+  readOnlyListSpy: ReturnType<typeof vi.spyOn>;
 } {
   vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
   vi.stubEnv(
@@ -90,6 +91,15 @@ function createRecoveryHarness(
   const liveListSpy = vi
     .spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit")
     .mockResolvedValue({
+      status: 0,
+      output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
+    });
+  // #7279: check mode observes gateways through the read-only helper instead of
+  // the recovering preflight; keep both stubbed so a check-mode run never hits
+  // the real openshell adapter.
+  const readOnlyListSpy = vi
+    .spyOn(sandboxList, "captureNamedGatewaySandboxListReadOnly")
+    .mockReturnValue({
       status: 0,
       output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
     });
@@ -142,6 +152,7 @@ function createRecoveryHarness(
     latestBackupSpy,
     managedEvidenceSpy,
     liveListSpy,
+    readOnlyListSpy,
   };
 }
 
