@@ -154,7 +154,7 @@ export function discardStagedReplacements(replacements: readonly StagedReplaceme
 
 type ActiveReplacement = {
   backupPath: string;
-  installed: boolean;
+  mutationStarted: boolean;
   replacement: StagedReplacement;
 };
 
@@ -162,9 +162,11 @@ function rollback(active: readonly ActiveReplacement[]): Error[] {
   const errors: Error[] = [];
   for (const state of [...active].reverse()) {
     try {
-      if (state.installed) {
-        renameSync(state.replacement.livePath, state.replacement.stagedPath);
+      if (!state.mutationStarted) {
+        rmSync(state.backupPath, { recursive: true, force: true });
+        continue;
       }
+      rmSync(state.replacement.livePath, { recursive: true, force: true });
       renameSync(state.backupPath, state.replacement.livePath);
     } catch (error) {
       errors.push(
@@ -188,17 +190,24 @@ export function commitStagedReplacementTransaction(options: {
     validateReplacementSet(options.replacements);
     for (const [index, replacement] of options.replacements.entries()) {
       const backupPath = `${replacement.livePath}.nemoclaw-backup-${transactionId}`;
-      const state = { backupPath, installed: false, replacement };
-      renameSync(replacement.livePath, backupPath);
+      const state = { backupPath, mutationStarted: false, replacement };
       active.push(state);
+      cpSync(replacement.livePath, backupPath, {
+        dereference: false,
+        errorOnExist: true,
+        force: false,
+        preserveTimestamps: true,
+        recursive: true,
+      });
       options.injectFailure?.({
         index,
         label: replacement.label,
         livePath: replacement.livePath,
         phase: "after-backup",
       });
+      state.mutationStarted = true;
+      rmSync(replacement.livePath, { recursive: true, force: true });
       renameSync(replacement.stagedPath, replacement.livePath);
-      state.installed = true;
       options.injectFailure?.({
         index,
         label: replacement.label,

@@ -239,6 +239,23 @@ describe("historical OpenClaw security revisions (#7272)", () => {
     expect(treeSnapshot(target.openClawRoot)).toEqual(before);
   });
 
+  it("leaves the live tree unchanged when a prepared backup is rejected", () => {
+    const target = fixture();
+    const before = treeSnapshot(target.openClawRoot);
+    expect(() =>
+      patchOpenClawTar({
+        ...target,
+        expectedOpenClawVersion: "2026.6.10",
+        transactionHook: (event) => {
+          if (event.phase === "after-backup" && event.index === 0) {
+            throw new Error("injected prepared-backup rejection");
+          }
+        },
+      }),
+    ).toThrow("injected prepared-backup rejection");
+    expect(treeSnapshot(target.openClawRoot)).toEqual(before);
+  });
+
   it("restores package trees and metadata when metadata commit fails", () => {
     const target = fixture();
     const before = treeSnapshot(target.openClawRoot);
