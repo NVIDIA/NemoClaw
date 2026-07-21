@@ -181,7 +181,12 @@ export function stopSandbox(
     };
   }
 
-  log(`  Sandbox '${sandboxName}' stopped. Workspace state is preserved.`);
+  // Do not promise workspace-data durability here: `start` is a direct
+  // `docker start` of the same container, and the sandbox's /sandbox workspace
+  // lives on an OpenShell-owned PVC whose re-attachment on restart NemoClaw does
+  // not control (#7199). State only what stop guarantees — the sandbox stays
+  // registered so a later `start` can bring it back.
+  log(`  Sandbox '${sandboxName}' stopped. The sandbox stays registered for restart.`);
   log(`  Start it again with '${CLI_NAME} ${sandboxName} start'.`);
   return { exitCode: 0 };
 }

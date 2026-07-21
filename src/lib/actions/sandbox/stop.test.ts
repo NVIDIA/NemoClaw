@@ -92,7 +92,8 @@ describe("stopSandbox", () => {
 
     expect(result.exitCode).toBe(0);
     const output = h.log.mock.calls.map(([line]) => line).join("\n");
-    expect(output).toContain("Workspace state is preserved");
+    expect(output).toContain("The sandbox stays registered for restart");
+    expect(output).not.toContain("Workspace state is preserved");
     expect(output).toContain("nemoclaw my-sandbox start");
   });
 
