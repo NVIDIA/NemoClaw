@@ -18,9 +18,13 @@ const AUDIT_MODULE_URL = pathToFileURL(
 ).href;
 const AUDIT_PROBE_SOURCE = `
 import fs from "node:fs";
-import { assertReviewedAuditFindings } from ${JSON.stringify(AUDIT_MODULE_URL)};
+import { assertReviewedAuditFindings, highSeverityAuditFindings } from ${JSON.stringify(AUDIT_MODULE_URL)};
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
-assertReviewedAuditFindings(input.report, input.expected, input.threshold);
+if (input.operation === "list") {
+  highSeverityAuditFindings(input.report, input.threshold);
+} else {
+  assertReviewedAuditFindings(input.report, input.expected, input.threshold);
+}
 `;
 const CONFIG = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
@@ -55,7 +59,10 @@ function reviewedHistoricalReport(): Record<string, unknown> {
   };
 }
 
-function runAuditProbe(report: Record<string, unknown>) {
+function runAuditProbe(
+  report: Record<string, unknown>,
+  options: { operation?: "assert" | "list"; threshold?: typeof CONFIG.severityThreshold } = {},
+) {
   return spawnSync(
     process.execPath,
     ["--experimental-strip-types", "--input-type=module", "--eval", AUDIT_PROBE_SOURCE],
@@ -63,8 +70,9 @@ function runAuditProbe(report: Record<string, unknown>) {
       encoding: "utf8",
       input: JSON.stringify({
         expected: CONFIG.archiveReview.expectedFindings,
+        operation: options.operation ?? "assert",
         report,
-        threshold: CONFIG.severityThreshold,
+        threshold: options.threshold ?? CONFIG.severityThreshold,
       }),
     },
   );
@@ -96,6 +104,15 @@ describe("reviewed npm audit gate", () => {
   it("accepts the exact reviewed high and critical archive findings", () => {
     const result = runAuditProbe(reviewedHistoricalReport());
     expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects a reviewed-findings threshold below high", () => {
+    const result = runAuditProbe(reviewedHistoricalReport(), {
+      operation: "list",
+      threshold: "moderate",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("reviewed raw npm audit threshold must be high or critical");
   });
 
   it("rejects a new advisory in the reviewed archive graph", () => {

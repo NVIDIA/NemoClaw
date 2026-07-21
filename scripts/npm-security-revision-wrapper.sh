@@ -27,7 +27,7 @@ if [[ "${EUID}" -eq 0 && "${1:-}" == ci ]]; then
           status=70
         fi
       fi
-      rm -rf "$backup_directory"
+      rm -rf -- "$backup_directory"
       exit "$status"
     }
     trap cleanup EXIT
@@ -42,7 +42,7 @@ if [[ "${EUID}" -eq 0 && "${1:-}" == ci ]]; then
       --verify-install \
       --nemoclaw-root "$NEMOCLAW_ROOT"
     restore_required=0
-    rm -rf "$backup_directory"
+    rm -rf -- "$backup_directory"
     trap - EXIT
     exit 0
   fi

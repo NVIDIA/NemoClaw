@@ -184,12 +184,18 @@ export function highSeverityAuditFindings(
   report: Record<string, unknown>,
   threshold: Severity,
 ): ReviewedFinding[] {
+  if (threshold !== "high" && threshold !== "critical") {
+    throw new Error(`reviewed raw npm audit threshold must be high or critical, got ${threshold}`);
+  }
   const vulnerabilities = object(report.vulnerabilities, "npm audit vulnerabilities");
   const findings: ReviewedFinding[] = [];
   for (const [key, value] of Object.entries(vulnerabilities)) {
     const vulnerability = object(value, `npm audit vulnerability ${key}`);
     const findingSeverity = severity(vulnerability.severity, `npm audit vulnerability ${key}`);
     if (!atOrAbove(findingSeverity, threshold)) continue;
+    if (findingSeverity !== "high" && findingSeverity !== "critical") {
+      throw new Error(`reviewed raw npm audit found unsupported severity ${findingSeverity}`);
+    }
     if (vulnerability.name !== key) {
       throw new Error(`npm audit vulnerability key/name mismatch for ${key}`);
     }
@@ -213,7 +219,7 @@ export function highSeverityAuditFindings(
       advisories,
       nodes: sortedUniqueStrings(vulnerability.nodes, `npm audit vulnerability ${key} nodes`),
       packageName: key,
-      severity: findingSeverity as "high" | "critical",
+      severity: findingSeverity,
     });
   }
   return findings.sort((left, right) => left.packageName.localeCompare(right.packageName));
