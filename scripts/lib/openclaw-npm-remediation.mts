@@ -94,6 +94,15 @@ const EVENTSOURCE_PARSER_INTEGRITY =
   "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==";
 const EVENTSOURCE_PARSER_TARBALL =
   "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz";
+const ZOD_VERSION = "4.4.3";
+const ZOD_INTEGRITY =
+  "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==";
+const ZOD_TARBALL = "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz";
+const PKCE_CHALLENGE_VERSION = "5.0.1";
+const PKCE_CHALLENGE_INTEGRITY =
+  "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==";
+const PKCE_CHALLENGE_TARBALL =
+  "https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz";
 const OTEL_PROPAGATOR_JAEGER_VERSION = "2.9.0";
 const OTEL_PROPAGATOR_JAEGER_INTEGRITY =
   "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==";
@@ -124,7 +133,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "openclaw@2026.6.10": {
     kind: "core",
     expectedPatchedMetadataIntegrity:
-      "sha512-p9kAvBe2g+2m0me+Ns5e9mSLw9md2uYJuDxhEAErVTE8JmCnDuPhS+3/A2NDVYzCWIyNB89Fezv1y2neBtuGEQ==",
+      "sha512-y+I2MqDPfxsxwU92PeLU+8f+8L0yL8XQOgLZArS6c07ah6nd7NrCv0B0TpqixjTZxM6Y7SAQ4g87hQBCq2UBFg==",
   },
 });
 
@@ -215,6 +224,8 @@ function hashPatchedMetadata(packageDirectory: string): string {
     "node_modules/@modelcontextprotocol/sdk/package.json",
     "node_modules/@openclaw/fs-safe/package.json",
     "node_modules/eventsource-parser/package.json",
+    "node_modules/pkce-challenge/package.json",
+    "node_modules/zod/package.json",
     "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core/package.json",
     "node_modules/@opentelemetry/propagator-jaeger/package.json",
     "node_modules/@opentelemetry/sdk-node/package.json",
@@ -441,6 +452,8 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
     | JsonObject
     | undefined;
   const eventsourceParser = packages["node_modules/eventsource-parser"] as JsonObject | undefined;
+  const pkceChallenge = packages["node_modules/pkce-challenge"] as JsonObject | undefined;
+  const zod = packages["node_modules/zod"] as JsonObject | undefined;
   if (root.dependencies?.tar !== "7.5.16" || tar?.version !== "7.5.16") {
     throw new Error("openclaw@2026.6.10 tar shrinkwrap state changed after review");
   }
@@ -465,6 +478,22 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
     throw new Error("openclaw@2026.6.10 Hono node server layout changed after review");
   }
   if (
+    packageJson.dependencies?.zod !== ZOD_VERSION ||
+    root.dependencies?.zod !== ZOD_VERSION ||
+    zod?.version !== ZOD_VERSION ||
+    zod?.resolved !== ZOD_TARBALL ||
+    zod?.integrity !== ZOD_INTEGRITY
+  ) {
+    throw new Error("openclaw@2026.6.10 Zod layout changed after review");
+  }
+  if (
+    pkceChallenge?.version !== PKCE_CHALLENGE_VERSION ||
+    pkceChallenge?.resolved !== PKCE_CHALLENGE_TARBALL ||
+    pkceChallenge?.integrity !== PKCE_CHALLENGE_INTEGRITY
+  ) {
+    throw new Error("openclaw@2026.6.10 PKCE challenge layout changed after review");
+  }
+  if (
     fsSafe?.optionalDependencies?.jszip !== "^3.10.1" ||
     fsSafe?.optionalDependencies?.tar !== "7.5.13" ||
     Object.keys(fsSafe.optionalDependencies).length !== 2 ||
@@ -487,6 +516,8 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
     "@modelcontextprotocol/sdk",
     "@openclaw/fs-safe",
     "eventsource-parser",
+    "pkce-challenge",
+    "zod",
   ];
   root.dependencies.tar = TAR_VERSION;
   root.bundleDependencies = [...packageJson.bundledDependencies];
@@ -541,9 +572,15 @@ function patchModelContextProtocolPackageGraph(packageDirectory: string): void {
     MODEL_CONTEXT_PROTOCOL_SDK_VERSION,
     "OpenClaw MCP SDK remediation package",
   );
-  if (packageJson.dependencies?.["@hono/node-server"] !== "^1.19.9") {
+  if (
+    packageJson.dependencies?.["@hono/node-server"] !== "^1.19.9" ||
+    packageJson.dependencies?.["pkce-challenge"] !== "^5.0.0" ||
+    packageJson.dependencies?.zod !== "^3.25 || ^4.0" ||
+    packageJson.peerDependencies?.zod !== "^3.25 || ^4.0" ||
+    packageJson.peerDependenciesMeta?.zod?.optional !== false
+  ) {
     throw new Error(
-      "@modelcontextprotocol/sdk@1.29.0 Hono node server dependency changed; review the remediation",
+      "@modelcontextprotocol/sdk@1.29.0 runtime dependency graph changed; review the remediation",
     );
   }
   packageJson.dependencies["@hono/node-server"] = HONO_NODE_SERVER_VERSION;
@@ -741,6 +778,20 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       remediationRoot,
       env,
     );
+    const zodArchive = packReplacement(
+      `zod@${ZOD_VERSION}`,
+      ZOD_INTEGRITY,
+      ZOD_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const pkceChallengeArchive = packReplacement(
+      `pkce-challenge@${PKCE_CHALLENGE_VERSION}`,
+      PKCE_CHALLENGE_INTEGRITY,
+      PKCE_CHALLENGE_TARBALL,
+      remediationRoot,
+      env,
+    );
     const modelContextProtocolSdkPackage = extractArchive(
       modelContextProtocolSdkArchive.archivePath,
       join(remediationRoot, "modelcontextprotocol-sdk"),
@@ -759,11 +810,35 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       remediationRoot,
       env,
     );
+    const zodPackage = extractArchive(
+      zodArchive.archivePath,
+      join(remediationRoot, "zod"),
+      remediationRoot,
+      env,
+    );
+    const pkceChallengePackage = extractArchive(
+      pkceChallengeArchive.archivePath,
+      join(remediationRoot, "pkce-challenge"),
+      remediationRoot,
+      env,
+    );
     requirePackageIdentity(
       readJson(join(eventsourceParserPackage, "package.json")),
       "eventsource-parser",
       EVENTSOURCE_PARSER_VERSION,
       "OpenClaw MCP SDK eventsource parser remediation package",
+    );
+    requirePackageIdentity(
+      readJson(join(zodPackage, "package.json")),
+      "zod",
+      ZOD_VERSION,
+      "OpenClaw MCP SDK Zod remediation package",
+    );
+    requirePackageIdentity(
+      readJson(join(pkceChallengePackage, "package.json")),
+      "pkce-challenge",
+      PKCE_CHALLENGE_VERSION,
+      "OpenClaw MCP SDK PKCE remediation package",
     );
     patchFsSafePackageGraph(fsSafePackage);
     patchModelContextProtocolPackageGraph(modelContextProtocolSdkPackage);
@@ -782,6 +857,11 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
     copyReplacementPackage(
       eventsourceParserPackage,
       join(sourcePackage, "node_modules", "eventsource-parser"),
+    );
+    copyReplacementPackage(zodPackage, join(sourcePackage, "node_modules", "zod"));
+    copyReplacementPackage(
+      pkceChallengePackage,
+      join(sourcePackage, "node_modules", "pkce-challenge"),
     );
     patchOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "otel-plugin") {

@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -87,6 +88,7 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
           jszip: "3.10.1",
           minimatch: "10.2.5",
           tar: tarVersion,
+          zod: "4.4.3",
         },
       },
       null,
@@ -110,6 +112,7 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
               jszip: "3.10.1",
               minimatch: "10.2.5",
               tar: tarVersion,
+              zod: "4.4.3",
             },
           },
           "node_modules/@openclaw/fs-safe": {
@@ -127,7 +130,11 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
             dependencies: {
               "@hono/node-server": "^1.19.9",
               "eventsource-parser": "^3.0.0",
+              "pkce-challenge": "^5.0.0",
+              zod: "^3.25 || ^4.0",
             },
+            peerDependencies: { zod: "^3.25 || ^4.0" },
+            peerDependenciesMeta: { zod: { optional: false } },
           },
           "node_modules/eventsource-parser": {
             version: "3.1.0",
@@ -135,6 +142,18 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
               "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz",
             integrity:
               "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
+          },
+          "node_modules/zod": {
+            version: "4.4.3",
+            resolved: "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz",
+            integrity:
+              "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
+          },
+          "node_modules/pkce-challenge": {
+            version: "5.0.1",
+            resolved: "https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz",
+            integrity:
+              "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==",
           },
           "node_modules/brace-expansion": {
             version: "5.0.6",
@@ -235,6 +254,7 @@ function packFixture(packageDirectory: string, archivePath: string): void {
 
 function writeCoreArchiveFixtures(): {
   archivePath: string;
+  executableMemberPath: string;
   longMemberPath: string;
   npmExecutable: string;
   workingDirectory: string;
@@ -249,8 +269,13 @@ function writeCoreArchiveFixtures(): {
     ...Array.from({ length: 8 }, (_, index) => `dependency-with-a-long-name-${index}`),
     "fixture.txt",
   );
-  mkdirSync(path.join(coreFixture, path.dirname(longMemberPath)), { recursive: true });
-  writeFileSync(path.join(coreFixture, longMemberPath), "long archive member\n");
+  const longMemberDirectory = path.join(coreFixture, path.dirname(longMemberPath));
+  mkdirSync(longMemberDirectory, { recursive: true });
+  chmodSync(longMemberDirectory, 0o700);
+  writeFileSync(path.join(coreFixture, longMemberPath), "long archive member\n", { mode: 0o600 });
+  const executableMemberPath = path.join("bin", "reviewed-tool");
+  mkdirSync(path.join(coreFixture, path.dirname(executableMemberPath)), { recursive: true });
+  writeFileSync(path.join(coreFixture, executableMemberPath), "#!/bin/sh\n", { mode: 0o700 });
   packFixture(coreFixture, archivePath);
 
   const fsSafeDirectory = path.join(root, "fs-safe-package");
@@ -281,7 +306,11 @@ function writeCoreArchiveFixtures(): {
         dependencies: {
           "@hono/node-server": "^1.19.9",
           "eventsource-parser": "^3.0.0",
+          "pkce-challenge": "^5.0.0",
+          zod: "^3.25 || ^4.0",
         },
+        peerDependencies: { zod: "^3.25 || ^4.0" },
+        peerDependenciesMeta: { zod: { optional: false } },
       },
       null,
       2,
@@ -324,6 +353,24 @@ function writeCoreArchiveFixtures(): {
   const eventsourceParserArchive = path.join(root, "eventsource-parser-3.1.0-source.tgz");
   packFixture(eventsourceParserDirectory, eventsourceParserArchive);
 
+  const zodDirectory = path.join(root, "zod-package");
+  mkdirSync(zodDirectory, { recursive: true });
+  writeFileSync(
+    path.join(zodDirectory, "package.json"),
+    `${JSON.stringify({ name: "zod", version: "4.4.3" }, null, 2)}\n`,
+  );
+  const zodArchive = path.join(root, "zod-4.4.3-source.tgz");
+  packFixture(zodDirectory, zodArchive);
+
+  const pkceChallengeDirectory = path.join(root, "pkce-challenge-package");
+  mkdirSync(pkceChallengeDirectory, { recursive: true });
+  writeFileSync(
+    path.join(pkceChallengeDirectory, "package.json"),
+    `${JSON.stringify({ name: "pkce-challenge", version: "5.0.1" }, null, 2)}\n`,
+  );
+  const pkceChallengeArchive = path.join(root, "pkce-challenge-5.0.1-source.tgz");
+  packFixture(pkceChallengeDirectory, pkceChallengeArchive);
+
   const npmExecutable = path.join(root, "npm-fixture.sh");
   writeFileSync(
     npmExecutable,
@@ -334,6 +381,8 @@ function writeCoreArchiveFixtures(): {
       `modelcontextprotocol_sdk_archive=${JSON.stringify(modelContextProtocolSdkArchive)}`,
       `hono_node_server_archive=${JSON.stringify(honoNodeServerArchive)}`,
       `eventsource_parser_archive=${JSON.stringify(eventsourceParserArchive)}`,
+      `zod_archive=${JSON.stringify(zodArchive)}`,
+      `pkce_challenge_archive=${JSON.stringify(pkceChallengeArchive)}`,
       'if [ "$1" = "view" ]; then',
       '  case "$2:$3" in',
       '    "@openclaw/fs-safe@0.3.0:dist.integrity") value="sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==" ;;',
@@ -344,6 +393,10 @@ function writeCoreArchiveFixtures(): {
       '    "@hono/node-server@2.0.5:dist.tarball") value="https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz" ;;',
       '    "eventsource-parser@3.1.0:dist.integrity") value="sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==" ;;',
       '    "eventsource-parser@3.1.0:dist.tarball") value="https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz" ;;',
+      '    "zod@4.4.3:dist.integrity") value="sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==" ;;',
+      '    "zod@4.4.3:dist.tarball") value="https://registry.npmjs.org/zod/-/zod-4.4.3.tgz" ;;',
+      '    "pkce-challenge@5.0.1:dist.integrity") value="sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==" ;;',
+      '    "pkce-challenge@5.0.1:dist.tarball") value="https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz" ;;',
       "    *) exit 1 ;;",
       "  esac",
       '  printf "%s\\n" "$value"',
@@ -355,6 +408,8 @@ function writeCoreArchiveFixtures(): {
       '    "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz") archive="$modelcontextprotocol_sdk_archive"; filename="sdk-1.29.0.tgz"; integrity="sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==" ;;',
       '    "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz") archive="$hono_node_server_archive"; filename="node-server-2.0.5.tgz"; integrity="sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" ;;',
       '    "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz") archive="$eventsource_parser_archive"; filename="eventsource-parser-3.1.0.tgz"; integrity="sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==" ;;',
+      '    "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz") archive="$zod_archive"; filename="zod-4.4.3.tgz"; integrity="sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==" ;;',
+      '    "https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz") archive="$pkce_challenge_archive"; filename="pkce-challenge-5.0.1.tgz"; integrity="sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==" ;;',
       "    *) exit 1 ;;",
       "  esac",
       '  destination=""',
@@ -372,7 +427,13 @@ function writeCoreArchiveFixtures(): {
     { mode: 0o700 },
   );
   chmodSync(npmExecutable, 0o700);
-  return { archivePath, longMemberPath, npmExecutable, workingDirectory: path.join(root, "work") };
+  return {
+    archivePath,
+    executableMemberPath,
+    longMemberPath,
+    npmExecutable,
+    workingDirectory: path.join(root, "work"),
+  };
 }
 
 function writePluginArchiveFixtures(): {
@@ -596,6 +657,8 @@ describe("OpenClaw npm remediation", () => {
       "@modelcontextprotocol/sdk",
       "@openclaw/fs-safe",
       "eventsource-parser",
+      "pkce-challenge",
+      "zod",
     ]);
     expect(shrinkwrap.packages[""]).toMatchObject({
       bundleDependencies: [
@@ -603,6 +666,8 @@ describe("OpenClaw npm remediation", () => {
         "@modelcontextprotocol/sdk",
         "@openclaw/fs-safe",
         "eventsource-parser",
+        "pkce-challenge",
+        "zod",
       ],
       dependencies: { tar: "7.5.19" },
     });
@@ -631,6 +696,18 @@ describe("OpenClaw npm remediation", () => {
       resolved: "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz",
       integrity:
         "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
+    });
+    expect(shrinkwrap.packages["node_modules/zod"]).toMatchObject({
+      version: "4.4.3",
+      resolved: "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz",
+      integrity:
+        "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
+    });
+    expect(shrinkwrap.packages["node_modules/pkce-challenge"]).toMatchObject({
+      version: "5.0.1",
+      resolved: "https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz",
+      integrity:
+        "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==",
     });
     expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
       version: "5.0.7",
@@ -726,12 +803,20 @@ describe("OpenClaw npm remediation", () => {
     const eventsourceParserPackageJson = readJson<{ name?: string; version?: string }>(
       path.join(extracted, "package", "node_modules", "eventsource-parser", "package.json"),
     );
+    const zodPackageJson = readJson<{ name?: string; version?: string }>(
+      path.join(extracted, "package", "node_modules", "zod", "package.json"),
+    );
+    const pkceChallengePackageJson = readJson<{ name?: string; version?: string }>(
+      path.join(extracted, "package", "node_modules", "pkce-challenge", "package.json"),
+    );
     expect(packageJson).toMatchObject({
       bundledDependencies: [
         "@hono/node-server",
         "@modelcontextprotocol/sdk",
         "@openclaw/fs-safe",
         "eventsource-parser",
+        "pkce-challenge",
+        "zod",
       ],
       dependencies: { jszip: "3.10.1", tar: "7.5.19" },
     });
@@ -745,9 +830,23 @@ describe("OpenClaw npm remediation", () => {
       name: "eventsource-parser",
       version: "3.1.0",
     });
+    expect(zodPackageJson).toMatchObject({ name: "zod", version: "4.4.3" });
+    expect(pkceChallengePackageJson).toMatchObject({
+      name: "pkce-challenge",
+      version: "5.0.1",
+    });
     expect(readFileSync(path.join(extracted, "package", fixture.longMemberPath), "utf-8")).toBe(
       "long archive member\n",
     );
+    expect(statSync(path.join(extracted, "package", fixture.longMemberPath)).mode & 0o777).toBe(
+      0o644,
+    );
+    expect(
+      statSync(path.join(extracted, "package", path.dirname(fixture.longMemberPath))).mode & 0o777,
+    ).toBe(0o755);
+    expect(
+      statSync(path.join(extracted, "package", fixture.executableMemberPath)).mode & 0o777,
+    ).toBe(0o755);
   });
 
   // source-shape-contract: security -- Extracted plugin contents prove the rebuilt archive carries every reviewed Axios replacement package

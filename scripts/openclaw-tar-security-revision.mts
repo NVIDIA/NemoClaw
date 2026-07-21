@@ -143,10 +143,15 @@ export function planHistoricalRelease(releaseTag: string): HistoricalReleasePlan
   else if (patch >= 75 && patch <= 89) openClawVersion = "2026.6.10";
   else throw new Error("release tag is outside the reviewed v0.0.50 through v0.0.89 range");
 
+  const layout = OPENCLAW_TAR_LAYOUTS.get(openClawVersion);
+  if (!layout) {
+    throw new Error(`OpenClaw ${openClawVersion} has no reviewed tar layout`);
+  }
+
   return {
     releaseTag,
     openClawVersion,
-    vulnerableTarVersion: OPENCLAW_TAR_LAYOUTS.get(openClawVersion)?.direct as string,
+    vulnerableTarVersion: layout.direct,
     revisionTag: `${releaseTag}-security-2026-07-20.1`,
   };
 }

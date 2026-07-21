@@ -160,7 +160,8 @@ if (args.includes("--classify-install-target")) {
     "@openclaw/slack@2026.6.10",
     "@openclaw/msteams@2026.6.10",
   ]);
-  if (reviewed.has(normalized)) process.stdout.write(normalized);
+  if (process.env.FAKE_AXIOS_CLASSIFIED_SPEC) process.stdout.write(process.env.FAKE_AXIOS_CLASSIFIED_SPEC);
+  else if (reviewed.has(normalized)) process.stdout.write(normalized);
   else if (target.endsWith("reviewed-slack.tgz")) process.stdout.write("@openclaw/slack@2026.6.10");
 } else if (args.includes("--materialize-install-target")) {
   const target = value("--materialize-install-target");
@@ -458,6 +459,31 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
       spec: "@openclaw/slack@2026.6.10",
       state: stateDirectory,
     });
+  });
+
+  it("passes each remediator its independently classified package spec", () => {
+    const target = fixture();
+    const stateDirectory = path.join(target.home, ".openclaw");
+    const result = run(target, ["plugins", "install", "@openclaw/slack@2026.6.10"], {
+      env: {
+        FAKE_AXIOS_CLASSIFIED_SPEC: "@openclaw/msteams@2026.6.10",
+        FAKE_MUTATE_STATE: "1",
+      },
+      stateDirectory,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(remediationEvents(target)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          mode: "patch",
+          spec: "@openclaw/msteams@2026.6.10",
+        }),
+        expect.objectContaining({
+          mode: "core-patch",
+          spec: "@openclaw/slack@2026.6.10",
+        }),
+      ]),
+    );
   });
 
   it("remediates reviewed non-Axios official plugins", () => {

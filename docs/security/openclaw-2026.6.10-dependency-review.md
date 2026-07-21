@@ -93,7 +93,7 @@ For `openclaw@2026.6.10`, the helper makes these changes:
 - Replaces `tar@7.5.16` with `tar@7.5.19`.
 - Replaces `brace-expansion@5.0.6` with `brace-expansion@5.0.7`.
 - Bundles the reviewed `@openclaw/fs-safe@0.3.0` package and removes its duplicate optional `tar` and `jszip` declarations. The bundled package resolves OpenClaw's reviewed direct `tar@7.5.19` and `jszip@3.10.1` dependencies instead, including during a global npm install.
-- Bundles the reviewed `@modelcontextprotocol/sdk@1.29.0` package with its Hono dependency pinned to exact `@hono/node-server@2.0.5`, and bundles that reviewed Hono package so a global npm install cannot re-resolve the vulnerable `1.19.14` subtree. The archive also bundles the SDK's already-declared, lock-pinned `eventsource-parser@3.1.0` runtime dependency so replacing the SDK does not leave an incomplete executable graph.
+- Bundles the reviewed `@modelcontextprotocol/sdk@1.29.0` package with its Hono dependency pinned to exact `@hono/node-server@2.0.5`, and bundles that reviewed Hono package so a global npm install cannot re-resolve the vulnerable `1.19.14` subtree. The archive also bundles the SDK's already-declared, lock-pinned `eventsource-parser@3.1.0`, `pkce-challenge@5.0.1`, and `zod@4.4.3` runtime dependencies required by the tool-search client path.
 - Verifies the installed global dependency tree before either the reviewed base image or production image can complete.
 
 For `@openclaw/slack@2026.6.10` and `@openclaw/msteams@2026.6.10`, the helper makes these changes:
@@ -116,6 +116,8 @@ The replacement packages are bound to these registry identities:
 | `@modelcontextprotocol/sdk@1.29.0` | `sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==` | `https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz` |
 | `@hono/node-server@2.0.5` | `sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==` | `https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz` |
 | `eventsource-parser@3.1.0` | `sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==` | `https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz` |
+| `pkce-challenge@5.0.1` | `sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==` | `https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz` |
+| `zod@4.4.3` | `sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==` | `https://registry.npmjs.org/zod/-/zod-4.4.3.tgz` |
 | `@opentelemetry/propagator-jaeger@2.9.0` | `sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==` | `https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz` |
 | `@opentelemetry/core@2.9.0` | `sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==` | `https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz` |
 | `axios@1.18.0` | `sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==` | `https://registry.npmjs.org/axios/-/axios-1.18.0.tgz` |
@@ -124,9 +126,9 @@ The replacement packages are bound to these registry identities:
 
 The helper extracts and rebuilds archives with `tar` instead of invoking a package build or pack lifecycle, and it disables npm lifecycle scripts while retrieving replacement archives.
 It binds each patched package manifest and shrinkwrap to a committed SHA-512 metadata value.
-The core value also covers the bundled `@openclaw/fs-safe`, `@modelcontextprotocol/sdk`, `@hono/node-server`, and `eventsource-parser` package manifests.
+The core value also covers the bundled `@openclaw/fs-safe`, `@modelcontextprotocol/sdk`, `@hono/node-server`, `eventsource-parser`, `pkce-challenge`, and `zod` package manifests.
 The diagnostics value also covers the patched SDK Node, Jaeger, and nested OpenTelemetry core package manifests.
-The expected values are `sha512-p9kAvBe2g+2m0me+Ns5e9mSLw9md2uYJuDxhEAErVTE8JmCnDuPhS+3/A2NDVYzCWIyNB89Fezv1y2neBtuGEQ==` for OpenClaw core, `sha512-QmgyGI7AQJrNGoWAYolunc18wUr6Q4iOK4n9YXCOo3Cxh+e2GONtOAbeu+OFpQW8PsF6x/iGInDQmeKD+jnOug==` for diagnostics OTEL, `sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
+The expected values are `sha512-y+I2MqDPfxsxwU92PeLU+8f+8L0yL8XQOgLZArS6c07ah6nd7NrCv0B0TpqixjTZxM6Y7SAQ4g87hQBCq2UBFg==` for OpenClaw core, `sha512-QmgyGI7AQJrNGoWAYolunc18wUr6Q4iOK4n9YXCOo3Cxh+e2GONtOAbeu+OFpQW8PsF6x/iGInDQmeKD+jnOug==` for diagnostics OTEL, `sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
 Both the library and command-line entry points enforce the same committed values.
 `Dockerfile.base` records `ignore-scripts+reviewed-lifecycle+transitive-remediation-v2` in its protected provenance marker.
 The production Dockerfile rejects stale base provenance and repeats the remediation when the marker does not match.

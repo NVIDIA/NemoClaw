@@ -239,7 +239,7 @@ else
     if node --no-warnings --experimental-strip-types "$AXIOS_REMEDIATION" \
       --state-directory "$state_directory" \
       --replacement-root "$REPLACEMENT_ROOT" \
-      --expected-package-spec "$expected_package_spec"; then
+      --expected-package-spec "$axios_package_spec"; then
       :
     else
       remediation_status=$?
