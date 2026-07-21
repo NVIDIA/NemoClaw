@@ -5,15 +5,18 @@
 
 ## v0.0.83
 
-NemoClaw v0.0.83 makes shared inference route changes explicit and safe, restores DGX Station GB300 express setup, warns on risky local vLLM configurations, and fixes several onboarding and platform edge cases.
+NemoClaw v0.0.83 restores the DGX Station GB300 express-install path without changing its Deferred support status.
+It also makes shared inference route changes explicit and safe, warns on risky local vLLM configurations, and fixes several onboarding and platform edge cases.
 
 - Shared inference route changes are now explicit and fail-safe.
   When multiple sandboxes share a gateway, onboarding warns immediately before re-pointing the live route and fails closed before replacing a provider-global identity used by another sandbox.
   Status output shows each sandbox's recorded route, the live route, and whether `connect` can safely restore a drifted route.
   For more information, refer to [Use Shared Gateway Routes](/user-guide/openclaw/inference/manage-inference/use-shared-gateway-routes) and [View Active Inference Route](/user-guide/openclaw/inference/manage-inference/view-active-inference-route).
-- DGX Station GB300 systems enter the express-install path, and managed vLLM storage preflight treats verified shortages as advisory during express and other non-interactive setup while the checks mature.
+- Qualifying DGX Station GB300 systems enter the express-install path.
+  This path availability does not change DGX Station's Deferred support status.
+  Managed vLLM storage preflight treats verified shortages as advisory during express and other non-interactive setup while the checks mature.
   Interactive setup still requires explicit confirmation, and non-interactive setup still stops when model-cache capacity is inconclusive.
-  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm), [Platform Support and Launch Claims](/user-guide/openclaw/reference/platform-support), and [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Onboarding warns when a bring-your-own vLLM server on DGX Spark appears to serve a large unquantized model that may exhaust GPU memory under agent tool-call load.
   The warning is suppressed for the managed Spark vLLM recipe.
   For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
