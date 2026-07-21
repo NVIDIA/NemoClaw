@@ -92,6 +92,7 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
       NEMOCLAW_NON_INTERACTIVE=1 \
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+      NEMOCLAW_AGENT=openclaw \
       NEMOCLAW_PROVIDER=build \
       NVIDIA_INFERENCE_API_KEY=<your-key> \
       NEMOCLAW_SANDBOX_NAME=my-gpt-claw \
@@ -99,7 +100,15 @@ Use these details when your first-run path needs more control.
     ```
 
     The example uses NVIDIA Endpoints.
+    Set `NEMOCLAW_AGENT` to `hermes` or `langchain-deepagents-code` to install another agent.
     Set `NEMOCLAW_PROVIDER` and the matching credential variable for another provider, then use a sandbox name that does not depend on a previous onboarding session.
+    To select a specific NemoClaw release, replace `vX.Y.Z` with its versioned release tag.
+
+    ```bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=vX.Y.Z bash
+    ```
+
+    Keep `NEMOCLAW_INSTALL_TAG` on the `bash` side of the pipeline so the installer can read it.
     Do not place `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before `curl`, because the installer process cannot read it there.
     Refer to the [Commands reference](../reference/commands#nemoclaw-onboard) for the full non-interactive configuration.
   </Accordion>
@@ -118,6 +127,11 @@ Use these details when your first-run path needs more control.
     On Linux, the installer checks Docker and can install it when it is missing.
     If the installer adds you to the `docker` group, run the printed `newgrp docker` command before you rerun it.
     On macOS, start Docker Desktop or Colima first.
+
+    When Codex reports that its execution sandbox blocked Docker, keep **Ask for approval** enabled.
+    Approve only the exact Docker-dependent command that Codex requests to rerun outside the sandbox.
+    Do not change Docker socket permissions or select **Full access** only to bypass the restriction.
+    If your organization blocks the approval, stop the coding-agent setup and contact the administrator who manages Codex permissions.
 
     DGX Spark, qualifying Station GB300 hosts, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
     Station accepts the generic Ubuntu 24.04 ARM64 image and stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
