@@ -670,17 +670,24 @@ describe("OpenClaw npm remediation", () => {
     }
     expect(metadataIntegrity).toMatch(/^sha512-/u);
 
-    const remediated = buildRemediatedOpenClawArchive({
-      ...request,
-      expectedPatchedMetadataIntegrity: metadataIntegrity,
-    });
-    expect(remediated).toMatchObject({ metadataIntegrity, remediated: true });
-    const rebuilt = buildRemediatedOpenClawArchive({
-      ...request,
-      env: { ...request.env, GZIP: "-1", TAR_OPTIONS: "--format=pax" },
-      expectedPatchedMetadataIntegrity: metadataIntegrity,
-    });
-    expect(rebuilt.integrity).toBe(remediated.integrity);
+    const originalUmask = process.umask(0o022);
+    let remediated: ReturnType<typeof buildRemediatedOpenClawArchive>;
+    try {
+      remediated = buildRemediatedOpenClawArchive({
+        ...request,
+        expectedPatchedMetadataIntegrity: metadataIntegrity,
+      });
+      expect(remediated).toMatchObject({ metadataIntegrity, remediated: true });
+      process.umask(0o077);
+      const rebuilt = buildRemediatedOpenClawArchive({
+        ...request,
+        env: { ...request.env, GZIP: "-1", TAR_OPTIONS: "--format=pax" },
+        expectedPatchedMetadataIntegrity: metadataIntegrity,
+      });
+      expect(rebuilt.integrity).toBe(remediated.integrity);
+    } finally {
+      process.umask(originalUmask);
+    }
     const listing = spawnSync("tar", ["-tzf", remediated.archivePath], { encoding: "utf-8" });
     expect(listing.status, listing.stderr).toBe(0);
     const archiveMembers = listing.stdout

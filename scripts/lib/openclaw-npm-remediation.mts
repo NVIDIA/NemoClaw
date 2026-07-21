@@ -5,6 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -13,6 +14,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -602,9 +604,11 @@ function normalizeArchiveContents(directory: string, member: string): string[] {
       throw new Error(`remediated npm archive contains an unsafe member: ${target}`);
     } else {
       members.push(childMember);
+      chmodSync(target, statSync(target).mode & 0o111 ? 0o755 : 0o644);
     }
     utimesSync(target, CANONICAL_ARCHIVE_TIME, CANONICAL_ARCHIVE_TIME);
   }
+  chmodSync(directory, 0o755);
   utimesSync(directory, CANONICAL_ARCHIVE_TIME, CANONICAL_ARCHIVE_TIME);
   return members;
 }
