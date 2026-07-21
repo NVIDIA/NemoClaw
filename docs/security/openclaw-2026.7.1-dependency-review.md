@@ -151,6 +151,11 @@ The `2026.7.1` dist changed seven reviewed shapes:
 `scripts/patch-openclaw-device-self-approval.mts` remains required. Its new
 shape recognizers preserve the bounded stored-device credential flow and keep
 the canonical `approveDevicePairing` transaction fail closed.
+The startup auto-pair watcher removes the gateway URL, port, and shared token
+from both `devices list` and `devices approve`. OpenClaw `2026.7.1` otherwise
+accepts the shared token for the list call without creating the canonical CLI
+pairing request. Local device authentication makes the list call initiate that
+pairing flow before the bounded approval runs.
 
 ## Gateway Startup Migration Compatibility
 

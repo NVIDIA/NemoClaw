@@ -2539,8 +2539,9 @@ start_auto_pair() {
   # The gateway must retain NemoClaw's private-interface URL, but the watcher
   # is an ordinary OpenClaw CLI client. Source the trusted runtime environment
   # in this child only so an injected private URL is removed before the first
-  # `devices list`. OpenClaw can then complete its local-loopback pairing
-  # bootstrap before this unchanged watcher starts approving bounded requests.
+  # `devices list`. The list call below also drops shared gateway auth so
+  # OpenClaw must complete its local-loopback device pairing bootstrap before
+  # this watcher starts approving bounded requests.
   # An explicit URL override is preserved by write_runtime_shell_env().
   (
     if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
@@ -2875,9 +2876,9 @@ def brief_child_error(out, err):
 
 # Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
 # runtime environment, so list calls resolve the same live gateway through
-# local loopback instead of the injected private-interface URL. Approval calls
-# additionally drop the gateway env triplet so OpenClaw must use the local
-# device token. The reviewed 2026.7.1 dist patch requests only
+# local loopback instead of the injected private-interface URL. List and
+# approval calls additionally drop the gateway env triplet so OpenClaw must
+# use local device auth. The reviewed 2026.7.1 dist patch requests only
 # operator.pairing for a complete bounded CLI self-upgrade and forces the
 # existing local-only stored-device-auth path so a shared token reloaded from
 # config cannot win authentication. The gateway then validates and commits in
@@ -2938,7 +2939,7 @@ while time.time() < DEADLINE:
     if not SLOW_MODE and time.time() >= FAST_DEADLINE:
         SLOW_MODE = True
         print(f'[auto-pair] fast-mode deadline reached; switching to slow-mode approvals={APPROVED}')
-    rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
+    rc, out, err = run(OPENCLAW, 'devices', 'list', '--json', strip_gateway_env=True)
     if rc != 0 or not out:
         initial_request_id = pairing_required_request_id(out, err)
         if (

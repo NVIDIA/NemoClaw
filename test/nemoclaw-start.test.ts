@@ -1624,7 +1624,7 @@ exit 2
         "ok-agent-cli",
       ]);
       const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
-      expect(envLogLines).toContain("list:ws://127.0.0.1:18789:18789:test-gateway-token");
+      expect(envLogLines).toContain("list:unset:unset:unset");
       expect(envLogLines).toContain("approve:ok-browser:unset:unset:unset");
       expect(envLogLines).toContain("approve:ok-agent-cli:unset:unset:unset");
       expect(envLogLines).not.toContain("approve:ok-webchat:unset:unset:unset");

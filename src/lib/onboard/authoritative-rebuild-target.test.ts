@@ -148,6 +148,7 @@ describe("prepared provider reconfiguration handoff", () => {
         provider: "compatible-endpoint",
         model: "nvidia/model",
         endpointUrl: "https://inference.example.test/v1",
+        endpointSource: "onboard",
         preferredInferenceApi: "openai-completions",
         source: "registry",
       },
@@ -163,7 +164,7 @@ describe("prepared provider reconfiguration handoff", () => {
     };
 
     const activated = rebuildProviderFlowOptions(
-      { ...authorizedOptions, providerRecoveryReceipt: receipt },
+      { ...authorizedOptions, endpointSource: "onboard", providerRecoveryReceipt: receipt },
       flowContext,
     );
     expect(activated.providerRecoveryReceipt?.sessionId).toBe("sess-alpha");
