@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -54,6 +55,22 @@ function treeSnapshot(root: string): object[] {
     return entries;
   };
   return (fs.existsSync(root) ? existingSnapshot : missingSnapshot)();
+}
+
+function filesContaining(root: string, value: string): string[] {
+  const needle = Buffer.from(value);
+  const visit = (directory: string): string[] =>
+    fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const pathname = path.join(directory, entry.name);
+      return entry.isSymbolicLink()
+        ? []
+        : entry.isDirectory()
+          ? visit(pathname)
+          : entry.isFile() && fs.readFileSync(pathname).includes(needle)
+            ? [path.relative(root, pathname)]
+            : [];
+    });
+  return visit(root).sort();
 }
 
 function writeFixedNemoClaw(root: string): void {
@@ -172,6 +189,25 @@ exec /bin/mv "$@"
 `,
   );
   fs.chmodSync(fakeMv, 0o755);
+
+  const fakeCp = path.join(bin, "cp");
+  fs.writeFileSync(
+    fakeCp,
+    `#!/usr/bin/env bash
+source_path=""
+for argument in "$@"; do
+  case "$argument" in
+    -a | --) ;;
+    *) source_path="$argument"; break ;;
+  esac
+done
+if [[ "\${FAKE_ROLLBACK_CP_FAILURE:-}" == 1 && "$source_path" == */prior-state ]]; then
+  exit 56
+fi
+exec /bin/cp "$@"
+`,
+  );
+  fs.chmodSync(fakeCp, 0o755);
 
   fs.writeFileSync(
     wrapper,
@@ -365,10 +401,14 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
     expect(fs.existsSync(stateDirectory)).toBe(false);
   });
 
-  it("retains the prior snapshot and returns 70 when rollback itself fails", () => {
+  it("restores credentials without retaining plaintext when the atomic rollback rename fails", () => {
     const target = fixture();
     const stateDirectory = path.join(target.home, ".openclaw");
-    fs.mkdirSync(stateDirectory);
+    const credentialDirectory = path.join(stateDirectory, "credentials");
+    const credentialPath = path.join(credentialDirectory, "auth.json");
+    const credential = crypto.randomBytes(32).toString("hex");
+    fs.mkdirSync(credentialDirectory, { recursive: true });
+    fs.writeFileSync(credentialPath, credential, { mode: 0o600 });
     fs.writeFileSync(path.join(stateDirectory, "prior.txt"), "prior\n");
     const result = run(target, ["plugins", "install", "@openclaw/slack@2026.6.10"], {
       env: {
@@ -378,15 +418,61 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
       },
       stateDirectory,
     });
-    expect(result.status).toBe(70);
+    expect(result.status).toBe(23);
     const snapshots = fs
       .readdirSync(target.home)
       .filter((entry) => entry.startsWith(".nemoclaw-openclaw-state-rollback."));
-    expect(snapshots).toHaveLength(1);
+    expect(snapshots).toEqual([]);
+    expect(fs.readFileSync(path.join(stateDirectory, "prior.txt"), "utf8")).toBe("prior\n");
+    expect(fs.readFileSync(credentialPath, "utf8")).toBe(credential);
+    expect(fs.statSync(credentialPath).mode & 0o777).toBe(0o600);
+    expect(filesContaining(target.home, credential)).toEqual([
+      path.relative(target.home, credentialPath),
+    ]);
     expect(
-      fs.readFileSync(path.join(target.home, snapshots[0], "prior-state", "prior.txt"), "utf8"),
-    ).toBe("prior\n");
-    expect(result.stderr).toContain(path.join(target.home, snapshots[0]));
+      fs
+        .readdirSync(target.home)
+        .filter((entry) => entry.startsWith(".nemoclaw-openclaw-credentials-hold.")),
+    ).toEqual([]);
+    expect(result.stderr).toContain("atomic rollback rename failed");
+    expect(result.stderr).not.toContain(credential);
+  });
+
+  it("deletes the credential-safe snapshot when every rollback restore method fails", () => {
+    const target = fixture();
+    const stateDirectory = path.join(target.home, ".openclaw");
+    const credentialPath = path.join(stateDirectory, "credentials", "auth.json");
+    const credential = crypto.randomBytes(32).toString("hex");
+    fs.mkdirSync(path.dirname(credentialPath), { recursive: true });
+    fs.writeFileSync(credentialPath, credential, { mode: 0o600 });
+    fs.writeFileSync(path.join(stateDirectory, "prior.txt"), "prior\n");
+    const result = run(target, ["plugins", "install", "@openclaw/slack@2026.6.10"], {
+      env: {
+        FAKE_MUTATE_STATE: "1",
+        FAKE_OPENCLAW_EXIT: "23",
+        FAKE_ROLLBACK_CP_FAILURE: "1",
+        FAKE_ROLLBACK_MV_FAILURE: "1",
+      },
+      stateDirectory,
+    });
+    expect(result.status).toBe(70);
+    expect(
+      fs
+        .readdirSync(target.home)
+        .filter((entry) => entry.startsWith(".nemoclaw-openclaw-state-rollback.")),
+    ).toEqual([]);
+    expect(
+      fs
+        .readdirSync(target.home)
+        .filter((entry) => entry.startsWith(".nemoclaw-openclaw-credentials-hold.")),
+    ).toEqual([]);
+    expect(fs.readFileSync(credentialPath, "utf8")).toBe(credential);
+    expect(fs.statSync(credentialPath).mode & 0o777).toBe(0o600);
+    expect(filesContaining(target.home, credential)).toEqual([
+      path.relative(target.home, credentialPath),
+    ]);
+    expect(result.stderr).toContain("failed to restore the prior OpenClaw state");
+    expect(result.stderr).not.toContain(credential);
   });
 
   it("keeps the historical NemoClaw target and verifies source and installed tar", () => {
