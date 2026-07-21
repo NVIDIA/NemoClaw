@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   classifyReviewedPluginCoreInstallTarget,
+  patchInstalledOpenClawPluginCore,
   patchReviewedOpenClawPluginRoot,
 } from "../scripts/openclaw-plugin-core-security-revision.mts";
 
@@ -15,6 +16,34 @@ const tempDirectories: string[] = [];
 function writePackage(directory: string, manifest: object): void {
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify(manifest));
+}
+
+function treeSnapshot(directory: string): object[] {
+  const snapshot: object[] = [];
+  const visit = (current: string): void => {
+    for (const name of fs.readdirSync(current).sort()) {
+      const child = path.join(current, name);
+      const relative = path.relative(directory, child);
+      const metadata = fs.lstatSync(child);
+      if (metadata.isDirectory() && !metadata.isSymbolicLink()) {
+        snapshot.push({ mode: metadata.mode & 0o777, path: relative, type: "directory" });
+        visit(child);
+      } else if (metadata.isFile()) {
+        snapshot.push({
+          contents: fs.readFileSync(child).toString("base64"),
+          mode: metadata.mode & 0o777,
+          path: relative,
+          type: "file",
+        });
+      } else if (metadata.isSymbolicLink()) {
+        snapshot.push({ path: relative, target: fs.readlinkSync(child), type: "symlink" });
+      } else {
+        snapshot.push({ path: relative, type: "other" });
+      }
+    }
+  };
+  visit(directory);
+  return snapshot;
 }
 
 function replacementFixture(root: string): string {
@@ -152,5 +181,69 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
         ),
       ).version,
     ).toBe("2.2.2");
+  });
+
+  it("restores every dependency and metadata file after a mid-transaction failure", () => {
+    const target = pluginFixture("@openclaw/slack@2026.6.10");
+    const before = treeSnapshot(target.pluginRoot);
+    expect(() =>
+      patchReviewedOpenClawPluginRoot(target.pluginRoot, target.replacements, {
+        injectFailure: (event) => {
+          if (event.index === 0 && event.phase === "after-install") {
+            throw new Error("injected core-plugin transaction failure");
+          }
+        },
+      }),
+    ).toThrow("injected core-plugin transaction failure");
+    expect(treeSnapshot(target.pluginRoot)).toEqual(before);
+  });
+
+  it("rejects a symlinked extensions parent without modifying the external plugin", () => {
+    const target = pluginFixture("@openclaw/slack@2026.6.10");
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-state-core-link-"));
+    tempDirectories.push(stateDirectory);
+    const externalExtensions = path.join(path.dirname(target.pluginRoot), "external-extensions");
+    fs.mkdirSync(externalExtensions);
+    const externalPlugin = path.join(externalExtensions, "slack");
+    fs.renameSync(target.pluginRoot, externalPlugin);
+    fs.symlinkSync(externalExtensions, path.join(stateDirectory, "extensions"));
+    const before = treeSnapshot(externalPlugin);
+
+    expect(() =>
+      patchInstalledOpenClawPluginCore({
+        expectedPackageSpec: "@openclaw/slack@2026.6.10",
+        replacementRoot: target.replacements,
+        stateDirectory,
+      }),
+    ).toThrow("contains a symbolic link");
+    expect(treeSnapshot(externalPlugin)).toEqual(before);
+  });
+
+  it("rejects a symlinked projects parent without modifying the external plugin", () => {
+    const target = pluginFixture("@openclaw/slack@2026.6.10");
+    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-state-project-link-"));
+    tempDirectories.push(stateDirectory);
+    const externalProjects = path.join(path.dirname(target.pluginRoot), "external-projects");
+    const externalPlugin = path.join(
+      externalProjects,
+      "slack-project",
+      "node_modules",
+      "@openclaw",
+      "slack",
+    );
+    fs.mkdirSync(path.dirname(externalPlugin), { recursive: true });
+    fs.renameSync(target.pluginRoot, externalPlugin);
+    fs.mkdirSync(path.join(stateDirectory, "npm"));
+    fs.symlinkSync(externalProjects, path.join(stateDirectory, "npm", "projects"));
+    const before = treeSnapshot(externalPlugin);
+
+    expect(() =>
+      patchInstalledOpenClawPluginCore({
+        expectedPackageSpec: "@openclaw/slack@2026.6.10",
+        replacementRoot: target.replacements,
+        stateDirectory,
+      }),
+    ).toThrow("contains a symbolic link");
+    expect(treeSnapshot(externalPlugin)).toEqual(before);
   });
 });
