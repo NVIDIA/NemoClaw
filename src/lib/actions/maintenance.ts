@@ -76,16 +76,33 @@ export async function backupAll(): Promise<void> {
     { gatewayName: selectedGatewayName },
   );
   const readyNames = parseReadySandboxNames(liveList.output || "");
-  // #6520: a sandbox the selected gateway does not observe, whose persisted
-  // binding resolves to that gateway, and whose OpenShell-labeled container is
-  // definitively absent is stranded (uninstall removed the gateway
-  // registration and container but preserved sandboxes.json). It has no state
-  // left to back up, so counting it as a strict-gate skip would abort the
-  // installer's pre-upgrade backup before its recovery phase
-  // (recover_preexisting_sandboxes_before_onboard in scripts/install.sh) that
-  // knows how to surface it ever runs. The container-absence gate is what
-  // makes this race-free without upgrade-sandboxes' confirming second
-  // listing: a reconnecting or sibling-healthy sandbox still has a container.
+  // Source-of-truth review (#6520):
+  //
+  // - Invalid state: a sandbox the selected gateway does not observe, whose
+  //   persisted binding resolves to that gateway, and whose OpenShell-labeled
+  //   container is definitively absent is stranded. It has no state left to
+  //   back up, so counting it as a strict-gate skip would abort the
+  //   installer's pre-upgrade backup before its recovery phase
+  //   (recover_preexisting_sandboxes_before_onboard in scripts/install.sh)
+  //   that knows how to surface it ever runs.
+  // - Source boundary: the state is created by `nemoclaw uninstall`, which
+  //   removes the gateway registration and containers but deliberately
+  //   preserves sandboxes.json so a later reinstall can rebuild from it.
+  // - Source-fix constraint: backup-all must not reconcile the registry —
+  //   clearing a stranded record is owned by the recovery phase's
+  //   destroy/onboard guidance (and the user), and this gate runs before
+  //   that phase. Deleting records inside a backup command would destroy the
+  //   very evidence the recovery phase reports.
+  // - Removal condition: drop this exemption when install/uninstall
+  //   reconciles sandboxes.json against the gateway (stranded records can no
+  //   longer reach backup-all), or when the installer runs its recovery
+  //   phase before the strict pre-upgrade backup.
+  //
+  // The container-absence gate (checked per candidate at skip time) plus the
+  // confirming second listing after the loop are what make the exemption
+  // race-safe: a reconnecting or sibling-healthy sandbox still has a
+  // container, and a candidate the gateway observes again reverts to a
+  // genuine strict skip.
   const orphanNames = new Set(
     classifyOrphanedRegistrySandboxes(sandboxes, {
       observedNames: parseLiveSandboxNames(liveList.output || ""),
@@ -216,13 +233,36 @@ export async function backupAll(): Promise<void> {
       failed++;
     }
   }
+  // The classification above is only as fresh as the pre-loop listing, and
+  // the backup loop can run for minutes. Confirm with a second pinned listing
+  // that every stranded candidate is still unobserved before accepting the
+  // exemption (same two-phase confirmation as upgrade-sandboxes, #6114); a
+  // candidate that reappeared reverts to the genuine strict skip it would
+  // otherwise have been.
+  let confirmedStranded = strandedOrphans;
+  if (strandedOrphans.length > 0) {
+    const confirmation = await captureSandboxListWithGatewayPreflightOrExit(
+      {
+        action: "confirming stranded sandboxes remain absent from the selected gateway",
+        command: `${CLI_NAME} backup-all`,
+      },
+      { gatewayName: selectedGatewayName },
+    );
+    const observedOnRecheck = parseLiveSandboxNames(confirmation.output || "");
+    confirmedStranded = strandedOrphans.filter((name) => !observedOnRecheck.has(name));
+    for (const name of strandedOrphans.filter((entry) => observedOnRecheck.has(entry))) {
+      console.log(`  ${D}${notRunningBackupSkipMessage(name)}${R}`);
+      skipped++;
+      notRunningSkipped++;
+    }
+  }
   console.log("");
   console.log(`  Pre-upgrade backup: ${backed} backed up, ${failed} failed, ${skipped} skipped`);
   if (backed > 0) {
     console.log(`  Backups stored in: ${rebuildBackupsDirectory(resolveHome(), GATEWAY_PORT)}`);
   }
-  if (strandedOrphans.length > 0) {
-    console.log(`  ${YW}${orphanedRegistrySummary(strandedOrphans)}${R}`);
+  if (confirmedStranded.length > 0) {
+    console.log(`  ${YW}${orphanedRegistrySummary(confirmedStranded)}${R}`);
     console.log(`  ${D}${orphanedRegistryRemediation(CLI_NAME)}${R}`);
   }
   if (failed > 0) {

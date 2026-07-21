@@ -742,6 +742,16 @@ describe("backupAll", () => {
     expect(exitSpy).not.toHaveBeenCalled();
     expect(mocks.backupSandboxState).toHaveBeenCalledWith("sb-good");
     expect(mocks.backupStartedSandboxState).not.toHaveBeenCalled();
+    // The exemption requires a confirming second pinned listing after the loop.
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledTimes(2);
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenNthCalledWith(
+      2,
+      {
+        action: "confirming stranded sandboxes remain absent from the selected gateway",
+        command: "nemoclaw backup-all",
+      },
+      { gatewayName: "nemoclaw" },
+    );
     const logOutput = logSpy.mock.calls.flat().join("\n");
     expect(logOutput).toContain(
       "1 recorded sandbox(es) were not found on their recorded gateway: sb-stranded.",
@@ -806,6 +816,42 @@ describe("backupAll", () => {
     expect(mocks.isSandboxContainerDefinitivelyAbsent).toHaveBeenCalledWith("sb-reconnecting");
     const logOutput = logSpy.mock.calls.flat().join("\n");
     expect(logOutput).toContain("Skipping 'sb-reconnecting' (not running");
+    expect(logOutput).not.toContain("were not found on their recorded gateway");
+  });
+
+  it("reverts a stranded candidate to a strict skip when the confirming listing observes it again (#6520)", async () => {
+    // The pre-loop listing can be minutes stale by the time the loop ends. A
+    // candidate the confirming second listing observes has reconnected — the
+    // exemption must not apply and strict mode must keep failing closed.
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-flapping" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.captureSandboxListWithGatewayPreflightOrExit
+      .mockResolvedValueOnce({ status: 0, output: "" })
+      .mockResolvedValueOnce({
+        status: 0,
+        output: "sb-flapping  openshell  2026-07-21 10:00:00  Ready\n",
+      });
+    mocks.parseLiveSandboxNames.mockImplementation((output: string) =>
+      output.includes("sb-flapping") ? new Set(["sb-flapping"]) : new Set(),
+    );
+    mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValue(true);
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledTimes(2);
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("Skipping 'sb-flapping' (not running");
+    expect(logOutput).toContain("0 backed up, 0 failed, 1 skipped");
     expect(logOutput).not.toContain("were not found on their recorded gateway");
   });
 });

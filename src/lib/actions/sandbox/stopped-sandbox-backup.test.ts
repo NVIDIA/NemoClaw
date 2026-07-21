@@ -154,12 +154,7 @@ describe("isSandboxContainerDefinitivelyAbsent (#6520)", () => {
     adapterMocks.dockerRun.mockReturnValue({ status: 1, stdout: "" });
     expect(isSandboxContainerDefinitivelyAbsent("my-sb")).toBe(false);
     expect(adapterMocks.dockerRun).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        "ps",
-        "-a",
-        "--filter",
-        "label=openshell.ai/sandbox-name=my-sb",
-      ]),
+      expect.arrayContaining(["ps", "-a", "--filter", "label=openshell.ai/sandbox-name=my-sb"]),
       expect.objectContaining({ ignoreError: true }),
     );
   });
