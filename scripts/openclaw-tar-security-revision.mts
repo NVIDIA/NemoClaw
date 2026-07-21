@@ -232,6 +232,26 @@ export function patchOpenClawTar(options: {
       throw new Error("@openclaw/fs-safe tar dependency does not match the review");
     }
     optionalDependencies.tar = FIXED_TAR_VERSION;
+    if (shrinkwrap) {
+      const packages = lockPackages(shrinkwrap);
+      const fsSafeLock = record(
+        packages["node_modules/@openclaw/fs-safe"],
+        "OpenClaw shrinkwrap @openclaw/fs-safe package",
+      );
+      const fsSafeLockOptionalDependencies = record(
+        fsSafeLock.optionalDependencies,
+        "OpenClaw shrinkwrap @openclaw/fs-safe optional dependencies",
+      );
+      if (
+        fsSafeLockOptionalDependencies.tar !== expectedTarLayout.fsSafe ||
+        packages["node_modules/@openclaw/fs-safe/node_modules/tar"] !== undefined
+      ) {
+        throw new Error(
+          "OpenClaw shrinkwrap @openclaw/fs-safe tar layout does not match the review",
+        );
+      }
+      fsSafeLockOptionalDependencies.tar = FIXED_TAR_VERSION;
+    }
     writeFileSync(fsSafeManifestPath, `${JSON.stringify(fsSafeManifest, null, 2)}\n`);
   }
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -305,6 +325,22 @@ export function verifyOpenClawTarRevision(options: {
     );
     if (optionalDependencies.tar !== FIXED_TAR_VERSION) {
       throw new Error("patched @openclaw/fs-safe package metadata is inconsistent");
+    }
+    if (expectedLayout.shrinkwrap) {
+      const packages = lockPackages(readJson(shrinkwrapPath, "OpenClaw shrinkwrap"));
+      const fsSafeLockOptionalDependencies = record(
+        record(
+          packages["node_modules/@openclaw/fs-safe"],
+          "OpenClaw shrinkwrap @openclaw/fs-safe package",
+        ).optionalDependencies,
+        "OpenClaw shrinkwrap @openclaw/fs-safe optional dependencies",
+      );
+      if (
+        fsSafeLockOptionalDependencies.tar !== FIXED_TAR_VERSION ||
+        packages["node_modules/@openclaw/fs-safe/node_modules/tar"] !== undefined
+      ) {
+        throw new Error("patched OpenClaw shrinkwrap @openclaw/fs-safe metadata is inconsistent");
+      }
     }
   }
 }

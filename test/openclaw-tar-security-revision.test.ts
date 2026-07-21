@@ -37,21 +37,26 @@ function fixture(
       dependencies: { tar: tarVersion },
     }),
   );
-  shrinkwrap &&
+  if (shrinkwrap) {
+    const packages: Record<string, unknown> = {
+      "": { dependencies: { tar: tarVersion } },
+      "node_modules/tar": {
+        version: tarVersion,
+        resolved: `https://registry.npmjs.org/tar/-/tar-${tarVersion}.tgz`,
+        integrity: "old-integrity",
+      },
+    };
+    if (fsSafeTarVersion) {
+      packages["node_modules/@openclaw/fs-safe"] = {
+        version: "0.3.0",
+        optionalDependencies: { tar: fsSafeTarVersion },
+      };
+    }
     fs.writeFileSync(
       path.join(openClawRoot, "npm-shrinkwrap.json"),
-      JSON.stringify({
-        lockfileVersion: 3,
-        packages: {
-          "": { dependencies: { tar: tarVersion } },
-          "node_modules/tar": {
-            version: tarVersion,
-            resolved: `https://registry.npmjs.org/tar/-/tar-${tarVersion}.tgz`,
-            integrity: "old-integrity",
-          },
-        },
-      }),
+      JSON.stringify({ lockfileVersion: 3, packages }),
     );
+  }
   fs.writeFileSync(
     path.join(installedTarRoot, "package.json"),
     JSON.stringify({ name: "tar", version: tarVersion }),
@@ -123,6 +128,13 @@ describe("historical OpenClaw tar security revisions (#7272)", () => {
     expect(fs.existsSync(path.join(target.openClawRoot, "node_modules", "tar", "old.js"))).toBe(
       false,
     );
+    const shrinkwrap = JSON.parse(
+      fs.readFileSync(path.join(target.openClawRoot, "npm-shrinkwrap.json"), "utf8"),
+    );
+    expect(shrinkwrap.packages["node_modules/@openclaw/fs-safe"].optionalDependencies.tar).toBe(
+      FIXED_TAR_VERSION,
+    );
+    expect(shrinkwrap.packages["node_modules/@openclaw/fs-safe/node_modules/tar"]).toBeUndefined();
   });
 
   it("fails closed when the historical dependency graph differs from the review", () => {
