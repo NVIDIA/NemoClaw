@@ -62,11 +62,12 @@ describe("DGX Station documentation ownership", () => {
     expect(platformSupport).toContain("`/sys/fs/cgroup/cgroup.controllers`");
     expect(platformSupport).toContain("`/sys/class/net/lo/address`");
     expect(vllmSetup).toContain("explicit temporary metadata override");
-    expect(stationPreparation).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
+    expect(stationPreparation).toContain("DGX Station is Tested with limitations");
+    expect(stationPreparation).toContain("Dual-Station configurations are not yet validated");
     expect(stationPreparation).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
     expect(stationPreparation).toContain("[Platform Support](../../reference/platform-support)");
     expect(prerequisites).toContain("### DGX Station Express Preparation");
-    expect(prerequisites).toMatch(/\| DGX OS \(Station\) \| Docker \| Deferred \|/);
+    expect(prerequisites).toMatch(/\| DGX OS \(Station\) \| Docker \| Tested with limitations \|/);
     expect(prerequisites).toContain("additional-setup/dgx-station-preparation");
     expect(prerequisites).toContain(
       "[Additional Setup for DGX Station](additional-setup/dgx-station-preparation)",
@@ -76,8 +77,9 @@ describe("DGX Station documentation ownership", () => {
     );
     expect(quickstart).toContain("additional-setup/dgx-station-preparation");
     expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
-    expect(quickstart).toMatch(/(?:DGX )?Station(?: remains|'s) Deferred/);
-    expect(quickstart).toContain("One physical DGX OS `7.5.0` GB300 validation completed");
+    expect(quickstart).toContain("DGX Station is Tested with limitations");
+    expect(quickstart).toContain("Dual-Station configurations are not yet validated");
+    expect(quickstart).toContain("one DGX Station GB300 running DGX OS `7.5.0`");
   });
 
   it("labels platform-specific prerequisite pages as additional setup", () => {
