@@ -223,6 +223,10 @@ exec /bin/cp "$@"
       )
       .replace("/usr/local/lib/nemoclaw/npm-tar-security-revision.mts", npmRemediation)
       .replace("/usr/local/share/nemoclaw/openclaw-plugin-axios-1.18.0", replacementRoot)
+      .replace(
+        "readonly OPENCLAW_STATE_ROOT=/sandbox",
+        `readonly OPENCLAW_STATE_ROOT=${JSON.stringify(home)}`,
+      )
       .replaceAll("/opt/nemoclaw", nemoclawRoot),
   );
   return {
@@ -331,7 +335,7 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
 
   it("lets OPENCLAW_STATE_DIR override a suffix profile", () => {
     const target = fixture();
-    const stateDirectory = path.join(target.root, "explicit-state");
+    const stateDirectory = path.join(target.home, "explicit-state");
     const args = ["plugins", "install", "@openclaw/slack@2026.6.10", "--profile=ignored"];
     const result = run(target, args, {
       env: { FAKE_MUTATE_STATE: "1", OPENCLAW_STATE_DIR: stateDirectory },
@@ -339,6 +343,45 @@ describe("OpenClaw security revision wrapper (#7272)", () => {
     });
     expect(result.status).toBe(0);
     expect(remediationEvents(target).at(-1)).toMatchObject({ state: stateDirectory });
+  });
+
+  it("rejects a reviewed out-of-root state override before touching unrelated data", () => {
+    const target = fixture();
+    const stateDirectory = path.join(target.root, "unrelated-state");
+    fs.mkdirSync(stateDirectory);
+    fs.writeFileSync(path.join(stateDirectory, "sentinel.txt"), "unrelated\n");
+    const before = treeSnapshot(stateDirectory);
+    const args = ["plugins", "install", "@openclaw/slack@2026.6.10"];
+    const result = run(target, args, {
+      env: { HOME: target.root, OPENCLAW_STATE_DIR: stateDirectory },
+      stateDirectory,
+    });
+    expect(result.status).toBe(64);
+    expect(treeSnapshot(stateDirectory)).toEqual(before);
+    expect(fs.existsSync(target.invocationLog)).toBe(false);
+    expect(remediationEvents(target)).toEqual([]);
+    expect(
+      fs
+        .readdirSync(target.root)
+        .filter(
+          (entry) =>
+            entry.startsWith(".nemoclaw-openclaw-state-rollback.") ||
+            entry.startsWith(".nemoclaw-openclaw-credentials-hold."),
+        ),
+    ).toEqual([]);
+  });
+
+  it("delegates an unreviewed install even when its state override is out of root", () => {
+    const target = fixture();
+    const stateDirectory = path.join(target.root, "unreviewed-state");
+    const args = ["plugins", "install", "@openclaw/slack@2026.7.1"];
+    const result = run(target, args, {
+      env: { OPENCLAW_STATE_DIR: stateDirectory },
+      stateDirectory,
+    });
+    expect(result.status).toBe(0);
+    expect(originalArguments(target)).toEqual(args);
+    expect(remediationEvents(target)).toEqual([]);
   });
 
   it("retains reviewed local archive installation and target-index support", () => {

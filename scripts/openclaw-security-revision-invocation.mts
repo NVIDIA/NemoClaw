@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -18,6 +19,45 @@ type InvocationEnvironment = Readonly<{
 }>;
 
 const PROFILE_NAME = /^[A-Za-z0-9_-]+$/u;
+
+export function validateOpenClawStateDirectory(options: {
+  effectiveUid?: number;
+  stateDirectory: string;
+  trustedRoot: string;
+}): string {
+  const trustedRoot = path.resolve(options.trustedRoot);
+  const stateDirectory = path.resolve(options.stateDirectory);
+  if (path.dirname(stateDirectory) !== trustedRoot) {
+    throw new Error(`OpenClaw state directory must be a direct child of ${trustedRoot}`);
+  }
+  const effectiveUid =
+    options.effectiveUid ??
+    (typeof process.geteuid === "function" ? process.geteuid() : Number.NaN);
+  if (!Number.isSafeInteger(effectiveUid) || effectiveUid < 0) {
+    throw new Error("effective user ID is unavailable for OpenClaw state validation");
+  }
+  const rootMetadata = fs.lstatSync(trustedRoot);
+  if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
+    throw new Error(`OpenClaw state root must be a real directory: ${trustedRoot}`);
+  }
+  if (rootMetadata.uid !== effectiveUid) {
+    throw new Error(`OpenClaw state root must be owned by the current user: ${trustedRoot}`);
+  }
+  try {
+    const stateMetadata = fs.lstatSync(stateDirectory);
+    if (!stateMetadata.isDirectory() || stateMetadata.isSymbolicLink()) {
+      throw new Error(`OpenClaw state directory must be a real directory: ${stateDirectory}`);
+    }
+    if (stateMetadata.uid !== effectiveUid) {
+      throw new Error(
+        `OpenClaw state directory must be owned by the current user: ${stateDirectory}`,
+      );
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return stateDirectory;
+}
 
 function requiredHome(environment: InvocationEnvironment): string {
   const home = environment.HOME?.trim();
@@ -121,17 +161,28 @@ function isMainModule(): boolean {
 
 if (isMainModule()) {
   try {
-    const separator = process.argv.indexOf("--");
-    if (!process.argv.includes("--describe-plugin-install") || separator < 0) {
-      throw new Error("expected --describe-plugin-install -- <openclaw arguments>");
-    }
-    const invocation = parseOpenClawPluginInstallInvocation({
-      args: process.argv.slice(separator + 1),
-    });
-    if (invocation) {
-      process.stdout.write(
-        `${invocation.targetIndex}\0${invocation.stateDirectory}\0${invocation.target}\0`,
-      );
+    const validationIndex = process.argv.indexOf("--validate-state-directory");
+    if (validationIndex >= 0) {
+      const stateDirectory = process.argv[validationIndex + 1];
+      const rootIndex = process.argv.indexOf("--trusted-root");
+      const trustedRoot = rootIndex >= 0 ? process.argv[rootIndex + 1] : null;
+      if (!stateDirectory || !trustedRoot) {
+        throw new Error("expected --validate-state-directory <path> --trusted-root <path>");
+      }
+      validateOpenClawStateDirectory({ stateDirectory, trustedRoot });
+    } else {
+      const separator = process.argv.indexOf("--");
+      if (!process.argv.includes("--describe-plugin-install") || separator < 0) {
+        throw new Error("expected --describe-plugin-install -- <openclaw arguments>");
+      }
+      const invocation = parseOpenClawPluginInstallInvocation({
+        args: process.argv.slice(separator + 1),
+      });
+      if (invocation) {
+        process.stdout.write(
+          `${invocation.targetIndex}\0${invocation.stateDirectory}\0${invocation.target}\0`,
+        );
+      }
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
