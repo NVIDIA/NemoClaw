@@ -86,7 +86,7 @@ describe("initial sandbox policy real preset merge", () => {
     expect(discordRules).not.toContainEqual({ method: "PATCH", path: "/**" });
   });
 
-  it("lets the OpenClaw Discord bot manage its own application commands", () => {
+  it("lets the OpenClaw Discord bot manage its own application commands (#7298)", () => {
     const prepared = prepareInitialSandboxCreatePolicy(
       repoPath("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
       [],
