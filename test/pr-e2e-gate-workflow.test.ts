@@ -477,7 +477,7 @@ describe("PR E2E gate workflow", () => {
     expect(approveInternal.concurrency).toEqual({
       group:
         "pr-e2e-gate-approve-internal-${{ needs.coordinate.outputs.control_plane_approval_pr_number }}",
-      "cancel-in-progress": true,
+      "cancel-in-progress": false,
     });
     expect(approveInternal.secrets).toBeUndefined();
     expect(approveForkSkip.name).toBe("Approve credentialed E2E skip for fork PR");
