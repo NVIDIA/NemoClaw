@@ -787,7 +787,7 @@ const SQLITE_BACKUP_PY = [
   "    src_conn.close()",
 ].join("\n");
 
-function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
+export function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
   const remotePath = stateFileRemotePath(dir, spec.path);
   const quotedRemotePath = shellQuote(remotePath);
   if (spec.strategy === "sqlite_backup") {
@@ -799,8 +799,7 @@ function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
       '[ "${hardlink_count:-0}" = "0" ] || { echo "hard-linked sqlite state file rejected: $src" >&2; exit 11; }',
       'tmp="$(mktemp /tmp/nemoclaw-sqlite-backup.XXXXXX)"',
       "trap 'rm -f \"$tmp\"' EXIT",
-      `python3 -c ${shellQuote(SQLITE_BACKUP_PY)} "$src" "$tmp"`,
-      'cat -- "$tmp"',
+      `/usr/bin/python3 -I -c ${shellQuote(SQLITE_BACKUP_PY)} "$src" "$tmp" && cat -- "$tmp"`,
     ].join("; ");
   }
 
