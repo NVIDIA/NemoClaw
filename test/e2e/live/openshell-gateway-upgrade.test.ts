@@ -86,7 +86,7 @@ const SURVIVOR_SANDBOX =
     .join("-");
 const SURVIVOR_MARKER = `gateway-upgrade-survivor-${Date.now()}`;
 const SURVIVOR_MARKER_PATH = "/sandbox/.openclaw/workspace/nemoclaw-gateway-upgrade-marker";
-const INSTALLED_AGENT_DB_MARKER = `openclaw-2026-6-agent-db-${Date.now()}`;
+const INSTALLED_STATE_DB_MARKER = `openclaw-2026-6-state-db-${Date.now()}`;
 const LEGACY_MEMORY_MARKER = `openclaw-2026-6-memory-${Date.now()}`;
 const LEGACY_MEMORY_SIDECAR = "/sandbox/.openclaw/memory/main.sqlite";
 const OPENCLAW_GLOBAL_STATE_DB = "/sandbox/.openclaw/state/openclaw.sqlite";
@@ -208,10 +208,11 @@ async function bash(
 }
 
 interface OpenClawStateContract {
-  agentDbIntegrity: string;
+  agentDbIntegrity: string | null;
+  agentDbPresent: boolean;
   apiKey: unknown;
   globalDbIntegrity: string;
-  installedAgentDbMarker: string | null;
+  installedStateDbMarker: string | null;
   keyRefIds: string[];
   legacyMemoryMarker: string | null;
   legacyMemorySidecarArchived: boolean;
@@ -259,7 +260,7 @@ const configPath = "/sandbox/.openclaw/openclaw.json";
 const authPath = "/sandbox/.openclaw/agents/main/agent/auth-profiles.json";
 const globalDbPath = ${JSON.stringify(OPENCLAW_GLOBAL_STATE_DB)};
 const agentDbPath = ${JSON.stringify(OPENCLAW_MAIN_AGENT_DB)};
-const installedAgentDbMarkerValue = ${JSON.stringify(INSTALLED_AGENT_DB_MARKER)};
+const installedStateDbMarkerValue = ${JSON.stringify(INSTALLED_STATE_DB_MARKER)};
 const legacyMemoryPath = ${JSON.stringify(LEGACY_MEMORY_SIDECAR)};
 const legacyMemoryMarkerValue = ${JSON.stringify(LEGACY_MEMORY_MARKER)};
 const updateCheckPath = ${JSON.stringify(LEGACY_UPDATE_CHECK_PATH)};
@@ -273,7 +274,30 @@ if (${JSON.stringify(seedLegacyUpdateCheck)}) {
     lastAvailableVersion: "2026.7.1",
   }) + "\n", { mode: 0o600 });
 }
-const globalDb = new DatabaseSync(globalDbPath, { readOnly: true });
+const globalDb = new DatabaseSync(globalDbPath, {
+  readOnly: !${JSON.stringify(seedLegacyUpdateCheck)},
+});
+globalDb.exec("PRAGMA busy_timeout = 5000");
+if (${JSON.stringify(seedLegacyUpdateCheck)}) {
+  // Seed the database that the real 6.10 gateway initialized. Its agent DB is
+  // not created for this custom-provider route until 7.1 migrates the Memory
+  // Core sidecar, so opening that path here would manufacture upgrade state.
+  const primaryStateSchema = globalDb
+    .prepare("SELECT role, schema_version AS schemaVersion FROM schema_meta WHERE meta_key = ?")
+    .get("primary");
+  if (!primaryStateSchema) throw new Error("legacy OpenClaw global database has no primary schema metadata");
+  const now = Date.now();
+  globalDb
+    .prepare("INSERT OR REPLACE INTO schema_meta (meta_key, role, schema_version, agent_id, app_version, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?, ?)")
+    .run(
+      "nemoclaw-e2e-state-upgrade",
+      primaryStateSchema.role,
+      primaryStateSchema.schemaVersion,
+      installedStateDbMarkerValue,
+      now,
+      now,
+    );
+}
 const globalDbIntegrity = globalDb.prepare("PRAGMA integrity_check").get().integrity_check;
 const hasSchemaMeta = globalDb
   .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -283,24 +307,12 @@ const startupCheckpoint = hasSchemaMeta
       .prepare("SELECT app_version AS appVersion FROM schema_meta WHERE meta_key = ?")
       .get("startup-migrations")?.appVersion ?? null
   : null;
+const installedStateDbMarker = globalDb
+  .prepare("SELECT app_version AS appVersion FROM schema_meta WHERE meta_key = ?")
+  .get("nemoclaw-e2e-state-upgrade")?.appVersion ?? null;
 globalDb.close();
-const agentDb = new DatabaseSync(agentDbPath, {
-  readOnly: !${JSON.stringify(seedLegacyUpdateCheck)},
-});
-agentDb.exec("PRAGMA busy_timeout = 5000");
-if (${JSON.stringify(seedLegacyUpdateCheck)}) {
-  // cache_entries is present with this exact shape in both published versions;
-  // a non-expiring private scope proves the real 6.10 agent DB was restored
-  // without being coupled to Memory Core's normal reindex cleanup.
-  agentDb.prepare("INSERT OR REPLACE INTO cache_entries (scope, key, value_json, blob, expires_at, updated_at) VALUES (?, ?, ?, NULL, NULL, ?)")
-    .run("nemoclaw-e2e-state-upgrade", "installed-agent-db-marker", JSON.stringify(installedAgentDbMarkerValue), 1);
-}
-const agentDbIntegrity = agentDb.prepare("PRAGMA integrity_check").get().integrity_check;
-const installedAgentDbMarkerJson = agentDb
-  .prepare("SELECT value_json AS valueJson FROM cache_entries WHERE scope = ? AND key = ?")
-  .get("nemoclaw-e2e-state-upgrade", "installed-agent-db-marker")?.valueJson;
-const installedAgentDbMarker =
-  typeof installedAgentDbMarkerJson === "string" ? JSON.parse(installedAgentDbMarkerJson) : null;
+const agentDbPresent = fs.existsSync(agentDbPath);
+let agentDbIntegrity = null;
 let legacyMemoryMarker = null;
 if (${JSON.stringify(seedLegacyUpdateCheck)}) {
   fs.mkdirSync(path.dirname(legacyMemoryPath), { recursive: true });
@@ -320,11 +332,14 @@ if (${JSON.stringify(seedLegacyUpdateCheck)}) {
   fs.chmodSync(legacyMemoryPath, 0o600);
   legacyMemoryMarker = legacyMemoryMarkerValue;
 } else {
+  const agentDb = new DatabaseSync(agentDbPath, { readOnly: true });
+  agentDb.exec("PRAGMA busy_timeout = 5000");
+  agentDbIntegrity = agentDb.prepare("PRAGMA integrity_check").get().integrity_check;
   legacyMemoryMarker = agentDb
     .prepare("SELECT text FROM memory_index_chunks WHERE id = ?")
     .get("nemoclaw-e2e-legacy-memory")?.text ?? null;
+  agentDb.close();
 }
-agentDb.close();
 const keyRefIds = [];
 function collectKeyRefs(value) {
   if (!value || typeof value !== "object") return;
@@ -338,9 +353,10 @@ collectKeyRefs(auth);
 const envEntries = Object.entries(process.env);
 console.log(JSON.stringify({
   agentDbIntegrity,
+  agentDbPresent,
   apiKey: config.models?.providers?.inference?.apiKey,
   globalDbIntegrity,
-  installedAgentDbMarker,
+  installedStateDbMarker,
   keyRefIds: [...new Set(keyRefIds)].sort(),
   legacyMemoryMarker,
   legacyMemorySidecarArchived: fs.existsSync(legacyMemoryPath + ".migrated"),
@@ -373,20 +389,25 @@ console.log(JSON.stringify({
   expect(summary.literalSecretInState).toBe(false);
   expect(summary.updateCheckPresent).toBe(seedLegacyUpdateCheck);
   expect(summary.globalDbIntegrity).toBe("ok");
-  expect(summary.agentDbIntegrity).toBe("ok");
-  expect(summary.installedAgentDbMarker).toBe(INSTALLED_AGENT_DB_MARKER);
+  expect(summary.installedStateDbMarker).toBe(INSTALLED_STATE_DB_MARKER);
   const expectedPhaseContract = {
     legacy: {
+      agentDbIntegrity: null,
+      agentDbPresent: false,
       legacyMemorySidecarArchived: false,
       legacyMemorySidecarPresent: true,
       startupCheckpoint: null,
     },
     upgraded: {
+      agentDbIntegrity: "ok",
+      agentDbPresent: true,
       legacyMemorySidecarArchived: true,
       legacyMemorySidecarPresent: false,
       startupCheckpoint: CURRENT_OPENCLAW_VERSION,
     },
   }[phase];
+  expect(summary.agentDbIntegrity).toBe(expectedPhaseContract.agentDbIntegrity);
+  expect(summary.agentDbPresent).toBe(expectedPhaseContract.agentDbPresent);
   expect(summary.startupCheckpoint).toBe(expectedPhaseContract.startupCheckpoint);
   expect(summary.legacyMemoryMarker).toBe(LEGACY_MEMORY_MARKER);
   expect(summary.legacyMemorySidecarPresent).toBe(expectedPhaseContract.legacyMemorySidecarPresent);
