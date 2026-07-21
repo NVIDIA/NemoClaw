@@ -98,12 +98,16 @@ function openClawBaseProvenance(
   integrity = PINNED_OPENCLAW_INTEGRITY,
   tarball = PINNED_OPENCLAW_TARBALL,
 ): string {
+  const recipe =
+    version === PINNED_OPENCLAW_VERSION
+      ? "ignore-scripts+reviewed-lifecycle+transitive-remediation-v1"
+      : "ignore-scripts+reviewed-lifecycle-v1";
   return [
     "schema=2",
     `package=openclaw@${version}`,
     `integrity=${integrity}`,
     `tarball=${tarball}`,
-    "recipe=ignore-scripts+reviewed-lifecycle-v1",
+    `recipe=${recipe}`,
     `mcporter-package=mcporter@${PINNED_MCPORTER_VERSION}`,
     `mcporter-integrity=${PINNED_MCPORTER_INTEGRITY}`,
     `mcporter-tarball=${PINNED_MCPORTER_TARBALL}`,
@@ -182,6 +186,7 @@ function runInstallBlock(
   const mcporterRuntime = path.join(tmp, "mcporter-runtime");
   const mcporterBin = path.join(tmp, "bin", "mcporter");
   const reviewedNpmExecutable = path.join(tmp, "bin", "reviewed-npm-fixture");
+  const remediationHelper = path.join(tmp, "openclaw-npm-remediation.cjs");
   fs.mkdirSync(path.dirname(mcporterBin), { recursive: true });
   fs.mkdirSync(mcporterRuntime, { recursive: true });
   fs.copyFileSync(MCPORTER_LOCKFILE, path.join(mcporterRuntime, "package-lock.json"));
@@ -219,6 +224,19 @@ function runInstallBlock(
       "",
     ].join("\n"),
     { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    remediationHelper,
+    [
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      "const args = process.argv.slice(2);",
+      "const value = (name) => args[args.indexOf(name) + 1];",
+      'const output = path.join(value("--working-directory"), "remediated-openclaw.tgz");',
+      'fs.copyFileSync(value("--archive"), output);',
+      "console.log(output);",
+      "",
+    ].join("\n"),
   );
   const writeProvenanceFile = () => {
     fs.writeFileSync(provenancePath, baseProvenance as string, { mode: 0o444 });
@@ -304,7 +322,8 @@ function runInstallBlock(
       .replaceAll(OPENCLAW_BASE_PROVENANCE_PATH, provenancePath)
       .replaceAll("/usr/local/lib/nemoclaw/mcporter-runtime", mcporterRuntime)
       .replaceAll("/usr/local/bin/mcporter", mcporterBin)
-      .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER),
+      .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
+      .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -857,7 +876,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "wrong lifecycle recipe",
           {
             baseProvenance: openClawBaseProvenance().replace(
-              "recipe=ignore-scripts+reviewed-lifecycle-v1",
+              "recipe=ignore-scripts+reviewed-lifecycle+transitive-remediation-v1",
               "recipe=ignore-scripts-only-v1",
             ),
           },
