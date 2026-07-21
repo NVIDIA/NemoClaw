@@ -225,9 +225,19 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("code-backed for the reviewed `openclaw@2026.6.10` artifact");
     expect(review).toContain("src/lib/messaging/channels/manifests.test.ts");
     expect(review).toContain("npm audit result in this note remains a point-in-time snapshot");
-    expect(review).toContain("Advisory audit revalidated: 2026-07-03");
-    expect(review).toContain("0` critical vulnerabilities across `763` total dependencies");
+    expect(review).toContain("Advisory audit revalidated: 2026-07-21");
+    expect(review).toContain(
+      "`0` info, `1` low, `1` moderate, `0` high, and `0` critical findings across `766` total dependencies",
+    );
+    expect(review).toContain(
+      "The mcporter locked graph reported no findings across `138` dependencies",
+    );
+    expect(review).toContain("GHSA-v422-hmwv-36x6");
+    expect(review).toContain("reviewed Slack and Microsoft Teams plugin graphs");
+    expect(review).toContain("GHSA-j3f2-48v5-ccww");
+    expect(review).toContain("reviewed diagnostics OTEL and WhatsApp plugin graphs");
     expect(review).toContain("Node `v22.22.2`");
+    expect(review).toContain("public npm registry");
     expect(review).toContain("engine requirement of `>=22.19.0`");
     expect(review).toContain(
       "separate `wechat-runtime-audit` gate uses Node `22.19.0` and npm `10.9.4`",
@@ -238,6 +248,55 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("`npm audit --omit=dev --json`");
     expect(review).toContain("configured threshold in `ci/reviewed-npm-audit.json` is `high`");
     expect(review).toContain("Transitive Dependency Graph Rationale");
+    expect(review).toContain("Transitive Remediation Boundary");
+    expect(review).toContain("Transitive Remediation Concern Ledger");
+    expect(review).toContain("`openclaw@2026.6.10`, the helper makes these changes");
+    expect(review).toContain("`tar@7.5.16` with `tar@7.5.19`");
+    expect(review).toContain("`brace-expansion@5.0.6` with `brace-expansion@5.0.7`");
+    expect(review).toContain("`@openclaw/fs-safe@0.3.0`");
+    expect(review).toContain("removes its duplicate optional `tar` and `jszip` declarations");
+    expect(review).toContain("direct `tar@7.5.19` and `jszip@3.10.1` dependencies");
+    expect(review).toContain("`axios@1.16.0` with `axios@1.18.0`");
+    expect(review).toContain("`https-proxy-agent@5.0.1` and `agent-base@6.0.2`");
+    expect(review).toContain("exact registry SRI and tarball URL");
+    expect(review).toContain(
+      "rejects unsafe archive members before extraction and after repacking",
+    );
+    expect(review).toContain("committed SHA-512 metadata value");
+    expect(review).toContain(
+      "core value also covers the bundled `@openclaw/fs-safe` package manifest",
+    );
+    for (const integrity of [
+      "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
+      "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
+      "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==",
+      "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
+      "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",
+      "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
+      "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
+      "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
+      "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
+    ]) {
+      expect(review).toContain(integrity);
+    }
+    for (const tarball of [
+      "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
+      "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
+      "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz",
+      "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
+      "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz",
+      "https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz",
+    ]) {
+      expect(review).toContain(tarball);
+    }
+    expect(review).toContain("ignore-scripts+reviewed-lifecycle+transitive-remediation-v1");
+    expect(review).toContain("The replacement graph has no repository-generated lock-derived SBOM");
+    expect(review).toContain(
+      "`https-proxy-agent@5.0.1` and `agent-base@6.0.2` tarballs declare MIT in package metadata but contain no license file",
+    );
+    expect(review).toContain("The other replacement tarballs include license files");
+    expect(review).toContain("`tar@7.5.19` declares BlueOak-1.0.0");
+    expect(review).toContain("the others declare MIT");
     expect(review).toContain(
       "The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transitive graph",
     );
@@ -316,6 +375,7 @@ set -euo pipefail
 
 messaging_build_applier=${JSON.stringify(MESSAGING_BUILD_APPLIER)}
 reviewed_archive_helper=scripts/lib/reviewed-npm-archive.mts
+remediation_helper=scripts/lib/openclaw-npm-remediation.mts
 
 boundary_marker_count="$(grep -hF 'Reviewed-archive invariants (#5896):' Dockerfile Dockerfile.base "$messaging_build_applier" | wc -l | tr -d ' ')"
 test "$boundary_marker_count" -eq 5
@@ -358,18 +418,21 @@ for dockerfile in Dockerfile Dockerfile.base; do
   openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.6.10/,/$end_marker/p" "$dockerfile")"
   check_contains "$openclaw_block" "ARG OPENCLAW_2026_6_10_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
   check_contains "$openclaw_block" '/scripts/lib/reviewed-npm-archive.mts' "$dockerfile shared helper"
+  check_contains "$openclaw_block" '/scripts/lib/openclaw-npm-remediation.mts' "$dockerfile remediation helper"
   check_contains "$openclaw_block" '--package-spec "openclaw@\${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY"' "$dockerfile reviewed identity"
   check_contains "$openclaw_block" '--tarball-url "$EXPECTED_TARBALL"' "$dockerfile reviewed tarball"
   check_contains "$openclaw_block" '"$OPENCLAW_PACK_PATH"' "$dockerfile local install path"
-  check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"' "$dockerfile pack directory"
+  check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_SOURCE_PACK_PATH")"' "$dockerfile pack directory"
+  check_contains "$openclaw_block" '--archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@\${OPENCLAW_VERSION}"' "$dockerfile remediated identity"
   if [ "$dockerfile" = Dockerfile.base ]; then
-    check_contains "$openclaw_block" '[ ! -f "$OPENCLAW_PACK_PATH" ]' "$dockerfile archive path guard"
+    check_contains "$openclaw_block" '[ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ]' "$dockerfile archive path guard"
   fi
   check_contains "$openclaw_block" 'rm -rf "$OPENCLAW_PACK_DIR"' "$dockerfile cleanup"
   check_not_contains "$openclaw_block" 'REGISTRY_INTEGRITY=$(npm view' "$dockerfile inline integrity lookup"
   check_not_contains "$openclaw_block" 'pack_reviewed_npm_tarball' "$dockerfile inline pack helper"
   check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
-  check_contains "$openclaw_block" 'recipe=ignore-scripts+reviewed-lifecycle-v1' "$dockerfile base provenance recipe"
+  check_contains "$openclaw_block" 'ignore-scripts+reviewed-lifecycle+transitive-remediation-v1' "$dockerfile base provenance recipe"
+  check_contains "$openclaw_block" 'npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip' "$dockerfile installed remediation graph guard"
   check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
   check_contains "$openclaw_block" 'mcporter-integrity=' "$dockerfile mcporter provenance integrity"
   check_contains "$openclaw_block" 'mcporter-lock-sha256=' "$dockerfile mcporter provenance lock hash"
@@ -400,11 +463,15 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq '["openclaw", "plugins", "install", \`npm-pack:\${packed.archivePath}\`]' "$messaging_build_applier"
 	grep -Fq 'rmSync(packed.rootDir, { recursive: true, force: true })' "$messaging_build_applier"
 	grep -Fq 'from "../../../../../scripts/lib/reviewed-npm-archive.mts"' "$messaging_build_applier"
+	grep -Fq 'from "../../../../../scripts/lib/openclaw-npm-remediation.mts"' "$messaging_build_applier"
+	grep -Fq 'remediateReviewedOpenClawArchive({' "$messaging_build_applier"
 	grep -Fq 'spawnSync(request.npmExecutable ?? "npm", args' "$reviewed_archive_helper"
 	grep -Fq '["view", request.packageSpec, "dist.integrity"]' "$reviewed_archive_helper"
 	grep -Fq '["view", request.packageSpec, "dist.tarball"]' "$reviewed_archive_helper"
 	grep -Fq '["pack", request.tarballUrl, "--pack-destination", rootDirectory, "--json"]' "$reviewed_archive_helper"
 	grep -Fq 'reported unsafe archive filename' "$reviewed_archive_helper"
+	grep -Fq 'expectedPatchedMetadataIntegrity' "$remediation_helper"
+	grep -Fq 'validateArchiveMembers(archivePath' "$remediation_helper"
 	! grep -Fq 'npmViewString(' "$messaging_build_applier"
 	! grep -Fq 'resolveNpmPackArchivePath(' "$messaging_build_applier"
 	issue_4434_patch=${JSON.stringify(ISSUE_4434_PATCH)}
