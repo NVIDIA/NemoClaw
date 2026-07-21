@@ -8,7 +8,6 @@ import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
-  cpSync,
   existsSync,
   fstatSync,
   lstatSync,
@@ -16,13 +15,19 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive } from "./lib/reviewed-npm-archive.mts";
+import {
+  commitStagedReplacementTransaction,
+  discardStagedReplacements,
+  type StagedReplacement,
+  type StagedReplacementTransactionHook,
+  stageDirectoryReplacement,
+  stageFileReplacement,
+} from "./lib/staged-replacement-transaction.mts";
 import { patchReviewedOpenClawPluginAxiosRoot } from "./openclaw-plugin-axios-security-revision.mts";
 
 type JsonObject = Record<string, any>;
@@ -230,14 +235,38 @@ function readJson(file: string): JsonObject {
   }
 }
 
-function writeJson(file: string, value: JsonObject): void {
-  writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+function jsonContents(value: JsonObject): string {
+  return `${JSON.stringify(value, null, 2)}\n`;
 }
 
 function requireRealDirectory(directory: string, label: string): void {
   const metadata = lstatSync(directory);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
     throw new Error(`${label} must be a real directory: ${directory}`);
+  }
+}
+
+function requireDescendantPath(root: string, candidate: string): void {
+  const relative = path.relative(root, candidate);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error(`OpenClaw plugin candidate must be a descendant of ${root}: ${candidate}`);
+  }
+  let current = root;
+  for (const part of relative.split(path.sep)) {
+    current = path.join(current, part);
+    if (!existsSync(current)) break;
+    const metadata = lstatSync(current);
+    if (metadata.isSymbolicLink()) {
+      throw new Error(`OpenClaw plugin candidate path contains a symbolic link: ${current}`);
+    }
+    if (current !== candidate && !metadata.isDirectory()) {
+      throw new Error(`OpenClaw plugin candidate parent must be a directory: ${current}`);
+    }
   }
 }
 
@@ -293,6 +322,7 @@ function lockEntry(pin: Pin, manifest: JsonObject): JsonObject {
 export function patchReviewedOpenClawPluginRoot(
   pluginRoot: string,
   replacementRoot: string,
+  options: { injectFailure?: StagedReplacementTransactionHook } = {},
 ): string | null {
   requireRealDirectory(pluginRoot, "installed OpenClaw plugin");
   const manifestPath = path.join(pluginRoot, "package.json");
@@ -327,13 +357,7 @@ export function patchReviewedOpenClawPluginRoot(
     return { installedRoot, pin, replacement };
   });
 
-  for (const { installedRoot, pin, replacement } of planned) {
-    const staged = `${installedRoot}.nemoclaw-security-revision`;
-    rmSync(staged, { recursive: true, force: true });
-    cpSync(replacement, staged, { recursive: true, dereference: false });
-    rmSync(installedRoot, { recursive: true, force: true });
-    renameSync(staged, installedRoot);
-
+  for (const { pin, replacement } of planned) {
     manifest.dependencies = { ...manifest.dependencies, [pin.name]: pin.version };
     root.dependencies = { ...root.dependencies, [pin.name]: pin.version };
     bundled.add(pin.name);
@@ -344,23 +368,60 @@ export function patchReviewedOpenClawPluginRoot(
   }
   manifest.bundledDependencies = [...bundled].sort();
   root.bundleDependencies = [...bundled].sort();
-  writeJson(manifestPath, manifest);
-  writeJson(shrinkwrapPath, shrinkwrap);
-
-  for (const { pin } of planned) {
-    const installed = readJson(path.join(pluginRoot, "node_modules", pin.name, "package.json"));
-    if (
-      installed.version !== pin.version ||
-      shrinkwrap.packages[`node_modules/${pin.name}`]?.version !== pin.version
-    ) {
-      throw new Error(`${spec} did not retain the reviewed ${pin.name} remediation`);
+  const manifestReplacement = jsonContents(manifest);
+  const shrinkwrapReplacement = jsonContents(shrinkwrap);
+  const staged: StagedReplacement[] = [];
+  try {
+    for (const { installedRoot, pin, replacement } of planned) {
+      staged.push(
+        stageDirectoryReplacement({
+          label: `${spec} ${pin.name} dependency`,
+          livePath: installedRoot,
+          sourcePath: replacement,
+        }),
+      );
     }
+    staged.push(
+      stageFileReplacement({
+        contents: manifestReplacement,
+        label: `${spec} package manifest`,
+        livePath: manifestPath,
+      }),
+      stageFileReplacement({
+        contents: shrinkwrapReplacement,
+        label: `${spec} npm shrinkwrap`,
+        livePath: shrinkwrapPath,
+      }),
+    );
+    commitStagedReplacementTransaction({
+      injectFailure: options.injectFailure,
+      replacements: staged,
+      verify: () => {
+        if (readFileSync(manifestPath, "utf8") !== manifestReplacement) {
+          throw new Error(`${spec} package manifest remediation did not commit exactly`);
+        }
+        if (readFileSync(shrinkwrapPath, "utf8") !== shrinkwrapReplacement) {
+          throw new Error(`${spec} npm shrinkwrap remediation did not commit exactly`);
+        }
+        for (const { installedRoot, pin } of planned) {
+          rejectUnsafeTree(installedRoot, `${spec} installed ${pin.name}`);
+          const installed = readJson(path.join(installedRoot, "package.json"));
+          if (installed.name !== pin.name || installed.version !== pin.version) {
+            throw new Error(`${spec} did not retain the reviewed ${pin.name} remediation`);
+          }
+        }
+      },
+    });
+  } catch (error) {
+    discardStagedReplacements(staged);
+    throw error;
   }
   return spec;
 }
 
 function installedPluginCandidates(stateDirectory: string): string[] {
   const openClawRoot = path.resolve(stateDirectory);
+  requireRealDirectory(openClawRoot, "OpenClaw state directory");
   const names = ["slack", "msteams", "diagnostics-otel", "whatsapp", "discord"];
   const candidates = names.flatMap((name) => [
     path.join(openClawRoot, "extensions", name),
@@ -368,6 +429,7 @@ function installedPluginCandidates(stateDirectory: string): string[] {
   ]);
   const projectsRoot = path.join(openClawRoot, "npm", "projects");
   if (existsSync(projectsRoot)) {
+    requireDescendantPath(openClawRoot, projectsRoot);
     requireRealDirectory(projectsRoot, "OpenClaw npm projects root");
     for (const project of readdirSync(projectsRoot, { withFileTypes: true })) {
       if (!project.isDirectory() || project.isSymbolicLink()) {
@@ -378,6 +440,7 @@ function installedPluginCandidates(stateDirectory: string): string[] {
       }
     }
   }
+  for (const candidate of candidates) requireDescendantPath(openClawRoot, candidate);
   return candidates.filter((candidate) => existsSync(path.join(candidate, "package.json")));
 }
 
