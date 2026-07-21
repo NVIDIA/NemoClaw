@@ -80,13 +80,15 @@ describe("npm bundled node-tar remediation", () => {
   it("does not invoke npm or npx until the affected bundled tar is replaced and verified", () => {
     const target = fixture("10.9.7", "7.5.11");
     const commands: string[] = [];
+    const verifyFixedTarByCommand: Partial<Record<string, () => void>> = {
+      npm: () => expect(verifyBundledNpmTar(target.npmRoot).tarVersion).toBe(FIXED_TAR_VERSION),
+      npx: () => expect(verifyBundledNpmTar(target.npmRoot).tarVersion).toBe(FIXED_TAR_VERSION),
+    };
 
     const result = patchBundledNpmTarFromRegistry(target.npmRoot, {
       commandRunner(command) {
         commands.push(command);
-        if (command === "npm" || command === "npx") {
-          expect(verifyBundledNpmTar(target.npmRoot).tarVersion).toBe(FIXED_TAR_VERSION);
-        }
+        verifyFixedTarByCommand[command]?.();
       },
       prepareReplacement(commandRunner) {
         commandRunner("curl", []);
