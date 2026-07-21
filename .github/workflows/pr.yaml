@@ -67,7 +67,9 @@ jobs:
         shell: bash
         run: |
           DOCS_ONLY_FROM_REF="${{ github.event.pull_request.base.sha }}"
-          git fetch --no-tags --depth=1 origin "$DOCS_ONLY_FROM_REF"
+          DOCS_ONLY_BASE_REF="${{ github.event.pull_request.base.ref }}"
+          git fetch --no-tags --deepen=1 origin "$(git rev-parse HEAD)"
+          git update-ref "refs/remotes/origin/$DOCS_ONLY_BASE_REF" "$DOCS_ONLY_FROM_REF"
           echo "DOCS_ONLY_FROM_REF=$DOCS_ONLY_FROM_REF" >> "$GITHUB_ENV"
 
       - name: Run docs-only hook checks
