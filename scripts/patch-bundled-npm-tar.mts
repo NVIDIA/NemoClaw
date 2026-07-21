@@ -231,11 +231,20 @@ function prepareFixedTarReplacement(
       archivePath,
       FIXED_TAR_TARBALL,
     ]);
-    const archive = lstatSync(archivePath);
-    if (!archive.isFile() || archive.isSymbolicLink()) {
-      throw new Error("npm bundled tar replacement download must be a real file");
+    const archiveDescriptor = openSync(
+      archivePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+    );
+    let archiveBytes: Buffer;
+    try {
+      if (!fstatSync(archiveDescriptor).isFile()) {
+        throw new Error("npm bundled tar replacement download must be a real file");
+      }
+      archiveBytes = readFileSync(archiveDescriptor);
+    } finally {
+      closeSync(archiveDescriptor);
     }
-    const actualIntegrity = `sha512-${createHash("sha512").update(readFileSync(archivePath)).digest("base64")}`;
+    const actualIntegrity = `sha512-${createHash("sha512").update(archiveBytes).digest("base64")}`;
     if (actualIntegrity !== FIXED_TAR_INTEGRITY) {
       throw new Error(
         `npm bundled tar replacement integrity mismatch\nExpected: ${FIXED_TAR_INTEGRITY}\nActual:   ${actualIntegrity}`,
