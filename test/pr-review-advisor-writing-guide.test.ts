@@ -4,7 +4,11 @@
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("PR Review Advisor writing guide", () => {
   it("loads the guide from the advisor checkout", async () => {
@@ -23,5 +27,14 @@ describe("PR Review Advisor writing guide", () => {
       process.chdir(originalCwd);
       fs.rmSync(prWorktree, { recursive: true, force: true });
     }
+  });
+
+  it("stops when the trusted guide is unavailable", async () => {
+    const { readTrustedWritingGuide } = await import("../tools/pr-review-advisor/analyze.mts");
+    vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
+      throw new Error("missing guide fixture");
+    });
+
+    expect(() => readTrustedWritingGuide()).toThrow("Writing guide unavailable");
   });
 });
