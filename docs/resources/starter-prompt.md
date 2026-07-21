@@ -40,8 +40,9 @@ Choices:
 2. Hermes.
 3. LangChain Deep Agents Code.
 
-Use `NEMOCLAW_AGENT=hermes` or `nemohermes onboard` for Hermes.
-Use `NEMOCLAW_AGENT=langchain-deepagents-code` or `nemo-deepagents onboard` for Deep Agents.
+Set `NEMOCLAW_AGENT=openclaw` for OpenClaw.
+Set `NEMOCLAW_AGENT=hermes` for Hermes, or use `nemohermes onboard`.
+Set `NEMOCLAW_AGENT=langchain-deepagents-code` for Deep Agents, or use `nemo-deepagents onboard`.
 
 ## Hardware and Readiness
 
@@ -64,13 +65,23 @@ Use `NEMOCLAW_AGENT=langchain-deepagents-code` or `nemo-deepagents onboard` for 
 - Offer a user-local alternative only when official documentation supports it for that exact operation.
 - Do not silently use user-local Ollama for a system Ollama upgrade when the old system service would remain active.
 
+## Execution Sandbox
+
+- If the coding agent's execution sandbox blocks a Docker command, use its command-scoped approval flow, if available.
+- Request permission to rerun only that exact command outside the sandbox.
+- Before requesting approval, explain that Docker daemon access can modify containers, images, and host files.
+- Do not change Docker socket permissions or request broad host access only to bypass the execution sandbox.
+- If the user or managed policy denies approval, stop before the command.
+- Explain that `NEMOCLAW_NON_INTERACTIVE=1` removes NemoClaw prompts.
+- Explain that `NEMOCLAW_NON_INTERACTIVE=1` does not bypass execution-sandbox permissions.
+
 ## Platform-Specific Instructions
 
 After the readiness check, load exactly one matching instruction asset before provider selection:
 
-- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c718a78c5794574a98fdd885d94466c3b6794153/docs/resources/prompt-assets/dgx-spark.md).
-- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c718a78c5794574a98fdd885d94466c3b6794153/docs/resources/prompt-assets/dgx-station.md).
-- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/c718a78c5794574a98fdd885d94466c3b6794153/docs/resources/prompt-assets/windows-wsl.md).
+- Confirmed DGX Spark: [DGX Spark Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/ebf29b024c7a24e69ab8386b68e426d31a4c6821/docs/resources/prompt-assets/dgx-spark.md).
+- Confirmed DGX Station: [DGX Station installation instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/ebf29b024c7a24e69ab8386b68e426d31a4c6821/docs/resources/prompt-assets/dgx-station.md).
+- Officially detected Windows WSL: [Windows WSL Express instructions](https://raw.githubusercontent.com/NVIDIA/NemoClaw/ebf29b024c7a24e69ab8386b68e426d31a4c6821/docs/resources/prompt-assets/windows-wsl.md).
 
 Read the matching raw Markdown file completely and follow it before continuing.
 Do not load a platform asset for any other computer.
@@ -121,6 +132,9 @@ Ask required model, endpoint, credential, and download questions one at a time.
 - Collect every choice before running the installer.
 - Ask one question at a time for model, endpoint, sandbox name, web search, messaging when the selected agent supports it, policy when no platform-asset install path is selected, credentials, administrator access, and downloads.
 - Use non-interactive environment variables whenever supported.
+- For installation outside an accepted platform-asset path, set `NEMOCLAW_AGENT` and `NEMOCLAW_PROVIDER` from my selections.
+- Use the maintained release unless I request a specific version.
+- For a specific version, clear any inherited `NEMOCLAW_INSTALL_REF`, then set `NEMOCLAW_INSTALL_TAG=vX.Y.Z` to its versioned release tag.
 - Never leave a command waiting at `Choose [1]:`.
 - If a choice cannot be supplied non-interactively, stop before starting and explain the supported alternative.
 - The DGX Station asset is the exception for the official third-party-software notice and Express confirmation. Keep those installer prompts visible, wait for the user's response, and do not pre-answer them.

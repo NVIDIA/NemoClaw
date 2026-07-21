@@ -100,6 +100,7 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
       NEMOCLAW_NON_INTERACTIVE=1 \
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+      NEMOCLAW_AGENT=openclaw \
       NEMOCLAW_PROVIDER=build \
       NVIDIA_INFERENCE_API_KEY=<your-key> \
       NEMOCLAW_SANDBOX_NAME=my-gpt-claw \
@@ -107,7 +108,16 @@ Use these details when your first-run path needs more control.
     ```
 
     The example uses NVIDIA Endpoints.
+    Set `NEMOCLAW_AGENT` to `hermes` or `langchain-deepagents-code` to install another agent.
     Set `NEMOCLAW_PROVIDER` and the matching credential variable for another provider, then use a sandbox name that does not depend on a previous onboarding session.
+    To select a specific NemoClaw release, replace `vX.Y.Z` with its versioned release tag.
+    `NEMOCLAW_INSTALL_REF` is a higher-priority development override, so clear it when pinning a release tag.
+
+    ```bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=vX.Y.Z bash
+    ```
+
+    Keep both install variables on the `bash` side of the pipeline so the installer can read them.
     Do not place `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before `curl`, because the installer process cannot read it there.
     Refer to the [Commands reference](../reference/commands#nemoclaw-onboard) for the full non-interactive configuration.
   </Accordion>
@@ -127,6 +137,11 @@ Use these details when your first-run path needs more control.
     On Linux, the installer can install Docker.
     If it prints a `newgrp docker` command, run that command before you retry the installer.
     On macOS, start Docker Desktop or Colima first.
+
+    When a coding agent reports that its execution sandbox blocked Docker, use its command-scoped approval flow, if available.
+    Approve only the exact Docker-dependent command that the coding agent requests to rerun outside the sandbox.
+    Do not change Docker socket permissions or grant broad host access only to bypass the restriction.
+    If your organization blocks command-scoped approval, stop the coding-agent setup and contact the administrator who manages coding-agent permissions.
 
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).

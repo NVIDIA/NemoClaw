@@ -30,7 +30,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "c718a78c5794574a98fdd885d94466c3b6794153";
+const promptAssetRevision = "ebf29b024c7a24e69ab8386b68e426d31a4c6821";
 
 type PromptAsset = {
   path: string;
@@ -53,7 +53,7 @@ const promptAssets = {
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
-    "f0c61cef93da203cecda2424eb1fc5680d56ffd679a518bfc98d26b2e82be381", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "9f506ece27dcda3cf85735d7c6a80846a7727696b825cf8ca161334ac6925c1f", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   windowsWsl: definePromptAsset(
     "docs/resources/prompt-assets/windows-wsl.md",
@@ -486,6 +486,68 @@ describe("starter prompt docs CTA", () => {
     ).toThrow("use LF line endings");
   });
 
+  it("names non-interactive install controls and scopes sandboxed Docker approval (#7311)", () => {
+    const promptSource = readStarterPrompt();
+    const quickstartSource = read("docs/get-started/quickstart.mdx");
+    const commandsSource = read("docs/reference/commands.mdx");
+    const updateSource = read("docs/manage-sandboxes/update-sandboxes.mdx");
+
+    for (const variable of ["NEMOCLAW_AGENT", "NEMOCLAW_PROVIDER", "NEMOCLAW_INSTALL_TAG"]) {
+      expect(promptSource, `starter prompt names ${variable}`).toContain(variable);
+      expect(quickstartSource, `quickstart names ${variable}`).toContain(variable);
+    }
+
+    expect(promptSource).toContain("NEMOCLAW_AGENT=openclaw");
+    expect(promptSource).toContain("NEMOCLAW_AGENT=hermes");
+    expect(promptSource).toContain("NEMOCLAW_AGENT=langchain-deepagents-code");
+    expect(promptSource).toContain(
+      "set `NEMOCLAW_AGENT` and `NEMOCLAW_PROVIDER` from my selections",
+    );
+    expect(quickstartSource).toMatch(/NEMOCLAW_AGENT=openclaw\s*\\\s*NEMOCLAW_PROVIDER=build/);
+    expect(promptSource).toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z");
+    expect(promptSource).toContain("clear any inherited `NEMOCLAW_INSTALL_REF`");
+    expect(promptSource).toContain(
+      "Request permission to rerun only that exact command outside the sandbox",
+    );
+    expect(promptSource).toContain("`NEMOCLAW_NON_INTERACTIVE=1` removes NemoClaw prompts");
+    expect(promptSource).toContain(
+      "`NEMOCLAW_NON_INTERACTIVE=1` does not bypass execution-sandbox permissions",
+    );
+    expect(promptSource).toContain(
+      "Do not change Docker socket permissions or request broad host access only to bypass the execution sandbox.",
+    );
+    expect(promptSource).not.toContain("or another approved host command");
+    expect(quickstartSource).toContain(
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=vX.Y.Z bash",
+    );
+    expect(quickstartSource).toContain(
+      "Approve only the exact Docker-dependent command that the coding agent requests",
+    );
+    expect(quickstartSource).toContain(
+      "Do not change Docker socket permissions or grant broad host access only to bypass the restriction.",
+    );
+    expect(promptSource).not.toContain("## Codex Execution Sandbox");
+    expect(quickstartSource).not.toContain("When Codex reports");
+    expect(quickstartSource).not.toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z curl");
+    expect(quickstartSource).not.toContain(
+      "https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=vX.Y.Z bash",
+    );
+    expect(commandsSource).toContain(
+      "A nonempty value takes precedence over `NEMOCLAW_INSTALL_TAG`.",
+    );
+    expect(commandsSource).toContain("Overridden by the `--install-ref` flag.");
+    expect(commandsSource).toContain("Overridden by the `--install-tag` flag.");
+    expect(commandsSource).toContain("Defaults to the admin-promoted `lkg` tag when unset.");
+    expect(updateSource).toContain(
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=lkg bash",
+    );
+    expect(updateSource).not.toContain(
+      "https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=lkg bash",
+    );
+    expect(promptSource).not.toContain("NEMOCLAW_INSTALL_TAG=<git-ref>");
+    expect(quickstartSource).not.toContain("NEMOCLAW_INSTALL_TAG=<git-ref>");
+  });
+
   it("rejects missing or stale generated snippets and accepts the current output (#5048)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-starter-prompt-"));
     const generatedPath = path.join(tempDir, "StarterPrompt.generated.mdx");
@@ -766,6 +828,13 @@ describe("starter prompt docs CTA", () => {
     expect(stationSource).not.toContain("only supported next step");
     expect(stationSource).toContain("model-cache filesystem and Docker storage");
     expect(stationSource).toContain(
+      "DGX Station is tested with limitations across qualified profiles on one physical DGX Station GB300.",
+    );
+    expect(stationSource).toContain(
+      "Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.",
+    );
+    expect(stationSource).not.toContain("deferred end-to-end validation on physical hardware");
+    expect(stationSource).toContain(
       "Do not run `scripts/prepare-dgx-station-host.sh --check`, `--verify`, or `--apply` separately",
     );
     expect(stationSource).toContain("For Nemotron Ultra, run the ordinary installer without");
@@ -786,8 +855,6 @@ describe("starter prompt docs CTA", () => {
     );
     expect(stationSource).toContain("Run the installer only in a secure interactive terminal");
     expect(stationSource).toContain("Keep each official confirmation visible");
-    expect(stationSource).toContain("evaluation path with deferred end-to-end validation");
-    expect(stationSource).toContain("startup may still fail after readiness checks");
     expect(stationSource).toContain("third-party-software notice");
     expect(windowsSource).toContain("NEMOCLAW_PROVIDER=install-windows-ollama");
     expect(windowsSource).toContain("Do not start a second Ollama service on the same port.");

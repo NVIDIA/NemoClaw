@@ -4,7 +4,7 @@
 title: "Prepare DGX Station to Install NemoClaw"
 sidebar-title: "Additional Setup for DGX Station"
 description: "Qualify and prepare a DGX Station GB300 for NemoClaw express install."
-description-agent: "Covers DGX Station GB300 qualification, generic Ubuntu preparation, stock DGX OS validation, and reboot handoff. Use when preparing a DGX Station for NemoClaw express install."
+description-agent: "Covers DGX Station GB300 qualification, generic Ubuntu preparation, qualified factory-image validation, and reboot handoff. Use when preparing a DGX Station for NemoClaw express install."
 keywords: ["nemoclaw dgx station setup", "nemoclaw dgx station gb300", "nemoclaw station express install"]
 content:
   type: "reference"
@@ -119,7 +119,7 @@ sudo reboot
 After the host restarts, rerun the NemoClaw installer.
 If the host uses RDMA, repair OpenIB/OFED instead, then rerun the installer after `openibd.service` is healthy.
 
-## Validate Stock DGX OS
+## Validate DGX OS and Factory Images
 
 On a qualifying stock DGX OS or exact no-OTA factory image, express install validates the factory stack in place against the local default Docker daemon.
 It requires a loaded GB300 driver with zero volatile corrected and uncorrected ECC errors, active Docker and containerd services, working Docker Buildx, `nvidia-ctk`, the `nvidia.com/gpu=all` CDI device, and successful `nvidia-smi` device-visibility probes through both CDI and `--gpus all`.

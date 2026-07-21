@@ -59,26 +59,34 @@ describe("DGX Station documentation ownership", () => {
     expect(stationPreparation).toContain("Remove the override after");
     expect(quickstart).not.toContain("--force-station-install");
     expect(platformSupport).toContain("explicit temporary metadata override");
+    expect(platformSupport).toContain(
+      "Physical validation on one DGX Station GB300 covers generic Ubuntu 24.04 ARM64",
+    );
+    expect(platformSupport).toContain("April 2026 NVIDIA Colossus BaseOS");
+    expect(platformSupport).toContain("June 2026 NVIDIA AI Developer Tools");
+    expect(platformSupport).toContain(
+      "Clean-host end-to-end validation passed on generic Ubuntu and Colossus BaseOS",
+    );
     expect(platformSupport).toContain("exact read-only BDF directory");
     expect(platformSupport).toContain("they do not expose `/sys`, the PCI parent subtree");
     expect(platformSupport).toContain("`/sys/fs/cgroup/cgroup.controllers`");
     expect(platformSupport).toContain("`/sys/class/net/lo/address`");
+    expect(stationPreparation).not.toContain("DGX Station is Tested with limitations");
+    expect(stationPreparation).not.toContain("Physical validation on one DGX Station GB300");
+    expect(stationPreparation).toContain("April 2026 NVIDIA Colossus BaseOS");
+    expect(stationPreparation).toContain("June 2026 NVIDIA AI Developer Tools");
+    expect(stationPreparation).toContain("[Platform Support](../../reference/platform-support)");
     expect(vllmSetup).toContain("Prepare DGX Station to Install NemoClaw");
     expect(vllmSetup).toContain("[Platform Support](../../reference/platform-support)");
     expect(vllmSetup).toContain("--station-deepseek");
     expect(vllmSetup).toContain("For a headless DGX Station setup");
     expect(vllmSetup).toContain("NEMOCLAW_NON_INTERACTIVE=1");
     expect(vllmSetup).toContain("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
-    expect(vllmSetup).not.toContain("One physical DGX OS `7.5.0` GB300 validation completed");
-    expect(stationPreparation).not.toContain(
-      "One physical DGX OS `7.5.0` GB300 validation completed",
-    );
-    expect(quickstart).not.toContain("One physical DGX OS `7.5.0` GB300 validation completed");
-    expect(quickstart).not.toContain("--station-deepseek");
-    expect(stationPreparation).toContain("[Platform Support](../../reference/platform-support)");
+    expect(vllmSetup).not.toContain("Physical validation on one DGX Station GB300");
     expect(prerequisites).toContain("### DGX Station Express Preparation");
-    expect(prerequisites).toContain("| DGX OS (Station) | Docker |");
+    expect(prerequisites).toMatch(/\| DGX OS \(Station\) \| Docker \| Tested with limitations \|/);
     expect(prerequisites).toContain("additional-setup/dgx-station-preparation");
+    expect(prerequisites).not.toContain("DGX Station is Tested with limitations");
     expect(prerequisites).toContain(
       "[Additional Setup for DGX Station](additional-setup/dgx-station-preparation)",
     );
@@ -90,6 +98,13 @@ describe("DGX Station documentation ownership", () => {
     expect(quickstart).toContain("../inference/local-inference/set-up-vllm");
     expect(quickstart).toContain("../reference/platform-support");
     expect(quickstart).not.toContain("prerequisites#dgx-station-express-preparation");
+    expect(quickstart).not.toContain("DGX Station is Tested with limitations");
+    expect(quickstart).not.toContain("Physical validation on one DGX Station GB300");
+    expect(quickstart).not.toContain("unmatched no-OTA factory images");
+    expect(quickstart).not.toContain("April 2026 NVIDIA Colossus BaseOS");
+    expect(quickstart).not.toContain("June 2026 NVIDIA AI Developer Tools");
+    expect(quickstart).not.toContain("--station-deepseek");
+    expect(quickstart).not.toContain('Accordion title="Installer Behavior and Platform Details"');
   });
 
   it("labels platform-specific prerequisite pages as additional setup", () => {
