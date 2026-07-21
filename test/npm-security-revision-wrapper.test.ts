@@ -14,6 +14,7 @@ const wrapperSource = fs.readFileSync(
   "utf8",
 );
 const helper = path.join(root, "scripts", "npm-tar-security-revision.mts");
+const mcporterHelper = path.join(root, "scripts", "mcporter-hono-security-revision.mts");
 const tempDirectories: string[] = [];
 const vulnerableIntegrity =
   "sha512-ChjMH33/KetonMTAtpYdgUFr0tbz69Fp2v7zWxQfYZX4g5ZN2nOBXm1R2xyA+lMIKrLKIoKAwFj93jE/avX9cQ==";
@@ -31,6 +32,7 @@ function fixture() {
   const nemoclawRoot = path.join(fixtureRoot, "nemoclaw");
   const fakeBin = path.join(fixtureRoot, "bin");
   const originalNpm = path.join(fakeBin, "npm-original");
+  const mcporterRoot = path.join(fixtureRoot, "mcporter-runtime");
   const invocationLog = path.join(fixtureRoot, "arguments.json");
   fs.mkdirSync(fakeBin);
   writeJson(path.join(nemoclawRoot, "package.json"), {
@@ -51,6 +53,35 @@ function fixture() {
       },
     },
   });
+  writeJson(path.join(mcporterRoot, "package.json"), {
+    name: "nemoclaw-mcporter-runtime",
+    version: "0.0.0",
+    dependencies: { mcporter: "0.7.3" },
+  });
+  writeJson(path.join(mcporterRoot, "package-lock.json"), {
+    name: "nemoclaw-mcporter-runtime",
+    version: "0.0.0",
+    lockfileVersion: 3,
+    packages: {
+      "": {
+        name: "nemoclaw-mcporter-runtime",
+        version: "0.0.0",
+        dependencies: { mcporter: "0.7.3" },
+      },
+      "node_modules/@hono/node-server": {
+        version: "1.19.14",
+        resolved: "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.14.tgz",
+        integrity:
+          "sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==",
+        engines: { node: ">=18.14.1" },
+      },
+      "node_modules/@modelcontextprotocol/sdk": {
+        version: "1.29.0",
+        dependencies: { "@hono/node-server": "^1.19.9" },
+      },
+      "node_modules/mcporter": { version: "0.7.3" },
+    },
+  });
   fs.writeFileSync(
     originalNpm,
     `#!/usr/bin/env node
@@ -61,6 +92,11 @@ if (process.env.FAKE_NPM_INSTALL === "1") {
   const target = path.join(process.env.FAKE_NPM_ROOT, "node_modules", "tar");
   fs.mkdirSync(target, { recursive: true });
   fs.writeFileSync(path.join(target, "package.json"), JSON.stringify({ name: "tar", version: "7.5.19" }));
+}
+if (process.env.FAKE_MCPORTER_INSTALL === "1") {
+  const target = path.join(process.env.FAKE_MCPORTER_ROOT, "node_modules", "@hono", "node-server");
+  fs.mkdirSync(target, { recursive: true });
+  fs.writeFileSync(path.join(target, "package.json"), JSON.stringify({ name: "@hono/node-server", version: "2.0.5" }));
 }
 process.exit(Number(process.env.FAKE_NPM_EXIT || 0));
 `,
@@ -75,11 +111,17 @@ process.exit(Number(process.env.FAKE_NPM_EXIT || 0));
     wrapperSource
       .replace("/usr/local/bin/npm.nemoclaw-original", originalNpm)
       .replace("/usr/local/lib/nemoclaw/npm-tar-security-revision.mts", helper)
+      .replace("/usr/local/lib/nemoclaw/mcporter-hono-security-revision.mts", mcporterHelper)
+      .replaceAll("/usr/local/lib/nemoclaw/mcporter-runtime", mcporterRoot)
+      .replace(
+        "/usr/local/lib/nemoclaw/.mcporter-hono-security-revision.XXXXXX",
+        `${fixtureRoot}/mcporter-backup.XXXXXX`,
+      )
       .replaceAll("/opt/nemoclaw", nemoclawRoot)
       .replace("/opt/.nemoclaw-npm-security-revision.XXXXXX", `${fixtureRoot}/backup.XXXXXX`)
-      .replace('"${EUID}" -eq 0', '"0" -eq 0'),
+      .replaceAll('"${EUID}" -eq 0', '"0" -eq 0'),
   );
-  return { fakeBin, fixtureRoot, invocationLog, nemoclawRoot, wrapper };
+  return { fakeBin, fixtureRoot, invocationLog, mcporterRoot, nemoclawRoot, wrapper };
 }
 
 function run(target: ReturnType<typeof fixture>, args: string[], extraEnv: object = {}) {
@@ -91,6 +133,7 @@ function run(target: ReturnType<typeof fixture>, args: string[], extraEnv: objec
       PATH: `${target.fakeBin}:${process.env.PATH}`,
       INVOCATION_LOG: target.invocationLog,
       FAKE_NPM_ROOT: target.nemoclawRoot,
+      FAKE_MCPORTER_ROOT: target.mcporterRoot,
       ...extraEnv,
     },
   });
@@ -148,5 +191,42 @@ describe("npm security revision wrapper (#7272)", () => {
       JSON.parse(fs.readFileSync(path.join(target.nemoclawRoot, "package-lock.json"), "utf8"))
         .packages["node_modules/tar"].version,
     ).toBe("7.5.11");
+  });
+
+  it("revises the exact historical mcporter npm ci and verifies its installed Hono", () => {
+    const target = fixture();
+    const result = run(target, ["--prefix", target.mcporterRoot, "ci", "--omit=dev"], {
+      FAKE_MCPORTER_INSTALL: "1",
+    });
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(target.invocationLog, "utf8"))).toEqual([
+      "--prefix",
+      target.mcporterRoot,
+      "ci",
+      "--omit=dev",
+    ]);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(target.mcporterRoot, "package.json"), "utf8")).overrides,
+    ).toEqual({ "@hono/node-server": "2.0.5" });
+    expect(
+      JSON.parse(fs.readFileSync(path.join(target.mcporterRoot, "package-lock.json"), "utf8"))
+        .packages["node_modules/@hono/node-server"].version,
+    ).toBe("2.0.5");
+  });
+
+  it("restores historical mcporter metadata when its npm ci fails", () => {
+    const target = fixture();
+    const result = run(target, ["--prefix", target.mcporterRoot, "ci", "--omit=dev"], {
+      FAKE_NPM_EXIT: "23",
+    });
+    expect(result.status).toBe(23);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(target.mcporterRoot, "package.json"), "utf8")).overrides,
+    ).toBeUndefined();
+    expect(
+      JSON.parse(fs.readFileSync(path.join(target.mcporterRoot, "package-lock.json"), "utf8"))
+        .packages["node_modules/@hono/node-server"].version,
+    ).toBe("1.19.14");
   });
 });

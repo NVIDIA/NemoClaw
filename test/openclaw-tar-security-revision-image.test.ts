@@ -90,6 +90,7 @@ describe.runIf(runImageTests)(
               "test -x /usr/local/bin/openclaw",
               "test -x /usr/local/bin/npm.nemoclaw-original",
               "test -x /usr/local/bin/npm",
+              "test -x /usr/local/lib/nemoclaw/mcporter-hono-security-revision.mts",
               'test "$(npm --version)" = 10.9.7',
               'test "$(npx --version)" = 10.9.7',
               'test "$(node -p "require(\'/usr/local/lib/node_modules/openclaw/node_modules/fast-uri/package.json\').version")" = 3.1.3',

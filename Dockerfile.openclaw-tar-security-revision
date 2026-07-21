@@ -30,6 +30,7 @@ COPY scripts/openclaw-plugin-axios-security-revision.mts /usr/local/lib/nemoclaw
 COPY scripts/openclaw-plugin-core-security-revision.mts /usr/local/lib/nemoclaw/openclaw-plugin-core-security-revision.mts
 COPY scripts/openclaw-security-revision-invocation.mts /usr/local/lib/nemoclaw/openclaw-security-revision-invocation.mts
 COPY scripts/npm-tar-security-revision.mts /usr/local/lib/nemoclaw/npm-tar-security-revision.mts
+COPY scripts/mcporter-hono-security-revision.mts /usr/local/lib/nemoclaw/mcporter-hono-security-revision.mts
 COPY scripts/openclaw-security-revision-wrapper.sh /usr/local/bin/openclaw.security-wrapper
 COPY scripts/npm-security-revision-wrapper.sh /usr/local/bin/npm.security-wrapper
 
@@ -216,6 +217,7 @@ RUN set -euo pipefail; \
         /usr/local/lib/nemoclaw/openclaw-plugin-axios-security-revision.mts \
         /usr/local/lib/nemoclaw/openclaw-plugin-core-security-revision.mts \
         /usr/local/lib/nemoclaw/openclaw-security-revision-invocation.mts \
+        /usr/local/lib/nemoclaw/mcporter-hono-security-revision.mts \
         /usr/local/bin/npm.security-wrapper \
         /usr/local/bin/openclaw.security-wrapper; \
     mv /usr/local/bin/openclaw.security-wrapper /usr/local/bin/openclaw; \
