@@ -9,8 +9,10 @@ export function parseActiveSwapBytes(output: string): number {
     .map((line) => line.trim())
     .filter(Boolean)
     .reduce((total, line) => {
-      if (!/^\d+$/u.test(line)) return total;
-      return total + Number.parseInt(line, 10);
+      const fields = line.split(/\s+/u);
+      const size = fields.length === 1 ? fields[0] : fields.length === 5 ? fields[2] : undefined;
+      if (!size || !/^\d+$/u.test(size)) return total;
+      return total + Number.parseInt(size, 10);
     }, 0);
 }
 
