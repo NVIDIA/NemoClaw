@@ -36,7 +36,6 @@ const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_READY_ATTEMPTS = 30;
 const SANDBOX_READY_DELAY_MS = 5_000;
 const USER_SERVICE_UNAVAILABLE_EXIT = 75;
-const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE = "nemoclaw-openshell-gateway";
 const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE =
   "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1";
 
@@ -403,13 +402,22 @@ export class LifecyclePhaseFixture {
         "-lc",
         [
           "set -eu",
-          `unit="$HOME/.config/systemd/user/${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}.service"`,
+          'if [ "$(uname -s)" = Darwin ] && command -v brew >/dev/null 2>&1 && brew list --formula openshell >/dev/null 2>&1; then',
+          '  brew info --json=v2 openshell | grep -Eq \'"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"\' || exit 1',
+          "  brew services restart openshell",
+          "  exit 0",
+          "fi",
           `if ! command -v systemctl >/dev/null 2>&1; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
+          "service=openshell-gateway",
+          'if ! systemctl --user cat "$service" >/dev/null 2>&1; then',
+          'unit="$HOME/.config/systemd/user/nemoclaw-openshell-gateway.service"',
           `if [ ! -f "$unit" ]; then exit ${USER_SERVICE_UNAVAILABLE_EXIT}; fi`,
           `grep -Fxq '${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}' "$unit" || exit ${USER_SERVICE_UNAVAILABLE_EXIT}`,
-          `systemctl --user is-enabled ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE} >/dev/null`,
+          "  service=nemoclaw-openshell-gateway",
+          "fi",
+          'systemctl --user is-enabled "$service" >/dev/null',
           "systemctl --user daemon-reload",
-          `systemctl --user restart ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE}`,
+          'systemctl --user restart "$service"',
         ].join("\n"),
       ],
       {

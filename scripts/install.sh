@@ -1324,6 +1324,7 @@ install_nemoclaw_openshell_gateway_user_service() {
   local service_dir
   service_dir="$(openshell_user_config_home)/systemd/user"
   local service_path="${service_dir}/${NEMOCLAW_GATEWAY_SERVICE_NAME}.service"
+  local service_template="${NEMOCLAW_SOURCE_ROOT}/scripts/lib/openshell-gateway.service.in"
 
   if [[ -L "$service_path" ]]; then
     error "Refusing to replace symlinked OpenShell gateway user service: $service_path"
@@ -1359,34 +1360,15 @@ install_nemoclaw_openshell_gateway_user_service() {
   if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
     error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
   fi
+  if [[ ! -f "$service_template" || -L "$service_template" ]]; then
+    error "OpenShell gateway user service template is unavailable: $service_template"
+  fi
 
   if ! {
     mkdir -p "$service_dir" \
       && chmod 700 "$service_dir" \
-      && cat >"$service_path" <<EOF
-# NemoClaw-managed OpenShell gateway user service
-$NEMOCLAW_GATEWAY_SERVICE_MARKER_LINE
-[Unit]
-Description=OpenShell Gateway
-Documentation=https://github.com/NVIDIA/OpenShell
-After=default.target
-
-[Service]
-Type=simple
-StateDirectory=openshell/gateway
-Environment=OPENSHELL_LOCAL_TLS_DIR=%h/.local/state/openshell/tls
-EnvironmentFile=-%E/openshell/gateway.env
-ExecStartPre=$gateway_bin generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal --server-san localhost --server-san 127.0.0.1
-ExecStart=$gateway_bin
-Restart=on-failure
-RestartSec=5s
-PrivateTmp=true
-UMask=0077
-
-[Install]
-WantedBy=default.target
-EOF
-    chmod 600 "$service_path"
+      && sed "s|@OPENSHELL_GATEWAY_BIN@|${gateway_bin}|g" "$service_template" >"$service_path" \
+      && chmod 600 "$service_path"
   }; then
     error "Could not install OpenShell gateway user service at $service_path"
   fi

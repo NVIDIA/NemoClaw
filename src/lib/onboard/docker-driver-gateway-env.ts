@@ -20,7 +20,6 @@ import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-loc
 import {
   getOpenShellUserConfigHome,
   hasOpenShellGatewayUserService,
-  installAndReportNemoclawOpenShellGatewayUserService,
   type PackageManagedDockerDriverGatewayOptions,
   startPackageManagedDockerDriverGateway,
 } from "./docker-driver-gateway-service";
@@ -61,7 +60,6 @@ export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
   "prepareOpenShellGatewayUserServiceEnv"
 > & {
   env?: NodeJS.ProcessEnv;
-  gatewayBin?: string | null;
   gatewayEnv: Record<string, string>;
   home?: string;
 };
@@ -329,28 +327,12 @@ export function writeDockerGatewayDebEnvOverrideOrThrow(
 export function startPackageManagedDockerDriverGatewayWithEnvOverride(
   optionsWithEnv: PackageManagedDockerDriverGatewayWithEnvOverrideOptions,
 ): Promise<boolean> {
-  const { env: _env, gatewayBin, gatewayEnv, home, ...options } = optionsWithEnv;
+  const { env: _env, gatewayEnv, home, ...options } = optionsWithEnv;
   const env = optionsWithEnv.env ?? process.env;
   const gatewayPort = Number(gatewayEnv.OPENSHELL_SERVER_PORT ?? GATEWAY_PORT);
   if (gatewayPort !== DEFAULT_GATEWAY_PORT) return Promise.resolve(false);
   assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
   const effectiveHome = home ?? optionsWithEnv.env?.HOME ?? os.homedir();
-  if (gatewayBin !== undefined) {
-    const installResult = installAndReportNemoclawOpenShellGatewayUserService({
-      env,
-      gatewayBin,
-      home: effectiveHome,
-    });
-    if (
-      !installResult.installed &&
-      installResult.reason !== "not a Linux host" &&
-      installResult.reason !== "upstream OpenShell gateway service is installed"
-    ) {
-      throw new Error(
-        `OpenShell gateway user service could not be staged: ${installResult.reason ?? "unknown error"}`,
-      );
-    }
-  }
   return startPackageManagedDockerDriverGateway({
     ...options,
     hasOpenShellGatewayUserService:

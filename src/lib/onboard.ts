@@ -1988,7 +1988,6 @@ async function startDockerDriverGateway({
     await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({
       clearDockerDriverGatewayRuntimeFiles,
       exitOnFailure,
-      gatewayBin,
       gatewayEnv: driftGatewayEnv,
       gatewayName: GATEWAY_NAME,
       isDockerDriverGatewayReady: () =>

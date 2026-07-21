@@ -136,7 +136,7 @@ fi
 # whyNotSourceFix: NemoClaw cannot retroactively make an upstream publication
 # immutable, so it independently pins every consumed archive and supervisor.
 # regressionTest: test/install-openshell-version-check.test.ts exercises all
-# eight mappings, and scripts/check-installer-hash.sh compares them with the
+# nine mappings, and scripts/check-installer-hash.sh compares them with the
 # GitHub release API on every PR, main push, weekly run, and manual dispatch.
 # removalCondition: remove these entries only when NemoClaw drops that
 # supported release or replaces them with independently verified newer pins.
@@ -167,6 +167,9 @@ openshell_pinned_sha256() {
     v0.0.85:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
       printf '%s\n' "2c52b2971aecf125e41ed160d8d2f2addf04031906ca88f120ae3d436dd6b8f7"
       ;;
+    v0.0.85:openshell.rb)
+      printf '%s\n' "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23"
+      ;;
     *)
       return 1
       ;;
@@ -176,18 +179,6 @@ openshell_pinned_sha256() {
 openshell_checksum_line() {
   local checksum_file="$1" asset="$2"
   awk -v asset="$asset" '$2 == asset { print; found=1; exit } END { if (!found) exit 1 }' "$checksum_file"
-}
-
-openshell_formula_pinned_sha256() {
-  local release_tag="$1" asset="$2"
-  case "${release_tag}:${asset}" in
-    v0.0.85:openshell.rb)
-      printf '%s\n' "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
 }
 
 # A pinned digest authenticates bytes, but it does not make extraction safe.
@@ -685,7 +676,7 @@ install_macos_homebrew_formula() {
   chmod 0644 "$formula_file"
 
   if [ "$RELEASE_TAG" != "dev" ]; then
-    expected_sha="$(openshell_formula_pinned_sha256 "$RELEASE_TAG" "openshell.rb")" \
+    expected_sha="$(openshell_pinned_sha256 "$RELEASE_TAG" "openshell.rb")" \
       || fail "No NemoClaw-pinned SHA-256 for OpenShell $RELEASE_TAG Homebrew formula"
     actual_sha="$(file_sha256 "$formula_file")" \
       || fail "No SHA-256 tool available (sha256sum/shasum)"

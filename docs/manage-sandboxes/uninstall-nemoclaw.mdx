@@ -20,7 +20,7 @@ $$nemoclaw uninstall
 | Flag | Effect |
 |---|---|
 | `--yes` | Skip the confirmation prompt. |
-| `--keep-openshell` | Leave OpenShell binaries, gateway service daemons, and gateway service configuration in place, without disabling or removing the OpenShell gateway service or stopping the host `openshell-gateway` daemon. This includes NemoClaw's marked Linux `$XDG_CONFIG_HOME/systemd/user/nemoclaw-openshell-gateway.service` unit, or `~/.config/systemd/user/nemoclaw-openshell-gateway.service` when `XDG_CONFIG_HOME` is unset, upstream Linux package units, and the macOS Homebrew service. |
+| `--keep-openshell` | Leave OpenShell binaries and NemoClaw-managed gateway service files in place, and do not stop the host gateway process. |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models. |
 | `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |

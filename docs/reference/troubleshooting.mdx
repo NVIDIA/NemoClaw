@@ -892,35 +892,33 @@ Follow these steps to reconnect.
    If you set `NEMOCLAW_GATEWAY_PORT` to a custom port, skip this service check and continue with the NemoClaw recovery step using the same environment value.
    Only the default port `8080` uses a managed service.
 
-   On Apple Silicon macOS with Homebrew, OpenShell uses the official formula and the gateway is a Homebrew service:
+   On Apple Silicon macOS with Homebrew, inspect and restart the official formula service.
 
    ```bash
    brew services list
    brew services restart openshell
    ```
 
-   Without Homebrew, continue with the NemoClaw recovery step below for the standalone gateway fallback.
+   If Homebrew is present but `openshell` is missing or comes from another tap, rerun the NemoClaw installer.
+   Onboarding does not use the standalone fallback while Homebrew is present.
 
-   On Linux package installs, OpenShell can provide an upstream user service:
+   On Linux package installs, inspect and restart the upstream service.
 
    ```bash
    systemctl --user status openshell-gateway
    systemctl --user restart openshell-gateway
    ```
 
-   On Linux tarball installs, NemoClaw installs a marked user `nemoclaw-openshell-gateway.service`.
-   The unit is written under `$XDG_CONFIG_HOME/systemd/user` when `XDG_CONFIG_HOME` is absolute, otherwise under `~/.config/systemd/user`.
-   The service generates the local OpenShell mTLS bundle before starting and then reads NemoClaw's `openshell/gateway.env` overrides.
-   The systemd user manager starts it with your user session.
-   NemoClaw does not enable lingering.
-   If `systemctl --user` is available, check and restart it first:
+   On Linux tarball installs, inspect and restart the marked NemoClaw service.
 
    ```bash
    systemctl --user status nemoclaw-openshell-gateway
    systemctl --user restart nemoclaw-openshell-gateway
    ```
 
-   On non-systemd Linux hosts or hosts where the user service cannot be reached, continue with the NemoClaw recovery step below.
+   The tarball unit is under `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when `XDG_CONFIG_HOME` is not absolute.
+   It starts with your user session; NemoClaw does not enable lingering.
+   Without Homebrew on macOS, or without a reachable systemd user manager on Linux, continue with the standalone recovery step below.
 
 1. Check sandbox state.
 

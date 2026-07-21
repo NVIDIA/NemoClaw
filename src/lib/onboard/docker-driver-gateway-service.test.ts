@@ -7,15 +7,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createVirtualClock } from "./__test-helpers__/virtual-clock";
 import {
-  buildNemoclawOpenShellGatewayUserService,
   getNemoclawOpenShellGatewayUserServicePath,
   getOpenShellGatewayUserServiceBinaryPaths,
   getOpenShellGatewayUserServicePaths,
   getOpenShellUserConfigHome,
-  hasNemoclawOpenShellGatewayUserService,
   hasOpenShellGatewayUserService,
-  installAndReportNemoclawOpenShellGatewayUserService,
-  installNemoclawOpenShellGatewayUserService,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
@@ -37,6 +33,10 @@ Gateway: nemoclaw
 Gateway endpoint: https://127.0.0.1:8080/
 `;
 
+function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult {
+  return { status, stderr, stdout };
+}
+
 function trustedShowOutput(
   fragmentPath = "/lib/systemd/user/openshell-gateway.service",
   execPath = "/usr/bin/openshell-gateway",
@@ -47,40 +47,7 @@ function trustedShowOutput(
   ].join("\n");
 }
 
-function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult {
-  return {
-    error: undefined,
-    status,
-    stderr,
-    stdout,
-  };
-}
-
-function homebrewServiceStatusResult({
-  exitCode = 0,
-  running = true,
-  status = "started",
-}: {
-  exitCode?: number | null;
-  running?: boolean;
-  status?: string;
-} = {}): SpawnSyncLikeResult {
-  return spawnResult(
-    0,
-    "",
-    JSON.stringify([
-      {
-        exit_code: exitCode,
-        loaded: true,
-        name: "openshell",
-        running,
-        status,
-      },
-    ]),
-  );
-}
-
-function homebrewFormulaInfoResult(): SpawnSyncLikeResult {
+function officialFormulaInfo(): SpawnSyncLikeResult {
   return spawnResult(
     0,
     "",
@@ -88,54 +55,43 @@ function homebrewFormulaInfoResult(): SpawnSyncLikeResult {
   );
 }
 
-function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
-  return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
-}
-
-function upstreamServiceExists(candidate: string): boolean {
-  return candidate === "/lib/systemd/user/openshell-gateway.service";
-}
-
 function nonSymlinkStat(): never {
   return { isSymbolicLink: () => false } as never;
 }
 
-describe("docker-driver-gateway-service", () => {
-  it("detects the platform OpenShell gateway service", () => {
-    const existsSync = (candidate: string) =>
-      candidate === "/usr/lib/systemd/user/openshell-gateway.service";
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      const results: Record<string, SpawnSyncLikeResult> = {
-        "list --formula openshell": spawnResult(),
-        "info --json=v2 openshell": homebrewFormulaInfoResult(),
-      };
-      return results[args.join(" ")] ?? spawnResult(1, "unexpected");
-    });
+function systemdSpawn(
+  events: string[],
+  fragmentPath = "/lib/systemd/user/openshell-gateway.service",
+  execPath = "/usr/bin/openshell-gateway",
+) {
+  return vi.fn((_command: string, args: string[]) => {
+    events.push(args.slice(1).join(" "));
+    return args.includes("show")
+      ? spawnResult(0, "", trustedShowOutput(fragmentPath, execPath))
+      : spawnResult();
+  });
+}
 
-    expect(hasOpenShellGatewayUserService({ existsSync, platform: "linux" })).toBe(true);
-    expect(
-      hasOpenShellGatewayUserService({
-        commandExists: () => false,
-        existsSync,
-        platform: "darwin",
-      }),
-    ).toBe(false);
+describe("docker-driver-gateway-service", () => {
+  it("selects trusted Linux and macOS service authorities (#6903)", () => {
+    const linuxExists = (candidate: string) =>
+      candidate === "/usr/lib/systemd/user/openshell-gateway.service";
+    const brew = vi.fn((_command: string, args: string[]) =>
+      args[0] === "info" ? officialFormulaInfo() : spawnResult(),
+    );
+
+    expect(hasOpenShellGatewayUserService({ existsSync: linuxExists, platform: "linux" })).toBe(
+      true,
+    );
     expect(
       hasOpenShellGatewayUserService({
         commandExists: (command) => command === "brew",
         platform: "darwin",
-        spawnSyncImpl,
+        spawnSyncImpl: brew,
       }),
     ).toBe(true);
-    expect(spawnSyncImpl).toHaveBeenCalledWith(
-      "brew",
-      ["list", "--formula", "openshell"],
-      expect.objectContaining({ encoding: "utf-8" }),
-    );
-    expect(spawnSyncImpl).toHaveBeenCalledWith(
-      "brew",
-      ["info", "--json=v2", "openshell"],
-      expect.objectContaining({ encoding: "utf-8" }),
+    expect(hasOpenShellGatewayUserService({ commandExists: () => false, platform: "darwin" })).toBe(
+      false,
     );
     expect(getOpenShellGatewayUserServicePaths()).toEqual([
       "/usr/local/lib/systemd/user/openshell-gateway.service",
@@ -148,17 +104,17 @@ describe("docker-driver-gateway-service", () => {
     ]);
   });
 
-  it("rejects an OpenShell formula outside the official Homebrew tap", () => {
+  it("rejects a Homebrew formula outside the official tap (#6903)", () => {
     expect(() =>
       hasOpenShellGatewayUserService({
-        commandExists: (command) => command === "brew",
+        commandExists: () => true,
         platform: "darwin",
         spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
-          args.join(" ") === "info --json=v2 openshell"
+          args[0] === "info"
             ? spawnResult(
                 0,
                 "",
-                JSON.stringify({ formulae: [{ name: "openshell", tap: "local/foreign" }] }),
+                JSON.stringify({ formulae: [{ name: "openshell", tap: "other/tap" }] }),
               )
             : spawnResult(),
         ),
@@ -166,686 +122,194 @@ describe("docker-driver-gateway-service", () => {
     ).toThrow("must come from nvidia/openshell");
   });
 
-  it("resolves the service unit under the effective XDG config home", () => {
-    expect(
-      getNemoclawOpenShellGatewayUserServicePath("/home/nvidia", {
-        XDG_CONFIG_HOME: "/tmp/nemoclaw-config",
-      }),
-    ).toBe("/tmp/nemoclaw-config/systemd/user/nemoclaw-openshell-gateway.service");
-    expect(
-      getNemoclawOpenShellGatewayUserServicePath("/home/nvidia", {
-        XDG_CONFIG_HOME: "relative-config",
-      }),
-    ).toBe("/home/nvidia/.config/systemd/user/nemoclaw-openshell-gateway.service");
-    expect(getOpenShellUserConfigHome("/home/nvidia", { XDG_CONFIG_HOME: "/tmp/config" })).toBe(
-      "/tmp/config",
-    );
-  });
-
-  it("rejects a foreign unit at the NemoClaw service path", () => {
-    const home = "/home/nvidia";
-    const env = homeEnv(home);
-    const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, env);
-    const existsSync = vi.fn((candidate: string) => candidate === servicePath);
-
+  it("rejects a missing Homebrew formula when Homebrew is available (#6903)", () => {
     expect(() =>
       hasOpenShellGatewayUserService({
-        existsSync,
-        env,
-        home,
-        lstatSync: () => ({ isSymbolicLink: () => false }) as never,
-        platform: "linux",
-        readFileSync: () => `# not ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}`,
-      }),
-    ).toThrow("Refusing foreign NemoClaw gateway user service");
-  });
-
-  it("rejects a symlink at the NemoClaw service path", () => {
-    const home = "/home/nvidia";
-    const env = homeEnv(home);
-    const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, env);
-
-    expect(() =>
-      hasOpenShellGatewayUserService({
-        existsSync: (candidate) => candidate === servicePath,
-        env,
-        home,
-        lstatSync: () => ({ isSymbolicLink: () => true }) as never,
-        platform: "linux",
-      }),
-    ).toThrow("Refusing symlinked NemoClaw gateway user service");
-  });
-
-  it("rejects a missing OpenShell formula when Homebrew is available", () => {
-    expect(() =>
-      hasOpenShellGatewayUserService({
-        commandExists: (command) => command === "brew",
+        commandExists: () => true,
         platform: "darwin",
-        spawnSyncImpl: vi.fn(() => spawnResult(1, "formula not installed")),
+        spawnSyncImpl: () => spawnResult(1, "formula not installed"),
       }),
-    ).toThrow("OpenShell Homebrew formula is not installed from nvidia/openshell");
+    ).toThrow("official OpenShell Homebrew formula is not installed");
   });
 
-  it("detects and installs a NemoClaw-managed user service on Linux only", () => {
+  it("uses the effective XDG config home and accepts only a marked regular unit (#6903)", () => {
     const home = "/home/nvidia";
-    const env = homeEnv(home);
-    const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, env);
-    const gatewayBin = "/home/nvidia/.local/bin/openshell-gateway";
-    const chmodSync = vi.fn();
-    const mkdirSync = vi.fn();
-    const writeFileSync = vi.fn();
+    const env = { HOME: home, XDG_CONFIG_HOME: "/tmp/nemoclaw-config" };
+    const servicePath = "/tmp/nemoclaw-config/systemd/user/nemoclaw-openshell-gateway.service";
 
+    expect(getOpenShellUserConfigHome(home, env)).toBe("/tmp/nemoclaw-config");
+    expect(getNemoclawOpenShellGatewayUserServicePath(home, env)).toBe(servicePath);
     expect(
-      installNemoclawOpenShellGatewayUserService({
-        chmodSync,
-        env,
-        existsSync: () => false,
-        gatewayBin,
-        home,
-        mkdirSync: mkdirSync as never,
-        platform: "linux",
-        writeFileSync: writeFileSync as never,
-      }),
-    ).toEqual({ installed: true, path: servicePath });
-    expect(mkdirSync).toHaveBeenCalledWith(path.dirname(servicePath), {
-      recursive: true,
-      mode: 0o700,
-    });
-    expect(chmodSync).toHaveBeenCalledWith(path.dirname(servicePath), 0o700);
-    expect(chmodSync).toHaveBeenCalledWith(servicePath, 0o600);
-    expect(String(writeFileSync.mock.calls[0]?.[1])).toContain(`ExecStart=${gatewayBin}`);
-    expect(String(writeFileSync.mock.calls[0]?.[1])).toContain("After=default.target");
-    expect(String(writeFileSync.mock.calls[0]?.[1])).toContain(
-      "Environment=OPENSHELL_LOCAL_TLS_DIR=%h/.local/state/openshell/tls",
-    );
-    expect(String(writeFileSync.mock.calls[0]?.[1])).toContain(
-      `ExecStartPre=${gatewayBin} generate-certs --output-dir \${OPENSHELL_LOCAL_TLS_DIR} --server-san host.openshell.internal --server-san localhost --server-san 127.0.0.1`,
-    );
-    expect(
-      hasNemoclawOpenShellGatewayUserService({
-        existsSync: (candidate) => candidate === servicePath,
-        env,
-        home,
-        lstatSync: () => ({ isSymbolicLink: () => false }) as never,
-        platform: "linux",
-        readFileSync: () => buildNemoclawOpenShellGatewayUserService(gatewayBin),
-      }),
-    ).toBe(true);
-    expect(
-      installNemoclawOpenShellGatewayUserService({
-        gatewayBin: "/opt/homebrew/bin/openshell-gateway",
-        platform: "darwin",
-        writeFileSync: vi.fn() as never,
-      }),
-    ).toEqual({ installed: false, reason: "not a Linux host" });
-  });
-
-  it("warns when Linux service installation cannot find a gateway binary", () => {
-    const warn = vi.fn();
-
-    expect(
-      installAndReportNemoclawOpenShellGatewayUserService({
-        existsSync: () => false,
-        gatewayBin: null,
-        platform: "linux",
-        warn,
-      }),
-    ).toEqual({ installed: false, reason: "OpenShell gateway binary not found" });
-    expect(warn).toHaveBeenCalledWith(
-      "  OpenShell gateway user service not installed: OpenShell gateway binary not found.",
-    );
-  });
-
-  it("defers a marked NemoClaw unit to upstream-service activation", () => {
-    const home = "/home/nvidia";
-    const env = homeEnv(home);
-    const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, env);
-    expect(
-      installNemoclawOpenShellGatewayUserService({
-        existsSync: (candidate) =>
-          candidate === "/usr/lib/systemd/user/openshell-gateway.service" ||
-          candidate === servicePath,
-        env,
-        gatewayBin: null,
-        home,
-        lstatSync: () => ({ isSymbolicLink: () => false }) as never,
-        platform: "linux",
-        readFileSync: () =>
-          buildNemoclawOpenShellGatewayUserService("/home/nvidia/.local/bin/openshell-gateway"),
-      }),
-    ).toEqual({ installed: false, reason: "upstream OpenShell gateway service is installed" });
-  });
-
-  it("rejects unsafe NemoClaw service ExecStart paths", () => {
-    expect(
-      installNemoclawOpenShellGatewayUserService({
-        existsSync: () => false,
-        gatewayBin: "./openshell-gateway",
-        platform: "linux",
-      }).reason,
-    ).toMatch(/absolute path/);
-    expect(
-      installNemoclawOpenShellGatewayUserService({
-        existsSync: () => false,
-        gatewayBin: "/home/nvidia/bad path/openshell-gateway",
-        platform: "linux",
-      }).reason,
-    ).toMatch(/cannot contain whitespace/);
-    expect(
-      installNemoclawOpenShellGatewayUserService({
-        existsSync: () => false,
-        gatewayBin: "/opt/openshell/bin/openshell-gateway",
-        home: "/home/nvidia",
-        platform: "linux",
-      }).reason,
-    ).toMatch(/not in a trusted install path/);
-  });
-
-  it("rejects a symlinked NemoClaw service unit", () => {
-    const home = "/home/nvidia";
-    const env = homeEnv(home);
-    const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, env);
-
-    expect(
-      installNemoclawOpenShellGatewayUserService({
+      hasOpenShellGatewayUserService({
         env,
         existsSync: (candidate) => candidate === servicePath,
-        gatewayBin: "/home/nvidia/.local/bin/openshell-gateway",
-        home,
-        lstatSync: () => ({ isSymbolicLink: () => true }) as never,
-        platform: "linux",
-      }),
-    ).toMatchObject({
-      installed: false,
-      path: servicePath,
-      reason: "refusing to overwrite a symlinked gateway user service",
-    });
-  });
-
-  it("restarts the NemoClaw-managed user service after validating its identity", () => {
-    const home = "/home/nvidia";
-    const env = homeEnv(home);
-    const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, env);
-    const gatewayBin = "/home/nvidia/.local/bin/openshell-gateway";
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) =>
-      args.includes("show")
-        ? spawnResult(0, "", trustedShowOutput(servicePath, gatewayBin))
-        : spawnResult(),
-    );
-
-    expect(
-      startOpenShellGatewayUserService({
-        commandExists: (command) => command === "systemctl",
-        env,
-        existsSync: (candidate) => candidate === servicePath,
-        home,
-        lstatSync: () => ({ isSymbolicLink: () => false }) as never,
-        platform: "linux",
-        readFileSync: () => buildNemoclawOpenShellGatewayUserService(gatewayBin),
-        spawnSyncImpl,
-      }),
-    ).toMatchObject({ attempted: true, fallbackAllowed: false, started: true });
-  });
-
-  it("restarts the upstream user service with systemctl --user after validating identity", () => {
-    const events: string[] = [];
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      events.push(args[0] === "is-active" ? "is-active" : (args[1] ?? args[0] ?? ""));
-      return args.includes("show") ? spawnResult(0, "", trustedShowOutput()) : spawnResult();
-    });
-
-    const result = startOpenShellGatewayUserService({
-      commandExists: (command) => command === "systemctl",
-      env: {},
-      existsSync: upstreamServiceExists,
-      platform: "linux",
-      preparePortForServiceStart: () => events.push("prepare-port"),
-      prepareServiceEnv: () => events.push("prepare-env"),
-      spawnSyncImpl,
-      validatePortOwnerForServiceStart: () => events.push("validate-port"),
-    });
-
-    expect(result).toMatchObject({ attempted: true, fallbackAllowed: false, started: true });
-    expect(events).toEqual([
-      "daemon-reload",
-      "show",
-      "validate-port",
-      "prepare-env",
-      "stop",
-      "prepare-port",
-      "enable",
-      "restart",
-      "is-active",
-    ]);
-    expect(spawnSyncImpl.mock.calls.map(([command, args]) => [command, args])).toEqual([
-      ["systemctl", ["--user", "daemon-reload"]],
-      [
-        "systemctl",
-        ["--user", "show", "openshell-gateway", "--property=FragmentPath", "--property=ExecStart"],
-      ],
-      ["systemctl", ["--user", "stop", "openshell-gateway"]],
-      ["systemctl", ["--user", "enable", "openshell-gateway"]],
-      ["systemctl", ["--user", "restart", "openshell-gateway"]],
-      ["systemctl", ["--user", "is-active", "--quiet", "openshell-gateway"]],
-    ]);
-  });
-
-  it("removes a marked NemoClaw unit before activating a trusted upstream service", () => {
-    const home = "/home/nvidia";
-    const env = homeEnv(home);
-    const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, env);
-    const rmSync = vi.fn();
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) =>
-      args.includes("show") ? spawnResult(0, "", trustedShowOutput()) : spawnResult(),
-    );
-
-    expect(
-      startOpenShellGatewayUserService({
-        commandExists: (command) => command === "systemctl",
-        env,
-        existsSync: (candidate) => upstreamServiceExists(candidate) || candidate === servicePath,
         home,
         lstatSync: nonSymlinkStat,
         platform: "linux",
-        readFileSync: () =>
-          buildNemoclawOpenShellGatewayUserService("/home/nvidia/.local/bin/openshell-gateway"),
-        rmSync,
-        spawnSyncImpl,
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
       }),
-    ).toMatchObject({ fallbackAllowed: false, started: true });
+    ).toBe(true);
 
-    expect(spawnSyncImpl.mock.calls.map(([, args]) => args.join(" "))).toContain(
-      "--user disable --now nemoclaw-openshell-gateway",
-    );
-    expect(rmSync).toHaveBeenCalledWith(servicePath, { force: true });
+    for (const unsafe of [
+      { lstatSync: nonSymlinkStat, readFileSync: () => "# foreign\n", error: "foreign" },
+      {
+        lstatSync: () => ({ isSymbolicLink: () => true }) as never,
+        readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+        error: "symlinked",
+      },
+    ]) {
+      expect(() =>
+        hasOpenShellGatewayUserService({
+          env,
+          existsSync: (candidate) => candidate === servicePath,
+          home,
+          platform: "linux",
+          ...unsafe,
+        }),
+      ).toThrow(unsafe.error);
+    }
   });
 
-  it("does not change service state when port ownership validation fails", () => {
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) =>
-      args.includes("show") ? spawnResult(0, "", trustedShowOutput()) : spawnResult(),
-    );
-
+  it("validates, cuts over, and starts the NemoClaw systemd unit (#6903)", () => {
+    const events: string[] = [];
+    const home = "/home/nvidia";
+    const servicePath = `${home}/.config/systemd/user/nemoclaw-openshell-gateway.service`;
+    const gatewayBin = `${home}/.local/bin/openshell-gateway`;
     const result = startOpenShellGatewayUserService({
       commandExists: (command) => command === "systemctl",
-      env: {},
-      existsSync: upstreamServiceExists,
+      env: { HOME: home },
+      existsSync: (candidate) => candidate === servicePath,
+      home,
+      lstatSync: nonSymlinkStat,
       platform: "linux",
-      spawnSyncImpl,
-      validatePortOwnerForServiceStart: () => {
-        throw new Error("foreign listener");
-      },
-    });
-
-    expect(result).toMatchObject({ attempted: true, fallbackAllowed: false, started: false });
-    expect(result.reason).toContain("foreign listener");
-    expect(spawnSyncImpl.mock.calls.map(([, args]) => args.join(" "))).not.toContain(
-      "--user stop openshell-gateway",
-    );
-  });
-
-  it("restarts the macOS Homebrew gateway service", () => {
-    const events: string[] = [];
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      const command = args.join(" ");
-      events.push(command);
-      return command === "info --json=v2 openshell"
-        ? homebrewFormulaInfoResult()
-        : command === "services info --json openshell"
-          ? homebrewServiceStatusResult()
-          : spawnResult();
-    });
-
-    const result = startOpenShellGatewayUserService({
-      commandExists: (command) => command === "brew",
-      env: {},
-      platform: "darwin",
+      preparePortForServiceStart: () => events.push("prepare-port"),
       prepareServiceEnv: () => events.push("prepare-env"),
-      spawnSyncImpl,
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      spawnSyncImpl: systemdSpawn(events, servicePath, gatewayBin),
+      validatePortOwnerForServiceStart: () => events.push("validate-port"),
     });
 
-    expect(result).toEqual({
-      attempted: true,
+    expect(result).toMatchObject({
       fallbackAllowed: false,
-      manager: "homebrew",
-      serviceName: "openshell",
+      manager: "systemd",
+      serviceName: "nemoclaw-openshell-gateway",
       started: true,
-      statusCommand: "brew services info openshell",
     });
     expect(events).toEqual([
-      "list --formula openshell",
-      "info --json=v2 openshell",
+      "daemon-reload",
+      "show nemoclaw-openshell-gateway --property=FragmentPath --property=ExecStart",
+      "validate-port",
       "prepare-env",
-      "services stop openshell",
-      "services restart openshell",
-      "services info --json openshell",
+      "stop nemoclaw-openshell-gateway",
+      "prepare-port",
+      "enable nemoclaw-openshell-gateway",
+      "restart nemoclaw-openshell-gateway",
+      "is-active --quiet nemoclaw-openshell-gateway",
     ]);
   });
 
-  it("waits briefly for a restarted macOS Homebrew service to begin running", () => {
-    let statusChecks = 0;
-    const sleepSeconds = vi.fn();
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      const command = args.join(" ");
-      const isFormulaInfo = command === "info --json=v2 openshell";
-      const isStatusCheck = command === "services info --json openshell";
-      const result = isStatusCheck
-        ? homebrewServiceStatusResult({
-            exitCode: statusChecks === 0 ? null : 0,
-            running: statusChecks > 0,
-          })
-        : isFormulaInfo
-          ? homebrewFormulaInfoResult()
-          : spawnResult();
-      statusChecks += Number(isStatusCheck);
-      return result;
+  it("removes a marked NemoClaw unit before activating an upstream systemd unit (#6903)", () => {
+    const events: string[] = [];
+    const removed: string[] = [];
+    const servicePath = "/home/nvidia/.config/systemd/user/nemoclaw-openshell-gateway.service";
+    const result = startOpenShellGatewayUserService({
+      commandExists: () => true,
+      env: { HOME: "/home/nvidia" },
+      existsSync: (candidate) =>
+        candidate === servicePath || candidate === "/lib/systemd/user/openshell-gateway.service",
+      home: "/home/nvidia",
+      lstatSync: nonSymlinkStat,
+      platform: "linux",
+      readFileSync: () => `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`,
+      rmSync: ((candidate: string) => removed.push(candidate)) as never,
+      spawnSyncImpl: systemdSpawn(events),
     });
 
+    expect(result.started).toBe(true);
+    expect(events).toContain("disable --now nemoclaw-openshell-gateway");
+    expect(removed).toEqual([servicePath]);
+  });
+
+  it("does not change service state when port ownership validation fails (#6903)", () => {
+    const events: string[] = [];
+    const result = startOpenShellGatewayUserService({
+      commandExists: () => true,
+      env: {},
+      existsSync: (candidate) => candidate === "/lib/systemd/user/openshell-gateway.service",
+      platform: "linux",
+      spawnSyncImpl: systemdSpawn(events),
+      validatePortOwnerForServiceStart: () => {
+        throw new Error("unknown listener");
+      },
+    });
+
+    expect(result).toMatchObject({ fallbackAllowed: false, started: false });
+    expect(result.reason).toContain("unknown listener");
+    expect(events.some((event) => /^(stop|enable|restart)/.test(event))).toBe(false);
+  });
+
+  it("restarts the official macOS Homebrew service after validation (#6903)", () => {
+    const events: string[] = [];
     const result = startOpenShellGatewayUserService({
       commandExists: (command) => command === "brew",
       env: {},
       platform: "darwin",
-      sleepSeconds,
-      spawnSyncImpl,
-    });
-
-    expect(result).toMatchObject({ manager: "homebrew", started: true });
-    expect(statusChecks).toBe(2);
-    expect(sleepSeconds).toHaveBeenCalledOnce();
-    expect(sleepSeconds).toHaveBeenCalledWith(0.25);
-  });
-
-  it("rejects a macOS Homebrew service that exits after a successful restart", () => {
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) =>
-      args.join(" ") === "info --json=v2 openshell"
-        ? homebrewFormulaInfoResult()
-        : args.join(" ") === "services info --json openshell"
-          ? homebrewServiceStatusResult({ exitCode: 1, running: false, status: "error" })
-          : spawnResult(),
-    );
-
-    const result = startOpenShellGatewayUserService({
-      commandExists: (command) => command === "brew",
-      env: {},
-      platform: "darwin",
-      sleepSeconds: vi.fn(),
-      spawnSyncImpl,
-    });
-
-    expect(result).toMatchObject({
-      attempted: true,
-      fallbackAllowed: false,
-      manager: "homebrew",
-      serviceName: "openshell",
-      started: false,
-    });
-    expect(result.reason).toMatch(/not running.*status=error.*exit_code=1/);
-  });
-
-  it("rechecks Homebrew service liveness before the sandbox bridge probe", async () => {
-    const verifySandboxBridgeGatewayReachableOrExit = vi.fn();
-
-    await expect(
-      startPackageManagedDockerDriverGateway({
-        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
-        exitOnFailure: false,
-        gatewayName: "nemoclaw",
-        getHomebrewServiceRunningState: () => ({
-          ok: false,
-          reason: "brew services info --json openshell reports exit_code=1",
-        }),
-        hasOpenShellGatewayUserService: () => true,
-        healthPollCount: 1,
-        healthPollInterval: 0,
-        isDockerDriverGatewayReady: async () => true,
-        registerDockerDriverGatewayEndpoint: () => true,
-        runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
-        skipSandboxBridgeReachability: false,
-        startOpenShellGatewayUserService: () => ({
-          attempted: true,
-          fallbackAllowed: false,
-          manager: "homebrew",
-          started: true,
-          statusCommand: "brew services info openshell",
-        }),
-        verifySandboxBridgeGatewayReachableOrExit,
+      preparePortForServiceStart: () => events.push("prepare-port"),
+      prepareServiceEnv: () => events.push("prepare-env"),
+      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
+        events.push(args.join(" "));
+        return args[0] === "info" ? officialFormulaInfo() : spawnResult();
       }),
-    ).rejects.toThrow(/service stopped after startup.*exit_code=1/);
+      validatePortOwnerForServiceStart: () => events.push("validate-port"),
+    });
 
-    expect(verifySandboxBridgeGatewayReachableOrExit).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ manager: "homebrew", serviceName: "openshell", started: true });
+    expect(events).toEqual([
+      "list --formula openshell",
+      "info --json=v2 openshell",
+      "validate-port",
+      "prepare-env",
+      "services stop openshell",
+      "prepare-port",
+      "services restart openshell",
+    ]);
   });
 
   it.each([
-    "not json",
-    "[]",
-  ])("fails closed when Homebrew service status is unusable: %s", (stdout) => {
-    const result = startOpenShellGatewayUserService({
-      commandExists: (command) => command === "brew",
-      env: {},
-      platform: "darwin",
-      sleepSeconds: vi.fn(),
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
-        args.join(" ") === "info --json=v2 openshell"
-          ? homebrewFormulaInfoResult()
-          : args.join(" ") === "services info --json openshell"
-            ? spawnResult(0, "", stdout)
-            : spawnResult(),
-      ),
-    });
-
-    expect(result).toMatchObject({
-      attempted: true,
-      fallbackAllowed: false,
-      manager: "homebrew",
-      serviceName: "openshell",
-      started: false,
-    });
-    expect(result.reason).toContain("brew services info --json openshell");
-  });
-
-  it("does not fall back when the macOS Homebrew service restart fails", () => {
-    const result = startOpenShellGatewayUserService({
-      commandExists: (command) => command === "brew",
-      env: {},
-      platform: "darwin",
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
-        args.join(" ") === "info --json=v2 openshell"
-          ? homebrewFormulaInfoResult()
-          : args.join(" ") === "services restart openshell"
-            ? spawnResult(1, "launchctl failed")
-            : spawnResult(),
-      ),
-    });
-
-    expect(result).toMatchObject({
-      attempted: true,
-      fallbackAllowed: false,
-      manager: "homebrew",
-      serviceName: "openshell",
-      started: false,
-      statusCommand: "brew services info openshell",
-    });
-    expect(result.reason).toContain("launchctl failed");
-  });
-
-  it("allows standalone fallback when the user systemd manager is unavailable", () => {
+    ["manager unavailable", "daemon-reload", "Failed to connect to bus", true],
+    ["foreign executable", "show", "", false],
+    ["inactive service", "is-active", "inactive", false],
+  ])("handles a selected systemd service failure: %s (#6903)", (_case, failedCommand, detail, fallbackAllowed) => {
     const result = startOpenShellGatewayUserService({
       commandExists: () => true,
       env: {},
-      existsSync: () => true,
-      platform: "linux",
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
-        args.includes("daemon-reload") ? spawnResult(1, "Failed to connect to bus") : spawnResult(),
-      ),
-    });
-
-    expect(result).toMatchObject({
-      attempted: true,
-      fallbackAllowed: true,
-      started: false,
-    });
-    expect(result.reason).toContain("Failed to connect to bus");
-  });
-
-  it("fails after selection when restart loses the user systemd manager", () => {
-    const result = startOpenShellGatewayUserService({
-      commandExists: () => true,
-      env: {},
-      existsSync: upstreamServiceExists,
+      existsSync: (candidate) => candidate === "/lib/systemd/user/openshell-gateway.service",
       platform: "linux",
       spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
-        if (args.includes("show")) return spawnResult(0, "", trustedShowOutput());
-        if (args.includes("restart")) return spawnResult(1, "Failed to connect to bus");
-        return spawnResult();
+        if (args.includes(failedCommand)) {
+          if (failedCommand === "show") {
+            return spawnResult(
+              0,
+              "",
+              trustedShowOutput(
+                "/lib/systemd/user/openshell-gateway.service",
+                "/tmp/openshell-gateway",
+              ),
+            );
+          }
+          return spawnResult(1, detail);
+        }
+        return args.includes("show") ? spawnResult(0, "", trustedShowOutput()) : spawnResult();
       }),
     });
 
-    expect(result).toMatchObject({
-      attempted: true,
-      fallbackAllowed: false,
-      started: false,
-    });
-    expect(result.reason).toContain("Failed to connect to bus");
+    expect(result).toMatchObject({ fallbackAllowed, started: false });
   });
 
-  it("does not silently fall back when the installed service fails to restart", () => {
-    const result = startOpenShellGatewayUserService({
-      commandExists: () => true,
-      env: {},
-      existsSync: upstreamServiceExists,
-      platform: "linux",
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
-        if (args.includes("show")) return spawnResult(0, "", trustedShowOutput());
-        if (args.includes("restart")) return spawnResult(1, "Job failed");
-        return spawnResult();
-      }),
-    });
-
-    expect(result).toMatchObject({
-      attempted: true,
-      fallbackAllowed: false,
-      started: false,
-    });
-    expect(result.reason).toContain("Job failed");
-  });
-
-  it("does not treat missing service executables as user-manager outages", () => {
-    const result = startOpenShellGatewayUserService({
-      commandExists: () => true,
-      env: {},
-      existsSync: upstreamServiceExists,
-      platform: "linux",
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
-        if (args.includes("show")) return spawnResult(0, "", trustedShowOutput());
-        if (args.includes("restart")) return spawnResult(1, "No such file or directory");
-        return spawnResult();
-      }),
-    });
-
-    expect(result).toMatchObject({
-      attempted: true,
-      fallbackAllowed: false,
-      started: false,
-    });
-    expect(result.reason).toContain("No such file or directory");
-  });
-
-  it("does not report service startup success when the restarted service is inactive", () => {
-    const result = startOpenShellGatewayUserService({
-      commandExists: () => true,
-      env: {},
-      existsSync: upstreamServiceExists,
-      platform: "linux",
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
-        args.includes("show")
-          ? spawnResult(0, "", trustedShowOutput())
-          : args.includes("is-active")
-            ? spawnResult(3, "inactive")
-            : spawnResult(),
-      ),
-    });
-
-    expect(result).toMatchObject({
-      attempted: true,
-      fallbackAllowed: false,
-      started: false,
-    });
-    expect(result.reason).toContain("is-active --quiet openshell-gateway failed");
-  });
-
-  it("fails closed instead of trusting an unverified service identity", () => {
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      if (args.includes("show")) {
-        return spawnResult(
-          0,
-          "",
-          trustedShowOutput("/home/nvidia/.config/systemd/user/nemoclaw-openshell-gateway.service"),
-        );
-      }
-      return spawnResult();
-    });
-
-    const result = startOpenShellGatewayUserService({
-      commandExists: () => true,
-      env: {},
-      existsSync: upstreamServiceExists,
-      platform: "linux",
-      spawnSyncImpl,
-    });
-
-    expect(result).toMatchObject({
-      attempted: true,
-      fallbackAllowed: false,
-      started: false,
-    });
-    expect(result.reason).toContain("not a trusted OpenShell gateway");
-    expect(spawnSyncImpl.mock.calls.map(([, args]) => args.join(" "))).not.toContain(
-      "--user restart openshell-gateway",
-    );
-  });
-
-  it("fails closed instead of trusting package units that execute untrusted wrappers", () => {
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      if (args.includes("show")) {
-        return spawnResult(
-          0,
-          "",
-          trustedShowOutput(
-            "/lib/systemd/user/openshell-gateway.service",
-            "/tmp/openshell-gateway",
-          ),
-        );
-      }
-      return spawnResult();
-    });
-
-    const result = startOpenShellGatewayUserService({
-      commandExists: () => true,
-      env: {},
-      existsSync: upstreamServiceExists,
-      platform: "linux",
-      spawnSyncImpl,
-    });
-
-    expect(result).toMatchObject({
-      attempted: true,
-      fallbackAllowed: false,
-      started: false,
-    });
-    expect(result.reason).toContain("not a trusted OpenShell gateway");
-    expect(spawnSyncImpl.mock.calls.map(([, args]) => args.join(" "))).not.toContain(
-      "--user restart openshell-gateway",
-    );
-  });
-
-  it("uses the package-managed service only after endpoint, metadata, and gRPC health are ready", async () => {
+  it("uses managed service only after metadata and direct gRPC health are ready (#6903)", async () => {
     const events: string[] = [];
     const clock = createVirtualClock();
     let registerCount = 0;
-    const registerDockerDriverGatewayEndpoint = vi.fn(() => {
-      events.push("register");
-      registerCount += 1;
-      return registerCount >= 2;
-    });
 
     await expect(
       startPackageManagedDockerDriverGateway({
@@ -860,17 +324,22 @@ describe("docker-driver-gateway-service", () => {
           return true;
         },
         now: clock.now,
-        registerDockerDriverGatewayEndpoint,
+        registerDockerDriverGatewayEndpoint: () => {
+          events.push("register");
+          registerCount += 1;
+          return registerCount >= 2;
+        },
         runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
+        skipSandboxBridgeReachability: false,
         sleepSeconds: (seconds) => {
           events.push("sleep");
           clock.advance(seconds);
         },
-        skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: () => ({
           attempted: true,
           fallbackAllowed: false,
           started: true,
+          statusCommand: "systemctl --user status nemoclaw-openshell-gateway",
         }),
         verifySandboxBridgeGatewayReachableOrExit: async () => {
           events.push("verify");
@@ -881,106 +350,15 @@ describe("docker-driver-gateway-service", () => {
     expect(events).toEqual(["register", "sleep", "register", "ready", "clear", "verify"]);
   });
 
-  it("rejects package-managed service health when direct gRPC health is unavailable", async () => {
-    const clearDockerDriverGatewayRuntimeFiles = vi.fn();
-
-    await expect(
-      startPackageManagedDockerDriverGateway({
-        clearDockerDriverGatewayRuntimeFiles,
-        exitOnFailure: false,
-        gatewayName: "nemoclaw",
-        hasOpenShellGatewayUserService: () => true,
-        healthPollCount: 1,
-        healthPollInterval: 0,
-        isDockerDriverGatewayReady: async () => false,
-        registerDockerDriverGatewayEndpoint: () => true,
-        runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
-        skipSandboxBridgeReachability: false,
-        startOpenShellGatewayUserService: () => ({
-          attempted: true,
-          fallbackAllowed: false,
-          started: true,
-        }),
-        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
-      }),
-    ).rejects.toThrow("did not become healthy");
-
-    expect(clearDockerDriverGatewayRuntimeFiles).not.toHaveBeenCalled();
-  });
-
-  it("accepts package-managed service health when direct gRPC probe is healthy and CLI status is unavailable", async () => {
-    const clearDockerDriverGatewayRuntimeFiles = vi.fn();
-
-    await expect(
-      startPackageManagedDockerDriverGateway({
-        clearDockerDriverGatewayRuntimeFiles,
-        exitOnFailure: false,
-        gatewayName: "nemoclaw",
-        hasOpenShellGatewayUserService: () => true,
-        healthPollCount: 1,
-        healthPollInterval: 0,
-        isDockerDriverGatewayReady: async () => true,
-        registerDockerDriverGatewayEndpoint: () => true,
-        runCaptureOpenshell: (args) => (args[0] === "gateway" ? GATEWAY_INFO : ""),
-        skipSandboxBridgeReachability: false,
-        startOpenShellGatewayUserService: () => ({
-          attempted: true,
-          fallbackAllowed: false,
-          started: true,
-        }),
-        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
-      }),
-    ).resolves.toBe(true);
-
-    expect(clearDockerDriverGatewayRuntimeFiles).toHaveBeenCalledOnce();
-  });
-
-  it("preserves bounded immediate package-service probes when the interval is zero", async () => {
-    const clock = createVirtualClock();
-    let registerCount = 0;
-
+  it("allows detached fallback only before a service authority starts (#6903)", async () => {
+    const register = vi.fn(() => true);
     await expect(
       startPackageManagedDockerDriverGateway({
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
         exitOnFailure: false,
         gatewayName: "nemoclaw",
         hasOpenShellGatewayUserService: () => true,
-        healthPollCount: 3,
-        healthPollInterval: 0,
-        isDockerDriverGatewayReady: async () => true,
-        now: clock.now,
-        registerDockerDriverGatewayEndpoint: () => {
-          registerCount += 1;
-          return registerCount >= 3;
-        },
-        runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
-        sleepSeconds: clock.sleeper,
-        skipSandboxBridgeReachability: false,
-        startOpenShellGatewayUserService: () => ({
-          attempted: true,
-          fallbackAllowed: false,
-          started: true,
-        }),
-        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
-      }),
-    ).resolves.toBe(true);
-
-    expect(registerCount).toBe(3);
-    expect(clock.sleeper).toHaveBeenCalledTimes(2);
-    expect(clock.sleeper).toHaveBeenNthCalledWith(1, 0);
-    expect(clock.sleeper).toHaveBeenNthCalledWith(2, 0);
-  });
-
-  it("falls back to standalone when package-managed service startup is unavailable", async () => {
-    const registerDockerDriverGatewayEndpoint = vi.fn(() => true);
-
-    await expect(
-      startPackageManagedDockerDriverGateway({
-        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
-        exitOnFailure: false,
-        gatewayName: "nemoclaw",
-        hasOpenShellGatewayUserService: () => true,
-        registerDockerDriverGatewayEndpoint,
+        registerDockerDriverGatewayEndpoint: register,
         runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: () => ({
@@ -992,17 +370,15 @@ describe("docker-driver-gateway-service", () => {
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
     ).resolves.toBe(false);
-
-    expect(registerDockerDriverGatewayEndpoint).not.toHaveBeenCalled();
+    expect(register).not.toHaveBeenCalled();
   });
 
-  it("keeps standalone runtime breadcrumbs when service health never becomes ready", async () => {
-    const clearDockerDriverGatewayRuntimeFiles = vi.fn();
+  it("keeps runtime breadcrumbs when managed service health fails (#6903)", async () => {
+    const clear = vi.fn();
     const clock = createVirtualClock();
-
     await expect(
       startPackageManagedDockerDriverGateway({
-        clearDockerDriverGatewayRuntimeFiles,
+        clearDockerDriverGatewayRuntimeFiles: clear,
         exitOnFailure: false,
         gatewayName: "nemoclaw",
         hasOpenShellGatewayUserService: () => true,
@@ -1011,18 +387,18 @@ describe("docker-driver-gateway-service", () => {
         isDockerDriverGatewayReady: async () => false,
         now: clock.now,
         registerDockerDriverGatewayEndpoint: () => true,
-        runCaptureOpenshell: (args) => (args[0] === "status" ? "Error: Connection refused" : ""),
-        sleepSeconds: clock.advance,
+        runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
         skipSandboxBridgeReachability: false,
+        sleepSeconds: clock.advance,
         startOpenShellGatewayUserService: () => ({
           attempted: true,
           fallbackAllowed: false,
           started: true,
+          statusCommand: "systemctl --user status nemoclaw-openshell-gateway",
         }),
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
     ).rejects.toThrow("configured 1s health deadline");
-
-    expect(clearDockerDriverGatewayRuntimeFiles).not.toHaveBeenCalled();
+    expect(clear).not.toHaveBeenCalled();
   });
 });

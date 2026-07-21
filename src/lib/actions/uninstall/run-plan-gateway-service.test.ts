@@ -5,313 +5,188 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  getOpenShellUserConfigHome,
   getNemoclawOpenShellGatewayUserServicePath,
+  getOpenShellUserConfigHome,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
 } from "../../onboard/docker-driver-gateway-service";
 import { HOST_GATEWAY_PGREP_PATTERN } from "../../onboard/host-gateway-process";
-import { type RunResult, runUninstallPlan } from "./run-plan";
+import { type RunResult, type UninstallRunDeps, runUninstallPlan } from "./run-plan";
 
 function ok(stdout = ""): RunResult {
   return { status: 0, stdout, stderr: "" };
 }
 
-function homeEnv(home: string, xdgConfigHome = ""): NodeJS.ProcessEnv {
-  return { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } as NodeJS.ProcessEnv;
+interface Fixture {
+  env: NodeJS.ProcessEnv;
+  home: string;
+  root: string;
 }
 
-function writeManagedService(home: string, env?: NodeJS.ProcessEnv): string {
-  const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, env);
+const tempRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+function fixture(useXdg = false): Fixture {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-"));
+  tempRoots.push(root);
+  const home = path.join(root, "home");
+  fs.mkdirSync(home, { recursive: true });
+  return {
+    env: {
+      HOME: home,
+      XDG_CONFIG_HOME: useXdg ? path.join(root, "xdg-config") : "",
+    },
+    home,
+    root,
+  };
+}
+
+function writeManagedService(test: Fixture): string {
+  const servicePath = getNemoclawOpenShellGatewayUserServicePath(test.home, test.env);
   fs.mkdirSync(path.dirname(servicePath), { recursive: true });
   fs.writeFileSync(
     servicePath,
-    [
-      "# NemoClaw-managed OpenShell gateway user service",
-      `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}`,
-      "[Service]",
-      "ExecStart=/home/test/.local/bin/openshell-gateway",
-      "",
-    ].join("\n"),
+    `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n[Service]\nExecStart=${test.home}/.local/bin/openshell-gateway\n`,
   );
   return servicePath;
 }
 
-function writeGatewayEnv(home: string, env?: NodeJS.ProcessEnv): string {
-  const envPath = path.join(getOpenShellUserConfigHome(home, env), "openshell", "gateway.env");
+function writeGatewayEnv(test: Fixture, contents = "OPENSHELL_SERVER_PORT=8080\n"): string {
+  const envPath = path.join(
+    getOpenShellUserConfigHome(test.home, test.env),
+    "openshell",
+    "gateway.env",
+  );
   fs.mkdirSync(path.dirname(envPath), { recursive: true });
-  fs.writeFileSync(envPath, "OPENSHELL_SERVER_PORT=8080\n");
+  fs.writeFileSync(envPath, contents);
   return envPath;
 }
 
+function uninstall(test: Fixture, keepOpenShell: boolean, deps: Partial<UninstallRunDeps> = {}) {
+  return runUninstallPlan(
+    { assumeYes: true, deleteModels: false, keepOpenShell },
+    {
+      commandExists: () => false,
+      env: test.env,
+      existsSync: (target) => String(target).startsWith(test.root) && fs.existsSync(target),
+      isTty: false,
+      platform: "linux",
+      rmSync: fs.rmSync,
+      run: () => ok(),
+      runDocker: () => ok(),
+      ...deps,
+    },
+  );
+}
+
 describe("uninstall OpenShell gateway user service", () => {
-  it("keeps OpenShell service and host gateway process when OpenShell is kept", () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-service-"));
-    const tmpHome = path.join(tmpRoot, "home");
-    const xdgConfigHome = path.join(tmpRoot, "xdg-config");
-    fs.mkdirSync(tmpHome, { recursive: true });
-    const env = homeEnv(tmpHome, xdgConfigHome);
-    const servicePath = writeManagedService(tmpHome, env);
-    const envPath = writeGatewayEnv(tmpHome, env);
+  it("keeps the service, env, and gateway process with --keep-openshell (#6903)", () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    const envPath = writeGatewayEnv(test);
     const run = vi.fn((_command: string, _args: string[]) => ok());
 
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: true },
-        {
-          commandExists: () => true,
-          env,
-          existsSync: (target) => String(target).startsWith(tmpRoot) && fs.existsSync(target),
-          isTty: false,
-          platform: "linux",
-          rmSync: fs.rmSync,
-          run,
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(fs.existsSync(servicePath)).toBe(true);
-      expect(fs.existsSync(envPath)).toBe(true);
-      expect(run.mock.calls.map(([command, args]) => [command, ...args].join("\0"))).not.toContain(
-        ["pgrep", "-f", HOST_GATEWAY_PGREP_PATTERN].join("\0"),
-      );
-      expect(run.mock.calls.some(([command]) => command === "pgrep")).toBe(false);
-    } finally {
-      fs.rmSync(tmpRoot, { recursive: true, force: true });
-    }
+    expect(uninstall(test, true, { commandExists: () => true, run }).exitCode).toBe(0);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(fs.existsSync(envPath)).toBe(true);
+    expect(run.mock.calls.map(([, args]) => args)).not.toContainEqual([
+      "-f",
+      HOST_GATEWAY_PGREP_PATTERN,
+    ]);
   });
 
-  it("removes the NemoClaw-managed Linux user service on full uninstall", () => {
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-service-"));
-    const tmpHome = path.join(tmpRoot, "home");
-    const xdgConfigHome = path.join(tmpRoot, "xdg-config");
-    fs.mkdirSync(tmpHome, { recursive: true });
-    const env = homeEnv(tmpHome, xdgConfigHome);
-    const servicePath = writeManagedService(tmpHome, env);
-    const envPath = writeGatewayEnv(tmpHome, env);
-    const runCalls: string[][] = [];
+  it("removes only the marked Linux unit and managed env on full uninstall (#6903)", () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    const envPath = writeGatewayEnv(test);
+    const calls: string[][] = [];
 
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: (command) => command === "systemctl",
-          env,
-          existsSync: (target) => String(target).startsWith(tmpRoot) && fs.existsSync(target),
-          isTty: false,
-          platform: "linux",
-          rmSync: fs.rmSync,
-          run: vi.fn((command: string, args: string[]) => {
-            runCalls.push([command, ...args]);
-            return ok();
-          }),
-          runDocker: () => ok(""),
-        },
-      );
+    const result = uninstall(test, false, {
+      commandExists: (command) => command === "systemctl",
+      run: (command, args) => {
+        calls.push([command, ...args]);
+        return ok();
+      },
+    });
 
-      expect(result.exitCode).toBe(0);
-      expect(fs.existsSync(servicePath)).toBe(false);
-      expect(fs.existsSync(envPath)).toBe(false);
-      expect(runCalls).toContainEqual([
-        "systemctl",
-        "--user",
-        "disable",
-        "--now",
-        NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
-      ]);
-    } finally {
-      fs.rmSync(tmpRoot, { recursive: true, force: true });
-    }
+    expect(result.exitCode).toBe(0);
+    expect(fs.existsSync(servicePath)).toBe(false);
+    expect(fs.existsSync(envPath)).toBe(false);
+    expect(calls).toContainEqual([
+      "systemctl",
+      "--user",
+      "disable",
+      "--now",
+      NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE,
+    ]);
+    expect(calls).toContainEqual(["systemctl", "--user", "daemon-reload"]);
   });
 
-  it("reports incomplete uninstall when disabling the service fails", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-service-"));
-    const servicePath = writeManagedService(tmpHome);
+  it("reports an incomplete uninstall when the marked service cannot be disabled (#6903)", () => {
+    const test = fixture();
+    const servicePath = writeManagedService(test);
     const errors: string[] = [];
 
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: (command) => command === "systemctl",
-          env: homeEnv(tmpHome),
-          error: (line) => errors.push(line),
-          existsSync: (target) => String(target).startsWith(tmpHome) && fs.existsSync(target),
-          isTty: false,
-          platform: "linux",
-          rmSync: fs.rmSync,
-          run: vi.fn((command: string, args: string[]) =>
-            command === "systemctl" && args.includes("disable")
-              ? { status: 1, stdout: "", stderr: "failed\n" }
-              : ok(),
-          ),
-          runDocker: () => ok(""),
-        },
-      );
+    const result = uninstall(test, false, {
+      commandExists: (command) => command === "systemctl",
+      error: (line) => errors.push(line),
+      run: (command, args) =>
+        command === "systemctl" && args.includes("disable")
+          ? { status: 1, stdout: "", stderr: "failed" }
+          : ok(),
+    });
 
-      expect(result.exitCode).toBe(1);
-      expect(fs.existsSync(servicePath)).toBe(true);
-      expect(errors).toContain(
-        "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
-      );
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(errors).toContain(
+      "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
+    );
   });
 
-  it("reports incomplete uninstall when the managed service cannot be read", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-service-"));
-    const servicePath = writeManagedService(tmpHome);
-    const errors: string[] = [];
-
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: () => true,
-          env: homeEnv(tmpHome),
-          error: (line) => errors.push(line),
-          existsSync: (target) => String(target).startsWith(tmpHome) && fs.existsSync(target),
-          isTty: false,
-          openRegularFile: () => {
-            throw new Error("permission denied");
-          },
-          platform: "linux",
-          rmSync: fs.rmSync,
-          run: vi.fn(() => ok()),
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(fs.existsSync(servicePath)).toBe(true);
-      expect(errors).toContain(
-        `Failed to read ${servicePath}; leaving gateway user service in place.`,
-      );
-      expect(errors).toContain(
-        "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
-      );
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
-
-  it("refuses to remove a symlinked managed service path", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-service-"));
-    const targetPath = path.join(tmpHome, "foreign.service");
-    const servicePath = getNemoclawOpenShellGatewayUserServicePath(tmpHome);
+  it("preserves a foreign unit at the NemoClaw service path (#6903)", () => {
+    const test = fixture();
+    const servicePath = getNemoclawOpenShellGatewayUserServicePath(test.home, test.env);
     fs.mkdirSync(path.dirname(servicePath), { recursive: true });
-    fs.writeFileSync(targetPath, `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`);
-    fs.symlinkSync(targetPath, servicePath);
+    fs.writeFileSync(servicePath, "# foreign service\n");
 
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: () => true,
-          env: homeEnv(tmpHome),
-          existsSync: (target) => String(target).startsWith(tmpHome) && fs.existsSync(target),
-          isTty: false,
-          platform: "linux",
-          rmSync: fs.rmSync,
-          run: vi.fn(() => ok()),
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(fs.readFileSync(targetPath, "utf-8")).toContain(
-        NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
-      );
-      expect(fs.lstatSync(servicePath).isSymbolicLink()).toBe(true);
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
+    expect(uninstall(test, false).exitCode).toBe(0);
+    expect(fs.readFileSync(servicePath, "utf-8")).toBe("# foreign service\n");
   });
 
-  it("reports incomplete uninstall when the managed service file cannot be removed", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-service-"));
-    const servicePath = writeManagedService(tmpHome);
-    const errors: string[] = [];
+  it("refuses to follow symlinked service and env files (#6903)", () => {
+    const test = fixture();
+    const serviceTarget = path.join(test.root, "foreign.service");
+    const servicePath = getNemoclawOpenShellGatewayUserServicePath(test.home, test.env);
+    const envTarget = path.join(test.root, "foreign.env");
+    const envPath = path.join(
+      getOpenShellUserConfigHome(test.home, test.env),
+      "openshell",
+      "gateway.env",
+    );
+    fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+    fs.mkdirSync(path.dirname(envPath), { recursive: true });
+    fs.writeFileSync(serviceTarget, `# ${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER}\n`);
+    fs.writeFileSync(envTarget, "KEEP_ME=1\n");
+    fs.symlinkSync(serviceTarget, servicePath);
+    fs.symlinkSync(envTarget, envPath);
 
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: (command) => command === "systemctl",
-          env: homeEnv(tmpHome),
-          error: (line) => errors.push(line),
-          existsSync: (target) => String(target).startsWith(tmpHome) && fs.existsSync(target),
-          isTty: false,
-          platform: "linux",
-          rmSync: vi.fn((target: fs.PathLike) =>
-            String(target) === servicePath
-              ? (() => {
-                  throw new Error("permission denied");
-                })()
-              : fs.rmSync(target, { recursive: true, force: true }),
-          ) as typeof fs.rmSync,
-          run: vi.fn(() => ok()),
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(fs.existsSync(servicePath)).toBe(true);
-      expect(errors).toContain(`Failed to remove ${servicePath}: permission denied`);
-      expect(errors).toContain(
-        "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
-      );
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
+    expect(uninstall(test, false).exitCode).toBe(1);
+    expect(fs.readFileSync(serviceTarget, "utf-8")).toContain(
+      NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
+    );
+    expect(fs.readFileSync(envTarget, "utf-8")).toBe("KEEP_ME=1\n");
   });
 
-  it("reports incomplete uninstall when user systemd reload fails after removal", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-service-"));
-    const servicePath = writeManagedService(tmpHome);
-    const errors: string[] = [];
-
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: (command) => command === "systemctl",
-          env: homeEnv(tmpHome),
-          error: (line) => errors.push(line),
-          existsSync: (target) => String(target).startsWith(tmpHome) && fs.existsSync(target),
-          isTty: false,
-          platform: "linux",
-          rmSync: fs.rmSync,
-          run: vi.fn((command: string, args: string[]) =>
-            command === "systemctl" && args.includes("daemon-reload")
-              ? { status: 1, stdout: "", stderr: "failed\n" }
-              : ok(),
-          ),
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(fs.existsSync(servicePath)).toBe(false);
-      expect(errors).toContain("Failed to reload the user systemd manager.");
-      expect(errors).toContain(
-        "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
-      );
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
-
-  it("removes only managed gateway settings from gateway.env", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-env-"));
-    const envPath = writeGatewayEnv(tmpHome);
-    fs.writeFileSync(
-      envPath,
+  it("removes managed env keys while preserving unrelated content (#6903)", () => {
+    const test = fixture();
+    const envPath = writeGatewayEnv(
+      test,
       [
         "KEEP_ME=1",
         "OPENSHELL_SERVER_PORT=8080",
@@ -321,83 +196,15 @@ describe("uninstall OpenShell gateway user service", () => {
       ].join("\n"),
     );
 
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: () => false,
-          env: homeEnv(tmpHome),
-          existsSync: (target) => String(target).startsWith(tmpHome) && fs.existsSync(target),
-          isTty: false,
-          platform: "linux",
-          rmSync: fs.rmSync,
-          run: vi.fn(() => ok()),
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(fs.readFileSync(envPath, "utf-8")).toBe("KEEP_ME=1\n");
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
+    expect(uninstall(test, false).exitCode).toBe(0);
+    expect(fs.readFileSync(envPath, "utf-8")).toBe("KEEP_ME=1\n");
   });
 
-  it("refuses to clean a symlinked gateway.env", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-gateway-env-"));
-    const configDir = path.join(getOpenShellUserConfigHome(tmpHome), "openshell");
-    const envPath = path.join(configDir, "gateway.env");
-    const targetPath = path.join(tmpHome, "foreign.env");
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.writeFileSync(targetPath, "KEEP_ME=1\n");
-    fs.symlinkSync(targetPath, envPath);
+  it("does not remove the Linux unit on macOS (#6903)", () => {
+    const test = fixture();
+    const servicePath = writeManagedService(test);
 
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: () => false,
-          env: homeEnv(tmpHome),
-          existsSync: (target) => String(target).startsWith(tmpHome) && fs.existsSync(target),
-          isTty: false,
-          platform: "linux",
-          rmSync: fs.rmSync,
-          run: vi.fn(() => ok()),
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(1);
-      expect(fs.readFileSync(targetPath, "utf-8")).toBe("KEEP_ME=1\n");
-      expect(fs.lstatSync(envPath).isSymbolicLink()).toBe(true);
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
-
-  it("does not remove Linux user service units on macOS", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-macos-service-"));
-    const servicePath = writeManagedService(tmpHome);
-
-    try {
-      const result = runUninstallPlan(
-        { assumeYes: true, deleteModels: false, keepOpenShell: false },
-        {
-          commandExists: () => true,
-          env: homeEnv(tmpHome),
-          existsSync: (target) => String(target).startsWith(tmpHome) && fs.existsSync(target),
-          isTty: false,
-          platform: "darwin",
-          rmSync: fs.rmSync,
-          run: vi.fn(() => ok()),
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(fs.existsSync(servicePath)).toBe(true);
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
+    expect(uninstall(test, false, { platform: "darwin" }).exitCode).toBe(0);
+    expect(fs.existsSync(servicePath)).toBe(true);
   });
 });

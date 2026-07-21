@@ -144,7 +144,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
       "sh -lc command -v openshell >/dev/null 2>&1 && openshell gateway stop -g nemoclaw || true",
       expect.stringContaining("sh -lc pid_file="),
       expect.stringContaining("sh -lc cid="),
-      expect.stringContaining("systemctl --user is-enabled nemoclaw-openshell-gateway"),
+      expect.stringContaining('systemctl --user cat "$service"'),
       "openshell status",
       "nemoclaw e2e-ubuntu-repo-cloud-openclaw status",
     ]);
@@ -209,9 +209,7 @@ describe("LifecyclePhaseFixture.simulate post-reboot-recovery (stop-original)", 
     ).rejects.toThrow(/OpenShell gateway user service is not available/);
 
     expect(runner.calls.map((call) => `${call.command} ${call.args.join(" ")}`)).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("systemctl --user is-enabled nemoclaw-openshell-gateway"),
-      ]),
+      expect.arrayContaining([expect.stringContaining('systemctl --user cat "$service"')]),
     );
   });
 });

@@ -52,10 +52,12 @@ const ASSET_DIGESTS = new Map([
     "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
     "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0",
   ],
+  ["openshell.rb", "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23"],
 ]);
-const ASSETS = [...ASSET_DIGESTS.keys()];
 const FORMULA_ASSET = "openshell.rb";
-const FORMULA_DIGEST = "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23";
+const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
+const ASSETS = [...ASSET_DIGESTS.keys()].filter((asset) => asset !== FORMULA_ASSET);
+const INSTALLER_ASSETS = [...ASSETS, FORMULA_ASSET];
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_ASSET = "openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_DIGEST =
@@ -434,7 +436,6 @@ function renderPinFunction(
   assets: string[],
   openshellVersion: string,
   formatting: PinFormatting,
-  digestMap: ReadonlyMap<string, string> = ASSET_DIGESTS,
 ): string {
   const functionOpening =
     formatting === "mixed-whitespace" ? `${functionName}\t( )\t{` : `${functionName}() {`;
@@ -450,7 +451,7 @@ function renderPinFunction(
       : '  case "${release_tag}:${asset}" in';
   const cases = assets
     .map((asset) => {
-      const digest = digestMap.get(asset) ?? "missing";
+      const digest = ASSET_DIGESTS.get(asset) ?? "missing";
       const pattern =
         formatting === "quote-styles"
           ? `    'v${openshellVersion}:${asset}')`
@@ -490,11 +491,7 @@ function replacePinFunction(
   return `${source.slice(0, start)}${replacement}${source.slice(next)}`;
 }
 
-function renderInstallerTemplate(
-  openshellVersion: string,
-  pinFunction: string,
-  formulaPinFunction: string,
-): string {
+function renderInstallerTemplate(openshellVersion: string, pinFunction: string): string {
   const selected = INSTALLER_TEMPLATE.replace(
     /^MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
     `MIN_VERSION="${openshellVersion}"`,
@@ -504,17 +501,11 @@ function renderInstallerTemplate(
       /^DEV_MIN_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$/m,
       `DEV_MIN_VERSION="${openshellVersion}"`,
     );
-  const withArchivePinFunction = replacePinFunction(
+  const withPinFunction = replacePinFunction(
     selected,
     "openshell_pinned_sha256",
     "openshell_checksum_line() {",
     pinFunction,
-  );
-  const withPinFunction = replacePinFunction(
-    withArchivePinFunction,
-    "openshell_formula_pinned_sha256",
-    "# A pinned digest authenticates bytes",
-    formulaPinFunction,
   );
   const sandboxFunctionStart = withPinFunction.indexOf("pinned_sandbox_build_version() {");
   const sandboxFunctionEnd = withPinFunction.indexOf(
@@ -574,14 +565,7 @@ function createFixture(
     path.join(scriptsDir, "install-openshell.sh"),
     renderInstallerTemplate(
       openshellVersion,
-      renderPinFunction("openshell_pinned_sha256", ASSETS, openshellVersion, formatting),
-      renderPinFunction(
-        "openshell_formula_pinned_sha256",
-        [FORMULA_ASSET],
-        openshellVersion,
-        formatting,
-        new Map([[FORMULA_ASSET, FORMULA_DIGEST]]),
-      ),
+      renderPinFunction("openshell_pinned_sha256", INSTALLER_ASSETS, openshellVersion, formatting),
     ),
   );
   fs.writeFileSync(
