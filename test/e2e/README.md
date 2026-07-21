@@ -411,10 +411,12 @@ normal limits, and output silence, first-turn, and all other phase requirements
 remain unchanged.
 
 The two Hermes rebuild jobs add a bounded 32 GiB swap file on their ephemeral
-hosted runners before invoking the live fixture. Those jobs build both old and
-current Hermes image layers and can otherwise exhaust the runner's default
-memory and swap during Docker layer export. Other E2E jobs keep the standard
-runner memory configuration.
+hosted runners before invoking the live fixture. The fixture verifies that
+floor and provisions the same swap file on GitHub Actions when a trusted
+control-plane run uses the workflow definition from `main`. Those jobs build
+both old and current Hermes image layers and can otherwise exhaust the runner's
+default memory and swap during Docker layer export. Other E2E jobs keep the
+standard runner memory configuration.
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first
