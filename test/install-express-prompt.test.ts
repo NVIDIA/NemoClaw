@@ -373,7 +373,10 @@ detect_express_platform
     expect(output).toMatch(
       /installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages/,
     );
-    expect(output).toMatch(/DGX Station remains Deferred/);
+    expect(output).toMatch(
+      /DGX Station is Tested with limitations across qualified profiles on one physical DGX Station GB300/,
+    );
+    expect(output).toMatch(/dual-Station configurations are not yet validated/);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
