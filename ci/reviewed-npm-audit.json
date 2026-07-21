@@ -1,8 +1,79 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "nodeVersion": "22.22.2",
   "severityThreshold": "high",
   "artifactDirectory": "coverage/reviewed-npm-audit",
+  "historicalReview": {
+    "graphLabel": "reviewed archive graph",
+    "expectedFindings": [
+      {
+        "packageName": "axios",
+        "severity": "high",
+        "advisories": [
+          {
+            "id": "GHSA-gcfj-64vw-6mp9",
+            "severity": "high"
+          }
+        ],
+        "nodes": [
+          "node_modules/@openclaw/msteams/node_modules/axios",
+          "node_modules/@openclaw/slack/node_modules/axios"
+        ]
+      },
+      {
+        "packageName": "tar",
+        "severity": "critical",
+        "advisories": [
+          {
+            "id": "GHSA-23hp-3jrh-7fpw",
+            "severity": "critical"
+          },
+          {
+            "id": "GHSA-8x88-c5mf-7j5w",
+            "severity": "high"
+          }
+        ],
+        "nodes": [
+          "node_modules/@openclaw/fs-safe/node_modules/tar",
+          "node_modules/tar"
+        ]
+      }
+    ],
+    "remediatedPackages": [
+      {
+        "name": "axios",
+        "version": "1.18.0",
+        "integrity": "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
+        "tarballUrl": "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
+        "nodes": [
+          {
+            "node": "node_modules/@openclaw/msteams/node_modules/axios",
+            "vulnerableVersion": "1.16.0"
+          },
+          {
+            "node": "node_modules/@openclaw/slack/node_modules/axios",
+            "vulnerableVersion": "1.16.0"
+          }
+        ]
+      },
+      {
+        "name": "tar",
+        "version": "7.5.19",
+        "integrity": "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
+        "tarballUrl": "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
+        "nodes": [
+          {
+            "node": "node_modules/@openclaw/fs-safe/node_modules/tar",
+            "vulnerableVersion": "7.5.13"
+          },
+          {
+            "node": "node_modules/tar",
+            "vulnerableVersion": "7.5.16"
+          }
+        ]
+      }
+    ]
+  },
   "archivePackages": [
     {
       "label": "OpenClaw 2026.6.10",

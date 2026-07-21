@@ -23,7 +23,7 @@ jobs:
   build-and-push:
     if: github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       - name: Checkout trusted main
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -36,13 +36,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Log in to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Resolve immutable publication plan
         id: plan
         env:
@@ -53,6 +46,9 @@ jobs:
           source_tag="$(jq -r .releaseTag <<<"$plan")"
           openclaw_version="$(jq -r .openClawVersion <<<"$plan")"
           revision_tag="$(jq -r .revisionTag <<<"$plan")"
+          git fetch --no-tags --depth=1 origin "refs/tags/${source_tag}:refs/tags/${source_tag}"
+          release_commit="$(git rev-parse "${source_tag}^{commit}")"
+          [[ "$release_commit" =~ ^[0-9a-f]{40}$ ]]
           image='ghcr.io/nvidia/nemoclaw/sandbox-base'
           source_ref="${image}:${source_tag}"
           manifest="$(docker buildx imagetools inspect "$source_ref" --format '{{json .Manifest}}')"
@@ -68,47 +64,422 @@ jobs:
           fi
           if ! grep -Eqi 'manifest unknown|not found' "$error_file"; then
             echo "ERROR: Could not prove revision tag is absent" >&2
-            cat "$error_file" >&2
+            sed -n '1,20p' "$error_file" >&2
             exit 1
           fi
           rm -f "$error_file"
 
           {
+            printf 'image_repository=%s\n' "$image"
             printf 'source_ref=%s\n' "$source_ref"
             printf 'source_digest=%s\n' "$source_digest"
             printf 'source_image=%s\n' "$source_image"
             printf 'destination_image=%s\n' "$destination_image"
             printf 'openclaw_version=%s\n' "$openclaw_version"
+            printf 'release_tag=%s\n' "$source_tag"
+            printf 'release_commit=%s\n' "$release_commit"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push immutable security revision
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - name: Checkout exact historical release source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          context: .
-          file: Dockerfile.openclaw-tar-security-revision
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.plan.outputs.destination_image }}
-          provenance: mode=max
-          sbom: true
-          build-args: |
-            BASE_IMAGE=${{ steps.plan.outputs.source_image }}
-            EXPECTED_OPENCLAW_VERSION=${{ steps.plan.outputs.openclaw_version }}
+          ref: ${{ steps.plan.outputs.release_commit }}
+          path: historical-source
+          persist-credentials: false
 
-      - name: Verify published revision
+      - name: Verify exact historical source checkout
         env:
-          SOURCE_REF: ${{ steps.plan.outputs.source_ref }}
+          RELEASE_COMMIT: ${{ steps.plan.outputs.release_commit }}
+          RELEASE_TAG: ${{ steps.plan.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "$(git -C historical-source rev-parse HEAD)" = "$RELEASE_COMMIT"
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "$RELEASE_COMMIT"
+
+      - name: Freeze and record the Trivy databases
+        env:
+          EVIDENCE_DIRECTORY: ${{ runner.temp }}/openclaw-security-revision-evidence
+          TRIVY_CACHE_DIRECTORY: ${{ runner.temp }}/trivy-cache
+          TRIVY_IMAGE: aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIRECTORY" "$TRIVY_CACHE_DIRECTORY"
+          docker pull "$TRIVY_IMAGE"
+          docker run --rm \
+            --volume "$TRIVY_CACHE_DIRECTORY:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image --download-db-only
+          docker run --rm \
+            --volume "$TRIVY_CACHE_DIRECTORY:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" image --download-java-db-only
+          docker run --rm \
+            --volume "$TRIVY_CACHE_DIRECTORY:/root/.cache/trivy" \
+            "$TRIVY_IMAGE" --version > "$EVIDENCE_DIRECTORY/trivy-db-metadata.txt"
+          grep -Fq 'Vulnerability DB:' "$EVIDENCE_DIRECTORY/trivy-db-metadata.txt"
+          grep -Fq 'UpdatedAt:' "$EVIDENCE_DIRECTORY/trivy-db-metadata.txt"
+          (
+            cd "$TRIVY_CACHE_DIRECTORY"
+            find db java-db -type f -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum
+          ) > "$EVIDENCE_DIRECTORY/trivy-databases-before.sha256"
+          test -s "$EVIDENCE_DIRECTORY/trivy-databases-before.sha256"
+          docker image inspect "$TRIVY_IMAGE" > "$EVIDENCE_DIRECTORY/trivy-image.json"
+
+      - name: Build the local multiarch candidate OCI archive
+        env:
+          CANDIDATE_ARCHIVE: ${{ runner.temp }}/openclaw-security-revision-candidate.oci.tar
+          CANDIDATE_LAYOUT: ${{ runner.temp }}/openclaw-security-revision-candidate-layout
+          EVIDENCE_DIRECTORY: ${{ runner.temp }}/openclaw-security-revision-evidence
+          OPENCLAW_VERSION: ${{ steps.plan.outputs.openclaw_version }}
+          SOURCE_IMAGE: ${{ steps.plan.outputs.source_image }}
+        run: |
+          set -euo pipefail
+          metadata="$EVIDENCE_DIRECTORY/candidate-build-metadata.json"
+          build_args=(
+            --build-arg "BASE_IMAGE=${SOURCE_IMAGE}"
+            --build-arg "EXPECTED_OPENCLAW_VERSION=${OPENCLAW_VERSION}"
+          )
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file Dockerfile.openclaw-tar-security-revision \
+            "${build_args[@]}" \
+            --provenance=mode=max \
+            --sbom=true \
+            --tag nemoclaw-openclaw-security-revision:validated \
+            --metadata-file "$metadata" \
+            --output "type=oci,dest=${CANDIDATE_ARCHIVE}" \
+            .
+
+          index_digest="$(jq -er '."containerimage.digest"' "$metadata")"
+          [[ "$index_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s\n' "$index_digest" > "$EVIDENCE_DIRECTORY/candidate-index.digest"
+          sha256sum "$CANDIDATE_ARCHIVE" > "$EVIDENCE_DIRECTORY/candidate-archive.sha256"
+          mkdir -p "$CANDIDATE_LAYOUT"
+          tar -xf "$CANDIDATE_ARCHIVE" -C "$CANDIDATE_LAYOUT"
+          index_blob="$CANDIDATE_LAYOUT/blobs/sha256/${index_digest#sha256:}"
+          test -f "$index_blob"
+          test "$(sha256sum "$index_blob" | cut -d ' ' -f 1)" = "${index_digest#sha256:}"
+          cp "$index_blob" "$EVIDENCE_DIRECTORY/candidate-index-manifest.json"
+
+          for architecture in amd64 arm64; do
+            candidate_digest="$(jq -er --arg architecture "$architecture" '
+              [.manifests[] | select(
+                .platform.os == "linux" and .platform.architecture == $architecture
+              )]
+              | if length == 1 then .[0].digest
+                else error("candidate index did not contain exactly one requested platform")
+                end
+            ' "$index_blob")"
+            [[ "$candidate_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            candidate_blob="$CANDIDATE_LAYOUT/blobs/sha256/${candidate_digest#sha256:}"
+            test -f "$candidate_blob"
+            test "$(sha256sum "$candidate_blob" | cut -d ' ' -f 1)" = "${candidate_digest#sha256:}"
+            attestation_digest="$(jq -er --arg digest "$candidate_digest" '
+              [.manifests[] | select(
+                .platform.os == "unknown" and
+                .platform.architecture == "unknown" and
+                .annotations."vnd.docker.reference.type" == "attestation-manifest" and
+                .annotations."vnd.docker.reference.digest" == $digest
+              )]
+              | if length == 1 then .[0].digest
+                else error("candidate platform did not have exactly one attestation manifest")
+                end
+            ' "$index_blob")"
+            attestation_blob="$CANDIDATE_LAYOUT/blobs/sha256/${attestation_digest#sha256:}"
+            test -f "$attestation_blob"
+            test "$(sha256sum "$attestation_blob" | cut -d ' ' -f 1)" = "${attestation_digest#sha256:}"
+            test "$(jq '[
+              .layers[]?.annotations."in-toto.io/predicate-type" | select(type == "string")
+            ] | any(. == "https://spdx.dev/Document")' "$attestation_blob")" = true
+            test "$(jq '[
+              .layers[]?.annotations."in-toto.io/predicate-type" | select(type == "string")
+            ] | any(startswith("https://slsa.dev/provenance/"))' "$attestation_blob")" = true
+            printf '%s\n' "$candidate_digest" > "$EVIDENCE_DIRECTORY/candidate-${architecture}.digest"
+          done
+          test "$(jq '[.manifests[] | select(.platform.os == "linux")] | length' "$index_blob")" = 2
+          test "$(jq '[.manifests[] | select(.platform.os == "unknown")] | length' "$index_blob")" = 2
+
+      - name: Validate both exact platform candidates against the historical release
+        env:
+          CANDIDATE_ARCHIVE: ${{ runner.temp }}/openclaw-security-revision-candidate.oci.tar
+          CANDIDATE_LAYOUT: ${{ runner.temp }}/openclaw-security-revision-candidate-layout
+          EVIDENCE_DIRECTORY: ${{ runner.temp }}/openclaw-security-revision-evidence
+          OPENCLAW_VERSION: ${{ steps.plan.outputs.openclaw_version }}
+          RELEASE_COMMIT: ${{ steps.plan.outputs.release_commit }}
+          RELEASE_TAG: ${{ steps.plan.outputs.release_tag }}
           SOURCE_DIGEST: ${{ steps.plan.outputs.source_digest }}
+          SOURCE_IMAGE: ${{ steps.plan.outputs.source_image }}
+          TRIVY_CACHE_DIRECTORY: ${{ runner.temp }}/trivy-cache
+          TRIVY_IMAGE: aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f
+        run: |
+          set -euo pipefail
+
+          scan_archive() {
+            local platform="$1"
+            local report="$2"
+            docker run --rm \
+              --volume "$CANDIDATE_ARCHIVE:/candidate.oci.tar:ro" \
+              --volume "$TRIVY_CACHE_DIRECTORY:/root/.cache/trivy" \
+              "$TRIVY_IMAGE" image \
+              --input /candidate.oci.tar \
+              --platform "$platform" \
+              --scanners vuln \
+              --skip-db-update \
+              --skip-java-db-update \
+              --skip-check-update \
+              --skip-vex-repo-update \
+              --format json \
+              --timeout 10m \
+              > "$report"
+          }
+
+          scan_docker_image() {
+            local image_ref="$1"
+            local report="$2"
+            docker run --rm \
+              --volume /var/run/docker.sock:/var/run/docker.sock \
+              --volume "$TRIVY_CACHE_DIRECTORY:/root/.cache/trivy" \
+              "$TRIVY_IMAGE" image \
+              --image-src docker \
+              --scanners vuln \
+              --skip-db-update \
+              --skip-java-db-update \
+              --skip-check-update \
+              --skip-vex-repo-update \
+              --format json \
+              --timeout 10m \
+              "$image_ref" > "$report"
+          }
+
+          candidate_index_digest="$(<"$EVIDENCE_DIRECTORY/candidate-index.digest")"
+          {
+            printf 'workflow_commit=%s\n' "$GITHUB_SHA"
+            printf 'workflow_run=%s\n' "$GITHUB_RUN_ID"
+            printf 'workflow_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'release_tag=%s\n' "$RELEASE_TAG"
+            printf 'release_commit=%s\n' "$RELEASE_COMMIT"
+            printf 'source_image=%s\n' "$SOURCE_IMAGE"
+            printf 'source_digest=%s\n' "$SOURCE_DIGEST"
+            printf 'openclaw_version=%s\n' "$OPENCLAW_VERSION"
+            printf 'trivy_image=%s\n' "$TRIVY_IMAGE"
+            printf 'candidate_index_digest=%s\n' "$candidate_index_digest"
+          } > "$EVIDENCE_DIRECTORY/binding.txt"
+
+          for architecture in amd64 arm64; do
+            platform="linux/${architecture}"
+            candidate_digest="$(<"$EVIDENCE_DIRECTORY/candidate-${architecture}.digest")"
+            [[ "$candidate_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            candidate_context="oci-layout://${CANDIDATE_LAYOUT}@${candidate_digest}"
+            historical_image="nemoclaw-openclaw-security-revision:historical-${architecture}"
+            inventory="$EVIDENCE_DIRECTORY/tar-inventory-${architecture}.tsv"
+            candidate_report="$EVIDENCE_DIRECTORY/trivy-candidate-${architecture}.json"
+            historical_report="$EVIDENCE_DIRECTORY/trivy-historical-${architecture}.json"
+
+            build_args=(--build-arg "BASE_IMAGE=candidate")
+            scripts/check-production-build-args.sh "${build_args[@]}"
+            docker buildx build \
+              --platform "$platform" \
+              --build-context "candidate=${candidate_context}" \
+              --file historical-source/Dockerfile \
+              "${build_args[@]}" \
+              --load \
+              --tag "$historical_image" \
+              historical-source
+            test "$(docker image inspect --format '{{.Architecture}}' "$historical_image")" = "$architecture"
+
+            docker run --rm --platform "$platform" --entrypoint node "$historical_image" -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const ignored = new Set(["/dev", "/proc", "/sys"]);
+            const found = [];
+            function walk(directory) {
+              let entries;
+              try { entries = fs.readdirSync(directory); }
+              catch (error) { throw new Error(`cannot inventory ${directory}: ${error.message}`); }
+              for (const name of entries) {
+                const child = path.join(directory, name);
+                if (ignored.has(child)) continue;
+                let metadata;
+                try { metadata = fs.lstatSync(child); }
+                catch (error) { throw new Error(`cannot inspect ${child}: ${error.message}`); }
+                if (metadata.isSymbolicLink()) continue;
+                if (metadata.isDirectory()) walk(child);
+                else if (metadata.isFile() && child.endsWith("/node_modules/tar/package.json")) {
+                  found.push([child, JSON.parse(fs.readFileSync(child, "utf8")).version]);
+                }
+              }
+            }
+            walk("/");
+            found.sort((left, right) => left[0].localeCompare(right[0]));
+            for (const [manifest, version] of found) console.log(`${manifest}\t${version}`);
+            ' > "$inventory"
+            test -s "$inventory"
+            inventory_count="$(wc -l < "$inventory")"
+            test "$inventory_count" -ge 4
+            for required_path in \
+              /usr/local/lib/node_modules/openclaw/node_modules/tar/package.json \
+              /usr/local/lib/node_modules/npm/node_modules/tar/package.json \
+              /opt/nemoclaw/node_modules/tar/package.json \
+              /sandbox/.openclaw/extensions/nemoclaw/node_modules/tar/package.json; do
+              grep -Fqx "${required_path}"$'\t7.5.19' "$inventory"
+            done
+            awk -F '\t' '$2 != "7.5.19" { print "ERROR: vulnerable tar inventory: " $0 > "/dev/stderr"; failed=1 } END { exit failed }' \
+              "$inventory"
+
+            scan_archive "$platform" "$candidate_report"
+            scan_docker_image "$historical_image" "$historical_report"
+            candidate_findings="$(jq '[.Results[]?.Vulnerabilities[]? | select(.VulnerabilityID == "CVE-2026-59873")] | length' "$candidate_report")"
+            historical_findings="$(jq '[.Results[]?.Vulnerabilities[]? | select(.VulnerabilityID == "CVE-2026-59873")] | length' "$historical_report")"
+            test "$candidate_findings" = 0
+            test "$historical_findings" = 0
+            {
+              printf 'candidate_%s_digest=%s\n' "$architecture" "$candidate_digest"
+              printf 'candidate_%s_cve_2026_59873_findings=%s\n' "$architecture" "$candidate_findings"
+              printf 'historical_%s_id=%s\n' "$architecture" "$(docker image inspect --format '{{.Id}}' "$historical_image")"
+              printf 'historical_%s_cve_2026_59873_findings=%s\n' "$architecture" "$historical_findings"
+            } >> "$EVIDENCE_DIRECTORY/binding.txt"
+          done
+
+          git -C historical-source status --short > "$EVIDENCE_DIRECTORY/historical-source-status.txt"
+          test ! -s "$EVIDENCE_DIRECTORY/historical-source-status.txt"
+          sha256sum \
+            historical-source/Dockerfile \
+            historical-source/nemoclaw/package.json \
+            historical-source/nemoclaw/package-lock.json \
+            > "$EVIDENCE_DIRECTORY/historical-source-files.sha256"
+          docker image inspect \
+            nemoclaw-openclaw-security-revision:historical-amd64 \
+            nemoclaw-openclaw-security-revision:historical-arm64 \
+            > "$EVIDENCE_DIRECTORY/local-images.json"
+          (
+            cd "$TRIVY_CACHE_DIRECTORY"
+            find db java-db -type f -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum
+          ) > "$EVIDENCE_DIRECTORY/trivy-databases-after.sha256"
+          cmp \
+            "$EVIDENCE_DIRECTORY/trivy-databases-before.sha256" \
+            "$EVIDENCE_DIRECTORY/trivy-databases-after.sha256"
+
+      - name: Set up pinned ORAS
+        uses: oras-project/setup-oras@8d34698a59f5ffe24821f0b48ab62a3de8b64b20 # v1.2.3
+        with:
+          version: 1.2.3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Recheck immutable destination immediately before publication
+        env:
           DESTINATION_IMAGE: ${{ steps.plan.outputs.destination_image }}
+          SOURCE_DIGEST: ${{ steps.plan.outputs.source_digest }}
+          SOURCE_REF: ${{ steps.plan.outputs.source_ref }}
         run: |
           set -euo pipefail
           current_source="$(docker buildx imagetools inspect "$SOURCE_REF" --format '{{json .Manifest}}' | jq -er .digest)"
           test "$current_source" = "$SOURCE_DIGEST"
+          error_file="$(mktemp)"
+          if docker buildx imagetools inspect "$DESTINATION_IMAGE" > /dev/null 2>"$error_file"; then
+            echo "ERROR: Refusing to overwrite existing revision tag ${DESTINATION_IMAGE}" >&2
+            exit 1
+          fi
+          if ! grep -Eqi 'manifest unknown|not found' "$error_file"; then
+            echo "ERROR: Could not prove revision tag is absent immediately before publication" >&2
+            sed -n '1,20p' "$error_file" >&2
+            exit 1
+          fi
+          rm -f "$error_file"
+
+      - name: Publish the validated local OCI index without rebuilding
+        env:
+          CANDIDATE_LAYOUT: ${{ runner.temp }}/openclaw-security-revision-candidate-layout
+          DESTINATION_IMAGE: ${{ steps.plan.outputs.destination_image }}
+          EVIDENCE_DIRECTORY: ${{ runner.temp }}/openclaw-security-revision-evidence
+        run: |
+          set -euo pipefail
+          index_digest="$(<"$EVIDENCE_DIRECTORY/candidate-index.digest")"
+          [[ "$index_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          oras version > "$EVIDENCE_DIRECTORY/oras-version.txt"
+          oras cp --from-oci-layout --recursive \
+            "$CANDIDATE_LAYOUT@$index_digest" \
+            "$DESTINATION_IMAGE" \
+            | tee "$EVIDENCE_DIRECTORY/oras-copy.txt"
+
+      - name: Verify published revision contains exactly the scanned digests
+        env:
+          DESTINATION_IMAGE: ${{ steps.plan.outputs.destination_image }}
+          EVIDENCE_DIRECTORY: ${{ runner.temp }}/openclaw-security-revision-evidence
+          SOURCE_DIGEST: ${{ steps.plan.outputs.source_digest }}
+          SOURCE_REF: ${{ steps.plan.outputs.source_ref }}
+        run: |
+          set -euo pipefail
+          amd64_digest="$(<"$EVIDENCE_DIRECTORY/candidate-amd64.digest")"
+          arm64_digest="$(<"$EVIDENCE_DIRECTORY/candidate-arm64.digest")"
+          candidate_index_digest="$(<"$EVIDENCE_DIRECTORY/candidate-index.digest")"
+          current_source="$(docker buildx imagetools inspect "$SOURCE_REF" --format '{{json .Manifest}}' | jq -er .digest)"
+          test "$current_source" = "$SOURCE_DIGEST"
+          oras manifest fetch --output "$EVIDENCE_DIRECTORY/published-manifest-raw.json" \
+            "$DESTINATION_IMAGE"
+          cmp \
+            "$EVIDENCE_DIRECTORY/candidate-index-manifest.json" \
+            "$EVIDENCE_DIRECTORY/published-manifest-raw.json"
           published="$(docker buildx imagetools inspect "$DESTINATION_IMAGE" --format '{{json .Manifest}}')"
+          printf '%s\n' "$published" > "$EVIDENCE_DIRECTORY/published-manifest.json"
           revision_digest="$(jq -er .digest <<<"$published")"
           [[ "$revision_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          test "$(jq '[.manifests[] | select(.platform.os == "linux" and (.platform.architecture == "amd64" or .platform.architecture == "arm64")) | .platform.architecture] | unique | length' <<<"$published")" = 2
+          test "$revision_digest" = "$candidate_index_digest"
+          exact_platforms="$(jq --arg amd64 "$amd64_digest" --arg arm64 "$arm64_digest" '
+            ([.manifests[] | {
+              architecture: .platform.architecture,
+              digest: .digest,
+              os: .platform.os
+            } | select(.os == "linux")] | sort_by(.architecture)) == [
+              {architecture: "amd64", digest: $amd64, os: "linux"},
+              {architecture: "arm64", digest: $arm64, os: "linux"}
+            ]
+          ' <<<"$published")"
+          test "$exact_platforms" = true
+          test "$(jq '[.manifests[] | select(
+            .platform.os == "unknown" and
+            .platform.architecture == "unknown" and
+            .annotations."vnd.docker.reference.type" == "attestation-manifest" and
+            (.annotations."vnd.docker.reference.digest" == $amd64 or
+             .annotations."vnd.docker.reference.digest" == $arm64)
+          )] | length' --arg amd64 "$amd64_digest" --arg arm64 "$arm64_digest" <<<"$published")" = 2
+          test "$(jq '.manifests | length' <<<"$published")" = 4
+          {
+            printf 'destination_image=%s\n' "$DESTINATION_IMAGE"
+            printf 'published_digest=%s\n' "$revision_digest"
+          } >> "$EVIDENCE_DIRECTORY/binding.txt"
           {
             printf 'Published `%s@%s` from `%s@%s`.\n\n' "$DESTINATION_IMAGE" "$revision_digest" "$SOURCE_REF" "$SOURCE_DIGEST"
+            printf 'The copied OCI index contains the scanned amd64 `%s` and arm64 `%s` platform digests plus their original SBOM/provenance attestations.\n\n' "$amd64_digest" "$arm64_digest"
             printf 'To rebuild an affected release without changing its tag, set `NEMOCLAW_SANDBOX_BASE_IMAGE_REF=%s@%s` for onboarding.\n' "$DESTINATION_IMAGE" "$revision_digest"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Finalize validation evidence
+        if: always()
+        env:
+          EVIDENCE_DIRECTORY: ${{ runner.temp }}/openclaw-security-revision-evidence
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIRECTORY"
+          printf 'job_status=%s\n' '${{ job.status }}' > "$EVIDENCE_DIRECTORY/job-status.txt"
+          find "$EVIDENCE_DIRECTORY" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | LC_ALL=C sort -z \
+            | xargs -0 sha256sum \
+            > "$EVIDENCE_DIRECTORY/SHA256SUMS"
+
+      - name: Upload validation and publication evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openclaw-security-revision-${{ steps.plan.outputs.release_tag }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/openclaw-security-revision-evidence
+          if-no-files-found: error
+          retention-days: 90
