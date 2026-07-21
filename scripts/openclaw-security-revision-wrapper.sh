@@ -69,7 +69,7 @@ if [[ "$state_directory" != /* || "$state_directory" == / ]]; then
   echo "ERROR: OpenClaw state directory must be a non-root absolute path" >&2
   exit 64
 fi
-if ! node --experimental-strip-types "$INVOCATION_PARSER" \
+if ! node --no-warnings --experimental-strip-types "$INVOCATION_PARSER" \
   --validate-state-directory "$state_directory" \
   --trusted-root "$OPENCLAW_STATE_ROOT"; then
   exit 64
