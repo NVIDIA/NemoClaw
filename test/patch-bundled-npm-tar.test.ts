@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   FIXED_TAR_VERSION,
@@ -79,6 +80,32 @@ describe("npm bundled node-tar remediation", () => {
     const target = fixture("10.9.7", FIXED_TAR_VERSION);
     expect(patchBundledNpmTar(target)).toMatchObject({ state: "fixed" });
     expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "old.js"))).toBe(true);
+  });
+
+  it("restores the original bundled package when the replacement rename fails", () => {
+    const target = fixture("10.9.7", "7.5.11");
+    const originalRenameSync = fs.renameSync.bind(fs);
+    const renameSpy = vi
+      .spyOn(fs, "renameSync")
+      .mockImplementationOnce(() => {
+        throw new Error("injected replacement rename failure");
+      })
+      .mockImplementation(originalRenameSync);
+    syncBuiltinESMExports();
+
+    try {
+      expect(() => patchBundledNpmTar(target)).toThrow("injected replacement rename failure");
+    } finally {
+      renameSpy.mockRestore();
+      syncBuiltinESMExports();
+    }
+
+    expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "old.js"))).toBe(true);
+    expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "tar", "lib", "fixed.js"))).toBe(
+      false,
+    );
+    expect(fs.readdirSync(path.join(target.npmRoot, "node_modules"))).toEqual(["tar"]);
+    expect(() => verifyBundledNpmTar(target.npmRoot)).toThrow("bundles affected tar@7.5.11");
   });
 
   it("fails closed on npm layout drift and unsafe replacement members", () => {

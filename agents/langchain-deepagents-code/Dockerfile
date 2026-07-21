@@ -15,7 +15,8 @@ USER root
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 
-# Enforce the npm-private node-tar fix when a stale published base is selected.
+# The final managed image owns the shipped dependency boundary independently
+# of base freshness. Reassert the idempotent npm-private node-tar fix here.
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
     --npm-root /usr/local/lib/node_modules/npm
 

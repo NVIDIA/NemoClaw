@@ -6,10 +6,14 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
+  closeSync,
+  constants,
   cpSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -37,14 +41,15 @@ function record(value: unknown, label: string): JsonRecord {
 }
 
 function readJson(file: string, label: string): JsonRecord {
-  const metadata = lstatSync(file);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error(`${label} must be a real file: ${file}`);
-  }
+  const descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    return record(JSON.parse(readFileSync(file, "utf8")), label);
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile()) throw new Error(`${label} must be a real file: ${file}`);
+    return record(JSON.parse(readFileSync(descriptor, "utf8")), label);
   } catch (error) {
     throw new Error(`${label} is invalid: ${String(error)}`);
+  } finally {
+    closeSync(descriptor);
   }
 }
 

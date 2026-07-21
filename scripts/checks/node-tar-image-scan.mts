@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,6 +53,34 @@ function findPackageManifests(root: string): string[] {
   return result.stdout.toString("utf8").split("\0").filter(Boolean).sort();
 }
 
+function readPackageManifest(manifestPath: string): {
+  device: string;
+  inode: string;
+  physicalPath: string;
+  value: unknown;
+} {
+  const descriptor = openSync(manifestPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const metadata = fstatSync(descriptor);
+    if (!metadata.isFile()) throw new Error(`node-tar manifest is not a file: ${manifestPath}`);
+    const physicalManifestPath = realpathSync(manifestPath);
+    let value: unknown;
+    try {
+      value = JSON.parse(readFileSync(descriptor, "utf8"));
+    } catch {
+      value = undefined;
+    }
+    return {
+      device: String(metadata.dev),
+      inode: String(metadata.ino),
+      physicalPath: dirname(physicalManifestPath),
+      value,
+    };
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 export function scanNodeTarImage(root: string, image: string): NodeTarImageScan {
   const scanRoot = resolve(root);
   const grouped = new Map<
@@ -60,17 +88,8 @@ export function scanNodeTarImage(root: string, image: string): NodeTarImageScan 
     { aliases: Set<string>; device: string; inode: string; physicalPath: string; version: string }
   >();
   for (const manifestPath of findPackageManifests(scanRoot)) {
-    const metadata = statSync(manifestPath);
-    const device = String(metadata.dev);
-    const inode = String(metadata.ino);
-    const physicalPath = dirname(realpathSync(manifestPath));
+    const { device, inode, physicalPath, value: manifest } = readPackageManifest(manifestPath);
     const key = physicalPath;
-    let manifest: unknown;
-    try {
-      manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-    } catch {
-      manifest = undefined;
-    }
     const version =
       typeof manifest === "object" &&
       manifest !== null &&

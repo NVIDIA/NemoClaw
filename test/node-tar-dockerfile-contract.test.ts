@@ -47,9 +47,9 @@ describe("node-tar image remediation contract", () => {
     expect(scanRun, file).toBeGreaterThan(scanCopy);
     expect(source, file).toContain("> /usr/local/share/nemoclaw/node-tar-inventory.json");
 
-    const npmConsumer = [...source.matchAll(/^RUN\s+.*\bnpm\s+(?:ci|install)\b/gmu)]
+    const npmConsumersBeforePatch = [...source.matchAll(/^RUN\s+.*\bnpm\s+(?:ci|install)\b/gmu)]
       .map((match) => match.index)
-      .find((index) => index !== undefined && index > patchRun);
-    if (npmConsumer !== undefined) expect(npmConsumer, file).toBeGreaterThan(patchRun);
+      .filter((index) => index < patchRun);
+    expect(npmConsumersBeforePatch, file).toEqual([]);
   });
 });
