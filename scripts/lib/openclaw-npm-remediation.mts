@@ -71,6 +71,7 @@ const OTEL_CORE_INTEGRITY =
 const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
+  // #7337: remove this branch only after a reviewed diagnostics release ships a safe SDK graph.
   "@openclaw/diagnostics-otel@2026.7.1": {
     expectedPatchedTreeIntegrity:
       "sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==",
