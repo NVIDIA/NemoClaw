@@ -10,6 +10,10 @@ export function buildHermesRuntimeExecArgs(containerId: string, command: string[
     "HOME=/sandbox",
     "--env",
     "HERMES_HOME=/sandbox/.hermes",
+    "--env",
+    "HERMES_KANBAN_HOME=/sandbox/.hermes",
+    "--env",
+    "HERMES_KANBAN_DB=/sandbox/.hermes/kanban.db",
     containerId,
     ...command,
   ];

@@ -67,6 +67,7 @@ SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
 const MARKER_FILE = "/sandbox/.hermes/memories/rebuild-marker.txt";
 const MARKER_CONTENT = `REBUILD_HM_E2E_${Date.now()}`;
 const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
+const KANBAN_DB = "/sandbox/.hermes/kanban.db";
 const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
@@ -99,6 +100,24 @@ function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[]
   // seed and inspect that runtime in the managed Docker container itself.
   const containerId = resolveDirectSandboxContainer(sandboxName, "docker");
   return buildHermesRuntimeExecArgs(containerId, command);
+}
+
+function inspectKanbanTaskArgs(sandboxName: string): string[] {
+  const script = [
+    "import json, sqlite3, sys",
+    "conn = sqlite3.connect(f'file:{sys.argv[1]}?mode=ro', uri=True)",
+    "rows = conn.execute('SELECT id, title, status FROM tasks WHERE title = ?', (sys.argv[2],)).fetchall()",
+    "conn.close()",
+    "print(json.dumps(rows))",
+    "raise SystemExit(0 if rows else 1)",
+  ].join("; ");
+  return hermesRuntimeExecArgs(sandboxName, [
+    "python3",
+    "-c",
+    script,
+    KANBAN_DB,
+    KANBAN_TASK_TITLE,
+  ]);
 }
 
 interface RegistryData {
@@ -748,6 +767,15 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(seedKanban, "seed Hermes default kanban board");
 
+  const seededKanbanDb = await host.command("docker", inspectKanbanTaskArgs(SANDBOX_NAME), {
+    artifactName: "phase-4-inspect-seeded-kanban-db",
+    env: testEnv(apiKey),
+    redactionValues,
+    timeoutMs: OPENSHELL_TIMEOUT_MS,
+  });
+  expectExitZero(seededKanbanDb, "inspect seeded Hermes kanban database");
+  expect(resultText(seededKanbanDb)).toContain(KANBAN_TASK_TITLE);
+
   const preEnv = await host.command(
     "openshell",
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/.env"],
@@ -879,6 +907,15 @@ test(STALE_BASE_REBUILD
     expectedVersion,
     `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
   );
+
+  const restoredKanbanDb = await host.command("docker", inspectKanbanTaskArgs(SANDBOX_NAME), {
+    artifactName: "phase-7-inspect-restored-kanban-db",
+    env: testEnv(apiKey),
+    redactionValues,
+    timeoutMs: OPENSHELL_TIMEOUT_MS,
+  });
+  expectExitZero(restoredKanbanDb, "inspect restored Hermes kanban database");
+  expect(resultText(restoredKanbanDb)).toContain(KANBAN_TASK_TITLE);
 
   const restoredKanban = await host.command(
     "docker",

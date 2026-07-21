@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { buildHermesRuntimeExecArgs } from "../live/rebuild-hermes-runtime-exec.ts";
 
 describe("Hermes rebuild direct runtime exec", () => {
-  it("uses the managed sandbox user and explicit Hermes state root", () => {
+  it("uses the managed sandbox user and explicit Hermes state paths", () => {
     expect(
       buildHermesRuntimeExecArgs("container-id", ["hermes", "kanban", "list", "--json"]),
     ).toEqual([
@@ -17,6 +17,10 @@ describe("Hermes rebuild direct runtime exec", () => {
       "HOME=/sandbox",
       "--env",
       "HERMES_HOME=/sandbox/.hermes",
+      "--env",
+      "HERMES_KANBAN_HOME=/sandbox/.hermes",
+      "--env",
+      "HERMES_KANBAN_DB=/sandbox/.hermes/kanban.db",
       "container-id",
       "hermes",
       "kanban",
