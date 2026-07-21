@@ -82,6 +82,9 @@ if [ "$RESOLVED_CHANNEL" = "dev" ]; then
   warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
 fi
 
+HOMEBREW_TAP="nvidia/openshell"
+HOMEBREW_FORMULA_NAME="openshell"
+
 # Honour the TS installer's blueprint-derived env overrides only on the stable
 # channel — the dev channel installs from the `dev` tag and uses DEV_MIN_VERSION
 # instead, so a malformed override should not abort a dev install (#3446 review).
@@ -173,6 +176,18 @@ openshell_pinned_sha256() {
 openshell_checksum_line() {
   local checksum_file="$1" asset="$2"
   awk -v asset="$asset" '$2 == asset { print; found=1; exit } END { if (!found) exit 1 }' "$checksum_file"
+}
+
+openshell_formula_pinned_sha256() {
+  local release_tag="$1" asset="$2"
+  case "${release_tag}:${asset}" in
+    v0.0.85:openshell.rb)
+      printf '%s\n' "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 # A pinned digest authenticates bytes, but it does not make extraction safe.
@@ -613,6 +628,96 @@ repair_existing_macos_vm_driver() {
   return 1
 }
 
+macos_homebrew_formula_installed() {
+  [ "$OS" = "Darwin" ] || return 1
+  command -v brew >/dev/null 2>&1 || return 1
+  brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1 || return 1
+  brew info --json=v2 "$HOMEBREW_FORMULA_NAME" 2>/dev/null \
+    | grep -Eq '"tap"[[:space:]]*:[[:space:]]*"nvidia/openshell"'
+}
+
+download_openshell_formula() {
+  local release_tag="$1" output="$2" output_dir
+  output_dir="$(dirname "$output")"
+  if command -v gh >/dev/null 2>&1; then
+    if GH_PROMPT_DISABLED=1 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}" gh release download "$release_tag" --repo NVIDIA/OpenShell \
+      --pattern "openshell.rb" --dir "$output_dir" --clobber 2>/dev/null; then
+      [ -f "$output" ] && return 0
+    fi
+    warn "gh CLI formula download failed (auth may not be configured) — falling back to curl"
+    rm -f "$output"
+  fi
+  curl -fL -sS "https://github.com/NVIDIA/OpenShell/releases/download/${release_tag}/openshell.rb" \
+    -o "$output"
+}
+
+homebrew_formula_path() {
+  local tap="$1" formula="$2" tap_dir formula_dir
+  if ! brew tap-info "$tap" >/dev/null 2>&1; then
+    info "creating local Homebrew tap ${tap}..." >&2
+    brew tap-new --no-git "$tap" >/dev/null
+  fi
+
+  tap_dir="$(brew --repository "$tap" 2>/dev/null || true)"
+  [ -n "$tap_dir" ] || fail "could not locate Homebrew tap ${tap}"
+
+  formula_dir="${tap_dir}/Formula"
+  mkdir -p "$formula_dir"
+  printf '%s/%s.rb\n' "$formula_dir" "$formula"
+}
+
+install_macos_homebrew_formula() {
+  local tmpdir formula_file tap_formula_file formula_ref expected_sha actual_sha brew_prefix openshell_bin
+  [ "$OS" = "Darwin" ] || return 1
+  [ "$ARCH_LABEL" = "aarch64" ] || fail "OpenShell ${PIN_VERSION} supports the Homebrew gateway service only on Apple Silicon macOS."
+  command -v brew >/dev/null 2>&1 || fail "Homebrew is required to install the OpenShell macOS gateway service. Install Homebrew and retry."
+
+  tmpdir="$(mktemp -d)"
+  OPENSHELL_HOMEBREW_FORMULA_TMPDIR="$tmpdir"
+  trap 'rm -rf "${OPENSHELL_HOMEBREW_FORMULA_TMPDIR:-}"' EXIT
+  formula_file="${tmpdir}/openshell.rb"
+
+  info "Downloading OpenShell Homebrew formula..."
+  download_openshell_formula "$RELEASE_TAG" "$formula_file" \
+    || fail "failed to download OpenShell Homebrew formula for ${RELEASE_TAG}"
+  chmod 0644 "$formula_file"
+
+  if [ "$RELEASE_TAG" != "dev" ]; then
+    expected_sha="$(openshell_formula_pinned_sha256 "$RELEASE_TAG" "openshell.rb")" \
+      || fail "No NemoClaw-pinned SHA-256 for OpenShell $RELEASE_TAG Homebrew formula"
+    actual_sha="$(file_sha256 "$formula_file")" \
+      || fail "No SHA-256 tool available (sha256sum/shasum)"
+    [ "$actual_sha" = "$expected_sha" ] \
+      || fail "OpenShell Homebrew formula checksum does not match NemoClaw-pinned $RELEASE_TAG digest"
+  fi
+
+  tap_formula_file="$(homebrew_formula_path "$HOMEBREW_TAP" "$HOMEBREW_FORMULA_NAME")"
+  info "staging Homebrew formula in tap ${HOMEBREW_TAP}..."
+  cp "$formula_file" "$tap_formula_file"
+  chmod 0644 "$tap_formula_file"
+
+  formula_ref="${HOMEBREW_TAP}/${HOMEBREW_FORMULA_NAME}"
+  if brew list --formula "$HOMEBREW_FORMULA_NAME" >/dev/null 2>&1; then
+    info "reinstalling OpenShell with Homebrew..."
+    brew reinstall --formula "$formula_ref"
+  else
+    info "installing OpenShell with Homebrew..."
+    brew install --formula "$formula_ref"
+  fi
+
+  brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  openshell_bin="${brew_prefix}/bin/openshell"
+  if [ -z "$brew_prefix" ] || [ ! -x "$openshell_bin" ]; then
+    openshell_bin="$(command -v openshell 2>/dev/null || true)"
+  fi
+  [ -n "$openshell_bin" ] && [ -x "$openshell_bin" ] \
+    || fail "Homebrew completed but the openshell binary was not found on PATH."
+  require_openshell_messaging_features "$openshell_bin"
+  info "$("$openshell_bin" --version 2>&1 || echo openshell) installed"
+  info "OpenShell Homebrew service staged; onboarding will start it after gateway validation."
+  exit 0
+}
+
 validate_explicit_component_override gateway "${NEMOCLAW_OPENSHELL_GATEWAY_BIN:-}"
 validate_explicit_component_override sandbox "${NEMOCLAW_OPENSHELL_SANDBOX_BIN:-}"
 
@@ -627,8 +732,15 @@ if command -v openshell >/dev/null 2>&1; then
       && printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -qi 'dev'; then
       if required_driver_bins_present "$ACTIVE_OPENSHELL_BIN" && openshell_has_required_messaging_features "$ACTIVE_OPENSHELL_BIN"; then
         if [ "$FORCE_INSTALL" != "1" ]; then
-          info "openshell already installed: $INSTALLED_VERSION_OUTPUT (dev channel)"
-          exit 0
+          if [ "$OS" = "Darwin" ] && command -v brew >/dev/null 2>&1 && ! macos_homebrew_formula_installed; then
+            warn "openshell $INSTALLED_VERSION_OUTPUT is installed without the Homebrew gateway service — installing OpenShell with Homebrew..."
+          else
+            if [ "$OS" = "Darwin" ] && ! command -v brew >/dev/null 2>&1; then
+              warn "Homebrew is not installed; reusing the standalone OpenShell gateway without reboot persistence."
+            fi
+            info "openshell already installed: $INSTALLED_VERSION_OUTPUT (dev channel)"
+            exit 0
+          fi
         fi
         warn "Current OpenShell dev build requested — refreshing the moving dev release instead of reusing the installed binary."
       else
@@ -649,7 +761,12 @@ if command -v openshell >/dev/null 2>&1; then
         warn "openshell $INSTALLED_VERSION is missing Docker-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."
       elif ! openshell_has_required_messaging_features "$ACTIVE_OPENSHELL_BIN"; then
         fail "${OPENSHELL_FEATURE_CHECK_ERROR:-openshell $INSTALLED_VERSION is missing required messaging credential rewrite and MCP L7 policy support. Install an OpenShell build that includes provider aliases, WebSocket text rewrite, request-body credential rewrite, and MCP/JSON-RPC L7 policy enforcement.}"
+      elif [ "$OS" = "Darwin" ] && command -v brew >/dev/null 2>&1 && ! macos_homebrew_formula_installed; then
+        warn "openshell $INSTALLED_VERSION is installed without the Homebrew gateway service — reinstalling pinned OpenShell ${PIN_VERSION} with Homebrew..."
       else
+        if [ "$OS" = "Darwin" ] && ! command -v brew >/dev/null 2>&1; then
+          warn "Homebrew is not installed; reusing the standalone OpenShell gateway without reboot persistence."
+        fi
         info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION, messaging rewrite, MCP L7, and policy --base capable)"
         exit 0
       fi
@@ -660,6 +777,13 @@ if command -v openshell >/dev/null 2>&1; then
 fi
 
 info "Installing OpenShell from release '$RELEASE_TAG'..."
+
+if [ "$OS" = "Darwin" ]; then
+  if command -v brew >/dev/null 2>&1; then
+    install_macos_homebrew_formula
+  fi
+  warn "Homebrew is not installed; installing the standalone OpenShell gateway without reboot persistence."
+fi
 
 case "$OS" in
   Darwin)
@@ -686,7 +810,7 @@ case "$OS" in
         CHECKSUM_FILES+=("openshell-gateway-checksums-sha256.txt")
         ;;
       x86_64)
-        fail "OpenShell ${PIN_VERSION} does not publish macOS x86_64 standalone gateway assets."
+        fail "OpenShell ${PIN_VERSION} supports the macOS Homebrew gateway service only on Apple Silicon."
         ;;
     esac
     ;;

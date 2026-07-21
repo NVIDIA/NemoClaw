@@ -15,6 +15,8 @@ export interface DockerDriverGatewayPortListenerOptions {
 export interface DockerDriverGatewayPortListenerScan {
   /** Every cmdline-verified listener observed by the primary and complete scans. */
   pids: number[];
+  /** Live listener PIDs that could not be verified as this Docker-driver gateway. */
+  unverifiedPids: number[];
   /** False when lsof could not authoritatively enumerate the whole listener set. */
   complete: boolean;
 }
@@ -90,9 +92,12 @@ export function createDockerDriverGatewayPortListenerHelpers(
     portCheck: PortProbeResult,
     opts: DockerDriverGatewayPortListenerOptions = {},
   ): DockerDriverGatewayPortListenerScan {
-    const candidates = new Set<number>();
+    const observedPids = new Set<number>();
     const primaryPid = getDockerDriverGatewayPortListenerPid(portCheck, opts);
-    if (primaryPid !== null) candidates.add(primaryPid);
+    const reportedPrimaryPid = Number(portCheck.pid);
+    if (Number.isInteger(reportedPrimaryPid) && reportedPrimaryPid > 0) {
+      observedPids.add(reportedPrimaryPid);
+    }
 
     let result: ListenerCaptureResult;
     try {
@@ -105,7 +110,7 @@ export function createDockerDriverGatewayPortListenerHelpers(
     // contradiction (commonly a root-owned listener), not a complete scan.
     const complete = result.exitCode === 0 || (result.exitCode === 1 && portCheck.ok);
     if (result.exitCode === 0) {
-      for (const pid of parseListenerPids(result.stdout)) candidates.add(pid);
+      for (const pid of parseListenerPids(result.stdout)) observedPids.add(pid);
     }
 
     const platform = opts.platform ?? process.platform;
@@ -114,8 +119,12 @@ export function createDockerDriverGatewayPortListenerHelpers(
       opts.isDockerDriverGatewayProcessFn ??
       ((pid: number, gatewayBin?: string | null) =>
         deps.isDockerDriverGatewayProcess(pid, gatewayBin, platform));
+    const livePids = Array.from(observedPids).filter((pid) => alive(pid));
+    const pids = livePids.filter((pid) => isGateway(pid, opts.gatewayBin));
+    if (primaryPid !== null && !pids.includes(primaryPid)) pids.push(primaryPid);
     return {
-      pids: Array.from(candidates).filter((pid) => alive(pid) && isGateway(pid, opts.gatewayBin)),
+      pids,
+      unverifiedPids: livePids.filter((pid) => !pids.includes(pid)),
       complete,
     };
   }

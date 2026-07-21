@@ -20,7 +20,7 @@ $$nemoclaw uninstall
 | Flag | Effect |
 |---|---|
 | `--yes` | Skip the confirmation prompt. |
-| `--keep-openshell` | Leave OpenShell binaries installed. |
+| `--keep-openshell` | Leave OpenShell binaries, gateway service daemons, and gateway service configuration in place, without disabling or removing the OpenShell gateway service or stopping the host `openshell-gateway` daemon. This includes NemoClaw's marked Linux `$XDG_CONFIG_HOME/systemd/user/nemoclaw-openshell-gateway.service` unit, or `~/.config/systemd/user/nemoclaw-openshell-gateway.service` when `XDG_CONFIG_HOME` is unset, upstream Linux package units, and the macOS Homebrew service. |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models. |
 | `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
@@ -28,6 +28,9 @@ $$nemoclaw uninstall
 `NEMOCLAW_GATEWAY_PORT` selects the gateway instance to uninstall (`nemoclaw` for port `8080`, or `nemoclaw-<port>` for a non-default port).
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
 Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
+Default-port uninstall removes only NemoClaw's marked Linux gateway unit and NemoClaw-managed entries in `openshell/gateway.env`.
+It preserves upstream Linux package units, the macOS Homebrew service, and unrelated environment entries.
+A custom-port uninstall does not stop or remove the default gateway service or its environment file.
 
 <Note>
 For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.

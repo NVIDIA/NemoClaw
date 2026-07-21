@@ -79,11 +79,27 @@ graph LR
 The logical diagram above shows how components relate.
 This section shows what actually runs where on the host.
 NemoClaw's default Docker-driver topology does not place the sandbox in an embedded k3s cluster.
-On Linux, NemoClaw configures and restarts the package-managed OpenShell gateway user service when it is installed, then creates the sandbox as a Docker container.
-NemoClaw treats that service as authoritative only when `systemctl --user show openshell-gateway` reports a package/vendor unit path and an `openshell-gateway` `ExecStart`.
-Per-user units, partial units, and user-manager or bus outages do not take over gateway ownership; NemoClaw falls back to the standalone gateway process used by earlier installs.
-That compatibility fallback remains until supported upgrade paths no longer include pre-service OpenShell installs and the package-managed handoff has direct nightly coverage.
-On Apple Silicon macOS, NemoClaw starts the OpenShell Docker-driver gateway and creates the sandbox as a Docker container.
+On Linux, NemoClaw configures, enables, restarts, and checks a trusted OpenShell gateway user service, then creates the sandbox as a Docker container.
+NemoClaw prefers the upstream package-managed `openshell-gateway.service` when `systemctl --user show openshell-gateway` reports a package/vendor unit path and an `openshell-gateway` `ExecStart`.
+For tarball-installed OpenShell binaries, the installer and onboarding stage a marked user-level `nemoclaw-openshell-gateway.service`, so the gateway can restart with the next user session after a reboot.
+The marker identifies the unit as NemoClaw-owned before NemoClaw reconciles or removes it.
+The marked unit generates the local OpenShell mTLS bundle before daemon startup; its `openshell/gateway.env` file overrides the gateway port, Docker-driver configuration, and NemoClaw gateway state.
+The marked unit and environment file use `$XDG_CONFIG_HOME` when it is set to an absolute path, otherwise they use `~/.config`.
+NemoClaw preserves unrelated entries in that environment file.
+It writes `DOCKER_HOST` only for an absolute local `unix://` socket path.
+NemoClaw rejects foreign, partial, or symlinked managed units and fails if it cannot safely write or remove its marked unit.
+On Linux port `8080`, NemoClaw uses the standalone gateway process only when the systemd user manager is unavailable.
+An untrusted gateway binary path fails service staging.
+After NemoClaw selects and reaches a systemd user service, a service-start or health failure stops onboarding.
+That compatibility fallback remains until supported upgrade paths no longer include pre-service OpenShell installs and the service-backed handoff has direct nightly coverage.
+On Apple Silicon macOS, the upstream OpenShell daemon model is the Homebrew service.
+When Homebrew is available, the installer stages the official OpenShell formula without starting it.
+Onboard writes the validated gateway environment, restarts the `openshell` Homebrew service, and checks gateway health.
+When Homebrew itself is absent, NemoClaw installs the standalone OpenShell assets and uses the detached Docker-driver gateway process as a compatibility fallback.
+After NemoClaw selects the Homebrew service, a formula, service-start, or health failure stops onboarding.
+In either case, NemoClaw creates the sandbox as a Docker container.
+Only the default gateway port `8080` uses a managed service.
+Gateways on custom ports run as detached processes and keep their state and lifecycle separate from the default gateway service.
 In both Docker-driver modes, the sandbox is a Docker container, not a Kubernetes pod.
 Entrypoint supervisors create the in-container `/tmp/nemoclaw-gateway-local` marker only when they actually launch an in-container gateway, and they normally keep it present while that supervisor is active.
 On normal exits, handled `SIGTERM`/`SIGINT`, startup failures, and shell `errexit` termination through the `EXIT` trap, the supervisor removes the marker on a best-effort basis so the Docker health check does not keep trusting a stale gateway PID.

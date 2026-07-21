@@ -1400,12 +1400,12 @@ describe("uninstall run plan", () => {
     });
   });
 
-  it("kills host openshell-gateway process during uninstall (#3516)", () => {
+  it("kills host openshell-gateway process during full uninstall (#3516)", () => {
     const logs: string[] = [];
     const killed: number[] = [];
     const exited = new Set<number>();
     const result = runUninstallPlan(
-      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      { assumeYes: true, deleteModels: false, keepOpenShell: false },
       {
         commandExists: () => true,
         env: { HOME: "/tmp/nemoclaw-uninstall-test-3516" } as NodeJS.ProcessEnv,

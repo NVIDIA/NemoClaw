@@ -502,11 +502,24 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       const selected = path.join(shared, "gateways", String(port));
       const openshellConfig = path.join(tmpHome, ".config", "openshell");
       const nemoclawConfig = path.join(tmpHome, ".config", "nemoclaw");
+      const servicePath = path.join(
+        tmpHome,
+        ".config",
+        "systemd",
+        "user",
+        "nemoclaw-openshell-gateway.service",
+      );
       fs.mkdirSync(selected, { recursive: true });
       fs.mkdirSync(openshellConfig, { recursive: true });
       fs.mkdirSync(nemoclawConfig, { recursive: true });
+      fs.mkdirSync(path.dirname(servicePath), { recursive: true });
       fs.writeFileSync(path.join(openshellConfig, "keep"), "default");
+      fs.writeFileSync(path.join(openshellConfig, "gateway.env"), "OPENSHELL_SERVER_PORT=8080\n");
       fs.writeFileSync(path.join(nemoclawConfig, "keep"), "default");
+      fs.writeFileSync(
+        servicePath,
+        "# NEMOCLAW_MANAGED_OPENSHELL_GATEWAY=1\n[Service]\nExecStart=/usr/bin/openshell-gateway\n",
+      );
       fs.writeFileSync(
         path.join(shared, "sandboxes.json"),
         JSON.stringify({
@@ -585,6 +598,9 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(fs.existsSync(selected)).toBe(false);
       expect(fs.existsSync(path.join(shared, "sandboxes.json"))).toBe(true);
       expect(fs.existsSync(path.join(openshellConfig, "keep"))).toBe(true);
+      expect(fs.existsSync(path.join(openshellConfig, "gateway.env"))).toBe(true);
+      expect(fs.existsSync(servicePath)).toBe(true);
+      expect(runCalls.some(({ command }) => command === "systemctl")).toBe(false);
       expect(fs.existsSync(path.join(nemoclawConfig, "keep"))).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
