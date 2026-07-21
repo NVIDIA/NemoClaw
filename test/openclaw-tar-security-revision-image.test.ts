@@ -92,6 +92,7 @@ describe.runIf(runImageTests)(
               "test -x /usr/local/bin/npm",
               'test "$(npm --version)" = 10.9.7',
               'test "$(npx --version)" = 10.9.7',
+              'test "$(node -p "require(\'/usr/local/lib/node_modules/openclaw/node_modules/fast-uri/package.json\').version")" = 3.1.3',
               "node --experimental-strip-types /usr/local/lib/nemoclaw/npm-tar-security-revision.mts --verify-bundled-npm --npm-root /usr/local/lib/node_modules/npm",
               'test "$(node -p "require(\'/usr/local/share/nemoclaw/openclaw-plugin-axios-1.18.0/package.json\').version")" = 1.18.0',
             ].join("; "),

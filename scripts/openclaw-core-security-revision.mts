@@ -95,6 +95,13 @@ export const CORE_SECURITY_PINS: Record<string, PackagePin> = {
       "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
     tarball: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
   },
+  "fast-uri": {
+    name: "fast-uri",
+    version: "3.1.3",
+    integrity:
+      "sha512-i70LwGWUduXqzicKXWshooq+sWL1K3WUU5rKZNG/0i3a1OSoX3HqhH5WbWwTmqWfor4urUakGPiRQcleRZTwOg==",
+    tarball: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.3.tgz",
+  },
   hono: {
     name: "hono",
     version: "4.12.30",
@@ -258,6 +265,7 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         },
         "body-parser": { observed: "2.2.2", pin: "body-parser" },
         "brace-expansion": { observed: "5.0.6", pin: "brace-expansion" },
+        "fast-uri": { observed: "3.1.2", pin: "fast-uri" },
         hono: { observed: "4.12.22", pin: "hono" },
         "linkify-it": { observed: "5.0.0", pin: "linkify-it" },
         "markdown-it": { observed: "14.1.1", pin: "markdown-it" },
@@ -364,6 +372,7 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
           pin: "brace-expansion",
           lockObserved: "5.0.6",
         },
+        "fast-uri": { observed: "3.1.2", pin: "fast-uri", lockObserved: "3.1.2" },
         hono: { observed: "4.12.18", pin: "hono", lockObserved: "4.12.18" },
         "linkify-it": { observed: "5.0.0", pin: "linkify-it", lockObserved: "5.0.0" },
         "markdown-it": { observed: "14.1.1", pin: "markdown-it", lockObserved: "14.1.1" },
@@ -469,6 +478,7 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
           pin: "brace-expansion",
           lockObserved: "5.0.6",
         },
+        "fast-uri": { observed: "3.1.2", pin: "fast-uri", lockObserved: "3.1.2" },
         hono: { observed: "4.12.18", pin: "hono", lockObserved: "4.12.18" },
         "linkify-it": { observed: "5.0.0", pin: "linkify-it", lockObserved: "5.0.0" },
         "markdown-it": { observed: "14.1.1", pin: "markdown-it", lockObserved: "14.1.1" },
@@ -540,6 +550,7 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
           pin: "brace-expansion",
           lockObserved: "5.0.6",
         },
+        "fast-uri": { observed: "3.1.3", pin: "fast-uri", lockObserved: "3.1.2" },
         hono: { observed: "4.12.30", pin: "hono", lockObserved: "4.12.25" },
         protobufjs: { observed: "7.6.5", pin: "protobufjs-7", lockObserved: "7.6.3" },
         qs: { observed: "6.15.3", pin: "qs", lockObserved: "6.15.2" },
@@ -571,6 +582,7 @@ const REVIEWED_NPM_TREE_PROBLEMS: Readonly<Record<string, readonly string[]>> = 
   "2026.5.27": [
     "invalid: tar@7.5.19 <openclaw-root>/node_modules/tar",
     "invalid: protobufjs@8.7.1 <openclaw-root>/node_modules/protobufjs",
+    "invalid: fast-uri@3.1.3 <openclaw-root>/node_modules/fast-uri",
     "invalid: fast-xml-parser@5.7.0 <openclaw-root>/node_modules/fast-xml-parser",
     "invalid: @aws-sdk/token-providers@3.1053.0 <openclaw-root>/node_modules/@aws-sdk/token-providers",
   ],
