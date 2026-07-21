@@ -114,9 +114,11 @@ RUN set -euo pipefail; \
     stage_reviewed_package "content-type@2.0.0" "sha512-j/O/d7GcZCyNl7/hwZAb606rzqkyvaDctLmckbxLzHvFBzTJHuGEdodATcP3yIRoDrLHkIATJuvzbFlp/ki2cQ==" "https://registry.npmjs.org/content-type/-/content-type-2.0.0.tgz" "$CORE_REPLACEMENTS/content-type"; \
     stage_reviewed_package "brace-expansion@5.0.7" "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==" "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz" "$CORE_REPLACEMENTS/brace-expansion"; \
     stage_reviewed_package "hono@4.12.30" "sha512-emn+JoJjrN9YTpRDS5it/UI2SO9BAE37T6I3d963RxcZ81G9A4pr2SZTEiiaiKbzx+NKRg5BZ89fCL7gCJCUog==" "https://registry.npmjs.org/hono/-/hono-4.12.30.tgz" "$CORE_REPLACEMENTS/hono"; \
+    stage_reviewed_package "@hono/node-server@2.0.5" "sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz" "$CORE_REPLACEMENTS/hono-node-server"; \
     stage_reviewed_package "form-data@2.5.6" "sha512-Ogz/E85h9tlfJzpI6TuFpGcHZFhLrb9Gw8wq9v40CxSCPnv7ahKr6Xgtkn0KYCDQJ8DNn5VoMO8EXr9V5PadyA==" "https://registry.npmjs.org/form-data/-/form-data-2.5.6.tgz" "$CORE_REPLACEMENTS/form-data"; \
     stage_reviewed_package "linkify-it@5.0.2" "sha512-ONTm2jCMAVZjgQa/Fy1kScXsuOoF5NPTsoFBdE1KVIZ2vAh/r9+Bqo+0jINCBYnavTPQZz38QzFTme79ENoN3Q==" "https://registry.npmjs.org/linkify-it/-/linkify-it-5.0.2.tgz" "$CORE_REPLACEMENTS/linkify-it"; \
     stage_reviewed_package "markdown-it@14.3.0" "sha512-RCEsPjR+sr0x+AuYp601tKTkgFG4YEPLCzHST3cQ/fhlJkqAkz1L2/Qbp1j9qw5SBwQHFBoW8+hoN5xssOF0Tw==" "https://registry.npmjs.org/markdown-it/-/markdown-it-14.3.0.tgz" "$CORE_REPLACEMENTS/markdown-it"; \
+    stage_reviewed_package "@modelcontextprotocol/sdk@1.29.0" "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==" "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz" "$CORE_REPLACEMENTS/modelcontextprotocol-sdk"; \
     stage_reviewed_package "protobufjs@7.6.5" "sha512-/FPD0nUc9jH6rfFjji9IBqOz4pcSE3CsT1m7Ep6Mdb0LxSUMj8hgl6GomOvZzpNpAqqGaXA0P3VSrZLFzIhQrw==" "https://registry.npmjs.org/protobufjs/-/protobufjs-7.6.5.tgz" "$CORE_REPLACEMENTS/protobufjs-7"; \
     stage_reviewed_package "protobufjs@8.7.1" "sha512-agdGHrXNTv0IrYscJPDou/PlEJk1c/hBZ9o/B5NH2i/nSPtPqacNxzgwf1CebXxFMjMrZH5sqv9uQuw96aGt/A==" "https://registry.npmjs.org/protobufjs/-/protobufjs-8.7.1.tgz" "$CORE_REPLACEMENTS/protobufjs-8"; \
     stage_reviewed_package "qs@6.15.3" "sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==" "https://registry.npmjs.org/qs/-/qs-6.15.3.tgz" "$CORE_REPLACEMENTS/qs"; \
@@ -282,7 +284,7 @@ RUN set -euo pipefail; \
         'schema=1' \
         "source=${BASE_IMAGE}" \
         "openclaw=${EXPECTED_OPENCLAW_VERSION}" \
-        'packages=@earendil-works/pi-*@0.79.0,@mariozechner/clipboard@0.3.9,@mariozechner/clipboard-linux-*-gnu@0.3.9,body-parser@2.3.0,brace-expansion@5.0.7,hono@4.12.30,linkify-it@5.0.2,markdown-it@14.3.0,protobufjs@7.6.5|8.7.1,qs@6.15.3,undici@8.5.0,ws@8.21.1' \
+        'packages=@earendil-works/pi-*@0.79.0,@hono/node-server@2.0.5,@mariozechner/clipboard@0.3.9,@mariozechner/clipboard-linux-*-gnu@0.3.9,@modelcontextprotocol/sdk@1.29.0,body-parser@2.3.0,brace-expansion@5.0.7,hono@4.12.30,linkify-it@5.0.2,markdown-it@14.3.0,protobufjs@7.6.5|8.7.1,qs@6.15.3,undici@8.5.0,ws@8.21.1' \
         'metadata-override=pi-runtime-dependencies:historical-openclaw-compatible' \
         'validation=npm-audit-production-zero' \
         > "$CORE_PROVENANCE_TMP"; \

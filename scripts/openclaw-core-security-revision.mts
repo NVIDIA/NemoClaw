@@ -102,6 +102,13 @@ export const CORE_SECURITY_PINS: Record<string, PackagePin> = {
       "sha512-emn+JoJjrN9YTpRDS5it/UI2SO9BAE37T6I3d963RxcZ81G9A4pr2SZTEiiaiKbzx+NKRg5BZ89fCL7gCJCUog==",
     tarball: "https://registry.npmjs.org/hono/-/hono-4.12.30.tgz",
   },
+  "hono-node-server": {
+    name: "@hono/node-server",
+    version: "2.0.5",
+    integrity:
+      "sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==",
+    tarball: "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz",
+  },
   "linkify-it": {
     name: "linkify-it",
     version: "5.0.2",
@@ -115,6 +122,13 @@ export const CORE_SECURITY_PINS: Record<string, PackagePin> = {
     integrity:
       "sha512-RCEsPjR+sr0x+AuYp601tKTkgFG4YEPLCzHST3cQ/fhlJkqAkz1L2/Qbp1j9qw5SBwQHFBoW8+hoN5xssOF0Tw==",
     tarball: "https://registry.npmjs.org/markdown-it/-/markdown-it-14.3.0.tgz",
+  },
+  "modelcontextprotocol-sdk": {
+    name: "@modelcontextprotocol/sdk",
+    version: "1.29.0",
+    integrity:
+      "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==",
+    tarball: "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz",
   },
   "protobufjs-7": {
     name: "protobufjs",
@@ -236,7 +250,12 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         "@earendil-works/pi-ai": { observed: "0.75.1", pin: "pi-ai" },
         "@earendil-works/pi-coding-agent": { observed: "0.75.1", pin: "pi-coding-agent" },
         "@earendil-works/pi-tui": { observed: "0.75.1", pin: "pi-tui" },
+        "@hono/node-server": { observed: "1.19.14", pin: "hono-node-server" },
         "@mariozechner/clipboard": { observed: "0.3.6", pin: "clipboard" },
+        "@modelcontextprotocol/sdk": {
+          observed: "1.29.0",
+          pin: "modelcontextprotocol-sdk",
+        },
         "body-parser": { observed: "2.2.2", pin: "body-parser" },
         "brace-expansion": { observed: "5.0.6", pin: "brace-expansion" },
         hono: { observed: "4.12.22", pin: "hono" },
@@ -258,6 +277,13 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         ws: "8.20.1",
       },
       dependencyOverrides: {
+        "@modelcontextprotocol/sdk": {
+          "@hono/node-server": {
+            published: "^1.19.9",
+            observed: "1.19.14",
+            target: "2.0.5",
+          },
+        },
         "@earendil-works/pi-ai": {
           "@aws-sdk/client-bedrock-runtime": {
             published: "3.1048.0",
@@ -317,10 +343,20 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
           pin: "pi-tui",
           lockObserved: "0.75.4",
         },
+        "@hono/node-server": {
+          observed: "1.19.14",
+          pin: "hono-node-server",
+          lockObserved: "1.19.14",
+        },
         "@mariozechner/clipboard": {
           observed: "0.3.6",
           pin: "clipboard",
           lockObserved: "0.3.6",
+        },
+        "@modelcontextprotocol/sdk": {
+          observed: "1.29.0",
+          pin: "modelcontextprotocol-sdk",
+          lockObserved: "1.29.0",
         },
         "body-parser": { observed: "2.2.2", pin: "body-parser", lockObserved: "2.2.2" },
         "brace-expansion": {
@@ -348,6 +384,13 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         ws: "8.20.1",
       },
       dependencyOverrides: {
+        "@modelcontextprotocol/sdk": {
+          "@hono/node-server": {
+            published: "^1.19.9",
+            observed: "1.19.14",
+            target: "2.0.5",
+          },
+        },
         "@earendil-works/pi-ai": {
           "@anthropic-ai/sdk": {
             published: "0.91.1",
@@ -405,10 +448,20 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
           pin: "pi-tui",
           lockObserved: "0.75.5",
         },
+        "@hono/node-server": {
+          observed: "1.19.14",
+          pin: "hono-node-server",
+          lockObserved: "1.19.14",
+        },
         "@mariozechner/clipboard": {
           observed: "0.3.6",
           pin: "clipboard",
           lockObserved: "0.3.6",
+        },
+        "@modelcontextprotocol/sdk": {
+          observed: "1.29.0",
+          pin: "modelcontextprotocol-sdk",
+          lockObserved: "1.29.0",
         },
         "body-parser": { observed: "2.2.2", pin: "body-parser", lockObserved: "2.2.2" },
         "brace-expansion": {
@@ -433,6 +486,13 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
         undici: "8.3.0",
       },
       dependencyOverrides: {
+        "@modelcontextprotocol/sdk": {
+          "@hono/node-server": {
+            published: "^1.19.9",
+            observed: "1.19.14",
+            target: "2.0.5",
+          },
+        },
         "@earendil-works/pi-ai": {
           "@anthropic-ai/sdk": {
             published: "0.91.1",
@@ -464,6 +524,16 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
     {
       shrinkwrap: true,
       replacements: {
+        "@hono/node-server": {
+          observed: "1.19.14",
+          pin: "hono-node-server",
+          lockObserved: "1.19.14",
+        },
+        "@modelcontextprotocol/sdk": {
+          observed: "1.29.0",
+          pin: "modelcontextprotocol-sdk",
+          lockObserved: "1.29.0",
+        },
         "body-parser": { observed: "2.3.0", pin: "body-parser", lockObserved: "2.2.2" },
         "brace-expansion": {
           observed: "5.0.7",
@@ -477,7 +547,15 @@ const HISTORICAL_LAYOUTS = new Map<string, HistoricalLayout>([
       platformReplacements: {},
       platformReplacementCount: 0,
       rootDirect: {},
-      dependencyOverrides: {},
+      dependencyOverrides: {
+        "@modelcontextprotocol/sdk": {
+          "@hono/node-server": {
+            published: "^1.19.9",
+            observed: "1.19.14",
+            target: "2.0.5",
+          },
+        },
+      },
       obsoletePackages: {},
     },
   ],

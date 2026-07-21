@@ -24,7 +24,9 @@ const layouts = {
       "@earendil-works/pi-ai": ["0.75.1", "pi-ai"],
       "@earendil-works/pi-coding-agent": ["0.75.1", "pi-coding-agent"],
       "@earendil-works/pi-tui": ["0.75.1", "pi-tui"],
+      "@hono/node-server": ["1.19.14", "hono-node-server"],
       "@mariozechner/clipboard": ["0.3.6", "clipboard"],
+      "@modelcontextprotocol/sdk": ["1.29.0", "modelcontextprotocol-sdk"],
       "body-parser": ["2.2.2", "body-parser"],
       "brace-expansion": ["5.0.6", "brace-expansion"],
       hono: ["4.12.22", "hono"],
@@ -51,7 +53,9 @@ const layouts = {
       "@earendil-works/pi-ai": ["0.75.4", "pi-ai", "0.75.4"],
       "@earendil-works/pi-coding-agent": ["0.75.4", "pi-coding-agent", "0.75.4"],
       "@earendil-works/pi-tui": ["0.75.4", "pi-tui", "0.75.4"],
+      "@hono/node-server": ["1.19.14", "hono-node-server", "1.19.14"],
       "@mariozechner/clipboard": ["0.3.6", "clipboard", "0.3.6"],
+      "@modelcontextprotocol/sdk": ["1.29.0", "modelcontextprotocol-sdk", "1.29.0"],
       "body-parser": ["2.2.2", "body-parser", "2.2.2"],
       "brace-expansion": ["5.0.6", "brace-expansion", "5.0.6"],
       hono: ["4.12.18", "hono", "4.12.18"],
@@ -79,7 +83,9 @@ const layouts = {
       "@earendil-works/pi-ai": ["0.75.5", "pi-ai", "0.75.5"],
       "@earendil-works/pi-coding-agent": ["0.75.5", "pi-coding-agent", "0.75.5"],
       "@earendil-works/pi-tui": ["0.75.5", "pi-tui", "0.75.5"],
+      "@hono/node-server": ["1.19.14", "hono-node-server", "1.19.14"],
       "@mariozechner/clipboard": ["0.3.6", "clipboard", "0.3.6"],
+      "@modelcontextprotocol/sdk": ["1.29.0", "modelcontextprotocol-sdk", "1.29.0"],
       "body-parser": ["2.2.2", "body-parser", "2.2.2"],
       "brace-expansion": ["5.0.6", "brace-expansion", "5.0.6"],
       hono: ["4.12.18", "hono", "4.12.18"],
@@ -100,6 +106,8 @@ const layouts = {
   "2026.6.10": {
     shrinkwrap: true,
     replacements: {
+      "@hono/node-server": ["1.19.14", "hono-node-server", "1.19.14"],
+      "@modelcontextprotocol/sdk": ["1.29.0", "modelcontextprotocol-sdk", "1.29.0"],
       "body-parser": ["2.3.0", "body-parser", "2.2.2"],
       "brace-expansion": ["5.0.7", "brace-expansion", "5.0.6"],
       hono: ["4.12.30", "hono", "4.12.25"],
@@ -204,21 +212,23 @@ function fixture(openClawVersion: keyof typeof layouts) {
     const packageDependencies =
       pinKey === "body-parser"
         ? { "content-type": "^2.0.0" }
-        : pinKey === "pi-ai"
-          ? {
-              "@anthropic-ai/sdk": "0.91.1",
-              "@aws-sdk/client-bedrock-runtime": "3.1048.0",
-              "@google/genai": "1.52.0",
-              "@smithy/node-http-handler": "4.7.3",
-              openai: "6.26.0",
-            }
-          : pinKey === "pi-coding-agent"
-            ? { undici: "8.3.0" }
-            : pinKey === "markdown-it"
-              ? { "linkify-it": "^5.0.2" }
-              : pinKey === "qs"
-                ? { "side-channel": "^1.1.1" }
-                : {};
+        : pinKey === "modelcontextprotocol-sdk"
+          ? { "@hono/node-server": "^1.19.9" }
+          : pinKey === "pi-ai"
+            ? {
+                "@anthropic-ai/sdk": "0.91.1",
+                "@aws-sdk/client-bedrock-runtime": "3.1048.0",
+                "@google/genai": "1.52.0",
+                "@smithy/node-http-handler": "4.7.3",
+                openai: "6.26.0",
+              }
+            : pinKey === "pi-coding-agent"
+              ? { undici: "8.3.0" }
+              : pinKey === "markdown-it"
+                ? { "linkify-it": "^5.0.2" }
+                : pinKey === "qs"
+                  ? { "side-channel": "^1.1.1" }
+                  : {};
     writePackage(
       path.join(replacementRoot, pinKey),
       pin.name,
@@ -347,6 +357,27 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
         ),
       ),
     ).toBe(true);
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(target.openClawRoot, "node_modules", "@hono/node-server", "package.json"),
+          "utf8",
+        ),
+      ).version,
+    ).toBe("2.0.5");
+    expect(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(
+            target.openClawRoot,
+            "node_modules",
+            "@modelcontextprotocol/sdk",
+            "package.json",
+          ),
+          "utf8",
+        ),
+      ).dependencies["@hono/node-server"],
+    ).toBe("2.0.5");
     expect(fs.existsSync(path.join(target.openClawRoot, "npm-shrinkwrap.json"))).toBe(
       layouts[openClawVersion].shrinkwrap,
     );
@@ -434,6 +465,14 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
       "@google/genai": "2.5.0",
       openai: "6.38.0",
     });
+    expect(packages["node_modules/@hono/node-server"]).toMatchObject({
+      version: "2.0.5",
+      resolved: CORE_SECURITY_PINS["hono-node-server"].tarball,
+      integrity: CORE_SECURITY_PINS["hono-node-server"].integrity,
+    });
+    expect(
+      packages["node_modules/@modelcontextprotocol/sdk"].dependencies["@hono/node-server"],
+    ).toBe("2.0.5");
     expect(packages["node_modules/koffi"]).toBeUndefined();
   });
 
