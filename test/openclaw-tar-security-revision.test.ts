@@ -37,7 +37,7 @@ function fixture(
       dependencies: { tar: tarVersion },
     }),
   );
-  if (shrinkwrap) {
+  shrinkwrap &&
     fs.writeFileSync(
       path.join(openClawRoot, "npm-shrinkwrap.json"),
       JSON.stringify({
@@ -52,30 +52,30 @@ function fixture(
         },
       }),
     );
-  }
   fs.writeFileSync(
     path.join(installedTarRoot, "package.json"),
     JSON.stringify({ name: "tar", version: tarVersion }),
   );
   fs.writeFileSync(path.join(installedTarRoot, "old.js"), "vulnerable\n");
-  if (fsSafeTarVersion) {
-    const fsSafeRoot = path.join(openClawRoot, "node_modules", "@openclaw", "fs-safe");
-    const fsSafeTarRoot = path.join(fsSafeRoot, "node_modules", "tar");
-    fs.mkdirSync(fsSafeTarRoot, { recursive: true });
-    fs.writeFileSync(
-      path.join(fsSafeRoot, "package.json"),
-      JSON.stringify({
-        name: "@openclaw/fs-safe",
-        version: "0.3.0",
-        optionalDependencies: { tar: fsSafeTarVersion },
-      }),
-    );
-    fs.writeFileSync(
-      path.join(fsSafeTarRoot, "package.json"),
-      JSON.stringify({ name: "tar", version: fsSafeTarVersion }),
-    );
-    fs.writeFileSync(path.join(fsSafeTarRoot, "old.js"), "vulnerable nested tar\n");
-  }
+  fsSafeTarVersion &&
+    (() => {
+      const fsSafeRoot = path.join(openClawRoot, "node_modules", "@openclaw", "fs-safe");
+      const fsSafeTarRoot = path.join(fsSafeRoot, "node_modules", "tar");
+      fs.mkdirSync(fsSafeTarRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(fsSafeRoot, "package.json"),
+        JSON.stringify({
+          name: "@openclaw/fs-safe",
+          version: "0.3.0",
+          optionalDependencies: { tar: fsSafeTarVersion },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(fsSafeTarRoot, "package.json"),
+        JSON.stringify({ name: "tar", version: fsSafeTarVersion }),
+      );
+      fs.writeFileSync(path.join(fsSafeTarRoot, "old.js"), "vulnerable nested tar\n");
+    })();
   fs.writeFileSync(
     path.join(replacementRoot, "package.json"),
     JSON.stringify({ name: "tar", version: FIXED_TAR_VERSION }),
