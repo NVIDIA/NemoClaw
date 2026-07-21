@@ -420,11 +420,16 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
 
   test("uses an offline read-only least-privilege Docker boundary", () => {
     const args = secureDockerRunArgs("security-e2e", "candidate:local");
-    expect(args).toContain("none");
+    for (const [option, value] of [
+      ["--network", "none"],
+      ["--cap-drop", "ALL"],
+      ["--security-opt", "no-new-privileges"],
+    ] as const) {
+      const optionIndex = args.indexOf(option);
+      expect(args.slice(optionIndex, optionIndex + 2)).toEqual([option, value]);
+    }
     expect(args).not.toContain("host");
     expect(args).toContain("--read-only");
-    expect(args).toContain("ALL");
-    expect(args).toContain("no-new-privileges");
     expect(args.join(" ")).not.toContain("docker.sock");
     expect(args).not.toContain("--mount");
   });
