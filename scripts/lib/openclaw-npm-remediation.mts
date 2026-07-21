@@ -622,7 +622,10 @@ function createCanonicalArchive(
       "tar",
       [
         "--format",
-        "ustar",
+        "paxr",
+        "--no-acls",
+        "--no-fflags",
+        "--no-xattrs",
         "--uid",
         "0",
         "--gid",

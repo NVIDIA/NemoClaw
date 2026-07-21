@@ -225,13 +225,23 @@ function packFixture(packageDirectory: string, archivePath: string): void {
 
 function writeCoreArchiveFixtures(): {
   archivePath: string;
+  longMemberPath: string;
   npmExecutable: string;
   workingDirectory: string;
 } {
   const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-build-remediation-"));
   temporaryDirectories.push(root);
   const archivePath = path.join(root, "openclaw-2026.6.10.tgz");
-  packFixture(writeCoreFixture(), archivePath);
+  const coreFixture = writeCoreFixture();
+  const longMemberPath = path.join(
+    "node_modules",
+    "@openclaw",
+    ...Array.from({ length: 8 }, (_, index) => `dependency-with-a-long-name-${index}`),
+    "fixture.txt",
+  );
+  mkdirSync(path.join(coreFixture, path.dirname(longMemberPath)), { recursive: true });
+  writeFileSync(path.join(coreFixture, longMemberPath), "long archive member\n");
+  packFixture(coreFixture, archivePath);
 
   const fsSafeDirectory = path.join(root, "fs-safe-package");
   mkdirSync(fsSafeDirectory, { recursive: true });
@@ -328,7 +338,7 @@ function writeCoreArchiveFixtures(): {
     { mode: 0o700 },
   );
   chmodSync(npmExecutable, 0o700);
-  return { archivePath, npmExecutable, workingDirectory: path.join(root, "work") };
+  return { archivePath, longMemberPath, npmExecutable, workingDirectory: path.join(root, "work") };
 }
 
 function writePluginArchiveFixtures(): {
@@ -663,6 +673,9 @@ describe("OpenClaw npm remediation", () => {
       name: "@hono/node-server",
       version: "2.0.5",
     });
+    expect(readFileSync(path.join(extracted, "package", fixture.longMemberPath), "utf-8")).toBe(
+      "long archive member\n",
+    );
   });
 
   // source-shape-contract: security -- Extracted plugin contents prove the rebuilt archive carries every reviewed Axios replacement package
