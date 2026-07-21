@@ -281,6 +281,9 @@ navigation:
               - page: "Integration Policy Examples"
                 path: _build/agent-variants/network-policy/integration-policy-examples.openclaw.generated.mdx
                 slug: integration-policy-examples
+              - page: "Set Up Gmail With an App Password"
+                path: _build/agent-variants/network-policy/set-up-gmail-with-an-app-password.openclaw.generated.mdx
+                slug: set-up-gmail-with-an-app-password
           - section: "Deployment"
             slug: deployment
             collapsed: open-by-default
@@ -886,6 +889,9 @@ navigation:
               - page: "Integration Policy Examples"
                 path: _build/agent-variants/network-policy/integration-policy-examples.hermes.generated.mdx
                 slug: integration-policy-examples
+              - page: "Set Up Gmail With an App Password"
+                path: _build/agent-variants/network-policy/set-up-gmail-with-an-app-password.hermes.generated.mdx
+                slug: set-up-gmail-with-an-app-password
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default
