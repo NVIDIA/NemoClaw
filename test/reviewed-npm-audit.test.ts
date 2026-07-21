@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   exceedsAuditThreshold,
   installedPackageInventory,
+  installedPackageResolutionInventory,
   packageInventory,
   parseAuditReport,
   remediateReviewedLock,
@@ -212,6 +213,46 @@ describe("reviewed npm audit gate", () => {
         CONFIG.severityThreshold,
       ),
     ).toBe(0);
+  });
+
+  it("proves a nested dependency resolves to the fixed hoisted package", () => {
+    const installedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "reviewed-hoisted-graph-"));
+    const parentRoot = path.join(installedRoot, "node_modules", "@openclaw", "fs-safe");
+    const tarRoot = path.join(installedRoot, "node_modules", "tar");
+    const logicalInventory = [
+      {
+        node: "node_modules/@openclaw/fs-safe/node_modules/tar",
+        packageName: "tar",
+        version: "7.5.19",
+      },
+      { node: "node_modules/tar", packageName: "tar", version: "7.5.19" },
+    ];
+    try {
+      fs.mkdirSync(parentRoot, { recursive: true });
+      fs.mkdirSync(tarRoot, { recursive: true });
+      fs.writeFileSync(
+        path.join(installedRoot, "package.json"),
+        JSON.stringify({ dependencies: { "@openclaw/fs-safe": "0.0.0", tar: "7.5.19" } }),
+      );
+      fs.writeFileSync(
+        path.join(parentRoot, "package.json"),
+        JSON.stringify({
+          dependencies: { tar: "7.5.19" },
+          name: "@openclaw/fs-safe",
+          version: "0.0.0",
+        }),
+      );
+      fs.writeFileSync(
+        path.join(tarRoot, "package.json"),
+        JSON.stringify({ name: "tar", version: "7.5.19" }),
+      );
+      expect(installedPackageResolutionInventory(installedRoot, logicalInventory)).toEqual([
+        { ...logicalInventory[0], resolvedNode: "node_modules/tar" },
+        { ...logicalInventory[1], resolvedNode: "node_modules/tar" },
+      ]);
+    } finally {
+      fs.rmSync(installedRoot, { force: true, recursive: true });
+    }
   });
 
   it("rejects vulnerable-version or node drift before synthesizing the final lock proof", () => {

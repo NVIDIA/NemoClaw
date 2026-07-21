@@ -33,8 +33,8 @@ const steps = workflow.jobs?.["build-and-push"]?.steps ?? [];
 
 function namedStep(name: string): Step {
   const step = steps.find((candidate) => candidate.name === name);
-  if (!step) throw new Error(`workflow step not found: ${name}`);
-  return step;
+  expect(step, `workflow step not found: ${name}`).toBeDefined();
+  return step as Step;
 }
 
 describe("historical OpenClaw security revision publication (#7272)", () => {
