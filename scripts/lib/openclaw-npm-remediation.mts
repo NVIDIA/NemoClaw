@@ -10,7 +10,10 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  renameSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -74,6 +77,7 @@ const BRACE_EXPANSION_INTEGRITY =
   "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==";
 const BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz";
+const CANONICAL_ARCHIVE_TIME = new Date(0);
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "@openclaw/msteams@2026.6.10": {
@@ -89,7 +93,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "openclaw@2026.6.10": {
     kind: "core",
     expectedPatchedMetadataIntegrity:
-      "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
+      "sha512-7oKMgemit3Yizu6s83pvfXdoIB0oDccBSErtCS3dmBsqEqav9b/aiI1VxlE9Ph1Ih7jSVRUIGUyWVdBicym/0A==",
   },
 });
 
@@ -147,7 +151,12 @@ function extractArchive(
 ): string {
   validateArchiveMembers(archivePath, cwd, env);
   mkdirSync(destination, { recursive: true, mode: 0o700 });
-  run("tar", ["-xzf", archivePath, "-C", destination], cwd, env);
+  run(
+    "tar",
+    ["-xzf", archivePath, "--no-same-owner", "--no-same-permissions", "-C", destination],
+    cwd,
+    env,
+  );
   const packageDirectory = join(destination, "package");
   if (!existsSync(join(packageDirectory, "package.json"))) {
     throw new Error(`npm archive ${archivePath} did not extract a package directory`);
@@ -350,6 +359,7 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   packageJson.dependencies.tar = TAR_VERSION;
   packageJson.bundledDependencies = ["@openclaw/fs-safe"];
   root.dependencies.tar = TAR_VERSION;
+  root.bundleDependencies = [...packageJson.bundledDependencies];
   tar.version = TAR_VERSION;
   tar.resolved = TAR_TARBALL;
   tar.integrity = TAR_INTEGRITY;
@@ -407,6 +417,76 @@ function packReplacement(
     tarballUrl,
     tempDirectory: workingDirectory,
   });
+}
+
+function normalizeArchiveTimestamps(directory: string): void {
+  const entries = readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+    left.name.localeCompare(right.name),
+  );
+  for (const entry of entries) {
+    const target = join(directory, entry.name);
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
+      normalizeArchiveTimestamps(target);
+    } else if (!entry.isFile()) {
+      throw new Error(`remediated npm archive contains an unsafe member: ${target}`);
+    }
+    utimesSync(target, CANONICAL_ARCHIVE_TIME, CANONICAL_ARCHIVE_TIME);
+  }
+  utimesSync(directory, CANONICAL_ARCHIVE_TIME, CANONICAL_ARCHIVE_TIME);
+}
+
+function createCanonicalArchive(
+  sourcePackage: string,
+  archivePath: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): void {
+  normalizeArchiveTimestamps(sourcePackage);
+  const tarPath = `${archivePath}.tar`;
+  const canonicalEnv = { ...env, LANG: "C", LC_ALL: "C", TZ: "UTC" };
+  delete canonicalEnv.GZIP;
+  delete canonicalEnv.TAR_OPTIONS;
+  const tarVersion = run("tar", ["--version"], cwd, canonicalEnv);
+  const common = ["-cf", tarPath, "-C", dirname(sourcePackage), "package"];
+  if (tarVersion.includes("GNU tar")) {
+    run(
+      "tar",
+      [
+        "--sort=name",
+        "--format=gnu",
+        "--mtime=@0",
+        "--owner=0",
+        "--group=0",
+        "--numeric-owner",
+        ...common,
+      ],
+      cwd,
+      canonicalEnv,
+    );
+  } else if (tarVersion.includes("bsdtar")) {
+    run(
+      "tar",
+      [
+        "--format",
+        "ustar",
+        "--uid",
+        "0",
+        "--gid",
+        "0",
+        "--uname",
+        "root",
+        "--gname",
+        "root",
+        ...common,
+      ],
+      cwd,
+      canonicalEnv,
+    );
+  } else {
+    throw new Error(`unsupported tar implementation for canonical npm archive: ${tarVersion}`);
+  }
+  run("gzip", ["-n", "-f", tarPath], cwd, canonicalEnv);
+  renameSync(`${tarPath}.gz`, archivePath);
 }
 
 export function buildRemediatedOpenClawArchive(request: BuildRequest): RemediatedArchive {
@@ -541,7 +621,7 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
   const outputDirectory = join(remediationRoot, "output");
   mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
   const archivePath = join(outputDirectory, "openclaw-remediated.tgz");
-  run("tar", ["-czf", archivePath, "-C", dirname(sourcePackage), "package"], remediationRoot, env);
+  createCanonicalArchive(sourcePackage, archivePath, remediationRoot, env);
   validateArchiveMembers(archivePath, remediationRoot, env);
   const metadataIntegrity = hashPatchedMetadata(sourcePackage);
   const integrity = `sha512-${createHash("sha512").update(readFileSync(archivePath)).digest("base64")}`;

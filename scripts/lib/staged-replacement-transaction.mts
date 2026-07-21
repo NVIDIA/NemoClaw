@@ -40,7 +40,7 @@ function siblingRoot(livePath: string): string {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const candidate = path.join(
       parent,
-      `.${base}.nemoclaw-stage-${process.pid}-${randomBytes(8).toString("hex")}`,
+      `.${base}.nemoclaw-stage-${process.pid}-${randomBytes(16).toString("hex")}`,
     );
     try {
       mkdirSync(candidate, { mode: 0o700 });
@@ -184,7 +184,7 @@ export function commitStagedReplacementTransaction(options: {
   replacements: readonly StagedReplacement[];
   verify: () => void;
 }): void {
-  const transactionId = `${process.pid}-${randomBytes(8).toString("hex")}`;
+  const transactionId = `${process.pid}-${randomBytes(16).toString("hex")}`;
   const active: ActiveReplacement[] = [];
   try {
     validateReplacementSet(options.replacements);

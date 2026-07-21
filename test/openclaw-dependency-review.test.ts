@@ -227,10 +227,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("npm audit result in this note remains a point-in-time snapshot");
     expect(review).toContain("Advisory audit revalidated: 2026-07-21");
     expect(review).toContain(
-      "`0` info, `1` low, `1` moderate, `0` high, and `0` critical findings across `766` total dependencies",
+      "`0` info, `1` low, `12` moderate, `0` high, and `0` critical findings across `766` total dependencies",
     );
     expect(review).toContain(
-      "The mcporter locked graph reported no findings across `138` dependencies",
+      "The mcporter locked graph reported `0` info, `0` low, `3` moderate, `0` high, and `0` critical findings across `138` dependencies",
     );
     expect(review).toContain("GHSA-v422-hmwv-36x6");
     expect(review).toContain("reviewed Slack and Microsoft Teams plugin graphs");
@@ -273,7 +273,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
       "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",
       "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
-      "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
+      "sha512-7oKMgemit3Yizu6s83pvfXdoIB0oDccBSErtCS3dmBsqEqav9b/aiI1VxlE9Ph1Ih7jSVRUIGUyWVdBicym/0A==",
       "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
     ]) {
@@ -472,6 +472,8 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'reported unsafe archive filename' "$reviewed_archive_helper"
 	grep -Fq 'expectedPatchedMetadataIntegrity' "$remediation_helper"
 	grep -Fq 'validateArchiveMembers(archivePath' "$remediation_helper"
+	grep -Fq '"--no-same-owner", "--no-same-permissions"' "$remediation_helper"
+	grep -Fq 'run("gzip", ["-n", "-f", tarPath]' "$remediation_helper"
 	! grep -Fq 'npmViewString(' "$messaging_build_applier"
 	! grep -Fq 'resolveNpmPackArchivePath(' "$messaging_build_applier"
 	issue_4434_patch=${JSON.stringify(ISSUE_4434_PATCH)}

@@ -29,6 +29,7 @@ type ReviewedFinding = Readonly<{
   severity: "high" | "critical";
 }>;
 type ArchiveReview = Readonly<{
+  contract: string;
   expectedFindings: readonly ReviewedFinding[];
   graphLabel: string;
 }>;
@@ -68,6 +69,8 @@ function readConfig(): AuditConfig {
     !SEVERITIES.includes(parsed.severityThreshold) ||
     !Array.isArray(parsed.archivePackages) ||
     !Array.isArray(parsed.lockedGraphs) ||
+    parsed.archiveReview?.contract !==
+      "exact vulnerable input; any high/critical finding drift fails; remediated output is threshold-gated" ||
     typeof parsed.archiveReview?.graphLabel !== "string" ||
     !Array.isArray(parsed.archiveReview.expectedFindings)
   ) {

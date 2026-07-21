@@ -372,6 +372,7 @@ describe("OpenClaw npm remediation", () => {
       packages: Record<
         string,
         {
+          bundleDependencies?: string[];
           dependencies?: Record<string, string>;
           integrity?: string;
           optionalDependencies?: Record<string, string>;
@@ -386,7 +387,10 @@ describe("OpenClaw npm remediation", () => {
     }>(path.join(directory, "package.json"));
     expect(packageJson.dependencies).toMatchObject({ jszip: "3.10.1", tar: "7.5.19" });
     expect(packageJson.bundledDependencies).toEqual(["@openclaw/fs-safe"]);
-    expect(shrinkwrap.packages[""]).toMatchObject({ dependencies: { tar: "7.5.19" } });
+    expect(shrinkwrap.packages[""]).toMatchObject({
+      bundleDependencies: ["@openclaw/fs-safe"],
+      dependencies: { tar: "7.5.19" },
+    });
     expect(shrinkwrap.packages["node_modules/tar"]).toMatchObject({
       version: "7.5.19",
       resolved: "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
@@ -439,6 +443,12 @@ describe("OpenClaw npm remediation", () => {
       expectedPatchedMetadataIntegrity: metadataIntegrity,
     });
     expect(remediated).toMatchObject({ metadataIntegrity, remediated: true });
+    const rebuilt = buildRemediatedOpenClawArchive({
+      ...request,
+      env: { ...request.env, GZIP: "-1", TAR_OPTIONS: "--format=pax" },
+      expectedPatchedMetadataIntegrity: metadataIntegrity,
+    });
+    expect(rebuilt.integrity).toBe(remediated.integrity);
     const extracted = path.join(fixture.workingDirectory, "asserted");
     mkdirSync(extracted, { recursive: true });
     const extraction = spawnSync("tar", ["-xzf", remediated.archivePath, "-C", extracted], {

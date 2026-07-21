@@ -4,6 +4,7 @@
   "severityThreshold": "high",
   "artifactDirectory": "coverage/reviewed-npm-audit",
   "archiveReview": {
+    "contract": "exact vulnerable input; any high/critical finding drift fails; remediated output is threshold-gated",
     "graphLabel": "reviewed raw archive graph",
     "expectedFindings": [
       {

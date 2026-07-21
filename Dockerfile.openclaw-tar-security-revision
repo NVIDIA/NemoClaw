@@ -37,6 +37,10 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # The npm viability probe changes directory only inside a disposable tree and
 # installs one exact local tarball produced by the same probe.
+# OpenClaw 2026.5.18 has no native shrinkwrap. This layer creates one only to audit the
+# exact remediated tree, then removes it to preserve that historical image contract.
+# The absent-after-build contract is pinned by openclaw-tar-security-revision-image.test.ts;
+# remove the fallback when 2026.5.18 is no longer supported or every supported archive has one.
 # hadolint ignore=DL3003,DL3016,SC2016
 RUN set -euo pipefail; \
     test -n "$BASE_IMAGE"; \
