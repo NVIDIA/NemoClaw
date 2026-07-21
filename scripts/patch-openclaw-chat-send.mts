@@ -117,28 +117,44 @@ function patchChatSendTranscriptIdempotency(source: string, file: string): Patch
 }
 
 function patchChatSendEmptyFinal(source: string, file: string): PatchResult {
-  if (source.includes("suppressing empty final event")) {
-    return { nextSource: source, status: "already-applied" };
+  let nextSource = source;
+  if (!nextSource.includes("suppressing empty final event")) {
+    nextSource = nextSource.replace(
+      /\n(\s*)broadcastChatFinal\(\{\n(\s*)context,\n\s*runId: clientRunId,\n\s*sessionKey,\n(\s*agentId,\n)?\s*message\n\s*\}\);/,
+      (_match, outerIndent, innerIndent, agentIdLine) =>
+        `\n${outerIndent}if (message) broadcastChatFinal({\n` +
+        `${innerIndent}context,\n` +
+        `${innerIndent}runId: clientRunId,\n` +
+        `${innerIndent}sessionKey,\n` +
+        (agentIdLine || "") +
+        `${innerIndent}message\n` +
+        `${outerIndent}}); else context.logGateway.warn("webchat chat.send completed without visible assistant reply; suppressing empty final event (nemoclaw #2603/#3145)");`,
+    );
   }
-  const nextSource = source.replace(
-    /\n(\s*)broadcastChatFinal\(\{\n(\s*)context,\n\s*runId: clientRunId,\n\s*sessionKey,\n(\s*agentId,\n)?\s*message\n\s*\}\);/,
-    (_match, outerIndent, innerIndent, agentIdLine) =>
-      `\n${outerIndent}if (message) broadcastChatFinal({\n` +
-      `${innerIndent}context,\n` +
-      `${innerIndent}runId: clientRunId,\n` +
-      `${innerIndent}sessionKey,\n` +
-      (agentIdLine || "") +
-      `${innerIndent}message\n` +
-      `${outerIndent}}); else context.logGateway.warn("webchat chat.send completed without visible assistant reply; suppressing empty final event (nemoclaw #2603/#3145)");`,
-  );
-  if (nextSource === source) {
+  if (
+    nextSource.includes("queuedFollowupEnqueued") &&
+    !nextSource.includes("suppressing premature queued followup final event")
+  ) {
+    nextSource = nextSource.replace(
+      /if \(queuedFollowupEnqueued && !context\.chatAbortedRuns\.has\(clientRunId\)\) broadcastChatFinal\(\{\n\s*context,\n\s*runId: clientRunId,\n\s*sessionKey,\n\s*agentId\n\s*\}\);/,
+      'if (queuedFollowupEnqueued && !context.chatAbortedRuns.has(clientRunId)) context.logGateway.warn("webchat chat.send queued a correlated followup; suppressing premature queued followup final event (nemoclaw #2603/#3145)");',
+    );
+  }
+  const missingVisibleFinalPatch = !nextSource.includes("suppressing empty final event");
+  const missingQueuedFinalPatch =
+    nextSource.includes("queuedFollowupEnqueued") &&
+    !nextSource.includes("suppressing premature queued followup final event");
+  if (missingVisibleFinalPatch || missingQueuedFinalPatch) {
     return {
       nextSource: source,
       status: "no-match",
       error: `OpenClaw chat.send empty-final shape not recognized in ${file}`,
     };
   }
-  return { nextSource, status: "would-apply" };
+  return {
+    nextSource,
+    status: nextSource === source ? "already-applied" : "would-apply",
+  };
 }
 
 function patchGetReplyFollowupRunId(source: string, file: string): PatchResult {

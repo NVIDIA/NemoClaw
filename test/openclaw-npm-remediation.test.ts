@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -62,6 +63,15 @@ function readJson<T>(file: string): T {
   return JSON.parse(readFileSync(file, "utf-8")) as T;
 }
 
+function readPackageField<T>(directory: string, field: string): T {
+  const result = spawnSync("npm", ["pkg", "get", field, "--json"], {
+    cwd: directory,
+    encoding: "utf-8",
+  });
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout) as T;
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -73,6 +83,12 @@ describe("OpenClaw npm remediation", () => {
     const directory = writeFixture();
 
     patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.7.1");
+
+    expect(readPackageField<string>(directory, "dependencies.axios")).toBe("1.18.0");
+    expect(readPackageField<string[]>(directory, "bundledDependencies")).toEqual([
+      "@slack/bolt",
+      "axios",
+    ]);
 
     const shrinkwrap = readJson<{
       packages: Record<string, { version?: string; dependencies?: Record<string, string> }>;

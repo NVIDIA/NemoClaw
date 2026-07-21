@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it } from "vitest";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const NORMALIZER = path.join(ROOT, "scripts", "lib", "normalize_mutable_config_perms.py");
 const START_SCRIPT = path.join(ROOT, "scripts", "nemoclaw-start.sh");
-const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const temporaryRoots: string[] = [];
 
 function temporaryConfigDir(): string {
@@ -42,10 +41,6 @@ afterEach(() => {
 });
 
 describe("OpenClaw 2026.7 startup compatibility", () => {
-  it("marks direct NemoClaw containers for split-user shared state", () => {
-    expect(fs.readFileSync(DOCKERFILE, "utf-8")).toContain("ENV NEMOCLAW_OPENCLAW_SHARED_STATE=1");
-  });
-
   it("removes a zero-byte legacy update-check file", () => {
     const configDir = temporaryConfigDir();
     const statePath = path.join(configDir, "update-check.json");

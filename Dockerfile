@@ -1317,9 +1317,16 @@ RUN set -eu; \
     [ ! -e "$update_check" ] || [ -f "$update_check" ] \
         || { echo "ERROR: refusing non-regular OpenClaw update-check state" >&2; exit 1; }; \
     rm -f "$update_check"; \
-    touch "$config_dir/exec-approvals.json"; \
-    chown sandbox:sandbox "$config_dir/exec-approvals.json"; \
-    chmod 660 "$config_dir/exec-approvals.json"; \
+    exec_approvals="$config_dir/exec-approvals.json"; \
+    [ ! -L "$exec_approvals" ] \
+        || { echo "ERROR: refusing unsafe OpenClaw state file: $exec_approvals" >&2; exit 1; }; \
+    [ ! -e "$exec_approvals" ] || [ -f "$exec_approvals" ] \
+        || { echo "ERROR: refusing unsafe OpenClaw state file: $exec_approvals" >&2; exit 1; }; \
+    [ ! -e "$exec_approvals" ] || [ "$(stat -c '%h' "$exec_approvals")" = "1" ] \
+        || { echo "ERROR: refusing unsafe OpenClaw state file: $exec_approvals" >&2; exit 1; }; \
+    touch "$exec_approvals"; \
+    chown sandbox:sandbox "$exec_approvals"; \
+    chmod 660 "$exec_approvals"; \
     for file in \
         "$config_dir/state/openclaw.sqlite" \
         "$config_dir/state/openclaw.sqlite-wal" \
@@ -1327,6 +1334,8 @@ RUN set -eu; \
         "$config_dir/state/openclaw.sqlite-journal"; do \
         [ -e "$file" ] || [ -L "$file" ] || continue; \
         [ -f "$file" ] && [ ! -L "$file" ] \
+            || { echo "ERROR: refusing unsafe OpenClaw state file: $file" >&2; exit 1; }; \
+        [ "$(stat -c '%h' "$file")" = "1" ] \
             || { echo "ERROR: refusing unsafe OpenClaw state file: $file" >&2; exit 1; }; \
         chown sandbox:sandbox "$file"; \
         chmod 660 "$file"; \

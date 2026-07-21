@@ -262,13 +262,13 @@ function runOpenclawStaleGroupFallback() {
 }
 
 describe("sandbox provisioning: runtime npm online state", () => {
-  it("replays the Dockerfile ENV directives so the runtime image inherits NPM_CONFIG_OFFLINE=false", () => {
+  it("replays the Dockerfile ENV directives for runtime npm and shared OpenClaw state", () => {
     const exports = collectDockerfileEnvExports(DOCKERFILE);
     const probe = [
       "#!/usr/bin/env bash",
       "set -eo pipefail",
       ...exports,
-      'printf "%s\\n" "${NPM_CONFIG_OFFLINE:-unset}"',
+      'printf "%s\\n" "${NPM_CONFIG_OFFLINE:-unset}" "${NEMOCLAW_OPENCLAW_SHARED_STATE:-unset}"',
     ].join("\n");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-npm-online-"));
     const scriptPath = path.join(tmp, "replay.sh");
@@ -276,7 +276,7 @@ describe("sandbox provisioning: runtime npm online state", () => {
       fs.writeFileSync(scriptPath, probe, { mode: 0o700 });
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
-      expect(result.stdout.trim()).toBe("false");
+      expect(result.stdout.trim().split("\n")).toEqual(["false", "1"]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

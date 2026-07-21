@@ -82,6 +82,9 @@ deterministic remediated package-tree integrity before installation. This
 canonical tree digest is independent of npm-generated tar metadata, which can
 vary between npm patch releases without changing package contents. The
 production plugin installer and `reviewed-npm-audit` use this same function.
+The tree hash opens each regular file without following symbolic links and
+validates the opened descriptor before it reads the content. This keeps the
+metadata and content checks bound to the same file.
 
 This remediation is limited to `@openclaw/slack@2026.7.1` and
 `@openclaw/msteams@2026.7.1`. Remove it when a reviewed stable OpenClaw plugin
@@ -108,7 +111,8 @@ The `2026.7.1` dist changed seven reviewed shapes:
   dispatcher policy;
 - queued follow-up execution now resolves inbound context before allocating a
   run id; `scripts/patch-openclaw-chat-send.mts` preserves the submitted run id
-  at that new boundary;
+  at that new boundary. It also suppresses the premature empty final event that
+  the new queue acknowledgment emits before the correlated follow-up completes;
 - device-token authentication now rejects a requested scope upgrade before the
   canonical pairing gate can create its pending request. The compatibility
   patch continues only an exact CLI/operator request limited to
@@ -170,6 +174,11 @@ follows:
   rejected;
 - a root entrypoint starts the `gateway` user with `HOME=/sandbox`, so startup
   migrations do not probe the inaccessible `/root/.openclaw` path.
+
+During image assembly, the shared-state repair rejects symbolic links,
+non-regular entries, and multiply linked files before it changes the ownership
+or mode of `exec-approvals.json` or SQLite state. This prevents a stale image
+entry from redirecting those mutations to another path or inode.
 
 These repairs run during image build or sandbox startup.
 They do not change the documented update and rebuild workflow.

@@ -5,11 +5,15 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  closeSync,
+  constants,
   cpSync,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -153,9 +157,18 @@ function hashPackageTree(packageDirectory: string): string {
         hash.update(`directory\0${relativePath}\0`);
         visit(absolutePath, relativePath);
       } else if (stats.isFile()) {
-        hash.update(`file\0${relativePath}\0${stats.size}\0`);
-        hash.update(readFileSync(absolutePath));
-        hash.update("\0");
+        const descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const openedStats = fstatSync(descriptor);
+          if (!openedStats.isFile()) {
+            throw new Error(`Remediated package tree has unsupported entry ${relativePath}`);
+          }
+          hash.update(`file\0${relativePath}\0${openedStats.size}\0`);
+          hash.update(readFileSync(descriptor));
+          hash.update("\0");
+        } finally {
+          closeSync(descriptor);
+        }
       } else {
         throw new Error(`Remediated package tree has unsupported entry ${relativePath}`);
       }
