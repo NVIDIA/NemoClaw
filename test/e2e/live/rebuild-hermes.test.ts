@@ -52,6 +52,12 @@ import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
+// Protected PR E2E checks out the exact head while the trusted controller runs
+// the base workflow. Older controller revisions therefore cannot provide a
+// newly introduced job-level CLI override. Keep the test pinned to the exact
+// checked-out launcher in both that transition window and direct local runs.
+process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
+
 // The rebuild regression invokes the checked-out CLI directly. Full install.sh
 // coverage remains in hermes-e2e; this lane owns Docker base-image builds,
 // OpenShell provider/sandbox commands, direct Hermes sandbox exec, curated
