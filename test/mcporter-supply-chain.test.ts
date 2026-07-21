@@ -18,9 +18,11 @@ const expectedVersion = "0.7.3";
 const expectedIntegrity =
   "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
 const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz";
-const expectedHonoNodeServerVersion = "2.0.5";
+const expectedHonoNodeServerVersion = "2.0.11";
 const expectedHonoNodeServerTarball =
-  "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz";
+  "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
+const expectedFastUriVersion = "3.1.4";
+const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 
 function extractIntegrityGate(contents: string): string {
@@ -82,6 +84,13 @@ describe("mcporter image supply-chain controls", () => {
         overridden: true,
         resolved: expectedHonoNodeServerTarball,
         version: expectedHonoNodeServerVersion,
+      }),
+    );
+    expect(findDependency(graph, "fast-uri")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedFastUriTarball,
+        version: expectedFastUriVersion,
       }),
     );
   });
