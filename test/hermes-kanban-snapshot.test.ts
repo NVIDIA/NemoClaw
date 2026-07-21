@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -44,6 +45,32 @@ function writeHermesRegistry(): void {
     }),
   );
 }
+
+it("fails the SQLite state backup when the online backup command fails (#7095)", () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-backup-failure-"));
+  try {
+    const binDir = path.join(fixture, "bin");
+    const sourceDir = path.join(fixture, "state");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(sourceDir, { recursive: true });
+    fs.writeFileSync(path.join(sourceDir, "kanban.db"), "source database\n");
+    writeExecutable(path.join(binDir, "python3"), "#!/bin/sh\nexit 9\n");
+
+    const command = sandboxState.buildStateFileBackupCommand(sourceDir, {
+      path: "kanban.db",
+      strategy: "sqlite_backup",
+    });
+    const result = spawnSync("sh", ["-c", command], {
+      env: { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH || ""}` },
+      encoding: null,
+    });
+
+    expect(result.status).toBe(9);
+    expect(result.stdout).toHaveLength(0);
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 it("preserves only the Hermes default-board database across rebuilds (#7095)", () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-kanban-state-"));
