@@ -53,3 +53,13 @@ export function createDualStationSshBindingFixture(
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }
+
+export function retargetDualStationSshBindingFixture(
+  fixture: DualStationSshBindingFixture,
+  peerTarget: string,
+  validTarget: boolean,
+): DualStationSshBindingFixture {
+  if (!validTarget || fixture.binding.peerTarget === peerTarget) return fixture;
+  fixture.cleanup();
+  return createDualStationSshBindingFixture(peerTarget);
+}

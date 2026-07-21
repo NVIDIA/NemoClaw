@@ -28,27 +28,13 @@ import {
 } from "./vllm-station-ssh-binding";
 import {
   createDualStationSshBindingFixture,
+  retargetDualStationSshBindingFixture,
   type DualStationSshBindingFixture,
 } from "./vllm-station-ssh-binding.test-support";
+import { resolveStationFixturePython } from "./vllm-station-fixture.test-support";
 
 const LOCAL_HOME = "/home/local";
 const PEER_HOME = "/home/nvidia";
-
-function resolveFixturePython(): string {
-  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
-    if (!directory || !path.isAbsolute(directory) || path.normalize(directory) !== directory) {
-      continue;
-    }
-    try {
-      const candidate = fs.realpathSync(path.join(directory, "python3"));
-      fs.accessSync(candidate, fs.constants.X_OK);
-      if (fs.statSync(candidate).isFile()) return candidate;
-    } catch {
-      // Keep searching PATH for an executable fixture interpreter.
-    }
-  }
-  throw new Error("python3 is required for the Station host-probe fixtures");
-}
 
 function strictDockerSshConfig(binding: DualStationSshBinding): string {
   return [
@@ -246,10 +232,11 @@ function fixtureDeps(
 }
 
 function runWith(deps: StationClusterProbeDeps, target = "nvidia@station-b") {
-  if (validatePeerTarget(target).ok && sshFixture.binding.peerTarget !== target) {
-    sshFixture.cleanup();
-    sshFixture = createDualStationSshBindingFixture(target);
-  }
+  sshFixture = retargetDualStationSshBindingFixture(
+    sshFixture,
+    target,
+    validatePeerTarget(target).ok,
+  );
   return probeDualStationVllmCapability({
     env: {
       [NEMOCLAW_DGX_STATION_PEER_ENV]: target,
@@ -385,9 +372,10 @@ describe("probeDualStationVllmCapability", () => {
       peerModelSnapshot: "ready",
       plan: { peerSshBinding: { peerTarget: target } },
     });
-    if (result.kind !== "ready") throw new Error("expected ready fixture");
-    expect(buildRemoteVllmDockerEnv(result.plan.peerSshBinding, {}).DOCKER_HOST).toBe(
-      `ssh://${result.plan.peerSshBinding.sshUser}@${result.plan.peerSshBinding.resolvedHost}`,
+    expect(result.kind).toBe("ready");
+    const ready = result as Extract<typeof result, { kind: "ready" }>;
+    expect(buildRemoteVllmDockerEnv(ready.plan.peerSshBinding, {}).DOCKER_HOST).toBe(
+      `ssh://${ready.plan.peerSshBinding.sshUser}@${ready.plan.peerSshBinding.resolvedHost}`,
     );
   });
 
@@ -884,7 +872,7 @@ describe("probe command boundary", () => {
       },
     );
     createStationClusterProbeDeps(recordingSpawn).probeLocalHost();
-    const python = resolveFixturePython();
+    const python = resolveStationFixturePython();
 
     try {
       const executed = spawnSync(python, ["-"], {
@@ -925,7 +913,7 @@ describe("probe command boundary", () => {
       },
     );
     createStationClusterProbeDeps(recordingSpawn).probeLocalHost();
-    const python = resolveFixturePython();
+    const python = resolveStationFixturePython();
     const fixturePrelude = String.raw`
 import pathlib
 import stat as fixture_stat
