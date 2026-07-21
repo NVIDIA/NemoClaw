@@ -23,23 +23,34 @@ function treeSnapshot(root: string): object[] {
       const pathname = path.join(directory, name);
       const relativePath = path.relative(root, pathname);
       const metadata = fs.lstatSync(pathname);
-      if (metadata.isDirectory()) {
+      const snapshotDirectory = (): void => {
         entries.push({ mode: metadata.mode & 0o7777, path: relativePath, type: "directory" });
         visit(pathname);
-      } else if (metadata.isFile()) {
+      };
+      const snapshotFile = (): void => {
         entries.push({
           bytes: fs.readFileSync(pathname).toString("base64"),
           mode: metadata.mode & 0o7777,
           path: relativePath,
           type: "file",
         });
-      } else {
+      };
+      const snapshotUnsafeEntry = (): void => {
         entries.push({ path: relativePath, type: "unsafe" });
-      }
+      };
+      (metadata.isDirectory()
+        ? snapshotDirectory
+        : metadata.isFile()
+          ? snapshotFile
+          : snapshotUnsafeEntry)();
     }
   };
   visit(root);
   return entries;
+}
+
+function fail(message: string): never {
+  throw new Error(message);
 }
 
 function fixture(
@@ -226,14 +237,11 @@ describe("historical OpenClaw security revisions (#7272)", () => {
       patchOpenClawTar({
         ...target,
         expectedOpenClawVersion: "2026.6.10",
-        transactionHook: (event) => {
-          if (
-            event.phase === "after-install" &&
-            event.label === "node_modules/@openclaw/fs-safe/node_modules/tar package tree"
-          ) {
-            throw new Error("injected second tar swap failure");
-          }
-        },
+        transactionHook: (event) =>
+          event.phase === "after-install" &&
+          event.label === "node_modules/@openclaw/fs-safe/node_modules/tar package tree"
+            ? fail("injected second tar swap failure")
+            : undefined,
       }),
     ).toThrow("injected second tar swap failure");
     expect(treeSnapshot(target.openClawRoot)).toEqual(before);
@@ -246,11 +254,10 @@ describe("historical OpenClaw security revisions (#7272)", () => {
       patchOpenClawTar({
         ...target,
         expectedOpenClawVersion: "2026.6.10",
-        transactionHook: (event) => {
-          if (event.phase === "after-backup" && event.index === 0) {
-            throw new Error("injected prepared-backup rejection");
-          }
-        },
+        transactionHook: (event) =>
+          event.phase === "after-backup" && event.index === 0
+            ? fail("injected prepared-backup rejection")
+            : undefined,
       }),
     ).toThrow("injected prepared-backup rejection");
     expect(treeSnapshot(target.openClawRoot)).toEqual(before);
@@ -263,11 +270,10 @@ describe("historical OpenClaw security revisions (#7272)", () => {
       patchOpenClawTar({
         ...target,
         expectedOpenClawVersion: "2026.6.10",
-        transactionHook: (event) => {
-          if (event.phase === "after-install" && event.label === "OpenClaw package metadata") {
-            throw new Error("injected OpenClaw metadata commit failure");
-          }
-        },
+        transactionHook: (event) =>
+          event.phase === "after-install" && event.label === "OpenClaw package metadata"
+            ? fail("injected OpenClaw metadata commit failure")
+            : undefined,
       }),
     ).toThrow("injected OpenClaw metadata commit failure");
     expect(treeSnapshot(target.openClawRoot)).toEqual(before);
@@ -280,11 +286,10 @@ describe("historical OpenClaw security revisions (#7272)", () => {
       patchOpenClawTar({
         ...target,
         expectedOpenClawVersion: "2026.6.10",
-        transactionHook: (event) => {
-          if (event.phase === "before-verify") {
-            throw new Error("injected OpenClaw verification failure");
-          }
-        },
+        transactionHook: (event) =>
+          event.phase === "before-verify"
+            ? fail("injected OpenClaw verification failure")
+            : undefined,
       }),
     ).toThrow("injected OpenClaw verification failure");
     expect(treeSnapshot(target.openClawRoot)).toEqual(before);
