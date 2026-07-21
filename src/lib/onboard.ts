@@ -321,7 +321,7 @@ const {
     inferenceCompat: LooseObject | null;
   };
 };
-const { sleepSeconds, waitUntil, waitUntilAsync } = require("./core/wait");
+const { sleepSeconds, waitUntil } = require("./core/wait");
 const platformUtils: typeof import("./platform") = require("./platform");
 const { isWsl, shouldPatchCoredns } = platformUtils;
 const {
@@ -331,10 +331,12 @@ const {
   shouldFrontOllamaWithProxy,
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
 const {
-  createGatewayHealthWaitOptions,
   formatGatewayHealthWaitLimit,
   waitForGatewayHealth,
 }: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
+const {
+  waitForStandaloneDockerDriverGateway,
+}: typeof import("./onboard/docker-driver-gateway-readiness") = require("./onboard/docker-driver-gateway-readiness");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
@@ -1875,12 +1877,8 @@ async function startGatewayWithOptions(
           return;
         }
 
-        throw new Error(
-          `Gateway failed within the configured ${formatGatewayHealthWaitLimit(
-            healthWait.count,
-            healthWait.interval,
-          )}.`,
-        );
+        const waitLimit = formatGatewayHealthWaitLimit(healthWait.count, healthWait.interval);
+        throw new Error(`Gateway failed within the configured ${waitLimit}.`);
       },
       {
         retries,
@@ -2107,55 +2105,36 @@ async function startDockerDriverGateway({
 
   const pollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
   const pollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
-  let gatewayHealthy = false;
-  let gatewayExited = false;
-  const gatewayWaitOptions = createGatewayHealthWaitOptions(
-    pollCount,
-    pollInterval,
-    Date.now,
-    (ms) => sleepSeconds(ms / 1000),
-  );
-  if (gatewayWaitOptions) {
-    await waitUntilAsync(async () => {
-      if (childExit.exited || !isPidAlive(childPid)) {
-        gatewayExited = true;
-        return true;
-      }
-      if (!registerDockerDriverGatewayEndpoint()) {
-        return false;
-      }
-      const status = runCaptureOpenshell(["status"], { ignoreError: true });
-      const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-        ignoreError: true,
+  const gatewayStartup = await waitForStandaloneDockerDriverGateway({
+    childExited: () => childExit.exited,
+    childPid,
+    gatewayName: GATEWAY_NAME,
+    healthPollCount: pollCount,
+    healthPollIntervalSeconds: pollInterval,
+    isGatewayHealthy,
+    isGatewayTcpReady,
+    isPidAlive,
+    onHealthy: async () => {
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+        skip: skipSandboxBridgeReachability,
+        port: GATEWAY_PORT,
       });
-      const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-      // #4430: the status/gateway-info/TCP probes above take real wall-clock time; re-confirm
-      // childExit/isPidAlive *after* them so a gateway that drifts on schema and aborts during
-      // migration after accepting briefly can never print the misleading healthy line below.
-      if (
-        isGatewayHealthy(status, namedInfo, currentInfo) &&
-        (await isGatewayTcpReady()) &&
-        !childExit.exited &&
-        isPidAlive(childPid)
-      ) {
-        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-          skip: skipSandboxBridgeReachability,
-          port: GATEWAY_PORT,
-        });
-        console.log("  ✓ Docker-driver gateway is healthy");
-        gatewayHealthy = true;
-        return true;
-      }
-      return false;
-    }, gatewayWaitOptions);
+    },
+    registerGatewayEndpoint: registerDockerDriverGatewayEndpoint,
+    runCaptureOpenshell,
+    sleepSeconds,
+  });
+  if (gatewayStartup === "healthy") {
+    console.log("  ✓ Docker-driver gateway is healthy");
+    return;
   }
-  if (gatewayHealthy) return;
 
   reportDockerDriverGatewayStartFailure(logPath, childExit, { exitOnFailure });
-  const failureReason = gatewayExited
-    ? "because the process exited"
-    : `within the configured ${formatGatewayHealthWaitLimit(pollCount, pollInterval)}`;
-  throw new Error(`Docker-driver gateway failed to start ${failureReason}`);
+  if (gatewayStartup === "exited") {
+    throw new Error("Docker-driver gateway failed to start because the process exited");
+  }
+  const waitLimit = formatGatewayHealthWaitLimit(pollCount, pollInterval);
+  throw new Error(`Docker-driver gateway failed to start within ${waitLimit}`);
 }
 
 async function startGateway(
@@ -2258,11 +2237,8 @@ async function recoverGatewayRuntime() {
   if (!healthy) return false;
 
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
-  const runtime = getContainerRuntime();
-  if (shouldPatchCoredns(runtime)) {
-    run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), GATEWAY_NAME], {
-      ignoreError: true,
-    });
+  if (shouldPatchCoredns(getContainerRuntime())) {
+    run(["bash", path.join(SCRIPTS, "fix-coredns.sh"), GATEWAY_NAME], { ignoreError: true });
   }
   return true;
 }
