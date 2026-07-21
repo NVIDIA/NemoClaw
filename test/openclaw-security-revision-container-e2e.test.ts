@@ -26,6 +26,10 @@ const BRACE_EXPANSION_TARBALL =
 const FS_SAFE_INTEGRITY =
   "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==";
 const FS_SAFE_TARBALL = "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz";
+const JSZIP_VERSION = "3.10.1";
+const JSZIP_INTEGRITY =
+  "sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==";
+const JSZIP_TARBALL = "https://registry.npmjs.org/jszip/-/jszip-3.10.1.tgz";
 const RUN_TIMEOUT_MS = 5 * 60_000;
 const NPM_LS_ARGS = [
   "ls",
@@ -75,6 +79,7 @@ type ProbeEvidence = Readonly<{
     fsSafe: LockedPackage;
     hasNestedFsSafeJszip: boolean;
     hasNestedFsSafeTar: boolean;
+    jszip: LockedPackage;
     lockfileVersion: number | null;
     rootDependencies: Readonly<Record<string, string>>;
     tar: LockedPackage;
@@ -248,6 +253,7 @@ const evidence = {
     fsSafe: readLockedPackage(packages["node_modules/@openclaw/fs-safe"]),
     hasNestedFsSafeJszip: packages["node_modules/@openclaw/fs-safe/node_modules/jszip"] !== undefined,
     hasNestedFsSafeTar: packages["node_modules/@openclaw/fs-safe/node_modules/tar"] !== undefined,
+    jszip: readLockedPackage(packages["node_modules/jszip"]),
     lockfileVersion: shrinkwrap.lockfileVersion ?? null,
     rootDependencies: packages[""]?.dependencies ?? {},
     tar: readLockedPackage(packages["node_modules/tar"]),
@@ -323,7 +329,7 @@ function exactEvidence(): ProbeEvidence {
       bundledDependencies: ["@openclaw/fs-safe"],
       dependencies: {
         "@openclaw/fs-safe": "0.3.0",
-        jszip: "3.10.1",
+        jszip: JSZIP_VERSION,
         tar: TAR_VERSION,
       },
       name: "openclaw",
@@ -332,7 +338,7 @@ function exactEvidence(): ProbeEvidence {
     packageVersions: {
       braceExpansion: [BRACE_EXPANSION_VERSION],
       fsSafe: ["0.3.0"],
-      jszip: ["3.10.1"],
+      jszip: [JSZIP_VERSION],
       tar: [TAR_VERSION],
     },
     shrinkwrap: {
@@ -352,10 +358,17 @@ function exactEvidence(): ProbeEvidence {
       },
       hasNestedFsSafeJszip: false,
       hasNestedFsSafeTar: false,
+      jszip: {
+        hasOptionalDependencies: false,
+        integrity: JSZIP_INTEGRITY,
+        optionalDependencies: null,
+        resolved: JSZIP_TARBALL,
+        version: JSZIP_VERSION,
+      },
       lockfileVersion: 3,
       rootDependencies: {
         "@openclaw/fs-safe": "0.3.0",
-        jszip: "3.10.1",
+        jszip: JSZIP_VERSION,
         tar: TAR_VERSION,
       },
       tar: {
@@ -379,14 +392,14 @@ function requireExactRemediation(evidence: ProbeEvidence): void {
   expect(evidence.openClaw.version).toBe("2026.6.10");
   expect(evidence.openClaw.dependencies).toMatchObject({
     "@openclaw/fs-safe": "0.3.0",
-    jszip: "3.10.1",
+    jszip: JSZIP_VERSION,
     tar: TAR_VERSION,
   });
   expect(evidence.openClaw.bundledDependencies).toEqual(["@openclaw/fs-safe"]);
   expect(evidence.packageVersions).toEqual({
     braceExpansion: [BRACE_EXPANSION_VERSION],
     fsSafe: ["0.3.0"],
-    jszip: ["3.10.1"],
+    jszip: [JSZIP_VERSION],
     tar: [TAR_VERSION],
   });
   expect(evidence.fsSafeHasOptionalDependencies).toBe(false);
@@ -394,7 +407,7 @@ function requireExactRemediation(evidence: ProbeEvidence): void {
   expect(evidence.shrinkwrap.lockfileVersion).toBe(3);
   expect(evidence.shrinkwrap.rootDependencies).toMatchObject({
     "@openclaw/fs-safe": "0.3.0",
-    jszip: "3.10.1",
+    jszip: JSZIP_VERSION,
     tar: TAR_VERSION,
   });
   expect(evidence.shrinkwrap.tar).toMatchObject({
@@ -413,6 +426,11 @@ function requireExactRemediation(evidence: ProbeEvidence): void {
     optionalDependencies: null,
     resolved: FS_SAFE_TARBALL,
     version: "0.3.0",
+  });
+  expect(evidence.shrinkwrap.jszip).toMatchObject({
+    integrity: JSZIP_INTEGRITY,
+    resolved: JSZIP_TARBALL,
+    version: JSZIP_VERSION,
   });
   expect(evidence.shrinkwrap.hasNestedFsSafeJszip).toBe(false);
   expect(evidence.shrinkwrap.hasNestedFsSafeTar).toBe(false);
@@ -471,6 +489,21 @@ describe("OpenClaw current-image security revision contract (#7272)", () => {
         shrinkwrap: { ...good.shrinkwrap, hasNestedFsSafeTar: true },
       }),
     ).toThrow();
+    for (const compromisedJszip of [
+      { integrity: "sha512-unreviewed" },
+      { resolved: "https://registry.npmjs.org/jszip/-/jszip-3.10.0.tgz" },
+      { version: "3.10.0" },
+    ]) {
+      expect(() =>
+        requireExactRemediation({
+          ...good,
+          shrinkwrap: {
+            ...good.shrinkwrap,
+            jszip: { ...good.shrinkwrap.jszip, ...compromisedJszip },
+          },
+        }),
+      ).toThrow();
+    }
     expect(() =>
       requireExactRemediation({
         ...good,
