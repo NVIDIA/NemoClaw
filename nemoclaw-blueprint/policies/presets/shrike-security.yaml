@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Data flow: When activated with a SHRIKE_API_KEY, scanned content is
+# transmitted to api.shrikesecurity.com over TLS for threat analysis and
+# an enforce/allow/warn/require_approval/block decision is returned to
+# the caller. No data leaves the device without an API key configured.
+# See https://shrikesecurity.com/privacy for retention, GDPR/CCPA, and
+# data-deletion posture.
+
+preset:
+  name: shrike-security
+  description: "Shrike Security — action governance for AI agents (canonical /api/scan/enforce endpoint returns allow / warn / require_approval / block; read-only session state observability)"
+
+network_policies:
+  shrike_security:
+    name: shrike_security
+    endpoints:
+      - host: api.shrikesecurity.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          # Canonical enforce endpoint — server-side action derivation
+          # returns "allow" | "warn" | "require_approval" | "block".
+          # The caller (SDK or MCP tool wrapper) honors action verbatim;
+          # no local reinterpretation. Contract pinned by the SDK
+          # contract-symmetry tests in shrike-guard{-js,-python}.
+          - allow: { method: POST, path: "/agent/api/scan/enforce" }
+          # Specialized enforce for action-plane content types
+          # (sql, command, file_write, web_search, a2a_message, agent_card).
+          - allow: { method: POST, path: "/agent/api/scan/enforce/specialized" }
+          # Read-only session state (session_status MCP tool + SDK). Callable
+          # while the session is quarantined — that is the point. Never
+          # exposes prompts, responses, tokens, or detector attribution.
+          - allow: { method: GET, path: "/agent/api/session/status" }
+          - allow: { method: GET, path: "/health" }
+    binaries:
+      # shrike-mcp is distributed as an npm CLI; OpenShell may observe
+      # the Node runtime instead of the shim that launched it (matches
+      # the claude-code preset precedent).
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /tmp/npm-global/bin/shrike-mcp }
+      - { path: /home/linuxbrew/.linuxbrew/bin/shrike-mcp }
+      # shrike-sh — optional Go shell proxy (single binary, ~5ms startup)
+      # that governs command execution via the SDK. Not required for
+      # baseline scanning; installed only when the operator opts in.
+      - { path: /usr/local/bin/shrike-sh }
+      - { path: /usr/bin/shrike-sh }
