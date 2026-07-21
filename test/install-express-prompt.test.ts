@@ -374,7 +374,7 @@ detect_express_platform
       /installs missing pinned driver, Docker, and NVIDIA Container Toolkit packages/,
     );
     expect(output).toMatch(
-      /DGX Station is Tested with limitations on one DGX Station GB300 running DGX OS 7\.5/,
+      /DGX Station is Tested with limitations across qualified profiles on one physical DGX Station GB300/,
     );
     expect(output).toMatch(/dual-Station configurations are not yet validated/);
     expect(output).toMatch(/Using express install for DGX Station/);

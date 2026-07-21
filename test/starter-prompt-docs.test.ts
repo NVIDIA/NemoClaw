@@ -766,7 +766,7 @@ describe("starter prompt docs CTA", () => {
     expect(stationSource).not.toContain("only supported next step");
     expect(stationSource).toContain("model-cache filesystem and Docker storage");
     expect(stationSource).toContain(
-      "DGX Station is tested with limitations on one physical DGX Station GB300.",
+      "DGX Station is tested with limitations across qualified profiles on one physical DGX Station GB300.",
     );
     expect(stationSource).toContain(
       "Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.",
