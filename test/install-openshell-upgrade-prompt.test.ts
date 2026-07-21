@@ -213,6 +213,60 @@ test ! -e "${pidFile}"`,
     },
   );
 
+  it.skipIf(process.platform !== "linux")(
+    "fails closed when a present openshell cannot report its version in if-missing mode (#7300)",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-unreportable-"));
+      const bin = path.join(tmp, "bin");
+      fs.mkdirSync(bin, { recursive: true });
+      // Present binary that exits non-zero and prints no version.
+      writeExecutable(path.join(bin, "openshell"), "#!/usr/bin/env bash\nexit 1\n");
+
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+NEMOCLAW_SOURCE_ROOT="${tmp}"
+unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
+maybe_install_openshell_during_install if-missing`,
+        ],
+        { encoding: "utf-8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+      );
+
+      expect(result.status, result.stdout + result.stderr).not.toBe(0);
+      expect(result.stderr + result.stdout).toContain("could not report its version");
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "keeps an existing openshell that reports a version in if-missing mode (#7300)",
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-healthy-"));
+      const bin = path.join(tmp, "bin");
+      fs.mkdirSync(bin, { recursive: true });
+      writeExecutable(
+        path.join(bin, "openshell"),
+        '#!/usr/bin/env bash\n[ "$1" = "--version" ] && echo "openshell 0.0.85"\nexit 0\n',
+      );
+
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1
+NEMOCLAW_SOURCE_ROOT="${tmp}"
+unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
+maybe_install_openshell_during_install if-missing`,
+        ],
+        { encoding: "utf-8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } },
+      );
+
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      expect(result.stderr + result.stdout).not.toContain("could not report its version");
+    },
+  );
+
   it("aborts non-interactive legacy gateway upgrades without explicit opt-in", () => {
     const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard({
       NON_INTERACTIVE: "1",

@@ -1274,6 +1274,14 @@ maybe_install_openshell_during_install() {
     return 0
   fi
   if [[ "$mode" == "if-missing" ]] && command_exists openshell; then
+    # A present binary that cannot report a version is not a usable managed
+    # OpenShell. Fail closed instead of silently keeping it: otherwise the
+    # install is skipped here AND the preinstall version gate is bypassed (its
+    # gate only runs when a sandbox is registered, install.sh:2276), so
+    # onboarding proceeds against an undeterminable OpenShell version (#7300).
+    if [ -z "$(installed_openshell_version 2>/dev/null || true)" ]; then
+      error "OpenShell is present on PATH but could not report its version. Refusing to continue with an undeterminable OpenShell version — reinstall a supported OpenShell (run scripts/install-openshell.sh) or remove the broken binary, then rerun the installer."
+    fi
     return 0
   fi
   spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
