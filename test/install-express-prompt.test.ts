@@ -548,6 +548,7 @@ ensure_station_express_host`,
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 load_station_vllm_conflict_helpers
 NON_INTERACTIVE=1
+_STATION_VLLM_STOP_COMMAND='docker stop -- 1234567890ab'
 NEMOCLAW_PROVIDER=install-vllm
 NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
 NEMOCLAW_VLLM_MODEL='nemotron-3-ultra-550b-a55b'
@@ -564,6 +565,9 @@ ensure_station_express_host
     expect(result.status, output).toBe(12);
     expect(output).toContain("Keep Express with nvidia/nemotron-3-ultra-550b-a55b (default)");
     expect(output).toContain("Use existing vLLM with existing/model (advanced manual setup)");
+    expect(output).toContain(
+      "Keep Express: run 'docker stop -- 1234567890ab' to stop the vLLM workload, then resume with:",
+    );
     expect(output).toContain("NEMOCLAW_INSTALL_TAG=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     expect(output).not.toContain("NEMOCLAW_NO_EXPRESS=1");
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(true);
