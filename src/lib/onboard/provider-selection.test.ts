@@ -14,6 +14,10 @@ const remoteProviderConfig = {
   hermesProvider: { providerName: "hermes-provider" },
 };
 
+// Ternary accessor (no `if`, per the changed-test-file conditionals guardrail).
+const selectedKey = (result: ReturnType<typeof resolveRequestedProviderSelection>) =>
+  result.kind === "selected" ? result.selected.key : null;
+
 function resolve(overrides: Partial<Parameters<typeof resolveRequestedProviderSelection>[0]> = {}) {
   return resolveRequestedProviderSelection({
     options: [option("build")],
@@ -135,10 +139,7 @@ describe("resolveRequestedProviderSelection", () => {
       preferManagedVllmDefault: true,
     });
 
-    assert.equal(result.kind, "selected");
-    if (result.kind === "selected") {
-      assert.equal(result.selected.key, "install-vllm");
-    }
+    assert.equal(selectedKey(result), "install-vllm");
   });
 
   it("keeps the cloud default when the platform is not a managed-vLLM default (#7293)", () => {
@@ -148,10 +149,7 @@ describe("resolveRequestedProviderSelection", () => {
       preferManagedVllmDefault: false,
     });
 
-    assert.equal(result.kind, "selected");
-    if (result.kind === "selected") {
-      assert.equal(result.selected.key, "build");
-    }
+    assert.equal(selectedKey(result), "build");
   });
 
   it("keeps the cloud default when no managed-vLLM entry is available (#7293)", () => {
@@ -160,9 +158,6 @@ describe("resolveRequestedProviderSelection", () => {
       preferManagedVllmDefault: true,
     });
 
-    assert.equal(result.kind, "selected");
-    if (result.kind === "selected") {
-      assert.equal(result.selected.key, "build");
-    }
+    assert.equal(selectedKey(result), "build");
   });
 });
