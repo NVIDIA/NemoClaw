@@ -67,7 +67,29 @@ remediation_working_directory="$(mktemp -d /tmp/nemoclaw-openclaw-plugin-remedia
 rollback_root=""
 prior_state=absent
 rollback_required=0
-rollback_failed=0
+credential_hold_root=""
+credential_state=absent
+
+# Reached through normal completion and the trap-invoked rollback/cleanup paths.
+# shellcheck disable=SC2329
+restore_held_credentials() {
+  local credential_path="$state_directory/credentials"
+  local held_path="$credential_hold_root/credentials"
+  if [[ "$credential_state" != held ]]; then
+    return 0
+  fi
+  mkdir -p -- "$state_directory" || return 1
+  if [[ -e "$credential_path" || -L "$credential_path" ]]; then
+    if [[ ! -L "$credential_path" || "$(readlink "$credential_path")" != "$held_path" ]]; then
+      return 1
+    fi
+    rm -f -- "$credential_path" || return 1
+  fi
+  mv -- "$held_path" "$credential_path" || return 1
+  rmdir "$credential_hold_root" || return 1
+  credential_state=restored
+  credential_hold_root=""
+}
 
 # Reached through the trap-invoked cleanup function below.
 # shellcheck disable=SC2329
@@ -78,16 +100,27 @@ rollback_openclaw_state() {
       rollback_root="$(mktemp -d "$(dirname -- "$state_directory")/.nemoclaw-openclaw-state-rollback.XXXXXX")" || return 1
     fi
     current_state="$rollback_root/current-state"
-    mv -- "$state_directory" "$current_state" || return 1
-  fi
-  if [[ "$prior_state" == present ]]; then
-    if ! mv -- "$rollback_root/prior-state" "$state_directory"; then
-      if [[ -n "$current_state" ]]; then
-        mv -- "$current_state" "$state_directory" || true
-      fi
+    if ! mv -- "$state_directory" "$current_state"; then
+      restore_held_credentials || true
       return 1
     fi
   fi
+  if [[ "$prior_state" == present ]]; then
+    if ! mv -- "$rollback_root/prior-state" "$state_directory"; then
+      if cp -a -- "$rollback_root/prior-state" "$state_directory"; then
+        restore_held_credentials || return 1
+        echo "WARNING: restored the prior OpenClaw state after the atomic rollback rename failed" >&2
+        return 0
+      fi
+      rm -rf -- "$state_directory" || true
+      if [[ -n "$current_state" ]]; then
+        mv -- "$current_state" "$state_directory" || true
+      fi
+      restore_held_credentials || true
+      return 1
+    fi
+  fi
+  restore_held_credentials || return 1
 }
 
 # Invoked indirectly by the EXIT trap below.
@@ -98,16 +131,20 @@ cleanup() {
   if [[ "$rollback_required" == 1 ]]; then
     if ! rollback_openclaw_state; then
       echo "ERROR: failed to restore the prior OpenClaw state after plugin installation" >&2
-      rollback_failed=1
       status=70
     fi
   fi
+  if [[ "$credential_state" == held ]] && ! restore_held_credentials; then
+    echo "ERROR: retained the only recoverable OpenClaw credential state at $credential_hold_root" >&2
+    status=70
+  fi
   if [[ -n "$rollback_root" ]]; then
-    if [[ "$rollback_failed" == 1 ]]; then
-      echo "ERROR: retained the OpenClaw state rollback snapshot at $rollback_root" >&2
-    elif ! rm -rf -- "$rollback_root"; then
-      echo "ERROR: failed to remove the OpenClaw state rollback snapshot" >&2
-      status=70
+    if ! rm -rf -- "$rollback_root"; then
+      chmod -R u+rwX -- "$rollback_root" 2>/dev/null || true
+      if ! rm -rf -- "$rollback_root"; then
+        echo "ERROR: failed to remove the OpenClaw state rollback snapshot" >&2
+        status=70
+      fi
     fi
   fi
   if ! rm -rf -- "$remediation_working_directory"; then
@@ -124,7 +161,21 @@ if [[ -e "$state_directory" || -L "$state_directory" ]]; then
     exit 64
   fi
   rollback_root="$(mktemp -d "$(dirname -- "$state_directory")/.nemoclaw-openclaw-state-rollback.XXXXXX")"
+  credential_path="$state_directory/credentials"
+  if [[ -e "$credential_path" || -L "$credential_path" ]]; then
+    credential_hold_root="$(mktemp -d "$(dirname -- "$state_directory")/.nemoclaw-openclaw-credentials-hold.XXXXXX")"
+    if ! chmod 0700 "$credential_hold_root"; then
+      rmdir "$credential_hold_root" || true
+      credential_hold_root=""
+      exit 70
+    fi
+    mv -- "$credential_path" "$credential_hold_root/credentials"
+    credential_state=held
+  fi
   cp -a -- "$state_directory" "$rollback_root/prior-state"
+  if [[ "$credential_state" == held ]]; then
+    ln -s -- "$credential_hold_root/credentials" "$credential_path"
+  fi
   prior_state=present
 fi
 rollback_required=1
@@ -167,7 +218,10 @@ else
     exit "$remediation_status"
   fi
 fi
-
+if ! restore_held_credentials; then
+  echo "ERROR: failed to restore protected OpenClaw credentials after plugin installation" >&2
+  exit 70
+fi
 rollback_required=0
 if [[ -n "$rollback_root" ]]; then
   rm -rf -- "$rollback_root"
