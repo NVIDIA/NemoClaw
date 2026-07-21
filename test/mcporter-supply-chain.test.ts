@@ -18,7 +18,8 @@ const expectedIntegrity =
   "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
 const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
-const expectedHonoNodeServerVersion = "2.0.5";
+const expectedHonoNodeServerVersion = "2.0.10";
+const expectedFastUriVersion = "3.1.4";
 
 interface ResolvedPackage {
   dependencies?: Record<string, ResolvedPackage>;
@@ -87,6 +88,10 @@ describe("mcporter image supply-chain controls", () => {
         "@hono/node-server"
       ]?.version,
     ).toBe(expectedHonoNodeServerVersion);
+    expect(
+      graph.dependencies?.mcporter?.dependencies?.["@modelcontextprotocol/sdk"]?.dependencies?.ajv
+        ?.dependencies?.["fast-uri"]?.version,
+    ).toBe(expectedFastUriVersion);
   });
 
   it.each(dockerfiles)("pins and verifies the package in $name", ({ contents }) => {
