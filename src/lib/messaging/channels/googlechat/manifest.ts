@@ -108,7 +108,7 @@ export const googlechatManifest = {
   // account, and the L7 proxy injects it as `Authorization: Bearer` on
   // chat.googleapis.com. The service-account private key stays gateway-side and
   // never enters the sandbox. The bridge provider + refresh are wired in
-  // src/lib/onboard/googlechat-bridge-provider.ts; the googlechat-outbound-auth
+  // src/lib/onboard/messaging-bridge-provider.ts; the googlechat-outbound-auth
   // runtime preload makes the plugin send the injected bearer instead of signing
   // in-process. No credentials/secretFiles here — the pasted serviceAccount is
   // consumed only as gateway-side refresh material, never delivered into the sandbox.
