@@ -74,6 +74,10 @@ function isCanonicalLocalBaseImageRef(agentName: string, imageRef: string): bool
   ).test(imageRef);
 }
 
+function isImmutableRemoteBaseImageRef(imageRef: string): boolean {
+  return /^[^\s@]+@sha256:[0-9a-f]{64}$/i.test(imageRef);
+}
+
 export function disposeRebuildAgentBaseImagePreflight(
   preflight: RebuildAgentBaseImagePreflight | null | undefined,
 ): boolean {
@@ -275,13 +279,16 @@ export function ensureRebuildAgentBaseImage(
         : {}),
     });
     const needsTemporaryHandoff =
-      result.imageTag !== null && !isCanonicalLocalBaseImageRef(agentDef.name, result.imageTag);
-    const imageRef = result.imageTag
-      ? pinAgentSandboxBaseImageRef(agentDef.name, result.imageTag, {
-          forceLocal: true,
-          ...(needsTemporaryHandoff ? { temporary: true } : {}),
-        })
-      : result.imageTag;
+      result.imageTag !== null &&
+      !isCanonicalLocalBaseImageRef(agentDef.name, result.imageTag) &&
+      !isImmutableRemoteBaseImageRef(result.imageTag);
+    const imageRef =
+      result.imageTag && !isImmutableRemoteBaseImageRef(result.imageTag)
+        ? pinAgentSandboxBaseImageRef(agentDef.name, result.imageTag, {
+            forceLocal: true,
+            ...(needsTemporaryHandoff ? { temporary: true } : {}),
+          })
+        : result.imageTag;
     const disposeImageRef =
       needsTemporaryHandoff && imageRef && imageRef !== result.imageTag
         ? createTemporaryBaseImageHandoffDisposer(imageRef)

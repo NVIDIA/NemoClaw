@@ -183,17 +183,19 @@ describe("ensureRebuildAgentBaseImage", () => {
     });
   });
 
-  it("preserves resolved provenance with the immutable local recreate handoff (#7144)", () => {
+  it("preserves resolved provenance with the immutable remote recreate handoff (#7144)", () => {
     const { ensureAgentBaseImage, pinAgentSandboxBaseImageRef, dockerRmi } = setup();
-    const resolutionMetadata = { key: "current-base" } as SandboxBaseImageResolutionMetadata;
-    const platformRef = "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:platform";
-    const localRef = "nemoclaw-hermes-sandbox-base-local:image-current";
+    const platformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+    const resolutionMetadata = {
+      key: "current-base",
+      ref: platformRef,
+      digest: `sha256:${"a".repeat(64)}`,
+    } as SandboxBaseImageResolutionMetadata;
     ensureAgentBaseImage.mockReturnValue({
       imageTag: platformRef,
       built: false,
       resolutionMetadata,
     });
-    pinAgentSandboxBaseImageRef.mockReturnValue(localRef);
     const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
     const exitListenersBefore = process.listenerCount("exit");
 
@@ -201,24 +203,13 @@ describe("ensureRebuildAgentBaseImage", () => {
 
     expect(result).toEqual({
       ok: true,
-      imageRef: localRef,
+      imageRef: platformRef,
       overrideEnvVar,
       resolutionMetadata,
-      disposeImageRef: expect.any(Function),
     });
-    expect(pinAgentSandboxBaseImageRef).toHaveBeenCalledWith("hermes", platformRef, {
-      forceLocal: true,
-      temporary: true,
-    });
-    expect(process.listenerCount("exit")).toBe(exitListenersBefore + 1);
-    expect(result.disposeImageRef?.()).toBe(true);
-    expect(result.disposeImageRef?.()).toBe(true);
+    expect(pinAgentSandboxBaseImageRef).not.toHaveBeenCalled();
     expect(process.listenerCount("exit")).toBe(exitListenersBefore);
-    expect(dockerRmi).toHaveBeenCalledOnce();
-    expect(dockerRmi).toHaveBeenCalledWith(localRef, {
-      ignoreError: true,
-      suppressOutput: true,
-    });
+    expect(dockerRmi).not.toHaveBeenCalled();
   });
 
   it("binds an explicit local override after its immutable recreate handoff (#7144)", () => {
@@ -261,7 +252,7 @@ describe("ensureRebuildAgentBaseImage", () => {
 
   it("retains exit cleanup until a failed temporary removal succeeds (#7144)", () => {
     const { ensureAgentBaseImage, pinAgentSandboxBaseImageRef, dockerRmi } = setup();
-    const platformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+    const platformRef = "hermes:mutable-override";
     const localRef = `nemoclaw-hermes-sandbox-base-local:rebuild-123-${"b".repeat(16)}-image-${"c".repeat(64)}`;
     ensureAgentBaseImage.mockReturnValue({ imageTag: platformRef, built: false });
     pinAgentSandboxBaseImageRef.mockReturnValue(localRef);

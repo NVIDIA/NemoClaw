@@ -92,6 +92,30 @@ describe("stageRebuildBaseImageResolutionHandoff", () => {
     expect(recreateOptions.preResolvedBaseImageMetadata).toBe(current);
   });
 
+  it("binds provenance to the exact immutable remote rebuild handoff (#7144)", () => {
+    const digest = `sha256:${"a".repeat(64)}`;
+    const imageRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${digest}`;
+    const current = {
+      key: "current",
+      imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+      imageId: `sha256:${"b".repeat(64)}`,
+      ref: imageRef,
+      digest,
+      source: "pinned",
+    } as SandboxBaseImageResolutionMetadata;
+    const recreateOptions: { preResolvedBaseImageMetadata?: SandboxBaseImageResolutionMetadata } =
+      {};
+
+    stageRebuildBaseImageResolutionHandoff(recreateOptions, {
+      ok: true,
+      imageRef,
+      overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+      resolutionMetadata: current,
+    });
+
+    expect(recreateOptions.preResolvedBaseImageMetadata).toBe(current);
+  });
+
   it("rejects provenance that is not bound to the immutable local handoff", () => {
     const current = {
       key: "current",
@@ -107,6 +131,6 @@ describe("stageRebuildBaseImageResolutionHandoff", () => {
         overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
         resolutionMetadata: current,
       }),
-    ).toThrow("provenance did not match its immutable local handoff");
+    ).toThrow("provenance did not match its immutable handoff");
   });
 });

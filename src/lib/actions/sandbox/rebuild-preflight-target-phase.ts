@@ -91,8 +91,15 @@ export function stageRebuildBaseImageResolutionHandoff(
         "i",
       )
     : null;
-  if (!localHandoffPattern?.test(preflight.imageRef ?? "")) {
-    throw new Error("Rebuild base-image provenance did not match its immutable local handoff");
+  const imageRef = preflight.imageRef ?? "";
+  const remoteDigest = metadata.digest?.match(/^sha256:([0-9a-f]{64})$/i)?.[1]?.toLowerCase();
+  const immutableRemoteHandoff =
+    remoteDigest !== undefined &&
+    metadata.source !== "local" &&
+    metadata.ref === imageRef &&
+    imageRef.toLowerCase() === `${metadata.imageName}@sha256:${remoteDigest}`.toLowerCase();
+  if (!localHandoffPattern?.test(imageRef) && !immutableRemoteHandoff) {
+    throw new Error("Rebuild base-image provenance did not match its immutable handoff");
   }
   recreateOptions.preResolvedBaseImageMetadata = metadata;
 }

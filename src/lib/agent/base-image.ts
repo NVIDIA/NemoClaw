@@ -26,10 +26,10 @@ import {
   OPENSHELL_SANDBOX_MIN_GLIBC,
   type ResolveBaseImageOptions,
   resolveSandboxBaseImage,
-  SandboxBaseImageResolutionError,
   SANDBOX_BASE_BUILD_PROVENANCE_LABEL,
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolution,
+  SandboxBaseImageResolutionError,
   type SandboxBaseImageResolutionMetadata,
   type TrustedLocalBaseImageOverride,
   versionGte,
@@ -185,9 +185,9 @@ function hermesFinalDockerfileAcceptsBase(
   }
   if (
     typeof image !== "string" &&
-    image.source === "pinned" &&
-    image.pinnedRemoteRef === getHermesPinnedRemoteBaseRef(agent) &&
-    HERMES_OFFICIAL_BASE_DIGEST_REF.test(imageRef)
+    HERMES_OFFICIAL_BASE_DIGEST_REF.test(imageRef) &&
+    (image.source === "override" ||
+      (image.source === "pinned" && image.pinnedRemoteRef === getHermesPinnedRemoteBaseRef(agent)))
   ) {
     return true;
   }

@@ -199,27 +199,20 @@ describe("rebuild agent base image preflight", () => {
     expect(disposeRebuildAgentBaseImagePreflight(result)).toBe(true);
   });
 
-  it("hands a resolved platform digest to recreation through an immutable local ref (#7144)", () => {
+  it("retains a resolved platform digest for the immutable remote handoff (#7144)", () => {
     const platformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
-    const immutableRef = `nemoclaw-hermes-sandbox-base-local:image-${"b".repeat(64)}`;
     const { pinAgentSandboxBaseImageRef } = mockBaseImagePreflight(platformRef);
-    pinAgentSandboxBaseImageRef.mockReturnValue(immutableRef);
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail(), {
       resolutionHint: { key: "stale-base" } as never,
     });
 
-    expect(pinAgentSandboxBaseImageRef).toHaveBeenCalledWith("hermes", platformRef, {
-      forceLocal: true,
-      temporary: true,
-    });
+    expect(pinAgentSandboxBaseImageRef).not.toHaveBeenCalled();
     expect(result).toEqual({
       ok: true,
-      imageRef: immutableRef,
+      imageRef: platformRef,
       overrideEnvVar,
-      disposeImageRef: expect.any(Function),
     });
-    expect(disposeRebuildAgentBaseImagePreflight(result)).toBe(true);
   });
 
   it("disposes a temporary recreate handoff at most once (#7144)", () => {
