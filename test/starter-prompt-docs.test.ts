@@ -30,7 +30,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "ebf29b024c7a24e69ab8386b68e426d31a4c6821";
+const promptAssetRevision = "962f80ced8918e823ab5355f5056d729ce9232c1";
 
 type PromptAsset = {
   path: string;
@@ -53,7 +53,7 @@ const promptAssets = {
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
-    "9f506ece27dcda3cf85735d7c6a80846a7727696b825cf8ca161334ac6925c1f", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "eed210be783c39080b38c54d4aa158ea825333c3d92b8dcc2244dae8a633554a", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   windowsWsl: definePromptAsset(
     "docs/resources/prompt-assets/windows-wsl.md",
@@ -817,7 +817,7 @@ describe("starter prompt docs CTA", () => {
     expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
     expect(sparkSource).toContain("Leave `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_MODEL` unset");
     expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
-    expect(stationSource).toContain("`nvidia/nemotron-3-ultra-550b-a55b`");
+    expect(stationSource).toContain("`nemotron-ultra`");
     expect(stationSource).toContain("`deepseek-v4-flash`");
     expect(stationSource).toContain("`deepseek-ai/DeepSeek-V4-Flash`");
     expect(stationSource).toContain("Automatic pair selection");
@@ -841,7 +841,7 @@ describe("starter prompt docs CTA", () => {
       "For automatic pair selection, run the ordinary installer without",
     );
     expect(stationSource).toContain("For DeepSeek, pass `--station-deepseek`");
-    expect(stationSource).toContain("TCP port `29501`");
+    expect(stationSource).toContain("TCP port `6379`");
     expect(stationSource).toContain("shared `/24`");
     for (const environmentName of [
       "NEMOCLAW_PROVIDER",
