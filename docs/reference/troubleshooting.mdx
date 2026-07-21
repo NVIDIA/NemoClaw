@@ -1506,7 +1506,7 @@ Raise `NEMOCLAW_SANDBOX_READY_TIMEOUT` too if the overall deadline is too short.
 To fail fast on the first `Error` poll, set the debounce to `1`:
 
 ```bash
-export NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE=60   # tolerate 60 consecutive Error observations
+export NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE=1
 $$nemoclaw onboard
 ```
 
