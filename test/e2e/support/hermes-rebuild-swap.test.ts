@@ -1,0 +1,40 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  HERMES_REBUILD_SWAP_BYTES,
+  needsHermesRebuildSwap,
+  parseActiveSwapBytes,
+} from "../fixtures/hermes-rebuild-swap.ts";
+
+describe("Hermes rebuild swap", () => {
+  it("adds active swap sizes reported by swapon", () => {
+    expect(parseActiveSwapBytes("17179869184\n17179869184\n")).toBe(HERMES_REBUILD_SWAP_BYTES);
+  });
+
+  it("provisions swap only on GitHub Actions runners below the rebuild floor", () => {
+    expect(needsHermesRebuildSwap({ activeSwapBytes: 0, githubActions: true })).toBe(true);
+    expect(
+      needsHermesRebuildSwap({
+        activeSwapBytes: HERMES_REBUILD_SWAP_BYTES,
+        githubActions: true,
+      }),
+    ).toBe(false);
+    expect(needsHermesRebuildSwap({ activeSwapBytes: 0, githubActions: false })).toBe(false);
+  });
+
+  it("checks the fallback before the live Docker fixture starts", () => {
+    const source = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../live/rebuild-hermes.test.ts"),
+      "utf8",
+    );
+    const ensureSwap = source.indexOf("await ensureHermesRebuildSwap(host);");
+    const dockerProbe = source.indexOf('host.command("docker", ["info"]');
+
+    expect(ensureSwap).toBeGreaterThan(-1);
+    expect(dockerProbe).toBeGreaterThan(ensureSwap);
+  });
+});
