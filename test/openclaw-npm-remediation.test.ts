@@ -205,6 +205,94 @@ function writeCoreArchiveFixtures(): {
   return { archivePath, npmExecutable, workingDirectory: path.join(root, "work") };
 }
 
+function writePluginArchiveFixtures(): {
+  archivePath: string;
+  npmExecutable: string;
+  workingDirectory: string;
+} {
+  const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-plugin-remediation-"));
+  temporaryDirectories.push(root);
+  const archivePath = path.join(root, "slack-2026.6.10.tgz");
+  packFixture(writeFixture(), archivePath);
+
+  const replacements = [
+    {
+      archive: "axios-1.18.0-source.tgz",
+      dependencies: {
+        "follow-redirects": "^1.16.0",
+        "form-data": "^4.0.5",
+        "https-proxy-agent": "^5.0.1",
+        "proxy-from-env": "^2.1.0",
+      },
+      name: "axios",
+      version: "1.18.0",
+    },
+    {
+      archive: "https-proxy-agent-5.0.1-source.tgz",
+      dependencies: { "agent-base": "6", debug: "4" },
+      name: "https-proxy-agent",
+      version: "5.0.1",
+    },
+    {
+      archive: "agent-base-6.0.2-source.tgz",
+      dependencies: { debug: "4" },
+      name: "agent-base",
+      version: "6.0.2",
+    },
+  ] as const;
+  for (const replacement of replacements) {
+    const directory = path.join(root, `${replacement.name}-package`);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      path.join(directory, "package.json"),
+      `${JSON.stringify(
+        {
+          dependencies: replacement.dependencies,
+          name: replacement.name,
+          version: replacement.version,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    packFixture(directory, path.join(root, replacement.archive));
+  }
+
+  const npmExecutable = path.join(root, "npm-fixture.sh");
+  writeFileSync(
+    npmExecutable,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `fixture_root=${JSON.stringify(root)}`,
+      'case "$1:$2:${3:-}" in',
+      '  "view:axios@1.18.0:dist.integrity") value="sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==" ;;',
+      '  "view:axios@1.18.0:dist.tarball") value="https://registry.npmjs.org/axios/-/axios-1.18.0.tgz" ;;',
+      '  "view:https-proxy-agent@5.0.1:dist.integrity") value="sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==" ;;',
+      '  "view:https-proxy-agent@5.0.1:dist.tarball") value="https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz" ;;',
+      '  "view:agent-base@6.0.2:dist.integrity") value="sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==" ;;',
+      '  "view:agent-base@6.0.2:dist.tarball") value="https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz" ;;',
+      '  "pack:https://registry.npmjs.org/axios/-/axios-1.18.0.tgz:--pack-destination") archive="axios-1.18.0-source.tgz"; filename="axios-1.18.0.tgz"; integrity="sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==" ;;',
+      '  "pack:https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz:--pack-destination") archive="https-proxy-agent-5.0.1-source.tgz"; filename="https-proxy-agent-5.0.1.tgz"; integrity="sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==" ;;',
+      '  "pack:https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz:--pack-destination") archive="agent-base-6.0.2-source.tgz"; filename="agent-base-6.0.2.tgz"; integrity="sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==" ;;',
+      '  *) echo "unexpected npm fixture invocation: $*" >&2; exit 1 ;;',
+      "esac",
+      'if [ "$1" = "view" ]; then printf "%s\\n" "$value"; exit 0; fi',
+      'destination=""',
+      'while [ "$#" -gt 0 ]; do',
+      '  if [ "$1" = "--pack-destination" ]; then destination="$2"; shift 2; continue; fi',
+      "  shift",
+      "done",
+      'cp "$fixture_root/$archive" "$destination/$filename"',
+      'printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$filename" "$integrity"',
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  chmodSync(npmExecutable, 0o700);
+  return { archivePath, npmExecutable, workingDirectory: path.join(root, "work") };
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -328,7 +416,9 @@ describe("OpenClaw npm remediation", () => {
         expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
       });
     } catch (error) {
-      metadataIntegrity = String(error).match(/got (sha512-\S+)/u)?.[1] ?? "";
+      const message = String(error);
+      expect(message).toMatch(/got sha512-\S+/u);
+      metadataIntegrity = message.match(/got (sha512-\S+)/u)?.[1] ?? "";
     }
     expect(metadataIntegrity).toMatch(/^sha512-/u);
 
@@ -355,5 +445,73 @@ describe("OpenClaw npm remediation", () => {
       dependencies: { tar: "7.5.19" },
     });
     expect(fsSafePackageJson.optionalDependencies).toMatchObject({ tar: "7.5.19" });
+  });
+
+  // source-shape-contract: security -- Extracted plugin contents prove the rebuilt archive carries every reviewed Axios replacement package
+  it("rebuilds a guarded plugin archive with the patched Axios graph bundled", () => {
+    const fixture = writePluginArchiveFixtures();
+    const request = {
+      archivePath: fixture.archivePath,
+      env: { NEMOCLAW_REVIEWED_NPM_EXECUTABLE: fixture.npmExecutable },
+      packageSpec: "@openclaw/slack@2026.6.10",
+      workingDirectory: fixture.workingDirectory,
+    };
+    let metadataIntegrity = "";
+    try {
+      buildRemediatedOpenClawArchive({
+        ...request,
+        expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
+      });
+    } catch (error) {
+      const message = String(error);
+      expect(message).toMatch(/got sha512-\S+/u);
+      metadataIntegrity = message.match(/got (sha512-\S+)/u)?.[1] ?? "";
+    }
+    expect(metadataIntegrity).toMatch(/^sha512-/u);
+
+    const remediated = buildRemediatedOpenClawArchive({
+      ...request,
+      expectedPatchedMetadataIntegrity: metadataIntegrity,
+    });
+    const extracted = path.join(fixture.workingDirectory, "asserted-plugin");
+    mkdirSync(extracted, { recursive: true });
+    const extraction = spawnSync("tar", ["-xzf", remediated.archivePath, "-C", extracted], {
+      encoding: "utf-8",
+    });
+    expect(extraction.status, extraction.stderr).toBe(0);
+    const axiosPackageJson = readJson<{ name: string; version: string }>(
+      path.join(extracted, "package", "node_modules", "axios", "package.json"),
+    );
+    const proxyPackageJson = readJson<{ name: string; version: string }>(
+      path.join(
+        extracted,
+        "package",
+        "node_modules",
+        "axios",
+        "node_modules",
+        "https-proxy-agent",
+        "package.json",
+      ),
+    );
+    const agentBasePackageJson = readJson<{ name: string; version: string }>(
+      path.join(
+        extracted,
+        "package",
+        "node_modules",
+        "axios",
+        "node_modules",
+        "https-proxy-agent",
+        "node_modules",
+        "agent-base",
+        "package.json",
+      ),
+    );
+    expect(axiosPackageJson).toEqual(expect.objectContaining({ name: "axios", version: "1.18.0" }));
+    expect(proxyPackageJson).toEqual(
+      expect.objectContaining({ name: "https-proxy-agent", version: "5.0.1" }),
+    );
+    expect(agentBasePackageJson).toEqual(
+      expect.objectContaining({ name: "agent-base", version: "6.0.2" }),
+    );
   });
 });

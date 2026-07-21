@@ -338,6 +338,11 @@
     },
     {
       "file": "test/openclaw-npm-remediation.test.ts",
+      "test": "rebuilds a guarded plugin archive with the patched Axios graph bundled",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-npm-remediation.test.ts",
       "test": "replaces the reviewed bundled Axios graph with the patched graph",
       "category": "security"
     },
