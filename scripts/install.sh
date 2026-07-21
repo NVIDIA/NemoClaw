@@ -1274,14 +1274,6 @@ maybe_install_openshell_during_install() {
     return 0
   fi
   if [[ "$mode" == "if-missing" ]] && command_exists openshell; then
-    # A present binary that cannot report a version is not a usable managed
-    # OpenShell. Fail closed instead of silently keeping it: otherwise the
-    # install is skipped here AND the preinstall version gate is bypassed (its
-    # gate only runs when a sandbox is registered, install.sh:2276), so
-    # onboarding proceeds against an undeterminable OpenShell version (#7300).
-    if [ -z "$(installed_openshell_version 2>/dev/null || true)" ]; then
-      error "OpenShell is present on PATH but could not report its version. Refusing to continue with an undeterminable OpenShell version — reinstall a supported OpenShell (run scripts/install-openshell.sh) or remove the broken binary, then rerun the installer."
-    fi
     return 0
   fi
   spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
@@ -2009,6 +2001,20 @@ run_preupgrade_backup() {
 installed_openshell_version() {
   command_exists openshell || return 1
   openshell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+# Fail closed before onboarding when an openshell binary is present on PATH but
+# cannot report a version. Run at an unconditional point (after all install
+# steps, before onboarding): the source-checkout `if-missing` branch keeps a
+# present binary, and the preinstall version gate only runs when a sandbox is
+# registered (install.sh:2276) — so a no-sandbox run or a deferred install would
+# otherwise proceed against an undeterminable OpenShell version (#7300). An
+# absent binary is fine (it was installed on the force path); a binary that
+# reports a version is fine (the #3989 developer-autonomy case).
+require_reportable_openshell_version() {
+  command_exists openshell || return 0
+  [ -n "$(installed_openshell_version 2>/dev/null || true)" ] && return 0
+  error "OpenShell is present on PATH but could not report its version. Refusing to start onboarding with an undeterminable OpenShell version — reinstall a supported OpenShell (run scripts/install-openshell.sh) or remove the broken binary, then rerun the installer."
 }
 
 truthy_env() {
@@ -4003,6 +4009,7 @@ main() {
   preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw
+  require_reportable_openshell_version
 
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
   # shell PATH cache no longer suppresses auto-onboarding (#3276). Falls
