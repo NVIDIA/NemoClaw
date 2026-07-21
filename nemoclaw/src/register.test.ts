@@ -171,9 +171,11 @@ describe("plugin registration", () => {
     const api = createMockApi();
     register(api);
 
-    const bannerLines = stderrOutput()
-      .split("\n")
-      .filter((line) => line.length > 0);
+    const output = stderrOutput();
+    expect(output.startsWith("\n")).toBe(true);
+    expect(output.endsWith("\n\n")).toBe(true);
+
+    const bannerLines = output.split("\n").filter((line) => line.length > 0);
     expect(bannerLines.length).toBeGreaterThan(0);
     for (const line of bannerLines) {
       expect(line.startsWith("[gateway] ")).toBe(true);
