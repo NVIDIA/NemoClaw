@@ -225,9 +225,19 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("code-backed for the reviewed `openclaw@2026.6.10` artifact");
     expect(review).toContain("src/lib/messaging/channels/manifests.test.ts");
     expect(review).toContain("npm audit result in this note remains a point-in-time snapshot");
-    expect(review).toContain("Advisory audit revalidated: 2026-07-03");
-    expect(review).toContain("0` critical vulnerabilities across `763` total dependencies");
+    expect(review).toContain("Advisory audit revalidated: 2026-07-21");
+    expect(review).toContain(
+      "`0` info, `1` low, `1` moderate, `0` high, and `0` critical findings across `766` total dependencies",
+    );
+    expect(review).toContain(
+      "The mcporter locked graph reported no findings across `138` dependencies",
+    );
+    expect(review).toContain("GHSA-v422-hmwv-36x6");
+    expect(review).toContain("reviewed Slack and Microsoft Teams plugin graphs");
+    expect(review).toContain("GHSA-j3f2-48v5-ccww");
+    expect(review).toContain("reviewed diagnostics OTEL and WhatsApp plugin graphs");
     expect(review).toContain("Node `v22.22.2`");
+    expect(review).toContain("public npm registry");
     expect(review).toContain("engine requirement of `>=22.19.0`");
     expect(review).toContain(
       "separate `wechat-runtime-audit` gate uses Node `22.19.0` and npm `10.9.4`",
@@ -238,6 +248,54 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("`npm audit --omit=dev --json`");
     expect(review).toContain("configured threshold in `ci/reviewed-npm-audit.json` is `high`");
     expect(review).toContain("Transitive Dependency Graph Rationale");
+    expect(review).toContain("Transitive Remediation Boundary");
+    expect(review).toContain("Transitive Remediation Concern Ledger");
+    expect(review).toContain("`openclaw@2026.6.10`, the helper makes these changes");
+    expect(review).toContain("`tar@7.5.16` with `tar@7.5.19`");
+    expect(review).toContain("`brace-expansion@5.0.6` with `brace-expansion@5.0.7`");
+    expect(review).toContain("`@openclaw/fs-safe@0.3.0`");
+    expect(review).toContain("optional `tar` pin from `7.5.13` to `7.5.19`");
+    expect(review).toContain("`axios@1.16.0` with `axios@1.18.0`");
+    expect(review).toContain("`https-proxy-agent@5.0.1` and `agent-base@6.0.2`");
+    expect(review).toContain("exact registry SRI and tarball URL");
+    expect(review).toContain(
+      "rejects unsafe archive members before extraction and after repacking",
+    );
+    expect(review).toContain("committed SHA-512 metadata value");
+    expect(review).toContain(
+      "core value also covers the bundled `@openclaw/fs-safe` package manifest",
+    );
+    for (const integrity of [
+      "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
+      "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
+      "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==",
+      "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
+      "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",
+      "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
+      "sha512-m5CjeXs484TZPC4g4ESFfxncv0BKJOGUtn0r63qDi3jolwMCJ1DKG0n1pfweAuLEAlfoCKXRpY0Rl0i+POcezw==",
+      "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
+      "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
+    ]) {
+      expect(review).toContain(integrity);
+    }
+    for (const tarball of [
+      "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
+      "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
+      "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz",
+      "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
+      "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz",
+      "https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz",
+    ]) {
+      expect(review).toContain(tarball);
+    }
+    expect(review).toContain("ignore-scripts+reviewed-lifecycle+transitive-remediation-v1");
+    expect(review).toContain("The replacement graph has no repository-generated lock-derived SBOM");
+    expect(review).toContain(
+      "`https-proxy-agent@5.0.1` and `agent-base@6.0.2` tarballs declare MIT in package metadata but contain no license file",
+    );
+    expect(review).toContain("The other replacement tarballs include license files");
+    expect(review).toContain("`tar@7.5.19` declares BlueOak-1.0.0");
+    expect(review).toContain("the others declare MIT");
     expect(review).toContain(
       "The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transitive graph",
     );

@@ -65,6 +65,10 @@ const TAR_VERSION = "7.5.19";
 const TAR_INTEGRITY =
   "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==";
 const TAR_TARBALL = "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz";
+const FS_SAFE_VERSION = "0.3.0";
+const FS_SAFE_INTEGRITY =
+  "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==";
+const FS_SAFE_TARBALL = "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz";
 const BRACE_EXPANSION_VERSION = "5.0.7";
 const BRACE_EXPANSION_INTEGRITY =
   "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==";
@@ -85,7 +89,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "openclaw@2026.6.10": {
     kind: "core",
     expectedPatchedMetadataIntegrity:
-      "sha512-Cc8q02HHzqsvbz/H/oY91VR7qtfg0Mug3wa88XrI2J1rKo/45doWnKj6gjAF1rJ5fzEsiPnWqPBa1K6kPCbSKQ==",
+      "sha512-m5CjeXs484TZPC4g4ESFfxncv0BKJOGUtn0r63qDi3jolwMCJ1DKG0n1pfweAuLEAlfoCKXRpY0Rl0i+POcezw==",
   },
 });
 
@@ -165,7 +169,12 @@ function writeJson(path: string, value: JsonObject): void {
 
 function hashPatchedMetadata(packageDirectory: string): string {
   const hash = createHash("sha512");
-  for (const name of ["package.json", "npm-shrinkwrap.json"]) {
+  const names = ["package.json", "npm-shrinkwrap.json"];
+  const bundledFsSafePackageJson = "node_modules/@openclaw/fs-safe/package.json";
+  if (existsSync(join(packageDirectory, bundledFsSafePackageJson))) {
+    names.push(bundledFsSafePackageJson);
+  }
+  for (const name of names) {
     const contents = readFileSync(join(packageDirectory, name));
     hash.update(`${name}\0${contents.length}\0`);
     hash.update(contents);
@@ -296,6 +305,9 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   if (packageJson.dependencies?.["brace-expansion"] !== undefined) {
     throw new Error("openclaw@2026.6.10 unexpectedly declares brace-expansion directly");
   }
+  if (packageJson.bundledDependencies !== undefined) {
+    throw new Error("openclaw@2026.6.10 unexpectedly declares bundled dependencies");
+  }
 
   const shrinkwrap = readJson(shrinkwrapPath);
   if (shrinkwrap.lockfileVersion !== 3 || !shrinkwrap.packages?.[""]) {
@@ -325,6 +337,7 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   }
 
   packageJson.dependencies.tar = TAR_VERSION;
+  packageJson.bundledDependencies = ["@openclaw/fs-safe"];
   root.dependencies.tar = TAR_VERSION;
   tar.version = TAR_VERSION;
   tar.resolved = TAR_TARBALL;
@@ -336,6 +349,29 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
 
   writeJson(packageJsonPath, packageJson);
   writeJson(shrinkwrapPath, shrinkwrap);
+}
+
+function patchFsSafePackageGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(
+    packageJson,
+    "@openclaw/fs-safe",
+    FS_SAFE_VERSION,
+    "OpenClaw fs-safe remediation package",
+  );
+  if (
+    !packageJson.optionalDependencies ||
+    packageJson.optionalDependencies.jszip !== "^3.10.1" ||
+    packageJson.optionalDependencies.tar !== "7.5.13" ||
+    Object.keys(packageJson.optionalDependencies).length !== 2
+  ) {
+    throw new Error(
+      "@openclaw/fs-safe@0.3.0 optional dependency graph changed; review the remediation",
+    );
+  }
+  packageJson.optionalDependencies.tar = TAR_VERSION;
+  writeJson(packageJsonPath, packageJson);
 }
 
 function copyReplacementPackage(source: string, destination: string): void {
@@ -355,6 +391,7 @@ function packReplacement(
     env,
     expectedIntegrity,
     label: `OpenClaw npm remediation dependency ${packageSpec}`,
+    npmExecutable: env.NEMOCLAW_REVIEWED_NPM_EXECUTABLE,
     packageSpec,
     tarballUrl,
     tempDirectory: workingDirectory,
@@ -385,6 +422,24 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
     env,
   );
   if (remediation.kind === "core") {
+    const fsSafeArchive = packReplacement(
+      `@openclaw/fs-safe@${FS_SAFE_VERSION}`,
+      FS_SAFE_INTEGRITY,
+      FS_SAFE_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const fsSafePackage = extractArchive(
+      fsSafeArchive.archivePath,
+      join(remediationRoot, "fs-safe"),
+      remediationRoot,
+      env,
+    );
+    patchFsSafePackageGraph(fsSafePackage);
+    copyReplacementPackage(
+      fsSafePackage,
+      join(sourcePackage, "node_modules", "@openclaw", "fs-safe"),
+    );
     patchOpenClawCorePackageGraph(sourcePackage);
   } else {
     const axiosArchive = packReplacement(
@@ -479,12 +534,11 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
   validateArchiveMembers(archivePath, remediationRoot, env);
   const metadataIntegrity = hashPatchedMetadata(sourcePackage);
   const integrity = `sha512-${createHash("sha512").update(readFileSync(archivePath)).digest("base64")}`;
-  if (
-    request.expectedPatchedMetadataIntegrity &&
-    metadataIntegrity !== request.expectedPatchedMetadataIntegrity
-  ) {
+  const expectedPatchedMetadataIntegrity =
+    request.expectedPatchedMetadataIntegrity ?? remediation.expectedPatchedMetadataIntegrity;
+  if (metadataIntegrity !== expectedPatchedMetadataIntegrity) {
     throw new Error(
-      `Remediated ${request.packageSpec} metadata integrity mismatch: expected ${request.expectedPatchedMetadataIntegrity}, got ${metadataIntegrity}`,
+      `Remediated ${request.packageSpec} metadata integrity mismatch: expected ${expectedPatchedMetadataIntegrity}, got ${metadataIntegrity}`,
     );
   }
   return { archivePath, integrity, metadataIntegrity, remediated: true };

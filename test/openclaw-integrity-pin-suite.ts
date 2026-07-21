@@ -232,7 +232,7 @@ function runInstallBlock(
       'const path = require("node:path");',
       "const args = process.argv.slice(2);",
       "const value = (name) => args[args.indexOf(name) + 1];",
-      'const output = path.join(value("--working-directory"), "remediated-openclaw.tgz");',
+      'const output = path.join(value("--working-directory"), "openclaw-remediated.tgz");',
       'fs.copyFileSync(value("--archive"), output);',
       "console.log(output);",
       "",
@@ -518,7 +518,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
         expect(reviewNote).toContain("`0` high");
         expect(reviewNote).toContain("`0` critical");
-        expect(reviewNote).toContain("`763` total dependencies");
+        expect(reviewNote).toContain("`766` total dependencies");
         expect(reviewNote).toContain(
           "`dist/pipeline.runtime-*.js`, which exports `prepareSlackMessage`",
         );
@@ -759,7 +759,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
 
         expect(production.result.status).toBe(0);
         expect(codexAcp.result.status).toBe(0);
-        expect(base.result.status).toBe(0);
+        expect(base.result.status, `${base.result.stdout}${base.result.stderr}`).toBe(0);
         expect(production.calls).toContain(
           `npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`,
         );
@@ -795,7 +795,18 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(base.calls).toContain(
           "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
         );
-        expect(base.calls).toContain(`openclaw-${PINNED_OPENCLAW_VERSION}.tgz`);
+        for (const calls of [production.calls, base.calls]) {
+          const installCalls = calls
+            .split("\n")
+            .filter((call) => call.startsWith("npm install -g "));
+          expect(
+            installCalls.some((call) => call.includes("/openclaw-remediated.tgz")),
+            calls,
+          ).toBe(true);
+          expect(
+            installCalls.some((call) => call.includes(`/openclaw-${PINNED_OPENCLAW_VERSION}.tgz`)),
+          ).toBe(false);
+        }
         expect(base.provenanceContent).toBe(openClawBaseProvenance());
         expect(base.provenanceMode).toBe(0o444);
       });

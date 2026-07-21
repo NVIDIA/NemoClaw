@@ -332,6 +332,21 @@
       "category": "security"
     },
     {
+      "file": "test/openclaw-npm-remediation.test.ts",
+      "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-npm-remediation.test.ts",
+      "test": "replaces the reviewed bundled Axios graph with the patched graph",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-npm-remediation.test.ts",
+      "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
+      "category": "security"
+    },
+    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "keeps the WSL suite unprivileged with explicit root-only contracts",
       "category": "security"
