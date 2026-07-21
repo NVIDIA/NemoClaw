@@ -141,9 +141,7 @@ function packFixture(packageDirectory: string, archivePath: string): void {
   const result = spawnSync("tar", ["-czf", archivePath, "-C", root, "package"], {
     encoding: "utf-8",
   });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || "failed to pack OpenClaw test archive");
-  }
+  expect(result.status, result.stderr || "failed to pack OpenClaw test archive").toBe(0);
 }
 
 function writeCoreArchiveFixtures(): {
