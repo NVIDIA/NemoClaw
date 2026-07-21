@@ -134,7 +134,7 @@ Ask required model, endpoint, credential, and download questions one at a time.
 - Use non-interactive environment variables whenever supported.
 - For installation outside an accepted platform-asset path, set `NEMOCLAW_AGENT` and `NEMOCLAW_PROVIDER` from my selections.
 - Use the maintained release unless I request a specific version.
-- For a specific version, set `NEMOCLAW_INSTALL_TAG=vX.Y.Z` to its versioned release tag.
+- For a specific version, clear any inherited `NEMOCLAW_INSTALL_REF`, then set `NEMOCLAW_INSTALL_TAG=vX.Y.Z` to its versioned release tag.
 - Never leave a command waiting at `Choose [1]:`.
 - If a choice cannot be supplied non-interactively, stop before starting and explain the supported alternative.
 - The DGX Station asset is the exception for the official third-party-software notice and Express confirmation. Keep those installer prompts visible, wait for the user's response, and do not pre-answer them.

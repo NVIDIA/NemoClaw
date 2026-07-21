@@ -489,6 +489,8 @@ describe("starter prompt docs CTA", () => {
   it("names non-interactive install controls and scopes sandboxed Docker approval (#7311)", () => {
     const promptSource = readStarterPrompt();
     const quickstartSource = read("docs/get-started/quickstart.mdx");
+    const commandsSource = read("docs/reference/commands.mdx");
+    const updateSource = read("docs/manage-sandboxes/update-sandboxes.mdx");
 
     for (const variable of ["NEMOCLAW_AGENT", "NEMOCLAW_PROVIDER", "NEMOCLAW_INSTALL_TAG"]) {
       expect(promptSource, `starter prompt names ${variable}`).toContain(variable);
@@ -497,6 +499,7 @@ describe("starter prompt docs CTA", () => {
 
     expect(promptSource).toContain("NEMOCLAW_AGENT=openclaw");
     expect(promptSource).toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z");
+    expect(promptSource).toContain("clear any inherited `NEMOCLAW_INSTALL_REF`");
     expect(promptSource).toContain(
       "Request permission to rerun only that exact command outside the sandbox",
     );
@@ -509,7 +512,7 @@ describe("starter prompt docs CTA", () => {
     );
     expect(promptSource).not.toContain("or another approved host command");
     expect(quickstartSource).toContain(
-      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=vX.Y.Z bash",
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=vX.Y.Z bash",
     );
     expect(quickstartSource).toContain(
       "Approve only the exact Docker-dependent command that the coding agent requests",
@@ -520,6 +523,18 @@ describe("starter prompt docs CTA", () => {
     expect(promptSource).not.toContain("## Codex Execution Sandbox");
     expect(quickstartSource).not.toContain("When Codex reports");
     expect(quickstartSource).not.toContain("NEMOCLAW_INSTALL_TAG=vX.Y.Z curl");
+    expect(quickstartSource).not.toContain(
+      "https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=vX.Y.Z bash",
+    );
+    expect(commandsSource).toContain(
+      "A nonempty value takes precedence over `NEMOCLAW_INSTALL_TAG`.",
+    );
+    expect(updateSource).toContain(
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=lkg bash",
+    );
+    expect(updateSource).not.toContain(
+      "https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=lkg bash",
+    );
     expect(promptSource).not.toContain("NEMOCLAW_INSTALL_TAG=<git-ref>");
     expect(quickstartSource).not.toContain("NEMOCLAW_INSTALL_TAG=<git-ref>");
   });

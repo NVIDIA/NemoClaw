@@ -103,12 +103,13 @@ Use these details when your first-run path needs more control.
     Set `NEMOCLAW_AGENT` to `hermes` or `langchain-deepagents-code` to install another agent.
     Set `NEMOCLAW_PROVIDER` and the matching credential variable for another provider, then use a sandbox name that does not depend on a previous onboarding session.
     To select a specific NemoClaw release, replace `vX.Y.Z` with its versioned release tag.
+    `NEMOCLAW_INSTALL_REF` is a higher-priority development override, so clear it when pinning a release tag.
 
     ```bash
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=vX.Y.Z bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=vX.Y.Z bash
     ```
 
-    Keep `NEMOCLAW_INSTALL_TAG` on the `bash` side of the pipeline so the installer can read it.
+    Keep both install variables on the `bash` side of the pipeline so the installer can read them.
     Do not place `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before `curl`, because the installer process cannot read it there.
     Refer to the [Commands reference](../reference/commands#nemoclaw-onboard) for the full non-interactive configuration.
   </Accordion>
