@@ -53,12 +53,14 @@ whose amd64 config reports Node `22.23.1`.
   - `sha512-9FcyK4PA6+WbzlTM9WhQm6vB5W7cP7dUiPsv1g7YDwEQnQ1CGpK3MGlKk/ITVWMk05kHZuBhmVhiv8LZoy/PFQ==`
   - `https://registry.npmjs.org/tar/-/tar-7.5.20.tgz`
 
-## Audit result and temporary Axios remediation
+## Audit result and temporary dependency remediations
 
-The exact reviewed archive graph contains `822` total dependencies and reports
-`1` moderate, `0` high, and `0` critical vulnerabilities. The critical `tar`
-finding that blocked the previous pin is gone. The remaining moderate
-`protobufjs` finding is below the configured `high` threshold.
+The exact reviewed archive graph contains `823` total dependencies and reports
+`13` moderate, `0` high, and `0` critical vulnerabilities. The critical `tar`
+finding that blocked the previous pin and the high Jaeger finding are gone. npm
+audit expands the remaining `@hono/node-server` advisory through its affected
+OpenClaw and MCP dependents, alongside the separate moderate `protobufjs`
+finding. Both advisories are below the configured `high` threshold.
 
 The independently installed `nemoclaw/` plugin graph reports `0`
 vulnerabilities after resolving its direct `tar` dependency to `7.5.20`.
@@ -87,6 +89,28 @@ plugin archives with this exact replacement graph:
 - `agent-base@6.0.2`,
   `sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==`.
 
+The diagnostics plugin bundles `@opentelemetry/sdk-node@0.219.0`, whose exact
+dependency on `@opentelemetry/propagator-jaeger@2.8.0` is affected by
+`GHSA-45rx-2jwx-cxfr`. The helper changes only that bundled SDK dependency edge
+to the first patched release and installs the matching Core package beneath it:
+
+- `@opentelemetry/propagator-jaeger@2.9.0`,
+  `sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==`,
+  `https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz`;
+- nested `@opentelemetry/core@2.9.0`,
+  `sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==`,
+  `https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz`.
+
+Both replacements declare `Apache-2.0`. The nested Core keeps every other
+consumer on the plugin's reviewed `2.8.0` graph while satisfying Jaeger's exact
+`2.9.0` dependency. The helper fails closed unless the source archive still
+contains diagnostics `2026.7.1`, SDK Node `0.219.0`, Jaeger `2.8.0`, and no
+preexisting nested Core. The resulting package tree is pinned to
+`sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==`.
+Malformed Jaeger trace and baggage headers no longer throw, while a valid
+Jaeger header still produces the expected trace and span context in the real
+remediated package graph.
+
 `scripts/lib/openclaw-npm-remediation.mts` verifies the original plugin and
 replacement package identities before it writes the archive. It rejects an
 upstream graph that no longer resolves Axios `1.16.0`. It then verifies the
@@ -98,9 +122,11 @@ The tree hash opens each regular file without following symbolic links and
 validates the opened descriptor before it reads the content. This keeps the
 metadata and content checks bound to the same file.
 
-This remediation is limited to `@openclaw/slack@2026.7.1` and
-`@openclaw/msteams@2026.7.1`. Remove it when a reviewed stable OpenClaw plugin
-release bundles Axios `>=1.18.0` and passes the repository audit.
+The Axios remediation is limited to `@openclaw/slack@2026.7.1` and
+`@openclaw/msteams@2026.7.1`; the Jaeger remediation is limited to
+`@openclaw/diagnostics-otel@2026.7.1`. Remove each branch when a reviewed stable
+OpenClaw plugin release bundles the corresponding patched graph and passes the
+repository audit.
 
 The reviewed installer verifies each registry identity and downloaded tarball
 integrity. `scripts/lib/reviewed-npm-archive.mts` uses `npm pack --json` and

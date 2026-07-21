@@ -85,7 +85,8 @@ The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transi
 This section is a point-in-time record of the remediation shipped for the
 2026.6.10 runtime. The current 2026.7.1 path installs the reviewed core archive
 directly because its core graph already contains the fixed versions, and keeps
-only the version-scoped Slack and Microsoft Teams Axios remediation. See
+only the version-scoped Slack and Microsoft Teams Axios remediation plus the
+diagnostics Jaeger remediation added for the 2026.7.1 archive. See
 [`openclaw-2026.7.1-dependency-review.md`](./openclaw-2026.7.1-dependency-review.md)
 for the active source and validation boundary.
 

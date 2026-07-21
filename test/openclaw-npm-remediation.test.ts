@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   hashPackageTree,
+  patchOpenClawDiagnosticsOtelPackageGraph,
   patchOpenClawPluginPackageGraph,
 } from "../scripts/lib/openclaw-npm-remediation.mts";
 
@@ -52,6 +53,53 @@ function writeFixture(axiosVersion = "1.16.0"): string {
               "form-data": "^4.0.5",
               "proxy-from-env": "^2.1.0",
             },
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return directory;
+}
+
+function writeDiagnosticsFixture(jaegerVersion = "2.8.0"): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-otel-remediation-"));
+  temporaryDirectories.push(directory);
+  const sdkDirectory = path.join(directory, "node_modules", "@opentelemetry", "sdk-node");
+  mkdirSync(sdkDirectory, { recursive: true });
+  writeFileSync(
+    path.join(directory, "package.json"),
+    `${JSON.stringify({ name: "@openclaw/diagnostics-otel", version: "2026.7.1" }, null, 2)}\n`,
+  );
+  writeFileSync(
+    path.join(sdkDirectory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "@opentelemetry/sdk-node",
+        version: "0.219.0",
+        dependencies: { "@opentelemetry/propagator-jaeger": jaegerVersion },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    path.join(directory, "npm-shrinkwrap.json"),
+    `${JSON.stringify(
+      {
+        name: "@openclaw/diagnostics-otel",
+        version: "2026.7.1",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "@openclaw/diagnostics-otel", version: "2026.7.1" },
+          "node_modules/@opentelemetry/sdk-node": {
+            version: "0.219.0",
+            dependencies: { "@opentelemetry/propagator-jaeger": jaegerVersion },
+          },
+          "node_modules/@opentelemetry/propagator-jaeger": {
+            version: jaegerVersion,
+            dependencies: { "@opentelemetry/core": jaegerVersion },
           },
         },
       },
@@ -168,6 +216,42 @@ describe("OpenClaw npm remediation", () => {
 
     expect(() => patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.7.1")).toThrow(
       "must resolve node_modules/axios to 1.16.0 before remediation",
+    );
+  });
+
+  it("replaces the reviewed Jaeger propagator with its aligned patched core", () => {
+    const directory = writeDiagnosticsFixture();
+
+    patchOpenClawDiagnosticsOtelPackageGraph(directory);
+
+    expect(
+      readPackageField<string>(
+        path.join(directory, "node_modules", "@opentelemetry", "sdk-node"),
+        "dependencies.@opentelemetry/propagator-jaeger",
+      ),
+    ).toBe("2.9.0");
+    const shrinkwrap = readJson<{
+      packages: Record<string, { version?: string; dependencies?: Record<string, string> }>;
+    }>(path.join(directory, "npm-shrinkwrap.json"));
+    expect(shrinkwrap.packages["node_modules/@opentelemetry/propagator-jaeger"]).toMatchObject({
+      version: "2.9.0",
+      dependencies: { "@opentelemetry/core": "2.9.0" },
+    });
+    expect(
+      shrinkwrap.packages[
+        "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core"
+      ],
+    ).toMatchObject({
+      version: "2.9.0",
+      dependencies: { "@opentelemetry/semantic-conventions": "^1.29.0" },
+    });
+  });
+
+  it("rejects a diagnostics Jaeger graph that changed after review", () => {
+    const directory = writeDiagnosticsFixture("2.8.1");
+
+    expect(() => patchOpenClawDiagnosticsOtelPackageGraph(directory)).toThrow(
+      "with Jaeger propagator 2.8.0 before remediation",
     );
   });
 });

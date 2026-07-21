@@ -1072,9 +1072,18 @@ RUN set -eu; \
     install_reviewed_openclaw_plugin() { \
         plugin_spec="${1}@${OPENCLAW_VERSION}"; \
         plugin_archive="$(verify_openclaw_plugin_integrity "$plugin_spec")"; \
+        plugin_root="$(dirname "$plugin_archive")"; \
+        case "$plugin_spec" in \
+            "@openclaw/diagnostics-otel@2026.7.1") \
+                remediation_json="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
+                    --archive "$plugin_archive" --package-spec "$plugin_spec" \
+                    --working-directory "$plugin_root")"; \
+                plugin_archive="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$remediation_json")" \
+                ;; \
+        esac; \
         NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
             openclaw plugins install "npm-pack:${plugin_archive}"; \
-        rm -rf "$(dirname "$plugin_archive")"; \
+        rm -rf "$plugin_root"; \
     }; \
     if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         test -n "$OPENCLAW_VERSION"; \

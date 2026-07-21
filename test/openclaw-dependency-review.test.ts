@@ -16,6 +16,12 @@ const DEPENDENCY_REVIEW = path.join(
   "security",
   "openclaw-2026.6.10-dependency-review.md",
 );
+const ACTIVE_DEPENDENCY_REVIEW = path.join(
+  REPO_ROOT,
+  "docs",
+  "security",
+  "openclaw-2026.7.1-dependency-review.md",
+);
 const CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
 const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
@@ -128,6 +134,25 @@ function runBaseImageBuildArgGuard(
 }
 
 describe("OpenClaw 2026.6.10 dependency review contract", () => {
+  it("pins the active diagnostics Jaeger remediation to the shipped install path", () => {
+    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+
+    expect(review).toContain("GHSA-45rx-2jwx-cxfr");
+    expect(review).toContain("@opentelemetry/propagator-jaeger@2.9.0");
+    expect(review).toContain("nested `@opentelemetry/core@2.9.0`");
+    expect(review).toContain(
+      "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==",
+    );
+    expect(review).toContain(
+      "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==",
+    );
+    expect(review).toContain(
+      "sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==",
+    );
+    expect(review).toContain("SDK Node `0.219.0`");
+    expect(review).toContain("preexisting nested Core");
+  });
+
   it("keeps advisor disposition evidence in the dependency review note", () => {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
 
@@ -463,8 +488,13 @@ optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that 
 check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
 check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
+check_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
+check_contains "$optional_plugin_block" '"@openclaw/diagnostics-otel@2026.7.1")' "diagnostics remediation identity"
+check_contains "$optional_plugin_block" '--working-directory "$plugin_root"' "diagnostics remediation workspace"
+check_contains "$optional_plugin_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "diagnostics remediation result guard"
+check_contains "$optional_plugin_block" 'plugin_root="$(dirname "$plugin_archive")"' "optional plugin cleanup root"
 check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_archive}"' "optional plugin npm-pack install"
-check_contains "$optional_plugin_block" 'rm -rf "$(dirname "$plugin_archive")"' "optional plugin cleanup"
+check_contains "$optional_plugin_block" 'rm -rf "$plugin_root"' "optional plugin cleanup"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
 	grep -Fq 'packReviewedNpmArchive({' "$messaging_build_applier"
@@ -481,6 +511,9 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'expectedPatchedTreeIntegrity' "$remediation_helper"
 	grep -Fq 'hashPackageTree' "$remediation_helper"
 	grep -Fq 'validateArchiveMembers(archivePath' "$remediation_helper"
+	remediation_cli_block="$(sed -n '/if (isMainModule())/,$p' "$remediation_helper")"
+	check_contains "$remediation_cli_block" 'remediateReviewedOpenClawPluginArchive({' "remediation CLI tree-integrity enforcement"
+	check_not_contains "$remediation_cli_block" 'buildRemediatedOpenClawPluginArchive({' "unenforced remediation CLI path"
 	! grep -Fq 'npmViewString(' "$messaging_build_applier"
 	! grep -Fq 'resolveNpmPackArchivePath(' "$messaging_build_applier"
 	issue_4434_patch=${JSON.stringify(ISSUE_4434_PATCH)}

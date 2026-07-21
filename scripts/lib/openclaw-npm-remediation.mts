@@ -26,6 +26,7 @@ type JsonObject = Record<string, any>;
 
 type Remediation = Readonly<{
   expectedPatchedTreeIntegrity: string;
+  kind: "axios" | "jaeger";
 }>;
 
 type RemediationRequest = Readonly<{
@@ -59,15 +60,31 @@ const AGENT_BASE_VERSION = "6.0.2";
 const AGENT_BASE_INTEGRITY =
   "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==";
 const AGENT_BASE_TARBALL = "https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz";
+const JAEGER_PROPAGATOR_VERSION = "2.9.0";
+const JAEGER_PROPAGATOR_INTEGRITY =
+  "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==";
+const JAEGER_PROPAGATOR_TARBALL =
+  "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz";
+const OTEL_CORE_VERSION = "2.9.0";
+const OTEL_CORE_INTEGRITY =
+  "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==";
+const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
+  "@openclaw/diagnostics-otel@2026.7.1": {
+    expectedPatchedTreeIntegrity:
+      "sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==",
+    kind: "jaeger",
+  },
   "@openclaw/msteams@2026.7.1": {
     expectedPatchedTreeIntegrity:
       "sha512-FL4l65gEbbwtDd9Ogr69+xBNzIfE4YS8Hib36G+kcmX+T0oB1zL+/qs6b4bJc+ygTsh60H3yqpFbXoQeN05JYQ==",
+    kind: "axios",
   },
   "@openclaw/slack@2026.7.1": {
     expectedPatchedTreeIntegrity:
       "sha512-4ThnsNS+yBlFSkTaQn2xosxrDu1s0vrxcqka5QqFj+8dCEaTa9JVLRgNniYV/QNhO53wc7a2R5oQFElzYspT2w==",
+    kind: "axios",
   },
 });
 
@@ -290,6 +307,70 @@ export function patchOpenClawPluginPackageGraph(
   writeJson(shrinkwrapPath, shrinkwrap);
 }
 
+export function patchOpenClawDiagnosticsOtelPackageGraph(packageDirectory: string): void {
+  const packageSpec = "@openclaw/diagnostics-otel@2026.7.1";
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(packageJson, "@openclaw/diagnostics-otel", "2026.7.1", "OpenClaw plugin");
+
+  const shrinkwrap = readJson(shrinkwrapPath);
+  if (shrinkwrap.lockfileVersion !== 3 || !shrinkwrap.packages?.[""]) {
+    throw new Error(`${packageSpec} must ship an npm lockfileVersion 3 shrinkwrap`);
+  }
+  const sdkKey = "node_modules/@opentelemetry/sdk-node";
+  const sdk = shrinkwrap.packages[sdkKey] as JsonObject | undefined;
+  if (
+    sdk?.version !== "0.219.0" ||
+    sdk.dependencies?.["@opentelemetry/propagator-jaeger"] !== "2.8.0"
+  ) {
+    throw new Error(
+      `${packageSpec} must resolve ${sdkKey} with Jaeger propagator 2.8.0 before remediation`,
+    );
+  }
+  sdk.dependencies["@opentelemetry/propagator-jaeger"] = JAEGER_PROPAGATOR_VERSION;
+
+  const sdkPackageJsonPath = join(packageDirectory, sdkKey, "package.json");
+  const sdkPackageJson = readJson(sdkPackageJsonPath);
+  requirePackageIdentity(sdkPackageJson, "@opentelemetry/sdk-node", "0.219.0", "Bundled SDK");
+  if (sdkPackageJson.dependencies?.["@opentelemetry/propagator-jaeger"] !== "2.8.0") {
+    throw new Error(`${packageSpec} bundled SDK Jaeger dependency changed before remediation`);
+  }
+  sdkPackageJson.dependencies["@opentelemetry/propagator-jaeger"] = JAEGER_PROPAGATOR_VERSION;
+
+  const jaegerKey = "node_modules/@opentelemetry/propagator-jaeger";
+  const jaeger = shrinkwrap.packages[jaegerKey] as JsonObject | undefined;
+  if (jaeger?.version !== "2.8.0" || jaeger.dependencies?.["@opentelemetry/core"] !== "2.8.0") {
+    throw new Error(`${packageSpec} must resolve ${jaegerKey} to 2.8.0 before remediation`);
+  }
+  shrinkwrap.packages[jaegerKey] = {
+    version: JAEGER_PROPAGATOR_VERSION,
+    resolved: JAEGER_PROPAGATOR_TARBALL,
+    integrity: JAEGER_PROPAGATOR_INTEGRITY,
+    license: "Apache-2.0",
+    dependencies: { "@opentelemetry/core": OTEL_CORE_VERSION },
+    engines: { node: "^18.19.0 || >=20.6.0" },
+    peerDependencies: { "@opentelemetry/api": ">=1.0.0 <1.10.0" },
+  };
+
+  const coreKey = `${jaegerKey}/node_modules/@opentelemetry/core`;
+  if (shrinkwrap.packages[coreKey]) {
+    throw new Error(`${packageSpec} already has a nested Jaeger core dependency`);
+  }
+  shrinkwrap.packages[coreKey] = {
+    version: OTEL_CORE_VERSION,
+    resolved: OTEL_CORE_TARBALL,
+    integrity: OTEL_CORE_INTEGRITY,
+    license: "Apache-2.0",
+    dependencies: { "@opentelemetry/semantic-conventions": "^1.29.0" },
+    engines: { node: "^18.19.0 || >=20.6.0" },
+    peerDependencies: { "@opentelemetry/api": ">=1.0.0 <1.10.0" },
+  };
+
+  writeJson(sdkPackageJsonPath, sdkPackageJson);
+  writeJson(shrinkwrapPath, shrinkwrap);
+}
+
 function copyReplacementPackage(source: string, destination: string): void {
   rmSync(destination, { recursive: true, force: true });
   mkdirSync(resolve(destination, ".."), { recursive: true, mode: 0o755 });
@@ -314,7 +395,8 @@ function packReplacement(
 }
 
 export function buildRemediatedOpenClawPluginArchive(request: BuildRequest): RemediatedArchive {
-  if (!REMEDIATIONS[request.packageSpec]) {
+  const remediation = REMEDIATIONS[request.packageSpec];
+  if (!remediation) {
     throw new Error(`No OpenClaw npm remediation is defined for ${request.packageSpec}`);
   }
   const env = {
@@ -335,89 +417,150 @@ export function buildRemediatedOpenClawPluginArchive(request: BuildRequest): Rem
     remediationRoot,
     env,
   );
-  const axiosArchive = packReplacement(
-    `axios@${AXIOS_VERSION}`,
-    AXIOS_INTEGRITY,
-    AXIOS_TARBALL,
-    remediationRoot,
-    env,
-  );
-  const httpsProxyAgentArchive = packReplacement(
-    `https-proxy-agent@${HTTPS_PROXY_AGENT_VERSION}`,
-    HTTPS_PROXY_AGENT_INTEGRITY,
-    HTTPS_PROXY_AGENT_TARBALL,
-    remediationRoot,
-    env,
-  );
-  const agentBaseArchive = packReplacement(
-    `agent-base@${AGENT_BASE_VERSION}`,
-    AGENT_BASE_INTEGRITY,
-    AGENT_BASE_TARBALL,
-    remediationRoot,
-    env,
-  );
-  const axiosPackage = extractArchive(
-    axiosArchive.archivePath,
-    join(remediationRoot, "axios"),
-    remediationRoot,
-    env,
-  );
-  const httpsProxyAgentPackage = extractArchive(
-    httpsProxyAgentArchive.archivePath,
-    join(remediationRoot, "https-proxy-agent"),
-    remediationRoot,
-    env,
-  );
-  const agentBasePackage = extractArchive(
-    agentBaseArchive.archivePath,
-    join(remediationRoot, "agent-base"),
-    remediationRoot,
-    env,
-  );
-  const axiosPackageJson = readJson(join(axiosPackage, "package.json"));
-  const httpsProxyAgentPackageJson = readJson(join(httpsProxyAgentPackage, "package.json"));
-  const agentBasePackageJson = readJson(join(agentBasePackage, "package.json"));
-  requirePackageIdentity(axiosPackageJson, "axios", AXIOS_VERSION, "Axios remediation package");
-  requirePackageIdentity(
-    httpsProxyAgentPackageJson,
-    "https-proxy-agent",
-    HTTPS_PROXY_AGENT_VERSION,
-    "Axios proxy remediation package",
-  );
-  requirePackageIdentity(
-    agentBasePackageJson,
-    "agent-base",
-    AGENT_BASE_VERSION,
-    "Axios agent-base remediation package",
-  );
-  requireDependencyShape(
-    axiosPackageJson,
-    {
-      "follow-redirects": "^1.16.0",
-      "form-data": "^4.0.5",
-      "https-proxy-agent": "^5.0.1",
-      "proxy-from-env": "^2.1.0",
-    },
-    "axios@1.18.0",
-  );
-  requireDependencyShape(
-    httpsProxyAgentPackageJson,
-    { "agent-base": "6", debug: "4" },
-    "https-proxy-agent@5.0.1",
-  );
-  requireDependencyShape(agentBasePackageJson, { debug: "4" }, "agent-base@6.0.2");
+  if (remediation.kind === "axios") {
+    const axiosArchive = packReplacement(
+      `axios@${AXIOS_VERSION}`,
+      AXIOS_INTEGRITY,
+      AXIOS_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const httpsProxyAgentArchive = packReplacement(
+      `https-proxy-agent@${HTTPS_PROXY_AGENT_VERSION}`,
+      HTTPS_PROXY_AGENT_INTEGRITY,
+      HTTPS_PROXY_AGENT_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const agentBaseArchive = packReplacement(
+      `agent-base@${AGENT_BASE_VERSION}`,
+      AGENT_BASE_INTEGRITY,
+      AGENT_BASE_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const axiosPackage = extractArchive(
+      axiosArchive.archivePath,
+      join(remediationRoot, "axios"),
+      remediationRoot,
+      env,
+    );
+    const httpsProxyAgentPackage = extractArchive(
+      httpsProxyAgentArchive.archivePath,
+      join(remediationRoot, "https-proxy-agent"),
+      remediationRoot,
+      env,
+    );
+    const agentBasePackage = extractArchive(
+      agentBaseArchive.archivePath,
+      join(remediationRoot, "agent-base"),
+      remediationRoot,
+      env,
+    );
+    const axiosPackageJson = readJson(join(axiosPackage, "package.json"));
+    const httpsProxyAgentPackageJson = readJson(join(httpsProxyAgentPackage, "package.json"));
+    const agentBasePackageJson = readJson(join(agentBasePackage, "package.json"));
+    requirePackageIdentity(axiosPackageJson, "axios", AXIOS_VERSION, "Axios remediation package");
+    requirePackageIdentity(
+      httpsProxyAgentPackageJson,
+      "https-proxy-agent",
+      HTTPS_PROXY_AGENT_VERSION,
+      "Axios proxy remediation package",
+    );
+    requirePackageIdentity(
+      agentBasePackageJson,
+      "agent-base",
+      AGENT_BASE_VERSION,
+      "Axios agent-base remediation package",
+    );
+    requireDependencyShape(
+      axiosPackageJson,
+      {
+        "follow-redirects": "^1.16.0",
+        "form-data": "^4.0.5",
+        "https-proxy-agent": "^5.0.1",
+        "proxy-from-env": "^2.1.0",
+      },
+      "axios@1.18.0",
+    );
+    requireDependencyShape(
+      httpsProxyAgentPackageJson,
+      { "agent-base": "6", debug: "4" },
+      "https-proxy-agent@5.0.1",
+    );
+    requireDependencyShape(agentBasePackageJson, { debug: "4" }, "agent-base@6.0.2");
 
-  const axiosTarget = join(sourcePackage, "node_modules", "axios");
-  copyReplacementPackage(axiosPackage, axiosTarget);
-  copyReplacementPackage(
-    httpsProxyAgentPackage,
-    join(axiosTarget, "node_modules", "https-proxy-agent"),
-  );
-  copyReplacementPackage(
-    agentBasePackage,
-    join(axiosTarget, "node_modules", "https-proxy-agent", "node_modules", "agent-base"),
-  );
-  patchOpenClawPluginPackageGraph(sourcePackage, request.packageSpec);
+    const axiosTarget = join(sourcePackage, "node_modules", "axios");
+    copyReplacementPackage(axiosPackage, axiosTarget);
+    copyReplacementPackage(
+      httpsProxyAgentPackage,
+      join(axiosTarget, "node_modules", "https-proxy-agent"),
+    );
+    copyReplacementPackage(
+      agentBasePackage,
+      join(axiosTarget, "node_modules", "https-proxy-agent", "node_modules", "agent-base"),
+    );
+    patchOpenClawPluginPackageGraph(sourcePackage, request.packageSpec);
+  } else {
+    const jaegerArchive = packReplacement(
+      `@opentelemetry/propagator-jaeger@${JAEGER_PROPAGATOR_VERSION}`,
+      JAEGER_PROPAGATOR_INTEGRITY,
+      JAEGER_PROPAGATOR_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const coreArchive = packReplacement(
+      `@opentelemetry/core@${OTEL_CORE_VERSION}`,
+      OTEL_CORE_INTEGRITY,
+      OTEL_CORE_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const jaegerPackage = extractArchive(
+      jaegerArchive.archivePath,
+      join(remediationRoot, "propagator-jaeger"),
+      remediationRoot,
+      env,
+    );
+    const corePackage = extractArchive(
+      coreArchive.archivePath,
+      join(remediationRoot, "otel-core"),
+      remediationRoot,
+      env,
+    );
+    const jaegerPackageJson = readJson(join(jaegerPackage, "package.json"));
+    const corePackageJson = readJson(join(corePackage, "package.json"));
+    requirePackageIdentity(
+      jaegerPackageJson,
+      "@opentelemetry/propagator-jaeger",
+      JAEGER_PROPAGATOR_VERSION,
+      "Jaeger remediation package",
+    );
+    requirePackageIdentity(
+      corePackageJson,
+      "@opentelemetry/core",
+      OTEL_CORE_VERSION,
+      "OpenTelemetry core remediation package",
+    );
+    requireDependencyShape(
+      jaegerPackageJson,
+      { "@opentelemetry/core": OTEL_CORE_VERSION },
+      `@opentelemetry/propagator-jaeger@${JAEGER_PROPAGATOR_VERSION}`,
+    );
+    requireDependencyShape(
+      corePackageJson,
+      { "@opentelemetry/semantic-conventions": "^1.29.0" },
+      `@opentelemetry/core@${OTEL_CORE_VERSION}`,
+    );
+
+    const jaegerTarget = join(sourcePackage, "node_modules", "@opentelemetry", "propagator-jaeger");
+    copyReplacementPackage(jaegerPackage, jaegerTarget);
+    copyReplacementPackage(
+      corePackage,
+      join(jaegerTarget, "node_modules", "@opentelemetry", "core"),
+    );
+    patchOpenClawDiagnosticsOtelPackageGraph(sourcePackage);
+  }
 
   const outputDirectory = join(remediationRoot, "output");
   mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
@@ -486,7 +629,7 @@ if (isMainModule()) {
   try {
     console.log(
       JSON.stringify(
-        buildRemediatedOpenClawPluginArchive({
+        remediateReviewedOpenClawPluginArchive({
           archivePath: value("--archive"),
           packageSpec: value("--package-spec"),
           workingDirectory: value("--working-directory"),

@@ -375,6 +375,7 @@ function runOptionalOpenClawPluginBlock(
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-integrity-"));
   const log = path.join(tmp, "calls.log");
   const reviewedNpmExecutable = path.join(tmp, "reviewed-npm-fixture");
+  const remediationFixture = path.join(tmp, "remediation-fixture.cjs");
   fs.writeFileSync(
     reviewedNpmExecutable,
     [
@@ -404,6 +405,26 @@ function runOptionalOpenClawPluginBlock(
       "",
     ].join("\n"),
     { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    remediationFixture,
+    [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      `const log = ${JSON.stringify(log)};`,
+      "const args = process.argv.slice(2);",
+      "const value = (name) => { const index = args.indexOf(name); if (index < 0 || !args[index + 1]) process.exit(1); return args[index + 1]; };",
+      "const archive = value('--archive');",
+      "const workingDirectory = value('--working-directory');",
+      "const outputDirectory = path.join(workingDirectory, 'remediated');",
+      "fs.mkdirSync(outputDirectory, { recursive: true });",
+      "const archivePath = path.join(outputDirectory, path.basename(archive));",
+      "fs.copyFileSync(archive, archivePath);",
+      "fs.appendFileSync(log, `remediate ${args.join(' ')}\\n`);",
+      "process.stdout.write(JSON.stringify({ archivePath, integrity: 'sha512-remediated', remediated: true }));",
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
   );
   const script = [
     "#!/usr/bin/env bash",
@@ -442,7 +463,9 @@ function runOptionalOpenClawPluginBlock(
     "  esac",
     "  return 1",
     "}",
-    command.replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER),
+    command
+      .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
+      .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationFixture),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -504,10 +527,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain("@openclaw/diagnostics-otel@2026.7.1");
         expect(reviewNote).toContain("@openclaw/brave-plugin@2026.7.1");
         expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
-        expect(reviewNote).toContain("`1` moderate");
+        expect(reviewNote).toContain("`13` moderate");
         expect(reviewNote).toContain("`0` high");
         expect(reviewNote).toContain("`0` critical");
-        expect(reviewNote).toContain("`822` total dependencies");
+        expect(reviewNote).toContain("`823` total dependencies");
         expect(reviewNote).toContain(
           "`dist/pipeline.runtime-*.js`, which exports `prepareSlackMessage`",
         );
@@ -660,6 +683,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         expect(calls).toMatch(
           /openclaw plugins install npm-pack:\S*\/diagnostics-otel-2026\.7\.1\.tgz\n/,
+        );
+        expect(calls).toContain(`remediate --archive`);
+        expect(calls).toContain(
+          `--package-spec @openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION}`,
         );
         expect(calls).toContain(
           `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.integrity`,
