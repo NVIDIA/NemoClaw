@@ -8,7 +8,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
-
 import {
   AGENT_MARKER,
   FILE_STORE_MARKER,
@@ -24,6 +23,7 @@ import {
   patchOpenClawStateMigrationText,
   SECRET_MARKER,
 } from "../scripts/patch-openclaw-shared-state-permissions.mts";
+import { restoreEnv } from "./helpers/env-test-helpers";
 
 const PATCH_SCRIPT = path.join(
   import.meta.dirname,
@@ -475,8 +475,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       expect(mode(stateDir)).toBe(0o2770);
       expect(mode(database)).toBe(0o660);
     } finally {
-      if (previousMarker === undefined) delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      else process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = previousMarker;
+      restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousMarker);
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
@@ -524,8 +523,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       await runtime.enforcePrivatePathMode(privateDir, defaults.dirMode, "directory");
       expect(mode(privateDir)).toBe(0o2770);
     } finally {
-      if (previousMarker === undefined) delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      else process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = previousMarker;
+      restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousMarker);
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
@@ -571,8 +569,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
         expect(reader.status, reader.stderr).toBe(0);
         expect(reader.stdout).toBe("shared");
       } finally {
-        if (previousMarker === undefined) delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-        else process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = previousMarker;
+        restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousMarker);
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
     },
@@ -602,8 +599,7 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
         runtime.fileStore({ rootDir, private: true, dirMode: 0o750, mode: 0o640 }),
       ).toMatchObject({ dirMode: 0o750, mode: 0o640, privateMode: true });
     } finally {
-      if (previousMarker === undefined) delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      else process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = previousMarker;
+      restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousMarker);
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
@@ -630,10 +626,8 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
         privateMode: true,
       });
     } finally {
-      if (previousShared === undefined) delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      else process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = previousShared;
-      if (previousOpenShell === undefined) delete process.env.OPENSHELL_SANDBOX;
-      else process.env.OPENSHELL_SANDBOX = previousOpenShell;
+      restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousShared);
+      restoreEnv("OPENSHELL_SANDBOX", previousOpenShell);
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
@@ -661,10 +655,8 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       await runtime.ensureModelsFileModeForModelsJson(modelsFile);
       expect(runtime.chmodCalls).toEqual([]);
     } finally {
-      if (previousShared === undefined) delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      else process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = previousShared;
-      if (previousOpenShell === undefined) delete process.env.OPENSHELL_SANDBOX;
-      else process.env.OPENSHELL_SANDBOX = previousOpenShell;
+      restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousShared);
+      restoreEnv("OPENSHELL_SANDBOX", previousOpenShell);
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
@@ -685,10 +677,8 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
       expect(mode(modelsFile)).toBe(0o600);
       expect(runtime.chmodCalls).toEqual([{ pathname: modelsFile, mode: 0o600 }]);
     } finally {
-      if (previousShared === undefined) delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      else process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = previousShared;
-      if (previousOpenShell === undefined) delete process.env.OPENSHELL_SANDBOX;
-      else process.env.OPENSHELL_SANDBOX = previousOpenShell;
+      restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousShared);
+      restoreEnv("OPENSHELL_SANDBOX", previousOpenShell);
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
@@ -714,10 +704,8 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
         warnings: [],
       });
     } finally {
-      if (previousShared === undefined) delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      else process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = previousShared;
-      if (previousOpenShell === undefined) delete process.env.OPENSHELL_SANDBOX;
-      else process.env.OPENSHELL_SANDBOX = previousOpenShell;
+      restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousShared);
+      restoreEnv("OPENSHELL_SANDBOX", previousOpenShell);
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });
@@ -739,10 +727,8 @@ describe("OpenClaw SQLite state permission compatibility patch (#7280)", () => {
         warnings: ["upstream update-check migration ran"],
       });
     } finally {
-      if (previousShared === undefined) delete process.env.NEMOCLAW_OPENCLAW_SHARED_STATE;
-      else process.env.NEMOCLAW_OPENCLAW_SHARED_STATE = previousShared;
-      if (previousOpenShell === undefined) delete process.env.OPENSHELL_SANDBOX;
-      else process.env.OPENSHELL_SANDBOX = previousOpenShell;
+      restoreEnv("NEMOCLAW_OPENCLAW_SHARED_STATE", previousShared);
+      restoreEnv("OPENSHELL_SANDBOX", previousOpenShell);
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
   });

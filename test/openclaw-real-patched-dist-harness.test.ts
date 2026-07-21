@@ -152,8 +152,9 @@ function resolveRealOpenClawNodeRuntime(
   });
   requireSpawnSuccess(versionProbe, `probe ${REAL_OPENCLAW_NODE_ENV}`);
   const version = versionProbe.stdout.trim();
-  const match = version.match(/^v(\d+)\.(\d+)\.(\d+)$/u);
-  if (!match) runtimeMismatch(version, "a stable Node version", REAL_OPENCLAW_NODE_ENV);
+  const match =
+    version.match(/^v(\d+)\.(\d+)\.(\d+)$/u) ??
+    runtimeMismatch(version, "a stable Node version", REAL_OPENCLAW_NODE_ENV);
   const major = Number(match[1]);
   const minor = Number(match[2]);
   const patch = Number(match[3]);

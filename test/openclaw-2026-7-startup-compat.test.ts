@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -30,7 +31,7 @@ function repairUpdateCheck(configDir: string) {
 
 function extractShellFunction(source: string, name: string): string {
   const match = source.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
+  assert(match, `Expected ${name} in scripts/nemoclaw-start.sh`);
   return `${name}() {${match[1]}\n}`;
 }
 
@@ -125,16 +126,19 @@ describe("OpenClaw 2026.7 startup compatibility", () => {
   ] as const)("rejects a %s update-check path", (kind) => {
     const configDir = temporaryConfigDir();
     const statePath = path.join(configDir, "update-check.json");
-    if (kind === "symlink") {
-      const target = path.join(path.dirname(configDir), "target.json");
-      fs.writeFileSync(target, "");
-      fs.symlinkSync(target, statePath);
-    } else if (kind === "directory") {
-      fs.mkdirSync(statePath);
-    } else {
-      const target = path.join(path.dirname(configDir), "target.json");
-      fs.writeFileSync(target, "{}");
-      fs.linkSync(target, statePath);
+    const target = path.join(path.dirname(configDir), "target.json");
+    switch (kind) {
+      case "symlink":
+        fs.writeFileSync(target, "");
+        fs.symlinkSync(target, statePath);
+        break;
+      case "directory":
+        fs.mkdirSync(statePath);
+        break;
+      case "hardlink":
+        fs.writeFileSync(target, "{}");
+        fs.linkSync(target, statePath);
+        break;
     }
 
     const result = repairUpdateCheck(configDir);
