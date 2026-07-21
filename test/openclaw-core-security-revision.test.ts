@@ -29,6 +29,7 @@ const layouts = {
       "@modelcontextprotocol/sdk": ["1.29.0", "modelcontextprotocol-sdk"],
       "body-parser": ["2.2.2", "body-parser"],
       "brace-expansion": ["5.0.6", "brace-expansion"],
+      "fast-uri": ["3.1.2", "fast-uri"],
       hono: ["4.12.22", "hono"],
       "linkify-it": ["5.0.0", "linkify-it"],
       "markdown-it": ["14.1.1", "markdown-it"],
@@ -58,6 +59,7 @@ const layouts = {
       "@modelcontextprotocol/sdk": ["1.29.0", "modelcontextprotocol-sdk", "1.29.0"],
       "body-parser": ["2.2.2", "body-parser", "2.2.2"],
       "brace-expansion": ["5.0.6", "brace-expansion", "5.0.6"],
+      "fast-uri": ["3.1.2", "fast-uri", "3.1.2"],
       hono: ["4.12.18", "hono", "4.12.18"],
       "linkify-it": ["5.0.0", "linkify-it", "5.0.0"],
       "markdown-it": ["14.1.1", "markdown-it", "14.1.1"],
@@ -88,6 +90,7 @@ const layouts = {
       "@modelcontextprotocol/sdk": ["1.29.0", "modelcontextprotocol-sdk", "1.29.0"],
       "body-parser": ["2.2.2", "body-parser", "2.2.2"],
       "brace-expansion": ["5.0.6", "brace-expansion", "5.0.6"],
+      "fast-uri": ["3.1.2", "fast-uri", "3.1.2"],
       hono: ["4.12.18", "hono", "4.12.18"],
       "linkify-it": ["5.0.0", "linkify-it", "5.0.0"],
       "markdown-it": ["14.1.1", "markdown-it", "14.1.1"],
@@ -110,6 +113,7 @@ const layouts = {
       "@modelcontextprotocol/sdk": ["1.29.0", "modelcontextprotocol-sdk", "1.29.0"],
       "body-parser": ["2.3.0", "body-parser", "2.2.2"],
       "brace-expansion": ["5.0.7", "brace-expansion", "5.0.6"],
+      "fast-uri": ["3.1.3", "fast-uri", "3.1.2"],
       hono: ["4.12.30", "hono", "4.12.25"],
       protobufjs: ["7.6.5", "protobufjs-7", "7.6.3"],
       qs: ["6.15.3", "qs", "6.15.2"],
@@ -368,6 +372,14 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
     expect(
       JSON.parse(
         fs.readFileSync(
+          path.join(target.openClawRoot, "node_modules", "fast-uri", "package.json"),
+          "utf8",
+        ),
+      ).version,
+    ).toBe("3.1.3");
+    expect(
+      JSON.parse(
+        fs.readFileSync(
           path.join(
             target.openClawRoot,
             "node_modules",
@@ -469,6 +481,11 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
       version: "2.0.5",
       resolved: CORE_SECURITY_PINS["hono-node-server"].tarball,
       integrity: CORE_SECURITY_PINS["hono-node-server"].integrity,
+    });
+    expect(packages["node_modules/fast-uri"]).toMatchObject({
+      version: "3.1.3",
+      resolved: CORE_SECURITY_PINS["fast-uri"].tarball,
+      integrity: CORE_SECURITY_PINS["fast-uri"].integrity,
     });
     expect(
       packages["node_modules/@modelcontextprotocol/sdk"].dependencies["@hono/node-server"],
