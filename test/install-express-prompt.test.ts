@@ -305,7 +305,7 @@ detect_express_platform
 
     expect(result.status, output).toBe(0);
     expect(output).toMatch(
-      /--force-station-install\s+Bypass only the DGX release-metadata allowlist/,
+      /--force-station-install\s+Bypass the DGX release-metadata allowlist and active-workload block/,
     );
   });
 
@@ -879,7 +879,9 @@ main "$@"
     const output = `${result.stdout}${result.stderr}`;
 
     expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Explicit --force-station-install intent bypasses only/);
+    expect(output).toMatch(
+      /Explicit --force-station-install intent bypasses DGX release-metadata qualification and permits active workloads/,
+    );
     expect(output.match(/Run express install with these settings\?/g)).toHaveLength(1);
     expect(output).toMatch(/Using express install for DGX Station/);
     expect(output).toMatch(/PROVIDER=install-vllm/);

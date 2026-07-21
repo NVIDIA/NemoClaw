@@ -203,7 +203,10 @@ Use these details when your first-run path needs more control.
     One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
     To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
     The `--station-deepseek` flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
-    The temporary `--force-station-install` flag has the same terminal requirement and bypasses only DGX release-metadata qualification on genuine Station GB300 hardware.
+    The temporary `--force-station-install` flag has the same terminal requirement and bypasses DGX release-metadata qualification plus the initial active-workload block on genuine Station GB300 hardware.
+    This lets forced factory-runtime validation continue and use an existing healthy vLLM server.
+    Hardware, GPU, ECC, Docker, Buildx, NVIDIA Container Toolkit, CDI, container GPU-visibility, service, and container-inventory preservation checks still apply.
+    Active workloads still block any required CDI, Docker runtime, service, or reboot mutation.
     Without terminal access, the installer stops before it installs Docker or build dependencies instead of ignoring the flag.
     For a headless or CI install on a qualifying DGX Station GB300 after host preparation, omit the flag and select the same managed-vLLM recipe explicitly.
 

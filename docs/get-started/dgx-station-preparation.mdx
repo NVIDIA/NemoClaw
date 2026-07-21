@@ -26,14 +26,16 @@ By default, an unknown version, malformed or unsafe marker, unmatched no-OTA fac
 On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
 
 Station preparation preserves existing stopped Docker container records, captures their IDs before its probes, and stops if that inventory changes during preparation.
-Running containers still block initial preparation and every Docker configuration change.
+Running containers block initial preparation except during forced factory-runtime validation, and they always block Docker configuration changes.
 Before a Docker restart or host reboot, stopped containers with a restart policy other than `no` also block preparation because they could start automatically.
 
 <Warning title="Temporary Metadata Override">
 Use `--force-station-install` only on a genuine DGX Station GB300 when automatic Station detection rejects its DGX release metadata.
 The flag handles metadata variants not yet recognized by NemoClaw; it is not a general compatibility bypass.
-The flag bypasses only the `/etc/dgx-release` allowlist.
-It still requires ARM64 Ubuntu 24.04, DGX Station GB300 hardware identity, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent, inference, or Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
+The flag bypasses the `/etc/dgx-release` allowlist and the initial active agent, inference, port `8000`, and running Docker workload checks during forced factory-runtime validation.
+This permits the installer to validate and use an existing healthy vLLM server.
+It still requires ARM64 Ubuntu 24.04, DGX Station GB300 hardware identity, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
+If validation requires a CDI, Docker runtime, service, or reboot change, active agent, inference, port `8000`, and Docker workloads block that mutation.
 The override preserves the existing factory driver, packages, and container-runtime configuration; it does not install or repair missing factory components.
 It cannot enable Station Express on another Station generation or hardware platform.
 This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the exact automatic allowlist.

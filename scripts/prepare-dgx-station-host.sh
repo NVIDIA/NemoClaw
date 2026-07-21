@@ -327,7 +327,8 @@ Usage: prepare-dgx-station-host.sh --check|--apply|--verify [--force-station-ins
   --apply   Install exact prerequisites or finish post-reboot runtime setup.
   --verify  Read-only host verification plus ephemeral GPU container tests.
   --force-station-install
-            Bypass only the DGX release-metadata allowlist. ARM64 Ubuntu 24.04,
+            Bypass the DGX release-metadata allowlist and permit active workloads
+            during forced factory-runtime validation. ARM64 Ubuntu 24.04,
             Station GB300 hardware, and all factory-runtime health checks still
             apply. The existing driver and container runtime are preserved.
 
@@ -1240,6 +1241,15 @@ check_agent_and_inference_conflicts() {
   info "agent_inference_workloads=none port_8000=free"
 }
 
+check_initial_workload_quiescence() {
+  if [[ "$STATION_HOST_PROFILE" == "forced-factory-runtime" ]]; then
+    warn "Active agent, inference, and Docker workloads are permitted by explicit --force-station-install intent"
+    return 0
+  fi
+  check_agent_and_inference_conflicts
+  require_no_running_docker_containers "initial Station host preparation"
+}
+
 require_docker_mutation_quiescence() {
   local action=$1
   check_agent_and_inference_conflicts
@@ -1405,9 +1415,8 @@ common_preflight() {
   check_capacity
   check_network
   check_failed_units
-  check_agent_and_inference_conflicts
   capture_docker_container_baseline
-  require_no_running_docker_containers "initial Station host preparation"
+  check_initial_workload_quiescence
 }
 
 verify_file_sha256() {

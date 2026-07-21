@@ -450,6 +450,34 @@ check_agent_and_inference_conflicts
     expect(active.output).toMatch(/Agent or inference workload is active/);
   });
 
+  it("permits active workloads only during forced factory-runtime validation", () => {
+    const forced = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=forced-factory-runtime
+check_agent_and_inference_conflicts() { printf 'UNEXPECTED_AGENT_CHECK\n'; return 1; }
+require_no_running_docker_containers() { printf 'UNEXPECTED_DOCKER_CHECK\n'; return 1; }
+check_initial_workload_quiescence
+`,
+    );
+    expect(forced.result.status, forced.output).toBe(0);
+    expect(forced.output).toMatch(/Active agent, inference, and Docker workloads are permitted/);
+    expect(forced.output).not.toContain("UNEXPECTED_");
+
+    const supported = runSourced(
+      STATION_PREPARE,
+      `
+STATION_HOST_PROFILE=stock-dgx-os
+check_agent_and_inference_conflicts() { printf 'AGENT_CHECK\n'; }
+require_no_running_docker_containers() { printf 'DOCKER_CHECK %s\n' "$1"; }
+check_initial_workload_quiescence
+`,
+    );
+    expect(supported.result.status, supported.output).toBe(0);
+    expect(supported.output).toContain("AGENT_CHECK");
+    expect(supported.output).toContain("DOCKER_CHECK initial Station host preparation");
+  });
+
   it("refuses an installed CUDA keyring version that differs from the pin", () => {
     const { result, output } = runSourced(
       STATION_PREPARE,
