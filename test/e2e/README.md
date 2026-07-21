@@ -368,7 +368,8 @@ runs. A new dispatch also cancels the previous run. The previous controller
 then completes the old exact-diff required check as cancelled when the PR
 revision moved or closed, or as failed when the current revision's selected E2E
 did not pass. A configured non-closed PR event seeds the current exact-diff
-identity; revision changes cancel the old controller before the new one starts.
+identity. Revision changes cancel superseded child E2E runs and seed the new
+identity; the prior coordinator remains active long enough to close its check.
 The controller does not read PR Review Advisor output, so model availability
 and recommendations are not part of merge authority.
 

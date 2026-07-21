@@ -226,7 +226,7 @@ It reads the PR SHA and base SHA before dispatch.
 Before any result reaches success, it confirms that the PR is open and that the PR SHA, base SHA, and required-check identity still match.
 It fails closed if any value changed or does not match.
 
-Authorization returns `E2E / PR Gate` to `in_progress`.
+Authorization keeps `E2E / PR Gate` in progress and updates its running title.
 It runs selected jobs through the wait, evidence-download, and finish process.
 Authorization cannot record success by itself.
 Only verified evidence for the PR SHA can make `E2E / PR Gate` pass.
@@ -246,6 +246,10 @@ Use this order:
    Approve a first-time fork run when necessary.
 3. Verify that `E2E / PR Gate` is attached to that PR SHA and base SHA.
 4. Use the gate checker to find PRs that still need a check.
+
+During rollout, the checker accepts the former `E2E / PR Gate Coordination`
+custom-check name only when the current name is absent, and prefers the current
+name when both exist.
 
 Do not enable the required context before the producer is ready.
 GitHub does not create a context for prior runs.
