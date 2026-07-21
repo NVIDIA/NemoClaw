@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  assertReviewedOpenClawNpmTreeReport,
   CORE_SECURITY_PINS,
   patchOpenClawCoreDependencies,
   verifyOpenClawCoreDependencies,
@@ -125,12 +126,22 @@ const historicalExtraPackages = {
       resolved: "https://registry.npmjs.org/old.tgz",
       version: "0.3.6",
     },
+    "@mariozechner/clipboard-linux-x64-musl": {
+      integrity: "old-integrity",
+      resolved: "https://registry.npmjs.org/old-musl.tgz",
+      version: "0.3.6",
+    },
     koffi: { version: "2.16.2" },
   },
   "2026.5.27": {
     "@mariozechner/clipboard-linux-x64-gnu": {
       integrity: "old-integrity",
       resolved: "https://registry.npmjs.org/old.tgz",
+      version: "0.3.6",
+    },
+    "@mariozechner/clipboard-linux-x64-musl": {
+      integrity: "old-integrity",
+      resolved: "https://registry.npmjs.org/old-musl.tgz",
       version: "0.3.6",
     },
   },
@@ -184,6 +195,9 @@ function fixture(openClawVersion: keyof typeof layouts) {
     ...Object.values(layout.replacements).map(([, pin]) => pin),
     "content-type",
     ...(openClawVersion === "2026.6.10" ? [] : ["clipboard-linux-x64-gnu"]),
+    ...(openClawVersion === "2026.5.22" || openClawVersion === "2026.5.27"
+      ? ["clipboard-linux-x64-musl"]
+      : []),
   ]);
   for (const pinKey of usedPins) {
     const pin = CORE_SECURITY_PINS[pinKey];
@@ -202,7 +216,9 @@ function fixture(openClawVersion: keyof typeof layouts) {
             ? { undici: "8.3.0" }
             : pinKey === "markdown-it"
               ? { "linkify-it": "^5.0.2" }
-              : {};
+              : pinKey === "qs"
+                ? { "side-channel": "^1.1.1" }
+                : {};
     writePackage(
       path.join(replacementRoot, pinKey),
       pin.name,
@@ -214,6 +230,7 @@ function fixture(openClawVersion: keyof typeof layouts) {
           ? {
               optionalDependencies: {
                 "@mariozechner/clipboard-linux-x64-gnu": "0.3.9",
+                "@mariozechner/clipboard-linux-x64-musl": "0.3.9",
               },
             }
           : {},
@@ -233,6 +250,7 @@ function fixture(openClawVersion: keyof typeof layouts) {
       "@google/genai": "2.5.0",
       "@smithy/node-http-handler": "4.7.3",
       openai: "6.38.0",
+      "side-channel": "1.1.0",
     },
     "2026.5.27": {
       "@anthropic-ai/sdk": "0.98.0",
@@ -298,7 +316,7 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
     }
     expect(dockerfile).toContain("npm audit --omit=dev --ignore-scripts --audit-level=low");
     expect(dockerfile).toContain("audit.metadata?.vulnerabilities?.total !== 0");
-    expect(dockerfile).toContain("npm ls --omit=dev --all");
+    expect(dockerfile).toContain("--verify-npm-tree");
     expect(dockerfile).toContain("--verify-plugin-tree");
     expect(dockerfile).toContain('--expected-package-spec "$plugin_spec"');
   });
@@ -332,6 +350,46 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
     expect(fs.existsSync(path.join(target.openClawRoot, "npm-shrinkwrap.json"))).toBe(
       layouts[openClawVersion].shrinkwrap,
     );
+  });
+
+  it("accepts only the exact reviewed post-remediation npm tree", () => {
+    const target = fixture("2026.5.22");
+    const reviewedProblems = [
+      `invalid: tar@7.5.19 ${target.openClawRoot}/node_modules/tar`,
+      `invalid: protobufjs@8.7.1 ${target.openClawRoot}/node_modules/protobufjs`,
+      `invalid: fast-xml-parser@5.7.0 ${target.openClawRoot}/node_modules/fast-xml-parser`,
+    ];
+    expect(() =>
+      assertReviewedOpenClawNpmTreeReport({
+        expectedOpenClawVersion: "2026.5.22",
+        openClawRoot: target.openClawRoot,
+        report: { problems: reviewedProblems },
+        status: 1,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertReviewedOpenClawNpmTreeReport({
+        expectedOpenClawVersion: "2026.5.22",
+        openClawRoot: target.openClawRoot,
+        report: {
+          problems: reviewedProblems.map((problem) => problem.replace("tar@7.5.19", "tar@7.5.15")),
+        },
+        status: 1,
+      }),
+    ).toThrow("differs from the reviewed baseline");
+    expect(() =>
+      assertReviewedOpenClawNpmTreeReport({
+        expectedOpenClawVersion: "2026.5.22",
+        openClawRoot: target.openClawRoot,
+        report: {
+          problems: [
+            ...reviewedProblems,
+            `invalid: side-channel@1.1.0 ${target.openClawRoot}/node_modules/side-channel`,
+          ],
+        },
+        status: 1,
+      }),
+    ).toThrow("differs from the reviewed baseline");
   });
 
   it("fails closed before replacing a drifted historical package", () => {
@@ -369,6 +427,7 @@ describe("historical OpenClaw core dependency security revisions (#7272)", () =>
     expect(packages["node_modules/@earendil-works/pi-tui"].peerDependencies).toBeUndefined();
     expect(packages["node_modules/@mariozechner/clipboard"].version).toBe("0.3.9");
     expect(packages["node_modules/@mariozechner/clipboard-linux-x64-gnu"].version).toBe("0.3.9");
+    expect(packages["node_modules/@mariozechner/clipboard-linux-x64-musl"].version).toBe("0.3.9");
     expect(packages["node_modules/@earendil-works/pi-ai"].dependencies).toMatchObject({
       "@anthropic-ai/sdk": "0.97.1",
       "@aws-sdk/client-bedrock-runtime": "3.1051.0",
