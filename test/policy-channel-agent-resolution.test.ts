@@ -163,7 +163,7 @@ registry.registerSandbox({
     expect(text).not.toContain("not supported for agent");
     expect(text).not.toContain("Terminal-runtime agents do not run inbound messaging bridges.");
     expect(text).not.toContain("Preset not found");
-    expect(text).not.toContain("Endpoints that would be opened");
+    expect(text).not.toContain("Effective egress that would be opened");
     expect(text).not.toContain("Apply 'telegram'");
   });
 });

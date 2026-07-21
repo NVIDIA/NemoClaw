@@ -54,7 +54,7 @@ describe("connectSandbox flow", () => {
     await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
 
     expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
-      ["sandbox", "list"],
+      ["sandbox", "list", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha");

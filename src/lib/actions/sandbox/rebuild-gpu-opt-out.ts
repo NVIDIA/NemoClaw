@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadAgent } from "../../agent/defs";
+import {
+  type InferenceEndpointSource,
+  normalizeInferenceEndpointSource,
+} from "../../inference/selection";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import {
   type DcodeAutoApprovalMode,
@@ -38,6 +42,7 @@ export type RebuildGpuOptOutEntry = {
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   observabilityEnabled?: boolean;
   policyTier?: string | null;
+  endpointSource?: InferenceEndpointSource | null;
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
@@ -95,6 +100,7 @@ export type RebuildRecreateOnboardOpts = {
   nonInteractive: true;
   recreateSandbox: true;
   authoritativeResumeConfig: true;
+  endpointSource?: InferenceEndpointSource | null;
   acceptThirdPartySoftware: true;
   agent: string | null | undefined;
   fromDockerfile: string | null;
@@ -167,6 +173,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     nonInteractive: true,
     recreateSandbox: true,
     authoritativeResumeConfig: true,
+    endpointSource: normalizeInferenceEndpointSource(args.sb?.endpointSource),
     acceptThirdPartySoftware: args.usageNoticeAccepted,
     agent: args.rebuildAgent,
     fromDockerfile: args.storedFromDockerfile,

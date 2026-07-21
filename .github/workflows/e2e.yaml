@@ -44,7 +44,7 @@ on:
         default: false
         type: boolean
       checkout_sha:
-        description: PR head commit selected by the controller.
+        description: PR SHA selected by the controller.
         required: false
         default: ""
         type: string
@@ -155,7 +155,7 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
           [[ "$(jq -r '.state' <<< "$pull_json")" == "open" ]] || { echo "::error::pull request must still be open"; exit 1; }
           [[ "$(jq -r '.head.repo.full_name // ""' <<< "$pull_json")" == "$GITHUB_REPOSITORY" ]] || { echo "::error::pull request must originate from this repository"; exit 1; }
-          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR head commit"; exit 1; }
+          [[ "$(jq -r '.head.sha' <<< "$pull_json")" == "$CHECKOUT_SHA" ]] || { echo "::error::checkout_sha must match the PR SHA"; exit 1; }
           [[ "$(jq -r '.base.sha' <<< "$pull_json")" == "$BASE_SHA" ]] || { echo "::error::base_sha must match the PR base commit"; exit 1; }
 
       - name: Prepare E2E workspace
@@ -2290,6 +2290,16 @@ jobs:
         with:
           build-cli: "false"
 
+      - name: Add swap for Hermes image rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
+          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
+          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
+          swapon --show
+
       - name: Run Hermes rebuild live test
         # Preserves the real
         # install.sh, Docker/OpenShell, Hermes base-image rebuild, registry,
@@ -2298,7 +2308,28 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
+          mkdir -p "$E2E_ARTIFACT_DIR"
+          baseline_file="$E2E_ARTIFACT_DIR/runner-pressure-baseline.jsonl"
+          phase_baselines_file="$E2E_ARTIFACT_DIR/runner-pressure-phase-baselines.jsonl"
+          classification_file="$E2E_ARTIFACT_DIR/runner-pressure-classification.jsonl"
+          test_outcome_file="$E2E_ARTIFACT_DIR/live-test-outcome.json"
+          export DOCKER_OOM_CONTAINER="$NEMOCLAW_SANDBOX_NAME"
+          export E2E_PHASE="rebuild-hermes.workflow"
+          export E2E_RESOURCE_BASELINE_FILE="$baseline_file"
+          export E2E_RESOURCE_PHASE_BASELINES_FILE="$phase_baselines_file"
+          export E2E_TERMINAL_CLASSIFICATION_FILE="$classification_file"
+          export E2E_TEST_OUTCOME_FILE="$test_outcome_file"
+          npx tsx tools/e2e/runner-pressure.mts snapshot
+          npx tsx tools/e2e/runner-pressure.mts initialize-evidence
+          set +e
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts
+          test_status="$?"
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            npx tsx tools/e2e/runner-pressure.mts classify
+            npx tsx tools/e2e/runner-pressure.mts validate-classification
+          fi
+          exit "$test_status"
 
       - name: Upload Hermes rebuild artifacts
         if: always()
@@ -2344,6 +2375,16 @@ jobs:
         with:
           build-cli: "false"
 
+      - name: Add swap for Hermes image rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 32G /mnt/nemoclaw-hermes-rebuild.swap
+          sudo chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap
+          sudo mkswap /mnt/nemoclaw-hermes-rebuild.swap
+          sudo swapon /mnt/nemoclaw-hermes-rebuild.swap
+          swapon --show
+
       - name: Run Hermes stale-base rebuild live test
         # Uses NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E=1, preserving issue #3025's
         # stale cached base-image regression boundary.
@@ -2351,7 +2392,28 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
+          mkdir -p "$E2E_ARTIFACT_DIR"
+          baseline_file="$E2E_ARTIFACT_DIR/runner-pressure-baseline.jsonl"
+          phase_baselines_file="$E2E_ARTIFACT_DIR/runner-pressure-phase-baselines.jsonl"
+          classification_file="$E2E_ARTIFACT_DIR/runner-pressure-classification.jsonl"
+          test_outcome_file="$E2E_ARTIFACT_DIR/live-test-outcome.json"
+          export DOCKER_OOM_CONTAINER="$NEMOCLAW_SANDBOX_NAME"
+          export E2E_PHASE="rebuild-hermes-stale-base.workflow"
+          export E2E_RESOURCE_BASELINE_FILE="$baseline_file"
+          export E2E_RESOURCE_PHASE_BASELINES_FILE="$phase_baselines_file"
+          export E2E_TERMINAL_CLASSIFICATION_FILE="$classification_file"
+          export E2E_TEST_OUTCOME_FILE="$test_outcome_file"
+          npx tsx tools/e2e/runner-pressure.mts snapshot
+          npx tsx tools/e2e/runner-pressure.mts initialize-evidence
+          set +e
           npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts
+          test_status="$?"
+          set -e
+          if [ "$test_status" -ne 0 ]; then
+            npx tsx tools/e2e/runner-pressure.mts classify
+            npx tsx tools/e2e/runner-pressure.mts validate-classification
+          fi
+          exit "$test_status"
 
       - name: Upload Hermes stale-base rebuild artifacts
         if: always()
@@ -3540,17 +3602,17 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  launchable-smoke:
+  bootstrap-install-smoke:
     needs: generate-matrix
-    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',launchable-smoke,') || contains(format(',{0},', inputs.targets), ',launchable-smoke,') }}
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',bootstrap-install-smoke,') || contains(format(',{0},', inputs.targets), ',bootstrap-install-smoke,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       E2E_JOB: "1"
-      E2E_TARGET_ID: "launchable-smoke"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/launchable-smoke
+      E2E_TARGET_ID: "bootstrap-install-smoke"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/bootstrap-install-smoke
       NEMOCLAW_RUN_LIVE_E2E: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
+      NEMOCLAW_SANDBOX_NAME: "e2e-bootstrap"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_PROVIDER: custom
@@ -3572,15 +3634,15 @@ jobs:
         with:
           build-cli: "false"
 
-      - name: Run launchable smoke live test
+      - name: Run bootstrap install smoke live test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/launchable-smoke.test.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/bootstrap-install-smoke.test.ts
 
-      - name: Upload launchable smoke artifacts
+      - name: Upload bootstrap install smoke artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
@@ -4855,7 +4917,7 @@ jobs:
         token-rotation,
         messaging-compatible-endpoint,
         messaging-providers,
-        launchable-smoke,
+        bootstrap-install-smoke,
         double-onboard,
         jetson-nvmap-gpu,
         concurrent-gateway-ports,

@@ -11,6 +11,10 @@ import {
   type TelegramHookOptions,
 } from "../channels/telegram/hooks";
 import { createWechatHookRegistrations, type WechatHookOptions } from "../channels/wechat/hooks";
+import {
+  createWhatsappHookRegistrations,
+  type WhatsappHookOptions,
+} from "../channels/whatsapp/hooks";
 import { type CommonHookOptions, createCommonHookRegistrations } from "./common";
 import { MessagingHookRegistry } from "./registry";
 import type { MessagingHookRegistration } from "./types";
@@ -23,6 +27,7 @@ export interface BuiltInMessagingHookOptions {
   readonly teams?: TeamsHookOptions;
   readonly telegram?: TelegramHookOptions;
   readonly wechat?: WechatHookOptions;
+  readonly whatsapp?: WhatsappHookOptions;
   // Host capability threaded into every channel's `phase:"status"` health hook,
   // so a status caller enables live probing without naming a specific channel.
   readonly statusHealth?: ChannelStatusHealthHookOptions;
@@ -47,6 +52,9 @@ export function createBuiltInMessagingHookRegistrations(
       ),
     ),
     ...createWechatHookRegistrations(options.wechat),
+    ...createWhatsappHookRegistrations(
+      withStatusHealthOptions(options.whatsapp, options.statusHealth),
+    ),
   ];
 }
 

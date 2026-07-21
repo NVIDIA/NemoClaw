@@ -18,6 +18,8 @@ function timelineHarness() {
     setTimer: () => ({ unref() {} }),
     clearTimer: () => {},
     logLine: () => {},
+    sampleResourceEvidence: () => "E2E_RESOURCE_SNAPSHOT {}",
+    recordResourceBaseline: () => {},
     sampleResources: () => ({
       freeMemoryBytes: 0,
       processRssBytes: 0,

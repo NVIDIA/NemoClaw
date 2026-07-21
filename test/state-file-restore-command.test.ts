@@ -43,4 +43,14 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
     expect(cmd).not.toContain("sha256sum");
     expect(cmd).toContain('mv -f "$tmp" "$dst"');
   });
+
+  it("uses the system Python runtime for SQLite restores", () => {
+    const cmd = sandboxState.buildStateFileRestoreCommand(
+      "/sandbox/.hermes",
+      { path: "kanban.db", strategy: "sqlite_backup" },
+      false,
+    );
+
+    expect(cmd).toContain("/usr/bin/python3 -I -c");
+  });
 });

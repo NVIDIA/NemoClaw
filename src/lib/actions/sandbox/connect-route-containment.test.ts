@@ -102,7 +102,7 @@ describe("connect route containment", () => {
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
-    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalledOnce();
+    expect(harness.ensureLiveSandboxSpy).toHaveBeenCalledTimes(2);
     expect(harness.checkAndRecoverSpy).toHaveBeenCalled();
     expect(harness.captureOpenshellSpy).toHaveBeenCalled();
     expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
@@ -275,7 +275,11 @@ describe("connect route containment", () => {
     releaseLock();
 
     await expect(connect).rejects.toThrow("process.exit(1)");
-    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    const routeReadCalls = harness.captureOpenshellSpy.mock.calls.filter((call) => {
+      const argv = Array.isArray(call?.[0]) ? (call[0] as string[]) : [];
+      return argv[0] === "sandbox" && argv[1] !== "list";
+    });
+    expect(routeReadCalls).toHaveLength(0);
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
     expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
     expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();

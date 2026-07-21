@@ -23,8 +23,13 @@ import {
   riskPlanRequiredTargetIds,
 } from "../advisors/risk-plan.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
-import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.ts";
+import { readPrivateRegularFile, writePrivateRegularFile } from "./private-file.mts";
 import type { E2eRiskSignal } from "./risk-signal.ts";
+import {
+  decideRetry,
+  detectRunnerLoss,
+  type WorkflowAttemptEvidence,
+} from "./runner-pressure-core.mts";
 import {
   focusedE2eJobsForChangedFiles,
   readFreeStandingJobsInventory,
@@ -215,8 +220,12 @@ type WorkflowRunsResponse = { workflow_runs: WorkflowRun[] };
 type WorkflowJob = {
   id: number;
   name: string;
+  status?: string;
   conclusion: string | null;
-  steps: Array<{ name: string; conclusion: string | null }>;
+  runnerId?: number | null;
+  runnerName?: string | null;
+  labels?: string[];
+  steps: Array<{ name: string; status?: string; conclusion: string | null }>;
 };
 type WorkflowJobsPage = { totalCount: number; jobs: WorkflowJob[] };
 type CheckRun = {
@@ -226,6 +235,7 @@ type CheckRun = {
   external_id?: string | null;
   status?: string;
   conclusion?: string | null;
+  details_url?: string | null;
   output?: { title?: string; summary?: string };
   app?: { id?: number } | null;
 };
@@ -924,26 +934,67 @@ function retryableFailureReason(check: CheckRun): RetryableFailureReason | undef
   return reason as RetryableFailureReason;
 }
 
+function priorRunnerLossRunUrls(
+  repository: string,
+  history: readonly CheckRun[],
+  currentCheckId: number,
+): string[] {
+  const prefix = `https://github.com/${repository}/actions/runs/`;
+  const priorRunnerLossChecks = history.filter(
+    (check) => check.id !== currentCheckId && retryableFailureReason(check) === "child-cancelled",
+  );
+  if (priorRunnerLossChecks.length > 1) {
+    throw new Error("Runner-loss retry history exceeds the single permitted retry");
+  }
+  return priorRunnerLossChecks.map((check) => {
+    const url = check.details_url;
+    if (
+      typeof url !== "string" ||
+      !url.startsWith(prefix) ||
+      !/^[1-9][0-9]*$/u.test(url.slice(prefix.length))
+    ) {
+      throw new Error("Runner-loss retry history has an invalid child-run URL");
+    }
+    return url;
+  });
+}
+
+function withRunnerLossLineage(
+  verdict: PrGateVerdict,
+  priorRunUrls: readonly string[],
+  currentRunUrl: string,
+): PrGateVerdict {
+  if (priorRunUrls.length === 0) return verdict;
+  const links = [...priorRunUrls, currentRunUrl].map(
+    (url, index) => `[attempt ${index + 1}](${url})`,
+  );
+  return {
+    ...verdict,
+    summary: `${verdict.summary}\nRunner-loss retry lineage: ${links.join(" → ")}.`,
+  };
+}
+
 function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
   if (checks.length === 0) return undefined;
   const ordered = [...checks].sort((left, right) => left.id - right.id);
   if (new Set(ordered.map((check) => check.id)).size !== ordered.length) {
-    throw new Error("Duplicate exact-diff PR gate check IDs exist");
+    throw new Error("Duplicate PR gate check IDs exist for one PR/base SHA pair");
   }
   const active = ordered.filter((check) => check.status !== "completed");
-  if (active.length > 1) throw new Error("Multiple active exact-diff PR gate checks exist");
+  if (active.length > 1)
+    throw new Error("Multiple active PR gate checks exist for one PR/base SHA pair");
   const history = ordered.slice(0, -1);
   if (history.some((check) => retryableFailureReason(check) === undefined)) {
-    throw new Error("Exact-diff PR gate history contains a non-retryable older check");
+    throw new Error("PR gate history contains a non-retryable older check for one PR/base SHA pair");
   }
   const current = ordered.at(-1)!;
   if (active[0] && active[0].id !== current.id) {
-    throw new Error("Exact-diff PR gate history contains an older active check");
+    throw new Error("PR gate history for one PR/base SHA pair contains an older active check");
   }
   return current;
 }
 
-async function matchingPrGateChecks(options: {
+async function matchingPrGateHistory(options: {
   repository: string;
   token: string;
   headSha: string;
@@ -957,9 +1008,22 @@ async function matchingPrGateChecks(options: {
   if (sameIdentity.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
     throw new Error("PR gate check identity was claimed by an unexpected GitHub App");
   }
-  const current = currentExactDiffCheck(
-    sameIdentity.filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID),
-  );
+  const history = sameIdentity
+    .filter((check) => check.app?.id === GITHUB_ACTIONS_APP_ID)
+    .sort((left, right) => left.id - right.id);
+  currentExactDiffCheck(history);
+  return history;
+}
+
+async function matchingPrGateChecks(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+  baseSha: string;
+  prNumber: number;
+}): Promise<CheckRun[]> {
+  const history = await matchingPrGateHistory(options);
+  const current = history.at(-1);
   return current ? [current] : [];
 }
 
@@ -1013,7 +1077,7 @@ async function createPrGateCheck(options: {
   const externalId = prGateExternalId(options.prNumber, options.headSha, options.baseSha);
   const title = "Waiting for PR CI";
   const summary =
-    "This exact PR head and base revision is reserved for deterministic E2E planning after CI completes.";
+    "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
   const check = await githubApi<unknown>(`repos/${options.repository}/check-runs`, options.token, {
     method: "POST",
     body: {
@@ -1093,7 +1157,7 @@ export async function seedPrGate(
     prNumber,
   });
   console.log(
-    `Exact-diff gate reserved: pr=${prNumber} head=${headSha} base=${baseSha} check=${checkRunId}`,
+    `PR gate reserved: pr=${prNumber} pr_sha=${headSha} base_sha=${baseSha} check=${checkRunId}`,
   );
   return checkRunId;
 }
@@ -1132,7 +1196,7 @@ function assertCheckCanStart(check: CheckRun | undefined, ciConclusion: string):
   if (ciConclusion === "success" && reason) return;
   const title = normalizedCiMetadata(check.output?.title ?? "untitled", "untitled");
   throw new Error(
-    `Existing exact-diff PR gate state is not retryable: status=${check.status ?? "unknown"} conclusion=${check.conclusion ?? "none"} title=${title}`,
+    `Existing PR gate state for this PR/base SHA pair is not retryable: status=${check.status ?? "unknown"} conclusion=${check.conclusion ?? "none"} title=${title}`,
   );
 }
 
@@ -1417,7 +1481,16 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
     (value.id as number) < 1 ||
     typeof value.name !== "string" ||
     value.name.length === 0 ||
+    (value.status !== undefined && typeof value.status !== "string") ||
     (value.conclusion !== null && typeof value.conclusion !== "string") ||
+    (value.runner_id !== undefined &&
+      value.runner_id !== null &&
+      (!Number.isSafeInteger(value.runner_id) || (value.runner_id as number) < 1)) ||
+    (value.runner_name !== undefined &&
+      value.runner_name !== null &&
+      typeof value.runner_name !== "string") ||
+    (value.labels !== undefined &&
+      (!Array.isArray(value.labels) || value.labels.some((label) => typeof label !== "string"))) ||
     (value.steps !== undefined && !Array.isArray(value.steps))
   ) {
     throw new Error("GitHub returned an invalid workflow job");
@@ -1427,16 +1500,25 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
       !isObjectRecord(step) ||
       typeof step.name !== "string" ||
       step.name.length === 0 ||
+      (step.status !== undefined && typeof step.status !== "string") ||
       (step.conclusion !== null && typeof step.conclusion !== "string")
     ) {
       throw new Error("GitHub returned an invalid workflow job step");
     }
-    return { name: step.name, conclusion: step.conclusion };
+    return {
+      name: step.name,
+      ...(step.status === undefined ? {} : { status: step.status }),
+      conclusion: step.conclusion,
+    };
   });
   return {
     id: value.id as number,
     name: value.name,
+    ...(value.status === undefined ? {} : { status: value.status }),
     conclusion: value.conclusion,
+    ...(value.runner_id === undefined ? {} : { runnerId: value.runner_id as number | null }),
+    ...(value.runner_name === undefined ? {} : { runnerName: value.runner_name }),
+    ...(value.labels === undefined ? {} : { labels: value.labels as string[] }),
     steps,
   };
 }
@@ -1616,13 +1698,75 @@ function ciFailureReport(options: {
   };
 }
 
-function e2eFailureReport(options: {
+const GITHUB_HOSTED_RUNNER_NAME_PATTERN = /^GitHub Actions [1-9][0-9]*$/u;
+
+/**
+ * GitHub records a lost hosted runner as a completed failed job whose active
+ * step never received a terminal conclusion. This is stronger than a
+ * cancellation: user and concurrency cancellations finish the active step and
+ * run cleanup, while the release-run failures tracked by #7146 retained one
+ * `in_progress` step after the job itself became terminal.
+ */
+function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
+  if (
+    job.status !== "completed" ||
+    job.conclusion !== "failure" ||
+    !Number.isSafeInteger(job.runnerId) ||
+    (job.runnerId ?? 0) < 1 ||
+    typeof job.runnerName !== "string" ||
+    !GITHUB_HOSTED_RUNNER_NAME_PATTERN.test(job.runnerName) ||
+    !Array.isArray(job.labels) ||
+    job.labels.includes("self-hosted")
+  ) {
+    return false;
+  }
+  const strandedSteps = job.steps.filter(
+    (step) => step.status === "in_progress" && step.conclusion === null,
+  );
+  return (
+    strandedSteps.length === 1 &&
+    job.steps.every(
+      (step) =>
+        step.conclusion === "success" ||
+        (step.conclusion === null && ["in_progress", "pending"].includes(step.status ?? "")),
+    )
+  );
+}
+
+function verifiedRunnerLossEvidence(options: {
+  workflowConclusion: string | null;
+  jobs: readonly WorkflowJob[];
+  jobDetailsAvailable: boolean;
+  jobDetailsComplete: boolean;
+}): WorkflowAttemptEvidence | null {
+  if (
+    !options.jobDetailsAvailable ||
+    !options.jobDetailsComplete ||
+    options.jobs.length === 0 ||
+    !["failure", "cancelled"].includes(options.workflowConclusion ?? "")
+  ) {
+    return null;
+  }
+  const runnerLostMarkerCount = options.jobs.filter(hasTrustedHostedRunnerLossMarker).length;
+  const ordinaryFailureEvidencePresent = options.jobs.some(
+    (job) => job.conclusion === "failure" && !hasTrustedHostedRunnerLossMarker(job),
+  );
+  return {
+    terminalClassificationPresent: ordinaryFailureEvidencePresent,
+    jobConclusion: options.workflowConclusion as "failure" | "cancelled",
+    runnerLostMarkerCount,
+  };
+}
+
+export function e2eFailureReport(options: {
   repository: string;
   runId: number;
   workflowConclusion: string | null;
   jobs: readonly WorkflowJob[];
   jobDetailsAvailable: boolean;
   jobDetailsComplete: boolean;
+  runnerLossAttempt: number;
+  runnerLossEvidence: WorkflowAttemptEvidence | null;
 }): PrGateVerdict {
   const runUrl = `https://github.com/${options.repository}/actions/runs/${options.runId}`;
   const conclusion = normalizedCiMetadata(
@@ -1650,11 +1794,24 @@ function e2eFailureReport(options: {
       options.jobDetailsComplete &&
       options.jobs.length > 0 &&
       options.jobs.every((job) => job.conclusion === "cancelled"));
+  const retryDecision = options.runnerLossEvidence
+    ? decideRetry({
+        runnerLoss: detectRunnerLoss(options.runnerLossEvidence),
+        classification: null,
+        attempt: options.runnerLossAttempt,
+      })
+    : {
+        retry: false,
+        reason: "no verified hosted-runner-loss marker was available",
+      };
+  if (conclusivelyCancelled || (options.runnerLossEvidence?.runnerLostMarkerCount ?? 0) > 0) {
+    summary.push(`Runner-loss policy: ${retryDecision.reason}.`);
+  }
   return {
     conclusion: "failure",
     title,
     summary: summary.join("\n"),
-    ...(conclusivelyCancelled ? { retryableFailureReason: "child-cancelled" as const } : {}),
+    ...(retryDecision.retry ? { retryableFailureReason: "child-cancelled" as const } : {}),
   };
 }
 
@@ -2263,7 +2420,7 @@ export async function startPrGate(
     prNumber: ciIdentity.prNumber,
   });
   if (existingChecks.length > 1) {
-    throw new Error("Multiple exact-diff PR gate checks already exist");
+    throw new Error("Multiple PR gate checks already exist for this PR/base SHA pair");
   }
   const existingCheckRunId =
     existingChecks[0]?.status === "in_progress" ? existingChecks[0].id : undefined;
@@ -2315,7 +2472,7 @@ export async function startPrGate(
     },
     token,
     "Evaluating PR commit",
-    "Validating the exact PR revision and selecting deterministic E2E jobs and typed targets.",
+    "Validating the PR SHA and selecting deterministic E2E jobs and typed targets.",
   );
 
   let finalized = false;
@@ -2430,9 +2587,9 @@ export async function startPrGate(
         token,
         CONTROL_PLANE_AUTHORIZATION_TITLE,
         [
-          `This exact internal diff (head \`${command.headSha}\`, base \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
+          `This internal diff (PR SHA \`${command.headSha}\`, base SHA \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
           "No selected E2E job or target ran and no repository secret was exposed.",
-          `A repository maintainer or administrator must review this exact revision, then open the [${WORKFLOW_NAME}](${workflowUrl}) workflow and run \`run-control-plane\` with the PR number, exact head and base SHAs, and a review reason. That authorized run dispatches the selected jobs and targets in one bound workflow run, and this gate passes only if their exact-SHA evidence verifies successfully.`,
+          `A repository maintainer or administrator must review PR SHA \`${command.headSha}\` against base SHA \`${ciIdentity.baseSha}\`. Then, they must open the [${WORKFLOW_NAME}](${workflowUrl}) workflow and run \`run-control-plane\` with the PR number, PR SHA, base SHA, and a review reason. That run dispatches the selected jobs and targets in one workflow run. This gate passes only if the evidence references both SHAs and verifies successfully.`,
           `Deterministic plan: \`${plan.planHash}\`.`,
         ].join("\n\n"),
       );
@@ -2549,7 +2706,9 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
       prNumber: command.prNumber,
     });
     if (matchingChecks.length !== 1) {
-      throw new Error(`Expected one exact-diff PR gate check; found ${matchingChecks.length}`);
+      throw new Error(
+        `Expected one PR gate check for the PR/base SHA pair; found ${matchingChecks.length}`,
+      );
     }
     const check = matchingChecks[0]!;
     const pendingAuthorization = check.status === "in_progress" && check.conclusion === null;
@@ -2601,7 +2760,7 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
             error,
             detailsUrl: `https://github.com/${repository}/actions/runs/${error.childRunId}`,
             recovery:
-              "A credential-bearing child run was dispatched, so this exact-diff authorization cannot be retried. Inspect the linked run, then update the PR and run fresh CI before authorizing again.",
+              "A credential-bearing child run was dispatched, so this authorization for the PR/base SHA pair cannot be retried. Inspect the linked run, then update the PR and run fresh CI before authorizing again.",
           },
         );
         if (closed) appendOutput("finalized", "true");
@@ -2620,7 +2779,7 @@ export async function startControlPlanePrGate(command: ControlPlaneDispatchComma
             CONTROL_PLANE_AUTHORIZATION_TITLE,
             [
               `The authorized E2E attempt did not produce an accepted result: \`${reason}\`.`,
-              "Review the controller error and any linked child run, then launch a fresh first-attempt `run-control-plane` workflow for this exact revision.",
+              "Review the controller error and any linked child run. Then, launch a first-attempt `run-control-plane` workflow for the PR/base SHA pair.",
             ].join("\n\n"),
           );
           appendOutput("finalized", "true");
@@ -2728,16 +2887,22 @@ export async function finishPrGate(options: {
     }
     const workflowConclusion =
       child.status === "completed" ? child.conclusion : `unfinished (${child.status})`;
-    const matchingChecks = await matchingPrGateChecks({
+    const matchingHistory = await matchingPrGateHistory({
       repository,
       token,
       headSha: state.commitSha,
       baseSha: state.baseSha,
       prNumber: state.prNumber,
     });
-    if (matchingChecks.length !== 1 || matchingChecks[0]!.id !== options.checkRunId) {
-      throw new Error("controller state does not match the exact PR gate check");
+    if (matchingHistory.at(-1)?.id !== options.checkRunId) {
+      throw new Error("controller state does not match the PR gate check");
     }
+    const priorRunnerLossUrls = priorRunnerLossRunUrls(
+      repository,
+      matchingHistory,
+      options.checkRunId,
+    );
+    const runnerLossAttempt = priorRunnerLossUrls.length + 1;
     const finalizeObsoleteExactDiff = async (): Promise<boolean> => {
       try {
         await requireLiveExactDiff({
@@ -2823,8 +2988,16 @@ export async function finishPrGate(options: {
         jobs,
         jobDetailsAvailable,
         jobDetailsComplete,
+        runnerLossAttempt,
+        runnerLossEvidence: verifiedRunnerLossEvidence({
+          workflowConclusion,
+          jobs,
+          jobDetailsAvailable,
+          jobDetailsComplete,
+        }),
       });
     }
+    verdict = withRunnerLossLineage(verdict, priorRunnerLossUrls, childRunUrl);
     if (await finalizeObsoleteExactDiff()) return;
     await completeCheck(context, token, verdict, childRunUrl);
     appendOutput("finalized", "true");
@@ -3019,7 +3192,7 @@ async function completeForkE2ESkip(command: ForkSkipCommand): Promise<void> {
     pull.head.sha !== command.headSha ||
     pull.base.sha !== command.baseSha
   ) {
-    throw new Error("pull request no longer matches the reviewed exact head and base SHAs");
+    throw new Error("pull request no longer matches the reviewed PR SHA and base SHA");
   }
   const isFork = pull.head.repo.full_name !== repository;
   if (!isFork) {
@@ -3057,7 +3230,9 @@ async function completeForkE2ESkip(command: ForkSkipCommand): Promise<void> {
     prNumber: command.prNumber,
   });
   if (matchingChecks.length !== 1) {
-    throw new Error(`Expected one exact-diff PR gate check; found ${matchingChecks.length}`);
+    throw new Error(
+      `Expected one PR gate check for the PR/base SHA pair; found ${matchingChecks.length}`,
+    );
   }
   const check = matchingChecks[0]!;
   if (

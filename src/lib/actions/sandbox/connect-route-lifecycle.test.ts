@@ -85,7 +85,7 @@ describe("connectSandbox route lifecycle", () => {
   });
 
   it("shell-quotes hostile route values in drift recovery commands (#3726)", async () => {
-    const sandboxName = "alpha's box";
+    const sandboxName = "alpha's-box";
     const harness = createConnectHarness({
       inferenceGetOutput:
         "Gateway inference:\n  Provider: openai; touch /tmp/pwn\n  Model: $(id) model\n",
@@ -100,7 +100,7 @@ describe("connectSandbox route lifecycle", () => {
 
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(errorOutput).toContain(
-      "nemoclaw inference set --provider 'openai; touch /tmp/pwn' --model '$(id) model' --sandbox 'alpha'\\''s box'",
+      "nemoclaw inference set --provider 'openai; touch /tmp/pwn' --model '$(id) model' --sandbox 'alpha'\\''s-box'",
     );
   });
 

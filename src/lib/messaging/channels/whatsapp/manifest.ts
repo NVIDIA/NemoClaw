@@ -120,5 +120,18 @@ export const whatsappManifest = {
       required: true,
     },
   ],
-  hooks: [],
+  hooks: [
+    {
+      id: "whatsapp-status-health",
+      phase: "status",
+      handler: "whatsapp.statusHealth",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "channelHealth",
+          kind: "status",
+        },
+      ],
+    },
+  ],
 } as const satisfies ChannelManifest;

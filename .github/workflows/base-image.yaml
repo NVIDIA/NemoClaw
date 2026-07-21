@@ -31,6 +31,7 @@ on:
       - "agents/openclaw/mcporter-runtime/package-lock.json"
       # Dockerfile.base validates min_openclaw_version from this file at build time.
       - "nemoclaw-blueprint/blueprint.yaml"
+      - "scripts/lib/openclaw-npm-remediation.mts"
       - "scripts/lib/reviewed-npm-archive.mts"
       - "scripts/lib/sandbox-rlimits.sh"
   workflow_dispatch:

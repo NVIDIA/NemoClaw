@@ -33,8 +33,16 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   providerRuntimeOwnedFields: ["baseUrl", "api", "apiKey"],
   /** A model entry's routing identity is owned by the fresh rebuild. */
   modelRuntimeOwnedFields: ["id", "name"],
-  /** Durable user-owned top-level sections are inherited from the backup. */
+  /**
+   * Durable user-owned top-level sections are inherited from the backup.
+   * `agents` is durable except its primary model routing reference, which the
+   * fresh rebuild re-owns (see `agentPrimaryModelPath`) so a managed-model
+   * switch followed by rebuild does not leave the agent pinned to the old
+   * model.
+   */
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
+  /** Fresh rebuild owns the agent's primary model routing within `agents`. */
+  agentPrimaryModelPath: ["agents", "defaults", "model", "primary"],
   /** NemoClaw's cross-agent disclosure selection owns this generated key. */
   currentGeneratedToolFields: ["toolSearch"],
 } as const;
@@ -422,6 +430,75 @@ export interface OpenClawConfigMergeOptions {
   previousImagePluginInstalls?: readonly OpenClawImagePluginInstall[];
 }
 
+function ensureMergedObject(record: Record<string, unknown>, key: string): Record<string, unknown> {
+  const existing = record[key];
+  if (isPlainObject(existing)) return existing as Record<string, unknown>;
+  const created: Record<string, unknown> = {};
+  record[key] = created;
+  return created;
+}
+
+/** Read the fresh rebuild's `agents.defaults.model.primary`, or undefined. */
+function readAgentPrimaryModelRef(config: Record<string, unknown>): string | undefined {
+  const agents = config.agents;
+  if (!isPlainObject(agents)) return undefined;
+  const defaults = agents.defaults;
+  if (!isPlainObject(defaults)) return undefined;
+  const model = defaults.model;
+  if (!isPlainObject(model)) return undefined;
+  return typeof model.primary === "string" ? model.primary : undefined;
+}
+
+/**
+ * Point the merged main/default agent's list model at the fresh primary,
+ * mirroring `updatePrimaryAgentListModel` in the inference-set path: the agent
+ * with id `main` wins; otherwise the first `default: true` agent, and only when
+ * its `model` is a string routing reference.
+ */
+function updateMainAgentListModel(agents: Record<string, unknown>, primaryModelRef: string): void {
+  const list = agents.list;
+  if (!Array.isArray(list)) return;
+  let defaultAgent: Record<string, unknown> | undefined;
+  for (const entry of list) {
+    if (!isPlainObject(entry)) continue;
+    if (entry.id === "main") {
+      if (typeof entry.model === "string") entry.model = primaryModelRef;
+      return;
+    }
+    if (!defaultAgent && entry.default === true && typeof entry.model === "string") {
+      defaultAgent = entry;
+    }
+  }
+  if (defaultAgent) defaultAgent.model = primaryModelRef;
+}
+
+/**
+ * Re-own the agent's primary model routing from the fresh rebuild.
+ *
+ * `agents` is backup-durable, so the overlay inherits the user's agent config
+ * from the snapshot — including a stale `model.primary` captured before a
+ * managed-model switch. `models.providers` routing is already refreshed, but
+ * the agent routes on `agents.defaults.model.primary` (and the matching
+ * main/default `agents.list[].model`), so without this the rebuilt sandbox
+ * keeps labelling/routing the previous model. This is issue #7210 (the
+ * `rebuild --tool-disclosure progressive` config-binding variant, where an
+ * MCP-present sandbox is switched via rebuild instead of a full recreate);
+ * #7011 is the related hard-failure form. Only override when the fresh config
+ * carries a primary, so backups with no rebuild-owned routing are untouched.
+ */
+function reconcileAgentPrimaryModel(
+  merged: Record<string, unknown>,
+  currentConfig: Record<string, unknown>,
+): void {
+  const freshPrimary = readAgentPrimaryModelRef(currentConfig);
+  if (freshPrimary === undefined) return;
+  const agents = ensureMergedObject(merged, "agents");
+  const defaults = ensureMergedObject(agents, "defaults");
+  const model = ensureMergedObject(defaults, "model");
+  model.primary = freshPrimary;
+  updateMainAgentListModel(agents, freshPrimary);
+}
+
 export function mergeOpenClawRestoredConfig(
   backedUpConfig: unknown,
   currentConfig: unknown,
@@ -459,6 +536,7 @@ export function mergeOpenClawRestoredConfig(
     freshOwnership,
   );
   merged.tools = mergeOpenClawTools(backedUpConfig.tools, currentConfig.tools);
+  reconcileAgentPrimaryModel(merged, currentConfig);
 
   return merged;
 }

@@ -120,7 +120,9 @@ describe("policies", () => {
 
     it("does not include the WhatsApp preset YAML body in the description", () => {
       const whatsapp = policies.listPresets().find((p) => p.name === "whatsapp");
-      expect(whatsapp?.description).toBe("WhatsApp Web WebSocket and media access");
+      expect(whatsapp?.description).toBe(
+        "WhatsApp Web WebSocket, media access, and a narrowly scoped Baileys protocol-version fetch from raw.githubusercontent.com",
+      );
       expect(whatsapp?.description).not.toContain("network_policies:");
     });
   });
@@ -433,6 +435,9 @@ exit 1
   });
 
   describe("applyPreset disclosure logging", () => {
+    const hasScopeHeader = (m: unknown): m is string =>
+      typeof m === "string" && m.includes("Effective egress that would be opened");
+
     it("logs egress endpoints before applying", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-disclosure-"));
       const fakeOpenshell = path.join(tmpDir, "openshell");
@@ -453,9 +458,7 @@ exit 1
         const messages = logSpy.mock.calls.map((call) =>
           typeof call[0] === "string" ? call[0] : undefined,
         );
-        expect(
-          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
-        ).toBe(true);
+        expect(messages.some(hasScopeHeader)).toBe(true);
       } finally {
         logSpy.mockRestore();
         errSpy.mockRestore();
@@ -473,16 +476,14 @@ exit 1
         const messages = logSpy.mock.calls.map((call) =>
           typeof call[0] === "string" ? call[0] : undefined,
         );
-        expect(
-          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
-        ).toBe(false);
+        expect(messages.some(hasScopeHeader)).toBe(false);
       } finally {
         logSpy.mockRestore();
         errSpy.mockRestore();
       }
     });
 
-    it("does not log when preset exists but has no host entries", () => {
+    it("does not log when preset does not exist under any sandbox load path", () => {
       const noHostPreset =
         "preset:\n  name: empty\n\nnetwork_policies:\n  empty_rule:\n    name: empty_rule\n    endpoints: []\n";
       const loadSpy = vi.spyOn(policies, "loadPreset").mockReturnValue(noHostPreset);
@@ -501,9 +502,7 @@ exit 1
         const messages = logSpy.mock.calls.map((call) =>
           typeof call[0] === "string" ? call[0] : undefined,
         );
-        expect(
-          messages.some((m) => typeof m === "string" && m.includes("Widening sandbox egress")),
-        ).toBe(false);
+        expect(messages.some(hasScopeHeader)).toBe(false);
       } finally {
         loadSpy.mockRestore();
         logSpy.mockRestore();

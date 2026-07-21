@@ -32,7 +32,7 @@ import {
  * Tests normally consume the `inference` fixture from `e2e-test.ts`, pass
  * `inference.env()` to install/onboard commands, use its model and provider
  * fields in assertions, and rely on fixture cleanup. When migrating
- * `launchable-smoke`, `issue-4434-tui-unreachable-inference`,
+ * `bootstrap-install-smoke`, `issue-4434-tui-unreachable-inference`,
  * `model-router-provider-routed-inference`, or `agent-turn-latency`, replace
  * bespoke inference env/probes with that lifecycle, preserve the suite-specific
  * sandbox assertions, scope `inference_mode` to the consuming workflow job,
