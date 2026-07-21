@@ -207,7 +207,7 @@ describe("historical OpenClaw bundled plugin security revisions", () => {
     expect(() => verifyRemediatedArchiveContents(source, archive)).not.toThrow();
     fs.writeFileSync(path.join(source, "payload.js"), "module.exports = false;\n");
     expect(() => verifyRemediatedArchiveContents(source, archive)).toThrow(
-      "archive contents changed during packing",
+      "payload.js: contents changed during packing",
     );
 
     const linkedArchive = path.join(root, "linked-plugin.tgz");
