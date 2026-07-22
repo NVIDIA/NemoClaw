@@ -40,6 +40,13 @@ export const OLD_INSTALLER_CLONE_NEEDLE =
   '    spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"\n';
 export const OLD_INSTALLER_ADVISORY_AUDIT =
   "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\\n";
+export const OLD_INSTALLER_ARCHIVE_CONTEXT_PATH = "nemoclaw/src/.nemoclaw-e2e-old-openclaw.tgz";
+
+const OLD_INSTALLER_ADVISORY_AUDIT_COUNTS: Readonly<Record<string, 0 | 1>> = Object.freeze({
+  "v0.0.36": 0,
+  "v0.0.55": 0,
+  "v0.0.74": 1,
+});
 
 export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClawArchive {
   const reviewedArchive = REVIEWED_OLD_OPENCLAW_ARCHIVES[version];
@@ -53,7 +60,12 @@ export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClaw
 // Dockerfiles predate the fixture pins needed for a deterministic upgrade test.
 // Keep this adapter scoped to the frozen historical lanes and retire it with
 // them; changing the tagged release payloads is not viable.
-export function patchOldInstallerFixture(installer: string): void {
+export function patchOldInstallerFixture(installer: string, nemoclawRef: string): void {
+  const expectedAdvisoryAuditCount = OLD_INSTALLER_ADVISORY_AUDIT_COUNTS[nemoclawRef];
+  if (expectedAdvisoryAuditCount === undefined) {
+    throw new Error(`Historical gateway upgrade ${nemoclawRef} has no reviewed installer profile`);
+  }
+
   const hook =
     String.raw`  if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" && -f "$payload_script" ]]; then
     python3 - "$payload_script" <<'NEMOCLAW_OLD_PAYLOAD_PIN_PY'
@@ -68,7 +80,12 @@ hook = r'''    if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" ]]; then
         echo "ERROR: reviewed historical OpenClaw archive is missing" >&2
         exit 1
       fi
-      cp -- "$NEMOCLAW_OLD_OPENCLAW_ARCHIVE" "$nemoclaw_src/.nemoclaw-e2e-old-openclaw.tgz"
+      archive_context_path="$nemoclaw_src/${OLD_INSTALLER_ARCHIVE_CONTEXT_PATH}"
+      if [[ ! -d "$(dirname "$archive_context_path")" ]]; then
+        echo "ERROR: historical OpenClaw archive context directory is missing" >&2
+        exit 1
+      fi
+      cp -- "$NEMOCLAW_OLD_OPENCLAW_ARCHIVE" "$archive_context_path"
       python3 - "$nemoclaw_src/Dockerfile" "$NEMOCLAW_OLD_OPENCLAW_VERSION" <<'NEMOCLAW_OLD_DOCKERFILE_PIN_PY'
 from pathlib import Path
 import sys
@@ -78,7 +95,7 @@ version = sys.argv[2]
 text = path.read_text(encoding="utf-8")
 injection = (
     "# E2E old-upgrade fixture: force the historical OpenClaw before the old Dockerfile's version gate.\n"
-    "COPY .nemoclaw-e2e-old-openclaw.tgz /tmp/nemoclaw-e2e-old-openclaw.tgz\n"
+    "COPY ${OLD_INSTALLER_ARCHIVE_CONTEXT_PATH} /tmp/nemoclaw-e2e-old-openclaw.tgz\n"
     "RUN rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw \\\n"
     "    && npm install -g --ignore-scripts --no-audit --no-fund --no-progress /tmp/nemoclaw-e2e-old-openclaw.tgz \\\n"
     "    && node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs \\\n"
@@ -105,14 +122,17 @@ if injection not in text:
 
 advisory_audit = ${JSON.stringify(OLD_INSTALLER_ADVISORY_AUDIT)}
 advisory_audit_count = text.count(advisory_audit)
-if advisory_audit_count != 1:
+expected_advisory_audit_count = ${expectedAdvisoryAuditCount}
+if advisory_audit_count != expected_advisory_audit_count:
     raise SystemExit(
-        f"{path}: found {advisory_audit_count} historical mcporter advisory audits; expected exactly one"
+        f"{path}: found {advisory_audit_count} historical mcporter advisory audits; "
+        f"expected {expected_advisory_audit_count}"
     )
-audit_fixture_note = (
-    '    echo "INFO: Skipping current advisory audit for the immutable historical mcporter lock"; \\\n'
-)
-text = text.replace(advisory_audit, audit_fixture_note, 1)
+if expected_advisory_audit_count == 1:
+    audit_fixture_note = (
+        '    echo "INFO: Skipping current advisory audit for the immutable historical mcporter lock"; \\\n'
+    )
+    text = text.replace(advisory_audit, audit_fixture_note, 1)
 
 path.write_text(text, encoding="utf-8")
 print(f"INFO: Forced OpenClaw {version} in old upgrade fixture Dockerfile", flush=True)

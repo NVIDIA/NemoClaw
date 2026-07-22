@@ -403,7 +403,7 @@ async function installOldNemoclawAndClaw(
     `downloaded ${OLD_NEMOCLAW_REF} installer must match its pinned SHA-256`,
   ).toBe(OLD_INSTALLER_SHA256);
   fs.chmodSync(oldInstaller, 0o755);
-  patchOldInstallerFixture(oldInstaller);
+  patchOldInstallerFixture(oldInstaller, OLD_NEMOCLAW_REF);
 
   const reviewedOpenClaw = packReviewedNpmArchive(reviewedOldOpenClawArchive(OLD_OPENCLAW_VERSION));
 
