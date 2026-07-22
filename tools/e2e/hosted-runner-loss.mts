@@ -92,6 +92,9 @@ export function validateWorkflowJobsPage(value: unknown): WorkflowJobsPage {
  * cancellation: user and concurrency cancellations finish the active step and
  * run cleanup, while the release-run failures tracked by #7146 retained one
  * `in_progress` step after the job itself became terminal.
+ * GitHub owns this hosted-runner state, so repository code cannot repair its
+ * source. Remove this retry only after GitHub stops producing this signature;
+ * keep the classifier fail-closed for any replacement terminal evidence.
  */
 export function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
   if (

@@ -73,7 +73,9 @@ graph as the live targets:
   attempts receive no automatic retry. The retry stays on the same workflow
   run and tested SHA. Validated attempt links remain in the job log to preserve
   the original evidence, while the job summary stays free of network-derived
-  content.
+  content. GitHub owns the hosted-runner state, so NemoClaw cannot repair the
+  source of this signature. Remove the retry only after GitHub stops producing
+  it, and keep the classifier fail-closed for replacement terminal evidence.
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.

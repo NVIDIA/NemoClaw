@@ -109,17 +109,19 @@ function optionalSecondPageRoute(options: {
 
 function controllerRoutes(options: {
   run?: Record<string, unknown>;
+  confirmationRun?: Record<string, unknown>;
   comparison?: Record<string, unknown>;
   jobs: unknown[];
   totalCount?: number;
   secondPage?: unknown[];
 }): GitHubFetchRoute[] {
   const run = options.run ?? mainRun();
+  const runResponses = [run, options.confirmationRun ?? run];
   const routes = [
     githubFetchRoute(
       ({ url, method }) =>
         url.endsWith(`/repos/${REPOSITORY}/actions/runs/${RUN_ID}`) && method === "GET",
-      () => githubResponse(run),
+      () => githubResponse(runResponses.shift() ?? run),
     ),
     githubFetchRoute(
       ({ url, method }) =>
@@ -243,6 +245,26 @@ describe("final-main E2E runner-loss retry for item 5 (#7140)", () => {
     expect(result.retry).toBe(false);
     expect(result.reason).toContain("already advanced to attempt 2");
     expect(requests).toHaveLength(1);
+  });
+
+  it("refuses a retry when the run changes after evidence collection", async () => {
+    const requests: RecordedGitHubRequest[] = [];
+    const result = await runController(
+      controllerRoutes({
+        jobs: [lostRunnerJob()],
+        confirmationRun: mainRun({ run_attempt: 2, status: "in_progress", conclusion: null }),
+      }),
+      requests,
+    );
+
+    expect(result.retry).toBe(false);
+    expect(result.reason).toContain("run changed while runner-loss evidence was being verified");
+    expect(
+      requests.filter((request) =>
+        request.url.endsWith(`/repos/${REPOSITORY}/actions/runs/${RUN_ID}`),
+      ),
+    ).toHaveLength(2);
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
   });
 
   it("rejects selective PR dispatch identity before reading job evidence", async () => {
