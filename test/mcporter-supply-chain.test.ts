@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { type DependencyNode, findDependency } from "./fixtures/dependency-graph.ts";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const runtimeDirectory = path.join(repoRoot, "agents", "openclaw", "mcporter-runtime");
@@ -17,15 +18,12 @@ const expectedVersion = "0.7.3";
 const expectedIntegrity =
   "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
 const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz";
+const expectedHonoNodeServerVersion = "2.0.11";
+const expectedHonoNodeServerTarball =
+  "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
+const expectedFastUriVersion = "3.1.4";
+const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
-const patchedHonoNodeServerVersion = "2.0.10";
-const patchedFastUriVersion = "3.1.4";
-
-type PackageGraphNode = {
-  dependencies?: Record<string, PackageGraphNode>;
-  overridden?: boolean;
-  version?: string;
-};
 
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
@@ -78,21 +76,23 @@ describe("mcporter image supply-chain controls", () => {
       { cwd: runtimeDirectory, encoding: "utf8" },
     );
     expect(result.status, result.stderr).toBe(0);
-    const graph = JSON.parse(result.stdout) as PackageGraphNode & {
-      problems?: string[];
-    };
+    const graph = JSON.parse(result.stdout) as DependencyNode & { problems?: string[] };
     expect(graph.problems).toBeUndefined();
-    const mcporter = graph.dependencies?.mcporter;
-    const sdk = mcporter?.dependencies?.["@modelcontextprotocol/sdk"];
-    const honoNodeServer = sdk?.dependencies?.["@hono/node-server"];
-    const fastUri = sdk?.dependencies?.ajv?.dependencies?.["fast-uri"];
-    expect(mcporter?.version).toBe(expectedVersion);
-    expect(sdk?.version).toBe("1.29.0");
-    expect(honoNodeServer).toMatchObject({
-      version: patchedHonoNodeServerVersion,
-      overridden: true,
-    });
-    expect(fastUri).toMatchObject({ version: patchedFastUriVersion, overridden: true });
+    expect(graph.dependencies?.mcporter?.version).toBe(expectedVersion);
+    expect(findDependency(graph, "@hono/node-server")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedHonoNodeServerTarball,
+        version: expectedHonoNodeServerVersion,
+      }),
+    );
+    expect(findDependency(graph, "fast-uri")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedFastUriTarball,
+        version: expectedFastUriVersion,
+      }),
+    );
   });
 
   it.each(dockerfiles)("pins and verifies the package in $name", ({ contents }) => {

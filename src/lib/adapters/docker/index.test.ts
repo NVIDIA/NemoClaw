@@ -84,6 +84,30 @@ describe("docker helpers", () => {
     );
   });
 
+  it("adds sorted image labels to dockerBuild argv and drops them from options", () => {
+    dockerBuild("Dockerfile.base", "sandbox-base:latest", "/repo/root", {
+      labels: { "com.example.z": "last", "com.example.a": "first" },
+      ignoreError: true,
+    });
+
+    expect(runMock).toHaveBeenCalledWith(
+      [
+        "docker",
+        "build",
+        "--label",
+        "com.example.a=first",
+        "--label",
+        "com.example.z=last",
+        "-f",
+        "Dockerfile.base",
+        "-t",
+        "sandbox-base:latest",
+        "/repo/root",
+      ],
+      { ignoreError: true, env: { DOCKER_BUILDKIT: "1" } },
+    );
+  });
+
   it("forces DOCKER_BUILDKIT=1 on dockerBuild so Dockerfile.base --mount works on legacy-builder hosts (#3583)", () => {
     dockerBuild("Dockerfile.base", "sandbox-base:latest", "/repo/root", {
       stdio: ["ignore", "inherit", "inherit"],

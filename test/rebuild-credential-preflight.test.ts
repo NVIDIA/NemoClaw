@@ -251,17 +251,42 @@ process.exit(0);
   fs.writeFileSync(
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const a = process.argv.slice(2);
+const provenancePath = ${JSON.stringify(path.join(tmpDir, "docker-base-provenance"))};
+const readProvenance = () => fs.existsSync(provenancePath) ? JSON.parse(fs.readFileSync(provenancePath, "utf8")) : {};
 if (a[0] === "info") { process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n"); process.exit(0); }
-if (a[0] === "build") process.exit(0);
+if (a[0] === "build") {
+  const labelIndex = a.indexOf("--label");
+  const tagIndex = a.indexOf("-t");
+  if (labelIndex >= 0 && tagIndex >= 0) {
+    const label = a[labelIndex + 1] || "";
+    const provenance = readProvenance();
+    const value = label.slice(label.indexOf("=") + 1);
+    provenance[a[tagIndex + 1]] = value;
+    provenance["sha256:${"a".repeat(64)}"] = value;
+    fs.writeFileSync(provenancePath, JSON.stringify(provenance));
+  }
+  process.exit(0);
+}
+if (a[0] === "tag") {
+  const provenance = readProvenance();
+  if (provenance[a[1]]) provenance[a[2]] = provenance[a[1]];
+  fs.writeFileSync(provenancePath, JSON.stringify(provenance));
+  process.exit(0);
+}
 if (a[0] === "image" && a[1] === "inspect") {
   const formatIndex = a.indexOf("--format");
   const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
   if (format === "{{.Id}}") process.stdout.write("sha256:${"a".repeat(64)}\\n");
   if (format === "{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  if (format === "{{json .}}") {
+    const provenance = readProvenance()[a[formatIndex + 2]] || "";
+    process.stdout.write(JSON.stringify({Id:"sha256:${"a".repeat(64)}", RepoDigests:[], Os:"linux", Architecture:"amd64", Config:{Labels:provenance ? {"com.nvidia.nemoclaw.base-build-provenance":provenance} : {}}}) + "\\n");
+  }
   process.exit(0);
 }
-if (a[0] === "tag" || a[0] === "rmi") process.exit(0);
+if (a[0] === "rmi") process.exit(0);
 if (a[0] === "run") {
   if (a.includes("nslookup")) process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
   else if (a.includes("/usr/bin/ldd")) process.stdout.write("ldd (GNU libc) 2.41\\n");
@@ -282,6 +307,7 @@ process.exit(1);
 const { spawnSync } = require("child_process");
 const cmd = process.argv[process.argv.length - 1] || "";
 if (cmd.includes("[ -d")) { process.stdout.write("workspace\\n"); process.exit(0); }
+if (cmd.startsWith("src=")) { process.exit(2); }
 if (cmd.includes("tar")) {
   const result = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(fakeRoot)}, "workspace"], { stdio: ["ignore", "pipe", "pipe"] });
   if (result.stdout) process.stdout.write(result.stdout);

@@ -70,7 +70,7 @@ The separately locked `mcporter@0.7.3` runtime graph originally resolved
 `2.0.5` override became affected when `GHSA-9mqv-5hh9-4cgg` was published for
 releases through `2.0.9`. The locked `@modelcontextprotocol/sdk@1.29.0` still
 declares `@hono/node-server@^1.19.9`, so the dedicated runtime manifest now pins
-the first release outside both affected ranges, `2.0.10`. Its Node `>=20`
+reviewed `2.0.11`, outside both affected ranges. Its Node `>=20`
 requirement remains inside the image's Node contract, and real ESM plus
 CommonJS Streamable HTTP transport construction/start/close probes cover the
 major-version compatibility boundary.

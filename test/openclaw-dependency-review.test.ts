@@ -158,7 +158,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
 
     expect(review).toContain("GHSA-9mqv-5hh9-4cgg");
     expect(review).toContain("@hono/node-server@^1.19.9");
-    expect(review).toContain("`2.0.10`");
+    expect(review).toContain("`2.0.11`");
     expect(review).toContain("GHSA-v2hh-gcrm-f6hx");
     expect(review).toContain("fast-uri@^3.0.1");
     expect(review).toContain("`3.1.4`");
@@ -268,14 +268,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("npm audit result in this note remains a point-in-time snapshot");
     expect(review).toContain("Advisory audit revalidated: 2026-07-21");
     expect(review).toContain(
-      "`0` info, `1` low, `1` moderate, `0` high, and `0` critical findings across `766` total dependencies",
+      "`0` info, `1` low, `12` moderate, `0` high, and `0` critical findings across `767` total dependencies",
     );
     expect(review).toContain(
-      "The remediated mcporter locked graph reported no findings across `138` dependencies",
+      "The mcporter locked graph reported no findings across `138` dependencies",
     );
     expect(review).toContain("GHSA-frvp-7c67-39w9");
-    expect(review).toContain("@hono/node-server@1.19.14");
-    expect(review).toContain("exact reviewed `2.0.5`");
+    expect(review).toContain("Hono finding remains in the reviewed OpenClaw graph");
     expect(review).toContain("GHSA-v422-hmwv-36x6");
     expect(review).toContain("reviewed Slack and Microsoft Teams plugin graphs");
     expect(review).toContain("GHSA-j3f2-48v5-ccww");
@@ -305,6 +304,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("direct `tar@7.5.19` and `jszip@3.10.1` dependencies");
     expect(review).toContain("`axios@1.16.0` with `axios@1.18.0`");
     expect(review).toContain("`https-proxy-agent@5.0.1` and `agent-base@6.0.2`");
+    expect(review).toContain("`@opentelemetry/propagator-jaeger@2.8.0` with `2.9.0`");
+    expect(review).toContain("bundled `@opentelemetry/sdk-node@0.219.0`");
+    expect(review).toContain("Nests reviewed `@opentelemetry/core@2.9.0`");
+    expect(review).toContain("complete published `v2.8.0..v2.9.0` range");
+    expect(review).toContain("`b1c196d49d54caae59741cca0a9d57d101d7ea88`");
+    expect(review).toContain("unrelated breaking notice only deprecates the OpenTracing shim");
+    expect(review).toContain("Node `^18.19.0 || >=20.6.0`");
     expect(review).toContain("exact registry SRI and tarball URL");
     expect(review).toContain(
       "rejects unsafe archive members before extraction and after repacking",
@@ -320,7 +326,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
       "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",
       "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
+      "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==",
+      "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==",
       "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
+      "sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==",
       "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
     ]) {
@@ -333,6 +342,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
       "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz",
       "https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz",
+      "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz",
+      "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz",
     ]) {
       expect(review).toContain(tarball);
     }
@@ -343,7 +354,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     );
     expect(review).toContain("The other replacement tarballs include license files");
     expect(review).toContain("`tar@7.5.19` declares BlueOak-1.0.0");
-    expect(review).toContain("the others declare MIT");
+    expect(review).toContain("the OpenTelemetry packages declare Apache-2.0");
+    expect(review).toContain("the other packages declare MIT");
     expect(review).toContain(
       "The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transitive graph",
     );
@@ -504,7 +516,8 @@ check_contains "$optional_plugin_block" '"@openclaw/diagnostics-otel@2026.7.1")'
 check_contains "$optional_plugin_block" '--working-directory "$plugin_root"' "diagnostics remediation workspace"
 check_contains "$optional_plugin_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "diagnostics remediation result guard"
 check_contains "$optional_plugin_block" 'plugin_root="$(dirname "$plugin_archive")"' "optional plugin cleanup root"
-check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_archive}"' "optional plugin npm-pack install"
+check_contains "$optional_plugin_block" 'plugin_install_archive="$plugin_archive"' "optional plugin default archive"
+check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_install_archive}"' "optional plugin npm-pack install"
 check_contains "$optional_plugin_block" 'rm -rf "$plugin_root"' "optional plugin cleanup"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
@@ -520,7 +533,20 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq '["pack", request.tarballUrl, "--pack-destination", rootDirectory, "--json"]' "$reviewed_archive_helper"
 	grep -Fq 'reported unsafe archive filename' "$reviewed_archive_helper"
 	grep -Fq 'expectedPatchedTreeIntegrity' "$remediation_helper"
+	grep -Fq 'expectedPatchedMetadataIntegrity' "$remediation_helper"
 	grep -Fq 'hashPackageTree' "$remediation_helper"
+	grep -Fq 'patchOpenClawCorePackageGraph' "$remediation_helper"
+	grep -Fq 'patchOpenClawDiagnosticsPackageGraph' "$remediation_helper"
+	for package_spec in \
+		'openclaw@2026.6.10' \
+		'@openclaw/diagnostics-otel@2026.6.10' \
+		'@openclaw/slack@2026.6.10' \
+		'@openclaw/msteams@2026.6.10' \
+		'@openclaw/diagnostics-otel@2026.7.1' \
+		'@openclaw/slack@2026.7.1' \
+		'@openclaw/msteams@2026.7.1'; do
+		grep -Fq "$package_spec" "$remediation_helper"
+	done
 	grep -Fq 'validateArchiveMembers(archivePath' "$remediation_helper"
 	remediation_cli_block="$(sed -n '/if (isMainModule())/,$p' "$remediation_helper")"
 	check_contains "$remediation_cli_block" 'remediateReviewedOpenClawPluginArchive({' "remediation CLI tree-integrity enforcement"
