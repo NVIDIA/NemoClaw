@@ -365,20 +365,25 @@ describe("OpenRouter Runtime adapter", () => {
   });
 
   it("returns a redacted timeout when upstream sends headers and then stalls (#7248)", async () => {
+    let markHeadersFlushed!: () => void;
+    const headersFlushed = new Promise<void>((resolve) => {
+      markHeadersFlushed = resolve;
+    });
     const upstream = http.createServer(async (req, res) => {
       await readRequestBody(req);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.flushHeaders();
+      markHeadersFlushed();
       req.on("close", () => res.destroy());
     });
     const upstreamBaseUrl = await listen(upstream);
     const adapter = createTestAdapter({
       upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
-      upstreamTimeoutMs: 25,
+      upstreamTimeoutMs: 250,
     });
     const adapterBaseUrl = await listen(adapter);
 
-    const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+    const responsePromise = fetch(`${adapterBaseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
@@ -386,6 +391,8 @@ describe("OpenRouter Runtime adapter", () => {
       },
       body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),
     });
+    await headersFlushed;
+    const response = await responsePromise;
 
     expect(response.status).toBe(504);
     await expect(response.json()).resolves.toMatchObject({
