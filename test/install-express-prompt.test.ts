@@ -572,20 +572,34 @@ ensure_station_express_host
       "Use Local vLLM at port 8000 (reported model: existing/model; advanced manual setup)",
     );
     expect(output).not.toContain("Existing vLLM detected: existing/model");
-    expect(output).toContain("NEMOCLAW_INSTALL_TAG=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(output).toContain(
+      "curl -fsSL https://www.nvidia.com/nemoclaw.sh | " +
+        "NEMOCLAW_INSTALL_TAG=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa " +
+        "NEMOCLAW_AGENT=openclaw NEMOCLAW_SANDBOX_NAME=my-assistant " +
+        "NEMOCLAW_POLICY_TIER=balanced NEMOCLAW_GATEWAY_PORT=8080 " +
+        "NEMOCLAW_DASHBOARD_PORT=18789 NEMOCLAW_VLLM_PORT=8000 bash",
+    );
     expect(output).not.toContain("NEMOCLAW_NO_EXPRESS=1");
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-express-resume"))).toBe(true);
   });
 
   it("reads a bounded running-model identity from the existing vLLM health endpoint", () => {
-    const { result, output } = runInstallerSourced(`
+    const { home, result, output } = runInstallerSourced(`
 load_station_vllm_conflict_helpers
-curl() { printf '{"data":[{"id":"running/model"}]}'; }
+NEMOCLAW_VLLM_PORT=18000
+curl() {
+  printf '%s\n' "$@" >"$HOME/curl-args"
+  printf '{"data":[{"id":"running/model"}]}'
+}
 printf 'MODEL=%s\n' "$(station_existing_vllm_model)"
 `);
 
     expect(result.status, output).toBe(0);
     expect(output).toContain("MODEL=running/model");
+    expect(fs.readFileSync(path.join(home, "curl-args"), "utf8")).toBe(
+      "-fsS\n--connect-timeout\n1\n--max-time\n3\n--max-filesize\n1048576\n" +
+        "http://127.0.0.1:18000/v1/models\n",
+    );
   });
 
   it("does not display an unsafe model identity returned by the existing endpoint", () => {
