@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { retryMainE2eRunnerLoss } from "../../../tools/e2e/main-e2e-runner-loss-retry.mts";
 import {
   createGitHubFetchRouter,
-  githubFetchRoute,
   type GitHubFetchRoute,
+  githubFetchRoute,
   type RecordedGitHubRequest,
 } from "../../support/github-fetch-router.ts";
 
@@ -88,6 +88,21 @@ function assertionJob(id = 8) {
   };
 }
 
+function optionalSecondPageRoute(options: {
+  secondPage?: unknown[];
+  totalCount?: number;
+}): GitHubFetchRoute[] {
+  return options.secondPage === undefined
+    ? []
+    : [
+        githubFetchRoute(
+          ({ url, method }) =>
+            url.includes(`/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=2`) && method === "GET",
+          () => githubResponse({ total_count: options.totalCount, jobs: options.secondPage }),
+        ),
+      ];
+}
+
 function controllerRoutes(options: {
   run?: Record<string, unknown>;
   comparison?: Record<string, unknown>;
@@ -116,16 +131,8 @@ function controllerRoutes(options: {
           jobs: options.jobs,
         }),
     ),
+    ...optionalSecondPageRoute(options),
   ];
-  if (options.secondPage) {
-    routes.push(
-      githubFetchRoute(
-        ({ url, method }) =>
-          url.includes(`/runs/${RUN_ID}/attempts/1/jobs?per_page=100&page=2`) && method === "GET",
-        () => githubResponse({ total_count: options.totalCount, jobs: options.secondPage }),
-      ),
-    );
-  }
   routes.push(
     githubFetchRoute(
       ({ url, method }) =>
