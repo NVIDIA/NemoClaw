@@ -24,6 +24,8 @@ const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tg
 const expectedHonoNodeServerVersion = "2.0.11";
 const expectedHonoNodeServerTarball =
   "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
+const expectedFastUriVersion = "3.1.4";
+const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 
 type DependencyNode = {
@@ -86,13 +88,16 @@ function runIntegrityGate(contents: string, version: string) {
 }
 
 describe("mcporter image supply-chain controls", () => {
-  it("records the patched Hono Node server review boundary", () => {
+  it("records the patched transitive dependency review boundaries", () => {
     expect(dependencyReview).toContain("a manifest override, or the locked graph changes");
     expect(dependencyReview).toContain(
       "`2.0.5` is the first patched release for `GHSA-frvp-7c67-39w9`",
     );
     expect(dependencyReview).toContain("any version other than exact `2.0.11`");
     expect(dependencyReview).toContain("the `/vercel` adapter");
+    expect(dependencyReview).toContain("`fast-uri@3.1.4`");
+    expect(dependencyReview).toContain("`GHSA-v2hh-gcrm-f6hx`");
+    expect(dependencyReview).toContain("exact `3.1.4`");
   });
 
   it("resolves the committed production graph through npm's lockfile boundary", () => {
@@ -110,6 +115,13 @@ describe("mcporter image supply-chain controls", () => {
         overridden: true,
         resolved: expectedHonoNodeServerTarball,
         version: expectedHonoNodeServerVersion,
+      }),
+    );
+    expect(findDependency(graph, "fast-uri")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedFastUriTarball,
+        version: expectedFastUriVersion,
       }),
     );
   });
