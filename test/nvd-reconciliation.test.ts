@@ -443,29 +443,39 @@ describe("attaching NVD reconciliations to signals", () => {
 });
 
 describe("advisory early-warning CLI --nvd-records", () => {
-  const REPO_ROOT = path.join(import.meta.dirname, "..");
-  const SCAN_CLI = path.join(REPO_ROOT, "scripts", "advisory-early-warning-scan.mts");
-  const AUDIT_CONFIG = JSON.parse(
-    fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
-  ) as { archivePackages: readonly { packageSpec: string }[] };
-  const firstPackageSpec = AUDIT_CONFIG.archivePackages[0]?.packageSpec ?? "";
-  // ">= 0.0.0" matches whichever version the committed spec currently pins, so
-  // the test tracks the real inventory without depending on exact versions.
-  const inventoryPackage = firstPackageSpec.slice(0, firstPackageSpec.lastIndexOf("@"));
+  const SCAN_CLI = path.join(
+    import.meta.dirname,
+    "..",
+    "scripts",
+    "advisory-early-warning-scan.mts",
+  );
+  // A synthetic package that exists only in the test's --inventory file keeps
+  // the CLI run hermetic: no expectation derives from the repo's committed
+  // reviewed inventory.
+  const cliInventory = [{ name: "nemoclaw-fixture-package", version: "3.1.2" }];
   const cliAdvisory = {
     ghsa_id: "GHSA-4c8g-83qw-93j6",
     cve_id: "CVE-2026-13676",
     vulnerabilities: [
       {
-        package: { ecosystem: "npm", name: inventoryPackage },
-        vulnerable_version_range: ">= 0.0.0",
+        package: { ecosystem: "npm", name: "nemoclaw-fixture-package" },
+        vulnerable_version_range: ">= 3.0.0, < 3.1.3",
       },
     ],
+  };
+  const expectedCliSignal = {
+    advisoryId: "GHSA-4c8g-83qw-93j6",
+    cveId: "CVE-2026-13676",
+    package: "nemoclaw-fixture-package",
+    vulnerableRange: ">= 3.0.0, < 3.1.3",
+    matchedVersions: ["3.1.2"],
+    source: "upstream-ghsa",
+    confidence: "exact",
+    action: "investigate",
   };
 
   function runScanCli(args: readonly string[]): string {
     return execFileSync(process.execPath, ["--experimental-strip-types", SCAN_CLI, ...args], {
-      cwd: REPO_ROOT,
       encoding: "utf-8",
     });
   }
@@ -473,13 +483,16 @@ describe("advisory early-warning CLI --nvd-records", () => {
   it("attaches reconciliations offline from --nvd-records without any network access", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-nvd-reconciliation-"));
     try {
-      expect(inventoryPackage).not.toBe("");
+      const inventoryPath = path.join(tempRoot, "inventory.json");
       const advisoriesPath = path.join(tempRoot, "advisories.json");
       const nvdRecordsPath = path.join(tempRoot, "nvd-records.json");
       const outputPath = path.join(tempRoot, "signals.json");
+      fs.writeFileSync(inventoryPath, JSON.stringify(cliInventory));
       fs.writeFileSync(advisoriesPath, JSON.stringify([cliAdvisory]));
       fs.writeFileSync(nvdRecordsPath, JSON.stringify([analyzedFastUriResponse]));
       const stdout = runScanCli([
+        "--inventory",
+        inventoryPath,
         "--advisories",
         advisoriesPath,
         "--nvd-records",
@@ -488,18 +501,18 @@ describe("advisory early-warning CLI --nvd-records", () => {
         outputPath,
       ]);
       const signals = JSON.parse(fs.readFileSync(outputPath, "utf-8")) as Record<string, unknown>[];
-      expect(signals).toHaveLength(1);
-      expect(signals[0]).toMatchObject({
-        advisoryId: "GHSA-4c8g-83qw-93j6",
-        cveId: "CVE-2026-13676",
-        package: inventoryPackage,
-        nvd: {
-          cveId: "CVE-2026-13676",
-          nvdStatus: "Analyzed",
-          nvdPublished: "2026-06-29T16:15:09.230",
-          agreement: "corroborated",
+      expect(signals).toEqual([
+        {
+          ...expectedCliSignal,
+          nvd: {
+            cveId: "CVE-2026-13676",
+            nvdStatus: "Analyzed",
+            nvdPublished: "2026-06-29T16:15:09.230",
+            agreement: "corroborated",
+            note: expect.stringMatching(/never an authoritative npm mapping/),
+          },
         },
-      });
+      ]);
       expect(stdout).toContain("NVD: corroborated (published 2026-06-29)");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
@@ -509,14 +522,21 @@ describe("advisory early-warning CLI --nvd-records", () => {
   it("emits unannotated signals when --nvd-records is not given", () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-nvd-reconciliation-"));
     try {
-      expect(inventoryPackage).not.toBe("");
+      const inventoryPath = path.join(tempRoot, "inventory.json");
       const advisoriesPath = path.join(tempRoot, "advisories.json");
       const outputPath = path.join(tempRoot, "signals.json");
+      fs.writeFileSync(inventoryPath, JSON.stringify(cliInventory));
       fs.writeFileSync(advisoriesPath, JSON.stringify([cliAdvisory]));
-      const stdout = runScanCli(["--advisories", advisoriesPath, "--output", outputPath]);
+      const stdout = runScanCli([
+        "--inventory",
+        inventoryPath,
+        "--advisories",
+        advisoriesPath,
+        "--output",
+        outputPath,
+      ]);
       const signals = JSON.parse(fs.readFileSync(outputPath, "utf-8")) as Record<string, unknown>[];
-      expect(signals).toHaveLength(1);
-      expect(signals[0]).toMatchObject({ cveId: "CVE-2026-13676" });
+      expect(signals).toEqual([expectedCliSignal]);
       expect(signals[0]).not.toHaveProperty("nvd");
       expect(stdout).not.toContain("NVD:");
     } finally {

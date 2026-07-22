@@ -42,7 +42,9 @@ shape unchanged.
   `cve_id`, and exists solely for the supplementary NVD reconciliation below).
 - The inventory is derived from `ci/reviewed-npm-audit.json`: every committed
   archive package spec plus the installed packages of each locked graph's
-  `package-lock.json`.
+  `package-lock.json`. The scan CLI's `--inventory <file>` flag substitutes an
+  explicit `{name, version}` inventory for hermetic offline runs; the
+  workflow always uses the repo-derived default.
 - Confidence is encoded, never guessed: only an exact npm ecosystem +
   package-name + parseable semver-range match yields `confidence: "exact"` and
   `action: "investigate"`. Name collisions from non-npm (CPE-derived) records
@@ -79,7 +81,8 @@ purely informational annotation that never changes a signal's `action` or
   `corroborated` (NVD lists the same CVE id and has not rejected it),
   `nvd-missing` (no NVD record — typical while a CVE is reserved or awaiting
   NVD processing; the earlier upstream signal stands on its own), or
-  `nvd-divergent` (NVD rejected the CVE id). CPE criteria surface only as a count in the note, never as package
+  `nvd-divergent` (NVD rejected the CVE id, or the record answers a different
+  one). CPE criteria surface only as a count in the note, never as package
   matches.
 - The workflow queries at most 20 CVE ids per run, spaced 7 seconds apart,
   to respect the unauthenticated NVD rate limit of roughly five requests per

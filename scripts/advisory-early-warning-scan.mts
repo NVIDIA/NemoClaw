@@ -9,9 +9,15 @@
 // fail the process: enforcement stays with the reviewed npm audit gate.
 //
 // Usage:
-//   advisory-early-warning-scan.mts --list-packages
-//   advisory-early-warning-scan.mts --advisories <advisories.json>
+//   advisory-early-warning-scan.mts [--inventory <inventory.json>] --list-packages
+//   advisory-early-warning-scan.mts [--inventory <inventory.json>]
+//     --advisories <advisories.json>
 //     [--nvd-records <nvd-responses.json>] [--output <signals.json>]
+//
+// --inventory replaces the repo-derived reviewed inventory with an explicit
+// JSON array of {name, version[, origin]} entries, so offline callers and
+// tests can run hermetically; without it (the workflow default) the inventory
+// is built from ci/reviewed-npm-audit.json and the locked-graph package-locks.
 //
 // --nvd-records attaches supplementary NVD reconciliations from a file of
 // previously fetched NVD 2.0 API responses. The CLI itself never performs
@@ -59,6 +65,26 @@ function loadNvdResponses(nvdRecordsPath: string): unknown[] {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
+function loadInventoryOverride(inventoryPath: string): InventoryEntry[] {
+  const parsed = JSON.parse(fs.readFileSync(inventoryPath, "utf-8")) as unknown;
+  const entries = Array.isArray(parsed) ? parsed : [];
+  const inventory: InventoryEntry[] = [];
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const name = (entry as Record<string, unknown>).name;
+    const version = (entry as Record<string, unknown>).version;
+    if (typeof name !== "string" || name.length === 0) continue;
+    if (typeof version !== "string" || version.length === 0) continue;
+    const origin = (entry as Record<string, unknown>).origin;
+    inventory.push({
+      name,
+      version,
+      origin: typeof origin === "string" && origin.length > 0 ? origin : inventoryPath,
+    });
+  }
+  return inventory;
+}
+
 function describeNvd(signal: NvdAnnotatedSignal): string {
   if (!signal.nvd) return "";
   const published =
@@ -81,7 +107,8 @@ function readFlagValue(argv: readonly string[], flag: string): string | undefine
 }
 
 function main(argv: readonly string[]): void {
-  const inventory = loadReviewedInventory();
+  const inventoryPath = readFlagValue(argv, "--inventory");
+  const inventory = inventoryPath ? loadInventoryOverride(inventoryPath) : loadReviewedInventory();
   if (argv.includes("--list-packages")) {
     const names = [...new Set(inventory.map((entry) => entry.name))].sort();
     for (const name of names) console.log(name);
@@ -90,7 +117,7 @@ function main(argv: readonly string[]): void {
   const advisoriesPath = readFlagValue(argv, "--advisories");
   if (!advisoriesPath) {
     throw new Error(
-      "usage: advisory-early-warning-scan.mts --list-packages | --advisories <file> [--nvd-records <file>] [--output <file>]",
+      "usage: advisory-early-warning-scan.mts [--inventory <file>] --list-packages | [--inventory <file>] --advisories <file> [--nvd-records <file>] [--output <file>]",
     );
   }
   const advisories = loadAdvisories(advisoriesPath);
