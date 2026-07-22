@@ -990,17 +990,22 @@ describe("installer hash verification", () => {
   it.each([
     "missing-brev-pin",
     "duplicate-brev-pin",
-    "duplicate-installer-pin",
   ] as const)("fails closed when the pull-request tree has a %s", (mode) => {
     const result = runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
-    if (mode === "duplicate-installer-pin") {
-      expect(result.stdout).toContain(
-        `openshell_pinned_sha256 contains duplicate assets: ${ASSETS[0]}`,
-      );
-    }
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("fails closed when the installer pin table contains a duplicate asset", () => {
+    const result = runFixture("duplicate-installer-pin", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).toContain(
+      `openshell_pinned_sha256 contains duplicate assets: ${ASSETS[0]}`,
+    );
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
