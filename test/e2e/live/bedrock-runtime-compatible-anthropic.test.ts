@@ -1302,7 +1302,16 @@ async function assertNoBedrockLeaks(options: {
 
 test("bedrock runtime compatible Anthropic endpoint routes through managed inference.local", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "validate prerequisites and start fake Bedrock endpoint",
+      "onboard agent through Bedrock adapter",
+      "validate managed adapter route and config",
+      "exercise agent inference through Bedrock",
+      "audit Bedrock traffic and secret isolation",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   assertAgent(AGENT);
   const shard =
     process.env.GITHUB_ACTIONS === "true"
@@ -1410,6 +1419,7 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
   });
 
   await cleanupSandboxState(host, home);
+  progress.phase("onboard agent through Bedrock adapter");
   onboarding = await runRawCommand(
     "node",
     [
@@ -1435,6 +1445,7 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
   });
   expect(onboarding.exitCode, redactedResultText(onboarding)).toBe(0);
 
+  progress.phase("validate managed adapter route and config");
   await assertOnboardIdentity(home, AGENT);
   await assertAdapterHealth(host, home);
   await assertOpenShellProviderRoute(host, home);
@@ -1444,6 +1455,7 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
     await assertOpenClawConfig(sandbox, home);
   }
 
+  progress.phase("exercise agent inference through Bedrock");
   await assertSandboxInference(sandbox, home);
   if (AGENT === "hermes") {
     await assertHermesApiChat(sandbox, home);
@@ -1451,6 +1463,7 @@ test("bedrock runtime compatible Anthropic endpoint routes through managed infer
     await assertOpenClawAgentTurn(sandbox, home);
   }
 
+  progress.phase("audit Bedrock traffic and secret isolation");
   expect(
     mock.converseCount,
     "fake Bedrock Runtime endpoint observed authenticated Converse traffic",

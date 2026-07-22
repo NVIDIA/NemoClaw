@@ -10,6 +10,7 @@ import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clie
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 import {
   classifyIssue4434AcceptanceFields,
@@ -17,7 +18,6 @@ import {
   hasFullIssue4434Diagnostics,
   stripTerminalControl,
 } from "../support/issue-4434-tui-capture.ts";
-import { REPO_ROOT } from "../fixtures/paths.ts";
 
 // This remains a privileged opt-in live repro: it onboards a real cloud
 // OpenClaw sandbox, installs temporary DOCKER-USER DROP rules for the NVIDIA
@@ -144,8 +144,21 @@ expect {
 
 runIssue4434LiveTest(
   "issue-4434: openclaw tui surfaces unreachable-inference errors and stops the connected spinner",
-  { timeout: 120 * 60_000 },
-  async ({ artifacts, cleanup, environment, host, onboard, sandbox, secrets, skip }) => {
+  {
+    timeout: 120 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm Linux firewall and hosted inference prerequisites",
+        "onboard OpenClaw and confirm the managed route",
+        "block hosted inference egress",
+        "route inference.local through a fake provider",
+        "stop the provider and confirm route failure",
+        "capture the OpenClaw TUI failure",
+        "analyze visible diagnostics and spinner state",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, environment, host, onboard, progress, sandbox, secrets, skip }) => {
     // Hosted compatible inference is gateway-managed; this repro only blocks
     // sandbox egress, so runIssue4434LiveTest skips that mode before setup.
     if (process.platform !== "linux") {
@@ -187,6 +200,7 @@ runIssue4434LiveTest(
     );
     expect(prereq.exitCode, resultText(prereq)).toBe(0);
 
+    progress.phase("onboard OpenClaw and confirm the managed route");
     const ready = await environment.assertReady(ENVIRONMENT);
     const instance = await onboard.from(ready, {
       sandboxName: SANDBOX_NAME,
@@ -272,6 +286,7 @@ runIssue4434LiveTest(
     });
     expect(connectProbe.exitCode, resultText(connectProbe)).toBe(0);
 
+    progress.phase("block hosted inference egress");
     for (const ip of BLOCKED_IPS) {
       const insert = await host.command(
         "sudo",
@@ -302,6 +317,7 @@ runIssue4434LiveTest(
       `inference-api.nvidia.com remained reachable from inside the sandbox after firewall block\n${resultText(blockedEndpointProbe)}`,
     ).not.toBe(0);
 
+    progress.phase("route inference.local through a fake provider");
     const fake = await startFakeOpenAiCompatibleServer({
       host: "0.0.0.0",
       model: hosted.model,
@@ -462,6 +478,7 @@ runIssue4434LiveTest(
     const fakeRequests = fake.requests();
     await artifacts.writeJson("issue4434-fake-openai-requests.json", fakeRequests);
 
+    progress.phase("stop the provider and confirm route failure");
     await closeFake();
 
     const failedManagedRouteProbe = await sandbox.execShell(
@@ -480,6 +497,7 @@ runIssue4434LiveTest(
       `inference.local remained healthy after its configured provider stopped\n${resultText(failedManagedRouteProbe)}`,
     ).not.toBe(0);
 
+    progress.phase("capture the OpenClaw TUI failure");
     const captureFile = artifacts.pathFor("openclaw-tui-capture.log");
     const expectLog = artifacts.pathFor("expect.log");
     const expectScript = artifacts.pathFor("issue4434-openclaw-tui.expect");
@@ -509,6 +527,7 @@ runIssue4434LiveTest(
     }
     const redactedRawCapture = secrets.redact(rawCapture, [apiKey]);
     fs.writeFileSync(captureFile, redactedRawCapture, "utf8");
+    progress.phase("analyze visible diagnostics and spinner state");
     const analysis = analyzeIssue4434TuiCapture(redactedRawCapture);
     await artifacts.writeText("openclaw-tui-capture.plain.log", analysis.plain);
     await artifacts.target.complete({

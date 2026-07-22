@@ -224,7 +224,19 @@ function readTimerMarker(sandboxName: string): {
 
 test("shields-config: live shields up/down locks config and detects drift", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm Docker and onboard the shields sandbox",
+      "establish the mutable unified OpenClaw config",
+      "lock config and workspace and inspect redaction",
+      "detect host-root config drift and refuse resealing",
+      "unlock shields and inspect the audit trail",
+      "recover shields after a dead restore timer",
+      "reject duplicate shields transitions",
+      "record shields contract evidence",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   await artifacts.target.declare({
     id: "shields-config",
     boundary: "live-sandbox-shields-config",
@@ -353,6 +365,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
   );
   expect(cliVersion.exitCode, resultText(cliVersion)).toBe(0);
 
+  progress.phase("establish the mutable unified OpenClaw config");
   const configDefault = await statPath(sandbox, CONFIG_PATH, "phase-2-config-perms-default");
   expect(configDefault.mode).toBe("660");
   expect(configDefault.owner).toBe("sandbox:sandbox");
@@ -429,6 +442,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
   expect(layoutProbe.exitCode, resultText(layoutProbe)).toBe(0);
   expect(resultText(layoutProbe).trim()).toBe("");
 
+  progress.phase("lock config and workspace and inspect redaction");
   const shieldsUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
     artifactName: "phase-3-shields-up",
   });
@@ -496,6 +510,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
   expect(statusUp.exitCode, resultText(statusUp)).toBe(0);
   expect(statusUp.stdout).toContain("Shields: UP");
 
+  progress.phase("detect host-root config drift and refuse resealing");
   const originalConfig = path.join(os.tmpdir(), `nemoclaw-shields-orig-${process.pid}.json`);
   await readOriginalConfig(host, containerId, originalConfig);
   try {
@@ -563,6 +578,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
   expect(statusRestored.exitCode, resultText(statusRestored)).toBe(0);
   expect(statusRestored.stdout).toContain("Shields: UP (lockdown active)");
 
+  progress.phase("unlock shields and inspect the audit trail");
   const shieldsDown = await runNemoclaw(
     host,
     [SANDBOX_NAME, "shields", "down", "--timeout", "5m", "--reason", "E2E shields lifecycle test"],
@@ -611,6 +627,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
     downCount,
   });
 
+  progress.phase("recover shields after a dead restore timer");
   const timerDown = await runNemoclaw(
     host,
     [SANDBOX_NAME, "shields", "down", "--timeout", "10s", "--reason", "Auto-restore timer E2E"],
@@ -672,6 +689,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
     ]),
   );
 
+  progress.phase("reject duplicate shields transitions");
   const doubleUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
     artifactName: "phase-10-double-shields-up",
   });
@@ -701,6 +719,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
   expect(finalUp.exitCode, resultText(finalUp)).toBe(0);
   expect(resultText(finalUp)).toContain("Lockdown active");
 
+  progress.phase("record shields contract evidence");
   await artifacts.target.complete({
     id: "shields-config",
     sandboxName: SANDBOX_NAME,

@@ -5,10 +5,12 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,7 +18,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRemediatedOpenClawArchive,
-  patchOpenClawCorePackageGraph,
+  hashPackageTree,
+  patchLegacyOpenClawCorePackageGraph,
+  patchOpenClawDiagnosticsOtelPackageGraph,
   patchOpenClawPluginPackageGraph,
 } from "../scripts/lib/openclaw-npm-remediation.mts";
 
@@ -30,7 +34,7 @@ function writeFixture(axiosVersion = "1.16.0"): string {
     `${JSON.stringify(
       {
         name: "@openclaw/slack",
-        version: "2026.6.10",
+        version: "2026.7.1",
         dependencies: { "@slack/bolt": "4.7.3" },
         bundledDependencies: ["@slack/bolt"],
       },
@@ -43,13 +47,13 @@ function writeFixture(axiosVersion = "1.16.0"): string {
     `${JSON.stringify(
       {
         name: "@openclaw/slack",
-        version: "2026.6.10",
+        version: "2026.7.1",
         lockfileVersion: 3,
         requires: true,
         packages: {
           "": {
             name: "@openclaw/slack",
-            version: "2026.6.10",
+            version: "2026.7.1",
             dependencies: { "@slack/bolt": "4.7.3" },
           },
           "node_modules/axios": {
@@ -71,21 +75,22 @@ function writeFixture(axiosVersion = "1.16.0"): string {
   return directory;
 }
 
-function writeCoreFixture(tarVersion = "7.5.16"): string {
-  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-core-remediation-"));
+function writeDiagnosticsFixture(jaegerVersion = "2.8.0"): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-otel-remediation-"));
   temporaryDirectories.push(directory);
+  const sdkDirectory = path.join(directory, "node_modules", "@opentelemetry", "sdk-node");
+  mkdirSync(sdkDirectory, { recursive: true });
   writeFileSync(
     path.join(directory, "package.json"),
+    `${JSON.stringify({ name: "@openclaw/diagnostics-otel", version: "2026.7.1" }, null, 2)}\n`,
+  );
+  writeFileSync(
+    path.join(sdkDirectory, "package.json"),
     `${JSON.stringify(
       {
-        name: "openclaw",
-        version: "2026.6.10",
-        dependencies: {
-          "@openclaw/fs-safe": "0.3.0",
-          jszip: "3.10.1",
-          minimatch: "10.2.5",
-          tar: tarVersion,
-        },
+        name: "@opentelemetry/sdk-node",
+        version: "0.219.0",
+        dependencies: { "@opentelemetry/propagator-jaeger": jaegerVersion },
       },
       null,
       2,
@@ -95,45 +100,38 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
     path.join(directory, "npm-shrinkwrap.json"),
     `${JSON.stringify(
       {
-        name: "openclaw",
-        version: "2026.6.10",
+        name: "@openclaw/diagnostics-otel",
+        version: "2026.7.1",
         lockfileVersion: 3,
         packages: {
-          "": {
-            name: "openclaw",
-            version: "2026.6.10",
-            dependencies: {
-              "@openclaw/fs-safe": "0.3.0",
-              jszip: "3.10.1",
-              minimatch: "10.2.5",
-              tar: tarVersion,
-            },
+          "": { name: "@openclaw/diagnostics-otel", version: "2026.7.1" },
+          "node_modules/@opentelemetry/sdk-node": {
+            version: "0.219.0",
+            dependencies: { "@opentelemetry/propagator-jaeger": jaegerVersion },
           },
-          "node_modules/@openclaw/fs-safe": {
-            version: "0.3.0",
-            optionalDependencies: { jszip: "^3.10.1", tar: "7.5.13" },
-          },
-          "node_modules/brace-expansion": {
-            version: "5.0.6",
-            resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.6.tgz",
-            integrity: "sha512-old-brace-expansion",
-          },
-          "node_modules/minimatch": {
-            version: "10.2.5",
-            dependencies: { "brace-expansion": "^5.0.5" },
-          },
-          "node_modules/jszip": {
-            version: "3.10.1",
-            resolved: "https://registry.npmjs.org/jszip/-/jszip-3.10.1.tgz",
-            integrity:
-              "sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==",
-          },
-          "node_modules/tar": {
-            version: tarVersion,
-            resolved: `https://registry.npmjs.org/tar/-/tar-${tarVersion}.tgz`,
-            integrity: "sha512-old-tar",
+          "node_modules/@opentelemetry/propagator-jaeger": {
+            version: jaegerVersion,
+            dependencies: { "@opentelemetry/core": jaegerVersion },
           },
         },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return directory;
+}
+
+function writeLegacyCoreFixture(tarVersion = "7.5.11"): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-legacy-openclaw-core-remediation-"));
+  temporaryDirectories.push(directory);
+  writeFileSync(
+    path.join(directory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "openclaw",
+        version: "2026.3.11",
+        dependencies: { commander: "14.0.3", tar: tarVersion },
       },
       null,
       2,
@@ -156,119 +154,33 @@ function packFixture(packageDirectory: string, archivePath: string): void {
   expect(result.status, result.stderr || "failed to pack OpenClaw test archive").toBe(0);
 }
 
-function writeCoreArchiveFixtures(): {
-  archivePath: string;
-  npmExecutable: string;
-  workingDirectory: string;
-} {
-  const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-build-remediation-"));
-  temporaryDirectories.push(root);
-  const archivePath = path.join(root, "openclaw-2026.6.10.tgz");
-  packFixture(writeCoreFixture(), archivePath);
-
-  const fsSafeDirectory = path.join(root, "fs-safe-package");
-  mkdirSync(fsSafeDirectory, { recursive: true });
-  writeFileSync(
-    path.join(fsSafeDirectory, "package.json"),
-    `${JSON.stringify(
-      {
-        name: "@openclaw/fs-safe",
-        version: "0.3.0",
-        optionalDependencies: { jszip: "^3.10.1", tar: "7.5.13" },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  const fsSafeArchive = path.join(root, "fs-safe-0.3.0-source.tgz");
-  packFixture(fsSafeDirectory, fsSafeArchive);
-
-  const npmExecutable = path.join(root, "npm-fixture.sh");
-  writeFileSync(
-    npmExecutable,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `fs_safe_archive=${JSON.stringify(fsSafeArchive)}`,
-      'if [ "$1" = "view" ] && [ "$3" = "dist.integrity" ]; then',
-      '  printf "%s\\n" "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA=="',
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "view" ] && [ "$3" = "dist.tarball" ]; then',
-      '  printf "%s\\n" "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz"',
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "pack" ]; then',
-      '  destination=""',
-      '  while [ "$#" -gt 0 ]; do',
-      '    if [ "$1" = "--pack-destination" ]; then destination="$2"; shift 2; continue; fi',
-      "    shift",
-      "  done",
-      '  cp "$fs_safe_archive" "$destination/fs-safe-0.3.0.tgz"',
-      '  printf \'[{"filename":"fs-safe-0.3.0.tgz","integrity":"sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA=="}]\\n\'',
-      "  exit 0",
-      "fi",
-      "exit 1",
-      "",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  chmodSync(npmExecutable, 0o700);
-  return { archivePath, npmExecutable, workingDirectory: path.join(root, "work") };
+function readPackageField<T>(directory: string, field: string): T {
+  const result = spawnSync("npm", ["pkg", "get", field, "--json"], {
+    cwd: directory,
+    encoding: "utf-8",
+  });
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout) as T;
 }
 
-function writePluginArchiveFixtures(): {
+function writeLegacyCoreArchiveFixtures(): {
   archivePath: string;
   npmExecutable: string;
   workingDirectory: string;
 } {
-  const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-plugin-remediation-"));
+  const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-legacy-openclaw-build-remediation-"));
   temporaryDirectories.push(root);
-  const archivePath = path.join(root, "slack-2026.6.10.tgz");
-  packFixture(writeFixture(), archivePath);
+  const archivePath = path.join(root, "openclaw-2026.3.11.tgz");
+  packFixture(writeLegacyCoreFixture(), archivePath);
 
-  const replacements = [
-    {
-      archive: "axios-1.18.0-source.tgz",
-      dependencies: {
-        "follow-redirects": "^1.16.0",
-        "form-data": "^4.0.5",
-        "https-proxy-agent": "^5.0.1",
-        "proxy-from-env": "^2.1.0",
-      },
-      name: "axios",
-      version: "1.18.0",
-    },
-    {
-      archive: "https-proxy-agent-5.0.1-source.tgz",
-      dependencies: { "agent-base": "6", debug: "4" },
-      name: "https-proxy-agent",
-      version: "5.0.1",
-    },
-    {
-      archive: "agent-base-6.0.2-source.tgz",
-      dependencies: { debug: "4" },
-      name: "agent-base",
-      version: "6.0.2",
-    },
-  ] as const;
-  for (const replacement of replacements) {
-    const directory = path.join(root, `${replacement.name}-package`);
-    mkdirSync(directory, { recursive: true });
-    writeFileSync(
-      path.join(directory, "package.json"),
-      `${JSON.stringify(
-        {
-          dependencies: replacement.dependencies,
-          name: replacement.name,
-          version: replacement.version,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    packFixture(directory, path.join(root, replacement.archive));
-  }
+  const tarDirectory = path.join(root, "tar-package");
+  mkdirSync(tarDirectory, { recursive: true });
+  writeFileSync(
+    path.join(tarDirectory, "package.json"),
+    `${JSON.stringify({ name: "tar", version: "7.5.19" }, null, 2)}\n`,
+  );
+  const tarArchive = path.join(root, "tar-7.5.19-source.tgz");
+  packFixture(tarDirectory, tarArchive);
 
   const npmExecutable = path.join(root, "npm-fixture.sh");
   writeFileSync(
@@ -276,17 +188,11 @@ function writePluginArchiveFixtures(): {
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      `fixture_root=${JSON.stringify(root)}`,
+      `tar_archive=${JSON.stringify(tarArchive)}`,
       'case "$1:$2:${3:-}" in',
-      '  "view:axios@1.18.0:dist.integrity") value="sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==" ;;',
-      '  "view:axios@1.18.0:dist.tarball") value="https://registry.npmjs.org/axios/-/axios-1.18.0.tgz" ;;',
-      '  "view:https-proxy-agent@5.0.1:dist.integrity") value="sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==" ;;',
-      '  "view:https-proxy-agent@5.0.1:dist.tarball") value="https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz" ;;',
-      '  "view:agent-base@6.0.2:dist.integrity") value="sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==" ;;',
-      '  "view:agent-base@6.0.2:dist.tarball") value="https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz" ;;',
-      '  "pack:https://registry.npmjs.org/axios/-/axios-1.18.0.tgz:--pack-destination") archive="axios-1.18.0-source.tgz"; filename="axios-1.18.0.tgz"; integrity="sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==" ;;',
-      '  "pack:https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz:--pack-destination") archive="https-proxy-agent-5.0.1-source.tgz"; filename="https-proxy-agent-5.0.1.tgz"; integrity="sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==" ;;',
-      '  "pack:https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz:--pack-destination") archive="agent-base-6.0.2-source.tgz"; filename="agent-base-6.0.2.tgz"; integrity="sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==" ;;',
+      '  "view:tar@7.5.19:dist.integrity") value="sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==" ;;',
+      '  "view:tar@7.5.19:dist.tarball") value="https://registry.npmjs.org/tar/-/tar-7.5.19.tgz" ;;',
+      '  "pack:https://registry.npmjs.org/tar/-/tar-7.5.19.tgz:--pack-destination") ;;',
       '  *) echo "unexpected npm fixture invocation: $*" >&2; exit 1 ;;',
       "esac",
       'if [ "$1" = "view" ]; then printf "%s\\n" "$value"; exit 0; fi',
@@ -295,8 +201,8 @@ function writePluginArchiveFixtures(): {
       '  if [ "$1" = "--pack-destination" ]; then destination="$2"; shift 2; continue; fi',
       "  shift",
       "done",
-      'cp "$fixture_root/$archive" "$destination/$filename"',
-      'printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$filename" "$integrity"',
+      'cp "$tar_archive" "$destination/tar-7.5.19.tgz"',
+      'printf \'[{"filename":"tar-7.5.19.tgz","integrity":"sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw=="}]\\n\'',
       "",
     ].join("\n"),
     { mode: 0o700 },
@@ -312,21 +218,60 @@ afterEach(() => {
 });
 
 describe("OpenClaw npm remediation", () => {
-  // source-shape-contract: security -- Exact replacement metadata binds the rebuilt plugin archive to the reviewed registry identities
+  it("hashes package entries through opened file descriptors", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-tree-integrity-"));
+    temporaryDirectories.push(directory);
+    mkdirSync(path.join(directory, "nested"));
+    writeFileSync(path.join(directory, "package.json"), '{"name":"fixture"}\n');
+    writeFileSync(path.join(directory, "nested", "content.txt"), "reviewed content\n");
+
+    const first = hashPackageTree(directory);
+    const second = hashPackageTree(directory);
+
+    expect(first).toMatch(/^sha512-/);
+    expect(second).toBe(first);
+  });
+
+  it("rejects symbolic links in a remediated package tree", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-tree-symlink-"));
+    temporaryDirectories.push(directory);
+    const outside = path.join(directory, "..", `${path.basename(directory)}-outside`);
+    writeFileSync(outside, "must not be hashed\n");
+    temporaryDirectories.push(outside);
+    symlinkSync(outside, path.join(directory, "linked-content"));
+
+    expect(() => hashPackageTree(directory)).toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects FIFOs without blocking in a remediated package tree",
+    () => {
+      const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-tree-fifo-"));
+      temporaryDirectories.push(directory);
+      const fifo = path.join(directory, "blocked-reader");
+      const created = spawnSync("mkfifo", [fifo], { encoding: "utf8", timeout: 5000 });
+      expect(created.status, created.stderr).toBe(0);
+
+      const startedAt = Date.now();
+      expect(() => hashPackageTree(directory)).toThrow(/unsupported entry/);
+      expect(Date.now() - startedAt).toBeLessThan(1000);
+    },
+  );
+
   it("replaces the reviewed bundled Axios graph with the patched graph", () => {
     const directory = writeFixture();
 
-    patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.6.10");
+    patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.7.1");
+
+    expect(readPackageField<string>(directory, "dependencies.axios")).toBe("1.18.0");
+    expect(readPackageField<string[]>(directory, "bundledDependencies")).toEqual([
+      "@slack/bolt",
+      "axios",
+    ]);
 
     const shrinkwrap = readJson<{
       packages: Record<string, { version?: string; dependencies?: Record<string, string> }>;
     }>(path.join(directory, "npm-shrinkwrap.json"));
-    const packageJson = readJson<{
-      bundledDependencies?: string[];
-      dependencies?: Record<string, string>;
-    }>(path.join(directory, "package.json"));
-    expect(packageJson.dependencies).toMatchObject({ axios: "1.18.0" });
-    expect(packageJson.bundledDependencies).toContain("axios");
     expect(shrinkwrap.packages["node_modules/axios"]).toMatchObject({
       version: "1.18.0",
       resolved: "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
@@ -357,173 +302,88 @@ describe("OpenClaw npm remediation", () => {
   it("rejects an upstream Axios graph that changed after review", () => {
     const directory = writeFixture("1.17.0");
 
-    expect(() => patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.6.10")).toThrow(
+    expect(() => patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.7.1")).toThrow(
       "must resolve node_modules/axios to 1.16.0 before remediation",
     );
   });
 
-  // source-shape-contract: security -- Exact core shrinkwrap metadata binds remediation output to the reviewed registry identities
-  it("replaces the reviewed OpenClaw core tar and brace-expansion graph", () => {
-    const directory = writeCoreFixture();
+  it("replaces the reviewed Jaeger propagator with its aligned patched core", () => {
+    const directory = writeDiagnosticsFixture();
 
-    patchOpenClawCorePackageGraph(directory);
+    patchOpenClawDiagnosticsOtelPackageGraph(directory);
 
+    expect(
+      readPackageField<string>(
+        path.join(directory, "node_modules", "@opentelemetry", "sdk-node"),
+        "dependencies.@opentelemetry/propagator-jaeger",
+      ),
+    ).toBe("2.9.0");
     const shrinkwrap = readJson<{
-      packages: Record<
-        string,
-        {
-          dependencies?: Record<string, string>;
-          integrity?: string;
-          optionalDependencies?: Record<string, string>;
-          resolved?: string;
-          version?: string;
-        }
-      >;
+      packages: Record<string, { version?: string; dependencies?: Record<string, string> }>;
     }>(path.join(directory, "npm-shrinkwrap.json"));
-    const packageJson = readJson<{
-      bundledDependencies?: string[];
-      dependencies?: Record<string, string>;
-    }>(path.join(directory, "package.json"));
-    expect(packageJson.dependencies).toMatchObject({ jszip: "3.10.1", tar: "7.5.19" });
-    expect(packageJson.bundledDependencies).toEqual(["@openclaw/fs-safe"]);
-    expect(shrinkwrap.packages[""]).toMatchObject({ dependencies: { tar: "7.5.19" } });
-    expect(shrinkwrap.packages["node_modules/tar"]).toMatchObject({
-      version: "7.5.19",
-      resolved: "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
-      integrity:
-        "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
+    expect(shrinkwrap.packages["node_modules/@opentelemetry/propagator-jaeger"]).toMatchObject({
+      version: "2.9.0",
+      dependencies: { "@opentelemetry/core": "2.9.0" },
     });
-    expect(shrinkwrap.packages["node_modules/@openclaw/fs-safe"]?.optionalDependencies).toBe(
-      undefined,
-    );
-    expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
-      version: "5.0.7",
-      resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
-      integrity:
-        "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
+    expect(
+      shrinkwrap.packages[
+        "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core"
+      ],
+    ).toMatchObject({
+      version: "2.9.0",
+      dependencies: { "@opentelemetry/semantic-conventions": "^1.29.0" },
     });
   });
 
-  it("rejects an OpenClaw core tar graph that changed after review", () => {
-    const directory = writeCoreFixture("7.5.17");
+  it("rejects a diagnostics Jaeger graph that changed after review", () => {
+    const directory = writeDiagnosticsFixture("2.8.1");
 
-    expect(() => patchOpenClawCorePackageGraph(directory)).toThrow(
-      "must declare reviewed tar@7.5.16 before remediation",
+    expect(() => patchOpenClawDiagnosticsOtelPackageGraph(directory)).toThrow(
+      "with Jaeger propagator 2.8.0 before remediation",
     );
   });
 
-  // source-shape-contract: security -- Archive metadata proves the rebuilt package carries the reviewed bundled fs-safe remediation
-  it("rebuilds a guarded core archive with the patched fs-safe package bundled", () => {
-    const fixture = writeCoreArchiveFixtures();
+  it("rejects a legacy rebuild fixture tar graph that changed after review", () => {
+    const directory = writeLegacyCoreFixture("7.5.12");
+
+    expect(() => patchLegacyOpenClawCorePackageGraph(directory)).toThrow(
+      "must declare reviewed tar@7.5.11 before remediation",
+    );
+  });
+
+  it("rebuilds the legacy fixture archive with the reviewed tar package bundled", () => {
+    const fixture = writeLegacyCoreArchiveFixtures();
     const request = {
       archivePath: fixture.archivePath,
       env: { NEMOCLAW_REVIEWED_NPM_EXECUTABLE: fixture.npmExecutable },
-      packageSpec: "openclaw@2026.6.10",
+      packageSpec: "openclaw@2026.3.11",
       workingDirectory: fixture.workingDirectory,
     };
-    let metadataIntegrity = "";
-    try {
+    const remediated = buildRemediatedOpenClawArchive(request);
+    expect(() =>
       buildRemediatedOpenClawArchive({
         ...request,
         expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
-      });
-    } catch (error) {
-      const message = String(error);
-      expect(message).toMatch(/got sha512-\S+/u);
-      metadataIntegrity = message.match(/got (sha512-\S+)/u)?.[1] ?? "";
-    }
-    expect(metadataIntegrity).toMatch(/^sha512-/u);
+      }),
+    ).toThrow(`got ${remediated.metadataIntegrity}`);
 
-    const remediated = buildRemediatedOpenClawArchive({
-      ...request,
-      expectedPatchedMetadataIntegrity: metadataIntegrity,
-    });
-    expect(remediated).toMatchObject({ metadataIntegrity, remediated: true });
-    const extracted = path.join(fixture.workingDirectory, "asserted");
+    const extracted = path.join(path.dirname(fixture.archivePath), "asserted");
     mkdirSync(extracted, { recursive: true });
     const extraction = spawnSync("tar", ["-xzf", remediated.archivePath, "-C", extracted], {
-      encoding: "utf-8",
+      encoding: "utf8",
     });
     expect(extraction.status, extraction.stderr).toBe(0);
-    const packageJson = readJson<{
-      bundledDependencies?: string[];
-      dependencies?: Record<string, string>;
-    }>(path.join(extracted, "package", "package.json"));
-    const fsSafePackageJson = readJson<{ optionalDependencies?: Record<string, string> }>(
-      path.join(extracted, "package", "node_modules", "@openclaw", "fs-safe", "package.json"),
-    );
-    expect(packageJson).toMatchObject({
-      bundledDependencies: ["@openclaw/fs-safe"],
-      dependencies: { jszip: "3.10.1", tar: "7.5.19" },
-    });
-    expect(fsSafePackageJson.optionalDependencies).toBeUndefined();
-  });
-
-  // source-shape-contract: security -- Extracted plugin contents prove the rebuilt archive carries every reviewed Axios replacement package
-  it("rebuilds a guarded plugin archive with the patched Axios graph bundled", () => {
-    const fixture = writePluginArchiveFixtures();
-    const request = {
-      archivePath: fixture.archivePath,
-      env: { NEMOCLAW_REVIEWED_NPM_EXECUTABLE: fixture.npmExecutable },
-      packageSpec: "@openclaw/slack@2026.6.10",
-      workingDirectory: fixture.workingDirectory,
-    };
-    let metadataIntegrity = "";
-    try {
-      buildRemediatedOpenClawArchive({
-        ...request,
-        expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
-      });
-    } catch (error) {
-      const message = String(error);
-      expect(message).toMatch(/got sha512-\S+/u);
-      metadataIntegrity = message.match(/got (sha512-\S+)/u)?.[1] ?? "";
-    }
-    expect(metadataIntegrity).toMatch(/^sha512-/u);
-
-    const remediated = buildRemediatedOpenClawArchive({
-      ...request,
-      expectedPatchedMetadataIntegrity: metadataIntegrity,
-    });
-    const extracted = path.join(fixture.workingDirectory, "asserted-plugin");
-    mkdirSync(extracted, { recursive: true });
-    const extraction = spawnSync("tar", ["-xzf", remediated.archivePath, "-C", extracted], {
-      encoding: "utf-8",
-    });
-    expect(extraction.status, extraction.stderr).toBe(0);
-    const axiosPackageJson = readJson<{ name: string; version: string }>(
-      path.join(extracted, "package", "node_modules", "axios", "package.json"),
-    );
-    const proxyPackageJson = readJson<{ name: string; version: string }>(
-      path.join(
-        extracted,
-        "package",
-        "node_modules",
-        "axios",
-        "node_modules",
-        "https-proxy-agent",
-        "package.json",
+    expect(existsSync(path.join(extracted, "package", "npm-shrinkwrap.json"))).toBe(false);
+    expect(
+      readJson<{
+        bundledDependencies?: string[];
+        dependencies?: Record<string, string>;
+      }>(path.join(extracted, "package", "package.json")),
+    ).toMatchObject({ bundledDependencies: ["tar"], dependencies: { tar: "7.5.19" } });
+    expect(
+      readJson<{ name?: string; version?: string }>(
+        path.join(extracted, "package", "node_modules", "tar", "package.json"),
       ),
-    );
-    const agentBasePackageJson = readJson<{ name: string; version: string }>(
-      path.join(
-        extracted,
-        "package",
-        "node_modules",
-        "axios",
-        "node_modules",
-        "https-proxy-agent",
-        "node_modules",
-        "agent-base",
-        "package.json",
-      ),
-    );
-    expect(axiosPackageJson).toEqual(expect.objectContaining({ name: "axios", version: "1.18.0" }));
-    expect(proxyPackageJson).toEqual(
-      expect.objectContaining({ name: "https-proxy-agent", version: "5.0.1" }),
-    );
-    expect(agentBasePackageJson).toEqual(
-      expect.objectContaining({ name: "agent-base", version: "6.0.2" }),
-    );
+    ).toMatchObject({ name: "tar", version: "7.5.19" });
   });
 });

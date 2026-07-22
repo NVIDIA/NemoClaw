@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeAgent, withMockedDocker } from "../../../test/helpers/base-image-test-harness";
-import type { SandboxBaseImageResolutionMetadata } from "../sandbox-base-image";
+import {
+  createSandboxBaseImageBuildProvenanceKey,
+  type SandboxBaseImageResolutionMetadata,
+} from "../sandbox-base-image";
 
 function makeResolutionMetadata(
   overrides: Partial<SandboxBaseImageResolutionMetadata> = {},
@@ -26,9 +31,29 @@ function makeResolutionMetadata(
   };
 }
 
+function makeDifferingImageInspection(
+  format: string,
+  imageRef: string,
+  localRef: string,
+  pinnedRef: string,
+): string {
+  return format === "{{json .}}"
+    ? JSON.stringify({
+        Id: imageRef === localRef ? `sha256:${"a".repeat(64)}` : `sha256:${"b".repeat(64)}`,
+        Os: "linux",
+        Architecture: "amd64",
+        RepoDigests: [pinnedRef],
+      })
+    : "";
+}
+
 describe("agent base image provisioning", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("reuses a compatible resolved agent base image during normal onboarding", () => {
@@ -76,6 +101,222 @@ describe("agent base image provisioning", () => {
         );
         expect(dockerImageInspectMock).not.toHaveBeenCalled();
         expect(dockerBuildMock).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  it("binds an identical local Hermes alias to its tracked pinned provenance (#7144)", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    withMockedDocker(
+      ({
+        bindLocalAgentBaseImageToPinnedProvenance,
+        dockerCaptureMock,
+        dockerImageInspectFormatMock,
+      }) => {
+        const agent = makeAgent();
+        const localRef = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+        const dockerfile = fs.readFileSync(agent.dockerfilePath as string, "utf8");
+        const pinnedRef = dockerfile.match(/^ARG BASE_IMAGE=(\S+)$/m)?.[1] as string;
+        const imageId = `sha256:${"a".repeat(64)}`;
+        dockerCaptureMock.mockImplementation((args: string[]) =>
+          args.includes("/usr/bin/ldd")
+            ? "ldd (Debian GLIBC 2.41-12) 2.41"
+            : "nemoclaw-hermes-mcp-runtime-ok",
+        );
+        dockerImageInspectFormatMock.mockImplementation((format: string, imageRef: string) =>
+          format === "{{json .}}"
+            ? JSON.stringify({
+                Id: imageId,
+                Os: "linux",
+                Architecture: "amd64",
+                RepoDigests: [pinnedRef],
+              })
+            : imageId,
+        );
+
+        vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", "");
+        const canonicalMetadata = bindLocalAgentBaseImageToPinnedProvenance(agent, localRef);
+        vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", localRef);
+        const reboundMetadata = bindLocalAgentBaseImageToPinnedProvenance(agent, localRef);
+
+        expect(reboundMetadata).toMatchObject({
+          ref: pinnedRef,
+          digest: pinnedRef.slice(pinnedRef.indexOf("@") + 1),
+          source: "pinned",
+          pinnedRemoteRef: pinnedRef,
+          imageId,
+          os: "linux",
+          architecture: "amd64",
+          glibcVersion: "2.41",
+        });
+        expect(reboundMetadata?.key).toBe(canonicalMetadata?.key);
+      },
+    );
+  });
+
+  it("refuses provenance when a local Hermes alias differs from the tracked image (#7144)", () => {
+    withMockedDocker(
+      ({ bindLocalAgentBaseImageToPinnedProvenance, dockerImageInspectFormatMock }) => {
+        const agent = makeAgent();
+        const localRef = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+        const dockerfile = fs.readFileSync(agent.dockerfilePath as string, "utf8");
+        const pinnedRef = dockerfile.match(/^ARG BASE_IMAGE=(\S+)$/m)?.[1] as string;
+        dockerImageInspectFormatMock.mockImplementation((format: string, imageRef: string) =>
+          makeDifferingImageInspection(format, imageRef, localRef, pinnedRef),
+        );
+
+        expect(bindLocalAgentBaseImageToPinnedProvenance(agent, localRef)).toBeNull();
+      },
+    );
+  });
+
+  it("binds Docker's normalized Hermes platform digest to the tracked pin (#7144)", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    withMockedDocker(
+      ({
+        bindLocalAgentBaseImageToPinnedProvenance,
+        dockerCaptureMock,
+        dockerImageInspectFormatMock,
+      }) => {
+        const agent = makeAgent();
+        const localRef = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+        const dockerfile = fs.readFileSync(agent.dockerfilePath as string, "utf8");
+        const pinnedRef = dockerfile.match(/^ARG BASE_IMAGE=(\S+)$/m)?.[1] as string;
+        const imageName = pinnedRef.slice(0, pinnedRef.indexOf("@"));
+        const platformDigest = `sha256:${"c".repeat(64)}`;
+        const platformRef = `${imageName}@${platformDigest}`;
+        const imageId = `sha256:${"a".repeat(64)}`;
+        dockerCaptureMock.mockImplementation((args: string[]) =>
+          args.includes("/usr/bin/ldd")
+            ? "ldd (Debian GLIBC 2.41-12) 2.41"
+            : "nemoclaw-hermes-mcp-runtime-ok",
+        );
+        dockerImageInspectFormatMock.mockImplementation((format: string) =>
+          format === "{{json .}}"
+            ? JSON.stringify({
+                Id: imageId,
+                Os: "linux",
+                Architecture: "amd64",
+                RepoDigests: [platformRef],
+              })
+            : imageId,
+        );
+
+        expect(bindLocalAgentBaseImageToPinnedProvenance(agent, localRef)).toMatchObject({
+          ref: platformRef,
+          digest: platformDigest,
+          source: "pinned",
+          pinnedRemoteRef: pinnedRef,
+          imageId,
+        });
+      },
+    );
+  });
+
+  it("refuses a local digest that differs from Docker's canonical pinned digest (#7144)", () => {
+    withMockedDocker(
+      ({ bindLocalAgentBaseImageToPinnedProvenance, dockerImageInspectFormatMock }) => {
+        const agent = makeAgent();
+        const localRef = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+        const dockerfile = fs.readFileSync(agent.dockerfilePath as string, "utf8");
+        const pinnedRef = dockerfile.match(/^ARG BASE_IMAGE=(\S+)$/m)?.[1] as string;
+        const imageName = pinnedRef.slice(0, pinnedRef.indexOf("@"));
+        const firstRef = `${imageName}@sha256:${"b".repeat(64)}`;
+        const secondRef = `${imageName}@sha256:${"c".repeat(64)}`;
+        const imageId = `sha256:${"a".repeat(64)}`;
+        dockerImageInspectFormatMock.mockImplementation((format: string, imageRef: string) =>
+          format === "{{json .}}"
+            ? JSON.stringify({
+                Id: imageId,
+                Os: "linux",
+                Architecture: "amd64",
+                RepoDigests: imageRef === localRef ? [secondRef] : [firstRef, secondRef],
+              })
+            : imageId,
+        );
+
+        expect(bindLocalAgentBaseImageToPinnedProvenance(agent, localRef)).toBeNull();
+      },
+    );
+  });
+
+  it("refuses pinned provenance when the local Hermes runtime probe fails (#7144)", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    withMockedDocker(
+      ({
+        bindLocalAgentBaseImageToPinnedProvenance,
+        dockerCaptureMock,
+        dockerImageInspectFormatMock,
+      }) => {
+        const agent = makeAgent();
+        const localRef = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+        const dockerfile = fs.readFileSync(agent.dockerfilePath as string, "utf8");
+        const pinnedRef = dockerfile.match(/^ARG BASE_IMAGE=(\S+)$/m)?.[1] as string;
+        const imageId = `sha256:${"a".repeat(64)}`;
+        dockerCaptureMock.mockImplementation((args: string[]) =>
+          args.includes("/usr/bin/ldd") ? "ldd (Debian GLIBC 2.41-12) 2.41" : "",
+        );
+        dockerImageInspectFormatMock.mockImplementation((format: string) =>
+          format === "{{json .}}"
+            ? JSON.stringify({
+                Id: imageId,
+                Os: "linux",
+                Architecture: "amd64",
+                RepoDigests: [pinnedRef],
+              })
+            : imageId,
+        );
+
+        expect(bindLocalAgentBaseImageToPinnedProvenance(agent, localRef)).toBeNull();
+      },
+    );
+  });
+
+  it("refuses provenance when a local Hermes alias lacks the tracked repository digest (#7144)", () => {
+    withMockedDocker(
+      ({ bindLocalAgentBaseImageToPinnedProvenance, dockerImageInspectFormatMock }) => {
+        const agent = makeAgent();
+        const localRef = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+        const imageId = `sha256:${"a".repeat(64)}`;
+        dockerImageInspectFormatMock.mockImplementation((format: string) =>
+          format === "{{json .}}"
+            ? JSON.stringify({
+                Id: imageId,
+                Os: "linux",
+                Architecture: "amd64",
+                RepoDigests: [],
+              })
+            : imageId,
+        );
+
+        expect(bindLocalAgentBaseImageToPinnedProvenance(agent, localRef)).toBeNull();
+      },
+    );
+  });
+
+  it.each([
+    ["operating system", "linux", "windows", "amd64", "amd64"],
+    ["architecture", "linux", "linux", "amd64", "arm64"],
+  ])("refuses provenance when a local Hermes alias has a different %s (#7144)", (_difference, localOs, pinnedOs, localArchitecture, pinnedArchitecture) => {
+    withMockedDocker(
+      ({ bindLocalAgentBaseImageToPinnedProvenance, dockerImageInspectFormatMock }) => {
+        const agent = makeAgent();
+        const localRef = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+        const dockerfile = fs.readFileSync(agent.dockerfilePath as string, "utf8");
+        const pinnedRef = dockerfile.match(/^ARG BASE_IMAGE=(\S+)$/m)?.[1] as string;
+        const imageId = `sha256:${"a".repeat(64)}`;
+        dockerImageInspectFormatMock.mockImplementation((format: string, imageRef: string) =>
+          format === "{{json .}}"
+            ? JSON.stringify({
+                Id: imageId,
+                Os: imageRef === localRef ? localOs : pinnedOs,
+                Architecture: imageRef === localRef ? localArchitecture : pinnedArchitecture,
+                RepoDigests: [pinnedRef],
+              })
+            : imageId,
+        );
+
+        expect(bindLocalAgentBaseImageToPinnedProvenance(agent, localRef)).toBeNull();
       },
     );
   });
@@ -147,9 +388,23 @@ describe("agent base image provisioning", () => {
         );
 
         const result = ensureAgentBaseImage(makeAgent(), { forceBaseImageRebuild: true });
+        const buildOptions = dockerBuildMock.mock.calls[0]?.[3] as {
+          labels?: Record<string, string>;
+        };
+        const provenance = buildOptions.labels?.["com.nvidia.nemoclaw.base-build-provenance"];
+        const expectedProvenanceKey = createSandboxBaseImageBuildProvenanceKey({
+          imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+          dockerfilePath: "/test/root/agents/hermes/Dockerfile.base",
+          localTag: "unused-by-build-provenance",
+          rootDir: root,
+        });
 
         expect(result.imageTag).toBe(`nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`);
         expect(result.built).toBe(true);
+        expect(result.trustedLocalOverride).toEqual({
+          ref: result.imageTag,
+          provenance,
+        });
         expect(result.resolutionMetadata).toEqual(
           expect.objectContaining({
             ref: result.imageTag,
@@ -166,6 +421,7 @@ describe("agent base image provisioning", () => {
             }),
             validateImage: expect.any(Function),
             validationDescription: "the required MCP Streamable HTTP runtime",
+            trustedLocalOverride: { ref: result.imageTag, provenance },
           }),
         );
         expect(dockerImageInspectMock).not.toHaveBeenCalled();
@@ -173,18 +429,24 @@ describe("agent base image provisioning", () => {
           "/test/root/agents/hermes/Dockerfile.base",
           expect.stringMatching(/^nemoclaw-hermes-sandbox-base-local:build-\d+-[0-9a-f]{16}$/),
           root,
-          { ignoreError: true, stdio: ["ignore", "inherit", "inherit"] },
+          {
+            ignoreError: true,
+            labels: {
+              "com.nvidia.nemoclaw.base-build-provenance": expect.stringMatching(
+                new RegExp(`^${expectedProvenanceKey}\\.[0-9a-f]{64}$`),
+              ),
+            },
+            stdio: ["ignore", "inherit", "inherit"],
+          },
         );
         expect(dockerImageInspectFormatMock).toHaveBeenCalledWith(
           "{{.Id}}",
           expect.stringMatching(/^nemoclaw-hermes-sandbox-base-local:build-\d+-[0-9a-f]{16}$/),
           { ignoreError: true },
         );
-        expect(dockerTagMock).toHaveBeenCalledWith(
-          expect.stringMatching(/^nemoclaw-hermes-sandbox-base-local:build-\d+-[0-9a-f]{16}$/),
-          result.imageTag,
-          { ignoreError: true },
-        );
+        expect(dockerTagMock).toHaveBeenCalledWith(`sha256:${"a".repeat(64)}`, result.imageTag, {
+          ignoreError: true,
+        });
         expect(dockerRmiMock).toHaveBeenCalledWith(
           expect.stringMatching(/^nemoclaw-hermes-sandbox-base-local:build-\d+-[0-9a-f]{16}$/),
           { ignoreError: true, suppressOutput: true },
@@ -250,10 +512,15 @@ describe("agent base image provisioning", () => {
   it("pins different image IDs to different recreate refs at the same source revision", () => {
     withMockedDocker(
       ({ ensureAgentBaseImage, dockerImageInspectFormatMock, resolveSandboxBaseImageMock }) => {
-        dockerImageInspectFormatMock
-          .mockReturnValueOnce(`sha256:${"a".repeat(64)}`)
-          .mockReturnValueOnce("")
-          .mockReturnValueOnce(`sha256:${"b".repeat(64)}`);
+        const inspectedIds = [
+          `sha256:${"a".repeat(64)}`,
+          `sha256:${"a".repeat(64)}`,
+          `sha256:${"b".repeat(64)}`,
+          `sha256:${"b".repeat(64)}`,
+        ];
+        dockerImageInspectFormatMock.mockImplementation((format: string) =>
+          format === "{{.Id}}" ? (inspectedIds.shift() ?? "") : "",
+        );
         resolveSandboxBaseImageMock.mockImplementation((options) => ({
           ref: options.env?.[options.envVar],
           digest: null,
@@ -281,11 +548,53 @@ describe("agent base image provisioning", () => {
         );
 
         expect(pinned).toBe(`nemoclaw-hermes-sandbox-base-local:image-${"c".repeat(64)}`);
-        expect(dockerTagMock).toHaveBeenCalledWith(
-          "nemoclaw-hermes-sandbox-base-local:caller",
-          pinned,
-          { ignoreError: true },
+        expect(dockerTagMock).toHaveBeenCalledWith(`sha256:${"c".repeat(64)}`, pinned, {
+          ignoreError: true,
+        });
+      },
+    );
+  });
+
+  it("creates a local immutable handoff for a resolved remote digest (#7144)", () => {
+    withMockedDocker(
+      ({ pinAgentSandboxBaseImageRef, dockerImageInspectFormatMock, dockerTagMock }) => {
+        const remoteRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+        dockerImageInspectFormatMock.mockReturnValue(`sha256:${"c".repeat(64)}`);
+
+        const pinned = pinAgentSandboxBaseImageRef("hermes", remoteRef, { forceLocal: true });
+
+        expect(pinned).toBe(`nemoclaw-hermes-sandbox-base-local:image-${"c".repeat(64)}`);
+        expect(dockerTagMock).toHaveBeenCalledWith(`sha256:${"c".repeat(64)}`, pinned, {
+          ignoreError: true,
+        });
+      },
+    );
+  });
+
+  it("creates a unique temporary handoff for a disposable rebuild pin (#7144)", () => {
+    withMockedDocker(
+      ({ pinAgentSandboxBaseImageRef, dockerImageInspectFormatMock, dockerTagMock }) => {
+        const remoteRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+        const imageId = `sha256:${"c".repeat(64)}`;
+        dockerImageInspectFormatMock.mockReturnValue(imageId);
+
+        const firstPinned = pinAgentSandboxBaseImageRef("hermes", remoteRef, {
+          forceLocal: true,
+          temporary: true,
+        });
+        const secondPinned = pinAgentSandboxBaseImageRef("hermes", remoteRef, {
+          forceLocal: true,
+          temporary: true,
+        });
+
+        const temporaryRefPattern = new RegExp(
+          `^nemoclaw-hermes-sandbox-base-local:rebuild-[1-9][0-9]*-[0-9a-f]{16}-image-${"c".repeat(64)}$`,
         );
+        expect(firstPinned).toMatch(temporaryRefPattern);
+        expect(secondPinned).toMatch(temporaryRefPattern);
+        expect(secondPinned).not.toBe(firstPinned);
+        expect(dockerTagMock).toHaveBeenCalledWith(imageId, firstPinned, { ignoreError: true });
+        expect(dockerTagMock).toHaveBeenCalledWith(imageId, secondPinned, { ignoreError: true });
       },
     );
   });
@@ -299,7 +608,45 @@ describe("agent base image provisioning", () => {
         const pinned = pinAgentSandboxBaseImageRef("hermes", claimed);
 
         expect(pinned).toBe(`nemoclaw-hermes-sandbox-base-local:image-${"d".repeat(64)}`);
-        expect(dockerTagMock).toHaveBeenCalledWith(claimed, pinned, { ignoreError: true });
+        expect(dockerTagMock).toHaveBeenCalledWith(`sha256:${"d".repeat(64)}`, pinned, {
+          ignoreError: true,
+        });
+      },
+    );
+  });
+
+  it("fails closed when the immutable handoff does not retain the inspected image ID", () => {
+    withMockedDocker(({ pinAgentSandboxBaseImageRef, dockerImageInspectFormatMock }) => {
+      dockerImageInspectFormatMock
+        .mockReturnValueOnce(`sha256:${"a".repeat(64)}`)
+        .mockReturnValueOnce(`sha256:${"b".repeat(64)}`);
+
+      expect(() =>
+        pinAgentSandboxBaseImageRef("hermes", "nemoclaw-hermes-sandbox-base-local:caller"),
+      ).toThrow("Pinned hermes base image did not retain its inspected image ID");
+    });
+  });
+
+  it("removes a temporary handoff that fails image-ID verification (#7144)", () => {
+    withMockedDocker(
+      ({ pinAgentSandboxBaseImageRef, dockerImageInspectFormatMock, dockerRmiMock }) => {
+        dockerImageInspectFormatMock
+          .mockReturnValueOnce(`sha256:${"a".repeat(64)}`)
+          .mockReturnValueOnce(`sha256:${"b".repeat(64)}`);
+
+        expect(() =>
+          pinAgentSandboxBaseImageRef("hermes", "nemoclaw-hermes-sandbox-base-local:caller", {
+            temporary: true,
+          }),
+        ).toThrow("Pinned hermes base image did not retain its inspected image ID");
+        expect(dockerRmiMock).toHaveBeenCalledWith(
+          expect.stringMatching(
+            new RegExp(
+              `^nemoclaw-hermes-sandbox-base-local:rebuild-[1-9][0-9]*-[0-9a-f]{16}-image-${"a".repeat(64)}$`,
+            ),
+          ),
+          { ignoreError: true, suppressOutput: true },
+        );
       },
     );
   });

@@ -49,6 +49,7 @@ vi.mock("./rebuild-credential-preflight", () => ({
   preflightRebuildCredentials: mocks.preflightRebuildCredentials,
 }));
 
+import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import type { RebuildTargetConfig } from "./rebuild-target-config";
@@ -140,6 +141,51 @@ describe("preflightRebuildTargetRuntime GPU route", () => {
       },
     );
     expect(bail).not.toHaveBeenCalled();
+  });
+
+  it("passes the immutable base provenance into replacement image preflight (#7144)", async () => {
+    const metadata = {
+      schema: 1,
+      key: "current-base",
+      imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+      ref: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`,
+      digest: `sha256:${"a".repeat(64)}`,
+      source: "pinned",
+      pinnedRemoteRef: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`,
+      imageId: `sha256:${"b".repeat(64)}`,
+      os: "linux",
+      architecture: "amd64",
+      glibcVersion: "2.41",
+      requireOpenshellSandboxAbi: true,
+      minGlibcVersion: "2.39",
+    } as const;
+    const imagePreflight = vi
+      .spyOn(rebuildImagePreflight, "preflightRebuildImage")
+      .mockResolvedValue({ ok: true, imageTag: "preflight:test", prepared: null } as never);
+    const bail = vi.fn((message: string): never => {
+      throw new Error(message);
+    });
+    try {
+      await expect(
+        preflightRebuildTargetRuntime(
+          TARGET,
+          ENTRY,
+          { ...RECREATE_OPTIONS, preResolvedBaseImageMetadata: metadata },
+          vi.fn(),
+          bail,
+        ),
+      ).resolves.toEqual({
+        ok: true,
+        preparedImage: null,
+        requiresGatewayProviderReconfigure: false,
+      });
+
+      expect(imagePreflight).toHaveBeenCalledWith(
+        expect.objectContaining({ preResolvedBaseImageMetadata: metadata }),
+      );
+    } finally {
+      imagePreflight.mockRestore();
+    }
   });
 });
 

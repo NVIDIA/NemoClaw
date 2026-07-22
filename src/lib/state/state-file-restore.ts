@@ -56,7 +56,7 @@ export function buildStateFileRestoreCommand(
       "trap 'rm -f \"$tmp\"' EXIT",
       'cat > "$tmp"',
       'chmod 600 "$tmp"',
-      `umask 0007; /usr/bin/python3 -I -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$dst"`,
+      `umask 0007; /usr/bin/python3 -I -S -c ${shellQuote(SQLITE_RESTORE_PY)} "$tmp" "$dst"`,
     ].join("; ");
   }
 
