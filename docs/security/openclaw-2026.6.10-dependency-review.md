@@ -77,7 +77,15 @@ The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transi
 
 ### Transitive Remediation Boundary
 
-`scripts/lib/openclaw-npm-remediation.mts` remediates only five exact reviewed identities.
+This section is a point-in-time record of the remediation shipped for the
+2026.6.10 runtime. The current 2026.7.1 path installs the reviewed core archive
+directly because its core graph already contains the fixed versions, and keeps
+only the version-scoped Slack and Microsoft Teams Axios remediation plus the
+diagnostics Jaeger remediation added for the 2026.7.1 archive. See
+[`openclaw-2026.7.1-dependency-review.md`](./openclaw-2026.7.1-dependency-review.md)
+for the active source and validation boundary.
+
+`scripts/lib/openclaw-npm-remediation.mts` recognizes only eight exact reviewed identities: the E2E-only 2026.3.11 core archive, four retained 2026.6.10 identities, and three active 2026.7.1 identities.
 It rejects an unexpected source dependency shape before it changes or installs an archive.
 The helper verifies every replacement package by exact registry SRI and tarball URL.
 It also rejects unsafe archive members before extraction and after repacking.
@@ -123,7 +131,7 @@ The replacement packages are bound to these registry identities:
 | `@opentelemetry/propagator-jaeger@2.9.0` | `sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==` | `https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz` |
 | `@opentelemetry/core@2.9.0` | `sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==` | `https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz` |
 
-The helper extracts and rebuilds archives with `tar` instead of invoking a package build or pack lifecycle, and it disables npm lifecycle scripts while retrieving replacement archives.
+The helper extracts reviewed archives without invoking package lifecycle scripts and rebuilds them with `npm pack . --ignore-scripts --json`.
 It binds each patched package manifest and shrinkwrap to a committed SHA-512 metadata value.
 The core value also covers the bundled `@openclaw/fs-safe` package manifest.
 The diagnostics value also covers the bundled SDK, Jaeger propagator, and nested core package manifests.
@@ -257,13 +265,13 @@ The reviewed `@openclaw/diagnostics-otel@2026.6.10` package dist imports `OTLPTr
 
 The legacy `2026.3.11` and `2026.4.24` OpenClaw pins are retained only for stale-upgrade fixture builds. Production Dockerfile install blocks now reject those versions unless `NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1` is set explicitly. The E2E-scoped name is intentionally noisy so production build workflows do not treat it as a general override. Production image workflows run `scripts/check-production-build-args.sh` before production Docker builds so the fixture flag, both legacy version values, and every integrity/tarball Docker ARG declared by a production Dockerfile cannot be overridden through production build args or their corresponding environment variables. The guard also rejects future positional `*_INTEGRITY` and `*_TARBALL` names, keeping reviewed pin values repository-controlled even before the Dockerfile's registry and downloaded-archive checks run. The stale-upgrade E2E build contexts pass their fixture values only on fixture-specific build paths, and the integrity-pin contract suite verifies the default rejection, the explicit fixture opt-in, and the production workflow guard.
 
-Frozen OpenShell gateway-upgrade fixtures select only the SRI-pinned OpenClaw `2026.4.24`, `2026.5.22`, or `2026.5.27` archive.
+Frozen OpenShell gateway-upgrade fixtures select only the SRI-pinned OpenClaw `2026.4.24`, `2026.5.22`, `2026.5.27`, or `2026.6.10` archive.
 The live test uses `packReviewedNpmArchive` to verify exact registry metadata, the reviewed tarball URL, and the downloaded SRI.
 The adapter stores only that verified local archive at `nemoclaw/src/.nemoclaw-e2e-old-openclaw.tgz`, which the frozen optimized build-context staging preserves.
 It installs the archive with lifecycle scripts disabled and invokes `postinstall-bundled-plugins.mjs` directly.
-The `v0.0.74` fixture retains npm registry signature verification for its historical mcporter lock.
+The `v0.0.74` and `v0.0.89` fixtures retain npm registry signature verification for their historical mcporter locks.
 The reviewed `v0.0.36` and `v0.0.55` profiles require no advisory audit statement.
-The reviewed `v0.0.74` profile requires exactly one advisory audit statement, which the adapter replaces with a test-only skip.
+The reviewed `v0.0.74` and `v0.0.89` profiles require exactly one advisory audit statement, which the adapter replaces with a test-only skip.
 Each audit policy is bound to one exact reviewed NemoClaw tag, full commit SHA, and OpenClaw version tuple before the installer is patched.
 The adapter rejects an unknown or mixed tuple and any advisory audit count that does not match its reviewed profile.
 `test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts` verifies these constraints.

@@ -111,11 +111,11 @@ export const whatsappManifest = {
       spec: "npm:@openclaw/whatsapp@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.6.10":
-          "sha512-k/XrRdZY77SHrdaRwJOEB7/JRbjp4yVgGD/ZNyakjTMqo32XRVtwPBUnj7726rW8Kl5yyOMQQLKFiD9MDfhmPQ==",
+        "2026.7.1":
+          "sha512-wLY/Omc5fleRpl2lKGN8sxt/8hYfHGwLRezmWsk8oCbea5pRKUPE6ZX+wJO1O52NOJkAGCuiXvS7x0qIeKxXbQ==",
       },
       tarballUrlByVersion: {
-        "2026.6.10": "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.6.10.tgz",
+        "2026.7.1": "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.7.1.tgz",
       },
       required: true,
     },

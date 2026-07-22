@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * `nemoclaw <name> gateway-token` -- print the OpenClaw gateway auth token
- * for a running sandbox to stdout so automation can capture it.
+ * `nemoclaw <name> gateway-token` -- print the running sandbox agent's auth
+ * token to stdout so automation can capture it. This is the OpenClaw gateway
+ * token or a bearer-token agent's web-auth key, such as Hermes' API_SERVER_KEY.
  *
  * Output contract (intended to be pipe-friendly):
  *   stdout: the token, followed by a single newline.

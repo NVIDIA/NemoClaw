@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
+import {
+  OPENSHELL_HEAVY_TIMEOUT_MS,
+  OPENSHELL_PROBE_TIMEOUT_MS,
+} from "../../adapters/openshell/timeouts";
 import { G, R } from "../../cli/terminal-style";
+import { waitUntil } from "../../core/wait";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
 import { redactFull } from "../../security/redact";
@@ -37,6 +42,24 @@ export interface RebuildDestroyPhaseInput {
 export type RebuildDestroyPhaseResult = McpRebuildPreparation & {
   removalReceipt: registry.SandboxRemovalReceipt | null;
 };
+
+function waitForSandboxDeletion(sandboxName: string, log: RebuildLog): boolean {
+  return waitUntil(
+    () => {
+      const getResult = runOpenshell(["sandbox", "get", sandboxName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      });
+      const { alreadyGone, gatewayUnreachable } = getSandboxDeleteOutcome(getResult);
+      log(
+        `Delete convergence probe: exit=${getResult.status}, alreadyGone=${alreadyGone}, gatewayUnreachable=${gatewayUnreachable}`,
+      );
+      return alreadyGone;
+    },
+    { deadlineMs: Date.now() + OPENSHELL_HEAVY_TIMEOUT_MS },
+  );
+}
 
 /**
  * Detach owned MCP state, stop inference, and delete the old sandbox.
@@ -145,6 +168,18 @@ export async function runRebuildDestroyPhase(
         : "Failed to delete sandbox.",
       deleteResult.status || 1,
     );
+    return null;
+  }
+  const deletionConfirmed = alreadyGone || waitForSandboxDeletion(sandboxName, log);
+  if (!deletionConfirmed) {
+    console.error(
+      "  Sandbox delete was accepted, but OpenShell did not confirm that the sandbox is absent.",
+    );
+    console.error("  Aborting rebuild before registry removal and sandbox recreation.");
+    if (backupManifest) {
+      console.error("  State backup is preserved at: " + backupManifest.backupPath);
+    }
+    bail("Sandbox deletion could not be confirmed.");
     return null;
   }
   onDeleted();
