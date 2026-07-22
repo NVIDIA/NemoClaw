@@ -32,8 +32,8 @@ function hostWithRuntime(runtime: HostAssessment["runtime"]): HostAssessment {
 describe("rejectUnsupportedContainerRuntime (#7320)", () => {
   // The Docker-driver gateway path is forced on Linux and Apple Silicon macOS;
   // the reject gate only fires there. Gate the test on the same predicate via
-  // it.runIf (not an in-body `if`) so it runs on the Linux CI runner.
-  it.runIf(isLinuxDockerDriverGatewayEnabled())(
+  // it.skipIf (not an in-body `if`) so it runs on the Linux CI runner.
+  it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
     "exits when Podman is detected on a Docker-driver gateway platform",
     () => {
       const exit = vi.fn(() => {
