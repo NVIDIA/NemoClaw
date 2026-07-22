@@ -34,6 +34,8 @@ If preparation detects an existing vLLM workload, the installer shows the reques
 1. Keep the managed Express recipe. This default leaves the host unchanged and prints the workload stop command and exact Express resume command.
 2. Leave vLLM running and continue in the same installer run through advanced manual Local vLLM validation and configuration.
 
+For the manual Local vLLM choice, NemoClaw records the exact installer revision until installation succeeds.
+If Docker access requires a new login or a later step fails, run the printed command to continue the same choice and revision.
 Without an interactive terminal or a choice, the installer safely selects the first option.
 
 <Warning title="Temporary Metadata Override">

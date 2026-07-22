@@ -25,7 +25,8 @@ assert_station_local_vllm_resume_file_safe() {
 }
 
 save_station_local_vllm_resume() {
-  local state_file state_dir temp_file gateway_port vllm_port
+  local state_file state_dir temp_file revision gateway_port vllm_port
+  revision="$(station_installer_revision)"
   gateway_port="$(resolve_nemoclaw_gateway_port)"
   vllm_port="$(station_express_resume_port_value NEMOCLAW_VLLM_PORT 8000)"
   state_file="$(station_local_vllm_resume_file)" \
@@ -42,8 +43,8 @@ save_station_local_vllm_resume() {
     rm -f "$temp_file"
     error "Could not secure DGX Station Local vLLM resume state under ${state_dir}."
   }
-  if ! printf 'version=1\ngateway_port=%s\nvllm_port=%s\n' \
-    "$gateway_port" "$vllm_port" >"$temp_file"; then
+  if ! printf 'version=1\nrevision=%s\ngateway_port=%s\nvllm_port=%s\n' \
+    "$revision" "$gateway_port" "$vllm_port" >"$temp_file"; then
     rm -f "$temp_file"
     error "Could not write DGX Station Local vLLM resume state under ${state_dir}."
   fi
@@ -52,7 +53,6 @@ save_station_local_vllm_resume() {
     error "Could not publish DGX Station Local vLLM resume state under ${state_dir}."
   fi
   assert_station_local_vllm_resume_file_safe "$state_file"
-  _STATION_LOCAL_VLLM_SELECTED=1
 }
 
 clear_station_local_vllm_resume() {
@@ -67,9 +67,16 @@ clear_station_local_vllm_resume() {
   rm -f "$state_file"
 }
 
+station_local_vllm_resume_command() {
+  local revision
+  revision="$(station_installer_revision)"
+  printf 'curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%q bash' "$revision"
+}
+
 activate_station_local_vllm_continuation() {
   local arg
   local -a continuation_args=()
+  _STATION_LOCAL_VLLM_SELECTED=1
   export NEMOCLAW_NO_EXPRESS=1
   if declare -p _NEMOCLAW_INSTALLER_ARGS >/dev/null 2>&1; then
     for arg in "${_NEMOCLAW_INSTALLER_ARGS[@]}"; do
@@ -115,7 +122,8 @@ station_vllm_workload_active() {
 }
 
 consume_station_local_vllm_resume() {
-  local state_file version_line gateway_port_line vllm_port_line saved_gateway_port saved_vllm_port
+  local state_file version_line revision_line gateway_port_line vllm_port_line
+  local saved_revision saved_gateway_port saved_vllm_port current_revision
   local current_gateway_port current_vllm_port line_count workload_status=0
   state_file="$(station_local_vllm_resume_file)" || return 1
   assert_nemoclaw_state_path_safe "$state_file"
@@ -123,19 +131,26 @@ consume_station_local_vllm_resume() {
   assert_station_local_vllm_resume_file_safe "$state_file"
   line_count="$(wc -l <"$state_file" | tr -d '[:space:]')"
   version_line="$(sed -n '1p' "$state_file")"
-  gateway_port_line="$(sed -n '2p' "$state_file")"
-  vllm_port_line="$(sed -n '3p' "$state_file")"
+  revision_line="$(sed -n '2p' "$state_file")"
+  gateway_port_line="$(sed -n '3p' "$state_file")"
+  vllm_port_line="$(sed -n '4p' "$state_file")"
+  saved_revision="${revision_line#revision=}"
   saved_gateway_port="${gateway_port_line#gateway_port=}"
   saved_vllm_port="${vllm_port_line#vllm_port=}"
   if ! {
-    [[ "$line_count" == "3" && "$version_line" == "version=1" &&
+    [[ "$line_count" == "4" && "$version_line" == "version=1" &&
+      "$revision_line" == "revision=${saved_revision}" &&
       "$gateway_port_line" == "gateway_port=${saved_gateway_port}" &&
       "$vllm_port_line" == "vllm_port=${saved_vllm_port}" ]] \
+      && validate_station_express_resume_revision "$saved_revision" \
       && validate_station_express_resume_port "$saved_gateway_port" \
       && validate_station_express_resume_port "$saved_vllm_port"
   }; then
     error "DGX Station Local vLLM resume state is invalid. Remove ${state_file} and rerun the installer."
   fi
+  current_revision="$(station_installer_revision)"
+  [[ "$current_revision" == "$saved_revision" ]] \
+    || error "DGX Station Local vLLM resume requires installer revision ${saved_revision}; rerun with NEMOCLAW_INSTALL_TAG=${saved_revision}."
   station_vllm_workload_active || workload_status=$?
   case "$workload_status" in
     0) ;;
@@ -162,9 +177,6 @@ consume_station_local_vllm_resume() {
   NEMOCLAW_VLLM_PORT="$saved_vllm_port"
   export NEMOCLAW_GATEWAY_PORT NEMOCLAW_VLLM_PORT
   clear_station_express_resume
-  if [[ "$workload_status" == "0" ]]; then
-    rm -f "$state_file"
-  fi
   activate_station_local_vllm_continuation
 }
 

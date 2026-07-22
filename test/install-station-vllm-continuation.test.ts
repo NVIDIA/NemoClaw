@@ -8,6 +8,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
+const STATION_PREPARE = path.join(
+  path.resolve(import.meta.dirname, ".."),
+  "scripts",
+  "prepare-dgx-station-host.sh",
+);
+
 function runInstallerSourced(body: string, existingHome?: string) {
   const home = existingHome ?? fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-resume-"));
   const result = spawnSync(
@@ -26,8 +32,40 @@ function runInstallerSourced(body: string, existingHome?: string) {
   return { home, result, output: `${result.stdout}${result.stderr}` };
 }
 
+function runStationPreparationSourced(body: string) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-guidance-"));
+  const result = spawnSync(
+    "bash",
+    ["--noprofile", "--norc", "-c", `source "$STATION_PREPARE" >/dev/null\n${body}`],
+    {
+      cwd: path.resolve(import.meta.dirname, ".."),
+      encoding: "utf-8",
+      env: { HOME: home, PATH: TEST_SYSTEM_PATH, STATION_PREPARE },
+    },
+  );
+  return { result, output: `${result.stdout}${result.stderr}` };
+}
+
 describe("installer Station Local vLLM continuation", () => {
-  it("preserves the Local vLLM choice for one installer continuation", () => {
+  it("uses Docker stop guidance when a vLLM container is also visible in the host process table", () => {
+    const { result, output } = runStationPreparationSourced(`
+MODE=--check
+ps() { printf '999 1 python python -m vllm serve hidden-model-name\n'; }
+ss() { :; }
+docker() {
+  printf '1234567890abcdef|nvcr.io/nvidia/vllm:station|vllm serve hidden-model-name\n'
+}
+check_initial_workload_quiescence
+`);
+
+    expect(result.status, output).toBe(12);
+    expect(output).toContain("container_id=1234567890ab");
+    expect(output).toContain("stop_command='docker stop -- 1234567890ab'");
+    expect(output).not.toContain("stop_command='kill -- 999'");
+    expect(output).not.toContain("hidden-model-name");
+  });
+
+  it("preserves the Local vLLM choice through a failed continuation and clears it after success", () => {
     const { home, result, output } = runInstallerSourced(`
 _SELECTED_EXPRESS_PLATFORM='DGX Station'
 load_station_vllm_conflict_helpers
@@ -72,7 +110,13 @@ printf 'CONTINUATION no_express=%s args=%s\n' \
     expect(
       fs.existsSync(path.join(home, ".nemoclaw", "gateways", "18081", "station-express-resume")),
     ).toBe(false);
-    expect(fs.existsSync(path.join(home, ".nemoclaw", "station-local-vllm-resume"))).toBe(true);
+    const localResumeFile = path.join(home, ".nemoclaw", "station-local-vllm-resume");
+    expect(fs.readFileSync(localResumeFile, "utf8")).toBe(
+      "version=1\n" +
+        "revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" +
+        "gateway_port=18081\n" +
+        "vllm_port=18000\n",
+    );
 
     const resumed = runInstallerSourced(
       `
@@ -80,13 +124,14 @@ detect_express_platform() { printf 'DGX Station'; }
 print_banner() { :; }
 preflight_usage_notice_prompt() { :; }
 load_station_vllm_conflict_helpers
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
 ps() { printf '219655 1 docker-init docker-init -- /usr/bin/vllm serve hidden-model\n'; }
 station_existing_vllm_model() { return 1; }
 ensure_docker() {
   printf 'RESUMED no_express=%s force=%s args=%s gateway=%s vllm=%s\n' \
     "$NEMOCLAW_NO_EXPRESS" "\${FORCE_STATION_INSTALL:-}" "\${_NEMOCLAW_INSTALLER_ARGS[*]:-}" \
     "$NEMOCLAW_GATEWAY_PORT" "$NEMOCLAW_VLLM_PORT"
-  exit 0
+  exit 7
 }
 ensure_openshell_build_deps() { :; }
 main --force-station-install --yes-i-accept-third-party-software
@@ -94,29 +139,30 @@ main --force-station-install --yes-i-accept-third-party-software
       home,
     );
 
-    expect(resumed.result.status, resumed.output).toBe(0);
+    expect(resumed.result.status, resumed.output).toBe(7);
     expect(resumed.output).toContain(
       "RESUMED no_express=1 force= args=--yes-i-accept-third-party-software gateway=18081 vllm=18000",
     );
     expect(resumed.output).toContain("Resuming the selected manual Local vLLM setup");
     expect(resumed.output).toContain("Skipping express prompt (NEMOCLAW_NO_EXPRESS=1)");
-    expect(fs.existsSync(path.join(home, ".nemoclaw", "station-local-vllm-resume"))).toBe(false);
+    expect(fs.existsSync(localResumeFile)).toBe(true);
 
     const laterRun = runInstallerSourced(
       `
 load_station_vllm_conflict_helpers
-if consume_station_local_vllm_resume; then
-  printf 'UNEXPECTED_LOCAL_RESUME\n'
-else
-  printf 'EXPRESS_AVAILABLE\n'
-fi
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+station_vllm_workload_active() { return 0; }
+consume_station_local_vllm_resume
+printf 'LOCAL_RESUMED no_express=%s\n' "$NEMOCLAW_NO_EXPRESS"
+print_done() { :; }
+finalize_install
 `,
       home,
     );
 
     expect(laterRun.result.status, laterRun.output).toBe(0);
-    expect(laterRun.output).toContain("EXPRESS_AVAILABLE");
-    expect(laterRun.output).not.toContain("UNEXPECTED_LOCAL_RESUME");
+    expect(laterRun.output).toContain("LOCAL_RESUMED no_express=1");
+    expect(fs.existsSync(localResumeFile)).toBe(false);
   });
 
   it("removes unused Local vLLM continuation state after a successful installer run", () => {
@@ -136,7 +182,7 @@ finalize_install
 load_station_vllm_conflict_helpers
 mkdir -p "$HOME/.nemoclaw"
 chmod 0700 "$HOME/.nemoclaw"
-printf 'version=1\ngateway_port=8080\nvllm_port=8000\n' \
+printf 'version=1\nrevision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ngateway_port=8080\nvllm_port=8000\n' \
   >"$HOME/.nemoclaw/station-local-vllm-resume"
 chmod 0640 "$HOME/.nemoclaw/station-local-vllm-resume"
 consume_station_local_vllm_resume
@@ -174,6 +220,32 @@ fi
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-local-vllm-resume"))).toBe(false);
   });
 
+  it("rejects a Local vLLM continuation created by a different installer revision", () => {
+    const { home, result, output } = runInstallerSourced(`
+load_station_vllm_conflict_helpers
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
+switch_station_express_to_local_vllm
+`);
+
+    expect(result.status, output).toBe(0);
+
+    const resumed = runInstallerSourced(
+      `
+load_station_vllm_conflict_helpers
+station_installer_revision() { printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'; }
+station_vllm_workload_active() { return 0; }
+consume_station_local_vllm_resume
+`,
+      home,
+    );
+
+    expect(resumed.result.status, resumed.output).not.toBe(0);
+    expect(resumed.output).toContain(
+      "Local vLLM resume requires installer revision aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    expect(fs.existsSync(path.join(home, ".nemoclaw", "station-local-vllm-resume"))).toBe(true);
+  });
+
   it("preserves Local vLLM when Docker cannot confirm whether its workload is active", () => {
     const { home, result, output } = runInstallerSourced(`
 load_station_vllm_conflict_helpers
@@ -199,6 +271,7 @@ fi
   it("preserves the Local vLLM choice when Docker access requires a login refresh", () => {
     const { home, result, output } = runInstallerSourced(`
 load_station_vllm_conflict_helpers
+station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
 _NEMOCLAW_INSTALLER_ARGS=(--force-station-install --yes-i-accept-third-party-software)
 switch_station_express_to_local_vllm
 uname() { printf 'Linux\n'; }
@@ -217,7 +290,10 @@ ensure_docker
 `);
 
     expect(result.status, output).toBe(0);
-    expect(output).toContain("Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash");
+    expect(output).toContain(
+      "Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | " +
+        "NEMOCLAW_INSTALL_TAG=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bash",
+    );
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-local-vllm-resume"))).toBe(true);
   });
 });

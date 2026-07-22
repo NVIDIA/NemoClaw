@@ -1258,6 +1258,10 @@ check_agent_and_inference_conflicts() {
   [[ -z "$agent_matches" ]] \
     || fatal "Agent workload is active: ${agent_matches}. Stop the listed agent process before Station Express. Then rerun the installer."
 
+  if [[ "${1:-}" == "--prefer-container-guidance" ]]; then
+    check_vllm_container_conflicts
+  fi
+
   inference_matches="$(awk -v self="$$" -v parent="$PPID" '
     {
       pid=$1
@@ -1283,8 +1287,7 @@ check_agent_and_inference_conflicts() {
 }
 
 check_initial_workload_quiescence() {
-  check_agent_and_inference_conflicts
-  check_vllm_container_conflicts
+  check_agent_and_inference_conflicts --prefer-container-guidance
   require_no_running_docker_containers "initial Station host preparation"
 }
 
