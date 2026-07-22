@@ -373,11 +373,6 @@
     },
     {
       "file": "test/openclaw-npm-remediation.test.ts",
-      "test": "replaces the reviewed bundled Axios graph with the patched graph",
-      "category": "security"
-    },
-    {
-      "file": "test/openclaw-npm-remediation.test.ts",
       "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
       "category": "security"
     },
