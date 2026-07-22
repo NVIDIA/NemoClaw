@@ -175,7 +175,9 @@ function copyApprovedArtifacts(sourceRoot: string, approvedRoot: string): void {
         continue;
       }
       if (!entry.isFile()) {
-        throw new Error(`Unsafe OpenShell auth-contract artifact '${entry.name}': non-regular file`);
+        throw new Error(
+          `Unsafe OpenShell auth-contract artifact '${entry.name}': non-regular file`,
+        );
       }
       copyRegularFile(sourcePath, approvedPath);
     }
@@ -190,17 +192,13 @@ export function scanAndApproveOpenShellGatewayAuthArtifacts(
   let approvedRoot: string | undefined;
   try {
     assertOpenShellGatewayAuthArtifactsSafe(rootDir);
-    approvedRoot = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-approved-auth-artifacts-"),
-      { encoding: "utf8" },
-    );
+    approvedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approved-auth-artifacts-"), {
+      encoding: "utf8",
+    });
     fs.chmodSync(approvedRoot, 0o700);
     copyApprovedArtifacts(path.resolve(rootDir), approvedRoot);
     assertOpenShellGatewayAuthArtifactsSafe(approvedRoot);
-    const safetyMarker = path.join(
-      approvedRoot,
-      openShellGatewayAuthArtifactSafetyMarkerName(env),
-    );
+    const safetyMarker = path.join(approvedRoot, openShellGatewayAuthArtifactSafetyMarkerName(env));
     fs.writeFileSync(safetyMarker, "approved\n", {
       encoding: "utf8",
       flag: "wx",

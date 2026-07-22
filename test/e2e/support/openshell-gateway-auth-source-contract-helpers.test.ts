@@ -316,9 +316,7 @@ describe("OpenShell gateway auth source contract helpers", () => {
       expect(fs.readFileSync(path.join(approved, "scenario.json"), "utf8")).toBe(
         '{"status":"passed"}\n',
       );
-      expect(
-        fs.existsSync(path.join(approved, "artifact-safety-29897237525-3.passed")),
-      ).toBe(true);
+      expect(fs.existsSync(path.join(approved, "artifact-safety-29897237525-3.passed"))).toBe(true);
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
       fs.rmSync(approved, { recursive: true, force: true });
