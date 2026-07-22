@@ -33,7 +33,13 @@ export function registerRebuildFlowLifecycleTests(): void {
       ).toBe(false);
     });
 
-    it("backs up, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async () => {
+    it("backs up once, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async ({
+      onTestFinished,
+    }) => {
+      const restoreEnv = snapshotEnv(["NEMOCLAW_RECREATE_WITHOUT_BACKUP"]);
+      onTestFinished(restoreEnv);
+      process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "0";
+      let innerBackupMarker: string | undefined;
       const mcpEntry = {
         server: "github",
         url: "https://mcp.example.test/mcp",
@@ -51,12 +57,16 @@ export function registerRebuildFlowLifecycleTests(): void {
           entries: [mcpEntry],
           detachedProviderEntries: [mcpEntry],
         },
+        onboard: () => {
+          innerBackupMarker = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+        },
       });
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
       ).resolves.toBeUndefined();
 
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
       expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
       expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
       expect(harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0]).toBeLessThan(
@@ -75,6 +85,8 @@ export function registerRebuildFlowLifecycleTests(): void {
           autoYes: true,
         }),
       );
+      expect(innerBackupMarker).toBe("1");
+      expect(process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBe("0");
       expect(harness.registryUpdateSpy).toHaveBeenCalledWith(
         "alpha",
         expect.objectContaining({

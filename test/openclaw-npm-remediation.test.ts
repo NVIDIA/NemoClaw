@@ -237,6 +237,54 @@ function writeCoreArchiveFixtures(): {
   return { archivePath, npmExecutable, workingDirectory: path.join(root, "work") };
 }
 
+function writeLegacyCoreArchiveFixtures(): {
+  archivePath: string;
+  npmExecutable: string;
+  workingDirectory: string;
+} {
+  const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-legacy-openclaw-build-remediation-"));
+  temporaryDirectories.push(root);
+  const archivePath = path.join(root, "openclaw-2026.3.11.tgz");
+  packFixture(writeLegacyCoreFixture(), archivePath);
+
+  const tarDirectory = path.join(root, "tar-package");
+  mkdirSync(tarDirectory, { recursive: true });
+  writeFileSync(
+    path.join(tarDirectory, "package.json"),
+    `${JSON.stringify({ name: "tar", version: "7.5.19" }, null, 2)}\n`,
+  );
+  const tarArchive = path.join(root, "tar-7.5.19-source.tgz");
+  packFixture(tarDirectory, tarArchive);
+
+  const npmExecutable = path.join(root, "npm-fixture.sh");
+  writeFileSync(
+    npmExecutable,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `tar_archive=${JSON.stringify(tarArchive)}`,
+      'case "$1:$2:${3:-}" in',
+      '  "view:tar@7.5.19:dist.integrity") value="sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==" ;;',
+      '  "view:tar@7.5.19:dist.tarball") value="https://registry.npmjs.org/tar/-/tar-7.5.19.tgz" ;;',
+      '  "pack:https://registry.npmjs.org/tar/-/tar-7.5.19.tgz:--pack-destination") ;;',
+      '  *) echo "unexpected npm fixture invocation: $*" >&2; exit 1 ;;',
+      "esac",
+      'if [ "$1" = "view" ]; then printf "%s\\n" "$value"; exit 0; fi',
+      'destination=""',
+      'while [ "$#" -gt 0 ]; do',
+      '  if [ "$1" = "--pack-destination" ]; then destination="$2"; shift 2; continue; fi',
+      "  shift",
+      "done",
+      'cp "$tar_archive" "$destination/tar-7.5.19.tgz"',
+      'printf \'[{"filename":"tar-7.5.19.tgz","integrity":"sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw=="}]\\n\'',
+      "",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  chmodSync(npmExecutable, 0o700);
+  return { archivePath, npmExecutable, workingDirectory: path.join(root, "work") };
+}
+
 function writePluginArchiveFixtures(): {
   archivePath: string;
   npmExecutable: string;
@@ -440,33 +488,23 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
-  it("rebuilds the legacy fixture archive without adding mutable lock metadata", () => {
-    const directory = writeLegacyCoreFixture();
-    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-legacy-openclaw-build-remediation-"));
-    temporaryDirectories.push(root);
-    const archivePath = path.join(root, "openclaw-2026.3.11.tgz");
-    packFixture(directory, archivePath);
+  it("rebuilds the legacy fixture archive with the reviewed tar package bundled", () => {
+    const fixture = writeLegacyCoreArchiveFixtures();
     const request = {
-      archivePath,
+      archivePath: fixture.archivePath,
+      env: { NEMOCLAW_REVIEWED_NPM_EXECUTABLE: fixture.npmExecutable },
       packageSpec: "openclaw@2026.3.11",
-      workingDirectory: path.join(root, "work"),
+      workingDirectory: fixture.workingDirectory,
     };
-    let metadataIntegrity = "";
-    try {
+    const remediated = buildRemediatedOpenClawArchive(request);
+    expect(() =>
       buildRemediatedOpenClawArchive({
         ...request,
         expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
-      });
-    } catch (error) {
-      metadataIntegrity = String(error).match(/got (sha512-\S+)/u)?.[1] ?? "";
-    }
-    expect(metadataIntegrity).toMatch(/^sha512-/u);
+      }),
+    ).toThrow(`got ${remediated.metadataIntegrity}`);
 
-    const remediated = buildRemediatedOpenClawArchive({
-      ...request,
-      expectedPatchedMetadataIntegrity: metadataIntegrity,
-    });
-    const extracted = path.join(root, "asserted");
+    const extracted = path.join(path.dirname(fixture.archivePath), "asserted");
     mkdirSync(extracted, { recursive: true });
     const extraction = spawnSync("tar", ["-xzf", remediated.archivePath, "-C", extracted], {
       encoding: "utf8",
@@ -474,10 +512,16 @@ describe("OpenClaw npm remediation", () => {
     expect(extraction.status, extraction.stderr).toBe(0);
     expect(existsSync(path.join(extracted, "package", "npm-shrinkwrap.json"))).toBe(false);
     expect(
-      readJson<{ dependencies?: Record<string, string> }>(
-        path.join(extracted, "package", "package.json"),
-      ).dependencies?.tar,
-    ).toBe("7.5.19");
+      readJson<{
+        bundledDependencies?: string[];
+        dependencies?: Record<string, string>;
+      }>(path.join(extracted, "package", "package.json")),
+    ).toMatchObject({ bundledDependencies: ["tar"], dependencies: { tar: "7.5.19" } });
+    expect(
+      readJson<{ name?: string; version?: string }>(
+        path.join(extracted, "package", "node_modules", "tar", "package.json"),
+      ),
+    ).toMatchObject({ name: "tar", version: "7.5.19" });
   });
 
   // source-shape-contract: security -- Archive metadata proves the rebuilt package carries the reviewed bundled fs-safe remediation

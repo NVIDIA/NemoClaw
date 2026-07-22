@@ -90,8 +90,10 @@ For `openclaw@2026.6.10`, the helper makes these changes:
 - Bundles the reviewed `@openclaw/fs-safe@0.3.0` package and removes its duplicate optional `tar` and `jszip` declarations. The bundled package resolves OpenClaw's reviewed direct `tar@7.5.19` and `jszip@3.10.1` dependencies instead, including during a global npm install.
 - Verifies the installed global dependency tree before either the reviewed base image or production image can complete.
 
-For the E2E-only `openclaw@2026.3.11` identity, the helper replaces the exact `tar@7.5.11` declaration with reviewed `tar@7.5.19`.
-It rejects a source archive that has different dependency metadata or an unexpected npm shrinkwrap.
+For the E2E-only `openclaw@2026.3.11` identity, the helper requires the exact `tar@7.5.11` declaration, no bundled dependencies, no bundled tar package, and no npm shrinkwrap.
+The reviewed source archive SRI binds the remainder of the source manifest and package bytes.
+The helper then verifies the exact `tar@7.5.19` registry SRI and tarball URL, copies that reviewed package into the remediated archive, and declares it as a bundled dependency so the later global install cannot resolve the replacement tar package from mutable registry state.
+The committed patched-metadata hash binds the OpenClaw identity, replacement declaration, bundled-dependency marker, and bundled tar identity.
 
 For `@openclaw/slack@2026.6.10` and `@openclaw/msteams@2026.6.10`, the helper makes these changes:
 
@@ -127,7 +129,7 @@ It binds each patched package manifest and shrinkwrap to a committed SHA-512 met
 The core value also covers the bundled `@openclaw/fs-safe` package manifest.
 The diagnostics value also covers the bundled SDK, Jaeger propagator, and nested core package manifests.
 The expected values are `sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==` for OpenClaw core, `sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==` for diagnostics OTEL, `sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
-The E2E-only `openclaw@2026.3.11` value is `sha512-c+3QxBJidAFb8xZSmz4azC7KHFvXUAY9vN1AlXJ243LwMCFN5it5MW0r6FBuxIFvlBCnGlzcqRCvU5ghUec/ng==`.
+The E2E-only `openclaw@2026.3.11` value is `sha512-1i30XSb/2NEcuTcuhXfR/x3YKaXVhWq6ttecFBSD9nrCKrzjNxSNMfK1y3qRcnblNOzRWmHtJZwZKeej02s/EQ==`.
 Both the library and command-line entry points enforce the same committed values.
 `Dockerfile.base` records `ignore-scripts+reviewed-lifecycle+transitive-remediation-v1` in its protected provenance marker.
 The production Dockerfile rejects stale base provenance and repeats the remediation when the marker does not match.
@@ -258,10 +260,13 @@ The legacy `2026.3.11` and `2026.4.24` OpenClaw pins are retained only for stale
 
 Frozen OpenShell gateway-upgrade fixtures select only the SRI-pinned OpenClaw `2026.4.24`, `2026.5.22`, or `2026.5.27` archive.
 The live test uses `packReviewedNpmArchive` to verify exact registry metadata, the reviewed tarball URL, and the downloaded SRI.
-The adapter copies only that verified local archive into the historical build context.
+The adapter stores only that verified local archive at `nemoclaw/src/.nemoclaw-e2e-old-openclaw.tgz`, which the frozen optimized build-context staging preserves.
 It installs the archive with lifecycle scripts disabled and invokes `postinstall-bundled-plugins.mjs` directly.
-The fixtures retain npm registry signature verification for the historical mcporter lock.
-The adapter requires exactly one advisory audit statement before it replaces that statement with a test-only skip.
+The `v0.0.74` fixture retains npm registry signature verification for its historical mcporter lock.
+The reviewed `v0.0.36` and `v0.0.55` profiles require no advisory audit statement.
+The reviewed `v0.0.74` profile requires exactly one advisory audit statement, which the adapter replaces with a test-only skip.
+Each audit policy is bound to one exact reviewed NemoClaw tag, full commit SHA, and OpenClaw version tuple before the installer is patched.
+The adapter rejects an unknown or mixed tuple and any advisory audit count that does not match its reviewed profile.
 `test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts` verifies these constraints.
 
 Invalid state: a production image build overriding `OPENCLAW_VERSION` to an old fixture pin or replacing any repository-reviewed integrity/tarball value while still passing the workflow boundary. Source boundary: Dockerfile and Dockerfile.base install blocks plus the guard that precedes every production image build. Source-fix constraint: keep stale-upgrade E2Es able to build old images without normalizing those pins or accepting caller-controlled production package identity. Regression tests: the integrity-pin contract suite rejects the flag, both legacy versions, all declared integrity/tarball ARG overrides through direct, `--build-arg`, and environment paths, and a future-shaped positional pin name; `test/openclaw-dependency-review.test.ts` proves all seven production image builds are guard-protected and carry no literal fixture selectors. Removal condition: issue #5896 section 9 retires the old-base fixture strategy and fixture flag; the general repository-owned production pin guard remains until production builds no longer expose package identity as Docker ARGs.

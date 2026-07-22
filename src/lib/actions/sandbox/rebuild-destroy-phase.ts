@@ -224,15 +224,19 @@ export async function runRebuildDestroyPhase(
     );
     return null;
   }
-  onDeleted();
-  if (!waitForRebuildDeleteAbsence(sandboxName, log)) {
-    console.error("  Sandbox deletion did not converge. Aborting rebuild.");
+  const deletionConfirmed = alreadyGone || waitForRebuildDeleteAbsence(sandboxName, log);
+  if (!deletionConfirmed) {
+    console.error(
+      "  Sandbox delete was accepted, but OpenShell did not confirm that the sandbox is absent.",
+    );
+    console.error("  Aborting rebuild before registry removal and sandbox recreation.");
     if (backupManifest) {
       console.error("  State backup is preserved at: " + backupManifest.backupPath);
     }
-    bail("Sandbox deletion did not converge to confirmed absence.", 1);
+    bail("Sandbox deletion could not be confirmed.");
     return null;
   }
+  onDeleted();
   let removalReceipt: registry.SandboxRemovalReceipt | null = null;
   const hasBaselineExclusions = (input.sandboxEntry.baselineExclusions?.length ?? 0) > 0;
   if (rebuildMcpEntries.length === 0 && !hasBaselineExclusions) {

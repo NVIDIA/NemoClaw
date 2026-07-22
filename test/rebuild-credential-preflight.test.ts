@@ -180,6 +180,11 @@ if (a[0] === "sandbox" && a[1] === "get") {
   process.exit(0);
 }
 if (a[0] === "sandbox" && a[1] === "delete") { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(${sandboxDeleteExitCode}); }
+if (a[0] === "sandbox" && a[1] === "get") {
+  if (fs.existsSync(${JSON.stringify(deleteMarker)})) { process.stderr.write("sandbox ${sandboxName} not found\\n"); process.exit(1); }
+  process.stdout.write("${sandboxName} Ready\\n");
+  process.exit(0);
+}
 if (a[0] === "sandbox" && a[1] === "exec") {
   const command = a.join(" ");
   if (command.includes("rebuild-atomicity-marker.txt")) {
