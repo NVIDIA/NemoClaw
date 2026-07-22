@@ -12,11 +12,35 @@ const RUNTIME_FUNCTION_NAMES = [
   "createOpenClawCodingTools",
   "applyToolSearchCatalog",
 ] as const;
-const RUNTIME_MODULE_FILE_PATTERNS = new Map<string, RegExp>([
-  ["2026.5.27", /^pi-tools-.*\.js$/],
-  ["2026.6.10", /^agent-tools-.*\.js$/],
-]);
 type RuntimeFunctionName = (typeof RUNTIME_FUNCTION_NAMES)[number];
+const RUNTIME_MODULE_FILE_PATTERNS = new Map<string, Readonly<Record<RuntimeFunctionName, RegExp>>>(
+  [
+    [
+      "2026.5.27",
+      {
+        resolveToolSearchConfig: /^pi-tools-.*\.js$/,
+        createOpenClawCodingTools: /^pi-tools-.*\.js$/,
+        applyToolSearchCatalog: /^pi-tools-.*\.js$/,
+      },
+    ],
+    [
+      "2026.6.10",
+      {
+        resolveToolSearchConfig: /^agent-tools-.*\.js$/,
+        createOpenClawCodingTools: /^agent-tools-.*\.js$/,
+        applyToolSearchCatalog: /^agent-tools-.*\.js$/,
+      },
+    ],
+    [
+      "2026.7.1",
+      {
+        resolveToolSearchConfig: /^tool-search-.*\.js$/,
+        createOpenClawCodingTools: /^agent-tools-.*\.js$/,
+        applyToolSearchCatalog: /^tool-search-.*\.js$/,
+      },
+    ],
+  ],
+);
 type ExpectedMode = "progressive" | "direct";
 interface JsonRecord {
   [key: string]: unknown;
@@ -124,10 +148,6 @@ function isObjectRecord(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function isRuntimeFunctionName(value: string): value is RuntimeFunctionName {
-  return (RUNTIME_FUNCTION_NAMES as readonly string[]).includes(value);
-}
-
 function readJson(filePath: string, label: string): JsonRecord {
   let text: string;
   try {
@@ -151,15 +171,22 @@ function countFunctionDeclarations(source: string, functionName: RuntimeFunction
   return [...source.matchAll(new RegExp(`\\bfunction\\s+${escapedName}\\s*\\(`, "g"))].length;
 }
 
-function runtimeModuleFilePattern(expectedVersion: string): RegExp {
-  const pattern = RUNTIME_MODULE_FILE_PATTERNS.get(expectedVersion);
-  if (pattern === undefined) {
+function runtimeModuleFilePattern(
+  expectedVersion: string,
+  functionName: RuntimeFunctionName,
+): RegExp {
+  const layout = RUNTIME_MODULE_FILE_PATTERNS.get(expectedVersion);
+  if (layout === undefined) {
     fail(`no compiled runtime module layout is registered for OpenClaw ${expectedVersion}`);
   }
-  return pattern;
+  return layout[functionName];
 }
 
-function readRuntimeCandidates(distDir: string, expectedVersion: string): RuntimeCandidate[] {
+function readRuntimeCandidates(
+  distDir: string,
+  expectedVersion: string,
+  functionName: RuntimeFunctionName,
+): RuntimeCandidate[] {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(distDir, { withFileTypes: true });
@@ -167,7 +194,7 @@ function readRuntimeCandidates(distDir: string, expectedVersion: string): Runtim
     fail(`could not read OpenClaw dist directory ${distDir}: ${errorMessage(error)}`);
   }
 
-  const filePattern = runtimeModuleFilePattern(expectedVersion);
+  const filePattern = runtimeModuleFilePattern(expectedVersion, functionName);
   const candidates: RuntimeCandidate[] = [];
   for (const entry of entries) {
     if (!entry.isFile() || !filePattern.test(entry.name)) continue;
@@ -178,40 +205,44 @@ function readRuntimeCandidates(distDir: string, expectedVersion: string): Runtim
     } catch (error) {
       fail(`could not read compiled runtime candidate ${filePath}: ${errorMessage(error)}`);
     }
-    if (RUNTIME_FUNCTION_NAMES.every((name) => source.includes(`function ${name}`))) {
+    if (source.includes(`function ${functionName}`)) {
       candidates.push({ filePath, source });
     }
   }
   return candidates;
 }
 
-function locateRuntimeModule(distDir: string, expectedVersion: string): RuntimeCandidate {
-  const candidates = readRuntimeCandidates(distDir, expectedVersion);
-  if (candidates.length !== 1) {
-    fail(
-      `expected exactly one registered OpenClaw ${expectedVersion} runtime module containing ${RUNTIME_FUNCTION_NAMES.join(
-        ", ",
-      )}; found ${candidates.length}`,
-    );
-  }
-  const candidate = candidates[0];
-  if (!candidate) fail("compiled runtime candidate disappeared after cardinality check");
+function locateRuntimeModules(
+  distDir: string,
+  expectedVersion: string,
+): Map<RuntimeFunctionName, RuntimeCandidate> {
+  const modules = new Map<RuntimeFunctionName, RuntimeCandidate>();
   for (const functionName of RUNTIME_FUNCTION_NAMES) {
+    const candidates = readRuntimeCandidates(distDir, expectedVersion, functionName);
+    if (candidates.length !== 1) {
+      fail(
+        `expected exactly one registered OpenClaw ${expectedVersion} runtime module containing ${functionName}; found ${candidates.length}`,
+      );
+    }
+    const candidate = candidates[0];
+    if (!candidate) fail("compiled runtime candidate disappeared after cardinality check");
     const count = countFunctionDeclarations(candidate.source, functionName);
     if (count !== 1) {
       fail(
         `${candidate.filePath} must declare compiled function ${functionName} exactly once; found ${count}`,
       );
     }
+    modules.set(functionName, candidate);
   }
-  return candidate;
+  return modules;
 }
 
-function parseRuntimeExportAliases(
+function parseRuntimeExportAlias(
   source: string,
   filePath: string,
-): Map<RuntimeFunctionName, string> {
-  const aliases = new Map<RuntimeFunctionName, string>();
+  functionName: RuntimeFunctionName,
+): string {
+  let alias: string | undefined;
   const exportBlocks = [...source.matchAll(/\bexport\s*\{([\s\S]*?)\}\s*;?/g)];
   for (const block of exportBlocks) {
     const blockBody = block[1];
@@ -224,58 +255,45 @@ function parseRuntimeExportAliases(
       );
       if (!match) continue;
       const localName = match[1];
-      if (localName === undefined || !isRuntimeFunctionName(localName)) continue;
-      if (aliases.has(localName)) {
-        fail(`${filePath} exports compiled function ${localName} more than once`);
+      if (localName !== functionName) continue;
+      if (alias !== undefined) {
+        fail(`${filePath} exports compiled function ${functionName} more than once`);
       }
-      aliases.set(localName, match[2] ?? localName);
+      alias = match[2] ?? localName;
     }
   }
-
-  for (const functionName of RUNTIME_FUNCTION_NAMES) {
-    if (!aliases.has(functionName)) {
-      fail(`${filePath} does not export compiled function ${functionName}`);
-    }
-  }
-  if (new Set(aliases.values()).size !== RUNTIME_FUNCTION_NAMES.length) {
-    fail(`${filePath} reuses an export alias across required compiled functions`);
-  }
-  return aliases;
-}
-
-function requiredAlias(
-  aliases: ReadonlyMap<RuntimeFunctionName, string>,
-  functionName: RuntimeFunctionName,
-  filePath: string,
-): string {
-  const alias = aliases.get(functionName);
   if (alias === undefined) fail(`${filePath} does not export compiled function ${functionName}`);
   return alias;
 }
 
 async function importRuntimeFunctions(
-  filePath: string,
-  aliases: ReadonlyMap<RuntimeFunctionName, string>,
+  modules: ReadonlyMap<RuntimeFunctionName, RuntimeCandidate>,
 ): Promise<RuntimeFunctions> {
-  const moduleUrl = pathToFileURL(filePath);
-  moduleUrl.searchParams.set(
-    "nemoclaw_tool_search_validator",
-    `${process.pid}-${Date.now()}-${importSequence++}`,
-  );
-
-  let runtimeModule: JsonRecord;
-  try {
-    runtimeModule = await import(moduleUrl.href);
-  } catch (error) {
-    fail(`could not import compiled runtime ${filePath}: ${errorMessage(error)}`);
-  }
-
+  const importedModules = new Map<string, JsonRecord>();
   const runtimeExports = new Map<RuntimeFunctionName, (...args: never[]) => unknown>();
   for (const functionName of RUNTIME_FUNCTION_NAMES) {
-    const exportName = requiredAlias(aliases, functionName, filePath);
+    const candidate = modules.get(functionName);
+    if (!candidate) fail(`compiled runtime module for ${functionName} disappeared`);
+    let runtimeModule = importedModules.get(candidate.filePath);
+    if (!runtimeModule) {
+      const moduleUrl = pathToFileURL(candidate.filePath);
+      moduleUrl.searchParams.set(
+        "nemoclaw_tool_search_validator",
+        `${process.pid}-${Date.now()}-${importSequence++}`,
+      );
+      try {
+        runtimeModule = await import(moduleUrl.href);
+      } catch (error) {
+        fail(`could not import compiled runtime ${candidate.filePath}: ${errorMessage(error)}`);
+      }
+      if (!runtimeModule) fail(`compiled runtime import for ${functionName} disappeared`);
+      importedModules.set(candidate.filePath, runtimeModule);
+    }
+    if (!runtimeModule) fail(`compiled runtime import for ${functionName} disappeared`);
+    const exportName = parseRuntimeExportAlias(candidate.source, candidate.filePath, functionName);
     const value = runtimeModule[exportName];
     if (typeof value !== "function") {
-      fail(`${filePath} export ${exportName} for ${functionName} is not a function`);
+      fail(`${candidate.filePath} export ${exportName} for ${functionName} is not a function`);
     }
     runtimeExports.set(functionName, value as (...args: never[]) => unknown);
   }
@@ -578,15 +596,21 @@ export async function validateOpenClawToolSearchRuntime({
   const version = assertExpectedVersion(resolvedDist, expectedVersion);
   const config = readJson(resolvedConfigPath, "generated OpenClaw config");
   readToolSearchConfig(config, validatedMode, resolvedConfigPath);
-  const { filePath, source } = locateRuntimeModule(resolvedDist, version);
-  const aliases = parseRuntimeExportAliases(source, filePath);
-  const runtime = await importRuntimeFunctions(filePath, aliases);
+  const runtimeModules = locateRuntimeModules(resolvedDist, version);
+  const runtime = await importRuntimeFunctions(runtimeModules);
   assertResolvedConfig(runtime.resolveToolSearchConfig, config, validatedMode);
   const visibleToolNames =
     validatedMode === "progressive"
       ? await validateProgressiveRuntime(runtime, config)
       : await validateDirectRuntime(runtime, config);
-  return { version, expectedMode: validatedMode, runtimeModulePath: filePath, visibleToolNames };
+  const toolModule = runtimeModules.get("createOpenClawCodingTools");
+  if (!toolModule) fail("compiled createOpenClawCodingTools module disappeared");
+  return {
+    version,
+    expectedMode: validatedMode,
+    runtimeModulePath: toolModule.filePath,
+    visibleToolNames,
+  };
 }
 
 function usage(): string {

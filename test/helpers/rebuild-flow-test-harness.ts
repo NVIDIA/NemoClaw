@@ -382,6 +382,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(openshellRuntime, "runOpenshell")
     .mockImplementation((args: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
+      if (argv.join(" ") === "sandbox get alpha") {
+        return {
+          status: 1,
+          output: "sandbox alpha not found",
+          stdout: "",
+          stderr: "sandbox alpha not found",
+        };
+      }
       return overrides.runOpenshell ? overrides.runOpenshell(argv) : { status: 0, output: "" };
     });
   const defaultRemovalReceipt = {
