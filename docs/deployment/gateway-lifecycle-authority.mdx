@@ -9,20 +9,32 @@ keywords: ["nemoclaw gateway lifecycle", "externally supervised gateway", "opens
 content:
   type: "reference"
 ---
-At every point, exactly one component owns the OpenShell gateway lifecycle.
+During onboarding, exactly one component owns the OpenShell gateway lifecycle.
 
-Platform images sometimes supervise the gateway with their own service. If canonical onboarding does not know that, both layers believe they own the same gateway and the same port: onboarding replaces the live listener, the platform service immediately restarts it, and the host is left with a persistent bind conflict and no authoritative owner.
+Platform images sometimes supervise the gateway with their own service.
+If onboarding does not know that, both layers can try to control the same gateway and port.
+Onboarding can replace the live listener, and the platform service can restart it.
+The host then has a persistent bind conflict and no authoritative owner.
 
-The gateway-management contract makes that ownership explicit. NemoClaw either manages the packaged canonical gateway service, or it attaches to a gateway that an external supervisor owns — never both, and it never silently falls back to starting its own gateway when external supervision was declared.
+The gateway-management contract makes that ownership explicit for onboarding.
+NemoClaw manages its gateway, or it attaches to a gateway that an external supervisor owns.
+When external supervision is declared, onboarding does not silently start a NemoClaw-managed gateway.
+
+<Warning>
+The declaration controls gateway effects in `nemoclaw onboard`, including preflight, resume, rebuild, and onboarding recovery paths.
+It does not change gateway cleanup in uninstall or sandbox-destroy commands.
+Do not run those cleanup actions against an externally supervised gateway.
+</Warning>
 
 ## Management modes
 
-| Mode | Who owns start, stop, restart, upgrade, and recovery |
+| Mode | Onboarding behavior |
 |---|---|
-| `nemoclaw-managed` | NemoClaw. The platform may enable the packaged service at boot, but must not add a second gateway implementation. |
-| `externally-supervised` | A platform supervisor. NemoClaw validates and attaches, but never starts, stops, or replaces the gateway process. |
+| `nemoclaw-managed` | NemoClaw manages the packaged gateway service or a standalone gateway. The platform must not add a second gateway implementation. |
+| `externally-supervised` | NemoClaw validates and attaches to the platform-supervised gateway. Onboarding does not start, stop, or replace its process. |
 
-When nothing is declared, NemoClaw keeps its historical behavior: it manages the packaged gateway user service if it is installed, and otherwise manages a standalone gateway.
+When nothing is declared, NemoClaw keeps its historical behavior.
+It manages the packaged gateway user service when installed, or it manages a standalone gateway.
 
 ## Declare the mode
 
@@ -51,26 +63,33 @@ export NEMOCLAW_GATEWAY_MANAGEMENT=/etc/nemoclaw/gateway-management.json
 |---|---|
 | `version` | Contract version. Only `1` is supported; an unrecognized version fails rather than being ignored. |
 | `mode` | `nemoclaw-managed` or `externally-supervised`. |
-| `endpoint` | Bare origin the gateway listens on. Use a numeric IPv4 or IPv6 loopback address; DNS names such as `localhost` are rejected so resolver configuration cannot redirect the readiness probe off-host. The origin must not embed credentials, a query string, or a path. Its port must be the port this NemoClaw process operates the gateway on — set `NEMOCLAW_GATEWAY_PORT` to match, or onboarding fails rather than validate one gateway and then use another. |
+| `endpoint` | Bare HTTP origin where the gateway listens. Contract v1 rejects HTTPS because it does not define TLS trust material. Use a numeric IPv4 or IPv6 loopback address. DNS names such as `localhost` are rejected so resolver configuration cannot redirect the readiness probe off-host. The origin must not contain credentials, a query string, or a path. Its port must match `NEMOCLAW_GATEWAY_PORT`. |
 | `stateDir` | Absolute path of the gateway state directory. |
-| `supervisor` | Required for `externally-supervised`, and rejected for `nemoclaw-managed`. `kind` is `systemd-system` or `systemd-user`. `serviceName` and an absolute `execPath` are both required — the listening process is checked against them. |
-| `requiredCapabilities` | Capabilities onboarding needs: `gateway.health`, `sandbox.create`, `sandbox.exec`, `gpu.passthrough`. Requesting one this NemoClaw build does not implement fails before any effect. |
+| `supervisor` | Required for `externally-supervised`, and rejected for `nemoclaw-managed`. `kind` is `systemd-system` or `systemd-user`. `serviceName` and an absolute `execPath` are required. NemoClaw checks the listening process against both values. |
+| `requiredCapabilities` | Optional list of capabilities that onboarding needs. Supported values are `gateway.health`, `sandbox.create`, `sandbox.exec`, and `gpu.passthrough`. An unsupported value stops onboarding before any effect. |
 
 <Note>
-Only systemd supervisors are supported in v1. NemoClaw attaches only to a listener it can authoritatively bind to the declared unit (via cgroup membership), and an opaque external supervisor offers no such proof — so it is rejected rather than accepted and then always failing. The contract is versioned, so a proven external-identity mechanism can be added later without a breaking change.
+Contract v1 supports only systemd supervisors.
+NemoClaw uses cgroup membership to bind the listener to the declared unit.
+The contract rejects a supervisor that cannot provide this ownership proof.
 </Note>
 
 <Note>
-OpenShell exposes no gateway capability-discovery endpoint, so `requiredCapabilities` is checked against what this NemoClaw build implements rather than interrogated from the running gateway. That still fails closed when a newer platform profile declares a capability an older NemoClaw cannot honor.
+OpenShell exposes no gateway capability-discovery endpoint.
+NemoClaw checks `requiredCapabilities` against the capabilities that its build implements, not the running gateway.
+This check rejects a platform profile that requires a capability from a newer NemoClaw build.
 </Note>
 
 <Note>
-The declaration carries no credentials, and unknown fields are rejected rather than ignored. Ownership metadata is persisted and emitted in diagnostics and machine events, so nothing secret may travel through it.
+The declaration must not contain credentials.
+NemoClaw rejects unknown fields instead of ignoring them.
+It persists ownership metadata and emits that metadata in diagnostics and machine events.
 </Note>
 
 ## What externally supervised mode enforces
 
-Before onboarding touches any provider, policy, sandbox, or registry state, NemoClaw checks that the declared owner still holds the gateway. Onboarding fails — rather than starting a competing gateway — when:
+Before onboarding changes provider, policy, sandbox, or registry state, NemoClaw checks that the declared owner still holds the gateway.
+Onboarding stops without starting a competing gateway when:
 
 - the declared endpoint names a port this process does not operate the gateway on;
 - the declaration requires a capability this NemoClaw build does not implement;
@@ -78,21 +97,28 @@ Before onboarding touches any provider, policy, sandbox, or registry state, Nemo
 - nothing is listening on the gateway endpoint;
 - an unrecognized process holds the gateway port;
 - more than one process holds the port, so ownership is ambiguous;
-- the listening process is not part of the declared supervisor unit — for systemd, its cgroup does not name the unit, so a same-binary process started outside the unit is rejected even though its executable matches;
+- the listening process is not part of the declared supervisor unit;
 - the listening process cannot be bound to the declared unit at all;
 - the declared authority would change part-way through a run (that is an explicit migration, not a silent switch);
 - the running gateway is not the declared executable;
 - the listener set cannot be enumerated, so a second gateway cannot be ruled out;
 - the supervised gateway is running but does not answer a health check.
 
-These checks run identically on a fresh run and on resume: a recorded `complete` gateway step is not evidence that the declared owner still holds the port. The same guard sits on the shared gateway start entrypoint and on every recovery branch, so rebuild and recovery cannot start a gateway either — on Docker-driver and non-Docker-driver hosts alike.
+These checks run on a fresh onboarding attempt and on resume.
+A recorded `complete` gateway step does not prove that the declared owner still holds the port.
+The same guard protects the shared gateway start entry point and each onboarding recovery branch.
+Rebuild and recovery cannot start a gateway on Docker-driver or non-Docker-driver hosts.
 
 ## Fix a failure
 
-Because NemoClaw will not manage a gateway it does not own, resolve these through the platform supervisor:
+Resolve an externally supervised gateway failure through the platform supervisor:
 
 ```bash
 systemctl status openshell-gateway.service
 ```
 
-Bring the supervised gateway up, leave exactly one process holding the port, then re-run `nemoclaw onboard`. To hand the lifecycle back to NemoClaw instead, remove the platform's gateway service and declare `nemoclaw-managed` (or remove the declaration entirely).
+Start the supervised gateway and leave exactly one process holding the port.
+Then run `nemoclaw onboard` again.
+
+To return lifecycle control to NemoClaw, remove the platform gateway service.
+Then declare `nemoclaw-managed` or remove the declaration.
