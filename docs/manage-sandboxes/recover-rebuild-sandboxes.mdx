@@ -141,6 +141,13 @@ The session then follows the current default selected through `inference set`, w
 
 <AgentOnly variant="hermes">
 The rebuild command preserves Hermes state, registered policies, and managed MCP configuration while recreating the container.
+A rebuild creates a new sandbox home and a new Hermes API bearer token.
+After the rebuild succeeds, retrieve the replacement token before reconnecting API clients:
+
+```bash
+$$nemoclaw <sandbox-name> gateway-token --quiet
+```
+
 Before post-restore repairs, NemoClaw verifies that the recreated sandbox still identifies as Hermes and exits nonzero if its identity does not match the rebuild target.
 After state restore, NemoClaw restores managed MCP configuration through the normal lifecycle, then re-proves or recovers gateway health and performs final MCP reconciliation.
 `rebuild` exits nonzero instead of reporting success when it cannot verify final gateway health or managed MCP state.
@@ -152,6 +159,7 @@ The rebuild command preserves manifest-defined Deep Agents state, regenerates `c
 </AgentOnly>
 
 If an archive command preserves at least one state directory, NemoClaw keeps the usable entries and reports the manifest-defined paths that could not be archived.
+If a manifest-declared state file fails, NemoClaw stops before deleting the original sandbox even when it preserved state directories, unless you explicitly pass `--force`.
 If every state directory fails, NemoClaw stops before deleting the original sandbox even when it captured loose files, unless you explicitly pass `--force`.
 
 <Warning>
