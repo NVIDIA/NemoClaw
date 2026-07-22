@@ -6,9 +6,9 @@ import { pathToFileURL } from "node:url";
 
 import { githubApi } from "../advisors/github.mts";
 import {
-  type WorkflowJob,
   validateWorkflowJobsPage,
   verifiedRunnerLossEvidence,
+  type WorkflowJob,
 } from "./hosted-runner-loss.mts";
 import { decideRetry, detectRunnerLoss } from "./runner-pressure-core.mts";
 
@@ -248,7 +248,7 @@ export async function retryMainE2eRunnerLoss(options: {
   return result;
 }
 
-export function renderRetrySummary(result: MainE2eRunnerLossRetryResult): string {
+export function renderRetryLog(result: MainE2eRunnerLossRetryResult): string {
   const originalAttemptUrl = `${result.runUrl}/attempts/${result.runAttempt}`;
   const lines = [
     "## Final-main E2E runner-loss policy",
@@ -267,6 +267,32 @@ export function renderRetrySummary(result: MainE2eRunnerLossRetryResult): string
   return `${lines.join("\n")}\n`;
 }
 
+export function renderRetrySummary(): string {
+  return [
+    "## Final-main E2E runner-loss policy",
+    "",
+    "See the job log for the validated decision and attempt links.",
+    "",
+  ].join("\n");
+}
+
+function appendJobSummary(): void {
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryPath) return;
+  const descriptor = fs.openSync(
+    summaryPath,
+    fs.constants.O_WRONLY | fs.constants.O_APPEND | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) {
+      throw new Error("GITHUB_STEP_SUMMARY must be a regular file");
+    }
+    fs.writeFileSync(descriptor, renderRetrySummary(), "utf8");
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 async function main(): Promise<void> {
   const result = await retryMainE2eRunnerLoss({
     repository: process.env.GITHUB_REPOSITORY ?? "",
@@ -277,10 +303,8 @@ async function main(): Promise<void> {
       "SUBJECT_RUN_ATTEMPT",
     ),
   });
-  const summary = renderRetrySummary(result);
-  if (process.env.GITHUB_STEP_SUMMARY) {
-    fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary, { encoding: "utf8" });
-  }
+  appendJobSummary();
+  console.log(renderRetryLog(result).trimEnd());
   console.log(JSON.stringify(result));
 }
 

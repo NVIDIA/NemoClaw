@@ -3,7 +3,11 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { retryMainE2eRunnerLoss } from "../../../tools/e2e/main-e2e-runner-loss-retry.mts";
+import {
+  renderRetryLog,
+  renderRetrySummary,
+  retryMainE2eRunnerLoss,
+} from "../../../tools/e2e/main-e2e-runner-loss-retry.mts";
 import {
   createGitHubFetchRouter,
   type GitHubFetchRoute,
@@ -155,6 +159,24 @@ async function runController(routes: GitHubFetchRoute[], requests: RecordedGitHu
 }
 
 describe("final-main E2E runner-loss retry for item 5 (#7140)", () => {
+  it("keeps network-derived attempt details in the log instead of the job summary", () => {
+    const result = {
+      retry: true,
+      reason: "confirmed runner loss",
+      runnerLostMarkerCount: 1,
+      runId: RUN_ID,
+      runAttempt: 1,
+      headSha: HEAD_SHA,
+      runUrl: `https://github.com/${REPOSITORY}/actions/runs/${RUN_ID}`,
+    };
+
+    expect(renderRetrySummary()).toBe(
+      "## Final-main E2E runner-loss policy\n\nSee the job log for the validated decision and attempt links.\n",
+    );
+    expect(renderRetryLog(result)).toContain(`/runs/${RUN_ID}/attempts/1`);
+    expect(renderRetryLog(result)).toContain(`/runs/${RUN_ID}/attempts/2`);
+  });
+
   it("reruns failed jobs once when every failed job has the hosted-runner-loss marker", async () => {
     const requests: RecordedGitHubRequest[] = [];
     const result = await runController(
