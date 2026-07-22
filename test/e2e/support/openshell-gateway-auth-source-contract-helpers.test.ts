@@ -6,10 +6,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-
+import {
+  openShellGatewayAuthArtifactSafetyMarkerName,
+  scanAndApproveOpenShellGatewayAuthArtifacts,
+} from "../../../tools/e2e/openshell-gateway-auth-artifact-safety.mts";
+import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
   assertOpenShellGatewayAuthArtifactsSafe,
   buildSandboxTokenContainerProbeDockerArgs,
+  registerSandboxJwtArtifactRedaction,
   skipUnavailableProbeImage,
   withOpenShellGatewayAuthArtifactSafety,
 } from "../live/openshell-gateway-auth-source-contract-helpers.ts";
@@ -124,6 +129,33 @@ describe("OpenShell gateway auth source contract helpers", () => {
     });
   });
 
+  it("redacts a minted sandbox token before gateway output reaches an artifact (#7101)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-artifact-redaction-"));
+    try {
+      const artifacts = new ArtifactSink(dir);
+      const sandboxToken = "opaque-sandbox-token-not-covered-by-canonical-patterns";
+      registerSandboxJwtArtifactRedaction(artifacts, sandboxToken);
+
+      await artifacts.writeText("openshell-gateway.log", `gateway echoed ${sandboxToken}\n`);
+
+      const content = fs.readFileSync(path.join(dir, "openshell-gateway.log"), "utf8");
+      expect(content).toContain("[REDACTED]");
+      expect(content).not.toContain(sandboxToken);
+      expect(() => assertOpenShellGatewayAuthArtifactsSafe(dir)).not.toThrow();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("binds artifact safety approval to the current GitHub run attempt (#7101)", () => {
+    expect(
+      openShellGatewayAuthArtifactSafetyMarkerName({
+        GITHUB_RUN_ATTEMPT: "4",
+        GITHUB_RUN_ID: "29897237525",
+      }),
+    ).toBe("artifact-safety-29897237525-4.passed");
+  });
+
   it.each([
     ["authorization header", '{"authorization":"redacted"}\n'],
     [
@@ -168,8 +200,10 @@ describe("OpenShell gateway auth source contract helpers", () => {
     });
   });
 
-  it("scans artifacts in the failure path before a workflow upload can run", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-artifact-scan-"));
+  it("removes rejected artifacts before an unconditional workflow upload can run (#7101)", async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-artifact-scan-"));
+    const dir = path.join(parent, "uploadable-auth-artifacts");
+    fs.mkdirSync(dir);
     try {
       await expect(
         withOpenShellGatewayAuthArtifactSafety(dir, async () => {
@@ -177,8 +211,92 @@ describe("OpenShell gateway auth source contract helpers", () => {
           throw new Error("scenario failed");
         }),
       ).rejects.toThrow(/failed-probe\.json.*authorization header/);
+      expect(fs.existsSync(dir)).toBe(false);
+      expect(fs.readdirSync(parent)).toEqual([]);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves safe diagnostics when the scenario itself fails (#7101)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-artifact-safe-failure-"));
+    try {
+      await expect(
+        withOpenShellGatewayAuthArtifactSafety(dir, async () => {
+          fs.writeFileSync(path.join(dir, "failed-probe.json"), '{"status":"failed"}\n');
+          throw new Error("scenario failed");
+        }),
+      ).rejects.toThrow("scenario failed");
+      expect(fs.readFileSync(path.join(dir, "failed-probe.json"), "utf8")).toContain(
+        '"status":"failed"',
+      );
+      expect(fs.existsSync(path.join(dir, openShellGatewayAuthArtifactSafetyMarkerName()))).toBe(
+        false,
+      );
+      scanAndApproveOpenShellGatewayAuthArtifacts(dir);
+      expect(fs.existsSync(path.join(dir, openShellGatewayAuthArtifactSafetyMarkerName()))).toBe(
+        true,
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("withholds safety approval when quarantine and deletion both fail (#7101)", async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-artifact-fail-closed-"));
+    const dir = path.join(parent, "uploadable-auth-artifacts");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "failed-probe.json"), '{"authorization":"redacted"}\n');
+    vi.stubEnv("GITHUB_RUN_ID", "29897237525");
+    vi.stubEnv("GITHUB_RUN_ATTEMPT", "9");
+    const safetyMarker = path.join(dir, openShellGatewayAuthArtifactSafetyMarkerName());
+    fs.writeFileSync(safetyMarker, "stale approval\n");
+
+    const originalRmSync = fs.rmSync.bind(fs);
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(() => {
+      throw new Error("simulated quarantine move failure");
+    });
+    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+      if (path.resolve(String(target)) === path.resolve(dir)) {
+        throw new Error("simulated artifact deletion failure");
+      }
+      originalRmSync(target, options);
+    });
+
+    try {
+      await expect(
+        Promise.resolve().then(() => scanAndApproveOpenShellGatewayAuthArtifacts(dir)),
+      ).rejects.toThrow(/failed safety approval and quarantine/);
+      expect(fs.existsSync(dir)).toBe(true);
+      expect(fs.existsSync(safetyMarker)).toBe(false);
+    } finally {
+      rmSpy.mockRestore();
+      renameSpy.mockRestore();
+      vi.unstubAllEnvs();
+      originalRmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unsafe artifact written after scenario finalization (#7101)", async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-artifact-post-test-"));
+    const dir = path.join(parent, "uploadable-auth-artifacts");
+    fs.mkdirSync(dir);
+    try {
+      await withOpenShellGatewayAuthArtifactSafety(dir, async () => {
+        fs.writeFileSync(path.join(dir, "scenario.json"), '{"status":"passed"}\n');
+      });
+      expect(fs.existsSync(path.join(dir, openShellGatewayAuthArtifactSafetyMarkerName()))).toBe(
+        false,
+      );
+
+      fs.writeFileSync(path.join(dir, "cleanup.json"), '{"authorization":"leaked"}\n');
+
+      expect(() => scanAndApproveOpenShellGatewayAuthArtifacts(dir)).toThrow(
+        /cleanup\.json.*authorization header/,
+      );
+      expect(fs.existsSync(dir)).toBe(false);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
     }
   });
 });

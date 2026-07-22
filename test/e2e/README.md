@@ -85,35 +85,43 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
-Every `e2e-live` test declares an ordered semantic phase plan in
-`meta.e2ePhases` and uses the automatic progress fixture. Normal live output
-shows only the phase number, semantic label, and the completed phase's outcome
-and duration. It deliberately does not repeat the test identity, test start or
-finish, or total test elapsed time already reported by Vitest and GitHub
-Actions. A transition looks like:
+Every `e2e-live` test and every credential-free integration test selected by
+the shared E2E workflow planner declares an ordered semantic phase plan in
+`meta.e2ePhases` and uses its automatic progress fixture. Normal E2E output
+identifies the workflow target and test scenario, then shows immediate phase
+start and completion lines with both phase and total elapsed time. A transition
+looks like:
 
 ```text
-[e2e phase 2/4] onboard the sandbox — passed in 2m 14s; next 3/4: verify hosted inference
+[e2e target="cloud-onboard" scenario="onboards a hosted sandbox"] [phase 2/4] completed: onboard the sandbox — passed in 2m 14s (total 2m 21s)
+[e2e target="cloud-onboard" scenario="onboards a hosted sandbox"] [phase 3/4] started: verify hosted inference (total 2m 21s; phase 0s)
 ```
 
-The harness appends `release registered E2E resources` after the test-declared
-plan, so the displayed phase count includes that terminal phase. Registered
-cleanup duration, failures, and stall diagnostics are attributed there. Soft
-assertion failures remain attributed to the semantic phase in which they
-occurred rather than being reassigned to resource release.
+For `e2e-live`, the stateful fixture appends `release registered E2E resources`
+after the test-declared plan, so the displayed phase count includes that
+terminal phase. Registered cleanup duration, failures, and stall diagnostics
+are attributed there. Workflow-selected integration tests instead declare and
+enter their own final release phase. Soft assertion failures remain attributed
+to the semantic phase in which they occurred rather than being reassigned to
+resource release.
 
 If one phase remains active for five minutes, a content-free diagnostic adds
-the phase duration, age of the last child output, current redacted command
-activity, and runner resources. It repeats every ten minutes while that same
-phase remains active. Child output contents are never forwarded by progress
-logging.
+the target/scenario identity, total and phase duration, age of the last child
+output, current redacted command or cleanup activity, and runner resources. It
+repeats every ten minutes while that same phase remains active. Automatic child
+output observation forwards only a timestamp and stream name, never contents.
+Operations with bounded retries may emit immediate content-free
+`progress.event(...)` lines for a timeout, cleanup, backoff, or retry; event
+labels are explicitly logged and must never contain child output, request data,
+credentials, or tokens.
 
 During fixture teardown, the fixture writes `test-progress.json` into each
 test's existing artifact directory for passing and failing tests. The summary
 keeps the test identity and overall timestamps, plus each recorded phase's
-timestamps, duration, outcome, output-event count, and last-output timestamp.
-It also records `E2E_TARGET_ID` and `NEMOCLAW_E2E_SHARD` when those values are
-set. Compare extracted artifacts from multiple runs with:
+timestamps, duration, outcome, child-output event count, and last-output timestamp.
+It records the target from `E2E_TARGET_ID`, falling back to the Actions
+`GITHUB_JOB` identity, and records `NEMOCLAW_E2E_SHARD` when set. Compare
+extracted artifacts from multiple runs with:
 
 ```bash
 npm run test:runtime-audit -- path/to/run-1 path/to/run-2
@@ -123,14 +131,27 @@ The audit groups each test by target and optional shard, ranks the groups by
 p95 runtime, and reports variability and the slowest observed phase. Keep phase
 labels specific to test behavior, call `progress.phase("literal phase label")`
 at the declared boundaries in order, and transition through the final
-test-declared phase on every passing path. The fixture rejects a passing live
-test that never reaches that phase; the harness enters the resource-release
-phase automatically.
-Validate phase coverage without executing live test bodies with:
+test-declared phase on every passing path. Both fixtures reject a passing test
+that never reaches that phase; only the stateful live fixture enters its
+resource-release phase automatically.
+Validate phase coverage without executing test bodies with:
 
 ```bash
 npm run test:e2e-phases:check
 ```
+
+The checker preserves coverage for every file under `test/e2e/live/` and adds
+workflow-selected integration files from the authoritative shared-job planner.
+Live modules import `fixtures/e2e-test.ts`; selected integration modules import
+`fixtures/workflow-e2e-test.ts` and declare their final release phase explicitly.
+It also follows shared E2E runtime helpers. Run child processes through
+`ShellProbe` or an existing audited progress-aware boundary; new direct async
+process boundaries fail the check. Synchronous calls require both a positive
+timeout shorter than the first heartbeat and `killSignal: "SIGKILL"`. Keep child
+contents in redacted artifacts and report only timestamp-based output activity
+to the console. Pass the fixture-provided frozen, canonical `progress`
+capability unchanged to an audited subprocess boundary; do not replace it with
+a custom, copied, or no-op adapter.
 
 ## PR E2E gate
 

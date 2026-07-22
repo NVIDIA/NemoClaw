@@ -71,3 +71,18 @@ test.runIf(outcome === "incomplete")(
   },
   () => undefined,
 );
+
+test.runIf(outcome === "redacted-event")(
+  "redacts progress identities and explicit events",
+  {
+    meta: {
+      e2ePhases: ["prepare redacted progress event", "finish redacted progress event"],
+    },
+  },
+  ({ progress }) => {
+    const secret = process.env.NEMOCLAW_E2E_PROGRESS_EVENT_SECRET;
+    if (!secret) throw new Error("redacted-event fixture secret is required");
+    progress.event(`retry cleanup for ${secret}`);
+    progress.phase("finish redacted progress event");
+  },
+);

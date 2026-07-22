@@ -34,6 +34,8 @@ const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
+const GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION =
+  "${{ always() && steps.artifact_safety.outcome == 'success' && hashFiles(format('e2e-artifacts/live/openshell-gateway-auth-contract/artifact-safety-{0}-{1}.passed', github.run_id, github.run_attempt)) != '' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const SHARED_E2E_JOBS: ReadonlyMap<string, { targetId: string }> = new Map([
@@ -174,6 +176,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
+  ["openshell-gateway-auth-contract", GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION],
 ]);
 
 const EXPECTED_ACTION_INPUTS = {

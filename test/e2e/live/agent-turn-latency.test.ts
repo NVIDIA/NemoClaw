@@ -45,7 +45,7 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
       "replace OpenClaw with Hermes sandbox",
       "validate Hermes inference route",
       "run Hermes hosted inference turn",
-      "remove provisioned sandboxes",
+      "record hosted inference timing evidence",
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
@@ -219,7 +219,7 @@ test("OpenClaw and Hermes complete real hosted inference turns within the latenc
   expect(hermesMs).toBeLessThanOrEqual(MAX_TURN_SECONDS * 1000);
   results.hermes = { elapsedMs: hermesMs };
   await artifacts.writeJson("turn-latency-results.json", results);
-  progress.phase("remove provisioned sandboxes");
+  progress.phase("record hosted inference timing evidence");
   fs.writeFileSync(
     artifacts.pathFor("agent-turn-latency-results-legacy-path.json"),
     `${JSON.stringify(results, null, 2)}\n`,

@@ -10,6 +10,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import { ArtifactSink, createArtifactSink } from "../fixtures/artifacts.ts";
 import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
 import { test as e2eTest } from "../fixtures/e2e-test.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import {
   ShellProbe,
@@ -18,6 +19,12 @@ import {
 } from "../fixtures/shell-probe.ts";
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+function supportProgress() {
+  return startTestProgress("ShellProbe support", ["run support command", "verify support result"], {
+    logLine: () => undefined,
+  });
+}
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -87,6 +94,7 @@ describe("E2E fixture primitives", () => {
       const controller = new AbortController();
       const shellProbe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
@@ -133,6 +141,73 @@ describe("E2E fixture primitives", () => {
     const result = await cleanup.runAll();
     expect(order).toEqual(["second", "first"]);
     expect(result).toEqual({ passed: ["second", "first"], failures: [] });
+  });
+
+  it("reports the active redacted cleanup entry and its outcome", async () => {
+    const events: string[] = [];
+    const secret = "cleanup-secret-value";
+    const cleanup = new CleanupRegistry((text) => text.replaceAll(secret, "[REDACTED]"), {
+      activity(label) {
+        events.push(`activity started: ${label}`);
+        return () => events.push(`activity finished: ${label}`);
+      },
+      event(label) {
+        events.push(`event: ${label}`);
+      },
+    });
+    cleanup.add(`release ${secret}\nresource`, () => undefined);
+    cleanup.add("release failing resource", () => {
+      throw new Error("expected cleanup failure");
+    });
+
+    const result = await cleanup.runAll();
+
+    expect(events).toEqual([
+      "activity started: cleanup: release failing resource",
+      "event: cleanup started: release failing resource",
+      "event: cleanup failed: release failing resource",
+      "activity finished: cleanup: release failing resource",
+      "activity started: cleanup: release [REDACTED] resource",
+      "event: cleanup started: release [REDACTED] resource",
+      "event: cleanup passed: release [REDACTED] resource",
+      "activity finished: cleanup: release [REDACTED] resource",
+    ]);
+    expect(events.join("\n")).not.toContain(secret);
+    expect(result).toEqual({
+      passed: ["release [REDACTED]\nresource"],
+      failures: [{ name: "release failing resource", message: "expected cleanup failure" }],
+    });
+  });
+
+  it("still releases every resource when redaction and progress reporting fail", async () => {
+    const released: string[] = [];
+    const cleanup = new CleanupRegistry(
+      () => {
+        throw new Error("redactor unavailable");
+      },
+      {
+        activity() {
+          throw new Error("progress activity unavailable");
+        },
+        event() {
+          throw new Error("progress event unavailable");
+        },
+      },
+    );
+    cleanup.add("first sensitive resource", () => {
+      released.push("first");
+    });
+    cleanup.add("second sensitive resource", () => {
+      released.push("second");
+    });
+
+    const result = await cleanup.runAll();
+
+    expect(released).toEqual(["second", "first"]);
+    expect(result).toEqual({
+      passed: ["[cleanup metadata unavailable]", "[cleanup metadata unavailable]"],
+      failures: [],
+    });
   });
 
   it("cleanup registry redacts failures, continues, and clears callbacks", async () => {
@@ -203,6 +278,7 @@ describe("E2E fixture primitives", () => {
       const controller = new AbortController();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
@@ -253,17 +329,13 @@ describe("E2E fixture primitives", () => {
       await artifacts.ensureRoot();
       const controller = new AbortController();
       const events: Array<{ stream: "stdout" | "stderr"; atMs: number }> = [];
-      const activities: string[] = [];
       const onOutput = (event: (typeof events)[number]) => events.push(event);
+      const progress = supportProgress();
       const probe = new ShellProbe({
         artifacts,
+        progress,
         redact: (text) => text,
         signal: controller.signal,
-        onOutput,
-        onActivity: (label) => {
-          activities.push(`start ${label}`);
-          return () => activities.push(`finish ${label}`);
-        },
       });
 
       const result = await probe.run(
@@ -279,10 +351,8 @@ describe("E2E fixture primitives", () => {
       expect(events).toHaveLength(1);
       expect(events[0]).toMatchObject({ stream: "stdout" });
       expect(events[0]?.atMs).toBeGreaterThan(0);
-      expect(activities).toEqual([
-        "start command: shared-output-observer",
-        "finish command: shared-output-observer",
-      ]);
+      progress.stop();
+      expect(progress.summary().phases[0]?.outputEvents).toBe(1);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -298,6 +368,7 @@ describe("E2E fixture primitives", () => {
       const controller = new AbortController();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
@@ -347,7 +418,6 @@ describe("E2E fixture primitives", () => {
       await artifacts.ensureRoot();
       const secret = "spawn-secret-value";
       const controller = new AbortController();
-      const activities: string[] = [];
       let abortAdds = 0;
       let abortRemoves = 0;
       const addEventListener = controller.signal.addEventListener.bind(controller.signal);
@@ -372,18 +442,16 @@ describe("E2E fixture primitives", () => {
         instrumentedAddEventListener as typeof controller.signal.addEventListener;
       controller.signal.removeEventListener =
         instrumentedRemoveEventListener as typeof controller.signal.removeEventListener;
+      const progress = supportProgress();
       const probe = new ShellProbe({
         artifacts,
+        progress,
         redact: (text, extraValues = []) =>
           [secret, ...extraValues].reduce(
             (redacted, value) => redacted.split(value).join("[REDACTED]"),
             text,
           ),
         signal: controller.signal,
-        onActivity: (label) => {
-          activities.push(`start ${label}`);
-          return () => activities.push(`finish ${label}`);
-        },
       });
 
       let thrown: unknown;
@@ -410,7 +478,7 @@ describe("E2E fixture primitives", () => {
       expect(message).not.toContain(secret);
       expect(abortAdds).toBe(1);
       expect(abortRemoves).toBe(1);
-      expect(activities).toEqual(["start command: spawn-error", "finish command: spawn-error"]);
+      progress.stop("failed");
       const spawnArtifact = fs.readFileSync(
         artifacts.pathFor("shell/spawn-error.result.json"),
         "utf8",
@@ -433,6 +501,7 @@ describe("E2E fixture primitives", () => {
       const controller = new AbortController();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
@@ -470,6 +539,7 @@ describe("E2E fixture primitives", () => {
       controller.abort();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });
@@ -505,6 +575,7 @@ describe("E2E fixture primitives", () => {
       const controller = new AbortController();
       const probe = new ShellProbe({
         artifacts,
+        progress: supportProgress(),
         redact: (text) => text,
         signal: controller.signal,
       });

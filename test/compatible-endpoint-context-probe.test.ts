@@ -17,9 +17,15 @@ import {
   type FakeOpenAiCompatibleServer,
   startFakeOpenAiCompatibleServer,
 } from "./e2e/fixtures/fake-openai-compatible";
+import { startTestProgress } from "./e2e/fixtures/progress.ts";
 import { testTimeout } from "./helpers/timeouts";
 
 const MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4";
+const NOOP_PROGRESS = startTestProgress(
+  "compatible endpoint support",
+  ["serve compatible endpoint", "verify compatible endpoint"],
+  { logLine: () => undefined },
+);
 
 // The fake server binds to loopback (127.0.0.1). Loopback is an allowed
 // host-side probe target (a locally-run vLLM/Ollama endpoint), so these
@@ -51,7 +57,11 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
   timeout: testTimeout(60_000),
 }, () => {
   it("reads max_model_len from a live /v1/models endpoint into NEMOCLAW_CONTEXT_WINDOW (#6177)", async () => {
-    server = await startFakeOpenAiCompatibleServer({ model: MODEL, maxModelLen: 65_536 });
+    server = await startFakeOpenAiCompatibleServer({
+      model: MODEL,
+      maxModelLen: 65_536,
+      progress: NOOP_PROGRESS,
+    });
 
     const models = fetchCompatibleEndpointModels(server.baseUrl, "");
     expect(models).toMatchObject({ data: [{ id: MODEL, max_model_len: 65_536 }] });
@@ -70,6 +80,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
       model: MODEL,
       maxModelLen: 32_768,
       apiKey: "secret-key",
+      progress: NOOP_PROGRESS,
     });
 
     const env: NodeJS.ProcessEnv = {};
@@ -93,6 +104,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
       model: MODEL,
       maxModelLen: 65_536,
       apiKey: "secret-key",
+      progress: NOOP_PROGRESS,
       requireAuthModels: true,
     });
 
@@ -131,7 +143,11 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     // so the source-boundary guard exempts loopback (mirroring the chat probe)
     // and the real curl fetcher must run and propagate the window. Non-loopback
     // private targets stay blocked — see the unit-test rejection cases.
-    server = await startFakeOpenAiCompatibleServer({ model: MODEL, maxModelLen: 65_536 });
+    server = await startFakeOpenAiCompatibleServer({
+      model: MODEL,
+      maxModelLen: 65_536,
+      progress: NOOP_PROGRESS,
+    });
     expect(new URL(server.baseUrl).hostname).toBe("127.0.0.1");
     const modelsRequestsBefore = server
       .requests()
@@ -151,7 +167,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
   });
 
   it("keeps the default context window when the endpoint omits max_model_len (#6177)", async () => {
-    server = await startFakeOpenAiCompatibleServer({ model: MODEL });
+    server = await startFakeOpenAiCompatibleServer({ model: MODEL, progress: NOOP_PROGRESS });
 
     const env: NodeJS.ProcessEnv = {};
     await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {

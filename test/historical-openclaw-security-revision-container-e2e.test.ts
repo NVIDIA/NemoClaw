@@ -545,10 +545,14 @@ describe("Historical OpenClaw security revision container E2E contract (#7272)",
 
 realContainerTest(
   "the historical wrapper remediates reviewed plugins, restores failures, and rejects outside state (#7272)",
-  async ({ artifacts, cleanup, docker, secrets }) => {
+  async ({ artifacts, cleanup, docker, progress, secrets, signal }) => {
     const image = configuredImage as string;
-    const probe = new DockerProbe(artifacts, (text, extraValues) =>
-      secrets.redact(text, extraValues),
+    const probe = new DockerProbe(
+      artifacts,
+      (text, extraValues) => secrets.redact(text, extraValues),
+      undefined,
+      progress,
+      signal,
     );
     const resourcePrefix = safeDockerName(`nemoclaw-security-e2e-${process.pid}-${randomUUID()}`);
     const containers: string[] = [];

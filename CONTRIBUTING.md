@@ -211,7 +211,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm run test:watch` | Watch the CLI, plugin, and E2E-support projects and rerun affected tests |
 | `npm run test:shuffle` | Shuffle test order in the focused source projects without collecting coverage |
 | `npm run test:diagnose:leaks` | Report async-resource leaks and diagnose a Vitest process that hangs during shutdown |
-| `npm run test:e2e-phases:check` | Validate semantic phase plans for every live E2E test without executing live bodies |
+| `npm run test:e2e-phases:check` | Validate semantic phase plans for every live E2E test and workflow-selected credential-free integration test without executing test bodies |
 | `npm run test:runtime-audit -- <artifact-dir> [...]` | Rank captured live E2E runs by median, p95, variability, and slowest phase |
 | `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
 | `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
@@ -234,15 +234,28 @@ npx vitest run --project e2e-support
 This project is fast and does not run live targets. Live E2E remains opt-in through
 `npm run test:live-e2e` or the applicable GitHub Actions workflow.
 
-Every `e2e-live` test must declare its ordered, behavior-specific phase plan in
-`meta.e2ePhases`, call `progress.phase("literal phase label")` at those
-boundaries, and reach the final test-declared phase on every passing path. The
-harness then appends `release registered E2E resources` so cleanup duration and
-failures have their own phase. Run `npm run test:e2e-phases:check` after adding
-or changing a live E2E case; collection validates the plans without running
-infrastructure-mutating test bodies. See
+Every `e2e-live` test, plus every credential-free integration test selected by
+the shared E2E workflow planner, must declare its ordered, behavior-specific
+phase plan in `meta.e2ePhases`, call
+`progress.phase("literal phase label")` at those boundaries, and reach the final
+test-declared phase on every passing path. Live tests import the shared
+`e2e-test` fixture, which appends `release registered E2E resources` so cleanup
+duration and failures have their own phase. Workflow-selected integration tests
+import `workflow-e2e-test` and declare their own final release phase. Run
+`npm run test:e2e-phases:check` after changing either coverage set or its
+workflow selection; collection validates the union without running test bodies. See
 [`test/e2e/docs/README.md`](test/e2e/docs/README.md) for the logging and artifact
 contract.
+
+Use the shared `ShellProbe` for E2E child processes. The semantic-phase check
+also follows shared E2E helpers and rejects new direct asynchronous process
+boundaries unless they are explicitly audited for content-free activity and
+timestamp-only output reporting. Synchronous process calls must have a positive
+timeout shorter than the first heartbeat and use `killSignal: "SIGKILL"` so the
+child cannot ignore that bound; write child contents only through the redacted
+artifact sink. Pass the auto fixture's frozen, canonical `progress` capability
+through unchanged; custom, copied, or no-op progress adapters are rejected at
+audited subprocess boundaries.
 
 ### Test Declarative Behavior
 
