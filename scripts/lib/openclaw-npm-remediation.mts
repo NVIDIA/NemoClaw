@@ -393,7 +393,7 @@ function hashPatchedMetadata(packageDirectory: string): string {
 
 function sortedObject(value: JsonObject): JsonObject {
   return Object.fromEntries(
-    Object.entries(value).sort(([left], [right]) => left.localeCompare(right)),
+    Object.entries(value).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
   );
 }
 
