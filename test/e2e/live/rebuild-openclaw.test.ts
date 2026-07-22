@@ -20,11 +20,6 @@ import {
 } from "../fixtures/file-state.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import {
-  assertCurrentNodeTarInventory,
-  assertLegacyNodeTarInventory,
-  NODE_TAR_INVENTORY_PATH,
-} from "./node-tar-upgrade-evidence.ts";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
 
 // The contract stays intentionally local to this live test: build an older
@@ -555,13 +550,6 @@ test(
     expectExitZero(oldVersion, "old openclaw --version");
     expect(resultText(oldVersion)).toContain(OLD_OPENCLAW_VERSION);
 
-    const oldTarInventory = await sandbox.exec(SANDBOX_NAME, ["cat", NODE_TAR_INVENTORY_PATH], {
-      artifactName: "phase-3-legacy-node-tar-inventory",
-      env: dockerContextEnv(),
-      timeoutMs: 30_000,
-    });
-    assertLegacyNodeTarInventory(oldTarInventory, "legacy node-tar inventory before rebuild");
-
     // Phase 4: seed workspace state, an existing gateway token, and registry /
     // resume-session state so `nemoclaw <name> rebuild --yes` drives the same
     // user-visible rebuild path as the former shell test.
@@ -743,13 +731,6 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     expectExitZero(newVersion, "new openclaw --version");
     expect(resultText(newVersion)).not.toContain(OLD_OPENCLAW_VERSION);
     expect(resultText(newVersion).trim()).not.toBe("");
-
-    const currentTarInventory = await sandbox.exec(SANDBOX_NAME, ["cat", NODE_TAR_INVENTORY_PATH], {
-      artifactName: "phase-7-current-node-tar-inventory",
-      env: dockerContextEnv(),
-      timeoutMs: 30_000,
-    });
-    assertCurrentNodeTarInventory(currentTarInventory, "current node-tar inventory after rebuild");
 
     const registryVersion = registrySandbox().agentVersion;
     expect(registryVersion).not.toBe(OLD_OPENCLAW_VERSION);

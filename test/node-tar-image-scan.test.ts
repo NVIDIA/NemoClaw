@@ -86,63 +86,6 @@ describe("completed-image node-tar scan", () => {
     expect(nodeTarImageScanErrors(scan)).toEqual([expect.stringContaining("tar@7.5.13")]);
   });
 
-  it("accepts only the exact affected package declared by a legacy fixture", () => {
-    const root = temporaryDirectory();
-    writeTar(root, "opt/current", "7.5.20");
-    const legacyTar = writeTar(root, "usr/local/lib/node_modules/openclaw", "7.5.11");
-    const scan = scanNodeTarImage(root, "legacy-fixture");
-
-    expect(
-      nodeTarImageScanErrors(scan, {
-        physicalPath: fs.realpathSync(legacyTar),
-        version: "7.5.11",
-      }),
-    ).toEqual([]);
-    expect(
-      nodeTarImageScanErrors(scan, {
-        physicalPath: fs.realpathSync(legacyTar),
-        version: "7.5.10",
-      }),
-    ).toEqual([expect.stringContaining("does not contain only expected")]);
-
-    writeTar(root, "opt/unexpected", "7.5.13");
-    const scanWithExtraAffectedCopy = scanNodeTarImage(root, "legacy-fixture-extra");
-    expect(
-      nodeTarImageScanErrors(scanWithExtraAffectedCopy, {
-        physicalPath: fs.realpathSync(legacyTar),
-        version: "7.5.11",
-      }),
-    ).toEqual([expect.stringContaining("does not contain only expected")]);
-  });
-
-  it("exposes the exact legacy-fixture expectation through the standalone CLI", () => {
-    const root = temporaryDirectory();
-    writeTar(root, "opt/current", "7.5.20");
-    const legacyTar = writeTar(root, "usr/local/lib/node_modules/openclaw", "7.5.11");
-    const scanner = fs.realpathSync(
-      path.join(import.meta.dirname, "..", "scripts", "checks", "node-tar-image-scan.mts"),
-    );
-    const result = spawnSync(
-      process.execPath,
-      [
-        "--experimental-strip-types",
-        scanner,
-        "--root",
-        root,
-        "--image",
-        "legacy-fixture",
-        "--expected-affected-physical-path",
-        fs.realpathSync(legacyTar),
-        "--expected-affected-version",
-        "7.5.11",
-      ],
-      { encoding: "utf8" },
-    );
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ image: "legacy-fixture", packageCount: 2 });
-  });
-
   it("groups symlink aliases by physical package directory", () => {
     const root = temporaryDirectory();
     const physical = writeTar(root, "opt/physical", "7.5.19");

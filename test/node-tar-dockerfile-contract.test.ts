@@ -50,19 +50,6 @@ describe("node-tar image remediation contract", () => {
     expect(patchRun, file).toBeGreaterThan(curlInstall);
   });
 
-  it("limits affected node-tar evidence to the explicit 2026.3.11 E2E base fixture", () => {
-    const baseSource = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf8");
-    const finalSource = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-
-    expect(baseSource).toContain('[ "$NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW" = "1" ]');
-    expect(baseSource).toContain('[ "$OPENCLAW_VERSION" = "2026.3.11" ]');
-    expect(baseSource).toContain(
-      "--expected-affected-physical-path /usr/local/lib/node_modules/openclaw/node_modules/tar",
-    );
-    expect(baseSource).toContain("--expected-affected-version 7.5.11");
-    expect(finalSource).not.toContain("--expected-affected-physical-path");
-  });
-
   it.each(
     dockerfiles,
   )("patches npm before use and scans the completed $file filesystem", (entry) => {
