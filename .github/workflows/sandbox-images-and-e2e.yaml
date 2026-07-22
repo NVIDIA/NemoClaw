@@ -94,6 +94,37 @@ jobs:
           scripts/check-production-build-args.sh "${build_args[@]}"
           docker build "${build_args[@]}" -t nemoclaw-production .
 
+      - name: Scan completed OpenClaw image for node-tar
+        id: node-tar-scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_id="$(docker image inspect --format '{{.Id}}' nemoclaw-production)"
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --cap-add DAC_READ_SEARCH \
+            --security-opt no-new-privileges \
+            --pids-limit 64 \
+            --memory 256m \
+            --entrypoint node \
+            -v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/scripts/checks/node-tar-image-scan.mts:ro" \
+            nemoclaw-production \
+            --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+            --root / \
+            --image "${image_id}" \
+            | tee /tmp/openclaw-node-tar-inventory.json
+
+      - name: Upload OpenClaw node-tar inventory
+        if: ${{ always() && steps.node-tar-scan.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openclaw-node-tar-inventory
+          path: /tmp/openclaw-node-tar-inventory.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Build sandbox test image (fixtures layered on production)
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
 
@@ -159,6 +190,37 @@ jobs:
           build_args=(-f agents/hermes/Dockerfile --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}")
           scripts/check-production-build-args.sh "${build_args[@]}"
           docker build "${build_args[@]}" -t nemoclaw-hermes-production .
+
+      - name: Scan completed Hermes image for node-tar
+        id: node-tar-scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_id="$(docker image inspect --format '{{.Id}}' nemoclaw-hermes-production)"
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --cap-add DAC_READ_SEARCH \
+            --security-opt no-new-privileges \
+            --pids-limit 64 \
+            --memory 256m \
+            --entrypoint node \
+            -v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/scripts/checks/node-tar-image-scan.mts:ro" \
+            nemoclaw-hermes-production \
+            --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+            --root / \
+            --image "${image_id}" \
+            | tee /tmp/hermes-node-tar-inventory.json
+
+      - name: Upload Hermes node-tar inventory
+        if: ${{ always() && steps.node-tar-scan.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hermes-node-tar-inventory
+          path: /tmp/hermes-node-tar-inventory.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Verify sandbox user can read copied files
         run: |
@@ -363,6 +425,37 @@ jobs:
           build_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
           scripts/check-production-build-args.sh "${build_args[@]}"
           docker build "${build_args[@]}" -t nemoclaw-production-arm64 .
+
+      - name: Scan completed OpenClaw arm64 image for node-tar
+        id: node-tar-scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_id="$(docker image inspect --format '{{.Id}}' nemoclaw-production-arm64)"
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --cap-add DAC_READ_SEARCH \
+            --security-opt no-new-privileges \
+            --pids-limit 64 \
+            --memory 256m \
+            --entrypoint node \
+            -v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/scripts/checks/node-tar-image-scan.mts:ro" \
+            nemoclaw-production-arm64 \
+            --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+            --root / \
+            --image "${image_id}" \
+            | tee /tmp/openclaw-arm64-node-tar-inventory.json
+
+      - name: Upload OpenClaw arm64 node-tar inventory
+        if: ${{ always() && steps.node-tar-scan.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: openclaw-arm64-node-tar-inventory
+          path: /tmp/openclaw-arm64-node-tar-inventory.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Build sandbox test image on arm64
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .

@@ -226,6 +226,13 @@ COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcpor
 COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+
+# npm 10.9.7 in the pinned Node 22 image bundles an affected node-tar copy.
+# Replace only that private package from a registry- and SRI-verified archive
+# before npm processes any OpenClaw or mcporter installation input.
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
 # names do not persist in runtime snapshots or leak-scan inputs.
@@ -307,6 +314,10 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter \
     && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
         --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
+    && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ls \
+        --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter >/dev/null \
+    && node --input-type=module -e \
+        'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();' \
     && ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter \
     && test "$(mcporter --version)" = "$MCPORTER_VERSION" \
     && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low \
@@ -411,3 +422,11 @@ RUN { \
     && gosu sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
     && gosu sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
     && gosu sandbox bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 0 ;; *) exit 1 ;; esac"
+
+# Gate the exact completed base filesystem before it can be published.
+COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+RUN install -d -m 0755 /usr/local/share/nemoclaw \
+    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+        --root / --image build:openclaw-base \
+        > /usr/local/share/nemoclaw/node-tar-inventory.json \
+    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json

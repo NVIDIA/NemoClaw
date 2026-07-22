@@ -13,9 +13,14 @@ import {
 import { ROOT, redact } from "./runner";
 import { imageMeetsMinimumGlibc } from "./sandbox-base-image/image-compatibility";
 import { withLocalBuildHeartbeat } from "./sandbox-base-image/local-build-heartbeat";
-import { createSandboxBaseImageResolutionKey } from "./sandbox-base-image/resolution-key";
+import {
+  createSandboxBaseImageBuildProvenance,
+  createSandboxBaseImageBuildProvenanceKey,
+  createSandboxBaseImageResolutionKey,
+} from "./sandbox-base-image/resolution-key";
 import {
   finalizeSandboxBaseImageResolution,
+  inspectLocalImageMetadata,
   reuseSandboxBaseImageResolutionHint,
 } from "./sandbox-base-image/resolution-metadata";
 import {
@@ -28,6 +33,7 @@ import {
 import {
   OPENSHELL_SANDBOX_MIN_GLIBC,
   type ResolveBaseImageOptions,
+  SANDBOX_BASE_BUILD_PROVENANCE_LABEL,
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolution,
 } from "./sandbox-base-image/types";
@@ -93,6 +99,15 @@ function getRepoDigest(
   imageName: string,
   imageRef: string,
 ): { digest: string; ref: string } | null {
+  const referencesExpectedRepository =
+    imageRef === imageName ||
+    imageRef.startsWith(`${imageName}:`) ||
+    imageRef.startsWith(`${imageName}@`);
+  // A directly tagged local override can retain the upstream RepoDigest of
+  // its source image. Keep the caller's explicit repository boundary instead
+  // of silently converting that trusted local ref back into a remote digest.
+  if (!referencesExpectedRepository) return null;
+
   const atIndex = imageRef.indexOf("@sha256:");
   const pinnedDigest =
     atIndex !== -1 ? { digest: imageRef.slice(atIndex + 1), ref: imageRef } : null;
@@ -124,11 +139,89 @@ function getRepoDigest(
 
 type PulledCandidateOptions = {
   pinnedRemoteRef?: string;
+  refreshBeforeValidation?: boolean;
   refreshIfLocalInvalid?: boolean;
 };
 
 function imageRefCanRefresh(imageRef: string): boolean {
   return !imageRef.includes("@sha256:");
+}
+
+function isExpectedRemoteBaseImageRef(imageName: string, imageRef: string): boolean {
+  return (
+    imageRef === imageName ||
+    imageRef.startsWith(`${imageName}:`) ||
+    imageRef.startsWith(`${imageName}@sha256:`)
+  );
+}
+
+function contentAddressedLocalImageId(localTag: string, imageRef: string): string | null {
+  const localImageName = localTag.replace(/:[^/:]+$/, "");
+  const prefix = `${localImageName}:image-`;
+  if (!imageRef.startsWith(prefix)) return null;
+  const digest = imageRef.slice(prefix.length);
+  return /^[0-9a-f]{64}$/.test(digest) ? `sha256:${digest}` : null;
+}
+
+function resolveContentAddressedLocalOverride(
+  imageRef: string,
+  options: ResolveBaseImageOptions,
+): SandboxBaseImageResolution | null {
+  const expectedImageId = contentAddressedLocalImageId(options.localTag, imageRef);
+  if (!expectedImageId) return null;
+
+  const inspected = inspectLocalImageMetadata(imageRef);
+  const imageId = typeof inspected?.Id === "string" ? inspected.Id.trim().toLowerCase() : "";
+  if (imageId !== expectedImageId) {
+    throw new SandboxBaseImageResolutionError(
+      `${options.label || "Sandbox base image"} local override '${imageRef}' does not match ` +
+        "its content-addressed image ID.",
+    );
+  }
+
+  const labels =
+    inspected?.Config?.Labels && typeof inspected.Config.Labels === "object"
+      ? (inspected.Config.Labels as Record<string, unknown>)
+      : {};
+  const expectedProvenance = createSandboxBaseImageBuildProvenanceKey(options);
+  const trustedOverride = options.trustedLocalOverride;
+  const provenance = trustedOverride?.provenance;
+  const imageProvenance = labels[SANDBOX_BASE_BUILD_PROVENANCE_LABEL];
+  if (
+    typeof provenance !== "string" ||
+    !provenance.startsWith(`${expectedProvenance}.`) ||
+    !/^[0-9a-f]{64}\.[0-9a-f]{64}$/.test(provenance) ||
+    trustedOverride?.ref !== imageRef ||
+    imageProvenance !== provenance
+  ) {
+    throw new SandboxBaseImageResolutionError(
+      `${options.label || "Sandbox base image"} local override '${imageRef}' is not backed ` +
+        "by the current NemoClaw build operation.",
+    );
+  }
+
+  let glibcVersion: string | null = null;
+  if (options.requireOpenshellSandboxAbi) {
+    const check = imageMeetsMinimumGlibc(
+      imageRef,
+      options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC,
+    );
+    glibcVersion = check.version;
+    if (!check.ok) {
+      throw new SandboxBaseImageResolutionError(
+        `${options.label || "Sandbox base image"} local override '${imageRef}' failed ` +
+          "the required OpenShell sandbox ABI check.",
+      );
+    }
+  }
+  if (options.validateImage && !options.validateImage(imageRef)) {
+    throw new SandboxBaseImageResolutionError(
+      `${options.label || "Sandbox base image"} local override '${imageRef}' lacks ` +
+        `${options.validationDescription || "a required runtime capability"}.`,
+    );
+  }
+
+  return { ref: imageRef, digest: null, source: "local", glibcVersion };
 }
 
 function validatePulledCandidate(
@@ -196,8 +289,15 @@ function resolvePulledCandidate(
     source,
     present: localPresent,
   });
-  if (!localPresent) {
-    addTraceEvent("nemoclaw.sandbox_base_image.remote_pull", { source });
+  const refreshBeforeValidation =
+    candidateOptions.refreshBeforeValidation === true && imageRefCanRefresh(imageRef);
+  if (!localPresent || refreshBeforeValidation) {
+    addTraceEvent(
+      refreshBeforeValidation
+        ? "nemoclaw.sandbox_base_image.remote_refresh"
+        : "nemoclaw.sandbox_base_image.remote_pull",
+      { source },
+    );
     const pullResult = dockerPull(imageRef, { ignoreError: true, suppressOutput: true });
     if (pullResult.status !== 0) return null;
   }
@@ -208,7 +308,7 @@ function resolvePulledCandidate(
     source,
     options,
     candidateOptions,
-    !localPresent || !candidateOptions.refreshIfLocalInvalid,
+    !localPresent || refreshBeforeValidation || !candidateOptions.refreshIfLocalInvalid,
   );
   if (resolved) return resolved;
 
@@ -258,6 +358,9 @@ function resolveLocalCandidate(
   // useful diagnostic.
   const buildResult = withLocalBuildHeartbeat(() =>
     dockerBuild(options.dockerfilePath, imageRef, options.rootDir || ROOT, {
+      labels: {
+        [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: createSandboxBaseImageBuildProvenance(options),
+      },
       quiet: true,
       ignoreError: true,
       suppressOutput: true,
@@ -333,11 +436,21 @@ export function resolveSandboxBaseImage(
   };
 
   if (override) {
-    const resolved = resolvePulledCandidate(options.imageName, override, "override", options);
-    if (resolved) return finish(resolved);
+    const localOverride = resolveContentAddressedLocalOverride(override, options);
+    if (localOverride) return finish(localOverride);
+    if (!isExpectedRemoteBaseImageRef(options.imageName, override)) {
+      throw new SandboxBaseImageResolutionError(
+        `${options.label || "Sandbox base image"} override '${override}' is outside the ` +
+          `trusted repository '${options.imageName}'.`,
+      );
+    }
+    const resolved = resolvePulledCandidate(options.imageName, override, "override", options, {
+      refreshBeforeValidation: true,
+    });
+    if (resolved?.digest) return finish(resolved);
     throw new SandboxBaseImageResolutionError(
       `${options.label || "Sandbox base image"} override '${override}' could not be resolved ` +
-        "or failed required compatibility checks.",
+        "to an immutable trusted digest or failed required compatibility checks.",
     );
   } else {
     const rootDir = options.rootDir || ROOT;

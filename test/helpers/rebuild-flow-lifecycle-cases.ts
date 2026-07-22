@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import {
   createRebuildFlowHarness,
@@ -273,6 +273,7 @@ export function registerRebuildFlowLifecycleTests(): void {
     it("uses the no-exec MCP preparation path when recovering an absent sandbox", async () => {
       const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
       const restoreEnv = snapshotEnv([overrideEnvVar]);
+      const disposeImageRef = vi.fn(() => true);
       process.env[overrideEnvVar] = "nemoclaw-hermes-sandbox-base-local:image-caller";
       const mcpEntry = {
         server: "github",
@@ -292,6 +293,7 @@ export function registerRebuildFlowLifecycleTests(): void {
             ok: true,
             imageRef: "nemoclaw-hermes-sandbox-base-local:image-preflighted",
             overrideEnvVar,
+            disposeImageRef,
           },
           mcpPreparation: {
             entries: [mcpEntry],
@@ -316,9 +318,32 @@ export function registerRebuildFlowLifecycleTests(): void {
         expect(harness.warnUnpreservedUserManagedFilesSpy).not.toHaveBeenCalled();
         expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).not.toHaveBeenCalled();
         expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+        expect(disposeImageRef).toHaveBeenCalledOnce();
       } finally {
         restoreEnv();
       }
+    });
+
+    it("disposes the base-image handoff when live-state preflight fails (#7144)", async () => {
+      const disposeImageRef = vi.fn(() => true);
+      const harness = createRebuildFlowHarness({
+        sandboxListOutput: "",
+        reconciledSandboxGatewayState: { state: "unknown", output: "indeterminate" },
+        baseImagePreflight: {
+          ok: true,
+          imageRef: `nemoclaw-hermes-sandbox-base-local:rebuild-123-${"a".repeat(16)}-image-${"b".repeat(64)}`,
+          overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+          disposeImageRef,
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Could not confirm live state");
+
+      expect(disposeImageRef).toHaveBeenCalledOnce();
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
     it("pins compatible-endpoint reasoning for an MCP-bearing rebuild", async () => {
