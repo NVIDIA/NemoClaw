@@ -17,6 +17,12 @@ const RUNTIME_CONFIG_GUARD = path.join(
 );
 const ROOT_RUNTIME_IMAGE =
   "python:3.12-slim@sha256:cab2dbf575e971934a81e4622f5aba17aa7929719bd7e31033a3a83b97fd0464";
+const ROOT_CONTAINER_RUNTIME_AVAILABLE =
+  process.platform === "linux" &&
+  dockerSpawnSync(["info"], {
+    stdio: "ignore",
+    timeout: 15_000,
+  }).status === 0;
 const ROOT_CONTAINER_DRIVER = String.raw`
 import json
 import os
@@ -506,7 +512,7 @@ print(json.dumps({
   });
 
   // source-shape-contract: security -- Executes the shipped guard as root to prove real Linux repair and rollback metadata
-  it.skipIf(process.platform !== "linux")(
+  it.skipIf(!ROOT_CONTAINER_RUNTIME_AVAILABLE)(
     "restores exact locked posture after root-separated repair and later failure (#7033)",
     () => {
       const result = runRootContainerHarness(`${loadGuardModule}
@@ -627,7 +633,9 @@ with tempfile.TemporaryDirectory() as tmp:
     }))
 `);
 
-      expect(result.status, String(result.stderr)).toBe(0);
+      expect(result.status, result.error?.message || String(result.stderr || result.stdout)).toBe(
+        0,
+      );
       expect(JSON.parse(String(result.stdout))).toEqual({
         aborting_state: "shields-transition-aborting",
         applied_state: "shields-transition-applied",
