@@ -85,6 +85,53 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
+Every `e2e-live` test declares an ordered semantic phase plan in
+`meta.e2ePhases` and uses the automatic progress fixture. Normal live output
+shows only the phase number, semantic label, and the completed phase's outcome
+and duration. It deliberately does not repeat the test identity, test start or
+finish, or total test elapsed time already reported by Vitest and GitHub
+Actions. A transition looks like:
+
+```text
+[e2e phase 2/4] onboard the sandbox — passed in 2m 14s; next 3/4: verify hosted inference
+```
+
+The harness appends `release registered E2E resources` after the test-declared
+plan, so the displayed phase count includes that terminal phase. Registered
+cleanup duration, failures, and stall diagnostics are attributed there. Soft
+assertion failures remain attributed to the semantic phase in which they
+occurred rather than being reassigned to resource release.
+
+If one phase remains active for five minutes, a content-free diagnostic adds
+the phase duration, age of the last child output, current redacted command
+activity, and runner resources. It repeats every ten minutes while that same
+phase remains active. Child output contents are never forwarded by progress
+logging.
+
+During fixture teardown, the fixture writes `test-progress.json` into each
+test's existing artifact directory for passing and failing tests. The summary
+keeps the test identity and overall timestamps, plus each recorded phase's
+timestamps, duration, outcome, output-event count, and last-output timestamp.
+It also records `E2E_TARGET_ID` and `NEMOCLAW_E2E_SHARD` when those values are
+set. Compare extracted artifacts from multiple runs with:
+
+```bash
+npm run test:runtime-audit -- path/to/run-1 path/to/run-2
+```
+
+The audit groups each test by target and optional shard, ranks the groups by
+p95 runtime, and reports variability and the slowest observed phase. Keep phase
+labels specific to test behavior, call `progress.phase("literal phase label")`
+at the declared boundaries in order, and transition through the final
+test-declared phase on every passing path. The fixture rejects a passing live
+test that never reaches that phase; the harness enters the resource-release
+phase automatically.
+Validate phase coverage without executing live test bodies with:
+
+```bash
+npm run test:e2e-phases:check
+```
+
 ## PR E2E gate
 
 The controller, coordination check, and required job deliberately use

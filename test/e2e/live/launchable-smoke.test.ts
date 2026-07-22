@@ -211,7 +211,19 @@ async function expectPongFromSandboxInference(
 
 test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm bootstrap host and hosted endpoint",
+      "prepare a fresh bootstrap clone",
+      "run the Brev bootstrap script",
+      "inspect installed CLI and runtime artifacts",
+      "onboard the hosted inference sandbox",
+      "inspect sandbox and gateway health",
+      "prove direct and sandbox inference",
+      "destroy the bootstrap sandbox and clone",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   validateSandboxName(SANDBOX_NAME);
 
   await artifacts.target.declare({
@@ -267,6 +279,7 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
   );
   expectExitZero(network, "inference-api.nvidia.com reachable");
 
+  progress.phase("prepare a fresh bootstrap clone");
   const cloneDir = path.join(os.tmpdir(), `NemoClaw-bootstrap-${randomUUID()}`);
   cleanup.add(`remove bootstrap clone ${cloneDir}`, async () =>
     cleanupBootstrapState(host, cloneDir),
@@ -274,6 +287,7 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
   await cleanupBootstrapState(host, cloneDir);
   await preseedBootstrapClone(host, cloneDir, artifacts);
 
+  progress.phase("run the Brev bootstrap script");
   const installLog = artifacts.pathFor("bootstrap.log");
   const install = await host.command("sudo", ["-E", "bash", BOOTSTRAP_SCRIPT], {
     artifactName: "phase-2-brev-bootstrap-script",
@@ -287,6 +301,7 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
   });
   expectExitZero(install, "Brev bootstrap script completed");
 
+  progress.phase("inspect installed CLI and runtime artifacts");
   const pathEnv = runEnv({ PATH: `/usr/local/bin:${process.env.PATH ?? ""}` });
 
   const nemoclawHelp = await runBash(host, "command -v nemoclaw && nemoclaw --help >/dev/null", {
@@ -339,6 +354,7 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
     `${cloneDir}/nemoclaw/dist missing`,
   ).toBe(true);
 
+  progress.phase("onboard the hosted inference sandbox");
   let onboard: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= ONBOARD_ATTEMPTS; attempt += 1) {
     onboard = await host.command("nemoclaw", ["onboard", "--non-interactive"], {
@@ -375,6 +391,7 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
   }
   expectExitZero(onboard as ShellProbeResult, "nemoclaw onboard --non-interactive");
 
+  progress.phase("inspect sandbox and gateway health");
   const list = await host.command("nemoclaw", ["list"], {
     artifactName: "phase-5-nemoclaw-list",
     cwd: cloneDir,
@@ -412,6 +429,7 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
   });
   expect(gatewayContainerNames, "expected a NemoClaw/OpenShell gateway container").not.toBe("");
 
+  progress.phase("prove direct and sandbox inference");
   const directPayload = JSON.stringify({
     model: MODEL,
     messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
@@ -473,6 +491,7 @@ test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inferenc
     `expected agent reply to contain 42; rc=${agent.exitCode}; reply='${agentReply.slice(0, 200)}'; stdout='${agent.stdout.slice(0, 300)}'; stderr='${agent.stderr.slice(0, 300)}'`,
   ).toBe(true);
 
+  progress.phase("destroy the bootstrap sandbox and clone");
   const destroy = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: "phase-7-nemoclaw-destroy",
     cwd: cloneDir,

@@ -289,7 +289,7 @@ export function findMissingDirectLegacyReleaseNotesRedirects(
 }
 
 /**
- * Validate static inference and Manage Sandboxes redirect destinations against the published route map.
+ * Validate static inference, deployment, and Manage Sandboxes redirect destinations against the published route map.
  * Variant placeholders are expanded independently so one unsupported agent route
  * cannot hide behind a redirect that works for the other variants.
  */
@@ -302,7 +302,7 @@ export function findBrokenPublishedRedirects(
   };
   const violations: RedirectViolation[] = [];
   for (const redirect of config.redirects ?? []) {
-    const guardedRedirect = ["/inference", "/manage-sandboxes", "/release-notes"].some(
+    const guardedRedirect = ["/inference", "/deployment", "/manage-sandboxes", "/release-notes"].some(
       (segment) => redirect.source.includes(segment) || redirect.destination.includes(segment),
     );
     if (
