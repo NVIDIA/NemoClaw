@@ -392,14 +392,16 @@ describe("base-image publication evidence", () => {
     ).toMatchObject({ state: "pending", run: { status: "in_progress" } });
   });
 
-  it("fails closed on unsuccessful, ambiguous, or malformed runs (#7372)", () => {
+  it.each([
+    "failure",
+    "cancelled",
+  ] as const)("fails closed when publication concludes %s (#7372)", (conclusion) => {
     expect(() =>
-      selectPublicationRun(
-        runsPayload([workflowRun({ conclusion: "failure" })]),
-        history(),
-        WORKFLOW_ID,
-      ),
-    ).toThrow(/concluded failure.*actions\/runs/u);
+      selectPublicationRun(runsPayload([workflowRun({ conclusion })]), history(), WORKFLOW_ID),
+    ).toThrow(`base-image workflow for ${RELEVANT_SHA} concluded ${conclusion}; ${RUN_URL}`);
+  });
+
+  it("fails closed on ambiguous or malformed runs (#7372)", () => {
     expect(() =>
       selectPublicationRun(
         runsPayload([
