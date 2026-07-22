@@ -47,13 +47,14 @@ import * as registry from "../../../state/registry";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { resolveHostPathFromCwd } from "../host-path";
 import { isWarmupSessionId } from "../warmup-session";
-import { type SessionIndexEntry, parseSessionIndex } from "./session-index";
+import { assertDownloadedFile } from "./download-verify";
 import {
   DEFAULT_AGENT_ID,
   parseAgentIdFromSessionKey,
   validateAgentId,
   validateSessionKey,
 } from "./paths";
+import { parseSessionIndex, type SessionIndexEntry } from "./session-index";
 
 export type SessionsExportFormat = "dir" | "tar" | "jsonl";
 
@@ -168,11 +169,11 @@ export async function exportSandboxSessions(
         ["sandbox", "download", opts.sandboxName, tarballRemote, hostDest],
         { ignoreError: true, stdio: "inherit" },
       );
-      if (downloadResult.status !== 0) {
-        throw new Error(
-          `Failed to download '${tarballRemote}' from sandbox '${opts.sandboxName}' (exit ${downloadResult.status}).`,
-        );
-      }
+      assertDownloadedFile(downloadResult, hostDest, {
+        remoteLabel: tarballRemote,
+        sandboxName: opts.sandboxName,
+        requireNonEmpty: true,
+      });
     } finally {
       // Best-effort cleanup of the in-sandbox staging tarball. Runs even when
       // tar/download fail so a partial export cannot leave a bundle of session
@@ -214,11 +215,10 @@ export async function exportSandboxSessions(
         ["sandbox", "download", opts.sandboxName, `${sourceDir}/${file}`, localPath],
         { ignoreError: true, stdio: "inherit" },
       );
-      if (downloadResult.status !== 0) {
-        throw new Error(
-          `Failed to download '${file}' from sandbox '${opts.sandboxName}' (exit ${downloadResult.status}).`,
-        );
-      }
+      assertDownloadedFile(downloadResult, localPath, {
+        remoteLabel: file,
+        sandboxName: opts.sandboxName,
+      });
       // Session JSONL can contain pasted secrets — restrict each file to owner-only.
       hardenPermissions(localPath);
     }
@@ -332,11 +332,14 @@ async function exportHermesSessions(opts: SessionsExportOptions): Promise<Sessio
       ["sandbox", "download", opts.sandboxName, stagingRemote, hostStagingPath],
       { ignoreError: true, stdio: "inherit" },
     );
-    if (downloadResult.status !== 0) {
-      throw new Error(
-        `Failed to download '${stagingRemote}' from sandbox '${opts.sandboxName}' (exit ${downloadResult.status}).`,
-      );
-    }
+    // Unlike the OpenClaw tar path, the hermes export has no zero-session guard
+    // upstream, so a sandbox with no sessions can legitimately produce an empty
+    // export file. Verify the artifact exists (the #7367 protection) but do not
+    // require it to be non-empty, to avoid rejecting a valid empty export.
+    assertDownloadedFile(downloadResult, hostStagingPath, {
+      remoteLabel: stagingRemote,
+      sandboxName: opts.sandboxName,
+    });
 
     fs.chmodSync(hostStagingPath, 0o600);
     fs.renameSync(hostStagingPath, hostDest);

@@ -30,6 +30,7 @@ const getSandboxMock = registry.getSandbox as unknown as ReturnType<typeof vi.fn
 
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+let statSyncSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   captureMock.mockReset();
@@ -39,11 +40,18 @@ beforeEach(() => {
   getSandboxMock.mockReturnValue(null);
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  // Default to a present, non-empty regular file so the post-download artifact
+  // verification (assertDownloadedFile) treats the mocked download as complete.
+  // Individual tests override this to simulate a missing/empty artifact.
+  statSyncSpy = vi
+    .spyOn(fs, "statSync")
+    .mockReturnValue({ size: 42, isFile: () => true } as unknown as ReturnType<typeof fs.statSync>);
 });
 
 afterEach(() => {
   consoleErrorSpy.mockRestore();
   consoleLogSpy.mockRestore();
+  statSyncSpy.mockRestore();
 });
 
 function makeCapture(output: string, status = 0) {
@@ -201,7 +209,7 @@ describe("exportSandboxSessions", () => {
     expect(result.resolvedSessionIds).toEqual(["sid-a", "sid-b"]);
     expect(result.resolvedFiles).toEqual(["sid-a.jsonl", "sid-b.jsonl"]);
     expect(result.hostDest).toBe(expectedHostDest);
-    expect(result.bundleBytes).toBeNull();
+    expect(result.bundleBytes).toBe(42);
   });
 
   it("writes a browsable directory of session files by default (dir format, no tar staging)", async () => {
@@ -216,9 +224,6 @@ describe("exportSandboxSessions", () => {
 
     const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
     const chmodSpy = vi.spyOn(fs, "chmodSync").mockImplementation(() => {});
-    const statSpy = vi
-      .spyOn(fs, "statSync")
-      .mockReturnValue({ size: 42 } as unknown as ReturnType<typeof fs.statSync>);
 
     const result = await exportSandboxSessions({
       sandboxName: "alpha",
@@ -277,7 +282,6 @@ describe("exportSandboxSessions", () => {
 
     mkdirSpy.mockRestore();
     chmodSpy.mockRestore();
-    statSpy.mockRestore();
   });
 
   it("dedupes resolved session ids when the same session is referenced by both alias and canonical key", async () => {
@@ -459,6 +463,73 @@ describe("exportSandboxSessions", () => {
     expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
   });
 
+  // #7367: `openshell sandbox download` can report success (exit 0) while
+  // writing nothing (an upstream process-exit race). The export must not treat
+  // that as a valid bundle, and must still clean up the in-sandbox staging file.
+  it("aborts and cleans up when the host download reports success but writes no file (#7367)", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    // tar exec + download both report success...
+    runMock.mockReturnValueOnce(makeRun(0)).mockReturnValueOnce(makeRun(0));
+    // ...but the host artifact never materialised.
+    statSyncSpy.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out.tgz",
+        format: "tar",
+      }),
+    ).rejects.toThrow(/reported success \(exit 0\) but no file was written/);
+    const cleanupCall = runMock.mock.calls.at(-1);
+    expect(cleanupCall?.[0]).toContain("rm");
+    expect(cleanupCall?.[0]).toContain("-f");
+    expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
+  });
+
+  // #7367: a tar bundle is never legitimately empty (the zero-session case is
+  // refused earlier), so an exit-0 download that produced an empty file is the
+  // race, not a valid export — and cleanup must still run.
+  it("aborts and cleans up when the host download reports success but writes an empty tar bundle (#7367)", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    runMock.mockReturnValueOnce(makeRun(0)).mockReturnValueOnce(makeRun(0));
+    statSyncSpy.mockReturnValue({
+      size: 0,
+      isFile: () => true,
+    } as unknown as ReturnType<typeof fs.statSync>);
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./out.tgz",
+        format: "tar",
+      }),
+    ).rejects.toThrow(/reported success \(exit 0\) but wrote an empty file/);
+    const cleanupCall = runMock.mock.calls.at(-1);
+    expect(cleanupCall?.[0]).toContain("rm");
+    expect(cleanupCall?.[0]).toContain("-f");
+    expect(cleanupCall?.[1]).toMatchObject({ ignoreError: true });
+  });
+
+  // #7367: the per-file dir path must abort the export when a session download
+  // reports success but wrote no file, rather than returning a partial export.
+  it("aborts a dir export when a per-file download reports success but writes no file (#7367)", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
+    );
+    const mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
+    statSyncSpy.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+    await expect(
+      exportSandboxSessions({ sandboxName: "alpha", out: "./sessions-alpha" }),
+    ).rejects.toThrow(/reported success \(exit 0\) but no file was written/);
+    mkdirSpy.mockRestore();
+  });
+
   it("emits a JSON manifest with resolved session ids, files, host path, and bundle size when --json is set", async () => {
     captureMock.mockReturnValueOnce(
       makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: "sid-a" }])),
@@ -594,6 +665,24 @@ describe("exportSandboxSessions (hermes sandbox)", () => {
     expect(cleanupCall?.[0]).toContain("rm");
     expect(cleanupCall?.[0]).toContain("-f");
     expect(renameSpy).not.toHaveBeenCalled();
+  });
+
+  // #7367: an exit-0 download that wrote no file must abort before the staging
+  // file is renamed into place, and must still clean up the in-sandbox staging.
+  it("aborts before rename and cleans up when the host download reports success but writes no file (#7367)", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    runMock.mockReturnValueOnce(makeRun(0)).mockReturnValueOnce(makeRun(0));
+    statSyncSpy.mockImplementation(() => {
+      throw new Error("ENOENT");
+    });
+
+    await expect(exportSandboxSessions({ sandboxName: "alpha" })).rejects.toThrow(
+      /reported success \(exit 0\) but no file was written/,
+    );
+    expect(renameSpy).not.toHaveBeenCalled();
+    const cleanupCall = runMock.mock.calls.at(-1);
+    expect(cleanupCall?.[0]).toContain("rm");
+    expect(cleanupCall?.[0]).toContain("-f");
   });
 
   it("fails closed when chmod on the staging file errors so a permissive host cannot end up with a world-readable session bundle", async () => {
