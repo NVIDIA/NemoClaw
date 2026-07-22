@@ -137,6 +137,7 @@ type SharedRegistrySiblingStatus = "none" | "present" | "uncertain";
 function sharedRegistrySiblingStatus(
   paths: UninstallPaths,
   runtime: Pick<UninstallRuntime, "existsSync">,
+  liveGatewayNames: () => Set<string> | null,
 ): SharedRegistrySiblingStatus {
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const registryFile = path.join(sharedRoot, "sandboxes.json");
@@ -144,11 +145,15 @@ function sharedRegistrySiblingStatus(
   try {
     const registry = readGatewayRegistryFile(path.dirname(sharedRoot), registryFile);
     if (!registry) return "uncertain";
-    return Object.values(registry.sandboxes).some(
-      (entry) => registryEntryGatewayPort(entry) !== GATEWAY_PORT,
-    )
-      ? "present"
-      : "none";
+    const siblingPorts = Object.values(registry.sandboxes)
+      .map((entry) => registryEntryGatewayPort(entry))
+      .filter((port) => port !== GATEWAY_PORT);
+    if (siblingPorts.length === 0) return "none";
+    // A non-current registry row is a live sibling only while OpenShell still
+    // knows its gateway; a stale row must not report "present".
+    const live = liveGatewayNames();
+    if (live === null) return "present";
+    return siblingPorts.some((port) => live.has(resolveGatewayName(port))) ? "present" : "none";
   } catch {
     // Unknown ownership must never permit host-global cleanup.
     return "uncertain";
@@ -1098,6 +1103,37 @@ interface OtherGatewayInspection {
   sharedRegistryMustBePreserved: boolean;
 }
 
+/**
+ * Names of the gateways OpenShell currently knows about, or `null` when that
+ * cannot be determined (OpenShell missing, the query failed, or its output was
+ * unparseable). `null` means "stay conservative": callers must not treat an
+ * absence they cannot prove as evidence that a gateway is gone. (#7315)
+ */
+function collectLiveOpenShellGatewayNames(runtime: UninstallRuntime): Set<string> | null {
+  if (!runtime.commandExists("openshell")) return null;
+  const result = runtime.run("openshell", ["gateway", "list", "-o", "json"], {
+    env: runtime.env,
+  });
+  if (result.status !== 0) return null;
+  try {
+    const parsed: unknown = JSON.parse(result.stdout);
+    if (!Array.isArray(parsed)) return null;
+    const names = new Set<string>();
+    for (const item of parsed) {
+      if (
+        item !== null &&
+        typeof item === "object" &&
+        typeof (item as { name?: unknown }).name === "string"
+      ) {
+        names.add((item as { name: string }).name);
+      }
+    }
+    return names;
+  } catch {
+    return null;
+  }
+}
+
 function inspectOtherGatewayEnvironments(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
@@ -1105,7 +1141,18 @@ function inspectOtherGatewayEnvironments(
   const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
   const selectedRoot = path.resolve(paths.nemoclawStateDir);
   const selectedIsDefault = selectedRoot === path.resolve(sharedRoot);
-  const sharedRegistryStatus = sharedRegistrySiblingStatus(paths, runtime);
+  // The gateways OpenShell actually knows about, queried at most once and shared
+  // by both sibling-detection surfaces below, so stale filesystem or registry
+  // state (e.g. a shared CI runner reusing ~/.nemoclaw across jobs) can't pin
+  // host-shared cleanup like the openshell-gateway binary on a gone gateway. (#7315)
+  let liveGatewayNamesCache: Set<string> | null | undefined;
+  const liveGatewayNames = (): Set<string> | null => {
+    if (liveGatewayNamesCache === undefined) {
+      liveGatewayNamesCache = collectLiveOpenShellGatewayNames(runtime);
+    }
+    return liveGatewayNamesCache;
+  };
+  const sharedRegistryStatus = sharedRegistrySiblingStatus(paths, runtime, liveGatewayNames);
   if (sharedRegistryStatus !== "none") {
     return {
       otherGatewayEnvironmentsRemain: true,
@@ -1149,9 +1196,16 @@ function inspectOtherGatewayEnvironments(
     const siblingExists = fs.readdirSync(gatewaysDir, { withFileTypes: true }).some((entry) => {
       const candidate = path.resolve(gatewaysDir, entry.name);
       if (candidate === selectedRoot) return false;
-      // Any other filesystem object is conservatively treated as gateway
-      // state. In particular, never follow or dismiss a symlink here.
-      return true;
+      // Never follow or dismiss a symlink or non-directory: a surprising shape
+      // may hide live gateway state, so keep the conservative treatment.
+      if (entry.isSymbolicLink() || !entry.isDirectory()) return true;
+      // A per-port directory whose gateway OpenShell no longer knows is an
+      // orphan; dismiss it only when the live set positively lacks it.
+      const port = Number(entry.name);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return true;
+      const live = liveGatewayNames();
+      if (live === null) return true;
+      return live.has(resolveGatewayName(port));
     });
     return {
       otherGatewayEnvironmentsRemain: siblingExists,
