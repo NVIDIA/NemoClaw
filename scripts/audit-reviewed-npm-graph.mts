@@ -59,10 +59,60 @@ function readConfig(): AuditConfig {
   return parsed;
 }
 
-function auditGraph(directory: string, reportPath: string): Record<string, unknown> {
+type GraphAuditContext = Readonly<{
+  label: string;
+  nodeVersion: string;
+  npmVersion: string;
+  packageSpecs: readonly string[];
+}>;
+
+// Exported for the provenance-ordering regression test; production callers
+// stay inside this script's main().
+export function auditGraph(
+  directory: string,
+  reportPath: string,
+  context: GraphAuditContext,
+): Record<string, unknown> {
+  const startedAt = new Date().toISOString();
   const result = run("npm", ["audit", "--omit=dev", "--json"], directory, true);
+  const finishedAt = new Date().toISOString();
   fs.writeFileSync(reportPath, result.stdout);
-  return parseAuditReport(result);
+  // Registry introspection is best-effort provenance and must never mask the
+  // audit outcome established below.
+  let registry = "";
+  try {
+    registry = run("npm", ["config", "get", "registry"], directory).stdout.trim();
+  } catch {
+    registry = "";
+  }
+  // The sidecar is written even when the audit failed: a failed attempt is
+  // exactly the run whose provenance matters when reconstructing detection
+  // timelines, matching the records-the-attempt semantics of
+  // .github/actions/ci-wechat-runtime-audit/audit.sh.
+  let report: Record<string, unknown> = {};
+  let auditFailure: Error | undefined;
+  try {
+    report = parseAuditReport(result);
+  } catch (error) {
+    auditFailure = error instanceof Error ? error : new Error(String(error));
+  }
+  const provenance = buildAuditProvenance({
+    failure: auditFailure?.message,
+    finishedAt,
+    label: context.label,
+    nodeVersion: context.nodeVersion,
+    npmVersion: context.npmVersion,
+    packageSpecs: context.packageSpecs,
+    // Convention shared with the WeChat audit sidecar: rawReportPath is
+    // relative to the directory containing the sidecar.
+    rawReportPath: path.basename(reportPath),
+    registry,
+    report,
+    startedAt,
+  });
+  fs.writeFileSync(provenanceSidecarPath(reportPath), `${JSON.stringify(provenance, null, 2)}\n`);
+  if (auditFailure) throw auditFailure;
+  return report;
 }
 
 export function parseAuditReport(result: {
@@ -129,6 +179,111 @@ export function exceedsAuditThreshold(
   );
 }
 
+export type AuditEndpoints = Readonly<{
+  configuredRegistry: string | null;
+  bulkAdvisoryEndpoint: string | null;
+  note: string;
+}>;
+
+// npm (>= 7) derives its audit endpoint from the configured registry the same
+// way (see npm/cli arborist audit-report): it posts the dependency graph to
+// the bulk advisory endpoint only — there is no quick-audit fallback; on
+// request failure npm reports no advisory data. Recording the endpoint plus
+// the configured registry pins down which advisory database actually served a
+// given report (#7338).
+//
+// Keep in sync with the inline provenance writer in
+// .github/actions/ci-wechat-runtime-audit/audit.sh, which duplicates this
+// derivation for the shell-only WeChat audit.
+export function deriveAuditEndpoints(configuredRegistry: string): AuditEndpoints {
+  if (configuredRegistry.trim() === "") {
+    // An endpoint derived from an unknown registry would be a nonsense claim;
+    // record the unknown explicitly instead.
+    return {
+      configuredRegistry: null,
+      bulkAdvisoryEndpoint: null,
+      note: "the configured registry could not be determined for this run, so the audit endpoint is unknown.",
+    };
+  }
+  const base = configuredRegistry.replace(/\/+$/, "");
+  return {
+    configuredRegistry,
+    bulkAdvisoryEndpoint: `${base}/-/npm/v1/security/advisories/bulk`,
+    note: "npm audit posts the dependency graph to the bulk advisory endpoint of the configured registry; on request failure npm reports no advisory data.",
+  };
+}
+
+const GHSA_ID_IN_URL = /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/gi;
+
+// Keep in sync with the inline provenance writer in
+// .github/actions/ci-wechat-runtime-audit/audit.sh, which duplicates this
+// extraction for the shell-only WeChat audit.
+export function extractAdvisoryIds(report: Record<string, unknown>): readonly string[] {
+  const ids = new Set<string>();
+  const vulnerabilities = report.vulnerabilities;
+  const findings =
+    typeof vulnerabilities === "object" &&
+    vulnerabilities !== null &&
+    !Array.isArray(vulnerabilities)
+      ? Object.values(vulnerabilities)
+      : [];
+  for (const finding of findings) {
+    const via = (finding as Record<string, unknown> | null)?.via;
+    if (!Array.isArray(via)) continue;
+    for (const cause of via) {
+      if (typeof cause !== "object" || cause === null) continue;
+      const url = (cause as Record<string, unknown>).url;
+      if (typeof url !== "string") continue;
+      for (const match of url.match(GHSA_ID_IN_URL) ?? []) {
+        ids.add(`GHSA${match.slice(4).toLowerCase()}`);
+      }
+    }
+  }
+  return [...ids].sort();
+}
+
+export type AuditProvenance = Readonly<{
+  schemaVersion: 1;
+  scanner: Readonly<{ name: "npm audit"; npmVersion: string; nodeVersion: string }>;
+  registry: AuditEndpoints;
+  run: Readonly<{ startedAt: string; finishedAt: string }>;
+  graph: Readonly<{ label: string; packageSpecs: readonly string[] }>;
+  rawReportPath: string;
+  advisoryIds: readonly string[];
+  // Present when the audit attempt failed; the sidecar still records the run.
+  failure?: string;
+}>;
+
+export function buildAuditProvenance(
+  input: Readonly<{
+    failure?: string;
+    finishedAt: string;
+    label: string;
+    nodeVersion: string;
+    npmVersion: string;
+    packageSpecs: readonly string[];
+    rawReportPath: string;
+    registry: string;
+    report: Record<string, unknown>;
+    startedAt: string;
+  }>,
+): AuditProvenance {
+  return {
+    schemaVersion: 1,
+    scanner: { name: "npm audit", npmVersion: input.npmVersion, nodeVersion: input.nodeVersion },
+    registry: deriveAuditEndpoints(input.registry),
+    run: { startedAt: input.startedAt, finishedAt: input.finishedAt },
+    graph: { label: input.label, packageSpecs: input.packageSpecs },
+    rawReportPath: input.rawReportPath,
+    advisoryIds: extractAdvisoryIds(input.report),
+    ...(input.failure === undefined ? {} : { failure: input.failure }),
+  };
+}
+
+export function provenanceSidecarPath(reportPath: string): string {
+  return `${reportPath.replace(/\.json$/, "")}.provenance.json`;
+}
+
 function materializeArchiveGraph(packages: readonly ReviewedPackage[], tempRoot: string): string {
   const graphDirectory = path.join(tempRoot, "reviewed-archive-graph");
   fs.mkdirSync(graphDirectory);
@@ -191,6 +346,7 @@ function main(): void {
   const artifactDirectory = path.join(REPO_ROOT, config.artifactDirectory);
   fs.rmSync(artifactDirectory, { recursive: true, force: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
+  const npmVersion = run("npm", ["--version"], REPO_ROOT).stdout.trim();
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
     const reports = [
@@ -199,6 +355,12 @@ function main(): void {
         report: auditGraph(
           materializeArchiveGraph(config.archivePackages, tempRoot),
           path.join(artifactDirectory, "reviewed-archive-graph.json"),
+          {
+            label: "reviewed archive graph",
+            nodeVersion: process.version,
+            npmVersion,
+            packageSpecs: config.archivePackages.map((reviewed) => reviewed.packageSpec),
+          },
         ),
       },
       ...config.lockedGraphs.map((graph, index) => ({
@@ -206,6 +368,12 @@ function main(): void {
         report: auditGraph(
           materializeLockedGraph(graph, tempRoot),
           path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
+          {
+            label: graph.label,
+            nodeVersion: process.version,
+            npmVersion,
+            packageSpecs: [graph.packageSpec],
+          },
         ),
       })),
     ];
