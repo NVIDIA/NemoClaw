@@ -311,7 +311,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return overrides.sandboxBaseImageLabelsOutput;
     }
     if (args[0] === "{{.Id}}") {
-      const imageId = imageIdsByRef.get(String(args[1]));
+      const imageRef = String(args[1]);
+      if (imageRef === agentBaseImageRef && dcodeBaseImageIds.length > 0) {
+        return dcodeBaseImageIds.shift()!;
+      }
+      const imageId = imageIdsByRef.get(imageRef);
       if (imageId) return imageId;
     }
     return dcodeBaseImageIds.shift() ?? "sha256:dcode-base";
