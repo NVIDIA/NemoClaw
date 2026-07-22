@@ -281,8 +281,8 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     if [ -z "$OPENCLAW_SOURCE_PACK_PATH" ] || [ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ] || [ -L "$OPENCLAW_SOURCE_PACK_PATH" ]; then \
         echo "Error: reviewed OpenClaw archive path is empty or invalid"; exit 1; \
     fi; \
-    OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_SOURCE_PACK_PATH")"; \
     OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
+    OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
         OPENCLAW_REMEDIATION_JSON="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \

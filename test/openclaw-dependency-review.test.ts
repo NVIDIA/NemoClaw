@@ -482,13 +482,17 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" '"$OPENCLAW_PACK_PATH"' "$dockerfile local install path"
   check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"' "$dockerfile pack directory"
   if [ "$dockerfile" = Dockerfile.base ]; then
-    check_contains "$openclaw_block" '[ ! -f "$OPENCLAW_PACK_PATH" ]' "$dockerfile archive path guard"
+    check_contains "$openclaw_block" '[ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ]' "$dockerfile source archive path guard"
   fi
+  check_contains "$openclaw_block" '--archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@\${OPENCLAW_VERSION}"' "$dockerfile legacy remediated identity"
+  check_contains "$openclaw_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "$dockerfile remediation result guard"
   check_contains "$openclaw_block" 'rm -rf "$OPENCLAW_PACK_DIR"' "$dockerfile cleanup"
   check_not_contains "$openclaw_block" 'REGISTRY_INTEGRITY=$(npm view' "$dockerfile inline integrity lookup"
   check_not_contains "$openclaw_block" 'pack_reviewed_npm_tarball' "$dockerfile inline pack helper"
   check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
-  check_contains "$openclaw_block" 'recipe=ignore-scripts+reviewed-lifecycle-v1' "$dockerfile base provenance recipe"
+  check_contains "$openclaw_block" "OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'" "$dockerfile direct provenance recipe"
+  check_contains "$openclaw_block" "OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'" "$dockerfile remediated provenance recipe"
+  check_contains "$openclaw_block" '"recipe=\${OPENCLAW_RECIPE}"' "$dockerfile selected provenance recipe"
   check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
   check_contains "$openclaw_block" 'mcporter-integrity=' "$dockerfile mcporter provenance integrity"
   check_contains "$openclaw_block" 'mcporter-lock-sha256=' "$dockerfile mcporter provenance lock hash"
@@ -538,6 +542,7 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'patchOpenClawCorePackageGraph' "$remediation_helper"
 	grep -Fq 'patchOpenClawDiagnosticsPackageGraph' "$remediation_helper"
 	for package_spec in \
+		'openclaw@2026.3.11' \
 		'openclaw@2026.6.10' \
 		'@openclaw/diagnostics-otel@2026.6.10' \
 		'@openclaw/slack@2026.6.10' \

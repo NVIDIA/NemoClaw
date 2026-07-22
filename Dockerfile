@@ -359,8 +359,8 @@ RUN set -eu; \
         OPENCLAW_SOURCE_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
             --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
             --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
-        OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_SOURCE_PACK_PATH")"; \
         OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
+        OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
         if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
             OPENCLAW_REMEDIATION_JSON="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
                 --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
