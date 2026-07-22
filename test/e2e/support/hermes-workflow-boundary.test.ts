@@ -129,6 +129,15 @@ describe("Hermes GPU boundary", () => {
     expect(validateHermesGpuStartupWorkflowBoundary()).toEqual([]);
   });
 
+  it("requires each GPU scenario to identify its evidence shard", () => {
+    const errors = wfErrors((workflow) => {
+      delete workflow.jobs[GPU].env.NEMOCLAW_E2E_SHARD;
+    });
+    expect(errors).toContain(
+      "hermes-gpu-startup job must set NEMOCLAW_E2E_SHARD=${{ matrix.scenario }}",
+    );
+  });
+
   it("rejects broad drift", () => {
     const errors = wfErrors((workflow) => {
       workflow.jobs["hermes-e2e"].env.NEMOCLAW_MODEL = "minimaxai/minimax-m2.7";
@@ -136,7 +145,7 @@ describe("Hermes GPU boundary", () => {
       job["runs-on"] = "ubuntu-latest";
       job.if = "${{ always() }}";
       job.strategy["max-parallel"] = 2;
-      job.strategy.matrix.scenario = ["native"];
+      job.strategy.matrix.include = [{ scenario: "native" }];
       job.env.UNRELATED_SECRET = KEY;
       const run = step(job, "Run Hermes GPU startup live Vitest test");
       run.env = { NVIDIA_INFERENCE_API_KEY: KEY };
