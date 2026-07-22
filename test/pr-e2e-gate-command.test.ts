@@ -156,6 +156,67 @@ describe("PR E2E controller commands", () => {
     });
   });
 
+  it("binds retry finalization and download to separate state and evidence paths", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "finish",
+          "--work-dir",
+          workDir,
+          "--slot",
+          "runner-loss-retry",
+          "--check-id",
+          "18",
+          "--run-id",
+          "24",
+          "--state-hash",
+          "b".repeat(64),
+          "--evidence-outcome",
+          "success",
+        ]),
+      ).toMatchObject({
+        mode: "finish",
+        statePath: path.join(workDir, "controller-state-runner-loss-retry.json"),
+        evidencePath: path.join(workDir, "evidence-runner-loss-retry"),
+      });
+
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "download",
+          "--run-id",
+          "24",
+          "--work-dir",
+          workDir,
+          "--slot",
+          "runner-loss-retry",
+        ]),
+      ).toMatchObject({
+        mode: "download",
+        statePath: path.join(workDir, "controller-state-runner-loss-retry.json"),
+        evidencePath: path.join(workDir, "evidence-runner-loss-retry"),
+      });
+    });
+  });
+
+  it("rejects unknown controller path slots", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(() =>
+        parseControllerCommand([
+          "--mode",
+          "download",
+          "--run-id",
+          "24",
+          "--work-dir",
+          workDir,
+          "--slot",
+          "unexpected",
+        ]),
+      ).toThrow("--slot must be initial or runner-loss-retry");
+    });
+  });
+
   it("parses a fork credentialed E2E skip resolution", () => {
     expect(
       parseControllerCommand([

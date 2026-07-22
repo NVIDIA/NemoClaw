@@ -117,6 +117,8 @@ type ControllerPaths = {
   evidencePath: string;
 };
 
+type ControllerPathSlot = "initial" | "runner-loss-retry";
+
 type EvidenceStepOutcome = "success" | "failure" | "cancelled" | "skipped";
 
 type ManualForkSkipCommandBase = {
@@ -429,7 +431,16 @@ function tokenAndRepository(): { token: string; repository: string } {
   return { token, repository };
 }
 
-export function privateControllerPaths(workDir: string): ControllerPaths {
+function parseControllerPathSlot(value: string | undefined): ControllerPathSlot {
+  if (value === undefined || value === "initial") return "initial";
+  if (value === "runner-loss-retry") return value;
+  throw new Error("--slot must be initial or runner-loss-retry");
+}
+
+export function privateControllerPaths(
+  workDir: string,
+  slot: ControllerPathSlot = "initial",
+): ControllerPaths {
   const resolved = path.resolve(workDir);
   const stat = fs.lstatSync(resolved);
   const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
@@ -442,10 +453,14 @@ export function privateControllerPaths(workDir: string): ControllerPaths {
   ) {
     throw new Error("--work-dir must be an owned private absolute directory");
   }
+  const retry = slot === "runner-loss-retry";
   return {
     planPath: path.join(resolved, "risk-plan.json"),
-    statePath: path.join(resolved, "controller-state.json"),
-    evidencePath: path.join(resolved, "evidence"),
+    statePath: path.join(
+      resolved,
+      retry ? "controller-state-runner-loss-retry.json" : "controller-state.json",
+    ),
+    evidencePath: path.join(resolved, retry ? "evidence-runner-loss-retry" : "evidence"),
   };
 }
 
@@ -481,7 +496,10 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
   if (args.mode === "finish") {
     return {
       mode: "finish",
-      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+      ...privateControllerPaths(
+        requiredArgument(args.workDir, "work-dir"),
+        parseControllerPathSlot(args.slot),
+      ),
       checkRunId: parsePositiveId(requiredArgument(args.checkId, "check-id"), "--check-id"),
       childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
       stateHash: parseHash(args.stateHash, "state-hash"),
@@ -522,7 +540,10 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     return {
       mode: "download",
       childRunId: parsePositiveId(requiredArgument(args.runId, "run-id"), "--run-id"),
-      ...privateControllerPaths(requiredArgument(args.workDir, "work-dir")),
+      ...privateControllerPaths(
+        requiredArgument(args.workDir, "work-dir"),
+        parseControllerPathSlot(args.slot),
+      ),
     };
   }
   if (args.mode === "start-control-plane") {
