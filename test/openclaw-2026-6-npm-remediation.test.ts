@@ -16,7 +16,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRemediatedOpenClawArchive,
-  patchOpenClawCorePackageGraph,
   patchOpenClawPluginPackageGraph,
 } from "../scripts/lib/openclaw-npm-remediation.mts";
 
@@ -71,77 +70,6 @@ function writeFixture(axiosVersion = "1.16.0"): string {
   return directory;
 }
 
-function writeCoreFixture(tarVersion = "7.5.16"): string {
-  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-core-remediation-"));
-  temporaryDirectories.push(directory);
-  writeFileSync(
-    path.join(directory, "package.json"),
-    `${JSON.stringify(
-      {
-        name: "openclaw",
-        version: "2026.6.10",
-        dependencies: {
-          "@openclaw/fs-safe": "0.3.0",
-          jszip: "3.10.1",
-          minimatch: "10.2.5",
-          tar: tarVersion,
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  writeFileSync(
-    path.join(directory, "npm-shrinkwrap.json"),
-    `${JSON.stringify(
-      {
-        name: "openclaw",
-        version: "2026.6.10",
-        lockfileVersion: 3,
-        packages: {
-          "": {
-            name: "openclaw",
-            version: "2026.6.10",
-            dependencies: {
-              "@openclaw/fs-safe": "0.3.0",
-              jszip: "3.10.1",
-              minimatch: "10.2.5",
-              tar: tarVersion,
-            },
-          },
-          "node_modules/@openclaw/fs-safe": {
-            version: "0.3.0",
-            optionalDependencies: { jszip: "^3.10.1", tar: "7.5.13" },
-          },
-          "node_modules/brace-expansion": {
-            version: "5.0.6",
-            resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.6.tgz",
-            integrity: "sha512-old-brace-expansion",
-          },
-          "node_modules/minimatch": {
-            version: "10.2.5",
-            dependencies: { "brace-expansion": "^5.0.5" },
-          },
-          "node_modules/jszip": {
-            version: "3.10.1",
-            resolved: "https://registry.npmjs.org/jszip/-/jszip-3.10.1.tgz",
-            integrity:
-              "sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g==",
-          },
-          "node_modules/tar": {
-            version: tarVersion,
-            resolved: `https://registry.npmjs.org/tar/-/tar-${tarVersion}.tgz`,
-            integrity: "sha512-old-tar",
-          },
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return directory;
-}
-
 function readJson<T>(file: string): T {
   return JSON.parse(readFileSync(file, "utf-8")) as T;
 }
@@ -154,67 +82,6 @@ function packFixture(packageDirectory: string, archivePath: string): void {
     encoding: "utf-8",
   });
   expect(result.status, result.stderr || "failed to pack OpenClaw test archive").toBe(0);
-}
-
-function writeCoreArchiveFixtures(): {
-  archivePath: string;
-  npmExecutable: string;
-  workingDirectory: string;
-} {
-  const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-build-remediation-"));
-  temporaryDirectories.push(root);
-  const archivePath = path.join(root, "openclaw-2026.6.10.tgz");
-  packFixture(writeCoreFixture(), archivePath);
-
-  const fsSafeDirectory = path.join(root, "fs-safe-package");
-  mkdirSync(fsSafeDirectory, { recursive: true });
-  writeFileSync(
-    path.join(fsSafeDirectory, "package.json"),
-    `${JSON.stringify(
-      {
-        name: "@openclaw/fs-safe",
-        version: "0.3.0",
-        optionalDependencies: { jszip: "^3.10.1", tar: "7.5.13" },
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  const fsSafeArchive = path.join(root, "fs-safe-0.3.0-source.tgz");
-  packFixture(fsSafeDirectory, fsSafeArchive);
-
-  const npmExecutable = path.join(root, "npm-fixture.sh");
-  writeFileSync(
-    npmExecutable,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `fs_safe_archive=${JSON.stringify(fsSafeArchive)}`,
-      'if [ "$1" = "view" ] && [ "$3" = "dist.integrity" ]; then',
-      '  printf "%s\\n" "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA=="',
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "view" ] && [ "$3" = "dist.tarball" ]; then',
-      '  printf "%s\\n" "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz"',
-      "  exit 0",
-      "fi",
-      'if [ "$1" = "pack" ]; then',
-      '  destination=""',
-      '  while [ "$#" -gt 0 ]; do',
-      '    if [ "$1" = "--pack-destination" ]; then destination="$2"; shift 2; continue; fi',
-      "    shift",
-      "  done",
-      '  cp "$fs_safe_archive" "$destination/fs-safe-0.3.0.tgz"',
-      '  printf \'[{"filename":"fs-safe-0.3.0.tgz","integrity":"sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA=="}]\\n\'',
-      "  exit 0",
-      "fi",
-      "exit 1",
-      "",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  chmodSync(npmExecutable, 0o700);
-  return { archivePath, npmExecutable, workingDirectory: path.join(root, "work") };
 }
 
 function writePluginArchiveFixtures(): {
@@ -360,103 +227,6 @@ describe("OpenClaw npm remediation", () => {
     expect(() => patchOpenClawPluginPackageGraph(directory, "@openclaw/slack@2026.6.10")).toThrow(
       "must resolve node_modules/axios to 1.16.0 before remediation",
     );
-  });
-
-  // source-shape-contract: security -- Exact core shrinkwrap metadata binds remediation output to the reviewed registry identities
-  it("replaces the reviewed OpenClaw core tar and brace-expansion graph", () => {
-    const directory = writeCoreFixture();
-
-    patchOpenClawCorePackageGraph(directory);
-
-    const shrinkwrap = readJson<{
-      packages: Record<
-        string,
-        {
-          dependencies?: Record<string, string>;
-          integrity?: string;
-          optionalDependencies?: Record<string, string>;
-          resolved?: string;
-          version?: string;
-        }
-      >;
-    }>(path.join(directory, "npm-shrinkwrap.json"));
-    const packageJson = readJson<{
-      bundledDependencies?: string[];
-      dependencies?: Record<string, string>;
-    }>(path.join(directory, "package.json"));
-    expect(packageJson.dependencies).toMatchObject({ jszip: "3.10.1", tar: "7.5.19" });
-    expect(packageJson.bundledDependencies).toEqual(["@openclaw/fs-safe"]);
-    expect(shrinkwrap.packages[""]).toMatchObject({ dependencies: { tar: "7.5.19" } });
-    expect(shrinkwrap.packages["node_modules/tar"]).toMatchObject({
-      version: "7.5.19",
-      resolved: "https://registry.npmjs.org/tar/-/tar-7.5.19.tgz",
-      integrity:
-        "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
-    });
-    expect(shrinkwrap.packages["node_modules/@openclaw/fs-safe"]?.optionalDependencies).toBe(
-      undefined,
-    );
-    expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
-      version: "5.0.7",
-      resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
-      integrity:
-        "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
-    });
-  });
-
-  it("rejects an OpenClaw core tar graph that changed after review", () => {
-    const directory = writeCoreFixture("7.5.17");
-
-    expect(() => patchOpenClawCorePackageGraph(directory)).toThrow(
-      "must declare reviewed tar@7.5.16 before remediation",
-    );
-  });
-
-  // source-shape-contract: security -- Archive metadata proves the rebuilt package carries the reviewed bundled fs-safe remediation
-  it("rebuilds a guarded core archive with the patched fs-safe package bundled", () => {
-    const fixture = writeCoreArchiveFixtures();
-    const request = {
-      archivePath: fixture.archivePath,
-      env: { NEMOCLAW_REVIEWED_NPM_EXECUTABLE: fixture.npmExecutable },
-      packageSpec: "openclaw@2026.6.10",
-      workingDirectory: fixture.workingDirectory,
-    };
-    let metadataIntegrity = "";
-    try {
-      buildRemediatedOpenClawArchive({
-        ...request,
-        expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
-      });
-    } catch (error) {
-      const message = String(error);
-      expect(message).toMatch(/got sha512-\S+/u);
-      metadataIntegrity = message.match(/got (sha512-\S+)/u)?.[1] ?? "";
-    }
-    expect(metadataIntegrity).toMatch(/^sha512-/u);
-
-    const remediated = buildRemediatedOpenClawArchive({
-      ...request,
-      expectedPatchedMetadataIntegrity: metadataIntegrity,
-    });
-    expect(remediated).toMatchObject({ metadataIntegrity, remediated: true });
-    const extracted = path.join(fixture.workingDirectory, "asserted");
-    mkdirSync(extracted, { recursive: true });
-    const extraction = spawnSync("tar", ["-xzf", remediated.archivePath, "-C", extracted], {
-      encoding: "utf-8",
-    });
-    expect(extraction.status, extraction.stderr).toBe(0);
-    const packageJson = readJson<{
-      bundledDependencies?: string[];
-      dependencies?: Record<string, string>;
-    }>(path.join(extracted, "package", "package.json"));
-    const fsSafePackageJson = readJson<{ optionalDependencies?: Record<string, string> }>(
-      path.join(extracted, "package", "node_modules", "@openclaw", "fs-safe", "package.json"),
-    );
-    expect(packageJson).toMatchObject({
-      bundledDependencies: ["@openclaw/fs-safe"],
-      dependencies: { jszip: "3.10.1", tar: "7.5.19" },
-    });
-    expect(fsSafePackageJson.optionalDependencies).toBeUndefined();
   });
 
   // source-shape-contract: security -- Extracted plugin contents prove the rebuilt archive carries every reviewed Axios replacement package
