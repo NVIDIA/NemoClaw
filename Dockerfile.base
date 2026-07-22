@@ -414,10 +414,21 @@ RUN { \
     && gosu sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
     && gosu sandbox bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 0 ;; *) exit 1 ;; esac"
 
-# Gate the exact completed base filesystem before it can be published.
+# Gate the exact completed base filesystem before it can be published. The
+# explicit 2026.3.11 E2E fixture is the one bounded exception: it must retain
+# its historical tar@7.5.11 so rebuild tests prove an installed vulnerable base
+# is replaced by a clean current image. Production build-arg guards reject the
+# fixture flag, and the scanner accepts only that exact affected path/version.
 COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
 RUN install -d -m 0755 /usr/local/share/nemoclaw \
-    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
-        --root / --image build:openclaw-base \
-        > /usr/local/share/nemoclaw/node-tar-inventory.json \
+    && if [ "$NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW" = "1" ] \
+        && [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
+        node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+            --root / --image build:openclaw-base-legacy-fixture \
+            --expected-affected-physical-path /usr/local/lib/node_modules/openclaw/node_modules/tar \
+            --expected-affected-version 7.5.11; \
+    else \
+        node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+            --root / --image build:openclaw-base; \
+    fi > /usr/local/share/nemoclaw/node-tar-inventory.json \
     && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json

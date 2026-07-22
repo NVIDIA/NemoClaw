@@ -30,6 +30,11 @@ export type NodeTarImageScan = Readonly<{
   schema: 1;
 }>;
 
+export type ExpectedAffectedNodeTarPackage = Readonly<{
+  physicalPath: string;
+  version: string;
+}>;
+
 function parseExactVersion(version: string): ExactVersion | undefined {
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(version);
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
@@ -139,16 +144,31 @@ export function scanNodeTarImage(root: string, image: string): NodeTarImageScan 
   };
 }
 
-export function nodeTarImageScanErrors(scan: NodeTarImageScan): string[] {
+export function nodeTarImageScanErrors(
+  scan: NodeTarImageScan,
+  expectedAffected?: ExpectedAffectedNodeTarPackage,
+): string[] {
   const errors: string[] = [];
   if (scan.packageCount === 0)
     errors.push("completed image contains no discoverable node-tar copy");
-  for (const entry of scan.packages) {
-    if (entry.status !== "fixed") {
+  const nonFixed = scan.packages.filter((entry) => entry.status !== "fixed");
+  if (expectedAffected) {
+    if (
+      nonFixed.length !== 1 ||
+      nonFixed[0]?.status !== "affected" ||
+      nonFixed[0].physicalPath !== expectedAffected.physicalPath ||
+      nonFixed[0].version !== expectedAffected.version
+    ) {
       errors.push(
-        `${entry.physicalPath} contains ${entry.version ? `tar@${entry.version}` : "invalid tar metadata"}`,
+        `completed legacy fixture does not contain only expected ${expectedAffected.physicalPath} tar@${expectedAffected.version}`,
       );
     }
+    return errors;
+  }
+  for (const entry of nonFixed) {
+    errors.push(
+      `${entry.physicalPath} contains ${entry.version ? `tar@${entry.version}` : "invalid tar metadata"}`,
+    );
   }
   return errors;
 }
@@ -160,6 +180,13 @@ function argument(name: string): string {
   return value;
 }
 
+function optionalArgument(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  const value = index >= 0 ? process.argv[index + 1] : undefined;
+  if (index >= 0 && (!value || value.startsWith("--"))) throw new Error(`${name} requires a value`);
+  return value;
+}
+
 function isMainModule(): boolean {
   return process.argv[1] ? fileURLToPath(import.meta.url) === resolve(process.argv[1]) : false;
 }
@@ -168,7 +195,25 @@ if (isMainModule()) {
   try {
     const scan = scanNodeTarImage(argument("--root"), argument("--image"));
     process.stdout.write(`${JSON.stringify(scan, null, 2)}\n`);
-    const errors = nodeTarImageScanErrors(scan);
+    const expectedAffectedPhysicalPath = optionalArgument("--expected-affected-physical-path");
+    const expectedAffectedVersion = optionalArgument("--expected-affected-version");
+    if (Boolean(expectedAffectedPhysicalPath) !== Boolean(expectedAffectedVersion)) {
+      throw new Error(
+        "--expected-affected-physical-path and --expected-affected-version must be provided together",
+      );
+    }
+    if (expectedAffectedVersion && !parseExactVersion(expectedAffectedVersion)) {
+      throw new Error("--expected-affected-version must be an exact semver version");
+    }
+    const errors = nodeTarImageScanErrors(
+      scan,
+      expectedAffectedPhysicalPath && expectedAffectedVersion
+        ? {
+            physicalPath: expectedAffectedPhysicalPath,
+            version: expectedAffectedVersion,
+          }
+        : undefined,
+    );
     if (errors.length > 0) {
       for (const error of errors) console.error(`ERROR: ${error}`);
       process.exitCode = 1;

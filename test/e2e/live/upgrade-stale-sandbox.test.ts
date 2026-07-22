@@ -13,6 +13,11 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
+  assertCurrentNodeTarInventory,
+  assertLegacyNodeTarInventory,
+  NODE_TAR_INVENTORY_PATH,
+} from "./node-tar-upgrade-evidence.ts";
+import {
   assertDeleteInstalledSandboxAllowed,
   assertDockerAvailable,
   buildOldOpenClawBase,
@@ -120,6 +125,13 @@ test("upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)", 
   expect(oldVersion.exitCode, resultText(oldVersion)).toBe(0);
   expect(resultText(oldVersion)).toContain(OLD_OPENCLAW_VERSION);
 
+  const oldTarInventory = await sandbox.exec(SANDBOX_NAME, ["cat", NODE_TAR_INVENTORY_PATH], {
+    artifactName: "phase-3-legacy-node-tar-inventory",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  assertLegacyNodeTarInventory(oldTarInventory, "legacy node-tar inventory before rebuild");
+
   writeStaleRegistryEntry();
   await artifacts.writeText("registered-stale-sandbox.json", registeredStaleSandboxJson());
 
@@ -151,6 +163,13 @@ test("upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)", 
   });
   expect(newVersion.exitCode, resultText(newVersion)).toBe(0);
   expect(resultText(newVersion)).not.toContain(OLD_OPENCLAW_VERSION);
+
+  const currentTarInventory = await sandbox.exec(SANDBOX_NAME, ["cat", NODE_TAR_INVENTORY_PATH], {
+    artifactName: "phase-6-current-node-tar-inventory",
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  assertCurrentNodeTarInventory(currentTarInventory, "current node-tar inventory after rebuild");
 
   const cleanCheck = await host.nemoclaw(["upgrade-sandboxes", "--check"], {
     artifactName: "phase-7-upgrade-sandboxes-check-clean",
