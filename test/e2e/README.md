@@ -25,17 +25,20 @@ CLI build/type-checking, in parallel with the remaining core jobs. The final
 `checks` gate still waits for both the core jobs and sandbox image/E2E result.
 
 The main platform signal shards the full Vitest suite four ways on both macOS
-and WSL. Each shard has a 30-minute job budget and `fail-fast` is disabled so a
-single platform failure does not hide the other shard results. The additional
-root-required WSL contracts run only on shard 1.
+and WSL. Each macOS shard has a 30-minute job budget, while each WSL shard has
+a 90-minute job budget. `fail-fast` is disabled so a single platform failure
+does not hide the other shard results. The additional root-required WSL
+contracts run only on shard 1.
 
 The sandbox image workflow builds the Hermes production image in a dedicated
 30-minute producer job with a runner-OS-and-architecture-scoped GitHub Actions
-Buildx cache. The build loads the image locally without pushing it, validates
-the image boundary, and uploads a one-day image artifact. The 90-minute Hermes
-test job and the state-directory metadata job consume that same artifact, so
-tests do not rebuild the image. Within the Hermes test job, the secret-boundary
-and root-entrypoint steps have 45- and 30-minute budgets respectively.
+Buildx cache. The producer adds a bounded 32 GiB swap file before the build,
+loads the image locally without pushing it, validates the image boundary, and
+scans the completed image for node-tar before uploading a one-day image
+artifact. The 90-minute Hermes test job and the state-directory metadata job
+consume that same artifact, so tests do not rebuild the image. Within the
+Hermes test job, the secret-boundary and root-entrypoint steps have 45- and
+30-minute budgets respectively.
 
 Brev branch validation allows two bounded provisioning attempts by default.
 During SSH readiness polling it stops the current attempt early when

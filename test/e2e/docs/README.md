@@ -254,12 +254,14 @@ test/e2e/
   repository-hosted targets, including `ollama-auth-proxy`, are selected
   through `.github/workflows/e2e.yaml`.
 - `.github/workflows/platform-vitest-main.yaml` runs the full Vitest suite in
-  four independent 30-minute shards on each of macOS and WSL. WSL runs its
+  four independent shards on each of macOS and WSL. Each macOS shard has a
+  30-minute budget, while each WSL shard has a 90-minute budget. WSL runs its
   additional root-required contracts on shard 1 only.
 - `.github/workflows/sandbox-images-and-e2e.yaml` builds the Hermes production
-  image once in a 30-minute Buildx producer with a scoped GitHub Actions cache,
-  does not push it, and passes the one-day image artifact to the 90-minute
-  Hermes test consumer and the state-directory metadata job.
+  image once in a 30-minute Buildx producer with a bounded 32 GiB swap file and
+  a scoped GitHub Actions cache. The producer loads without pushing, scans the
+  completed image for node-tar, and passes the one-day image artifact to the
+  90-minute Hermes test consumer and the state-directory metadata job.
 - `vitest.config.ts` contains `e2e-support` for fast fixture/support tests and
   `e2e-live` for opt-in live target execution. The PR and `main` CLI coverage
   shards include `e2e-support` for code changes; they never opt into live
