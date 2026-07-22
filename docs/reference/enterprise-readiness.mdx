@@ -77,14 +77,10 @@ Each row links to deeper documentation and, when a concrete fix is in progress, 
 | Credential isolation | Supported | Inference credentials stay on the host and never enter the sandbox; the agent reaches models through `inference.local`. CLI output redaction adds defense in depth, and OpenClaw sandboxes also run a memory secret scanner. Refer to [Credential Storage](../security/credential-storage) and [Security Best Practices](../security/best-practices). |
 | Upgrades and lifecycle | Supported with caveats | Upgrade NemoClaw, then run `$$nemoclaw <sandbox> rebuild` to recreate the sandbox with the current image while backing up and restoring state. Do not run `openclaw update` inside the sandbox; the agent is image-pinned. Known gaps include config restore after rebuild ([#5202](https://github.com/NVIDIA/NemoClaw/issues/5202)) and version attachment flexibility ([#2217](https://github.com/NVIDIA/NemoClaw/issues/2217)). |
 | Backup and restore | Supported | Create snapshots and restore workspace and agent state with the snapshot and backup commands. Refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots). |
-| Remote and cloud deployment | Supported with caveats | Provision the host, run the installer, and run `$$nemoclaw onboard`; the `$$nemoclaw deploy` Brev wrapper is deprecated. Remote dashboard origins can disable device pairing, so avoid exposing them on shared networks. Brev rough edges are tracked in [#3959](https://github.com/NVIDIA/NemoClaw/issues/3959) and [#3365](https://github.com/NVIDIA/NemoClaw/issues/3365). |
+| Remote and cloud deployment | Supported with caveats | Provision a tested Linux host, connect over SSH, run the installer, and run `$$nemoclaw onboard`. Keep dashboards bound to loopback and access them through SSH port forwarding. Automatic recovery after a host reboot is not guaranteed; follow the manual recovery flow in [Deploy to a Headless Server](../deployment/deploy-to-headless-server). |
 
 <AgentOnly variant="openclaw">
-For remote deployment specifics, refer to [Deploy to Remote GPU Instances](../deployment/deploy-to-remote-gpu) and [Brev Web UI](../deployment/brev-web-ui).
 For container-level hardening beyond the entrypoint defaults, refer to [Sandbox Hardening](../manage-sandboxes/configure-sandboxes/review-sandbox-hardening).
-</AgentOnly>
-<AgentOnly variant="hermes">
-For remote deployment and Brev specifics, refer to the Brev section of the [Troubleshooting](troubleshooting#brev) guide.
 </AgentOnly>
 
 ## Admin and Control-Plane Capabilities
