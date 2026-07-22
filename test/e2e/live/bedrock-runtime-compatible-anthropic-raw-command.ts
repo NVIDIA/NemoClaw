@@ -11,6 +11,33 @@ import {
   type RawArtifactOutputMode,
 } from "./bedrock-runtime-compatible-anthropic-artifacts.ts";
 
+const MAX_RAW_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
+const RAW_COMMAND_OUTPUT_LIMIT_MARKER = "[bedrock raw-command output exceeded safe capture limit]";
+
+interface BoundedOutputCapture {
+  readonly buffer: Buffer;
+  length: number;
+}
+
+function boundedOutputCapture(): BoundedOutputCapture {
+  return { buffer: Buffer.allocUnsafe(MAX_RAW_COMMAND_OUTPUT_BYTES), length: 0 };
+}
+
+function appendBoundedOutput(capture: BoundedOutputCapture, chunk: Buffer): boolean {
+  const copied = chunk.copy(
+    capture.buffer,
+    capture.length,
+    0,
+    MAX_RAW_COMMAND_OUTPUT_BYTES - capture.length,
+  );
+  capture.length += copied;
+  return copied === chunk.length;
+}
+
+function capturedOutput(capture: BoundedOutputCapture): string {
+  return capture.buffer.subarray(0, capture.length).toString("utf8");
+}
+
 export interface RawRunResult {
   readonly command: readonly string[];
   readonly exitCode: number | null;
@@ -31,24 +58,6 @@ export interface RawRunOptions {
   readonly progress: Pick<TestProgress, "activity" | "event" | "onOutput"> & TestProgressCapability;
   readonly redactionValues?: readonly string[];
   readonly timeoutMs?: number;
-}
-
-const MAX_RAW_OUTPUT_BYTES = 10 * 1024 * 1024;
-const TRUNCATED_OUTPUT_MARKER = "\n[raw command output truncated at safe capture limit]";
-
-function appendBoundedOutput(
-  output: Buffer,
-  chunk: Buffer,
-): { output: Buffer; truncated: boolean } {
-  const remaining = Math.max(0, MAX_RAW_OUTPUT_BYTES - output.length);
-  return {
-    output: Buffer.concat([output, chunk.subarray(0, remaining)]),
-    truncated: chunk.length > remaining,
-  };
-}
-
-function renderBoundedOutput(output: Buffer, truncated: boolean): string {
-  return `${output.toString("utf8")}${truncated ? TRUNCATED_OUTPUT_MARKER : ""}`;
 }
 
 function progressCommandName(artifactName: string): string {
@@ -95,10 +104,9 @@ export async function runRawCommand(
     throw error;
   }
   const fullCommand = [command, ...args];
-  let stdoutBuffer = Buffer.alloc(0);
-  let stderrBuffer = Buffer.alloc(0);
-  let stdoutTruncated = false;
-  let stderrTruncated = false;
+  const stdoutCapture = boundedOutputCapture();
+  const stderrCapture = boundedOutputCapture();
+  let captureLimitExceeded = false;
   let timedOut = false;
   let spawnError: Error | undefined;
 
@@ -109,6 +117,18 @@ export async function runRawCommand(
     } catch {
       child.kill(signal);
     }
+  };
+
+  const captureOutput = (capture: BoundedOutputCapture, chunk: Buffer): void => {
+    if (captureLimitExceeded || appendBoundedOutput(capture, chunk)) return;
+    captureLimitExceeded = true;
+    stdoutCapture.length = 0;
+    stderrCapture.length = 0;
+    emitProgressEvent(
+      options.progress,
+      `command ${progressName} output exceeded safe capture limit`,
+    );
+    killProcessGroup("SIGKILL");
   };
 
   const timeout = setTimeout(() => {
@@ -123,14 +143,10 @@ export async function runRawCommand(
   timeout.unref();
 
   child.stdout?.on("data", (chunk: Buffer) => {
-    const capture = appendBoundedOutput(stdoutBuffer, chunk);
-    stdoutBuffer = capture.output;
-    stdoutTruncated ||= capture.truncated;
+    captureOutput(stdoutCapture, chunk);
   });
   child.stderr?.on("data", (chunk: Buffer) => {
-    const capture = appendBoundedOutput(stderrBuffer, chunk);
-    stderrBuffer = capture.output;
-    stderrTruncated ||= capture.truncated;
+    captureOutput(stderrCapture, chunk);
   });
   child.on("error", (error) => {
     spawnError = error;
@@ -153,13 +169,21 @@ export async function runRawCommand(
     throw new Error(`failed to spawn ${redactString(command, redactionValues)}: ${message}`);
   }
 
-  const stdout = renderBoundedOutput(stdoutBuffer, stdoutTruncated);
-  const stderr = renderBoundedOutput(stderrBuffer, stderrTruncated);
+  const stdout = captureLimitExceeded
+    ? RAW_COMMAND_OUTPUT_LIMIT_MARKER
+    : capturedOutput(stdoutCapture);
+  const stderr = captureLimitExceeded
+    ? RAW_COMMAND_OUTPUT_LIMIT_MARKER
+    : capturedOutput(stderrCapture);
   const redactedStdout = redactString(stdout, redactionValues);
   const redactedStderr = redactString(stderr, redactionValues);
   const artifactOutputMode = options.artifactOutputMode ?? "content";
-  const artifactStdout = projectRawOutputForArtifact(redactedStdout, "stdout", artifactOutputMode);
-  const artifactStderr = projectRawOutputForArtifact(redactedStderr, "stderr", artifactOutputMode);
+  const artifactStdout = captureLimitExceeded
+    ? RAW_COMMAND_OUTPUT_LIMIT_MARKER
+    : projectRawOutputForArtifact(redactedStdout, "stdout", artifactOutputMode);
+  const artifactStderr = captureLimitExceeded
+    ? RAW_COMMAND_OUTPUT_LIMIT_MARKER
+    : projectRawOutputForArtifact(redactedStderr, "stderr", artifactOutputMode);
   await options.artifacts.writeText(`raw-shell/${options.artifactName}.stdout.txt`, artifactStdout);
   await options.artifacts.writeText(`raw-shell/${options.artifactName}.stderr.txt`, artifactStderr);
   await options.artifacts.writeJson(`raw-shell/${options.artifactName}.result.json`, {
@@ -167,9 +191,14 @@ export async function runRawCommand(
     exitCode,
     signal,
     timedOut,
+    captureLimitExceeded,
     stdout: artifactStdout,
     stderr: artifactStderr,
   });
+
+  if (captureLimitExceeded) {
+    throw new Error(`command ${progressName} output exceeded safe capture limit`);
+  }
 
   return {
     command: fullCommand,

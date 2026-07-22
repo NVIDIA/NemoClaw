@@ -105,6 +105,7 @@ describe("automatic E2E phase outcomes", () => {
           {
             cwd: REPO_ROOT,
             encoding: "utf8",
+            killSignal: "SIGKILL",
             timeout: 20_000,
             env: {
               ...process.env,

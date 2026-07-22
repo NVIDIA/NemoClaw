@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import { startTestProgress } from "../fixtures/progress.ts";
@@ -29,6 +29,7 @@ function progressProbe() {
       },
     },
   );
+  onTestFinished(() => progress.stop());
   return { lines, progress, timers };
 }
 
@@ -120,33 +121,50 @@ describe("Bedrock raw-command progress", () => {
     progress.stop();
   });
 
-  it("bounds captured child output before redaction and artifact publication", async () => {
-    const artifacts = await artifactSink("bedrock-progress-bounded-output");
+  it("fails closed when command output exceeds the bounded capture limit (#7101)", async () => {
+    const secret = "opaque-bedrock-capture-limit-secret";
+    const artifacts = await artifactSink("bedrock-progress-output-limit");
     const observation = progressProbe();
-    const { progress } = observation;
 
-    try {
-      const result = await runRawCommand(
+    await expect(
+      runRawCommand(
         process.execPath,
-        ["-e", "process.stdout.write(Buffer.alloc(10 * 1024 * 1024 + 1, 97))"],
+        ["-e", `process.stdout.write(${JSON.stringify(secret)}.repeat(400_000))`],
         {
-          artifactName: "bedrock-progress-bounded-output",
+          artifactName: "bedrock-progress-output-limit",
           artifacts,
-          progress,
+          progress: observation.progress,
+          redactionValues: [secret],
         },
-      );
+      ),
+    ).rejects.toThrow("output exceeded safe capture limit");
 
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("[raw command output truncated at safe capture limit]");
-      expect(Buffer.byteLength(result.stdout)).toBeLessThan(10 * 1024 * 1024 + 100);
-      await expect(
-        fs.readFile(
-          path.join(artifacts.rootDir, "raw-shell/bedrock-progress-bounded-output.stdout.txt"),
-          "utf8",
+    expect(observation.lines).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "event: command bedrock-progress-output-limit output exceeded safe capture limit",
         ),
-      ).resolves.toContain("[raw command output truncated at safe capture limit]");
-    } finally {
-      progress.stop();
-    }
+      ]),
+    );
+    expect(observation.lines.join("\n")).not.toContain(secret);
+    const marker = "[bedrock raw-command output exceeded safe capture limit]";
+    await expect(
+      fs.readFile(
+        path.join(artifacts.rootDir, "raw-shell/bedrock-progress-output-limit.stdout.txt"),
+        "utf8",
+      ),
+    ).resolves.toBe(marker);
+    const resultArtifact = JSON.parse(
+      await fs.readFile(
+        path.join(artifacts.rootDir, "raw-shell/bedrock-progress-output-limit.result.json"),
+        "utf8",
+      ),
+    );
+    expect(resultArtifact).toMatchObject({
+      captureLimitExceeded: true,
+      stdout: marker,
+      stderr: marker,
+    });
+    expect(JSON.stringify(resultArtifact)).not.toContain(secret);
   });
 });
