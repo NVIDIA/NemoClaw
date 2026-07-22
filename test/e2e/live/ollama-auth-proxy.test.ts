@@ -14,6 +14,7 @@ import fs from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { type ChildProcessOwner, ownChildProcess } from "../../helpers/child-process-lifecycle.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
@@ -50,38 +51,17 @@ function token(): string {
   return randomBytes(24).toString("hex");
 }
 
+const childOwners = new WeakMap<ChildProcess, ChildProcessOwner>();
 const loggedArtifactWrites = new WeakMap<ChildProcess, Promise<void>>();
-
-function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (exited: boolean): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      child.off("exit", onExit);
-      resolve(exited);
-    };
-    const onExit = (): void => finish(true);
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    timer.unref();
-    child.once("exit", onExit);
-    if (child.exitCode !== null || child.signalCode !== null) finish(true);
-  });
-}
+const CHILD_PROCESS_OWNER_OPTIONS = {
+  forceTimeoutMs: 3_000,
+  gracefulTimeoutMs: 3_000,
+} as const;
 
 async function terminate(child: ChildProcess | undefined): Promise<void> {
   if (!child) return;
-  if (child.exitCode === null && child.signalCode === null) {
-    child.kill("SIGTERM");
-    if (!(await waitForChildExit(child, 3_000))) {
-      child.kill("SIGKILL");
-      if (!(await waitForChildExit(child, 3_000))) {
-        throw new Error("test child process did not stop after SIGKILL");
-      }
-    }
-  }
+  const owner = childOwners.get(child) ?? ownChildProcess(child, CHILD_PROCESS_OWNER_OPTIONS);
+  await owner.terminate();
   await loggedArtifactWrites.get(child);
 }
 
@@ -108,6 +88,7 @@ function spawnLogged(
       stdio: ["ignore", "pipe", "pipe"],
     },
   });
+  childOwners.set(child, ownChildProcess(child, CHILD_PROCESS_OWNER_OPTIONS));
   const outputLimit = 1024 * 1024;
   let stdout = "";
   let stderr = "";

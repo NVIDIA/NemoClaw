@@ -79,9 +79,9 @@ test.runIf(outcome === "redacted-event")(
       e2ePhases: ["prepare redacted progress event", "finish redacted progress event"],
     },
   },
-  ({ progress }) => {
+  ({ expect, progress }) => {
     const secret = process.env.NEMOCLAW_E2E_PROGRESS_EVENT_SECRET;
-    if (!secret) throw new Error("redacted-event fixture secret is required");
+    expect(secret, "redacted-event fixture secret is required").toBeTruthy();
     progress.event(`retry cleanup for ${secret}`);
     progress.phase("finish redacted progress event");
   },

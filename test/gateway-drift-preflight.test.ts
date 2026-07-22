@@ -19,13 +19,17 @@ const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const ARTIFACT_ROOT = process.env.E2E_ARTIFACT_DIR;
 let workRoot: string | null = null;
 
-function gatewayDriftWorkRoot(): string {
-  if (workRoot) return workRoot;
+function createGatewayDriftWorkRoot(): string {
   const parent = ARTIFACT_ROOT ?? os.tmpdir();
   fs.mkdirSync(parent, { recursive: true });
-  workRoot = fs.mkdtempSync(path.join(parent, "nemoclaw-gateway-drift-preflight-"));
+  return fs.mkdtempSync(path.join(parent, "nemoclaw-gateway-drift-preflight-"));
+}
+
+function gatewayDriftWorkRoot(): string {
+  workRoot ??= createGatewayDriftWorkRoot();
   return workRoot;
 }
+
 const commandTimeoutMs = 45_000;
 const GATEWAY_DRIFT_PHASES = [
   "prepare gateway drift fixtures",

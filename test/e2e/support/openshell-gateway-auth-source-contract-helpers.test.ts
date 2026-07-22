@@ -257,9 +257,9 @@ describe("OpenShell gateway auth source contract helpers", () => {
       throw new Error("simulated quarantine move failure");
     });
     const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
-      if (path.resolve(String(target)) === path.resolve(dir)) {
-        throw new Error("simulated artifact deletion failure");
-      }
+      expect(path.resolve(String(target)), "simulated artifact deletion failure").not.toBe(
+        path.resolve(dir),
+      );
       originalRmSync(target, options);
     });
 
