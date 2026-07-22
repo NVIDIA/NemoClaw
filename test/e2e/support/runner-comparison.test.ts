@@ -159,7 +159,7 @@ describe("runner comparison schema", () => {
     expect(() => parseRunnerComparisonLedger(`${ledger(sample())}\n`)).toThrow(
       "canonical JSONL encoding",
     );
-    expect(() => parseRunnerComparisonLedger(ledger(sample()).replace("\n", "\r\n"))).toThrow(
+    expect(() => parseRunnerComparisonLedger(ledger(sample()).replaceAll("\n", "\r\n"))).toThrow(
       "canonical JSONL encoding",
     );
   });
