@@ -63,12 +63,9 @@ describe("rebuild destroy phase", () => {
     });
     mocks.reattachMcpAfterDeleteFailure.mockResolvedValue(undefined);
     mocks.removeSandboxRegistryEntryWithReceipt.mockReturnValue(null);
-    mocks.waitUntil.mockImplementation((condition: () => boolean) => {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        if (condition()) return true;
-      }
-      return false;
-    });
+    mocks.waitUntil.mockImplementation(
+      (condition: () => boolean) => condition() || condition() || condition(),
+    );
   });
 
   afterEach(() => {
@@ -111,19 +108,21 @@ describe("rebuild destroy phase", () => {
   it("removes registry state only after the gateway reports the deleted sandbox missing", async () => {
     const events: string[] = [];
     let getAttempts = 0;
-    mocks.runOpenshell.mockImplementation((args: string[]) => {
-      if (args[1] === "delete") {
-        events.push("delete");
-        return { status: 0, stdout: "deleted", stderr: "" };
-      }
+    const deleteResult = () => {
+      events.push("delete");
+      return { status: 0, stdout: "deleted", stderr: "" };
+    };
+    const getResult = () => {
       getAttempts += 1;
-      if (getAttempts === 1) {
-        events.push("get-live");
-        return { status: 0, stdout: "Name: alpha\nPhase: Terminating", stderr: "" };
-      }
-      events.push("get-missing");
-      return { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
-    });
+      const isFirstProbe = getAttempts === 1;
+      events.push(isFirstProbe ? "get-live" : "get-missing");
+      return isFirstProbe
+        ? { status: 0, stdout: "Name: alpha\nPhase: Terminating", stderr: "" }
+        : { status: 1, stdout: "", stderr: "Error: sandbox alpha not found" };
+    };
+    mocks.runOpenshell.mockImplementation((args: string[]) =>
+      args[1] === "delete" ? deleteResult() : getResult(),
+    );
     mocks.removeSandboxRegistryEntryWithReceipt.mockImplementation(() => {
       events.push("remove-registry");
       return null;

@@ -157,15 +157,14 @@ describe("rebuild resume snapshot repair", () => {
       } as never),
       vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args: unknown) => {
         const argv = Array.isArray(args) ? args.map(String) : [];
-        if (argv.join(" ") === "sandbox get alpha") {
-          return {
-            status: 1,
-            output: "sandbox alpha not found",
-            stdout: "",
-            stderr: "sandbox alpha not found",
-          } as never;
-        }
-        return { status: 0, output: "", stdout: "", stderr: "" } as never;
+        return argv.join(" ") === "sandbox get alpha"
+          ? ({
+              status: 1,
+              output: "sandbox alpha not found",
+              stdout: "",
+              stderr: "sandbox alpha not found",
+            } as never)
+          : ({ status: 0, output: "", stdout: "", stderr: "" } as never);
       }),
       vi.spyOn(destroy, "removeSandboxRegistryEntry").mockReturnValue(true),
       vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined),
