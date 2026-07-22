@@ -43,11 +43,17 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "authoritativeLocalBaseBuildAllowanceMs",
         "rootStartToFirstTurnCompletionBudgetMs",
         "rootEndToFirstTurnCompletionBudgetMs",
         "phaseBudgetsMs"
       ],
       "properties": {
+        "authoritativeLocalBaseBuildAllowanceMs": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Bounded extra time allowed for the root-start and sandbox-phase caps only when full-e2e observes the authoritative local base-image rebuild message."
+        },
         "rootStartToFirstTurnCompletionBudgetMs": {
           "type": "number",
           "minimum": 0,

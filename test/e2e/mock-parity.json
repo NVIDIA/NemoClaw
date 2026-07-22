@@ -423,7 +423,10 @@
       "fast": [
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts",
+        "test/e2e/support/rebuild-hermes-env.test.ts",
+        "test/e2e/support/rebuild-hermes-base-identity.test.ts",
         "test/e2e/support/rebuild-hermes-image-state.test.ts",
+        "test/e2e/support/rebuild-hermes-old-base-fixture.test.ts",
         "test/e2e/support/rebuild-hermes-progress.test.ts"
       ]
     },

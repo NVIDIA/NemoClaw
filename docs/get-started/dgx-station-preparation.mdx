@@ -4,7 +4,7 @@
 title: "Prepare DGX Station to Install NemoClaw"
 sidebar-title: "Additional Setup for DGX Station"
 description: "Qualify and prepare a DGX Station GB300 for NemoClaw express install."
-description-agent: "Covers DGX Station GB300 qualification, generic Ubuntu preparation, stock DGX OS validation, and reboot handoff. Use when preparing a DGX Station for NemoClaw express install."
+description-agent: "Covers DGX Station GB300 qualification, generic Ubuntu preparation, qualified factory-image validation, and reboot handoff. Use when preparing a DGX Station for NemoClaw express install."
 keywords: ["nemoclaw dgx station setup", "nemoclaw dgx station gb300", "nemoclaw station express install"]
 content:
   type: "reference"
@@ -53,6 +53,14 @@ The installer records the override in the printed relogin command when Docker-gr
 
 On the generic Ubuntu path, accepting express install prepares the host with NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
 Preparation probes package and runtime state first, reuses exact matches, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
+NemoClaw accepts an idle PackageKit daemon and quiesces it during repository and package changes.
+NemoClaw still stops before mutation when it finds any of these conditions:
+
+- An active or malformed PackageKit transaction.
+- An active APT or dpkg process or lock.
+- Unhealthy package state.
+- A failure in a required package or package-manager state query.
+
 It permits only the reviewed factory transition from `dkms` `3.0.11-1ubuntu13` to `1:3.4.0-1ubuntu1`.
 It also accepts an installed `dkms` `1:3.4.1-1ubuntu1` as a retained-compatible forward revision, warns that it differs from the validated `1:3.4.0-1ubuntu1` pin, excludes it from APT transactions, and continues runtime validation.
 Retention requires `dpkg` to report a fully installed package for `arm64` or architecture `all`; an unhealthy or malformed record, an unexpected architecture, or a package-query failure stops preparation before APT changes.
@@ -109,7 +117,7 @@ sudo reboot
 After the host restarts, rerun the NemoClaw installer.
 If the host uses RDMA, repair OpenIB/OFED instead, then rerun the installer after `openibd.service` is healthy.
 
-## Validate Stock DGX OS
+## Validate DGX OS and Factory Images
 
 On a qualifying stock DGX OS or exact no-OTA factory image, express install validates the factory stack in place against the local default Docker daemon.
 It requires a loaded GB300 driver with zero volatile corrected and uncorrected ECC errors, active Docker and containerd services, working Docker Buildx, `nvidia-ctk`, the `nvidia.com/gpu=all` CDI device, and successful `nvidia-smi` device-visibility probes through both CDI and `--gpus all`.
@@ -125,13 +133,15 @@ The preparation helper writes a private audit log under `~/station-bootstrap-log
 Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS path leaves only the digest-pinned visibility-test image in the Docker cache.
 The AI Developer Tools path can also leave the packaged CDI refresh units enabled when it repairs a missing device.
 
-One physical DGX OS `7.5.0` GB300 validation completed with released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
-Repeat qualification from a clean host and CI coverage remain pending.
+Physical validation on one DGX Station GB300 covers generic Ubuntu 24.04 ARM64, stock DGX OS `7.5.0`, the April 2026 NVIDIA Colossus BaseOS profile, and the June 2026 NVIDIA AI Developer Tools profile.
+Clean-host end-to-end validation passed on generic Ubuntu and Colossus BaseOS; stock DGX OS and AI Developer Tools completed Station Express validation.
+The DGX OS `7.5.0` run used released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
+A dual-Station configuration has not been validated, and dedicated CI coverage is not available.
 For the complete support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
 
 <Warning title="DGX Station Support Status">
-DGX Station remains Deferred.
-Repeat qualification from a clean host and CI coverage remain pending before any support-status promotion.
+DGX Station is Tested with limitations across the qualified profiles above on one physical DGX Station GB300.
+Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
 </Warning>
 
 ## Next Step
