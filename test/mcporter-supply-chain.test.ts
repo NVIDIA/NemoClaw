@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { type DependencyNode, findDependency } from "./fixtures/dependency-graph.ts";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const runtimeDirectory = path.join(repoRoot, "agents", "openclaw", "mcporter-runtime");
@@ -17,6 +18,11 @@ const expectedVersion = "0.7.3";
 const expectedIntegrity =
   "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
 const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz";
+const expectedHonoNodeServerVersion = "2.0.11";
+const expectedHonoNodeServerTarball =
+  "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
+const expectedFastUriVersion = "3.1.4";
+const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 
 function extractIntegrityGate(contents: string): string {
@@ -70,12 +76,23 @@ describe("mcporter image supply-chain controls", () => {
       { cwd: runtimeDirectory, encoding: "utf8" },
     );
     expect(result.status, result.stderr).toBe(0);
-    const graph = JSON.parse(result.stdout) as {
-      dependencies?: Record<string, { version?: string }>;
-      problems?: string[];
-    };
+    const graph = JSON.parse(result.stdout) as DependencyNode & { problems?: string[] };
     expect(graph.problems).toBeUndefined();
     expect(graph.dependencies?.mcporter?.version).toBe(expectedVersion);
+    expect(findDependency(graph, "@hono/node-server")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedHonoNodeServerTarball,
+        version: expectedHonoNodeServerVersion,
+      }),
+    );
+    expect(findDependency(graph, "fast-uri")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedFastUriTarball,
+        version: expectedFastUriVersion,
+      }),
+    );
   });
 
   it.each(dockerfiles)("pins and verifies the package in $name", ({ contents }) => {

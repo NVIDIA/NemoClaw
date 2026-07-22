@@ -46,6 +46,102 @@ function writeHermesRegistry(): void {
   );
 }
 
+function exerciseFailedKanbanBackup(options: { mode: "execute" | "empty-success"; name: string }): {
+  success: boolean;
+  backedUpFiles: string[];
+  failedFiles: string[];
+  localKanbanBackupExists: boolean;
+  remoteKanbanStatus: number | null;
+} {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-kanban-failure-"));
+  const oldPath = process.env.PATH;
+  const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+  try {
+    const binDir = path.join(fixture, "bin");
+    const hermesDir = path.join(fixture, "sandbox-root", ".hermes");
+    const remoteStatusPath = path.join(fixture, "remote-kanban-status");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(hermesDir, { recursive: true });
+    fs.writeFileSync(path.join(hermesDir, "kanban.db"), "not a sqlite database\n");
+
+    const openshell = path.join(binDir, "openshell");
+    writeExecutable(
+      openshell,
+      `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "sandbox" && args[1] === "ssh-config") {
+  process.stdout.write("Host openshell-hermes\\n  HostName 127.0.0.1\\n  User sandbox\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+    );
+
+    writeExecutable(
+      path.join(binDir, "ssh"),
+      `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const cmd = process.argv[process.argv.length - 1] || "";
+const mode = ${JSON.stringify(options.mode)};
+if (mode === "empty-success") {
+  if (cmd.includes("[ -d ")) process.exit(0);
+  if (cmd.includes("nemoclaw-sqlite-backup") && cmd.includes("kanban.db")) process.exit(0);
+  process.exit(2);
+}
+const mapped = cmd.split("/sandbox/.hermes").join(${JSON.stringify(hermesDir)});
+const result = spawnSync("/bin/sh", ["-c", mapped], { stdio: "inherit" });
+if (cmd.includes("nemoclaw-sqlite-backup") && cmd.includes("kanban.db")) {
+  fs.writeFileSync(${JSON.stringify(remoteStatusPath)}, String(result.status));
+}
+process.exit(result.status === null ? 1 : result.status);
+`,
+    );
+
+    writeHermesRegistry();
+    process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+    process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+
+    const backup = sandboxState.backupSandboxState("hermes", { name: options.name });
+    return {
+      success: backup.success,
+      backedUpFiles: backup.backedUpFiles,
+      failedFiles: backup.failedFiles,
+      localKanbanBackupExists:
+        backup.manifest !== undefined &&
+        fs.existsSync(path.join(backup.manifest.backupPath, "kanban.db")),
+      remoteKanbanStatus: fs.existsSync(remoteStatusPath)
+        ? Number(fs.readFileSync(remoteStatusPath, "utf-8"))
+        : null,
+    };
+  } finally {
+    oldOpenshell === undefined
+      ? delete process.env.NEMOCLAW_OPENSHELL_BIN
+      : (process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell);
+    oldPath === undefined ? delete process.env.PATH : (process.env.PATH = oldPath);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
+it("fails closed when the remote Hermes SQLite backup command fails (#7144)", () => {
+  const result = exerciseFailedKanbanBackup({ mode: "execute", name: "invalid-kanban" });
+
+  expect(result.success).toBe(false);
+  expect(result.backedUpFiles).toEqual([]);
+  expect(result.failedFiles).toEqual(["kanban.db"]);
+  expect(result.localKanbanBackupExists).toBe(false);
+  expect(result.remoteKanbanStatus).toBe(1);
+});
+
+it("rejects an empty Hermes SQLite backup payload (#7144)", () => {
+  const result = exerciseFailedKanbanBackup({ mode: "empty-success", name: "empty-kanban" });
+
+  expect(result.success).toBe(false);
+  expect(result.backedUpFiles).toEqual([]);
+  expect(result.failedFiles).toEqual(["kanban.db"]);
+  expect(result.localKanbanBackupExists).toBe(false);
+});
+
 it("fails the SQLite state backup when the online backup command fails (#7095)", () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sqlite-backup-failure-"));
   try {
@@ -61,7 +157,7 @@ it("fails the SQLite state backup when the online backup command fails (#7095)",
       encoding: null,
     });
 
-    expect(command).toContain("/usr/bin/python3 -I -c");
+    expect(command).toContain("/usr/bin/python3 -I -S -c");
     expect(result.status).not.toBe(0);
     expect(result.stdout).toHaveLength(0);
   } finally {
@@ -190,6 +286,7 @@ process.exit(0);
     expect(fs.readFileSync(externalWorktreeFile, "utf-8")).toBe("fresh external worktree\n");
 
     const loggedCommands = fs.readFileSync(sshLog, "utf-8");
+    expect(loggedCommands).toContain("/usr/bin/python3 -I -S -c");
     expect(loggedCommands).toContain("sqlite3.connect");
     expect(loggedCommands).not.toContain("tar -cf -");
     expect(loggedCommands).not.toContain("kanban/boards/release-board");
