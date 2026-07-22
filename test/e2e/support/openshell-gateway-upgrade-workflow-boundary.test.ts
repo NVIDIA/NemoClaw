@@ -131,6 +131,18 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     expect(validateLegacyGatewayUpgradeFixture(fixture)).toEqual({
       sandboxBaseDigest: "10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108",
     });
+    expect(
+      validateLegacyGatewayUpgradeFixture({
+        nemoclawRef: "v0.0.89",
+        nemoclawCommit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
+        installerSha256: "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2",
+        openclawVersion: "2026.6.10",
+        sandboxBaseImageRef:
+          "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
+      }),
+    ).toEqual({
+      sandboxBaseDigest: "3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
+    });
     expect(() =>
       validateLegacyGatewayUpgradeFixture({
         ...fixture,

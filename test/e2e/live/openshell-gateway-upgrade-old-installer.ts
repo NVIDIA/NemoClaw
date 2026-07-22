@@ -80,6 +80,12 @@ const REVIEWED_OLD_INSTALLER_PROFILES: Readonly<Record<string, ReviewedOldInstal
       nemoclawRef: "v0.0.74",
       openclawVersion: "2026.5.27",
     }),
+    "v0.0.89": Object.freeze({
+      expectedAdvisoryAuditCount: 1,
+      nemoclawCommit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
+      nemoclawRef: "v0.0.89",
+      openclawVersion: "2026.6.10",
+    }),
   });
 
 export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClawArchive {
