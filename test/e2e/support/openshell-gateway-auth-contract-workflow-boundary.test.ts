@@ -61,6 +61,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
     )!;
     upload.uses = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
     upload.if = "always()";
+    upload.with = { path: "e2e-artifacts/live/openshell-gateway-auth-contract/" };
     steps.splice(steps.indexOf(artifactSafety), 1);
     steps.splice(steps.indexOf(upload) + 1, 0, artifactSafety);
 
@@ -84,6 +85,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must run: node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts \"$E2E_ARTIFACT_DIR\"",
         "openshell-gateway-auth-contract must use the reviewed artifact uploader",
         "openshell-gateway-auth-contract must upload artifacts only after this run attempt passes safety scan",
+        "openshell-gateway-auth-contract must upload only the immutable approved artifact payload",
         "openshell-gateway-auth-contract step 'Pre-pull pinned gateway auth probe image' must precede 'Run OpenShell gateway auth contract live test'",
         "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must precede 'Upload OpenShell gateway auth contract artifacts'",
       ]),

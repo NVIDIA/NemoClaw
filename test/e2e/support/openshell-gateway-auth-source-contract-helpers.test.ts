@@ -230,13 +230,17 @@ describe("OpenShell gateway auth source contract helpers", () => {
       expect(fs.readFileSync(path.join(dir, "failed-probe.json"), "utf8")).toContain(
         '"status":"failed"',
       );
-      expect(fs.existsSync(path.join(dir, openShellGatewayAuthArtifactSafetyMarkerName()))).toBe(
-        false,
-      );
-      scanAndApproveOpenShellGatewayAuthArtifacts(dir);
-      expect(fs.existsSync(path.join(dir, openShellGatewayAuthArtifactSafetyMarkerName()))).toBe(
-        true,
-      );
+      const approved = scanAndApproveOpenShellGatewayAuthArtifacts(dir);
+      try {
+        expect(fs.readFileSync(path.join(approved, "failed-probe.json"), "utf8")).toContain(
+          '"status":"failed"',
+        );
+        expect(
+          fs.existsSync(path.join(approved, openShellGatewayAuthArtifactSafetyMarkerName())),
+        ).toBe(true);
+      } finally {
+        fs.rmSync(approved, { recursive: true, force: true });
+      }
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -249,9 +253,6 @@ describe("OpenShell gateway auth source contract helpers", () => {
     fs.writeFileSync(path.join(dir, "failed-probe.json"), '{"authorization":"redacted"}\n');
     vi.stubEnv("GITHUB_RUN_ID", "29897237525");
     vi.stubEnv("GITHUB_RUN_ATTEMPT", "9");
-    const safetyMarker = path.join(dir, openShellGatewayAuthArtifactSafetyMarkerName());
-    fs.writeFileSync(safetyMarker, "stale approval\n");
-
     const originalRmSync = fs.rmSync.bind(fs);
     const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(() => {
       throw new Error("simulated quarantine move failure");
@@ -268,7 +269,6 @@ describe("OpenShell gateway auth source contract helpers", () => {
         Promise.resolve().then(() => scanAndApproveOpenShellGatewayAuthArtifacts(dir)),
       ).rejects.toThrow(/failed safety approval and quarantine/);
       expect(fs.existsSync(dir)).toBe(true);
-      expect(fs.existsSync(safetyMarker)).toBe(false);
     } finally {
       rmSpy.mockRestore();
       renameSpy.mockRestore();
@@ -297,6 +297,31 @@ describe("OpenShell gateway auth source contract helpers", () => {
       expect(fs.existsSync(dir)).toBe(false);
     } finally {
       fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("uploads a vetted staging payload that later source mutations cannot change (#7101)", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-artifact-staging-"));
+    const dir = path.join(parent, "uploadable-auth-artifacts");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "scenario.json"), '{"status":"passed"}\n');
+    const approved = scanAndApproveOpenShellGatewayAuthArtifacts(dir, {
+      GITHUB_RUN_ATTEMPT: "3",
+      GITHUB_RUN_ID: "29897237525",
+    });
+    try {
+      fs.writeFileSync(path.join(dir, "late.json"), '{"authorization":"leaked"}\n');
+
+      expect(fs.existsSync(path.join(approved, "late.json"))).toBe(false);
+      expect(fs.readFileSync(path.join(approved, "scenario.json"), "utf8")).toBe(
+        '{"status":"passed"}\n',
+      );
+      expect(
+        fs.existsSync(path.join(approved, "artifact-safety-29897237525-3.passed")),
+      ).toBe(true);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+      fs.rmSync(approved, { recursive: true, force: true });
     }
   });
 });

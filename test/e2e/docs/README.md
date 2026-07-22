@@ -262,9 +262,11 @@ test/e2e/
   JSON summaries plus action, log, and shell command-evidence directories under
   14-day retention.
   Final OpenShell gateway-auth artifacts pass a fail-closed safety scan after
-  cleanup. Approval is bound to the current Actions run ID and attempt; unsafe
-  files are quarantined or deleted, and the gateway-auth directory is uploaded
-  only when it contains that current-attempt approval marker.
+  cleanup. The scanner copies safe files into a private staging directory,
+  scans that copy again, and adds a marker bound to the current Actions run ID
+  and attempt. Unsafe source files are quarantined or deleted. The workflow
+  uploads only the staged copy, so later changes to the source directory cannot
+  alter the approved payload.
   The allowlist includes each target's sanitized onboard timing summary at
   `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`.
   Raw onboard traces stay under the runner temporary directory and are deleted

@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const LOCAL_ARTIFACT_SAFETY_RUN_ID = `local-${process.pid}`;
+const NO_FOLLOW = fs.constants.O_NOFOLLOW ?? 0;
 
 const FORBIDDEN_AUTH_ARTIFACT_CONTENT: Array<{ label: string; pattern: RegExp }> = [
   { label: "authorization header", pattern: /["']?authorization["']?\s*[:=]/i },
@@ -135,24 +136,81 @@ export function openShellGatewayAuthArtifactSafetyMarkerName(
   return `artifact-safety-${runId}-${runAttempt}.passed`;
 }
 
+function copyApprovedArtifacts(sourceRoot: string, approvedRoot: string): void {
+  const copyRegularFile = (sourcePath: string, approvedPath: string): void => {
+    const source = fs.openSync(sourcePath, fs.constants.O_RDONLY | NO_FOLLOW);
+    const approved = fs.openSync(
+      approvedPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NO_FOLLOW,
+      0o600,
+    );
+    try {
+      const sourceStat = fs.fstatSync(source);
+      if (!sourceStat.isFile() || sourceStat.nlink !== 1) {
+        throw new Error(`${sourcePath} must be a single-link regular file`);
+      }
+      const buffer = Buffer.allocUnsafe(64 * 1024);
+      let count = fs.readSync(source, buffer, 0, buffer.length, null);
+      while (count > 0) {
+        let written = 0;
+        while (written < count) {
+          written += fs.writeSync(approved, buffer, written, count - written);
+        }
+        count = fs.readSync(source, buffer, 0, buffer.length, null);
+      }
+      fs.fchmodSync(approved, 0o600);
+      fs.fsyncSync(approved);
+    } finally {
+      fs.closeSync(approved);
+      fs.closeSync(source);
+    }
+  };
+  const copy = (sourceDir: string, approvedDir: string): void => {
+    for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+      const sourcePath = path.join(sourceDir, entry.name);
+      const approvedPath = path.join(approvedDir, entry.name);
+      if (entry.isDirectory()) {
+        fs.mkdirSync(approvedPath, { mode: 0o700 });
+        copy(sourcePath, approvedPath);
+        continue;
+      }
+      if (!entry.isFile()) {
+        throw new Error(`Unsafe OpenShell auth-contract artifact '${entry.name}': non-regular file`);
+      }
+      copyRegularFile(sourcePath, approvedPath);
+    }
+  };
+  copy(sourceRoot, approvedRoot);
+}
+
 export function scanAndApproveOpenShellGatewayAuthArtifacts(
   rootDir: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const safetyMarker = path.join(rootDir, openShellGatewayAuthArtifactSafetyMarkerName(env));
-  const pendingSafetyMarker = `${safetyMarker}.pending`;
+  let approvedRoot: string | undefined;
   try {
-    fs.rmSync(safetyMarker, { force: true });
-    fs.rmSync(pendingSafetyMarker, { force: true });
     assertOpenShellGatewayAuthArtifactsSafe(rootDir);
-    fs.writeFileSync(pendingSafetyMarker, "approved\n", {
+    approvedRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-approved-auth-artifacts-"),
+      { encoding: "utf8" },
+    );
+    fs.chmodSync(approvedRoot, 0o700);
+    copyApprovedArtifacts(path.resolve(rootDir), approvedRoot);
+    assertOpenShellGatewayAuthArtifactsSafe(approvedRoot);
+    const safetyMarker = path.join(
+      approvedRoot,
+      openShellGatewayAuthArtifactSafetyMarkerName(env),
+    );
+    fs.writeFileSync(safetyMarker, "approved\n", {
       encoding: "utf8",
       flag: "wx",
       mode: 0o600,
     });
-    fs.renameSync(pendingSafetyMarker, safetyMarker);
-    return safetyMarker;
+    return approvedRoot;
   } catch (error) {
+    if (approvedRoot) {
+      fs.rmSync(approvedRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
     rejectAndQuarantine(rootDir, error);
   }
 }
@@ -164,8 +222,14 @@ function runCli(): void {
       "Usage: node --experimental-strip-types tools/e2e/openshell-gateway-auth-artifact-safety.mts <artifact-root>",
     );
   }
-  const marker = scanAndApproveOpenShellGatewayAuthArtifacts(rootDir);
-  process.stdout.write(`OpenShell gateway auth artifacts approved: ${path.basename(marker)}\n`);
+  const approvedRoot = scanAndApproveOpenShellGatewayAuthArtifacts(rootDir);
+  const githubOutput = process.env.GITHUB_OUTPUT;
+  if (githubOutput) {
+    fs.appendFileSync(githubOutput, `approved_path=${approvedRoot}\n`, "utf8");
+  }
+  process.stdout.write(
+    `OpenShell gateway auth artifacts copied to approved staging: ${path.basename(approvedRoot)}\n`,
+  );
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

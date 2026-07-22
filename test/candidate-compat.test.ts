@@ -152,7 +152,7 @@ describe("OpenShell candidate compatibility contract", () => {
       [
         "candidate-results/live-openshell-gateway-auth-contract.json",
         "candidate-live-observed.json",
-        "${{ steps.artifact_safety.outcome == 'success' && hashFiles(format('candidate-source/e2e-artifacts/live/openshell-gateway-auth-contract/artifact-safety-{0}-{1}.passed', github.run_id, github.run_attempt)) != '' && 'candidate-source/e2e-artifacts/live/openshell-gateway-auth-contract/' || '' }}",
+        "${{ steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path || '' }}",
         "",
       ].join("\n"),
     );

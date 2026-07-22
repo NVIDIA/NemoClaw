@@ -18,7 +18,8 @@ const EXPLICIT_ONLY_CONDITION =
 const GATEWAY_PROBE_IMAGE =
   "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
 const ARTIFACT_SAFETY_GATED_UPLOAD =
-  "${{ always() && steps.artifact_safety.outcome == 'success' && hashFiles(format('e2e-artifacts/live/openshell-gateway-auth-contract/artifact-safety-{0}-{1}.passed', github.run_id, github.run_attempt)) != '' }}";
+  "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
+const APPROVED_ARTIFACT_PATH = "${{ steps.artifact_safety.outputs.approved_path }}";
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
@@ -175,6 +176,9 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   }
   if (upload.if !== ARTIFACT_SAFETY_GATED_UPLOAD) {
     errors.push(`${JOB_NAME} must upload artifacts only after this run attempt passes safety scan`);
+  }
+  if (asRecord(upload.with).path !== APPROVED_ARTIFACT_PATH) {
+    errors.push(`${JOB_NAME} must upload only the immutable approved artifact payload`);
   }
 
   requireStepOrder(errors, steps, "Prepare E2E workspace", "Install OpenShell CLI");
