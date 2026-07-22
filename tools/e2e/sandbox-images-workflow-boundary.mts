@@ -93,6 +93,46 @@ const GUARDED_PRODUCTION_BUILD_CONTRACTS: readonly GuardedProductionBuildContrac
   },
 ];
 
+type NodeTarImageScanContract = Readonly<{
+  artifactName: string;
+  boundaryStepName: string;
+  evidencePath: string;
+  jobName: "build-hermes-sandbox-image" | "build-sandbox-images" | "build-sandbox-images-arm64";
+  scanStepName: string;
+  target: string;
+  uploadStepName: string;
+}>;
+
+const NODE_TAR_IMAGE_SCAN_CONTRACTS: readonly NodeTarImageScanContract[] = [
+  {
+    artifactName: "openclaw-node-tar-inventory",
+    boundaryStepName: "Save images to tarballs",
+    evidencePath: "/tmp/openclaw-node-tar-inventory.json",
+    jobName: "build-sandbox-images",
+    scanStepName: "Scan completed OpenClaw image for node-tar",
+    target: "nemoclaw-production",
+    uploadStepName: "Upload OpenClaw node-tar inventory",
+  },
+  {
+    artifactName: "hermes-node-tar-inventory",
+    boundaryStepName: "Save Hermes production image",
+    evidencePath: "/tmp/hermes-node-tar-inventory.json",
+    jobName: "build-hermes-sandbox-image",
+    scanStepName: "Scan completed Hermes image for node-tar",
+    target: "nemoclaw-hermes-production",
+    uploadStepName: "Upload Hermes node-tar inventory",
+  },
+  {
+    artifactName: "openclaw-arm64-node-tar-inventory",
+    boundaryStepName: "Build sandbox test image on arm64",
+    evidencePath: "/tmp/openclaw-arm64-node-tar-inventory.json",
+    jobName: "build-sandbox-images-arm64",
+    scanStepName: "Scan completed OpenClaw arm64 image for node-tar",
+    target: "nemoclaw-production-arm64",
+    uploadStepName: "Upload OpenClaw arm64 node-tar inventory",
+  },
+];
+
 type WorkflowRecord = Record<string, unknown>;
 
 export type SandboxImagesWorkflowStep = WorkflowRecord & {
@@ -367,6 +407,94 @@ function validateGuardedProductionBuildContracts(
 ): void {
   for (const contract of GUARDED_PRODUCTION_BUILD_CONTRACTS) {
     validateGuardedProductionBuild(errors, workflow, contract);
+  }
+}
+
+function validateNodeTarImageScan(
+  errors: string[],
+  workflow: SandboxImagesWorkflow,
+  contract: NodeTarImageScanContract,
+): void {
+  const job = workflow.jobs[contract.jobName] ?? {};
+  const scan = requireStep(errors, contract.jobName, job, contract.scanStepName);
+  const upload = requireStep(errors, contract.jobName, job, contract.uploadStepName);
+  if (steps(job).filter((step) => step.name === contract.scanStepName).length !== 1) {
+    errors.push(`${contract.jobName} must scan its completed image exactly once`);
+  }
+  if (scan.id !== "node-tar-scan" || scan.shell !== "bash") {
+    errors.push(`${contract.jobName} node-tar scan must expose its outcome from a bash step`);
+  }
+
+  const run = normalizedShell(scan.run);
+  const requiredFragments = [
+    "set -euo pipefail",
+    `image_id="$(docker image inspect --format '{{.Id}}' ${contract.target})"`,
+    "docker run --rm",
+    "--network none",
+    "--read-only",
+    "--cap-drop ALL",
+    "--cap-add DAC_READ_SEARCH",
+    "--security-opt no-new-privileges",
+    "--pids-limit 64",
+    "--memory 256m",
+    "--entrypoint node",
+    '-v "${{ github.workspace }}/scripts/checks/node-tar-image-scan.mts:/scripts/checks/node-tar-image-scan.mts:ro"',
+    contract.target,
+    "--experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
+    "--root /",
+    '--image "${image_id}"',
+    `| tee ${contract.evidencePath}`,
+  ];
+  for (const fragment of requiredFragments) {
+    if (!run.includes(fragment)) {
+      errors.push(`${contract.jobName} node-tar scan must include ${fragment}`);
+    }
+  }
+  if (run.includes("--privileged") || run.includes("/var/run/docker.sock")) {
+    errors.push(`${contract.jobName} node-tar scan must remain isolated from host privileges`);
+  }
+
+  if (
+    steps(job).filter((step) => step.name === contract.uploadStepName).length !== 1 ||
+    upload.if !== "${{ always() && steps.node-tar-scan.outcome != 'skipped' }}" ||
+    !FULL_SHA_ACTION.test(upload.uses ?? "") ||
+    !String(upload.uses ?? "").startsWith("actions/upload-artifact@") ||
+    !isDeepStrictEqual(record(upload.with), {
+      name: contract.artifactName,
+      path: contract.evidencePath,
+      "if-no-files-found": "error",
+      "retention-days": 14,
+    })
+  ) {
+    errors.push(`${contract.jobName} must retain its node-tar inventory for 14 days`);
+  }
+
+  const buildIndex = stepIndex(
+    job,
+    contract.jobName === "build-hermes-sandbox-image"
+      ? "Build Hermes production image"
+      : contract.jobName === "build-sandbox-images-arm64"
+        ? "Build production image on arm64"
+        : "Build production image",
+  );
+  const scanIndex = stepIndex(job, contract.scanStepName);
+  const uploadIndex = stepIndex(job, contract.uploadStepName);
+  const boundaryIndex = stepIndex(job, contract.boundaryStepName);
+  if (
+    buildIndex < 0 ||
+    scanIndex <= buildIndex ||
+    uploadIndex <= scanIndex ||
+    boundaryIndex <= uploadIndex
+  ) {
+    errors.push(
+      `${contract.jobName} must scan and retain evidence before the completed image is handed off`,
+    );
+  }
+}
+
+function validateNodeTarImageScans(errors: string[], workflow: SandboxImagesWorkflow): void {
+  for (const contract of NODE_TAR_IMAGE_SCAN_CONTRACTS) {
+    validateNodeTarImageScan(errors, workflow, contract);
   }
 }
 
@@ -840,6 +968,7 @@ export function validateSandboxImagesWorkflow(
   }
   validateSecretScopeAndRegistryWrites(errors, workflow);
   validateGuardedProductionBuildContracts(errors, workflow);
+  validateNodeTarImageScans(errors, workflow);
   validateMessagingPlanImageBoundary(errors, workflow);
   validateRuntimeImageReuse(errors, workflow);
   validateHermesImageReuse(errors, workflow);

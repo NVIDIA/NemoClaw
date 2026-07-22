@@ -254,8 +254,8 @@ position: 1
 ## Style Guide
 
 Write like you are explaining something to a colleague. Be direct, specific, and concise.
-Apply the [NemoClaw Technical English profile](../CONTRIBUTING.md#nemoclaw-technical-english) to changed prose.
-The profile defines shared terminology, sentence rules, rewrite examples, and the changed-text pilot.
+Follow the [NemoClaw Writing Guide](../WRITING.md) for changed prose.
+The guide defines shared terms, sentence rules, rewrite examples, and review policy.
 The rules below add documentation-specific voice, formatting, and product-name conventions.
 
 ### Voice and Tone
