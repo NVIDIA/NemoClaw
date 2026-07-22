@@ -23,11 +23,11 @@ import {
   stageFileReplacement,
 } from "./lib/staged-replacement-transaction.mts";
 
-export const FIXED_HONO_NODE_SERVER_VERSION = "2.0.10";
+export const FIXED_HONO_NODE_SERVER_VERSION = "2.0.11";
 export const FIXED_HONO_NODE_SERVER_INTEGRITY =
-  "sha512-ZcnNVhKTmyDJeg0UlnZjvM73JBsTAuhrH/J4fjwGOw59PwOW51r4J+p6CsKZWXdKSme4MFqU62CZMOsdDrU4CA==";
+  "sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==";
 export const FIXED_HONO_NODE_SERVER_TARBALL =
-  "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.10.tgz";
+  "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
 
 const VULNERABLE_HONO_NODE_SERVER_VERSION = "1.19.14";
 const VULNERABLE_HONO_NODE_SERVER_INTEGRITY =

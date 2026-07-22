@@ -8,6 +8,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  FIXED_HONO_NODE_SERVER_INTEGRITY,
+  FIXED_HONO_NODE_SERVER_TARBALL,
   FIXED_HONO_NODE_SERVER_VERSION,
   prepareHistoricalMcporterInstall,
   restoreHistoricalMcporterInstall,
@@ -67,6 +69,16 @@ afterEach(() => {
 
 describe("historical mcporter Hono security revision (#7272)", () => {
   it("atomically revises the reviewed metadata and verifies the installed package", () => {
+    expect({
+      integrity: FIXED_HONO_NODE_SERVER_INTEGRITY,
+      tarball: FIXED_HONO_NODE_SERVER_TARBALL,
+      version: FIXED_HONO_NODE_SERVER_VERSION,
+    }).toEqual({
+      integrity:
+        "sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==",
+      tarball: "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz",
+      version: "2.0.11",
+    });
     const target = fixture();
     expect(prepareHistoricalMcporterInstall(target)).toBe("vulnerable");
     writeJson(
