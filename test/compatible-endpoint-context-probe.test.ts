@@ -27,7 +27,7 @@ function testProgress(): TestProgress {
   progress ??= startTestProgress(
     "compatible endpoint support",
     ["serve compatible endpoint", "verify compatible endpoint"],
-    { logLine: () => undefined },
+    { targetId: "compatible-endpoint-context-probe" },
   );
   return progress;
 }
@@ -67,12 +67,15 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
   timeout: testTimeout(60_000),
 }, () => {
   it("reads max_model_len from a live /v1/models endpoint into NEMOCLAW_CONTEXT_WINDOW (#6177)", async () => {
+    const testRun = testProgress();
+    testRun.phase("serve compatible endpoint");
     server = await startFakeOpenAiCompatibleServer({
       model: MODEL,
       maxModelLen: 65_536,
-      progress: testProgress(),
+      progress: testRun,
     });
 
+    testRun.phase("verify compatible endpoint");
     const models = fetchCompatibleEndpointModels(server.baseUrl, "");
     expect(models).toMatchObject({ data: [{ id: MODEL, max_model_len: 65_536 }] });
 
@@ -86,13 +89,16 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
   });
 
   it("sends the endpoint credential through curl's --config auth flow (#6177)", async () => {
+    const testRun = testProgress();
+    testRun.phase("serve compatible endpoint");
     server = await startFakeOpenAiCompatibleServer({
       model: MODEL,
       maxModelLen: 32_768,
       apiKey: "secret-key",
-      progress: testProgress(),
+      progress: testRun,
     });
 
+    testRun.phase("verify compatible endpoint");
     const env: NodeJS.ProcessEnv = {};
     await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,
@@ -110,14 +116,17 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
   });
 
   it("enforces auth on /v1/models: sets the window with the key, skips it without (#6177)", async () => {
+    const testRun = testProgress();
+    testRun.phase("serve compatible endpoint");
     server = await startFakeOpenAiCompatibleServer({
       model: MODEL,
       maxModelLen: 65_536,
       apiKey: "secret-key",
-      progress: testProgress(),
+      progress: testRun,
       requireAuthModels: true,
     });
 
+    testRun.phase("verify compatible endpoint");
     // Wrong/absent credential → the endpoint 401s → no window is set.
     const noKeyEnv: NodeJS.ProcessEnv = {};
     await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
@@ -153,11 +162,14 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     // so the source-boundary guard exempts loopback (mirroring the chat probe)
     // and the real curl fetcher must run and propagate the window. Non-loopback
     // private targets stay blocked — see the unit-test rejection cases.
+    const testRun = testProgress();
+    testRun.phase("serve compatible endpoint");
     server = await startFakeOpenAiCompatibleServer({
       model: MODEL,
       maxModelLen: 65_536,
-      progress: testProgress(),
+      progress: testRun,
     });
+    testRun.phase("verify compatible endpoint");
     expect(new URL(server.baseUrl).hostname).toBe("127.0.0.1");
     const modelsRequestsBefore = server
       .requests()
@@ -177,8 +189,11 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
   });
 
   it("keeps the default context window when the endpoint omits max_model_len (#6177)", async () => {
-    server = await startFakeOpenAiCompatibleServer({ model: MODEL, progress: testProgress() });
+    const testRun = testProgress();
+    testRun.phase("serve compatible endpoint");
+    server = await startFakeOpenAiCompatibleServer({ model: MODEL, progress: testRun });
 
+    testRun.phase("verify compatible endpoint");
     const env: NodeJS.ProcessEnv = {};
     await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,

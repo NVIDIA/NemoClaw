@@ -125,25 +125,28 @@ describe("Bedrock raw-command progress", () => {
     const observation = progressProbe();
     const { progress } = observation;
 
-    const result = await runRawCommand(
-      process.execPath,
-      ["-e", "process.stdout.write(Buffer.alloc(10 * 1024 * 1024 + 1, 97))"],
-      {
-        artifactName: "bedrock-progress-bounded-output",
-        artifacts,
-        progress,
-      },
-    );
+    try {
+      const result = await runRawCommand(
+        process.execPath,
+        ["-e", "process.stdout.write(Buffer.alloc(10 * 1024 * 1024 + 1, 97))"],
+        {
+          artifactName: "bedrock-progress-bounded-output",
+          artifacts,
+          progress,
+        },
+      );
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("[raw command output truncated at safe capture limit]");
-    expect(Buffer.byteLength(result.stdout)).toBeLessThan(10 * 1024 * 1024 + 100);
-    await expect(
-      fs.readFile(
-        path.join(artifacts.rootDir, "raw-shell/bedrock-progress-bounded-output.stdout.txt"),
-        "utf8",
-      ),
-    ).resolves.toContain("[raw command output truncated at safe capture limit]");
-    progress.stop();
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("[raw command output truncated at safe capture limit]");
+      expect(Buffer.byteLength(result.stdout)).toBeLessThan(10 * 1024 * 1024 + 100);
+      await expect(
+        fs.readFile(
+          path.join(artifacts.rootDir, "raw-shell/bedrock-progress-bounded-output.stdout.txt"),
+          "utf8",
+        ),
+      ).resolves.toContain("[raw command output truncated at safe capture limit]");
+    } finally {
+      progress.stop();
+    }
   });
 });
