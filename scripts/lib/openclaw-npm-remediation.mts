@@ -20,7 +20,7 @@ import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
 type JsonObject = Record<string, any>;
 
 type Remediation = Readonly<{
-  kind: "core" | "diagnostics-otel" | "plugin";
+  kind: "core" | "diagnostics-otel" | "legacy-core" | "plugin";
   expectedPatchedMetadataIntegrity: string;
 }>;
 
@@ -36,17 +36,19 @@ type BuildRequest = RemediationRequest &
     expectedPatchedMetadataIntegrity?: string;
   }>;
 
-export type RemediatedArchive = Readonly<{
-  archivePath: string;
-  integrity: string;
-}> &
-  Readonly<
-    | { remediated: false }
-    | {
-        metadataIntegrity: string;
-        remediated: true;
-      }
-  >;
+export type RemediatedArchive = Readonly<
+  | {
+      archivePath: string;
+      integrity: string;
+      remediated: false;
+    }
+  | {
+      archivePath: string;
+      integrity: string;
+      metadataIntegrity: string;
+      remediated: true;
+    }
+>;
 
 const AXIOS_VERSION = "1.18.0";
 const AXIOS_INTEGRITY =
@@ -104,6 +106,11 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
     kind: "core",
     expectedPatchedMetadataIntegrity:
       "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
+  },
+  "openclaw@2026.3.11": {
+    kind: "legacy-core",
+    expectedPatchedMetadataIntegrity:
+      "sha512-1i30XSb/2NEcuTcuhXfR/x3YKaXVhWq6ttecFBSD9nrCKrzjNxSNMfK1y3qRcnblNOzRWmHtJZwZKeej02s/EQ==",
   },
 });
 
@@ -181,9 +188,49 @@ function writeJson(path: string, value: JsonObject): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
-function hashPatchedMetadata(packageDirectory: string): string {
+function hashMetadataEntries(entries: readonly (readonly [string, Buffer])[]): string {
   const hash = createHash("sha512");
-  const names = ["package.json", "npm-shrinkwrap.json"];
+  for (const [name, contents] of entries) {
+    hash.update(`${name}\0${contents.length}\0`);
+    hash.update(contents);
+    hash.update("\0");
+  }
+  return `sha512-${hash.digest("base64")}`;
+}
+
+function hashPatchedMetadata(packageDirectory: string): string {
+  const packageJson = readJson(join(packageDirectory, "package.json"));
+  if (packageJson.name === "openclaw" && packageJson.version === "2026.3.11") {
+    const bundledTarPackageJson = readJson(
+      join(packageDirectory, "node_modules", "tar", "package.json"),
+    );
+    return hashMetadataEntries([
+      [
+        "legacy-openclaw-remediation.json",
+        Buffer.from(
+          `${JSON.stringify(
+            {
+              bundledDependencies: packageJson.bundledDependencies,
+              bundledTar: {
+                name: bundledTarPackageJson.name,
+                version: bundledTarPackageJson.version,
+              },
+              name: packageJson.name,
+              tarDependency: packageJson.dependencies?.tar,
+              version: packageJson.version,
+            },
+            null,
+            2,
+          )}\n`,
+        ),
+      ],
+    ]);
+  }
+
+  const names = ["package.json"];
+  if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
+    names.push("npm-shrinkwrap.json");
+  }
   const bundledFsSafePackageJson = "node_modules/@openclaw/fs-safe/package.json";
   if (existsSync(join(packageDirectory, bundledFsSafePackageJson))) {
     names.push(bundledFsSafePackageJson);
@@ -196,13 +243,9 @@ function hashPatchedMetadata(packageDirectory: string): string {
   if (diagnosticsMetadata.every((name) => existsSync(join(packageDirectory, name)))) {
     names.push(...diagnosticsMetadata);
   }
-  for (const name of names) {
-    const contents = readFileSync(join(packageDirectory, name));
-    hash.update(`${name}\0${contents.length}\0`);
-    hash.update(contents);
-    hash.update("\0");
-  }
-  return `sha512-${hash.digest("base64")}`;
+  return hashMetadataEntries(
+    names.map((name) => [name, readFileSync(join(packageDirectory, name))] as const),
+  );
 }
 
 function sortedObject(value: JsonObject): JsonObject {
@@ -384,6 +427,35 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   writeJson(shrinkwrapPath, shrinkwrap);
 }
 
+export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const bundledTarPackageJsonPath = join(packageDirectory, "node_modules", "tar", "package.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(packageJson, "openclaw", "2026.3.11", "Legacy OpenClaw core");
+  if (packageJson.dependencies?.tar !== "7.5.11") {
+    throw new Error("openclaw@2026.3.11 must declare reviewed tar@7.5.11 before remediation");
+  }
+  if (packageJson.bundledDependencies !== undefined) {
+    throw new Error("openclaw@2026.3.11 unexpectedly declares bundled dependencies");
+  }
+  if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
+    throw new Error("openclaw@2026.3.11 unexpectedly ships an npm shrinkwrap");
+  }
+  if (!existsSync(bundledTarPackageJsonPath)) {
+    throw new Error("openclaw@2026.3.11 remediation requires the reviewed bundled tar package");
+  }
+  requirePackageIdentity(
+    readJson(bundledTarPackageJsonPath),
+    "tar",
+    TAR_VERSION,
+    "Legacy OpenClaw bundled tar remediation",
+  );
+
+  packageJson.dependencies.tar = TAR_VERSION;
+  packageJson.bundledDependencies = ["tar"];
+  writeJson(packageJsonPath, packageJson);
+}
+
 export function patchOpenClawDiagnosticsPackageGraph(packageDirectory: string): void {
   const packageJsonPath = join(packageDirectory, "package.json");
   const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
@@ -522,7 +594,9 @@ function packReplacement(
   });
 }
 
-export function buildRemediatedOpenClawArchive(request: BuildRequest): RemediatedArchive {
+export function buildRemediatedOpenClawArchive(
+  request: BuildRequest,
+): Extract<RemediatedArchive, { remediated: true }> {
   const remediation = REMEDIATIONS[request.packageSpec];
   if (!remediation) {
     throw new Error(`No OpenClaw npm remediation is defined for ${request.packageSpec}`);
@@ -565,6 +639,32 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       join(sourcePackage, "node_modules", "@openclaw", "fs-safe"),
     );
     patchOpenClawCorePackageGraph(sourcePackage);
+  } else if (remediation.kind === "legacy-core") {
+    const bundledTarPath = join(sourcePackage, "node_modules", "tar");
+    if (existsSync(bundledTarPath)) {
+      throw new Error("openclaw@2026.3.11 unexpectedly bundles tar before remediation");
+    }
+    const tarArchive = packReplacement(
+      `tar@${TAR_VERSION}`,
+      TAR_INTEGRITY,
+      TAR_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const tarPackage = extractArchive(
+      tarArchive.archivePath,
+      join(remediationRoot, "tar"),
+      remediationRoot,
+      env,
+    );
+    requirePackageIdentity(
+      readJson(join(tarPackage, "package.json")),
+      "tar",
+      TAR_VERSION,
+      "Legacy OpenClaw tar remediation package",
+    );
+    copyReplacementPackage(tarPackage, bundledTarPath);
+    patchLegacyOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "diagnostics-otel") {
     const jaegerArchive = packReplacement(
       `@opentelemetry/propagator-jaeger@${OTEL_PROPAGATOR_JAEGER_VERSION}`,

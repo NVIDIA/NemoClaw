@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../fixtures/clients/command.ts";
+import { reviewedOldInstallerProfile } from "./openshell-gateway-upgrade-old-installer.ts";
 
 const NON_INTERACTIVE_INSTALLER_ARGS = ["--non-interactive", "--yes-i-accept-third-party-software"];
 const GATEWAY_VOLUME_PREFIX = "openshell-cluster-nemoclaw";
@@ -35,6 +36,7 @@ export function validateLegacyGatewayUpgradeFixture(fixture: LegacyGatewayUpgrad
       `NEMOCLAW_OLD_OPENCLAW_VERSION must use the YYYY.M.D release format; got ${fixture.openclawVersion}`,
     );
   }
+  reviewedOldInstallerProfile(fixture);
   const sandboxBaseDigest = fixture.sandboxBaseImageRef.match(
     /^[^@\s]+@sha256:([0-9a-f]{64})$/,
   )?.[1];

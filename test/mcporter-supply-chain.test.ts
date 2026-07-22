@@ -10,6 +10,10 @@ import { type DependencyNode, findDependency } from "./fixtures/dependency-graph
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const runtimeDirectory = path.join(repoRoot, "agents", "openclaw", "mcporter-runtime");
+const dependencyReview = fs.readFileSync(
+  path.join(repoRoot, "agents", "openclaw", "dependency-review.md"),
+  "utf8",
+);
 const dockerfiles = ["Dockerfile.base", "Dockerfile"].map((name) => ({
   name,
   contents: fs.readFileSync(path.join(repoRoot, name), "utf8"),
@@ -69,6 +73,18 @@ function runIntegrityGate(contents: string, version: string) {
 }
 
 describe("mcporter image supply-chain controls", () => {
+  it("records the patched transitive dependency review boundaries", () => {
+    expect(dependencyReview).toContain("a manifest override, or the locked graph changes");
+    expect(dependencyReview).toContain(
+      "`2.0.5` is the first patched release for `GHSA-frvp-7c67-39w9`",
+    );
+    expect(dependencyReview).toContain("any version other than exact `2.0.11`");
+    expect(dependencyReview).toContain("the `/vercel` adapter");
+    expect(dependencyReview).toContain("`fast-uri@3.1.4`");
+    expect(dependencyReview).toContain("`GHSA-v2hh-gcrm-f6hx`");
+    expect(dependencyReview).toContain("exact `3.1.4`");
+  });
+
   it("resolves the committed production graph through npm's lockfile boundary", () => {
     const result = spawnSync(
       "npm",
@@ -136,7 +152,13 @@ describe("mcporter image supply-chain controls", () => {
   });
 
   it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {
+    const flattenedContents = contents.replace(/\\\s*\n/g, " ").replace(/\s+/g, " ");
+
     expect(contents).toContain(`${runtimePrefix} audit --omit=dev --audit-level=low`);
     expect(contents).toContain(`${runtimePrefix} audit signatures`);
+    expect(flattenedContents).toContain(
+      `${runtimePrefix} ls --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter`,
+    );
+    expect(contents).toContain("StreamableHTTPServerTransport");
   });
 });

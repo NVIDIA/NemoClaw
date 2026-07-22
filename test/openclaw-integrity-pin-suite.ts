@@ -99,7 +99,7 @@ function openClawBaseProvenance(
   tarball = PINNED_OPENCLAW_TARBALL,
 ): string {
   const recipe =
-    version === PINNED_OPENCLAW_VERSION
+    version === PINNED_OPENCLAW_VERSION || version === LEGACY_REBUILD_OPENCLAW_VERSION
       ? "ignore-scripts+reviewed-lifecycle+transitive-remediation-v1"
       : "ignore-scripts+reviewed-lifecycle-v1";
   return [
@@ -277,6 +277,7 @@ function runInstallBlock(
     `installed_mcporter_version=${JSON.stringify(installedMcporterVersion)}`,
     "node() {",
     '  if [ "${1:-}" = "/usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs" ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
+    '  if [ "${1:-}" = "--input-type=module" ] && [ "${2:-}" = "-e" ] && printf "%s\\n" "${3:-}" | grep -q "StreamableHTTPServerTransport"; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
     '  "$real_node" "$@"',
     "}",
     `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw %s\\n' "$installed_openclaw_version"; else return 127; fi; }`,
@@ -1228,6 +1229,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         expect(fixtureBase.calls).toContain(`openclaw-${LEGACY_REBUILD_OPENCLAW_VERSION}.tgz`);
         expect(fixtureBase.calls).toContain("npm install -g --ignore-scripts ");
+        expect(fixtureBase.calls).toContain("openclaw-remediated.tgz");
         expect(fixtureBase.calls).not.toContain("postinstall-bundled-plugins.mjs");
         expect(gatewayFixtureBase.result.status).toBe(0);
         expect(gatewayFixtureBase.calls).toContain("npm install -g --ignore-scripts ");
