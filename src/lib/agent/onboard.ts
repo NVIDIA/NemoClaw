@@ -44,8 +44,33 @@ export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
   return baseImage.getAgentSandboxBaseImageEnvVar(agentName);
 }
 
-export function pinAgentSandboxBaseImageRef(agentName: string, imageRef: string): string {
-  return baseImage.pinAgentSandboxBaseImageRef(agentName, imageRef);
+export function pinAgentSandboxBaseImageRef(
+  agentName: string,
+  imageRef: string,
+  options: { forceLocal?: boolean; temporary?: boolean } = {},
+): string {
+  return baseImage.pinAgentSandboxBaseImageRef(agentName, imageRef, options);
+}
+
+export function bindLocalAgentBaseImageToPinnedProvenance(
+  agent: AgentDefinition,
+  imageRef: string,
+): ReturnType<typeof baseImage.bindLocalAgentBaseImageToPinnedProvenance> {
+  return baseImage.bindLocalAgentBaseImageToPinnedProvenance(agent, imageRef);
+}
+
+export function pinTrustedAgentBaseImageOverrideForOperation(
+  overrideEnvVar: string,
+  override: import("../sandbox-base-image").TrustedLocalBaseImageOverride,
+): () => void {
+  return baseImage.pinTrustedAgentBaseImageOverrideForOperation(overrideEnvVar, override);
+}
+
+export function pinTrustedAgentRemoteBaseImageOverrideForOperation(
+  overrideEnvVar: string,
+  override: baseImage.TrustedRemoteBaseImageOverride,
+): () => void {
+  return baseImage.pinTrustedAgentRemoteBaseImageOverrideForOperation(overrideEnvVar, override);
 }
 
 export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
