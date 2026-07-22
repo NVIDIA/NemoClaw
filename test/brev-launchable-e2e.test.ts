@@ -20,7 +20,14 @@ function executable(file: string, source: string): void {
   fs.writeFileSync(file, source, { mode: 0o755 });
 }
 
-function fixture(options: { deleteFails?: boolean; e2eFails?: boolean; imageId?: string } = {}) {
+function fixture(
+  options: {
+    deleteFails?: boolean;
+    e2eFails?: boolean;
+    imageId?: string;
+    receiptSha?: string;
+  } = {},
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launchable-e2e-"));
   roots.push(root);
   const bin = path.join(root, "bin");
@@ -51,7 +58,7 @@ elif [ "$1 $2" = 'run download' ]; then
     shift
   done
   mkdir -p "$directory"
-  jq -n --arg sha "$CANDIDATE_SHA" --arg correlation "$CORRELATION_ID" '{
+  jq -n --arg sha "$FAKE_RECEIPT_SHA" --arg correlation "$CORRELATION_ID" '{
     kind:"nemoclaw-exact-image-manifest",nemoclawSha:$sha,correlationId:$correlation,
     requesterWorkflowRunId:"789",requesterWorkflowRunAttempt:1,
     imageRepository:"brevdev/nemoclaw-image",producerWorkflow:".github/workflows/build-qualification-image.yml",
@@ -113,6 +120,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     FAKE_DELETE_FAILS: options.deleteFails ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
     FAKE_IMAGE_ID: options.imageId ?? "123456789",
+    FAKE_RECEIPT_SHA: options.receiptSha ?? candidateSha,
     FAKE_STATE: state,
     GH_TOKEN: "github-test-token",
     GITHUB_RUN_ATTEMPT: "1",
@@ -161,13 +169,20 @@ describe("focused staging Brev Launchable lane", () => {
     });
   });
 
-  it("blocks E2E when the post-boot immutable identity mismatches", () => {
-    const { calls, env, state } = fixture({ imageId: "987654321" });
-    const result = run(env);
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("baked SHA or immutable boot image does not match");
-    expect(fs.readFileSync(calls, "utf8")).not.toContain("full-e2e.test.ts");
-    expect(fs.existsSync(state)).toBe(false);
+  it("blocks E2E when the receipt or post-boot immutable identity mismatches", () => {
+    const receipt = fixture({ receiptSha: "b".repeat(40) });
+    const receiptResult = run(receipt.env);
+    expect(receiptResult.status).not.toBe(0);
+    expect(receiptResult.stderr).toContain("producer receipt does not match the candidate");
+    expect(fs.readFileSync(receipt.calls, "utf8")).not.toMatch(/brev create|full-e2e\.test\.ts/u);
+    expect(fs.existsSync(receipt.state)).toBe(false);
+
+    const boot = fixture({ imageId: "987654321" });
+    const bootResult = run(boot.env);
+    expect(bootResult.status).not.toBe(0);
+    expect(bootResult.stderr).toContain("baked SHA or immutable boot image does not match");
+    expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
+    expect(fs.existsSync(boot.state)).toBe(false);
   });
 
   it("reports E2E failure only after verified workspace cleanup", () => {
