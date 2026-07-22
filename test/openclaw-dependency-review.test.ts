@@ -424,6 +424,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
   });
 
+  // source-shape-contract: security -- The legacy archive remediation helper must be present in the base image before the fail-closed Docker build invokes it
   it("copies the legacy OpenClaw remediation helper before the base build invokes it", () => {
     const dockerfile = readFileSync(path.join(REPO_ROOT, "Dockerfile.base"), "utf-8");
     const helperCopy = dockerfile.indexOf(

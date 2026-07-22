@@ -348,6 +348,11 @@
     },
     {
       "file": "test/openclaw-dependency-review.test.ts",
+      "test": "copies the legacy OpenClaw remediation helper before the base build invokes it",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-dependency-review.test.ts",
       "test": "runs and gates the real patched-distribution harness only from trusted main code",
       "category": "security"
     },
