@@ -188,7 +188,7 @@ jobs:
   staging-brev-launchable:
     name: Exact staging Brev Launchable
     needs: generate-matrix
-    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,'))) }}
+    if: ${{ vars.NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED == 'true' && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && contains(format(',{0},', inputs.jobs), ',staging-brev-launchable,'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment:
@@ -217,10 +217,10 @@ jobs:
       - id: workspace
         name: Prepare the trusted lane
         env:
-          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_API_KEY: ${{ inputs.checkout_sha == '' && secrets.BREV_API_KEY || '' }}
           BREV_CLI_SHA256: 5a6e70374db9be33f85f299161733b4a8409840d47638c781429b96e8d53704f
           BREV_CLI_VERSION: 0.6.330
-          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+          BREV_ORG_ID: ${{ inputs.checkout_sha == '' && secrets.BREV_ORG_ID || '' }}
         run: |
           set -euo pipefail
           work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-launchable-e2e.XXXXXX")"
@@ -235,8 +235,8 @@ jobs:
       - name: Build, deploy, verify, test, and clean up
         env:
           BREV_LAUNCHABLE_ID: ${{ vars.NEMOCLAW_STAGING_LAUNCHABLE_ID }}
-          GH_TOKEN: ${{ secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN }}
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          GH_TOKEN: ${{ inputs.checkout_sha == '' && secrets.NEMOCLAW_IMAGE_DISPATCH_TOKEN || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ inputs.checkout_sha == '' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
         run: tools/e2e/brev-launchable-e2e.sh
 

@@ -38,6 +38,29 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("rejects staging Launchable secret exposure to an explicit checkout SHA", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          if?: string;
+          steps?: Array<{ env?: Record<string, string>; name?: string }>;
+        }
+      >;
+    };
+    const job = workflow.jobs["staging-brev-launchable"]!;
+    job.if = job.if!.replace("inputs.checkout_sha == '' && ", "");
+    const prepare = job.steps!.find((step) => step.name === "Prepare the trusted lane")!;
+    prepare.env!.BREV_API_KEY = "${{ secrets.BREV_API_KEY }}";
+
+    expect(validateE2eWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "staging-brev-launchable job must reject an explicit checkout_sha",
+        "staging-brev-launchable BREV_API_KEY must reject an explicit checkout_sha",
+      ]),
+    );
+  });
+
   it("binds typed-target evidence identity and upload to the live matrix entry", () => {
     const workflow = readWorkflow() as {
       jobs: Record<

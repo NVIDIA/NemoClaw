@@ -3881,6 +3881,29 @@ function validateInferenceModeGeneration(
   requireRunContains(errors, step, "--ci-output");
 }
 
+function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs["staging-brev-launchable"]);
+  const trustedCandidate = "inputs.checkout_sha == ''";
+  if (!stringValue(job.if).includes(trustedCandidate)) {
+    errors.push("staging-brev-launchable job must reject an explicit checkout_sha");
+  }
+  const steps = asSteps(job.steps);
+  const prepareEnv = asRecord(requireStep(errors, steps, "Prepare the trusted lane")?.env);
+  const runEnv = asRecord(
+    requireStep(errors, steps, "Build, deploy, verify, test, and clean up")?.env,
+  );
+  for (const [env, key] of [
+    [prepareEnv, "BREV_API_KEY"],
+    [prepareEnv, "BREV_ORG_ID"],
+    [runEnv, "GH_TOKEN"],
+    [runEnv, "NVIDIA_INFERENCE_API_KEY"],
+  ] as const) {
+    if (!stringValue(env[key]).includes(trustedCandidate)) {
+      errors.push(`staging-brev-launchable ${key} must reject an explicit checkout_sha`);
+    }
+  }
+}
+
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
@@ -4376,6 +4399,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   }
 
   validateSharedE2eJob(errors, jobs);
+  validateStagingBrevLaunchableJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "credential-migration", "credential-migration");
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
