@@ -1115,8 +1115,19 @@ const runLinuxOpenShellGatewayUpgrade = test.skipIf(process.platform !== "linux"
 
 runLinuxOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: upgrades old working OpenClaw claw and restores survivor state",
-  { timeout: TEST_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox }) => {
+  {
+    timeout: TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "clear the prior gateway and start compatible inference",
+        "install pinned legacy NemoClaw and its sandbox",
+        "start the survivor agent and workspace marker",
+        "upgrade to the current OpenShell gateway",
+        "confirm survivor state and registry after upgrade",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox }) => {
     await artifacts.writeJson("live-upgrade-target.json", {
       id: "openshell-gateway-upgrade",
       runner: "vitest",
@@ -1186,18 +1197,25 @@ runLinuxOpenShellGatewayUpgrade(
       baseUrl: fake.baseUrl,
     });
 
+    progress.phase("install pinned legacy NemoClaw and its sandbox");
     await installOldNemoclawAndClaw(host, artifacts, fake.baseUrl);
     const legacyStateContract = await captureOpenClawStateUpgradeProof(host, fake, artifacts);
     const hiddenOldOpenShellDir =
       OLD_NEMOCLAW_REF === "v0.0.55" ? await stageOldOpenShellInUserLocalBin(host) : undefined;
+
+    progress.phase("start the survivor agent and workspace marker");
     const survivorPid = await startSurvivorAgentInExistingClaw(host);
     expect(Number.isInteger(survivorPid) && survivorPid > 0).toBe(true);
+
+    progress.phase("upgrade to the current OpenShell gateway");
     await installCurrentNemoclawUpgrade(
       host,
       fake.baseUrl,
       artifacts.pathFor("current-install.log"),
       hiddenOldOpenShellDir,
     );
+
+    progress.phase("confirm survivor state and registry after upgrade");
     await assertSurvivorSandboxAfterUpgrade(host);
     await verifyOpenClawStateUpgradeProof(host, fake, artifacts, legacyStateContract);
   },
@@ -1205,8 +1223,18 @@ runLinuxOpenShellGatewayUpgrade(
 
 runOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: macOS incomplete current install fetches Darwin gateway asset",
-  async ({ artifacts }) => {
+  {
+    meta: {
+      e2ePhases: [
+        "stage a Darwin install with the gateway missing",
+        "run the installer asset recovery path",
+        "inspect the requested Darwin gateway assets",
+      ],
+    },
+  },
+  async ({ artifacts, progress }) => {
     const curlLog = artifacts.pathFor("macos-missing-gateway/curl.log");
+    progress.phase("run the installer asset recovery path");
     const result = runMacInstallerProbe(artifacts, "missing-gateway", (fakeBin) => {
       fs.mkdirSync(path.dirname(curlLog), { recursive: true });
       writeFakeDarwinUname(fakeBin);
@@ -1236,6 +1264,7 @@ exit 0
     const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
     expect(result.status, output).not.toBe(0);
     expect(result.stdout).toContain("missing Docker-driver binaries");
+    progress.phase("inspect the requested Darwin gateway assets");
     const downloads = fs.readFileSync(curlLog, "utf8");
     expect(downloads).toContain("openshell-gateway-aarch64-apple-darwin.tar.gz");
     expect(downloads).not.toContain("openshell-driver-vm-aarch64-apple-darwin.tar.gz");
@@ -1244,9 +1273,19 @@ exit 0
 
 runOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: macOS installer does not require VM driver Hypervisor entitlement",
-  async ({ artifacts }) => {
+  {
+    meta: {
+      e2ePhases: [
+        "stage a Darwin install with current binaries",
+        "run the installer entitlement path",
+        "confirm the VM driver remains unsigned",
+      ],
+    },
+  },
+  async ({ artifacts, progress }) => {
     const signLog = artifacts.pathFor("macos-vm-driver-entitlement/codesign.log");
     const stateFile = artifacts.pathFor("macos-vm-driver-entitlement/codesign-state");
+    progress.phase("run the installer entitlement path");
     const result = runMacInstallerProbe(artifacts, "vm-driver-entitlement", (fakeBin) => {
       fs.mkdirSync(path.dirname(signLog), { recursive: true });
       writeFakeDarwinUname(fakeBin);
@@ -1284,6 +1323,7 @@ exit 0
     });
     const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
     expect(result.status, output).toBe(0);
+    progress.phase("confirm the VM driver remains unsigned");
     const signLogText = fs.existsSync(signLog) ? fs.readFileSync(signLog, "utf8") : "";
     expect(signLogText).not.toContain("--force --sign - --entitlements");
     expect(result.stdout).not.toContain("Installing OpenShell from release");
@@ -1292,7 +1332,16 @@ exit 0
 
 runOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: macOS Docker sandbox builds keep VM rootfs compatibility disabled",
-  async ({ artifacts }) => {
+  {
+    meta: {
+      e2ePhases: [
+        "read the Docker compatibility sources",
+        "confirm OpenClaw Docker defaults disable Darwin VM mode",
+        "confirm Hermes Docker defaults disable Darwin VM mode",
+      ],
+    },
+  },
+  async ({ artifacts, progress }) => {
     await artifacts.writeJson("macos-docker-rootfs-permissions-target.json", {
       id: "openshell-gateway-upgrade-macos-docker-rootfs-permissions",
       runner: "vitest",
@@ -1312,12 +1361,15 @@ runOpenShellGatewayUpgrade(
       "utf8",
     );
 
+    progress.phase("confirm OpenClaw Docker defaults disable Darwin VM mode");
     expect(dockerfile).toContain("ARG NEMOCLAW_DARWIN_VM_COMPAT=0");
     expect(dockerfilePatch).toContain(
       'ARG NEMOCLAW_DARWIN_VM_COMPAT=${sanitizeDockerArg(darwinVmCompat ? "1" : "0")}',
     );
     expect(patchFlow).toContain("const darwinVmCompat = false;");
     expect(dockerfile).toContain("chmod -R a+rwX /sandbox/.openclaw");
+
+    progress.phase("confirm Hermes Docker defaults disable Darwin VM mode");
     expect(hermesDockerfile).toContain("ARG NEMOCLAW_DARWIN_VM_COMPAT=0");
     expect(hermesDockerfile).toContain("chmod -R a+rwX /sandbox/.hermes");
     expect(hermesDockerfile).toContain("chmod a+rw /sandbox/.bashrc /sandbox/.profile");

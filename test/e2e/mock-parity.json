@@ -37,6 +37,9 @@
       "fast": [
         "test/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
         "test/installer-hash-check.test.ts",
         "test/runner.test.ts"
@@ -47,6 +50,9 @@
       "fast": [
         "test/brev-launchable-ci-cpu-checksum.test.ts",
         "test/e2e/support/e2e-live-target-gating.test.ts",
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts",
         "test/e2e/support/prepare-e2e-workflow-boundary.test.ts",
         "test/installer-hash-check.test.ts",
         "test/runner.test.ts"
@@ -510,6 +516,102 @@
     {
       "live": "test/e2e/live/state-dir-guard-metadata.test.ts",
       "liveOnlyReason": "Runs the installed guard from both production images against a real bind-mounted Linux filesystem; mocks cannot reproduce kernel xattr copying, POSIX ACL mask synchronization, inode replacement, or allocated-byte behavior."
+    },
+    {
+      "live": "test/e2e/live/channels-stop-start.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/docs-validation.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/hermes-root-entrypoint-smoke.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/hermes-sandbox-secret-boundary.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/hermes-slack-e2e.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/onboard-negative-paths.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/registry-targets.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/runtime-overrides.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/tunnel-lifecycle.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/ubuntu-repo-cli-smoke.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/whatsapp-qr-compact.test.ts",
+      "fast": [
+        "test/e2e/support/e2e-progress-fixture.test.ts",
+        "test/e2e/support/e2e-progress-outcome.test.ts",
+        "test/e2e/support/e2e-semantic-phase-check.test.ts"
+      ]
     }
   ]
 }

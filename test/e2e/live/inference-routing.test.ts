@@ -34,12 +34,21 @@ import {
 
 test("TC-INF-06 invalid API key fails with credential classification and cleanup", {
   timeout: 5 * 60_000,
-}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm live inference prerequisites",
+      "clear the invalid-key sandbox",
+      "attempt onboard with an invalid NVIDIA credential",
+      "confirm credential failure and no sandbox residue",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   await requireLivePrerequisites(host, skip);
   const sandboxName = inferenceSandboxName("e2e-invalid-key");
   cleanup.add(`remove inference-routing invalid-key residue for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
+  progress.phase("clear the invalid-key sandbox");
   await cleanupSandbox(host, sandbox, sandboxName);
 
   await artifacts.target.declare({
@@ -52,6 +61,7 @@ test("TC-INF-06 invalid API key fails with credential classification and cleanup
     ],
   });
 
+  progress.phase("attempt onboard with an invalid NVIDIA credential");
   const invalidKey = ["nvapi", "INTENTIONALLY", "INVALID", "KEY", "FOR", "E2E", "TEST"].join("-");
   const result = await onboardSandbox(
     artifacts,
@@ -64,6 +74,7 @@ test("TC-INF-06 invalid API key fails with credential classification and cleanup
   const raw = resultText(result);
   const redacted = redactedResultText(result);
 
+  progress.phase("confirm credential failure and no sandbox residue");
   expectOnboardFailure(result, "TC-INF-06 invalid-key onboard");
   expect(CREDENTIAL_CLASSIFICATION_PATTERN.test(raw), redacted).toBe(true);
   expect(hasRawNodeStackTrace(raw), redacted).toBe(false);
@@ -73,12 +84,21 @@ test("TC-INF-06 invalid API key fails with credential classification and cleanup
 
 test("TC-INF-07 unreachable endpoint fails with transport classification and cleanup", {
   timeout: 5 * 60_000,
-}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm live inference prerequisites",
+      "clear the unreachable-endpoint sandbox",
+      "attempt onboard against the unreachable endpoint",
+      "confirm transport failure and no sandbox residue",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   await requireLivePrerequisites(host, skip);
   const sandboxName = inferenceSandboxName("e2e-unreachable");
   cleanup.add(`remove inference-routing unreachable residue for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName),
   );
+  progress.phase("clear the unreachable-endpoint sandbox");
   await cleanupSandbox(host, sandbox, sandboxName);
 
   await artifacts.target.declare({
@@ -91,6 +111,7 @@ test("TC-INF-07 unreachable endpoint fails with transport classification and cle
     ],
   });
 
+  progress.phase("attempt onboard against the unreachable endpoint");
   const nvidiaKey = ["nvapi", "valid", "format", "but", "fake", "key", "1234567890"].join("-");
   const compatibleKey = "fake-key-for-unreachable-test";
   const result = await onboardSandbox(
@@ -110,6 +131,7 @@ test("TC-INF-07 unreachable endpoint fails with transport classification and cle
   const raw = resultText(result);
   const redacted = redactedResultText(result);
 
+  progress.phase("confirm transport failure and no sandbox residue");
   expectOnboardFailure(result, "TC-INF-07 unreachable-endpoint onboard");
   expect(TRANSPORT_CLASSIFICATION_PATTERN.test(raw), redacted).toBe(true);
   expect(hasRawNodeStackTrace(raw), redacted).toBe(false);
@@ -118,7 +140,14 @@ test("TC-INF-07 unreachable endpoint fails with transport classification and cle
 
 test("TC-INF-10 DNS-backed HTTPS blueprint endpoint fails closed before OpenShell runtime handoff", {
   timeout: 5 * 60_000,
-}, async ({ artifacts, cleanup }) => {
+  meta: {
+    e2ePhases: [
+      "prepare the DNS-backed endpoint blueprint",
+      "apply the blueprint with controlled DNS resolution",
+      "confirm rejection before OpenShell handoff",
+    ],
+  },
+}, async ({ artifacts, cleanup, progress }) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-https-dns-fail-closed-"));
   const workdir = path.join(root, "blueprint");
   const fakeBinDir = path.join(root, "bin");
@@ -170,6 +199,7 @@ const { main } = await import(${JSON.stringify(path.join(REPO_ROOT, "nemoclaw/sr
 await main(["apply"]);
 `;
 
+  progress.phase("apply the blueprint with controlled DNS resolution");
   const result = await runRawCommand(
     process.execPath,
     [
@@ -195,6 +225,7 @@ await main(["apply"]);
   const openshellLog = fs.existsSync(commandLogPath) ? fs.readFileSync(commandLogPath, "utf8") : "";
   await artifacts.writeText("tc-inf-10-openshell-commands.jsonl", openshellLog);
 
+  progress.phase("confirm rejection before OpenShell handoff");
   expectOnboardFailure(result, "TC-INF-10 DNS-backed HTTPS fail-closed blueprint apply");
   expect(raw).toMatch(/DNS-backed HTTPS endpoint/);
   expect(openshellLog).toBe("");
@@ -202,7 +233,17 @@ await main(["apply"]);
 
 test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through inference.local (#5744)", {
   timeout: 20 * 60_000,
-}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm compatible-endpoint prerequisites",
+      "start the local compatible endpoint",
+      "onboard Deep Agents Code to the endpoint",
+      "inspect the compatible provider route",
+      "request sandbox chat through inference.local",
+      "request a dcode completion through the route",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   const model = "nemoclaw-e2e-compatible";
   const apiKey = "sk-compatible-TEST-NOT-A-REAL-VALUE";
   await requireLivePrerequisites(host, skip);
@@ -211,6 +252,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
     cleanupSandbox(host, sandbox, sandboxName),
   );
   await cleanupSandbox(host, sandbox, sandboxName);
+  progress.phase("start the local compatible endpoint");
   const fake = await startFakeOpenAiCompatibleServer({
     apiKey,
     chatContent: "PONG",
@@ -240,6 +282,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
     model,
   });
 
+  progress.phase("onboard Deep Agents Code to the endpoint");
   const onboard = await onboardSandbox(
     artifacts,
     sandboxName,
@@ -259,6 +302,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
   cleanup.add(`strict inference-routing compatible-endpoint cleanup for ${sandboxName}`, () =>
     cleanupSandbox(host, sandbox, sandboxName, { strict: true }),
   );
+  progress.phase("inspect the compatible provider route");
   const provider = await sandbox.openshell(
     ["provider", "get", "-g", "nemoclaw", "compatible-endpoint"],
     {
@@ -279,6 +323,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
     }),
   );
 
+  progress.phase("request sandbox chat through inference.local");
   const sandboxRequestOffset = fake.requests().length;
   await expectOpenAiChatThroughSandbox(
     sandbox,
@@ -297,6 +342,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
     }),
   );
 
+  progress.phase("request a dcode completion through the route");
   const dcodeRequestOffset = fake.requests().length;
   const dcode = await runNemoclawCli(
     [sandboxName, "exec", "--", "dcode", "-n", "Reply with exactly one word: PONG"],

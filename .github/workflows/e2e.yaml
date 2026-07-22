@@ -356,6 +356,7 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/run-plan.json
             e2e-artifacts/live/${{ matrix.id }}/target.json
             e2e-artifacts/live/${{ matrix.id }}/target-result.json
+            e2e-artifacts/live/${{ matrix.id }}/test-progress.json
             e2e-artifacts/live/${{ matrix.id }}/environment.result.json
             e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
@@ -776,6 +777,7 @@ jobs:
             e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json
             e2e-artifacts/live/skill-agent/*/target.json
             e2e-artifacts/live/skill-agent/*/target-result.json
+            e2e-artifacts/live/skill-agent/*/test-progress.json
             e2e-artifacts/live/skill-agent/*/shell/*.result.json
             e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt
             e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt
@@ -1625,12 +1627,16 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        scenario: [native, fallback, compatibility-only]
+        include:
+          - scenario: native
+          - scenario: fallback
+          - scenario: compatibility-only
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-gpu-startup"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}
       E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
