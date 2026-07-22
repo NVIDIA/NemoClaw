@@ -71,10 +71,19 @@ describe("node-tar image remediation contract", () => {
     expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
     expect(patchCopy, file).toBeGreaterThan(reviewedCopy);
     expect(patchRun, file).toBeGreaterThan(patchCopy);
-    const patchDownloader = source.indexOf("curl=");
-    expect(patchDownloader > patchCopy && patchDownloader < patchRun, file).toBe(
-      installsPatchDownloader,
+    const aptInstall = source.indexOf(
+      "RUN apt-get update && apt-get install -y --no-install-recommends",
+      patchCopy,
     );
+    const curlPackage = source.indexOf("curl=8.14.1-2+deb13u4", aptInstall);
+    const aptInstallCleanup = source.indexOf("&& rm -rf /var/lib/apt/lists/*", curlPackage);
+    expect(
+      aptInstall > patchCopy &&
+        curlPackage > aptInstall &&
+        aptInstallCleanup > curlPackage &&
+        aptInstallCleanup < patchRun,
+      file,
+    ).toBe(installsPatchDownloader);
     expect(scanCopy, file).toBeGreaterThan(patchRun);
     expect(scanRun, file).toBeGreaterThan(scanCopy);
     expect(source, file).toContain("> /usr/local/share/nemoclaw/node-tar-inventory.json");

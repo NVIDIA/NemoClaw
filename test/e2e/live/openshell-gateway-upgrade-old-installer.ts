@@ -35,6 +35,12 @@ const REVIEWED_OLD_OPENCLAW_ARCHIVES: Readonly<Record<string, ReviewedOldOpenCla
     },
   });
 
+export const OLD_INSTALLER_BOOTSTRAP_NEEDLE = '  legacy_script="${source_root}/install.sh"\n';
+export const OLD_INSTALLER_CLONE_NEEDLE =
+  '    spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"\n';
+export const OLD_INSTALLER_ADVISORY_AUDIT =
+  "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\\n";
+
 export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClawArchive {
   const reviewedArchive = REVIEWED_OLD_OPENCLAW_ARCHIVES[version];
   if (!reviewedArchive) {
@@ -48,7 +54,6 @@ export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClaw
 // Keep this adapter scoped to the frozen historical lanes and retire it with
 // them; changing the tagged release payloads is not viable.
 export function patchOldInstallerFixture(installer: string): void {
-  const needle = '  legacy_script="${source_root}/install.sh"\n';
   const hook =
     String.raw`  if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" && -f "$payload_script" ]]; then
     python3 - "$payload_script" <<'NEMOCLAW_OLD_PAYLOAD_PIN_PY'
@@ -57,7 +62,7 @@ import sys
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
-needle = '    spin "Cloning \${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"\n'
+needle = ${JSON.stringify(OLD_INSTALLER_CLONE_NEEDLE)}
 hook = r'''    if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" ]]; then
       if [[ -z "\${NEMOCLAW_OLD_OPENCLAW_ARCHIVE:-}" || ! -f "$NEMOCLAW_OLD_OPENCLAW_ARCHIVE" ]]; then
         echo "ERROR: reviewed historical OpenClaw archive is missing" >&2
@@ -98,7 +103,7 @@ if injection not in text:
             raise SystemExit(f"{path}: old OpenClaw version gate not found")
         text = text.replace(marker, injection + marker, 1)
 
-advisory_audit = '    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\\n'
+advisory_audit = ${JSON.stringify(OLD_INSTALLER_ADVISORY_AUDIT)}
 advisory_audit_count = text.count(advisory_audit)
 if advisory_audit_count != 1:
     raise SystemExit(
@@ -126,8 +131,8 @@ NEMOCLAW_OLD_PAYLOAD_PIN_PY
   const text = fs.readFileSync(installer, "utf8");
   const patchedText = text.includes(hook)
     ? text
-    : text.includes(needle)
-      ? text.replace(needle, needle + hook)
+    : text.includes(OLD_INSTALLER_BOOTSTRAP_NEEDLE)
+      ? text.replace(OLD_INSTALLER_BOOTSTRAP_NEEDLE, OLD_INSTALLER_BOOTSTRAP_NEEDLE + hook)
       : (() => {
           throw new Error(`${installer}: old bootstrap payload hook not found`);
         })();

@@ -36,17 +36,19 @@ type BuildRequest = RemediationRequest &
     expectedPatchedMetadataIntegrity?: string;
   }>;
 
-export type RemediatedArchive = Readonly<{
-  archivePath: string;
-  integrity: string;
-}> &
-  Readonly<
-    | { remediated: false }
-    | {
-        metadataIntegrity: string;
-        remediated: true;
-      }
-  >;
+export type RemediatedArchive = Readonly<
+  | {
+      archivePath: string;
+      integrity: string;
+      remediated: false;
+    }
+  | {
+      archivePath: string;
+      integrity: string;
+      metadataIntegrity: string;
+      remediated: true;
+    }
+>;
 
 const AXIOS_VERSION = "1.18.0";
 const AXIOS_INTEGRITY =
@@ -108,7 +110,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "openclaw@2026.3.11": {
     kind: "legacy-core",
     expectedPatchedMetadataIntegrity:
-      "sha512-c+3QxBJidAFb8xZSmz4azC7KHFvXUAY9vN1AlXJ243LwMCFN5it5MW0r6FBuxIFvlBCnGlzcqRCvU5ghUec/ng==",
+      "sha512-1i30XSb/2NEcuTcuhXfR/x3YKaXVhWq6ttecFBSD9nrCKrzjNxSNMfK1y3qRcnblNOzRWmHtJZwZKeej02s/EQ==",
   },
 });
 
@@ -186,8 +188,45 @@ function writeJson(path: string, value: JsonObject): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
-function hashPatchedMetadata(packageDirectory: string): string {
+function hashMetadataEntries(entries: readonly (readonly [string, Buffer])[]): string {
   const hash = createHash("sha512");
+  for (const [name, contents] of entries) {
+    hash.update(`${name}\0${contents.length}\0`);
+    hash.update(contents);
+    hash.update("\0");
+  }
+  return `sha512-${hash.digest("base64")}`;
+}
+
+function hashPatchedMetadata(packageDirectory: string): string {
+  const packageJson = readJson(join(packageDirectory, "package.json"));
+  if (packageJson.name === "openclaw" && packageJson.version === "2026.3.11") {
+    const bundledTarPackageJson = readJson(
+      join(packageDirectory, "node_modules", "tar", "package.json"),
+    );
+    return hashMetadataEntries([
+      [
+        "legacy-openclaw-remediation.json",
+        Buffer.from(
+          `${JSON.stringify(
+            {
+              bundledDependencies: packageJson.bundledDependencies,
+              bundledTar: {
+                name: bundledTarPackageJson.name,
+                version: bundledTarPackageJson.version,
+              },
+              name: packageJson.name,
+              tarDependency: packageJson.dependencies?.tar,
+              version: packageJson.version,
+            },
+            null,
+            2,
+          )}\n`,
+        ),
+      ],
+    ]);
+  }
+
   const names = ["package.json"];
   if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
     names.push("npm-shrinkwrap.json");
@@ -204,13 +243,9 @@ function hashPatchedMetadata(packageDirectory: string): string {
   if (diagnosticsMetadata.every((name) => existsSync(join(packageDirectory, name)))) {
     names.push(...diagnosticsMetadata);
   }
-  for (const name of names) {
-    const contents = readFileSync(join(packageDirectory, name));
-    hash.update(`${name}\0${contents.length}\0`);
-    hash.update(contents);
-    hash.update("\0");
-  }
-  return `sha512-${hash.digest("base64")}`;
+  return hashMetadataEntries(
+    names.map((name) => [name, readFileSync(join(packageDirectory, name))] as const),
+  );
 }
 
 function sortedObject(value: JsonObject): JsonObject {
@@ -394,6 +429,7 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
 
 export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
   const packageJsonPath = join(packageDirectory, "package.json");
+  const bundledTarPackageJsonPath = join(packageDirectory, "node_modules", "tar", "package.json");
   const packageJson = readJson(packageJsonPath);
   requirePackageIdentity(packageJson, "openclaw", "2026.3.11", "Legacy OpenClaw core");
   if (packageJson.dependencies?.tar !== "7.5.11") {
@@ -405,8 +441,18 @@ export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): v
   if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
     throw new Error("openclaw@2026.3.11 unexpectedly ships an npm shrinkwrap");
   }
+  if (!existsSync(bundledTarPackageJsonPath)) {
+    throw new Error("openclaw@2026.3.11 remediation requires the reviewed bundled tar package");
+  }
+  requirePackageIdentity(
+    readJson(bundledTarPackageJsonPath),
+    "tar",
+    TAR_VERSION,
+    "Legacy OpenClaw bundled tar remediation",
+  );
 
   packageJson.dependencies.tar = TAR_VERSION;
+  packageJson.bundledDependencies = ["tar"];
   writeJson(packageJsonPath, packageJson);
 }
 
@@ -548,7 +594,9 @@ function packReplacement(
   });
 }
 
-export function buildRemediatedOpenClawArchive(request: BuildRequest): RemediatedArchive {
+export function buildRemediatedOpenClawArchive(
+  request: BuildRequest,
+): Extract<RemediatedArchive, { remediated: true }> {
   const remediation = REMEDIATIONS[request.packageSpec];
   if (!remediation) {
     throw new Error(`No OpenClaw npm remediation is defined for ${request.packageSpec}`);
@@ -592,6 +640,30 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
     );
     patchOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "legacy-core") {
+    const bundledTarPath = join(sourcePackage, "node_modules", "tar");
+    if (existsSync(bundledTarPath)) {
+      throw new Error("openclaw@2026.3.11 unexpectedly bundles tar before remediation");
+    }
+    const tarArchive = packReplacement(
+      `tar@${TAR_VERSION}`,
+      TAR_INTEGRITY,
+      TAR_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const tarPackage = extractArchive(
+      tarArchive.archivePath,
+      join(remediationRoot, "tar"),
+      remediationRoot,
+      env,
+    );
+    requirePackageIdentity(
+      readJson(join(tarPackage, "package.json")),
+      "tar",
+      TAR_VERSION,
+      "Legacy OpenClaw tar remediation package",
+    );
+    copyReplacementPackage(tarPackage, bundledTarPath);
     patchLegacyOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "diagnostics-otel") {
     const jaegerArchive = packReplacement(
