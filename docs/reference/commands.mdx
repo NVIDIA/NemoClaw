@@ -2504,7 +2504,7 @@ $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v] [--tool-disclo
 | Flag | Description |
 |------|-------------|
 | `--yes`, `-y` | Skip the confirmation prompt. |
-| `--force` | Skip the confirmation prompt and continue when no state directory was preserved. NemoClaw restores any captured loose files; after a total failure, it recreates from registry metadata only. |
+| `--force` | Skip the confirmation prompt and continue when no state directory was preserved or a manifest-declared state file failed. NemoClaw restores any captured entries; after a total failure, it recreates from registry metadata only. |
 | `--verbose`, `-v` | Log SSH commands, exit codes, and session state (also enabled by `NEMOCLAW_REBUILD_VERBOSE=1`) |
 | `--tool-disclosure <progressive\|direct>` | Change the model-visible tool catalog during this transactional rebuild. Use this path for sandboxes with managed MCP servers so their providers and adapter state are preserved. |
 | `--dcode-auto-approval <disabled\|thread-opt-in>` | Change the managed Deep Agents Code thread auto-approval capability. `thread-opt-in` is accepted only for managed Deep Agents Code sandboxes and is rejected for other agents or custom images. Enabling prints a warning, and either value requires sandbox recreation. |
@@ -2515,6 +2515,7 @@ Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 
 The sandbox normally must be reachable for the backup step to succeed.
 If an archive command preserves at least one state directory, `rebuild` keeps the captured backup entries and reports the manifest-defined paths that could not be archived.
+If a manifest-declared state file fails, `rebuild` exits before destroying the original sandbox even when it preserved state directories, unless you explicitly pass `--force`.
 If every state directory fails, `rebuild` exits before destroying the original sandbox even when it captured loose files, unless you explicitly pass `--force`.
 With `--force`, NemoClaw preserves any captured loose files in the partial manifest and restores them after recreation.
 If the backup produced nothing usable, it continues from recorded registry metadata without restoring prior sandbox state.
@@ -3338,8 +3339,8 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_SANDBOX_NAME` | sandbox name | Preferred environment override for the default sandbox. Used by onboarding defaults and host-level commands such as `list`, `status`, `tunnel`, `services`, and `debug`. |
 | `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
 | `SANDBOX_NAME` | sandbox name | Compatibility spelling used after `NEMOCLAW_SANDBOX_NAME` and `NEMOCLAW_SANDBOX`. |
-| `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
-| `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
+| `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. A nonempty value takes precedence over `NEMOCLAW_INSTALL_TAG`. Overridden by the `--install-ref` flag. |
+| `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install when `NEMOCLAW_INSTALL_REF` is unset or empty. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
 | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `qwen3.6-35b-a3b-nvfp4`, `nemotron-3-nano-4b`, `deepseek-v4-flash`, `nemotron-3-ultra-550b-a55b`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. The DGX Station express installer sets `nemotron-3-ultra-550b-a55b` explicitly. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_VLLM_EXTRA_ARGS_JSON` | JSON array of non-blank strings | Appends advanced operator-owned tokens to the managed `vllm serve` command after NemoClaw's registry defaults. Example: `["--max-num-seqs","2"]`. Malformed JSON, non-string tokens, or blank tokens fail before Docker work starts. |
 <AgentOnly variant="openclaw">
@@ -3525,21 +3526,22 @@ Set them before running `$$nemoclaw onboard`.
 <AgentOnly variant="openclaw">
 
 Set `NEMOCLAW_SANDBOX_BASE_IMAGE_REF` to an OpenClaw sandbox-base tag or digest to override base-image resolution during onboarding.
-Use a release-matched tag or immutable digest for a source-based custom image; NemoClaw resolves the reference and pins a repository digest into a stock-style `ARG BASE_IMAGE` declaration when possible.
+Remote overrides must use the official NVIDIA sandbox-base repository and resolve to an immutable repository digest.
+Local bases are accepted only when NemoClaw builds and pins them during the current operation; a local image reference supplied through this environment variable is rejected because it has no trusted build capability.
 
 </AgentOnly>
 
 <AgentOnly variant="deepagents">
 
 Set `NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF` to a LangChain Deep Agents Code sandbox-base tag or digest to override base-image resolution during onboarding.
-NemoClaw validates the requested image against the manifest-required `deepagents-code` package version before using it.
+NemoClaw requires environment overrides to use the official remote repository and resolve to an immutable repository digest, then validates the requested image against the manifest-required `deepagents-code` package version before using it. Local bases are accepted only when NemoClaw builds and pins them during the current operation.
 
 </AgentOnly>
 
 <AgentOnly variant="hermes">
 
 Set `NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF` to a Hermes sandbox-base tag or digest to override base-image resolution during onboarding.
-NemoClaw validates the requested image for the required MCP runtime, and the final Hermes image still accepts only the tracked official digest or a repository-built local base.
+NemoClaw requires environment overrides to use the official remote repository and resolve to an immutable repository digest, validates the requested image for the required MCP runtime, and keeps the final image bound to that trusted base. Local bases are accepted only when NemoClaw builds and pins them during the current operation.
 
 </AgentOnly>
 

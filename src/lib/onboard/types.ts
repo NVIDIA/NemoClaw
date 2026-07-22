@@ -96,6 +96,14 @@ export type OnboardOptions = {
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
+  /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
+  baseImageResolutionHint?:
+    | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata
+    | null;
+  /** Internal rebuild handoff for provenance already bound to an immutable local base ref. */
+  preResolvedBaseImageMetadata?:
+    | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata
+    | null;
   resume?: boolean;
   fresh?: boolean;
   fromDockerfile?: string | null;

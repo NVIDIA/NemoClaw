@@ -318,6 +318,11 @@
     },
     {
       "file": "test/onboard-performance-config-schema.test.ts",
+      "test": "keeps the authoritative local-build allowance tied to same-head PR evidence",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/onboard-performance-config-schema.test.ts",
       "test": "records five independent successful samples for current main",
       "category": "compatibility"
     },
@@ -329,6 +334,26 @@
     {
       "file": "test/openclaw-lifecycle-policy.test.ts",
       "test": "cross-checks the allowlist against every production archive install boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-npm-remediation.test.ts",
+      "test": "rebuilds a guarded core archive with the patched fs-safe package bundled",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-npm-remediation.test.ts",
+      "test": "rebuilds a guarded plugin archive with the patched Axios graph bundled",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-npm-remediation.test.ts",
+      "test": "replaces the reviewed bundled Axios graph with the patched graph",
+      "category": "security"
+    },
+    {
+      "file": "test/openclaw-npm-remediation.test.ts",
+      "test": "replaces the reviewed OpenClaw core tar and brace-expansion graph",
       "category": "security"
     },
     {
