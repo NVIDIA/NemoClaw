@@ -22,6 +22,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import {
+  type GatewayCapability,
+  SUPPORTED_GATEWAY_CAPABILITIES,
+} from "../core/gateway-capabilities";
+
+export {
+  type GatewayCapability,
+  SUPPORTED_GATEWAY_CAPABILITIES,
+} from "../core/gateway-capabilities";
 
 /** Bump only for a breaking change to the declaration shape. */
 export const GATEWAY_MANAGEMENT_CONTRACT_VERSION = 1;
@@ -30,21 +39,6 @@ export const GATEWAY_MANAGEMENT_CONTRACT_VERSION = 1;
 export const GATEWAY_MANAGEMENT_ENV_VAR = "NEMOCLAW_GATEWAY_MANAGEMENT";
 
 export type GatewayManagementMode = "nemoclaw-managed" | "externally-supervised";
-
-/**
- * Capabilities a gateway must expose for canonical onboarding to attach to it.
- * A declaration requiring a capability NemoClaw does not implement fails closed
- * rather than attaching and discovering the gap after provider or sandbox
- * effects have already run.
- */
-export const SUPPORTED_GATEWAY_CAPABILITIES = [
-  "gateway.health",
-  "sandbox.create",
-  "sandbox.exec",
-  "gpu.passthrough",
-] as const;
-
-export type GatewayCapability = (typeof SUPPORTED_GATEWAY_CAPABILITIES)[number];
 
 /** How the external supervisor runs the gateway, and how to recognize it. */
 /**

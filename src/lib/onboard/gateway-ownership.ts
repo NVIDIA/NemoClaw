@@ -26,14 +26,16 @@
  * Gateway-side discovery can replace this check when OpenShell reports it.
  */
 
+import {
+  type GatewayCapability,
+  SUPPORTED_GATEWAY_CAPABILITIES,
+} from "../core/gateway-capabilities";
 import type { JsonObject } from "../core/json-types";
 import { redactUrl } from "../security/redact";
 import {
-  type GatewayCapability,
   type GatewayManagementDeclaration,
   type GatewayManagementMode,
   type GatewaySupervisorDeclaration,
-  SUPPORTED_GATEWAY_CAPABILITIES,
 } from "./gateway-management";
 
 /**
@@ -234,7 +236,7 @@ export interface GatewayAttachmentProbe {
   httpReady: boolean;
   /** Anything at all holds the gateway port. */
   portOccupied: boolean;
-  /** Identity-verified gateway processes listening on the port. */
+  /** All processes observed listening on the port; identity is established separately. */
   listenerPids: readonly number[];
   /** False when the listener set could not be authoritatively enumerated. */
   listenerScanComplete: boolean;
@@ -343,12 +345,14 @@ export function evaluateGatewayAttachment(
     };
   }
 
-  if (probe.supervisorActive === false) {
+  if (probe.supervisorActive !== true) {
+    const status =
+      probe.supervisorActive === false ? "is not active" : "could not be confirmed active";
     return {
       ok: false,
       code: "supervisor_inactive",
       message:
-        `${supervisorName} is not active, and NemoClaw does not start an externally supervised gateway. ` +
+        `${supervisorName} ${status}, and NemoClaw does not start an externally supervised gateway. ` +
         `Start it through the platform supervisor, then re-run onboarding.`,
     };
   }

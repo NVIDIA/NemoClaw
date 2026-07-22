@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
+import { SUPPORTED_GATEWAY_CAPABILITIES } from "../core/gateway-capabilities";
 import { isObjectRecord } from "../core/json-types";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
-import { SUPPORTED_GATEWAY_CAPABILITIES } from "../onboard/gateway-management";
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import { parseCheckpointDecision } from "./onboard-checkpoint-decision";
 import {

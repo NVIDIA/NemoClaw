@@ -50,22 +50,20 @@ describe("durable gateway lifecycle authority", () => {
 
     expect(bindGatewayAuthorityToCheckpoint(session, owner)).toEqual(owner);
     const authority = session.checkpoint?.gatewayAuthority;
-    expect(authority).toBeDefined();
-    if (!authority) throw new Error("expected gateway authority checkpoint");
-    expect(isDecisionSelected(authority)).toBe(true);
-    expect(authority.kind === "selected" && authority.value).toEqual(
-      checkpointGatewayAuthority(owner),
-    );
+    expect(authority).toEqual({ kind: "selected", value: checkpointGatewayAuthority(owner) });
+    expect(isDecisionSelected(authority!)).toBe(true);
   });
 
   it("accepts the same authority after a process resume round-trip (#6576)", () => {
     const firstProcess = createSession({ sessionId: "authority-session" });
     const owner = externalOwner();
     bindGatewayAuthorityToCheckpoint(firstProcess, owner);
+    const checkpointUpdatedAt = firstProcess.checkpoint?.updatedAt;
     const resumed = normalizeSession(JSON.parse(JSON.stringify(firstProcess)) as never);
 
     expect(resumed).not.toBeNull();
     expect(bindGatewayAuthorityToCheckpoint(resumed!, owner)).toEqual(owner);
+    expect(resumed!.checkpoint?.updatedAt).toBe(checkpointUpdatedAt);
   });
 
   it("rejects external-to-managed drift after a process resume before effects (#6576)", () => {

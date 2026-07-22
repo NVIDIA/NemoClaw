@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { GatewayCapability } from "../core/gateway-capabilities";
 import {
+  decisionSelected,
   isDecisionDeclined,
   isDecisionSelected,
-  decisionSelected,
 } from "../state/onboard-checkpoint-decision";
+import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import type { CheckpointGatewayAuthority } from "../state/onboard-checkpoint-types";
 import type { Session } from "../state/onboard-session";
-import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
-import type { GatewayCapability } from "./gateway-management";
 import {
   describeGatewayOwnerForError,
   type GatewayOwner,

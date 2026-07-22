@@ -59,6 +59,7 @@ function createDeps(overrides: Partial<GatewayHostRuntimeDeps> = {}): GatewayHos
     // test overwriting them.
     readProcExe: () => SYSTEMD_GATEWAY_EXEC,
     readProcCgroup: () => `0::/system.slice/${DECLARATION.supervisor.serviceName}\n`,
+    readProcStartTime: () => "710024",
     waitForGatewayHttpReady: async () => true,
     ...overrides,
   };
@@ -236,6 +237,42 @@ describe("gateway host runtime attachment probe", () => {
     });
   });
 
+  it("fails closed when the listener PID changes during identity verification (#6576)", async () => {
+    declareExternalSupervision();
+    const getGatewayPortListenerRawScan = vi
+      .fn()
+      .mockReturnValueOnce({ pids: [SYSTEMD_GATEWAY_PID], complete: true })
+      .mockReturnValueOnce({ pids: [4343], complete: true });
+    const runtime = createGatewayHostRuntime(createDeps({ getGatewayPortListenerRawScan }));
+    const owner = runtime.getGatewayOwner();
+
+    const probe = await runtime.probeGatewayAttachment(owner);
+
+    expect(probe.listenerPids).toEqual([4343]);
+    expect(probe.listenerExecPath).toBeNull();
+    expect(probe.listenerSupervisorMatch).toBeNull();
+    expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({
+      ok: false,
+      code: "unknown_listener",
+    });
+  });
+
+  it("fails closed when a PID is reused while its identity is read (#6576)", async () => {
+    declareExternalSupervision();
+    const readProcStartTime = vi.fn().mockReturnValueOnce("710024").mockReturnValueOnce("710025");
+    const runtime = createGatewayHostRuntime(createDeps({ readProcStartTime }));
+    const owner = runtime.getGatewayOwner();
+
+    const probe = await runtime.probeGatewayAttachment(owner);
+
+    expect(probe.listenerExecPath).toBeNull();
+    expect(probe.listenerSupervisorMatch).toBeNull();
+    expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({
+      ok: false,
+      code: "unknown_listener",
+    });
+  });
+
   it("reports an unprobeable supervisor rather than guessing (#6576)", async () => {
     declareExternalSupervision();
     const runtime = createGatewayHostRuntime(
@@ -247,6 +284,10 @@ describe("gateway host runtime attachment probe", () => {
     const probe = await runtime.probeGatewayAttachment(runtime.getGatewayOwner());
 
     expect(probe.supervisorActive).toBeNull();
+    expect(evaluateGatewayAttachment(runtime.getGatewayOwner(), probe)).toMatchObject({
+      ok: false,
+      code: "supervisor_inactive",
+    });
   });
 
   it("reads the authoritative gateway port lazily, not at construction (#6576)", () => {

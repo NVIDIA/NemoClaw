@@ -73,6 +73,8 @@ export interface GatewayHostRuntimeDeps {
   readProcExe?(pid: number): string | null;
   /** Overrides `/proc/<pid>/cgroup` reads; defaults to the real file. */
   readProcCgroup?(pid: number): string | null;
+  /** Overrides `/proc/<pid>/stat` start-time reads; defaults to the real file. */
+  readProcStartTime?(pid: number): string | null;
   waitForGatewayHttpReady(): Promise<boolean>;
 }
 
@@ -176,6 +178,23 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     }
   }
 
+  function readProcStartTime(pid: number): string | null {
+    if (deps.readProcStartTime) return deps.readProcStartTime(pid);
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf-8");
+      const commandEnd = stat.lastIndexOf(")");
+      // Fields after the command begin at field 3; process start time is field 22.
+      return commandEnd >= 0
+        ? (stat
+            .slice(commandEnd + 1)
+            .trim()
+            .split(/\s+/)[19] ?? null)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Bind a listening PID to the declared supervisor unit via cgroup membership
    * — the authoritative evidence that the process is the unit's, not merely a
@@ -183,15 +202,21 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
    * cannot be established (no PID or an unreadable cgroup), and the caller then
    * fails closed.
    */
-  function readListenerSupervisorMatch(
-    owner: GatewayOwner,
-    pid: number | undefined,
-  ): boolean | null {
+  function readListenerSupervisorMatch(owner: GatewayOwner, pid: number): boolean | null {
     const supervisor = owner.supervisor;
-    if (!supervisor || typeof pid !== "number") return null;
+    if (!supervisor) return null;
     const cgroupText = readProcCgroup(pid);
     if (cgroupText === null) return null;
     return cgroupBelongsToUnit(cgroupText, supervisor.serviceName);
+  }
+
+  /** Read executable and cgroup evidence only while the PID names one process. */
+  function readStableListenerIdentity(owner: GatewayOwner, pid: number) {
+    const startTime = readProcStartTime(pid);
+    const execPath = readListenerExecPath(pid);
+    const supervisorMatch = readListenerSupervisorMatch(owner, pid);
+    const endTime = readProcStartTime(pid);
+    return startTime !== null && endTime === startTime ? { execPath, supervisorMatch } : null;
   }
 
   /**
@@ -222,20 +247,39 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
    */
   async function probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe> {
     const portCheck = await deps.checkGatewayPortAvailable();
+    const httpReady = await waitForDeclaredGatewayHttpReady(owner);
+    const supervisorActive = isSupervisorUnitActive(owner);
+    const gatewayBin = deps.resolveOpenShellGatewayBinary();
     const scan = deps.getGatewayPortListenerRawScan(portCheck, {
-      gatewayBin: deps.resolveOpenShellGatewayBinary(),
+      gatewayBin,
     });
     const [firstPid] = scan.pids;
+    const identity =
+      scan.complete && scan.pids.length === 1 && typeof firstPid === "number"
+        ? readStableListenerIdentity(owner, firstPid)
+        : null;
+    const verifiedScan =
+      typeof firstPid === "number"
+        ? deps.getGatewayPortListenerRawScan(portCheck, {
+            gatewayBin,
+          })
+        : scan;
+    const listenerStayedStable =
+      scan.complete &&
+      verifiedScan.complete &&
+      scan.pids.length === 1 &&
+      verifiedScan.pids.length === 1 &&
+      verifiedScan.pids[0] === firstPid;
     return {
       gatewayPort: deps.gatewayPort(),
-      httpReady: await waitForDeclaredGatewayHttpReady(owner),
+      httpReady,
       // `ok` means the port is free; anything else means something holds it.
       portOccupied: !portCheck.ok,
-      listenerPids: scan.pids,
-      listenerScanComplete: scan.complete,
-      supervisorActive: isSupervisorUnitActive(owner),
-      listenerExecPath: typeof firstPid === "number" ? readListenerExecPath(firstPid) : null,
-      listenerSupervisorMatch: readListenerSupervisorMatch(owner, firstPid),
+      listenerPids: verifiedScan.pids,
+      listenerScanComplete: scan.complete && verifiedScan.complete,
+      supervisorActive,
+      listenerExecPath: listenerStayedStable ? (identity?.execPath ?? null) : null,
+      listenerSupervisorMatch: listenerStayedStable ? (identity?.supervisorMatch ?? null) : null,
     };
   }
 

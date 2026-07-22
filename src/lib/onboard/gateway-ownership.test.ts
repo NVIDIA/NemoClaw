@@ -166,6 +166,13 @@ describe("externally supervised gateway attachment", () => {
     );
   });
 
+  it("fails closed when the declared supervisor status cannot be determined (#6576)", () => {
+    const result = evaluateGatewayAttachment(externalOwner, probe({ supervisorActive: null }));
+
+    expect(result).toMatchObject({ ok: false, code: "supervisor_inactive" });
+    expect(result.ok === false && result.message).toMatch(/could not be confirmed active/);
+  });
+
   it("fails instead of launching a gateway when nothing holds the port (#6576)", () => {
     const result = evaluateGatewayAttachment(
       externalOwner,
