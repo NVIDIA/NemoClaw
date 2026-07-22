@@ -6,7 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
+import {
+  INSTALLER_PAYLOAD,
+  TEST_SYSTEM_PATH,
+  writeExecutable,
+} from "./helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
   function runInstallerSourced(body: string) {
@@ -25,6 +29,20 @@ describe("installer express install prompt (sourced)", () => {
       },
     );
     return { result, output: `${result.stdout}${result.stderr}` };
+  }
+
+  // Build a PATH-injectable `docker` stub whose `docker info --format
+  // '{{.OperatingSystem}}'` reports the given OS string, so express WSL runtime
+  // detection (#7318) can be exercised deterministically without a real Docker
+  // daemon. The probe wraps docker in `timeout`, which execs the real binary
+  // from PATH, so a stub on PATH (not a shell function) is required here.
+  function dockerStubBin(operatingSystem: string) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-stub-"));
+    writeExecutable(
+      path.join(dir, "docker"),
+      `#!/usr/bin/env bash\nif [ "$1" = "info" ]; then\n  printf '%s\\n' "${operatingSystem}"\nfi\nexit 0\n`,
+    );
+    return dir;
   }
 
   function runExpressPromptWithTty(
@@ -1263,8 +1281,11 @@ printf 'PROMPT_REACHED\n'
     expect(output).not.toContain("PROMPT_REACHED");
   });
 
-  it("maps Windows WSL express install to Windows-host Ollama", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "Windows WSL");
+  it("maps Windows WSL express install to Windows-host Ollama under Docker Desktop", () => {
+    const dockerBin = dockerStubBin("Docker Desktop");
+    const result = runExpressPromptWithTty("\n", "pipe", "Windows WSL", {
+      PATH: `${dockerBin}:${TEST_SYSTEM_PATH}`,
+    });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected Windows WSL/);
@@ -1277,6 +1298,54 @@ printf 'PROMPT_REACHED\n'
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=/,
     );
+  });
+
+  it("maps Windows WSL express install to WSL-local Ollama under native Docker Engine", () => {
+    const dockerBin = dockerStubBin("Ubuntu 24.04.4 LTS");
+    const result = runExpressPromptWithTty("\n", "pipe", "Windows WSL", {
+      PATH: `${dockerBin}:${TEST_SYSTEM_PATH}`,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Detected Windows WSL/);
+    expect(output).toMatch(
+      /Express install will configure WSL-local Ollama \(native Docker Engine detected\)/,
+    );
+    expect(output).toMatch(/Using express install for Windows WSL/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=/,
+    );
+  });
+
+  it("activate_express_install keeps Windows-host Ollama when Docker Desktop is detected", () => {
+    const { result, output } = runInstallerSourced(
+      `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-windows-ollama");
+  });
+
+  it("activate_express_install falls back to WSL-local Ollama under native Docker Engine", () => {
+    const { result, output } = runInstallerSourced(
+      `express_wsl_docker_operating_system() { printf 'Ubuntu 24.04.4 LTS\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama");
+  });
+
+  it("activate_express_install falls back to WSL-local Ollama when the docker probe fails or times out", () => {
+    const { result, output } = runInstallerSourced(
+      // Empty output + non-zero status mimics a timeout/dead-daemon probe.
+      `express_wsl_docker_operating_system() { return 124; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama");
   });
 
   it.skipIf(process.platform === "darwin")(

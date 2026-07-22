@@ -3580,6 +3580,26 @@ clear_station_express_resume() {
   done
 }
 
+# Report the container runtime's operating-system string (e.g. "Docker Desktop"
+# or "Ubuntu 24.04.4 LTS"). Bounded with a hard timeout so a wedged,
+# misconfigured, or dead-DOCKER_HOST daemon cannot hang the interactive express
+# prompt: this runs from describe_express_install before ensure_docker, and WSL
+# skips ensure_docker entirely. Empty on timeout or error.
+express_wsl_docker_operating_system() {
+  timeout 10 docker info --format '{{.OperatingSystem}}' 2>/dev/null
+}
+
+# Express install on WSL defaults to Windows-host Ollama, which only works under
+# Docker Desktop WSL integration (it bridges the Windows-host loopback into
+# sandbox containers via host.docker.internal). Native Docker Engine inside WSL
+# cannot reach the Windows host's Ollama (#3695), so auto-selecting
+# install-windows-ollama there aborts onboarding at [3/8] with no fallback
+# (#7318). Only a Docker Desktop runtime is usable here; every other result
+# (native engine, or the empty probe above) falls back to WSL-local Ollama.
+express_wsl_can_use_windows_host_ollama() {
+  express_wsl_docker_operating_system | grep -qi 'docker desktop'
+}
+
 activate_express_install() {
   local platform="$1"
   _SELECTED_EXPRESS_PLATFORM="$platform"
@@ -3609,7 +3629,11 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      export NEMOCLAW_PROVIDER=install-windows-ollama
+      if express_wsl_can_use_windows_host_ollama; then
+        export NEMOCLAW_PROVIDER=install-windows-ollama
+      else
+        export NEMOCLAW_PROVIDER=install-ollama
+      fi
       ;;
   esac
 }
@@ -3768,7 +3792,11 @@ describe_express_install() {
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
-      inference_summary="Windows-host Ollama through host.docker.internal"
+      if express_wsl_can_use_windows_host_ollama; then
+        inference_summary="Windows-host Ollama through host.docker.internal"
+      else
+        inference_summary="WSL-local Ollama (native Docker Engine detected)"
+      fi
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     *)
