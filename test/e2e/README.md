@@ -404,7 +404,7 @@ phase limits in the budget file, and limits the longest onboard output gap to
 `full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
 
 When changed base-image inputs require the authoritative local OpenClaw base
-build, the target applies the separately calibrated 31-second allowance only to
+build, the target applies the separately calibrated 90-second allowance only to
 the root-start and sandbox-phase limits. The installer must emit the exact local
 base-build reason before the allowance applies. Published-image runs retain the
 normal limits, and output silence, first-turn, and all other phase requirements
