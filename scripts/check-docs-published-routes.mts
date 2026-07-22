@@ -289,7 +289,7 @@ export function findMissingDirectLegacyReleaseNotesRedirects(
 }
 
 /**
- * Validate static inference, deployment, Additional Setup, and Manage Sandboxes redirect destinations against the published route map.
+ * Validate guarded redirect destinations against the published route map.
  * Variant placeholders are expanded independently so one unsupported agent route
  * cannot hide behind a redirect that works for the other variants.
  */
