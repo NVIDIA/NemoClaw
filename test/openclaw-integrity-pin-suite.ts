@@ -99,7 +99,7 @@ function openClawBaseProvenance(
   tarball = PINNED_OPENCLAW_TARBALL,
 ): string {
   const recipe =
-    version === PINNED_OPENCLAW_VERSION
+    version === PINNED_OPENCLAW_VERSION || version === LEGACY_REBUILD_OPENCLAW_VERSION
       ? "ignore-scripts+reviewed-lifecycle+transitive-remediation-v1"
       : "ignore-scripts+reviewed-lifecycle-v1";
   return [
@@ -277,6 +277,7 @@ function runInstallBlock(
     `installed_mcporter_version=${JSON.stringify(installedMcporterVersion)}`,
     "node() {",
     '  if [ "${1:-}" = "/usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs" ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
+    '  if [ "${1:-}" = "--input-type=module" ] && [ "${2:-}" = "-e" ] && printf "%s\\n" "${3:-}" | grep -q "StreamableHTTPServerTransport"; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
     '  "$real_node" "$@"',
     "}",
     `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw %s\\n' "$installed_openclaw_version"; else return 127; fi; }`,
@@ -390,6 +391,7 @@ function runOptionalOpenClawPluginBlock(
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-plugin-integrity-"));
   const log = path.join(tmp, "calls.log");
   const reviewedNpmExecutable = path.join(tmp, "reviewed-npm-fixture");
+  const remediationHelper = path.join(tmp, "openclaw-npm-remediation.cjs");
   fs.writeFileSync(
     reviewedNpmExecutable,
     [
@@ -419,6 +421,20 @@ function runOptionalOpenClawPluginBlock(
       "",
     ].join("\n"),
     { mode: 0o755 },
+  );
+  fs.writeFileSync(
+    remediationHelper,
+    [
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      "const args = process.argv.slice(2);",
+      "const value = (name) => args[args.indexOf(name) + 1];",
+      `fs.appendFileSync(${JSON.stringify(log)}, \`remediate \${args.join(" ")}\\n\`);`,
+      'const output = path.join(value("--working-directory"), "diagnostics-otel-2026.6.10-remediated.tgz");',
+      'fs.copyFileSync(value("--archive"), output);',
+      "console.log(output);",
+      "",
+    ].join("\n"),
   );
   const script = [
     "#!/usr/bin/env bash",
@@ -457,7 +473,9 @@ function runOptionalOpenClawPluginBlock(
     "  esac",
     "  return 1",
     "}",
-    command.replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER),
+    command
+      .replaceAll("/scripts/lib/reviewed-npm-archive.mts", REVIEWED_NPM_ARCHIVE_HELPER)
+      .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -518,7 +536,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
         expect(reviewNote).toContain("`0` high");
         expect(reviewNote).toContain("`0` critical");
-        expect(reviewNote).toContain("`766` total dependencies");
+        expect(reviewNote).toContain("`767` total dependencies");
         expect(reviewNote).toContain(
           "`dist/pipeline.runtime-*.js`, which exports `prepareSlackMessage`",
         );
@@ -646,6 +664,12 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "npm pack https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.10.tgz --pack-destination",
         );
         expect(calls).toMatch(
+          /remediate --archive \S*\/diagnostics-otel-2026\.6\.10\.tgz --package-spec @openclaw\/diagnostics-otel@2026\.6\.10 --working-directory \S+\n/,
+        );
+        expect(calls).toMatch(
+          /openclaw plugins install npm-pack:\S*\/diagnostics-otel-2026\.6\.10-remediated\.tgz\n/,
+        );
+        expect(calls).not.toMatch(
           /openclaw plugins install npm-pack:\S*\/diagnostics-otel-2026\.6\.10\.tgz\n/,
         );
         expect(calls).toContain(
@@ -1205,6 +1229,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         expect(fixtureBase.calls).toContain(`openclaw-${LEGACY_REBUILD_OPENCLAW_VERSION}.tgz`);
         expect(fixtureBase.calls).toContain("npm install -g --ignore-scripts ");
+        expect(fixtureBase.calls).toContain("openclaw-remediated.tgz");
         expect(fixtureBase.calls).not.toContain("postinstall-bundled-plugins.mjs");
         expect(gatewayFixtureBase.result.status).toBe(0);
         expect(gatewayFixtureBase.calls).toContain("npm install -g --ignore-scripts ");

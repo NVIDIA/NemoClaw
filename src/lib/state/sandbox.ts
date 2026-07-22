@@ -799,7 +799,7 @@ export function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): s
       '[ "${hardlink_count:-0}" = "0" ] || { echo "hard-linked sqlite state file rejected: $src" >&2; exit 11; }',
       'tmp="$(mktemp /tmp/nemoclaw-sqlite-backup.XXXXXX)"',
       "trap 'rm -f \"$tmp\"' EXIT",
-      `/usr/bin/python3 -I -c ${shellQuote(SQLITE_BACKUP_PY)} "$src" "$tmp" && cat -- "$tmp"`,
+      `/usr/bin/python3 -I -S -c ${shellQuote(SQLITE_BACKUP_PY)} "$src" "$tmp" && cat -- "$tmp"`,
     ].join("; ");
   }
 
@@ -841,11 +841,16 @@ function backupStateFile(
   });
 
   if (result.status === 2) return { outcome: "missing", unreachable: false };
-  if (result.status !== 0 || result.error || result.signal || !result.stdout) {
+  const emptySqliteBackup = spec.strategy === "sqlite_backup" && result.stdout?.length === 0;
+  if (result.status !== 0 || result.error || result.signal || !result.stdout || emptySqliteBackup) {
     const detail =
       (result.stderr?.toString() || "").trim() ||
       result.error?.message ||
-      (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
+      (result.signal
+        ? `signal ${result.signal}`
+        : emptySqliteBackup
+          ? "empty output"
+          : `exit ${String(result.status)}`);
     _log(`FAILED: state file backup ${spec.path}: ${detail.substring(0, 200)}`);
     return { outcome: "failed", unreachable: isSshTransportFailure(result) };
   }

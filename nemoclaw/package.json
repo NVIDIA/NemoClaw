@@ -33,7 +33,7 @@
   "dependencies": {
     "execa": "^9.6.1",
     "json5": "^2.2.3",
-    "tar": "^7.0.0",
+    "tar": "7.5.20",
     "yaml": "2.8.3"
   },
   "devDependencies": {
