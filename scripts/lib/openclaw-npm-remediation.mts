@@ -275,7 +275,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "openclaw@2026.6.10": {
     kind: "core",
     expectedPatchedMetadataIntegrity:
-      "sha512-12xx2zL4oZ/cljBNFJF5nYH1BBGWbXnAkVdhKZQJp7zeKh3lh77NETa/ol5GXYzDt1UaP9oh3Mh548qW2xTlcw==",
+      "sha512-QJH/wyJBl7eEnjIMmWQs8jCoUXAHFNxvYCv0y+yh2WaDFJh3ptlHlgH7N+quLWRUSHPcmjcyOlKYIYXYtiDNiA==",
   },
 });
 
