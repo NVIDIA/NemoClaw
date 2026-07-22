@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Advisory Early Warning and Audit Provenance
 
 Status: implemented mechanism, proposed policy (issue #7338; evidence from #7276)
