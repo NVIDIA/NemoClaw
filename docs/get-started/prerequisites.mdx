@@ -37,7 +37,8 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 On Linux, the installer checks Docker before it installs the NemoClaw CLI.
 The installer can install Docker, start the Docker service, and add your user to the `docker` group.
 When Docker is missing, the installer downloads Docker's official convenience script, prompts for `sudo`, and starts the service when systemd is available.
-If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
+In a non-interactive run, the installer can reactivate the group through `sg docker` and continue onboarding.
+If that path is unavailable or does not restore Docker access, the installer exits with `newgrp docker` guidance before it starts onboarding.
 
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.
