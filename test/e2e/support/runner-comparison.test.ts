@@ -299,19 +299,28 @@ describe("runner comparison private artifacts", () => {
     }
   });
 
-  it.each(["symlink", "hardlink"])("rejects a %s ledger replacement (#7145)", (kind) => {
+  it.each([
+    {
+      kind: "symlink",
+      replace: (ledgerPath: string, replacement: string) => {
+        fs.writeFileSync(replacement, fs.readFileSync(ledgerPath));
+        fs.unlinkSync(ledgerPath);
+        fs.symlinkSync(replacement, ledgerPath);
+      },
+    },
+    {
+      kind: "hardlink",
+      replace: (ledgerPath: string, replacement: string) => {
+        fs.linkSync(ledgerPath, replacement);
+      },
+    },
+  ])("rejects a $kind ledger replacement (#7145)", ({ replace }) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runner-link-"));
     try {
       expectSuccess(runCli(directory, "initialize"));
       const ledgerPath = path.join(directory, "artifacts", RUNNER_COMPARISON_LEDGER_FILE);
       const replacement = path.join(directory, "replacement");
-      if (kind === "symlink") {
-        fs.writeFileSync(replacement, fs.readFileSync(ledgerPath));
-        fs.unlinkSync(ledgerPath);
-        fs.symlinkSync(replacement, ledgerPath);
-      } else {
-        fs.linkSync(ledgerPath, replacement);
-      }
+      replace(ledgerPath, replacement);
       expect(runCli(directory, "finalize").status).not.toBe(0);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });

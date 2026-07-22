@@ -37,8 +37,8 @@ function loadWorkflow(): Workflow {
 
 function step(workflow: Workflow, jobId: string, name: string): WorkflowStep {
   const found = workflow.jobs[jobId]!.steps.find((candidate) => candidate.name === name);
-  if (!found) throw new Error(`${jobId} is missing ${name}`);
-  return found;
+  expect(found, `${jobId} is missing ${name}`).toBeDefined();
+  return found!;
 }
 
 function telemetrySteps(workflow: Workflow, jobId: string): WorkflowStep[] {
