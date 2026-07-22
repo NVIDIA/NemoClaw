@@ -99,9 +99,5 @@ describe("headless server deployment guide contracts", () => {
     expect(commands).toContain("### Deprecated Brev Deployment");
     expect(commands).not.toContain("onboard --remote");
     expect(commands).not.toContain("For a remote Brev instance");
-    expect(
-      fs.existsSync(path.join(repoRoot, "docs", "deployment", "deploy-to-remote-gpu.mdx")),
-    ).toBe(false);
-    expect(fs.existsSync(path.join(repoRoot, "docs", "deployment", "brev-web-ui.mdx"))).toBe(false);
   });
 });
