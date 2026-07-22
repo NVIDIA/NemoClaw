@@ -1120,13 +1120,10 @@ function collectLiveOpenShellGatewayNames(runtime: UninstallRuntime): Set<string
     if (!Array.isArray(parsed)) return null;
     const names = new Set<string>();
     for (const item of parsed) {
-      if (
-        item !== null &&
-        typeof item === "object" &&
-        typeof (item as { name?: unknown }).name === "string"
-      ) {
-        names.add((item as { name: string }).name);
-      }
+      if (item === null || typeof item !== "object") return null;
+      const name = (item as { name?: unknown }).name;
+      if (typeof name !== "string" || name.length === 0) return null;
+      names.add(name);
     }
     return names;
   } catch {
