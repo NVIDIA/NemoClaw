@@ -3095,6 +3095,24 @@ jobs:
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
+      - name: Add swap for Hermes security posture
+        if: ${{ matrix.agent == 'hermes' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          swap_file=/mnt/nemoclaw-hermes-security-posture.swap
+          free -h
+          df -h / /mnt
+          swapon --show
+          sudo fallocate -l 32G "$swap_file"
+          sudo chmod 0600 "$swap_file"
+          sudo mkswap "$swap_file"
+          sudo swapon "$swap_file"
+          swapon --show
+          free -h
+          df -h / /mnt
+          docker system df
+
       - name: Run security posture live Vitest test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
