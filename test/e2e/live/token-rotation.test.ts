@@ -264,10 +264,25 @@ async function destroyGatewayIfOpenshellExists(
   );
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "messaging token rotation rebuilds only the changed provider and reuses unchanged credentials",
-  testTimeoutOptions(PHASE_TIMEOUT_MS),
-  async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  {
+    ...testTimeoutOptions(PHASE_TIMEOUT_MS),
+    meta: {
+      e2ePhases: [
+        "confirm Docker and start hermetic inference",
+        "install the sandbox and confirm provider hashes",
+        "rotate only the Telegram provider",
+        "reuse the sandbox after the unchanged Telegram token",
+        "rotate only the Discord provider",
+        "reuse the sandbox after the unchanged Discord token",
+        "rotate only the Slack providers",
+        "reuse the sandbox and record rotation evidence",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "run `npm run build:cli` before live repo CLI targets",
@@ -404,6 +419,7 @@ test(
       "pre-cleanup-openshell-gateway-destroy-token-rotation",
     );
 
+    progress.phase("install the sandbox and confirm provider hashes");
     const first = await runInstall(host, fakeOpenAI.baseUrl, TOKEN_A, {
       NEMOCLAW_RECREATE_SANDBOX: "1",
     });
@@ -464,6 +480,7 @@ test(
     }
     await assertSandboxRunning(host, "phase-1-sandbox-running-after-install");
 
+    progress.phase("rotate only the Telegram provider");
     const telegram = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -483,6 +500,7 @@ test(
     );
     await assertSandboxRunning(host, "phase-2-sandbox-running-after-telegram-rotation");
 
+    progress.phase("reuse the sandbox after the unchanged Telegram token");
     const afterTelegramSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -494,6 +512,7 @@ test(
     expect(afterTelegramSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
     expect(afterTelegramSameText).toContain("reusing it");
 
+    progress.phase("rotate only the Discord provider");
     const discord = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -513,6 +532,7 @@ test(
     );
     await assertSandboxRunning(host, "phase-4-sandbox-running-after-discord-rotation");
 
+    progress.phase("reuse the sandbox after the unchanged Discord token");
     const afterDiscordSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
@@ -524,6 +544,7 @@ test(
     expect(afterDiscordSameText).toContain(`Sandbox '${SANDBOX_NAME}' exists and is ready`);
     expect(afterDiscordSameText).toContain("reusing it");
 
+    progress.phase("rotate only the Slack providers");
     const slack = await runOnboard(host, fakeOpenAI.baseUrl, TOKEN_B, "phase-6-rotate-slack");
     const slackText = resultText(slack);
     expect(slack.exitCode, slackText).toBe(0);
@@ -534,6 +555,7 @@ test(
     );
     await assertSandboxRunning(host, "phase-6-sandbox-running-after-slack-rotation");
 
+    progress.phase("reuse the sandbox and record rotation evidence");
     const afterSlackSame = await runOnboard(
       host,
       fakeOpenAI.baseUrl,
