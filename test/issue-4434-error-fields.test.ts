@@ -14,15 +14,15 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
 const DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
-  "docs/security/openclaw-2026.6.10-dependency-review.md",
+  "docs/security/openclaw-2026.7.1-dependency-review.md",
 );
 const LIVE_VITEST_GUARD = path.join(
   REPO_ROOT,
   "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts",
 );
 
-const CURRENT_REVIEWED_OPENCLAW_VERSION = "2026.6.10";
-const PATCHED_OPENCLAW_2026_6_10_ISSUE_4434_TUI_ERROR_OUTPUT = [
+const CURRENT_REVIEWED_OPENCLAW_VERSION = "2026.7.1";
+const PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
   "run error: LLM request timed out.",
   "Cause: timed out while reaching the upstream API.",
   "Reporting layer: gateway proxy / upstream API.",
@@ -30,7 +30,7 @@ const PATCHED_OPENCLAW_2026_6_10_ISSUE_4434_TUI_ERROR_OUTPUT = [
   "1m 04s | error",
 ].join("\n");
 
-const UPSTREAM_OPENCLAW_2026_6_10_ISSUE_4434_TUI_ERROR_OUTPUT = [
+const UPSTREAM_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT = [
   "run error: LLM request timed out.",
   "1m 04s | error",
 ].join("\n");
@@ -58,17 +58,17 @@ describe("full OpenClaw TUI error guard (#4434)", () => {
   it("requires the reviewed patched output to include all full-acceptance fields", () => {
     expect(readDockerfileOpenClawVersion()).toBe(CURRENT_REVIEWED_OPENCLAW_VERSION);
     expect(
-      detectIssue4434AcceptanceFields(PATCHED_OPENCLAW_2026_6_10_ISSUE_4434_TUI_ERROR_OUTPUT),
+      detectIssue4434AcceptanceFields(PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT),
     ).toEqual({
       httpStatusOrCause: true,
       reportingLayer: true,
       recoveryHint: true,
     });
     expect(
-      missingIssue4434AcceptanceFields(PATCHED_OPENCLAW_2026_6_10_ISSUE_4434_TUI_ERROR_OUTPUT),
+      missingIssue4434AcceptanceFields(PATCHED_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT),
     ).toEqual([]);
     expect(
-      missingIssue4434AcceptanceFields(UPSTREAM_OPENCLAW_2026_6_10_ISSUE_4434_TUI_ERROR_OUTPUT),
+      missingIssue4434AcceptanceFields(UPSTREAM_OPENCLAW_2026_7_1_ISSUE_4434_TUI_ERROR_OUTPUT),
     ).toEqual(["httpStatusOrCause", "reportingLayer", "recoveryHint"]);
   });
 
@@ -82,7 +82,7 @@ describe("full OpenClaw TUI error guard (#4434)", () => {
     expect(review).not.toContain("`PRA-5`");
     expect(review).toContain("3/3 fields are present in the NemoClaw-patched runtime output");
     expect(review).toContain(
-      "3/3 fields are missing in the upstream-shaped `openclaw@2026.6.10` output",
+      "3/3 fields are missing in the upstream-shaped `openclaw@2026.7.1` output",
     );
     expect(vitestGuard).toContain("../support/issue-4434-tui-capture.ts");
     expect(vitestGuard).toContain("finalErrorBlock");
