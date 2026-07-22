@@ -1,0 +1,36 @@
+{{/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */}}
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "nemoclaw-gpu.fullname" . }}-agent
+  namespace: {{ include "nemoclaw-gpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  rules:
+    - {{- with .Values.ingress.host }}
+      host: {{ . | quote }}
+      {{- end }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path | quote }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "nemoclaw-gpu.fullname" . }}-agent
+                port:
+                  name: http
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

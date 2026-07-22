@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nemoclaw-gpu.fullname" . }}-agent
+  namespace: {{ include "nemoclaw-gpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+data:
+  agent-server.mjs: |
+{{ .Files.Get "files/agent-server.mjs" | indent 4 }}
+  agent-metrics.mjs: |
+{{ .Files.Get "files/agent-metrics.mjs" | indent 4 }}
+  ollama-start.sh: |
+{{ .Files.Get "files/ollama-start.sh" | indent 4 }}
+  INFERENCE_BASE_URL: {{ .Values.inference.baseUrl | quote }}
+  INFERENCE_MODEL: {{ .Values.inference.model | quote }}

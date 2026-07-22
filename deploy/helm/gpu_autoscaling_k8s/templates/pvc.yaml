@@ -1,0 +1,18 @@
+{{- if and .Values.ollama.persistence.enabled (not .Values.ollama.persistence.hostPath) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "nemoclaw-gpu.fullname" . }}-ollama
+  namespace: {{ include "nemoclaw-gpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.ollama.persistence.accessMode | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.ollama.persistence.size | quote }}
+  {{- with .Values.ollama.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

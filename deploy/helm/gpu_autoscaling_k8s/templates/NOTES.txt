@@ -1,0 +1,6 @@
+HPA: kubectl get hpa -n {{ include "nemoclaw-gpu.namespace" . }} -w
+Pods: ./scripts/get-agent-pods.sh -n {{ include "nemoclaw-gpu.namespace" . }} -w  (per-pod GPU %)
+{{- if .Values.ingress.enabled }}
+Ingress: kubectl get ingress {{ include "nemoclaw-gpu.fullname" . }}-agent -n {{ include "nemoclaw-gpu.namespace" . }}
+Endpoint: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}{{ .Values.ingress.path }}
+{{- end }}

@@ -1,0 +1,20 @@
+{{- if and .Values.metrics.enabled .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "nemoclaw-gpu.fullname" . }}-agent
+  namespace: {{ include "nemoclaw-gpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-gpu.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "nemoclaw-gpu.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.metrics.path }}
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+{{- end }}

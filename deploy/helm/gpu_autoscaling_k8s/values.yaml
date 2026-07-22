@@ -1,0 +1,165 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Manual scaling: one pod per GPU (see README.md for HPA installation).
+# Target deployment: local Ollama on GPU, GPU-util HPA.
+#   helm install nemoclaw-gpu . -n nemoclaw-gpu --create-namespace --set gpuScaling.count=2
+gpuScaling:
+  oneReplicaPerGpu: true
+  count: 1
+  perPodGpu: 1
+  perPodCpuRequest: "2"
+  perPodCpuLimit: "4"
+  perPodMemory: "16Gi"
+  perPodMemoryLimit: "24Gi"
+  # Agent sidecar (no GPU) — metrics + OpenAI-compatible proxy to local Ollama
+  agentCpuRequest: "250m"
+  agentCpuLimit: "1"
+  agentMemory: "512Mi"
+  agentMemoryLimit: "1Gi"
+
+replicaCount: 1
+
+ollama:
+  image:
+    repository: ollama/ollama
+    tag: latest
+    pullPolicy: IfNotPresent
+  port: 11434
+  # Concurrent GPU batches per model (raise with care — VRAM limited).
+  numParallel: 4
+  # Persist pulled models across pod restarts / scale-up (see accessMode + hostPath).
+  persistence:
+    enabled: false
+    size: 20Gi
+    storageClass: ""
+    # ReadWriteMany: one PVC shared by all agent pods. ReadWriteOnce: single pod only.
+    accessMode: ReadWriteMany
+    # Single-node dev: host dir shared by all replicas (pull once per node). Overrides PVC.
+    hostPath: ""
+
+agent:
+  image:
+    repository: node
+    tag: "22-bookworm-slim"
+    pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+namespace:
+  create: false
+  name: nemoclaw-gpu
+
+service:
+  type: ClusterIP
+  # Agent HTTP port (CPU chart uses 8080 — keep charts on different ports)
+  port: 8081
+
+# Optional Layer-7 routing through an existing ingress-nginx controller.
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+  host: nemoclaw.local
+  path: /
+  pathType: Prefix
+  tls: []
+
+# Local GPU inference via Ollama sidecar (same pattern as NemoClaw GPU E2E / Ollama onboard)
+inference:
+  baseUrl: "http://127.0.0.1:11434/v1"
+  model: "llama3.2:3b"
+  # Optional bearer token if fronting Ollama with auth later
+  apiKey: ""
+  existingSecret: ""
+  secretName: nemoclaw-gpu-inference
+
+resources:
+  requests:
+    cpu: "2"
+    memory: "16Gi"
+    nvidia.com/gpu: "1"
+  limits:
+    cpu: "4"
+    memory: "24Gi"
+    nvidia.com/gpu: "1"
+
+podAnnotations: {}
+
+# Readiness checks local Ollama (/readyz). First model pull can take several minutes.
+probes:
+  readinessChecksInference: true
+  startupProbeSeconds: 600
+
+runtimeClassName: ""
+
+nodeSelector:
+  nvidia.com/gpu.present: "true"
+
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+
+affinity: {}
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 4
+  maxGpus: 4
+  # gpu (default) | performance | latency | resource
+  # gpu: DCGM_FI_DEV_GPU_UTIL via Prometheus + prometheus-adapter (see install-hpa.sh)
+  mode: gpu
+  targetGPUUtilizationPercentage: 40
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: null
+  gpu:
+    # Exposed to HPA / kubectl get hpa TARGETS column (Prometheus source: DCGM_FI_DEV_GPU_UTIL)
+    metricName: gpu_utilization_percent
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 180
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+      selectPolicy: Max
+  performance:
+    requestsPerSecondPerPod: "5"
+    inflightRequestsPerPod: "4"
+    latencyP95Milliseconds: "2000"
+
+loadTest:
+  chatOnly: true
+  concurrencyPerPod: 20
+  maxTokens: 128
+  jobParallelism: 2
+  rampSec: 45
+
+metrics:
+  enabled: true
+  path: /metrics
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}

@@ -1,0 +1,10 @@
+What is Kubernetes HPA and when should you use it?
+Explain the difference between CPU requests and limits on a pod.
+How does NVIDIA Inference Hub route requests to Nemotron Ultra?
+Write a short Python function to compute Fibonacci numbers recursively.
+What are the tradeoffs of manual replica scaling vs autoscaling?
+Describe how a readiness probe differs from a liveness probe.
+What is the CAP theorem in distributed systems?
+How would you debug a pod stuck in Pending state?
+Summarize how Prometheus metrics feed into Kubernetes HPA.
+What is the purpose of a HorizontalPodAutoscaler behavior stabilization window?

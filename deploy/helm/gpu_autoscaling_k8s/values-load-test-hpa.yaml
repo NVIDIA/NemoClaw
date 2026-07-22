@@ -1,0 +1,15 @@
+# Optional overlay for load-test — same 40% target and fast scale-up as values-step2-hpa.yaml.
+# Kept for ./scripts/hpa-load-test.sh (-f values-load-test-hpa.yaml); uses shorter scale-up periods.
+autoscaling:
+  targetGPUUtilizationPercentage: 40
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 10
+        - type: Pods
+          value: 4
+          periodSeconds: 10
+      selectPolicy: Max
