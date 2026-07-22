@@ -15,11 +15,12 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 - Registry metadata independently queried from npm: 2026-06-30.
 - Locked graph: `agents/openclaw/mcporter-runtime/package-lock.json` (npm lockfile version 3).
 - Lock regeneration command: `npm --prefix agents/openclaw/mcporter-runtime install --package-lock-only --ignore-scripts --omit=dev`
-- Advisory command: `npm --prefix agents/openclaw/mcporter-runtime ci --ignore-scripts --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit --omit=dev && npm --prefix agents/openclaw/mcporter-runtime audit signatures`
+- Advisory command: `npm --prefix agents/openclaw/mcporter-runtime ci --ignore-scripts --omit=dev && node --experimental-strip-types scripts/lib/reviewed-npm-audit.mts --directory agents/openclaw/mcporter-runtime --exceptions ci/npm-audit-exceptions.json --graph mcporter-runtime --threshold high && npm --prefix agents/openclaw/mcporter-runtime audit signatures`
 - Advisory review date: 2026-06-30.
 - Advisory result: `0` known vulnerabilities across the resolved production dependency graph; npm verified registry signatures for all `120` resolved packages and attestations for `12` packages.
 
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.
+The reviewed audit wrapper reports lower-severity production findings and blocks unaccepted high or critical advisories. The default `ci/npm-audit-exceptions.json` registry is empty. Any future exception must match one advisory, graph, package, installed version, and severity; identify an owner and NemoClaw tracking issue; state a decision, rationale, and expiry no more than 30 days away; and include compensating controls for temporary risk acceptance. Missing, malformed, expired, overlong, mismatched, or unused exceptions fail closed. The repository-wide audit also rejects exceptions for unknown graph IDs. Registry signature verification remains a separate control.
 
 ## WeChat plugin runtime graph
 
@@ -39,7 +40,7 @@ The lock records the exact version, registry URL, and integrity for every transi
 ## Source-of-Truth Boundary
 
 - `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`.
-- `sourceBoundary`: npm owns registry metadata, tarball integrity, provenance signatures, and advisory responses; NemoClaw owns the exact lock, script-disabled install, Docker integrity assertion, and review record.
+- `sourceBoundary`: npm owns registry metadata, tarball integrity, provenance signatures, and advisory responses; NemoClaw owns the exact lock, script-disabled install, Docker integrity assertion, empty-by-default audit exception registry, and review record.
 - `whyNotSourceFix`: a repository note cannot make external registry state trustworthy, so image builds execute `npm audit` and `npm audit signatures` against the locked production graph and reviewers compare the lock with the registry response.
-- `regressionTest`: `test/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, audit commands, and this review synchronized.
+- `regressionTest`: `test/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, audit commands, and this review synchronized; `test/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.
