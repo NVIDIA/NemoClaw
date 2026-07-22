@@ -1910,6 +1910,17 @@ export function expectedSignalShards(
           if (shards.length !== matrix.agent.length) {
             throw new Error(`${jobId} matrix agent values must be strings`);
           }
+        } else if (keys.length === 1 && keys[0] !== "include" && Array.isArray(matrix[keys[0]!])) {
+          const shardKey = keys[0]!;
+          const env = isObjectRecord(job.env) ? job.env : {};
+          if (env.NEMOCLAW_E2E_SHARD !== `\${{ matrix.${shardKey} }}`) {
+            throw new Error(`${jobId} NEMOCLAW_E2E_SHARD must name matrix ${shardKey}`);
+          }
+          const values = matrix[shardKey] as unknown[];
+          shards = values.filter((value): value is string => typeof value === "string");
+          if (shards.length !== values.length) {
+            throw new Error(`${jobId} matrix ${shardKey} values must be strings`);
+          }
         } else if (keys.length === 1 && Array.isArray(matrix.include)) {
           const env = isObjectRecord(job.env) ? job.env : {};
           const configuredShard = env.NEMOCLAW_E2E_SHARD;

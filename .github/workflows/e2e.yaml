@@ -1633,6 +1633,7 @@ jobs:
       E2E_TARGET_ID: "hermes-gpu-startup"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}
       E2E_HERMES_GPU_STARTUP_SCENARIO: ${{ matrix.scenario }}
+      NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"

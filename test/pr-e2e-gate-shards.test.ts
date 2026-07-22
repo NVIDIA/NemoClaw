@@ -31,6 +31,26 @@ describe("PR E2E shard policy", () => {
     });
   });
 
+  it("derives Hermes GPU signal shards from the scenario matrix", () => {
+    expect(expectedSignalShards(["hermes-gpu-startup"])).toEqual({
+      "hermes-gpu-startup": ["native", "fallback", "compatibility-only"],
+    });
+  });
+
+  // source-shape-contract: security -- Scenario shard selectors bind every matrix result to distinct exact-SHA E2E evidence
+  it("rejects a direct matrix whose shard selector names another field", () => {
+    const workflow = fs.readFileSync(".github/workflows/e2e.yaml", "utf8");
+    const invalid = temporaryE2eWorkflow(
+      workflow.replace(
+        "NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}",
+        "NEMOCLAW_E2E_SHARD: ${{ matrix.mode }}",
+      ),
+    );
+    expect(() => expectedSignalShards(["hermes-gpu-startup"], invalid)).toThrow(
+      /must name matrix scenario/u,
+    );
+  });
+
   // source-shape-contract: security -- Malformed matrix shard selectors must fail closed before SHA evidence dispatch
   it("rejects malformed configured matrix shard selectors", () => {
     const workflow = fs.readFileSync(".github/workflows/e2e.yaml", "utf8");

@@ -134,6 +134,7 @@ export function validateHermesGpuStartupWorkflow(
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_NAME,
     NEMOCLAW_AGENT: "hermes",
+    NEMOCLAW_E2E_SHARD: "${{ matrix.scenario }}",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_SANDBOX_GPU: "1",
     NEMOCLAW_SANDBOX_NAME: "e2e-hermes-gpu-startup-${{ matrix.scenario }}",
