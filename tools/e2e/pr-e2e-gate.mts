@@ -245,6 +245,8 @@ type WorkflowJob = {
   conclusion: string | null;
   runnerId?: number | null;
   runnerName?: string | null;
+  runnerGroupId?: number | null;
+  runnerGroupName?: string | null;
   labels?: string[];
   steps: Array<{ name: string; status?: string; conclusion: string | null }>;
 };
@@ -1562,6 +1564,12 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
     (value.runner_name !== undefined &&
       value.runner_name !== null &&
       typeof value.runner_name !== "string") ||
+    (value.runner_group_id !== undefined &&
+      value.runner_group_id !== null &&
+      (!Number.isSafeInteger(value.runner_group_id) || (value.runner_group_id as number) < 0)) ||
+    (value.runner_group_name !== undefined &&
+      value.runner_group_name !== null &&
+      typeof value.runner_group_name !== "string") ||
     (value.labels !== undefined &&
       (!Array.isArray(value.labels) || value.labels.some((label) => typeof label !== "string"))) ||
     (value.steps !== undefined && !Array.isArray(value.steps))
@@ -1591,6 +1599,10 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
     conclusion: value.conclusion,
     ...(value.runner_id === undefined ? {} : { runnerId: value.runner_id as number | null }),
     ...(value.runner_name === undefined ? {} : { runnerName: value.runner_name }),
+    ...(value.runner_group_id === undefined
+      ? {}
+      : { runnerGroupId: value.runner_group_id as number | null }),
+    ...(value.runner_group_name === undefined ? {} : { runnerGroupName: value.runner_group_name }),
     ...(value.labels === undefined ? {} : { labels: value.labels as string[] }),
     steps,
   };
@@ -1789,7 +1801,10 @@ function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
     (job.runnerId ?? 0) < 1 ||
     typeof job.runnerName !== "string" ||
     !GITHUB_HOSTED_RUNNER_NAME_PATTERN.test(job.runnerName) ||
+    job.runnerGroupId !== 0 ||
+    job.runnerGroupName !== "GitHub Actions" ||
     !Array.isArray(job.labels) ||
+    !job.labels.includes("ubuntu-latest") ||
     job.labels.includes("self-hosted")
   ) {
     return false;
@@ -1797,13 +1812,20 @@ function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
   const strandedSteps = job.steps.filter(
     (step) => step.status === "in_progress" && step.conclusion === null,
   );
+  const strandedIndex = job.steps.findIndex(
+    (step) => step.status === "in_progress" && step.conclusion === null,
+  );
   const legacyStrandedStep =
     strandedSteps.length === 1 &&
-    job.steps.every(
-      (step) =>
-        step.conclusion === "success" ||
-        (step.conclusion === null && ["in_progress", "pending"].includes(step.status ?? "")),
-    );
+    job.steps
+      .slice(0, strandedIndex)
+      .every(
+        (step) =>
+          step.status === "completed" && ["success", "skipped"].includes(step.conclusion ?? ""),
+      ) &&
+    job.steps
+      .slice(strandedIndex + 1)
+      .every((step) => step.status === "pending" && step.conclusion === null);
   if (legacyStrandedStep) return true;
 
   const cancelledStepIndexes = job.steps.flatMap((step, index) =>
@@ -1811,22 +1833,30 @@ function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
   );
   if (cancelledStepIndexes.length !== 1) return false;
   const cancelledIndex = cancelledStepIndexes[0]!;
+  if (job.steps[cancelledIndex]?.name === "Complete job") return false;
   const beforeCancellation = job.steps.slice(0, cancelledIndex);
   const afterCancellation = job.steps.slice(cancelledIndex + 1);
+  const syntheticCompletion = afterCancellation.at(-1);
+  const skippedCleanup = afterCancellation.slice(0, -1);
   return (
-    beforeCancellation.every((step) => ["success", "skipped"].includes(step.conclusion ?? "")) &&
-    afterCancellation.some((step) => step.conclusion === "skipped") &&
-    afterCancellation.every(
+    beforeCancellation.every(
       (step) =>
-        step.conclusion === "skipped" ||
-        (step.name === "Complete job" &&
-          step.status === "completed" &&
-          step.conclusion === "success"),
-    )
+        step.status === "completed" && ["success", "skipped"].includes(step.conclusion ?? ""),
+    ) &&
+    skippedCleanup.length > 0 &&
+    skippedCleanup.every(
+      (step) =>
+        step.name !== "Complete job" &&
+        step.status === "completed" &&
+        step.conclusion === "skipped",
+    ) &&
+    syntheticCompletion?.name === "Complete job" &&
+    syntheticCompletion.status === "completed" &&
+    syntheticCompletion.conclusion === "success"
   );
 }
 
-function verifiedRunnerLossEvidence(options: {
+export function verifiedRunnerLossEvidence(options: {
   workflowConclusion: string | null;
   jobs: readonly WorkflowJob[];
   jobDetailsAvailable: boolean;
@@ -1836,17 +1866,17 @@ function verifiedRunnerLossEvidence(options: {
     !options.jobDetailsAvailable ||
     !options.jobDetailsComplete ||
     options.jobs.length === 0 ||
-    !["failure", "cancelled"].includes(options.workflowConclusion ?? "")
+    options.workflowConclusion !== "failure"
   ) {
     return null;
   }
   const runnerLostMarkerCount = options.jobs.filter(hasTrustedHostedRunnerLossMarker).length;
-  const ordinaryFailureEvidencePresent = options.jobs.some(
-    (job) => job.conclusion === "failure" && !hasTrustedHostedRunnerLossMarker(job),
+  const otherNonPassingEvidencePresent = options.jobs.some(
+    (job) => !hasTrustedHostedRunnerLossMarker(job),
   );
   return {
-    terminalClassificationPresent: ordinaryFailureEvidencePresent,
-    jobConclusion: options.workflowConclusion as "failure" | "cancelled",
+    terminalClassificationPresent: otherNonPassingEvidencePresent,
+    jobConclusion: "failure",
     runnerLostMarkerCount,
   };
 }

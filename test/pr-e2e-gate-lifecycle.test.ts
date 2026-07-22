@@ -656,6 +656,8 @@ describe("PR E2E controller lifecycle", () => {
           conclusion: "failure",
           runner_id: 1_020_705_058,
           runner_name: "GitHub Actions 1020705058",
+          runner_group_id: 0,
+          runner_group_name: "GitHub Actions",
           labels: ["ubuntu-latest"],
           steps: [
             { name: "Set up job", status: "completed", conclusion: "success" },
@@ -692,6 +694,8 @@ describe("PR E2E controller lifecycle", () => {
           conclusion: "failure",
           runner_id: 1_021_276_374,
           runner_name: "GitHub Actions 1021276374",
+          runner_group_id: 0,
+          runner_group_name: "GitHub Actions",
           labels: ["ubuntu-latest"],
           steps: [
             { name: "Set up job", status: "completed", conclusion: "success" },
@@ -734,6 +738,8 @@ describe("PR E2E controller lifecycle", () => {
           conclusion: "failure",
           runner_id: 1_021_276_374,
           runner_name: "GitHub Actions 1021276374",
+          runner_group_id: 0,
+          runner_group_name: "GitHub Actions",
           labels: ["ubuntu-latest"],
           steps: [
             { name: "Set up job", status: "completed", conclusion: "success" },
@@ -771,6 +777,8 @@ describe("PR E2E controller lifecycle", () => {
           conclusion: "failure",
           runner_id: 1_020_705_058,
           runner_name: "GitHub Actions 1020705058",
+          runner_group_id: 0,
+          runner_group_name: "GitHub Actions",
           labels: ["ubuntu-latest"],
           steps: [
             { name: "Set up job", status: "completed", conclusion: "success" },
@@ -788,6 +796,8 @@ describe("PR E2E controller lifecycle", () => {
           conclusion: "failure",
           runner_id: 1_020_705_059,
           runner_name: "GitHub Actions 1020705059",
+          runner_group_id: 0,
+          runner_group_name: "GitHub Actions",
           labels: ["ubuntu-latest"],
           steps: [
             {
