@@ -83,7 +83,7 @@ console.log(JSON.stringify({
     runtime: /npm install -g --no-audit --no-fund --no-progress --ignore-scripts "\$OPENCLAW_PACK_PATH"/.test(runtimeBlock),
     base: /npm install -g --ignore-scripts "\$OPENCLAW_PACK_PATH"/.test(baseBlock),
     optionalPlugin: /NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true\s+\\\s*openclaw plugins install "npm-pack:/.test(optionalPluginBlock) &&
-      optionalPluginBlock.includes('openclaw plugins install "npm-pack:\${plugin_archive}"'),
+      optionalPluginBlock.includes('openclaw plugins install "npm-pack:\${plugin_install_archive}"'),
     messagingPlugin: [
       '["openclaw", "plugins", "install", \`npm-pack:\${packed.archivePath}\`]',
       'NPM_CONFIG_IGNORE_SCRIPTS: "true"',
