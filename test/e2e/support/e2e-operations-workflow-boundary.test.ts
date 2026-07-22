@@ -470,6 +470,96 @@ describe("E2E operations workflow boundary", () => {
     expect(setOutput).toHaveBeenCalledWith("slackData", expect.any(String));
   });
 
+  it("keeps scorecard outputs available when a progress artifact is invalid", async () => {
+    const script = workflowScript("scorecard", "Generate E2E scorecard").replace(
+      "${{ toJSON(needs) }}",
+      JSON.stringify({ "generate-matrix": { result: "success" } }),
+    );
+    const warning = vi.fn();
+    const setOutput = vi.fn();
+    const summary = {
+      addRaw: vi.fn(),
+      write: vi.fn().mockResolvedValue(undefined),
+    };
+    summary.addRaw.mockReturnValue(summary);
+    const runtimeAudit = {
+      auditTestRuntime: vi.fn(() => {
+        throw new Error("invalid progress artifact");
+      }),
+      formatRuntimeAuditSummary: vi.fn(),
+    };
+    const runtimeModules = new Map<string, unknown>([
+      ["path", { join: (...parts: string[]) => parts.join("/") }],
+      ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
+      [
+        "/workspace/scripts/scorecard/coordinate-scorecard.mts",
+        {
+          buildScorecard: vi.fn().mockReturnValue({
+            scorecardData: { ran: 0, runMode: "Scheduled E2E", total: 0 },
+            slackData: { channel: "daily", payload: { attachments: [], text: "scorecard" } },
+            summaryMarkdown: "## 🌅 NemoClaw E2E Scorecard",
+          }),
+        },
+      ],
+      [
+        "/workspace/scripts/scorecard/analyze-trace-timing.mts",
+        {
+          buildTraceTimingResult: vi.fn().mockResolvedValue({
+            budgetWarningMessage: undefined,
+            traceSummaryLines: [],
+            traceTimingLine: "Trace: unavailable",
+          }),
+        },
+      ],
+      [
+        "/workspace/scripts/scorecard/summarize-jobs.mts",
+        { loadWorkflowRunJobs: vi.fn().mockResolvedValue([]) },
+      ],
+    ]);
+    const runtimeRequire = (specifier: string) => {
+      const runtimeModule = runtimeModules.get(specifier);
+      expect(runtimeModule, `Unexpected scorecard require: ${specifier}`).toBeDefined();
+      return runtimeModule;
+    };
+    const processMock = {
+      env: {
+        EXPLICIT_ONLY_JOBS: "",
+        GITHUB_WORKSPACE: "/workspace",
+        JOBS: "",
+        RUNTIME_ARTIFACTS: "/runner/e2e-runtime-audit",
+        TARGETS: "",
+      },
+    };
+    const context = {
+      actor: "scorecard-test",
+      eventName: "schedule",
+      repo: { owner: "NVIDIA", repo: "NemoClaw" },
+      runId: 123,
+      serverUrl: "https://github.com",
+    };
+
+    await new AsyncFunction("require", "process", "github", "context", "core", script)(
+      runtimeRequire,
+      processMock,
+      {},
+      context,
+      { setOutput, summary, warning },
+    );
+
+    expect(warning).toHaveBeenCalledWith(
+      "E2E test phase runtime summary unavailable: invalid progress artifact",
+    );
+    expect(runtimeAudit.formatRuntimeAuditSummary).not.toHaveBeenCalled();
+    expect(summary.addRaw).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "The summary is unavailable because a `test-progress.json` artifact was invalid.",
+      ),
+    );
+    expect(summary.write).toHaveBeenCalledOnce();
+    expect(setOutput).toHaveBeenCalledWith("scorecardData", expect.any(String));
+    expect(setOutput).toHaveBeenCalledWith("slackData", expect.any(String));
+  });
+
   it("keeps selective scorecards silent unless Slack posting is explicitly enabled", async () => {
     const script = workflowScript("scorecard", "Post scorecard to Slack");
     const info = vi.fn();
