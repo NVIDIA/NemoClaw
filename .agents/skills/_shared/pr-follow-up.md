@@ -32,9 +32,8 @@ gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}/comments" --paginate \
 
 ## Handle results
 
-- Apply [NemoClaw Technical English](../../../CONTRIBUTING.md#nemoclaw-technical-english) to review comments and proposed rewrites.
-- During the changed-text pilot, block on language only when ambiguity can change behavior, security, data safety, test meaning, or release meaning.
-- Treat other language findings as suggestions. Include a proposed rewrite and do not request unrelated cleanup.
+- Follow the [NemoClaw Writing Guide](../../../WRITING.md) for review comments and proposed rewrites.
+- The guide defines which language findings can block and how to write a suggestion.
 - Before you act on feedback, state the problem and the intended result.
 - Do not add a helper, configuration switch, fallback, migration, or compatibility path only to satisfy reviewer wording.
 - Treat feedback as a suggestion if you cannot connect it to one of these conditions:
