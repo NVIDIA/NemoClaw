@@ -41,6 +41,7 @@ describe("PR E2E signal shard policy", () => {
         "v0-0-55-x86-64",
         "v0-0-55-aarch64",
         "v0-0-74-x86-64",
+        "v0-0-89-x86-64",
       ],
       [DCODE_TARGET]: ["default"],
     });
