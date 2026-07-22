@@ -20,15 +20,6 @@
 
 FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c
 
-COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
-COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
-
-# npm 11.13.0 in the pinned Node 24 image bundles an affected node-tar copy.
-# Patch that private package before npm processes the checksum-pinned Hermes
-# release lockfiles.
-RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
-    --npm-root /usr/local/lib/node_modules/npm
-
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Hermes version pinned for reproducibility. All four values below are
@@ -69,6 +60,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq=1.7.1-6+deb13u2 \
         vim-tiny=2:9.1.1230-2 \
     && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+
+# npm 11.13.0 in the pinned Node 24 image bundles an affected node-tar copy.
+# Patch that private package after curl is installed and before npm processes
+# the checksum-pinned Hermes release lockfiles.
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Identical to OpenClaw base — pinned to 1.19 with checksum.

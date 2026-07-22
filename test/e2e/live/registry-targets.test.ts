@@ -38,6 +38,15 @@ process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 // targeted unsupported target at module load so the job log/summary
 // captures it before vitest reports the skipped test by id.
 const SELECTED_TARGET_ID = process.env.TARGET_ID;
+const REGISTRY_TARGET_PHASES = [
+  "resolve the target contract and run plan",
+  "confirm the target environment is ready",
+  "onboard the registry-selected sandbox",
+  "evaluate the target lifecycle profile",
+  "inspect the expected sandbox state",
+  "run target-specific cloud checks",
+  "record target completion evidence",
+] as const;
 
 for (const target of listTargets()) {
   const support = liveTargetSupport(target);
@@ -45,13 +54,29 @@ for (const target of listTargets()) {
     if (SELECTED_TARGET_ID === target.id) {
       console.warn(`[not wired] ${target.id}: ${support.reasons.join("; ")}`);
     }
-    test.skip(liveTargetTestName(target), () => {});
+    // biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
+    test.skip(
+      liveTargetTestName(target),
+      { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
+      () => {},
+    );
     continue;
   }
 
+  // biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
   test(
     liveTargetTestName(target),
-    async ({ artifacts, environment, host, lifecycle, onboard, secrets, stateValidation }) => {
+    { meta: { e2ePhases: REGISTRY_TARGET_PHASES } },
+    async ({
+      artifacts,
+      environment,
+      host,
+      lifecycle,
+      onboard,
+      progress,
+      secrets,
+      stateValidation,
+    }) => {
       for (const secret of target.requiredSecrets ?? []) {
         secrets.required(secret);
       }
@@ -76,7 +101,9 @@ for (const target of listTargets()) {
       const runPlan = buildLiveTargetRunPlan(target);
       await artifacts.writeJson("run-plan.json", runPlan);
 
+      progress.phase("confirm the target environment is ready");
       const ready = await environment.assertReady(target.environment);
+      progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, { sandboxName: `e2e-${target.id}` });
 
       // Lifecycle phase runs between onboard and state-validation.
@@ -86,6 +113,9 @@ for (const target of listTargets()) {
       // LifecyclePhaseFixture before state validation.
       let lifecycleResult: Awaited<ReturnType<typeof lifecycle.simulate>> | undefined;
       const profile = target.environment.lifecycle;
+      // Every registry target evaluates whether it declares an optional
+      // lifecycle transition before state validation.
+      progress.phase("evaluate the target lifecycle profile");
       if (profile) {
         if (!isLifecycleProfile(profile)) {
           throw new Error(
@@ -107,8 +137,10 @@ for (const target of listTargets()) {
             : await lifecycle.simulate(profile, instance);
       }
 
+      progress.phase("inspect the expected sandbox state");
       const validation = await stateValidation.from(target.expectedStateId, instance);
 
+      progress.phase("run target-specific cloud checks");
       const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
       expect(checkScripts).toEqual(
         cloudExperimentalChecksForOnboarding(target.environment.onboarding),
@@ -123,6 +155,7 @@ for (const target of listTargets()) {
         secrets,
       });
 
+      progress.phase("record target completion evidence");
       await artifacts.target.complete({
         id: target.id,
         expectedStateId: validation.state.id,
