@@ -48,6 +48,7 @@ It cannot enable Station Express on another Station generation or hardware platf
 This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the exact automatic allowlist.
 Remove the override after those images publish recognized metadata or NemoClaw replaces the exact allowlist with a separately qualified platform-family and runtime-capability check.
 
+If the installer cannot read the prompt, it stops before host changes.
 Run the override from an interactive terminal:
 
 ```bash
@@ -62,6 +63,7 @@ The installer records the override in the printed relogin command when Docker-gr
 
 On the generic Ubuntu path, accepting express install prepares the host with NVIDIA open driver `610.43.02`, Docker CE `29.6.1` with Buildx, and NVIDIA Container Toolkit `1.19.1`.
 Preparation probes package and runtime state first, reuses exact matches, and installs only missing pinned packages, including the NVIDIA Container Toolkit libraries and `nvidia-ctk` CLI.
+
 NemoClaw accepts an idle PackageKit daemon and quiesces it during repository and package changes.
 NemoClaw still stops before mutation when it finds any of these conditions:
 
@@ -142,16 +144,7 @@ The preparation helper writes a private audit log under `~/station-bootstrap-log
 Aside from the installer's separately disclosed `docker`-group membership grant when the current trusted account needs Docker access, the stock DGX OS path leaves only the digest-pinned visibility-test image in the Docker cache.
 The AI Developer Tools path can also leave the packaged CDI refresh units enabled when it repairs a missing device.
 
-Physical validation on one DGX Station GB300 covers generic Ubuntu 24.04 ARM64, stock DGX OS `7.5.0`, the April 2026 NVIDIA Colossus BaseOS profile, and the June 2026 NVIDIA AI Developer Tools profile.
-Clean-host end-to-end validation passed on generic Ubuntu and Colossus BaseOS; stock DGX OS and AI Developer Tools completed Station Express validation.
-The DGX OS `7.5.0` run used released OpenShell `0.0.85`, local Nemotron Ultra serving, sandbox `cuInit(0)`, and a Hermes write/read file-tool task.
-A dual-Station configuration has not been validated, and dedicated CI coverage is not available.
-For the complete support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
-
-<Warning title="DGX Station Support Status">
-DGX Station is Tested with limitations across the qualified profiles above on one physical DGX Station GB300.
-Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
-</Warning>
+For the current support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
 
 ## Next Step
 
