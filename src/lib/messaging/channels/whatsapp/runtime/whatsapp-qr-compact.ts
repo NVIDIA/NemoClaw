@@ -34,7 +34,7 @@
 //     fix also covers any agent/path that renders through that package.
 //   * the reviewed OpenClaw QR renderer ES module: widen the compact-renderer
 //     quiet zone on all four edges. This is hash-gated to the reviewed
-//     OpenClaw 2026.6.10 renderer so a drifted upstream bundle fails closed.
+//     OpenClaw 2026.7.1 renderer so a drifted upstream bundle fails closed.
 // The QR text and error-correction level are never altered — only the
 // terminal cell packing — so the rendered code is identical apart from size.
 //
@@ -72,7 +72,7 @@ function isOpenClawQrTerminalRendererSource(source) {
 }
 
 var REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256 =
-  "f74865035a498389fe910b23537a7dffeaee1b05e044999d855b61c96af0ada7";
+  "73ba96f98d89c1abbba5d41e72ffd2b10658a37f33c31c6a9775eb40df06afb9";
 
 function isReviewedOpenClawQrTerminalRendererIntegrity(integrity: string | undefined) {
   return integrity === REVIEWED_OPENCLAW_QR_TERMINAL_RENDERER_SHA256;

@@ -305,7 +305,16 @@ async function cleanupNemoClawSandbox(
 
 test("concurrent gateway ports: onboards two sandboxes on isolated gateways and dashboards", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "validate multi-gateway prerequisites",
+      "onboard sandbox on default gateway",
+      "onboard sandbox on alternate gateway",
+      "verify isolated gateways and dashboard forwards",
+      "uninstall alternate gateway without disrupting default",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
@@ -388,6 +397,7 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
 
   await bestEffortPreclean(host, sandbox, gatewayA, gatewayB);
 
+  progress.phase("onboard sandbox on default gateway");
   const onboardA = await runOnboard(
     host,
     SANDBOX_A,
@@ -409,6 +419,7 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
   expect(dashboardA, listAfterA.stdout).toBe(DASHBOARD_PORT_A);
   await expectPortListening(host, GATEWAY_PORT_A, "phase-1-gateway-port-a-listening");
 
+  progress.phase("onboard sandbox on alternate gateway");
   const onboardB = await runOnboard(
     host,
     SANDBOX_B,
@@ -418,6 +429,7 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
   );
   expect(onboardB.exitCode, resultText(onboardB)).toBe(0);
 
+  progress.phase("verify isolated gateways and dashboard forwards");
   const phaseAAfterB = await waitForSandboxReady(
     sandbox,
     SANDBOX_A,
@@ -459,6 +471,7 @@ test("concurrent gateway ports: onboards two sandboxes on isolated gateways and 
   expect(dashboardB, listGatewayB.stdout).toBeTruthy();
   expect(dashboardB).not.toBe(dashboardA);
 
+  progress.phase("uninstall alternate gateway without disrupting default");
   const uninstallB = await command(host, ["uninstall", "--yes", "--destroy-user-data"], {
     artifactName: "phase-4-uninstall-gateway-b",
     env: commandEnv({ NEMOCLAW_GATEWAY_PORT: GATEWAY_PORT_B }),

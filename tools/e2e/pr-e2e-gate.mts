@@ -985,7 +985,9 @@ function currentExactDiffCheck(checks: CheckRun[]): CheckRun | undefined {
     throw new Error("Multiple active PR gate checks exist for one PR/base SHA pair");
   const history = ordered.slice(0, -1);
   if (history.some((check) => retryableFailureReason(check) === undefined)) {
-    throw new Error("PR gate history contains a non-retryable older check for one PR/base SHA pair");
+    throw new Error(
+      "PR gate history contains a non-retryable older check for one PR/base SHA pair",
+    );
   }
   const current = ordered.at(-1)!;
   if (active[0] && active[0].id !== current.id) {

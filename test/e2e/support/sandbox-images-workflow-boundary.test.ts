@@ -197,6 +197,22 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("requires bounded swap before every hosted Hermes image export", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    for (const jobName of ["build-hermes-sandbox-image", "messaging-plan-image-boundary"]) {
+      const job = imageWorkflow.jobs[jobName];
+      const swap = job.steps!.find((step) => step.name === "Add swap for Hermes image export")!;
+      swap.run = swap.run!.replace('sudo swapon "$swap_file"', 'echo "swap omitted"');
+    }
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        'build-hermes-sandbox-image Hermes export swap must include sudo swapon "$swap_file"',
+        'messaging-plan-image-boundary Hermes export swap must include sudo swapon "$swap_file"',
+      ]),
+    );
+  });
+
   it("rejects coupling, rebuilding, or failing to reuse the OpenClaw image artifact", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const producer = imageWorkflow.jobs["build-sandbox-images"];

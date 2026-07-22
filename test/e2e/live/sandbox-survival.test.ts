@@ -74,14 +74,30 @@ async function expectSandboxExecAlive(
   expect(alive.stdout.trim(), resultText(alive)).toBe("alive");
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "sandbox survives gateway restart with registry, state, SSH, and live inference intact",
+  {
+    timeout: 30 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm Docker and inference prerequisites",
+        "install and register the OpenClaw sandbox",
+        "prove baseline sandbox access and inference",
+        "write persistent OpenClaw markers",
+        "restart the gateway and reconnect the sandbox",
+        "recheck state and inference after restart",
+        "destroy the sandbox and confirm registry removal",
+      ],
+    },
+  },
   async ({
     artifacts,
     cleanup,
     host,
     lifecycle,
     provider,
+    progress,
     runtime,
     sandbox,
     secrets,
@@ -210,6 +226,7 @@ test(
       sandboxCleanupOptions,
     );
 
+    progress.phase("install and register the OpenClaw sandbox");
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {
       artifactName: "install-sh-sandbox-survival",
       cwd: REPO_ROOT,
@@ -252,6 +269,7 @@ test(
       artifactName: "post-install-nemoclaw-status",
     });
 
+    progress.phase("prove baseline sandbox access and inference");
     const execShell = (script: string, artifactName: string) =>
       sandbox.exec(SANDBOX_NAME, ["sh", "-lc", script], {
         artifactName,
@@ -268,6 +286,7 @@ test(
       redactionValues: [apiKey],
     });
 
+    progress.phase("write persistent OpenClaw markers");
     const markerValue = `nemoclaw-survival-${Date.now()}`;
     const markers: SandboxMarker[] = [
       {
@@ -283,6 +302,7 @@ test(
     await stateValidation.writeSandboxMarkers(instance, markers);
     await stateValidation.expectSandboxMarkers(instance, markers, "pre-restart-marker-read");
 
+    progress.phase("restart the gateway and reconnect the sandbox");
     await lifecycle.restartGatewayRuntime({
       delayMs: 5_000,
       sandboxName: SANDBOX_NAME,
@@ -292,6 +312,7 @@ test(
       intervalMs: 5_000,
     });
 
+    progress.phase("recheck state and inference after restart");
     await sandbox.expectListed(SANDBOX_NAME, {
       artifactName: "post-restart-openshell-sandbox-list",
     });
@@ -319,6 +340,7 @@ test(
       redactionValues: [apiKey],
     });
 
+    progress.phase("destroy the sandbox and confirm registry removal");
     await host.cleanupSandbox(SANDBOX_NAME, {
       artifactName: "final-destroy-sandbox-survival",
       timeoutMs: 15 * 60_000,
@@ -345,5 +367,4 @@ test(
       },
     });
   },
-  30 * 60_000,
 );
