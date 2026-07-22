@@ -49,6 +49,13 @@ Live execution happens through shared fixtures:
 - `stateValidation` probes host-observable expected state.
 - `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
   services.
+- The automatic `progress` fixture reports the ordered semantic phase plan for
+  each `e2e-live` case. Normal output contains phase transitions, outcomes, and
+  durations. The harness appends `release registered E2E resources` to cover
+  registered cleanup. After five minutes in one phase, a content-free stall
+  diagnostic adds child-output age, current redacted command activity, and
+  runner resources; it repeats every ten minutes while the phase remains
+  active.
 
 The `test/e2e/fixtures/` path is fixture/support code, not a test
 harness or runner. Vitest remains the only test harness.
@@ -71,8 +78,14 @@ npx tsx test/e2e/registry/run.ts --emit-live-matrix --targets ubuntu-repo-cloud-
 # Fixture/support tests
 npx vitest run --project e2e-support --silent=false --reporter=default
 
+# Validate every live test's semantic phase metadata without running live bodies
+npm run test:e2e-phases:check
+
 # Opt-in live E2E targets
 npm run test:live-e2e -- --silent=false --reporter=default
+
+# Rank one or more downloaded/extracted live artifact directories
+npm run test:runtime-audit -- e2e-artifacts/run-1 e2e-artifacts/run-2
 ```
 
 The aggregate live command rebuilds the CLI before Vitest starts and runs live
@@ -83,6 +96,80 @@ on the same runner can replace the original failure with stale-lock,
 storage-exhaustion, or ownership noise. A target may retry a transient operation
 only inside its own cleanup boundary.
 Retry a full target by starting a fresh workflow run and runner.
+
+During fixture teardown, every passing or failing live test writes
+`test-progress.json` beside its other target artifacts. The runtime audit
+groups those files by target, optional shard, and test name, then reports
+median, p95, maximum, p95-minus-median variability, and the slowest observed
+phase. The summary reads the matrix identity from `E2E_TARGET_ID` and
+`NEMOCLAW_E2E_SHARD` when set. It retains overall start, finish, and duration,
+and records each declared or harness-owned phase's start, finish, duration,
+outcome, output-event count, and last-output timestamp. Use several recent
+workflow artifact directories to distinguish a consistently expensive test
+from a variable one.
+
+Normal phase output intentionally omits test identity and test-level timing
+because Vitest and GitHub Actions already provide them. It reports the current
+position and semantic label, then the outcome and duration when that phase
+ends:
+
+```text
+[e2e phase 1/4] provision a clean sandbox
+[e2e phase 1/4] provision a clean sandbox — passed in 48s; next 2/4: exercise token rotation
+[e2e phase 2/4] still running: exercise token rotation (phase 5m; child output 12s ago; activity command: rotate-token; ...)
+[e2e phase 3/4] verify the rotated credential — passed in 9s; next 4/4: release registered E2E resources
+[e2e phase 4/4] release registered E2E resources — passed in 6s
+```
+
+The `still running` line first appears after five minutes in the same phase and
+then every ten minutes. Shell probes update child-output liveness and redacted
+command activity automatically, but that detail remains hidden until the stall
+threshold. The progress fixture never forwards child output contents.
+The harness-owned final phase captures registered cleanup duration, failures,
+and stalls. Soft assertion failures are recorded against the semantic phase
+where they occurred, while successful resource release retains its own
+`passed` outcome.
+
+Every `e2e-live` test must declare two to twelve behavior-specific phases and
+transition through them in order. For example:
+
+```typescript
+const PHASES = [
+  "provision a clean sandbox",
+  "exercise token rotation",
+  "verify the rotated credential",
+] as const;
+
+test(
+  "rotates a live sandbox credential",
+  { meta: { e2ePhases: PHASES } },
+  async ({ progress }) => {
+    await provisionSandbox();
+    progress.phase("exercise token rotation");
+    await rotateCredential();
+    progress.phase("verify the rotated credential");
+    await verifyCredential();
+  },
+);
+```
+
+Use phases for meaningful scenario boundaries, not individual commands. Labels
+must be unique within the plan; generic labels such as `setup`, `execute`,
+`verify`, and `test body` are rejected. Pass each phase label as a string
+literal so the collection-only checker can validate the transition without
+executing the test body; variables and array lookups are rejected. A phase
+transition may skip optional intermediate phases, which are recorded with a
+`skipped` outcome, but it cannot move backward or select an undeclared label.
+When a module has multiple tests, including tests with the same phase plan,
+keep each literal transition inside its owning test callback so the checker can
+attribute it to that case. A helper may own the operational boundary by
+accepting a callback that performs the transition.
+Completed phases use `passed`, `failed`, or `skipped` outcomes. A passing path
+must enter the final declared phase before returning, or fixture teardown fails
+the test. Do not declare or enter `release registered E2E resources`; the
+harness appends and enters it automatically after the test's phase plan.
+`npm run test:e2e-phases:check` collects the `e2e-live` project and rejects
+missing or invalid plans without executing live test bodies.
 
 The retired `--emit-matrix` and `--plan-only` paths must not be reintroduced.
 

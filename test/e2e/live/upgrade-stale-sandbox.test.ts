@@ -33,7 +33,17 @@ const LIVE_TIMEOUT_MS = 45 * 60_000;
 
 test("upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm Docker and install current NemoClaw",
+      "construct an old OpenClaw sandbox",
+      "register stale sandbox metadata",
+      "detect the stale sandbox",
+      "rebuild to the current OpenClaw runtime",
+      "confirm the upgrade check is clean",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets);
 
   await artifacts.target.declare({
@@ -76,6 +86,7 @@ test("upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)", 
   const install = await installCurrentNemoclaw(host, hosted);
   expect(install.exitCode, resultText(install)).toBe(0);
 
+  progress.phase("construct an old OpenClaw sandbox");
   const deleteInstalledSandbox = await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
     artifactName: "phase-2-delete-installed-sandbox",
     env: commandEnv(),
@@ -120,9 +131,11 @@ test("upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)", 
   expect(oldVersion.exitCode, resultText(oldVersion)).toBe(0);
   expect(resultText(oldVersion)).toContain(OLD_OPENCLAW_VERSION);
 
+  progress.phase("register stale sandbox metadata");
   writeStaleRegistryEntry();
   await artifacts.writeText("registered-stale-sandbox.json", registeredStaleSandboxJson());
 
+  progress.phase("detect the stale sandbox");
   const staleCheck = await host.nemoclaw(["upgrade-sandboxes", "--check"], {
     artifactName: "phase-5-upgrade-sandboxes-check-stale",
     env: commandEnv(hosted.env),
@@ -133,6 +146,7 @@ test("upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)", 
   expect(resultText(staleCheck)).toMatch(/stale|need upgrading/i);
   expect(resultText(staleCheck)).not.toMatch(/up to date/i);
 
+  progress.phase("rebuild to the current OpenClaw runtime");
   const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
     artifactName: "phase-6-rebuild-stale-sandbox",
     env: commandEnv(hosted.env),
@@ -152,6 +166,7 @@ test("upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)", 
   expect(newVersion.exitCode, resultText(newVersion)).toBe(0);
   expect(resultText(newVersion)).not.toContain(OLD_OPENCLAW_VERSION);
 
+  progress.phase("confirm the upgrade check is clean");
   const cleanCheck = await host.nemoclaw(["upgrade-sandboxes", "--check"], {
     artifactName: "phase-7-upgrade-sandboxes-check-clean",
     env: commandEnv(hosted.env),

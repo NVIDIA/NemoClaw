@@ -128,7 +128,8 @@ Use these details when your first-run path needs more control.
     ```
 
     Configure API clients with the base URL `http://127.0.0.1:8642/v1` after forwarding port `8642`.
-    Run `nemohermes <name> gateway-token --quiet` to retrieve the API bearer token, and pass it in the client's `Authorization` header.
+    Run `nemohermes my-hermes gateway-token --quiet` to retrieve the API bearer token.
+    Pass the token in the client's `Authorization` header.
     Do not append an OpenClaw `#token=` fragment to either URL.
     Treat the dashboard as a local management UI and protect it before you expose it on a shared network.
   </Accordion>

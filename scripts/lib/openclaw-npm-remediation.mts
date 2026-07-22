@@ -5,23 +5,30 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  closeSync,
+  constants,
   cpSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
 
 type JsonObject = Record<string, any>;
 
 type Remediation = Readonly<{
-  kind: "core" | "plugin";
-  expectedPatchedMetadataIntegrity: string;
+  expectedPatchedMetadataIntegrity?: string;
+  expectedPatchedTreeIntegrity?: string;
+  kind: "axios" | "core" | "jaeger" | "legacy-core";
+  version: "2026.3.11" | "2026.6.10" | "2026.7.1";
 }>;
 
 type RemediationRequest = Readonly<{
@@ -34,19 +41,23 @@ type RemediationRequest = Readonly<{
 type BuildRequest = RemediationRequest &
   Readonly<{
     expectedPatchedMetadataIntegrity?: string;
+    expectedPatchedTreeIntegrity?: string;
   }>;
 
-export type RemediatedArchive = Readonly<{
-  archivePath: string;
-  integrity: string;
-}> &
-  Readonly<
-    | { remediated: false }
-    | {
-        metadataIntegrity: string;
-        remediated: true;
-      }
-  >;
+export type RemediatedArchive = Readonly<
+  | {
+      archivePath: string;
+      integrity: string;
+      remediated: false;
+    }
+  | {
+      archivePath: string;
+      integrity: string;
+      metadataIntegrity: string;
+      remediated: true;
+      treeIntegrity: string;
+    }
+>;
 
 const AXIOS_VERSION = "1.18.0";
 const AXIOS_INTEGRITY =
@@ -74,22 +85,64 @@ const BRACE_EXPANSION_INTEGRITY =
   "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==";
 const BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz";
+const JAEGER_PROPAGATOR_VERSION = "2.9.0";
+const JAEGER_PROPAGATOR_INTEGRITY =
+  "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==";
+const JAEGER_PROPAGATOR_TARBALL =
+  "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz";
+const OTEL_CORE_VERSION = "2.9.0";
+const OTEL_CORE_INTEGRITY =
+  "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==";
+const OTEL_CORE_TARBALL = "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz";
 
 const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
+  "@openclaw/diagnostics-otel@2026.6.10": {
+    expectedPatchedMetadataIntegrity:
+      "sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==",
+    kind: "jaeger",
+    version: "2026.6.10",
+  },
   "@openclaw/msteams@2026.6.10": {
-    kind: "plugin",
     expectedPatchedMetadataIntegrity:
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
+    kind: "axios",
+    version: "2026.6.10",
   },
   "@openclaw/slack@2026.6.10": {
-    kind: "plugin",
     expectedPatchedMetadataIntegrity:
       "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
+    kind: "axios",
+    version: "2026.6.10",
+  },
+  "@openclaw/diagnostics-otel@2026.7.1": {
+    expectedPatchedTreeIntegrity:
+      "sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==",
+    kind: "jaeger",
+    version: "2026.7.1",
+  },
+  "@openclaw/msteams@2026.7.1": {
+    expectedPatchedTreeIntegrity:
+      "sha512-FL4l65gEbbwtDd9Ogr69+xBNzIfE4YS8Hib36G+kcmX+T0oB1zL+/qs6b4bJc+ygTsh60H3yqpFbXoQeN05JYQ==",
+    kind: "axios",
+    version: "2026.7.1",
+  },
+  "@openclaw/slack@2026.7.1": {
+    expectedPatchedTreeIntegrity:
+      "sha512-4ThnsNS+yBlFSkTaQn2xosxrDu1s0vrxcqka5QqFj+8dCEaTa9JVLRgNniYV/QNhO53wc7a2R5oQFElzYspT2w==",
+    kind: "axios",
+    version: "2026.7.1",
   },
   "openclaw@2026.6.10": {
-    kind: "core",
     expectedPatchedMetadataIntegrity:
       "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
+    kind: "core",
+    version: "2026.6.10",
+  },
+  "openclaw@2026.3.11": {
+    kind: "legacy-core",
+    expectedPatchedMetadataIntegrity:
+      "sha512-1i30XSb/2NEcuTcuhXfR/x3YKaXVhWq6ttecFBSD9nrCKrzjNxSNMfK1y3qRcnblNOzRWmHtJZwZKeej02s/EQ==",
+    version: "2026.3.11",
   },
 });
 
@@ -167,20 +220,101 @@ function writeJson(path: string, value: JsonObject): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
-function hashPatchedMetadata(packageDirectory: string): string {
+// The package tree lives below the caller's freshly created 0700 remediation
+// root. Pin each regular file's type and contents to the same no-follow
+// descriptor, and reject special entries after a nonblocking open.
+export function hashPackageTree(packageDirectory: string): string {
   const hash = createHash("sha512");
-  const names = ["package.json", "npm-shrinkwrap.json"];
-  const bundledFsSafePackageJson = "node_modules/@openclaw/fs-safe/package.json";
-  if (existsSync(join(packageDirectory, bundledFsSafePackageJson))) {
-    names.push(bundledFsSafePackageJson);
-  }
-  for (const name of names) {
-    const contents = readFileSync(join(packageDirectory, name));
+  const visit = (directory: string, relativeDirectory: string): void => {
+    for (const name of readdirSync(directory).sort()) {
+      const absolutePath = join(directory, name);
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${name}` : name;
+      const descriptor = openSync(
+        absolutePath,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      try {
+        const openedStats = fstatSync(descriptor);
+        if (openedStats.isDirectory()) {
+          hash.update(`directory\0${relativePath}\0`);
+          visit(absolutePath, relativePath);
+        } else if (openedStats.isFile()) {
+          hash.update(`file\0${relativePath}\0${openedStats.size}\0`);
+          hash.update(readFileSync(descriptor));
+          hash.update("\0");
+        } else {
+          throw new Error(`Remediated package tree has unsupported entry ${relativePath}`);
+        }
+      } finally {
+        closeSync(descriptor);
+      }
+    }
+  };
+  visit(packageDirectory, "");
+  return `sha512-${hash.digest("base64")}`;
+}
+
+function hashMetadataEntries(entries: readonly (readonly [string, Buffer])[]): string {
+  const hash = createHash("sha512");
+  for (const [name, contents] of entries) {
     hash.update(`${name}\0${contents.length}\0`);
     hash.update(contents);
     hash.update("\0");
   }
   return `sha512-${hash.digest("base64")}`;
+}
+
+// The retained 2026.6.10 remediation shipped with a narrower metadata digest.
+// Keep enforcing that exact historical contract for those four identities while
+// 2026.7.1 continues to use the stronger complete-tree digest above.
+function hashPatchedMetadata(packageDirectory: string): string {
+  const packageJson = readJson(join(packageDirectory, "package.json"));
+  if (packageJson.name === "openclaw" && packageJson.version === "2026.3.11") {
+    const bundledTarPackageJson = readJson(
+      join(packageDirectory, "node_modules", "tar", "package.json"),
+    );
+    return hashMetadataEntries([
+      [
+        "legacy-openclaw-remediation.json",
+        Buffer.from(
+          `${JSON.stringify(
+            {
+              bundledDependencies: packageJson.bundledDependencies,
+              bundledTar: {
+                name: bundledTarPackageJson.name,
+                version: bundledTarPackageJson.version,
+              },
+              name: packageJson.name,
+              tarDependency: packageJson.dependencies?.tar,
+              version: packageJson.version,
+            },
+            null,
+            2,
+          )}\n`,
+        ),
+      ],
+    ]);
+  }
+
+  const names = ["package.json"];
+  if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
+    names.push("npm-shrinkwrap.json");
+  }
+  const bundledFsSafePackageJson = "node_modules/@openclaw/fs-safe/package.json";
+  if (existsSync(join(packageDirectory, bundledFsSafePackageJson))) {
+    names.push(bundledFsSafePackageJson);
+  }
+  const diagnosticsMetadata = [
+    "node_modules/@opentelemetry/sdk-node/package.json",
+    "node_modules/@opentelemetry/propagator-jaeger/package.json",
+    "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core/package.json",
+  ];
+  if (diagnosticsMetadata.every((name) => existsSync(join(packageDirectory, name)))) {
+    names.push(...diagnosticsMetadata);
+  }
+  return hashMetadataEntries(
+    names.map((name) => [name, readFileSync(join(packageDirectory, name))] as const),
+  );
 }
 
 function sortedObject(value: JsonObject): JsonObject {
@@ -362,6 +496,185 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   writeJson(shrinkwrapPath, shrinkwrap);
 }
 
+export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const bundledTarPackageJsonPath = join(packageDirectory, "node_modules", "tar", "package.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(packageJson, "openclaw", "2026.3.11", "Legacy OpenClaw core");
+  if (packageJson.dependencies?.tar !== "7.5.11") {
+    throw new Error("openclaw@2026.3.11 must declare reviewed tar@7.5.11 before remediation");
+  }
+  if (packageJson.bundledDependencies !== undefined) {
+    throw new Error("openclaw@2026.3.11 unexpectedly declares bundled dependencies");
+  }
+  if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
+    throw new Error("openclaw@2026.3.11 unexpectedly ships an npm shrinkwrap");
+  }
+  if (!existsSync(bundledTarPackageJsonPath)) {
+    throw new Error("openclaw@2026.3.11 remediation requires the reviewed bundled tar package");
+  }
+  requirePackageIdentity(
+    readJson(bundledTarPackageJsonPath),
+    "tar",
+    TAR_VERSION,
+    "Legacy OpenClaw bundled tar remediation",
+  );
+
+  packageJson.dependencies.tar = TAR_VERSION;
+  packageJson.bundledDependencies = ["tar"];
+  writeJson(packageJsonPath, packageJson);
+}
+
+export function patchOpenClawDiagnosticsPackageGraph(packageDirectory: string): void {
+  const packageSpec = "@openclaw/diagnostics-otel@2026.6.10";
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
+  const sdkPackageJsonPath = join(
+    packageDirectory,
+    "node_modules",
+    "@opentelemetry",
+    "sdk-node",
+    "package.json",
+  );
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(
+    packageJson,
+    "@openclaw/diagnostics-otel",
+    "2026.6.10",
+    "OpenClaw diagnostics OTEL plugin",
+  );
+  if (
+    packageJson.dependencies?.["@opentelemetry/sdk-node"] !== "0.219.0" ||
+    !Array.isArray(packageJson.bundledDependencies) ||
+    !packageJson.bundledDependencies.includes("@opentelemetry/sdk-node")
+  ) {
+    throw new Error(`${packageSpec} SDK bundle changed; review the remediation`);
+  }
+
+  const shrinkwrap = readJson(shrinkwrapPath);
+  if (shrinkwrap.lockfileVersion !== 3 || !shrinkwrap.packages?.[""]) {
+    throw new Error(`${packageSpec} must ship an npm lockfileVersion 3 shrinkwrap`);
+  }
+  const packages = shrinkwrap.packages as JsonObject;
+  const sdk = packages["node_modules/@opentelemetry/sdk-node"] as JsonObject | undefined;
+  const jaeger = packages["node_modules/@opentelemetry/propagator-jaeger"] as
+    | JsonObject
+    | undefined;
+  const nestedCoreKey =
+    "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core";
+  if (
+    sdk?.version !== "0.219.0" ||
+    sdk.dependencies?.["@opentelemetry/propagator-jaeger"] !== "2.8.0" ||
+    jaeger?.version !== "2.8.0" ||
+    jaeger.dependencies?.["@opentelemetry/core"] !== "2.8.0" ||
+    packages[nestedCoreKey] !== undefined
+  ) {
+    throw new Error(`${packageSpec} Jaeger graph changed; review the remediation`);
+  }
+
+  const sdkPackageJson = readJson(sdkPackageJsonPath);
+  requirePackageIdentity(
+    sdkPackageJson,
+    "@opentelemetry/sdk-node",
+    "0.219.0",
+    "bundled OpenTelemetry SDK",
+  );
+  if (sdkPackageJson.dependencies?.["@opentelemetry/propagator-jaeger"] !== "2.8.0") {
+    throw new Error(
+      "@opentelemetry/sdk-node@0.219.0 Jaeger dependency changed; review the remediation",
+    );
+  }
+
+  sdk.dependencies["@opentelemetry/propagator-jaeger"] = JAEGER_PROPAGATOR_VERSION;
+  sdkPackageJson.dependencies["@opentelemetry/propagator-jaeger"] = JAEGER_PROPAGATOR_VERSION;
+  packages["node_modules/@opentelemetry/propagator-jaeger"] = {
+    version: JAEGER_PROPAGATOR_VERSION,
+    resolved: JAEGER_PROPAGATOR_TARBALL,
+    integrity: JAEGER_PROPAGATOR_INTEGRITY,
+    license: "Apache-2.0",
+    dependencies: { "@opentelemetry/core": OTEL_CORE_VERSION },
+    engines: { node: "^18.19.0 || >=20.6.0" },
+    peerDependencies: { "@opentelemetry/api": ">=1.0.0 <1.10.0" },
+  };
+  packages[nestedCoreKey] = {
+    version: OTEL_CORE_VERSION,
+    resolved: OTEL_CORE_TARBALL,
+    integrity: OTEL_CORE_INTEGRITY,
+    license: "Apache-2.0",
+    dependencies: { "@opentelemetry/semantic-conventions": "^1.29.0" },
+    engines: { node: "^18.19.0 || >=20.6.0" },
+    peerDependencies: { "@opentelemetry/api": ">=1.0.0 <1.10.0" },
+  };
+
+  writeJson(sdkPackageJsonPath, sdkPackageJson);
+  writeJson(packageJsonPath, packageJson);
+  writeJson(shrinkwrapPath, shrinkwrap);
+}
+
+export function patchOpenClawDiagnosticsOtelPackageGraph(packageDirectory: string): void {
+  const packageSpec = "@openclaw/diagnostics-otel@2026.7.1";
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(packageJson, "@openclaw/diagnostics-otel", "2026.7.1", "OpenClaw plugin");
+
+  const shrinkwrap = readJson(shrinkwrapPath);
+  if (shrinkwrap.lockfileVersion !== 3 || !shrinkwrap.packages?.[""]) {
+    throw new Error(`${packageSpec} must ship an npm lockfileVersion 3 shrinkwrap`);
+  }
+  const sdkKey = "node_modules/@opentelemetry/sdk-node";
+  const sdk = shrinkwrap.packages[sdkKey] as JsonObject | undefined;
+  if (
+    sdk?.version !== "0.219.0" ||
+    sdk.dependencies?.["@opentelemetry/propagator-jaeger"] !== "2.8.0"
+  ) {
+    throw new Error(
+      `${packageSpec} must resolve ${sdkKey} with Jaeger propagator 2.8.0 before remediation`,
+    );
+  }
+  sdk.dependencies["@opentelemetry/propagator-jaeger"] = JAEGER_PROPAGATOR_VERSION;
+
+  const sdkPackageJsonPath = join(packageDirectory, sdkKey, "package.json");
+  const sdkPackageJson = readJson(sdkPackageJsonPath);
+  requirePackageIdentity(sdkPackageJson, "@opentelemetry/sdk-node", "0.219.0", "Bundled SDK");
+  if (sdkPackageJson.dependencies?.["@opentelemetry/propagator-jaeger"] !== "2.8.0") {
+    throw new Error(`${packageSpec} bundled SDK Jaeger dependency changed before remediation`);
+  }
+  sdkPackageJson.dependencies["@opentelemetry/propagator-jaeger"] = JAEGER_PROPAGATOR_VERSION;
+
+  const jaegerKey = "node_modules/@opentelemetry/propagator-jaeger";
+  const jaeger = shrinkwrap.packages[jaegerKey] as JsonObject | undefined;
+  if (jaeger?.version !== "2.8.0" || jaeger.dependencies?.["@opentelemetry/core"] !== "2.8.0") {
+    throw new Error(`${packageSpec} must resolve ${jaegerKey} to 2.8.0 before remediation`);
+  }
+  shrinkwrap.packages[jaegerKey] = {
+    version: JAEGER_PROPAGATOR_VERSION,
+    resolved: JAEGER_PROPAGATOR_TARBALL,
+    integrity: JAEGER_PROPAGATOR_INTEGRITY,
+    license: "Apache-2.0",
+    dependencies: { "@opentelemetry/core": OTEL_CORE_VERSION },
+    engines: { node: "^18.19.0 || >=20.6.0" },
+    peerDependencies: { "@opentelemetry/api": ">=1.0.0 <1.10.0" },
+  };
+
+  const coreKey = `${jaegerKey}/node_modules/@opentelemetry/core`;
+  if (shrinkwrap.packages[coreKey]) {
+    throw new Error(`${packageSpec} already has a nested Jaeger core dependency`);
+  }
+  shrinkwrap.packages[coreKey] = {
+    version: OTEL_CORE_VERSION,
+    resolved: OTEL_CORE_TARBALL,
+    integrity: OTEL_CORE_INTEGRITY,
+    license: "Apache-2.0",
+    dependencies: { "@opentelemetry/semantic-conventions": "^1.29.0" },
+    engines: { node: "^18.19.0 || >=20.6.0" },
+    peerDependencies: { "@opentelemetry/api": ">=1.0.0 <1.10.0" },
+  };
+
+  writeJson(sdkPackageJsonPath, sdkPackageJson);
+  writeJson(shrinkwrapPath, shrinkwrap);
+}
+
 function patchFsSafePackageGraph(packageDirectory: string): void {
   const packageJsonPath = join(packageDirectory, "package.json");
   const packageJson = readJson(packageJsonPath);
@@ -409,7 +722,9 @@ function packReplacement(
   });
 }
 
-export function buildRemediatedOpenClawArchive(request: BuildRequest): RemediatedArchive {
+export function buildRemediatedOpenClawPluginArchive(
+  request: BuildRequest,
+): Extract<RemediatedArchive, { remediated: true }> {
   const remediation = REMEDIATIONS[request.packageSpec];
   if (!remediation) {
     throw new Error(`No OpenClaw npm remediation is defined for ${request.packageSpec}`);
@@ -452,7 +767,33 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       join(sourcePackage, "node_modules", "@openclaw", "fs-safe"),
     );
     patchOpenClawCorePackageGraph(sourcePackage);
-  } else {
+  } else if (remediation.kind === "legacy-core") {
+    const bundledTarPath = join(sourcePackage, "node_modules", "tar");
+    if (existsSync(bundledTarPath)) {
+      throw new Error("openclaw@2026.3.11 unexpectedly bundles tar before remediation");
+    }
+    const tarArchive = packReplacement(
+      `tar@${TAR_VERSION}`,
+      TAR_INTEGRITY,
+      TAR_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const tarPackage = extractArchive(
+      tarArchive.archivePath,
+      join(remediationRoot, "tar"),
+      remediationRoot,
+      env,
+    );
+    requirePackageIdentity(
+      readJson(join(tarPackage, "package.json")),
+      "tar",
+      TAR_VERSION,
+      "Legacy OpenClaw tar remediation package",
+    );
+    copyReplacementPackage(tarPackage, bundledTarPath);
+    patchLegacyOpenClawCorePackageGraph(sourcePackage);
+  } else if (remediation.kind === "axios") {
     const axiosArchive = packReplacement(
       `axios@${AXIOS_VERSION}`,
       AXIOS_INTEGRITY,
@@ -536,26 +877,122 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       join(axiosTarget, "node_modules", "https-proxy-agent", "node_modules", "agent-base"),
     );
     patchOpenClawPluginPackageGraph(sourcePackage, request.packageSpec);
+  } else {
+    const jaegerArchive = packReplacement(
+      `@opentelemetry/propagator-jaeger@${JAEGER_PROPAGATOR_VERSION}`,
+      JAEGER_PROPAGATOR_INTEGRITY,
+      JAEGER_PROPAGATOR_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const coreArchive = packReplacement(
+      `@opentelemetry/core@${OTEL_CORE_VERSION}`,
+      OTEL_CORE_INTEGRITY,
+      OTEL_CORE_TARBALL,
+      remediationRoot,
+      env,
+    );
+    const jaegerPackage = extractArchive(
+      jaegerArchive.archivePath,
+      join(remediationRoot, "propagator-jaeger"),
+      remediationRoot,
+      env,
+    );
+    const corePackage = extractArchive(
+      coreArchive.archivePath,
+      join(remediationRoot, "otel-core"),
+      remediationRoot,
+      env,
+    );
+    const jaegerPackageJson = readJson(join(jaegerPackage, "package.json"));
+    const corePackageJson = readJson(join(corePackage, "package.json"));
+    requirePackageIdentity(
+      jaegerPackageJson,
+      "@opentelemetry/propagator-jaeger",
+      JAEGER_PROPAGATOR_VERSION,
+      "Jaeger remediation package",
+    );
+    requirePackageIdentity(
+      corePackageJson,
+      "@opentelemetry/core",
+      OTEL_CORE_VERSION,
+      "OpenTelemetry core remediation package",
+    );
+    requireDependencyShape(
+      jaegerPackageJson,
+      { "@opentelemetry/core": OTEL_CORE_VERSION },
+      `@opentelemetry/propagator-jaeger@${JAEGER_PROPAGATOR_VERSION}`,
+    );
+    requireDependencyShape(
+      corePackageJson,
+      { "@opentelemetry/semantic-conventions": "^1.29.0" },
+      `@opentelemetry/core@${OTEL_CORE_VERSION}`,
+    );
+
+    const jaegerTarget = join(sourcePackage, "node_modules", "@opentelemetry", "propagator-jaeger");
+    copyReplacementPackage(jaegerPackage, jaegerTarget);
+    copyReplacementPackage(
+      corePackage,
+      join(jaegerTarget, "node_modules", "@opentelemetry", "core"),
+    );
+    if (remediation.version === "2026.6.10") {
+      patchOpenClawDiagnosticsPackageGraph(sourcePackage);
+    } else {
+      patchOpenClawDiagnosticsOtelPackageGraph(sourcePackage);
+    }
   }
 
   const outputDirectory = join(remediationRoot, "output");
   mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
-  const archivePath = join(outputDirectory, "openclaw-remediated.tgz");
-  run("tar", ["-czf", archivePath, "-C", dirname(sourcePackage), "package"], remediationRoot, env);
+  const packedJson = run(
+    "npm",
+    ["pack", ".", "--pack-destination", outputDirectory, "--ignore-scripts", "--json"],
+    sourcePackage,
+    env,
+  );
+  const packed = JSON.parse(packedJson);
+  if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0]?.filename !== "string") {
+    throw new Error(`npm pack returned an invalid remediation result for ${request.packageSpec}`);
+  }
+  const archivePath = resolve(outputDirectory, basename(packed[0].filename));
   validateArchiveMembers(archivePath, remediationRoot, env);
+  const packedPackage = extractArchive(
+    archivePath,
+    join(remediationRoot, "packed-output"),
+    remediationRoot,
+    env,
+  );
   const metadataIntegrity = hashPatchedMetadata(sourcePackage);
+  const treeIntegrity = hashPackageTree(packedPackage);
   const integrity = `sha512-${createHash("sha512").update(readFileSync(archivePath)).digest("base64")}`;
   const expectedPatchedMetadataIntegrity =
     request.expectedPatchedMetadataIntegrity ?? remediation.expectedPatchedMetadataIntegrity;
-  if (metadataIntegrity !== expectedPatchedMetadataIntegrity) {
+  if (expectedPatchedMetadataIntegrity && metadataIntegrity !== expectedPatchedMetadataIntegrity) {
     throw new Error(
       `Remediated ${request.packageSpec} metadata integrity mismatch: expected ${expectedPatchedMetadataIntegrity}, got ${metadataIntegrity}`,
     );
   }
-  return { archivePath, integrity, metadataIntegrity, remediated: true };
+  const expectedPatchedTreeIntegrity =
+    request.expectedPatchedTreeIntegrity ?? remediation.expectedPatchedTreeIntegrity;
+  if (expectedPatchedTreeIntegrity && treeIntegrity !== expectedPatchedTreeIntegrity) {
+    throw new Error(
+      `Remediated ${request.packageSpec} tree integrity mismatch: expected ${expectedPatchedTreeIntegrity}, got ${treeIntegrity}`,
+    );
+  }
+  return { archivePath, integrity, metadataIntegrity, remediated: true, treeIntegrity };
 }
 
-export function remediateReviewedOpenClawArchive(request: RemediationRequest): RemediatedArchive {
+// Compatibility export for the 2026.6.10 remediation tests and callers merged
+// from main. Both names use the same version-dispatched implementation.
+export function buildRemediatedOpenClawArchive(
+  request: BuildRequest,
+): Extract<RemediatedArchive, { remediated: true }> {
+  return buildRemediatedOpenClawPluginArchive(request);
+}
+
+export function remediateReviewedOpenClawPluginArchive(
+  request: RemediationRequest,
+): RemediatedArchive {
   const remediation = REMEDIATIONS[request.packageSpec];
   if (!remediation) {
     return {
@@ -566,9 +1003,10 @@ export function remediateReviewedOpenClawArchive(request: RemediationRequest): R
       remediated: false,
     };
   }
-  return buildRemediatedOpenClawArchive({
+  return buildRemediatedOpenClawPluginArchive({
     ...request,
     expectedPatchedMetadataIntegrity: remediation.expectedPatchedMetadataIntegrity,
+    expectedPatchedTreeIntegrity: remediation.expectedPatchedTreeIntegrity,
   });
 }
 
@@ -585,12 +1023,15 @@ if (isMainModule()) {
     return result;
   };
   try {
-    const remediated = buildRemediatedOpenClawArchive({
-      archivePath: value("--archive"),
-      packageSpec: value("--package-spec"),
-      workingDirectory: value("--working-directory"),
-    });
-    console.log(remediated.archivePath);
+    console.log(
+      JSON.stringify(
+        remediateReviewedOpenClawPluginArchive({
+          archivePath: value("--archive"),
+          packageSpec: value("--package-spec"),
+          workingDirectory: value("--working-directory"),
+        }),
+      ),
+    );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);

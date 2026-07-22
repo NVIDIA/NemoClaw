@@ -4,6 +4,15 @@
 import fs from "node:fs";
 import path from "node:path";
 
+export const ISSUE_4462_SCOPE_UPGRADE_PHASES = [
+  "confirm Docker credentials and clear the scope-upgrade sandbox",
+  "install the OpenClaw sandbox",
+  "prove fresh agent turns stay on the gateway path",
+  "approve the write-scope upgrade without admin",
+  "trigger and approve an operator.admin request through connect",
+  "clear the sandbox and record the approval contract",
+] as const;
+
 const OPENCLAW_AGENT_JSON_HELPER_PY = fs.readFileSync(
   path.join(import.meta.dirname, "..", "lib", "openclaw-agent-json.py"),
   "utf-8",
@@ -155,7 +164,7 @@ export function adminApprovalConnectScript(
     'echo "ISSUE_5324_STAGE=explicit-admin-approval"',
     'if ! openclaw devices approve "$request_id" >"$approve_output" 2>&1; then echo "ADMIN_APPROVE_FAILED" >&2; exit 27; fi',
     'if ! openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello" >"$cron_output" 2>&1; then echo "ADMIN_CRON_RETRY_FAILED" >&2; exit 28; fi',
-    // OpenClaw 2026.6.10 classifies cron.add and cron.run at the same
+    // OpenClaw 2026.6.10 and 2026.7.1 classify cron.add and cron.run at the same
     // operator.admin gateway-method boundary (gateway/methods/core-descriptors.ts).
     // The exact-request approval above therefore grants the scope both use.
     // The cron.run response is validated below after the final agent proof so

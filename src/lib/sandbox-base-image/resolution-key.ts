@@ -9,6 +9,7 @@ import { dockerInfoFormat } from "../adapters/docker";
 import { ROOT } from "../runner";
 import {
   getNearestVersionedBaseImageTags,
+  getSourceRevisionIds,
   getSourceShortShaTags,
   getVersionedBaseImageTags,
   normalizeBaseImageInputPaths,
@@ -45,6 +46,22 @@ function dockerPlatform(): string {
     timeout: 2_000,
   }).trim();
   return reported && reported !== "/" ? reported : `${process.platform}/${process.arch}`;
+}
+
+export function createSandboxBaseImageBuildProvenanceKey(options: ResolveBaseImageOptions): string {
+  const env = options.env || process.env;
+  const rootDir = options.rootDir || ROOT;
+  const material = {
+    schema: SANDBOX_BASE_RESOLUTION_SCHEMA,
+    imageName: options.imageName,
+    sourceRevisions: getSourceRevisionIds(rootDir, env),
+    inputFingerprint: hashBaseImageInputs(rootDir, options.dockerfilePath, options.inputPaths),
+  };
+  return crypto.createHash("sha256").update(JSON.stringify(material)).digest("hex");
+}
+
+export function createSandboxBaseImageBuildProvenance(options: ResolveBaseImageOptions): string {
+  return `${createSandboxBaseImageBuildProvenanceKey(options)}.${crypto.randomBytes(32).toString("hex")}`;
 }
 
 export function createSandboxBaseImageResolutionKey(options: ResolveBaseImageOptions): string {

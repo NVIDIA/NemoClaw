@@ -163,11 +163,19 @@ describe("rebuild local-provider recreation", () => {
     });
     harness.session.provider = provider;
     harness.session.model = model;
-    harness.runOpenshellSpy.mockImplementation((args: string[]) => ({
-      status: args[0] === "provider" && args[1] === "get" ? 1 : 0,
-      stdout: "",
-      stderr: "",
-    }));
+    harness.runOpenshellSpy.mockImplementation((args: string[]) =>
+      args[0] === "sandbox" && args[1] === "get"
+        ? {
+            status: 1,
+            stdout: "",
+            stderr: "sandbox alpha not found",
+          }
+        : {
+            status: args[0] === "provider" && args[1] === "get" ? 1 : 0,
+            stdout: "",
+            stderr: "",
+          },
+    );
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
