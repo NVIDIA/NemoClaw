@@ -21,11 +21,11 @@ const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
   "2026.5.18",
   "2026.5.22",
   "2026.5.27",
-  "2026.6.10",
+  "2026.7.1",
 ] as const;
 const EXPECTED_OPENCLAW_INTEGRITY =
-  "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==";
-const REVIEWED_OPENCLAW_2026_6_10_WEB_FETCH_SHAPE = [
+  "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
+const REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE = [
   "async function fetchWithWebToolsNetworkGuard(params) {",
   "  const { timeoutSeconds, useEnvProxy, ...rest } = params;",
   "  const resolved = {",
@@ -38,8 +38,8 @@ const REVIEWED_OPENCLAW_2026_6_10_WEB_FETCH_SHAPE = [
   "  return fetchWithSsrFGuard(useEnvProxy ? withTrustedEnvProxyGuardedFetchMode(resolved) : withStrictGuardedFetchMode(resolved));",
   "}",
 ].join("\n");
-const REVIEWED_OPENCLAW_2026_6_10_MANAGED_PROXY_SHAPE =
-  "const canUseManagedProxy = mode === GUARDED_FETCH_MODE.STRICT && isManagedProxyActive() && hasProxyEnvConfigured();";
+const REVIEWED_OPENCLAW_2026_7_1_MANAGED_PROXY_SHAPE =
+  "const isStrictManagedProxyActive = mode === GUARDED_FETCH_MODE.STRICT && isManagedProxyActive();";
 function readRequiredMatch(file: string, pattern: RegExp, description: string): string {
   const match = fs.readFileSync(file, "utf-8").match(pattern);
   if (!match?.[1]) {
@@ -109,7 +109,7 @@ function readDockerfileMcporterIntegrity(): string {
 function readDockerfileBaseOpenClawIntegrity(): string {
   return readRequiredMatch(
     DOCKERFILE_BASE,
-    /^ARG OPENCLAW_2026_6_10_INTEGRITY=([^\s]+)/m,
+    /^ARG OPENCLAW_2026_7_1_INTEGRITY=([^\s]+)/m,
     "OpenClaw base image integrity",
   );
 }
@@ -117,7 +117,7 @@ function readDockerfileBaseOpenClawIntegrity(): string {
 function readDockerfileOpenClawIntegrity(): string {
   return readRequiredMatch(
     DOCKERFILE,
-    /^ARG OPENCLAW_2026_6_10_INTEGRITY=([^\s]+)/m,
+    /^ARG OPENCLAW_2026_7_1_INTEGRITY=([^\s]+)/m,
     "OpenClaw runtime integrity",
   );
 }
@@ -125,7 +125,7 @@ function readDockerfileOpenClawIntegrity(): string {
 function readDockerfileOpenClawTarball(): string {
   return readRequiredMatch(
     DOCKERFILE,
-    /^ARG OPENCLAW_2026_6_10_TARBALL=([^\s]+)/m,
+    /^ARG OPENCLAW_2026_7_1_TARBALL=([^\s]+)/m,
     "OpenClaw runtime tarball",
   );
 }
@@ -141,8 +141,6 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   const openclawVersion = readDockerfileOpenClawVersion();
   const reviewedArchiveDir = path.join(tmp, "reviewed-pack");
   const reviewedArchive = path.join(reviewedArchiveDir, `openclaw-${openclawVersion}.tgz`);
-  const remediatedArchive = path.join(tmp, "openclaw-remediated.tgz");
-  const remediationHelper = path.join(tmp, "openclaw-npm-remediation.cjs");
   const expectedMcporterVersion = readDockerfileMcporterVersion();
   const openclawIntegrity = readDockerfileOpenClawIntegrity();
   const openclawTarball = readDockerfileOpenClawTarball();
@@ -160,17 +158,6 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   fs.writeFileSync(openclawShim, "");
   fs.writeFileSync(mcporterShim, "");
   fs.writeFileSync(reviewedArchive, "fake reviewed OpenClaw archive");
-  fs.writeFileSync(
-    remediationHelper,
-    [
-      'const fs = require("node:fs");',
-      "const args = process.argv.slice(2);",
-      "const value = (name) => args[args.indexOf(name) + 1];",
-      `fs.copyFileSync(value("--archive"), ${JSON.stringify(remediatedArchive)});`,
-      `console.log(${JSON.stringify(remediatedArchive)});`,
-      "",
-    ].join("\n"),
-  );
   const command = dockerRunCommandBetween(
     "# OPENCLAW_VERSION is the NemoClaw runtime build target",
     "# Patch OpenClaw media fetch",
@@ -180,8 +167,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     .replaceAll("/usr/local/bin/openclaw", openclawShim)
     .replaceAll("/usr/local/lib/node_modules/mcporter", mcporterInstall)
     .replaceAll("/usr/local/lib/nemoclaw/mcporter-runtime", mcporterInstall)
-    .replaceAll("/usr/local/bin/mcporter", mcporterShim)
-    .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper);
+    .replaceAll("/usr/local/bin/mcporter", mcporterShim);
   const script = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
@@ -192,12 +178,13 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
     `BASE_IMAGE=${JSON.stringify("registry.example/nemoclaw-test-base:latest")}`,
     `MCPORTER_VERSION=${JSON.stringify(expectedMcporterVersion)}`,
-    `OPENCLAW_2026_6_10_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
-    `OPENCLAW_2026_6_10_TARBALL=${JSON.stringify(openclawTarball)}`,
+    `OPENCLAW_2026_7_1_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
+    `OPENCLAW_2026_7_1_TARBALL=${JSON.stringify(openclawTarball)}`,
     `MCPORTER_0_7_3_INTEGRITY=${JSON.stringify(mcporterIntegrity)}`,
     `MCPORTER_0_7_3_TARBALL=${JSON.stringify(mcporterTarball)}`,
     "node() {",
     '  if [ "${1:-}" = "$postinstall_path" ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
+    '  if [ "${1:-}" = "--input-type=module" ] && [ "${2:-}" = "-e" ] && printf "%s\\n" "${3:-}" | grep -q "StreamableHTTPServerTransport"; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
     '  if [ "${2:-}" = "/scripts/lib/reviewed-npm-archive.mts" ]; then',
     '    if [ "${3:-}" = "--verify-only" ]; then',
     '      [ "$#" -eq 11 ] && [ "${4:-}" = "--package-spec" ] && [ "${5:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 91;',
@@ -207,8 +194,8 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "      return 0;",
     "    fi",
     '    [ "$#" -eq 10 ] && [ "${3:-}" = "--package-spec" ] && [ "${4:-}" = "openclaw@${OPENCLAW_VERSION}" ] || return 95;',
-    '    [ "${5:-}" = "--integrity" ] && [ "${6:-}" = "$OPENCLAW_2026_6_10_INTEGRITY" ] || return 96;',
-    '    [ "${7:-}" = "--tarball-url" ] && [ "${8:-}" = "$OPENCLAW_2026_6_10_TARBALL" ] || return 97;',
+    '    [ "${5:-}" = "--integrity" ] && [ "${6:-}" = "$OPENCLAW_2026_7_1_INTEGRITY" ] || return 96;',
+    '    [ "${7:-}" = "--tarball-url" ] && [ "${8:-}" = "$OPENCLAW_2026_7_1_TARBALL" ] || return 97;',
     '    [ "${9:-}" = "--label" ] && [ "${10:-}" = "OpenClaw ${OPENCLAW_VERSION}" ] || return 98;',
     '    printf "npm pack %s --pack-destination reviewed-temp\\n" "${8:-}" >> "$call_log";',
     '    printf "%s\\n" "$reviewed_archive"; return 0;',
@@ -220,7 +207,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
     '  if [ "${1:-}" = "view" ] && [ "${2:-}" = "openclaw@${OPENCLAW_VERSION}" ] && [ "${3:-}" = "dist.integrity" ]; then',
-    '    printf "%s\\n" "$OPENCLAW_2026_6_10_INTEGRITY";',
+    '    printf "%s\\n" "$OPENCLAW_2026_7_1_INTEGRITY";',
     "    return 0",
     "  fi",
     '  if [ "${1:-}" = "view" ] && [ "${2:-}" = "mcporter@${MCPORTER_VERSION}" ] && [ "${3:-}" = "dist.integrity" ]; then',
@@ -228,7 +215,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "    return 0",
     "  fi",
     '  if [ "${1:-}" = "view" ] && [ "${2:-}" = "openclaw@${OPENCLAW_VERSION}" ] && [ "${3:-}" = "dist.tarball" ]; then',
-    '    printf "%s\\n" "$OPENCLAW_2026_6_10_TARBALL";',
+    '    printf "%s\\n" "$OPENCLAW_2026_7_1_TARBALL";',
     "    return 0",
     "  fi",
     '  if [ "${1:-}" = "pack" ]; then',
@@ -240,10 +227,9 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     '    test -n "$pack_dir";',
     '    pack_file="openclaw-${OPENCLAW_VERSION}.tgz";',
     '    printf "fake openclaw tarball" > "$pack_dir/$pack_file";',
-    '    printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$pack_file" "$OPENCLAW_2026_6_10_INTEGRITY";',
+    '    printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$pack_file" "$OPENCLAW_2026_7_1_INTEGRITY";',
     "    return 0",
     "  fi",
-    '  if [ "${1:-}" = "ls" ]; then return 0; fi',
     '  if [ "${1:-}" = "install" ]; then return 0; fi',
     '  if [ "${1:-}" = "--prefix" ]; then return 0; fi',
     "  return 1",
@@ -293,11 +279,11 @@ function webGuardedFetchFixtureSource(): string {
 }
 
 describe("fetch-guard patch regression guard", () => {
-  it("anchors web_fetch proxy mode to the reviewed OpenClaw 2026.6.10 contract", () => {
-    expect(REVIEWED_OPENCLAW_2026_6_10_WEB_FETCH_SHAPE).toContain(
+  it("anchors web_fetch proxy mode to the reviewed OpenClaw 2026.7.1 contract", () => {
+    expect(REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE).toContain(
       "function fetchWithWebToolsNetworkGuard(params)",
     );
-    expect(REVIEWED_OPENCLAW_2026_6_10_WEB_FETCH_SHAPE).toContain(
+    expect(REVIEWED_OPENCLAW_2026_7_1_WEB_FETCH_SHAPE).toContain(
       "withTrustedEnvProxyGuardedFetchMode(resolved)",
     );
   });
@@ -355,7 +341,6 @@ describe("fetch-guard patch regression guard", () => {
       "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
     );
     expect(stale.calls).toContain("postinstall-bundled-plugins.mjs");
-    expect(stale.calls).toContain("npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip");
     expect(stale.calls).toContain(
       `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,
     );
@@ -372,12 +357,11 @@ describe("fetch-guard patch regression guard", () => {
       "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
     );
     expect(current.calls).toContain("postinstall-bundled-plugins.mjs");
-    expect(current.calls).toContain("npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip");
     expect(current.calls).toContain(
       `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,
     );
 
-    const newer = runOpenClawUpgradeBlock("2026.6.11");
+    const newer = runOpenClawUpgradeBlock("2026.7.2");
     expect(newer.result.status).toBe(1);
     expect(newer.result.stderr).toContain(
       "newer than reviewed target " + CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
@@ -399,6 +383,7 @@ describe("fetch-guard patch regression guard", () => {
     expect(invocation.calls).toMatch(
       /npm --prefix \S+ ci --ignore-scripts --omit=dev --no-audit --no-fund --no-progress/,
     );
+    expect(invocation.calls).toContain("StreamableHTTPServerTransport");
     readRequiredMatch(
       DOCKERFILE_BASE,
       /(npm --prefix \/usr\/local\/lib\/nemoclaw\/mcporter-runtime ci\s*\\\s*--ignore-scripts --omit=dev --no-audit --no-fund --no-progress)/,
@@ -1134,7 +1119,9 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
         "function isManagedProxyActive() { return process.env.OPENCLAW_PROXY_ACTIVE === '1'; }",
         "function hasProxyEnvConfigured() { return true; }",
         "function computeCanUseManagedProxy(mode, params) {",
-        `  ${REVIEWED_OPENCLAW_2026_6_10_MANAGED_PROXY_SHAPE}`,
+        "  const dispatcherPolicy = params.dispatcherPolicy;",
+        `  ${REVIEWED_OPENCLAW_2026_7_1_MANAGED_PROXY_SHAPE}`,
+        "  const canUseManagedProxy = isStrictManagedProxyActive && hasProxyEnvConfigured();",
         "  return canUseManagedProxy;",
         "}",
         "export { withStrictGuardedFetchMode as a, withTrustedEnvProxyGuardedFetchMode as b, computeCanUseManagedProxy as g };",
@@ -1339,7 +1326,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       const patch = runFetchGuardPatchBlock(dist, tmp);
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain(
-        "Patch 6 applied to OpenClaw 2026.6.10 cron preflight trusted env-proxy",
+        "Patch 6 applied to OpenClaw 2026.7.1 cron preflight trusted env-proxy",
       );
       const patched = fs.readFileSync(preflightPath, "utf-8");
       expect(
@@ -1392,7 +1379,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       const patch = runFetchGuardPatchBlock(dist, tmp);
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain(
-        "OpenClaw 2026.6.10 has no cron model-provider preflight; Patch 6 not needed",
+        "OpenClaw 2026.7.1 has no cron model-provider preflight; Patch 6 not needed",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

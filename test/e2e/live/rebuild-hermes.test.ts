@@ -37,6 +37,7 @@ import {
   verifyRebuildHermesOldBaseIsStale,
 } from "./rebuild-hermes-base-identity.ts";
 import { buildRebuildHermesChildEnv, planRebuildHermesBaseReuse } from "./rebuild-hermes-env.ts";
+import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
 import {
   cleanupTrackedRebuildHermesImage,
   type RebuildHermesRegistryImageState,
@@ -50,7 +51,6 @@ import {
 import { buildRebuildHermesOldSandboxDockerfile } from "./rebuild-hermes-old-sandbox.ts";
 import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
-import { ensureRebuildHermesHostTools } from "./rebuild-hermes-host-tools.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
 // Protected PR E2E checks out the exact head while the trusted controller runs
@@ -90,6 +90,7 @@ const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
 const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
+const PRE_REBUILD_API_SERVER_KEY = createHash("sha256").update(MARKER_CONTENT).digest("hex");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
@@ -304,7 +305,7 @@ async function bestEffortPrecleanHermesResources(
   await host.nemoclaw([SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"], {
     artifactName: `${artifactName}-nemoclaw-destroy`,
     env: testEnv(apiKey),
-    redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN],
+    redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
     timeoutMs: 3 * 60_000,
   });
   await host.command(
@@ -328,7 +329,7 @@ async function bestEffortPrecleanHermesResources(
         CURRENT_BASE_REUSE_TAG,
         OLD_BASE_TAG,
       }),
-      redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN],
+      redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
       timeoutMs: 3 * 60_000,
     },
   );
@@ -343,7 +344,7 @@ function hermesCleanupEnv(apiKey: string | undefined): NodeJS.ProcessEnv {
 }
 
 function hermesCleanupRedactions(apiKey: string | undefined): string[] {
-  return [apiKey ?? "", DISCORD_FAKE_TOKEN];
+  return [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY];
 }
 
 async function cleanupHermesNemoClawSandbox(
@@ -419,7 +420,7 @@ async function waitForSandboxReady(
     const list = await host.command("openshell", ["sandbox", "list"], {
       artifactName: `${artifactPrefix}-sandbox-list-${attempt}`,
       env: testEnv(apiKey),
-      redactionValues: [apiKey],
+      redactionValues: [apiKey, PRE_REBUILD_API_SERVER_KEY],
       timeoutMs: 30_000,
     });
     switch (new RegExp(`${SANDBOX_NAME}.*Ready`).test(resultText(list))) {
@@ -629,7 +630,7 @@ test(STALE_BASE_REBUILD
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-  const redactionValues = [apiKey, DISCORD_FAKE_TOKEN];
+  const redactionValues = [apiKey, DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY];
   const expectedVersion = expectedHermesVersion();
   const progress = startRebuildHermesProgress("setup");
   cleanup.trackDisposable("stop Hermes rebuild progress", progress.stop);
@@ -971,6 +972,7 @@ test(STALE_BASE_REBUILD
     buildRebuildHermesOldSandboxDockerfile({
       baseTag: OLD_BASE_TAG,
       baseResolutionMetadata: STALE_BASE_REBUILD ? oldBaseResolutionMetadata : null,
+      apiServerKey: PRE_REBUILD_API_SERVER_KEY,
       discordPlaceholder: DISCORD_PLACEHOLDER,
       kanbanTaskTitle: KANBAN_TASK_TITLE,
     }),
@@ -1179,6 +1181,14 @@ test(STALE_BASE_REBUILD
     },
     session: sessionSummary,
   });
+  const preRebuildApiTokenDigest = await hermesApiTokenDigest(
+    host,
+    SANDBOX_NAME,
+    "phase-4-api-token-before-rebuild",
+    testEnv(apiKey, { SANDBOX_NAME }),
+    redactionValues,
+    OPENSHELL_TIMEOUT_MS,
+  );
 
   switch (STALE_BASE_REBUILD) {
     case false: {
@@ -1215,6 +1225,8 @@ test(STALE_BASE_REBUILD
   });
   expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
   const rebuildOutput = resultText(rebuild);
+  expect(rebuildOutput).toContain("Hermes API bearer token changed during rebuild");
+  expect(rebuildOutput).toContain(`nemoclaw ${SANDBOX_NAME} gateway-token --quiet`);
   expect(rebuildOutput).toContain(`Using Hermes Agent base image: ${phase1BaseResolution.ref}`);
   expect(rebuildOutput).not.toContain("Rebuilding Hermes Agent base image");
   await waitForSandboxReady(host, apiKey, "phase-6-post-rebuild");
@@ -1357,6 +1369,25 @@ test(STALE_BASE_REBUILD
   expectExitZero(restoredEnv, "read Hermes .env after rebuild");
   expect(restoredEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
 
+  const postRebuildApiTokenDigest = await hermesApiTokenDigest(
+    host,
+    SANDBOX_NAME,
+    "phase-7-api-token-after-rebuild",
+    testEnv(apiKey, { SANDBOX_NAME }),
+    redactionValues,
+    OPENSHELL_TIMEOUT_MS,
+  );
+  const stablePostRebuildApiTokenDigest = await hermesApiTokenDigest(
+    host,
+    SANDBOX_NAME,
+    "phase-7-api-token-stability-check",
+    testEnv(apiKey, { SANDBOX_NAME }),
+    redactionValues,
+    OPENSHELL_TIMEOUT_MS,
+  );
+  expect(postRebuildApiTokenDigest).not.toBe(preRebuildApiTokenDigest);
+  expect(stablePostRebuildApiTokenDigest).toBe(postRebuildApiTokenDigest);
+
   const restoredConfig = await host.command(
     "openshell",
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/config.yaml"],
@@ -1444,7 +1475,7 @@ test(STALE_BASE_REBUILD
     true,
   );
   const leaks = listCredentialLeakPaths(sandboxBackupRoot, {
-    extraSecrets: [apiKey, DISCORD_FAKE_TOKEN],
+    extraSecrets: [apiKey, DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
   });
   await artifacts.writeJson("phase-7-backup-credential-scan.json", {
     backupRoot: sandboxBackupRoot,

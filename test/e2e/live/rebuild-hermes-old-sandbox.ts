@@ -7,6 +7,7 @@ import { formatSandboxBaseImageResolutionLabels } from "../../../src/lib/sandbox
 interface RebuildHermesOldSandboxDockerfileOptions {
   baseTag: string;
   baseResolutionMetadata: Parameters<typeof formatSandboxBaseImageResolutionLabels>[0] | null;
+  apiServerKey: string;
   discordPlaceholder: string;
   kanbanTaskTitle: string;
 }
@@ -47,6 +48,7 @@ export function buildRebuildHermesOldSandboxDockerfile(
     "    && printf '%s\\n' \\",
     "      'API_SERVER_PORT=18642' \\",
     "      'API_SERVER_HOST=127.0.0.1' \\",
+    `      'API_SERVER_KEY=${options.apiServerKey}' \\`,
     `      'DISCORD_BOT_TOKEN=${options.discordPlaceholder}' \\`,
     "      > /sandbox/.hermes/.env",
     "RUN /usr/local/bin/hermes kanban init \\",

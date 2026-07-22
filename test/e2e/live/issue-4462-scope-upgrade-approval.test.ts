@@ -256,7 +256,10 @@ rebootstrap_write_cli_to_pairing() {
   while [ "$attempt" -lt 10 ]; do
     (
       unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN
-      command openclaw devices list --json >/dev/null 2>&1
+      # OpenClaw 2026.7.1 omits CLI identity for loopback shared-token auth.
+      # Scope the compatibility marker to this deliberate re-pair provoke.
+      NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
+        command openclaw devices list --json >/dev/null 2>&1
     ) || true
     state="$(state_json)"
     paired_record="$(printf '%s' "$state" | select_paired_cli_device 2>/dev/null || true)"
@@ -1172,7 +1175,12 @@ if [ -z "$request_id" ]; then
   rm -f "/sandbox/.openclaw/agents/main/sessions/\${session_id}.jsonl.lock" \
         "/sandbox/.openclaw/agents/main/sessions/\${session_id}.trajectory.jsonl" 2>/dev/null || true
   set +e
-  trigger_output="$(openclaw agent --agent main --json --session-id "$session_id" -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.' 2>&1)"
+  # OpenClaw 2026.7.1 needs forced pairing on this shared-token scope-upgrade provoke to retain CLI identity.
+  trigger_output="$(
+    NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
+      openclaw agent --agent main --json --session-id "$session_id" \
+        -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.' 2>&1
+  )"
   trigger_rc=$?
   set -e
   printf '%s\n' "$trigger_output" >/tmp/issue4462-trigger-agent.log

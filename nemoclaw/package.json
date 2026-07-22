@@ -15,7 +15,7 @@
       "minGatewayVersion": "2026.5.22"
     },
     "build": {
-      "openclawVersion": "2026.6.10"
+      "openclawVersion": "2026.7.1"
     }
   },
   "scripts": {
@@ -33,7 +33,7 @@
   "dependencies": {
     "execa": "^9.6.1",
     "json5": "^2.2.3",
-    "tar": "^7.0.0",
+    "tar": "7.5.20",
     "yaml": "2.8.3"
   },
   "devDependencies": {
