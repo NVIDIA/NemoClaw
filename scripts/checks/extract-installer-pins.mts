@@ -173,6 +173,7 @@ function assertExactAssetSet(
 }
 
 function assertInstallerAssetSet(pins: InstallerPin[]): void {
+  // extractInstallerPins rejects duplicate assets before this transition check.
   const includesFormula = pins.some((pin) => pin.asset === TRANSITIONAL_INSTALLER_ASSET);
   assertExactAssetSet(
     pins,
