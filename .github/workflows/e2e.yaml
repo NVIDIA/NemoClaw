@@ -5076,8 +5076,16 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             ci/onboard-performance-budget.json
+            scripts/audit-test-runtime.mts
             scripts/scorecard
           sparse-checkout-cone-mode: false
+
+      - name: Download E2E progress artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/e2e-runtime-audit
+          pattern: e2e-*
 
       - name: Generate E2E scorecard
         id: scorecard
@@ -5085,6 +5093,7 @@ jobs:
         env:
           EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           JOBS: ${{ inputs.jobs }}
+          RUNTIME_ARTIFACTS: ${{ runner.temp }}/e2e-runtime-audit
           TARGETS: ${{ inputs.targets }}
         with:
           script: |
@@ -5098,6 +5107,9 @@ jobs:
             const traceTiming = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.mts'),
             );
+            const runtimeAudit = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/audit-test-runtime.mts'),
+            );
             const needs = ${{ toJSON(needs) }};
 
             // GitHub's jobs API is the canonical source because `needs.live`
@@ -5106,6 +5118,19 @@ jobs:
             const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
             const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
             if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
+            let runtimeSummaryMarkdown;
+            try {
+              const runtimeRows = runtimeAudit.auditTestRuntime([process.env.RUNTIME_ARTIFACTS]);
+              runtimeSummaryMarkdown = runtimeAudit.formatRuntimeAuditSummary(runtimeRows);
+            } catch {
+              core.warning('E2E test phase runtime summary unavailable: invalid progress artifact');
+              runtimeSummaryMarkdown = [
+                '## E2E Test Phase Runtime',
+                '',
+                'The summary is unavailable because a `test-progress.json` artifact was invalid.',
+                '',
+              ].join('\n');
+            }
 
             const { summaryMarkdown, scorecardData, slackData } = buildScorecard({
               eventName: context.eventName,
@@ -5122,7 +5147,7 @@ jobs:
               today: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
             });
 
-            await core.summary.addRaw(summaryMarkdown).write();
+            await core.summary.addRaw(`${summaryMarkdown}\n\n${runtimeSummaryMarkdown}`).write();
             core.setOutput('scorecardData', JSON.stringify(scorecardData));
             core.setOutput('slackData', JSON.stringify(slackData));
 

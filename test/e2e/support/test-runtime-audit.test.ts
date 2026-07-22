@@ -7,7 +7,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { auditTestRuntime, formatRuntimeAudit } from "../../../scripts/audit-test-runtime.mts";
+import {
+  auditTestRuntime,
+  formatRuntimeAudit,
+  formatRuntimeAuditSummary,
+} from "../../../scripts/audit-test-runtime.mts";
 
 function writeProgress(
   root: string,
@@ -31,6 +35,7 @@ function writeProgress(
       phases: [
         {
           label: phase,
+          outcome: phase === "inference" ? "failed" : "passed",
           startedAtMs: 1_000,
           finishedAtMs: 1_000 + phaseDurationMs,
           durationMs: phaseDurationMs,
@@ -64,6 +69,7 @@ describe("test runtime audit", () => {
           variabilityMs: 20_000,
           slowestPhase: "inference",
           slowestPhaseMs: 40_000,
+          slowestPhaseOutcome: "failed",
         },
         {
           target: "steady test-target",
@@ -75,14 +81,22 @@ describe("test runtime audit", () => {
           variabilityMs: 0,
           slowestPhase: "sandbox",
           slowestPhaseMs: 15_000,
+          slowestPhaseOutcome: "passed",
         },
       ]);
       expect(formatRuntimeAudit(rows)).toContain(
-        "| variable test-target | variable test | 2 | 30.0s | 50.0s | 50.0s | 20.0s | inference (40.0s) |",
+        "| variable test-target | variable test | 2 | 30.0s | 50.0s | 50.0s | 20.0s | inference (40.0s, failed) |",
       );
+      expect(formatRuntimeAuditSummary(rows)).toContain("## E2E Test Phase Runtime");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("renders an explicit no-artifact summary", () => {
+    expect(formatRuntimeAuditSummary([])).toContain(
+      "No `test-progress.json` artifacts were available for this run.",
+    );
   });
 
   it("rejects malformed progress artifacts instead of producing a misleading ranking", () => {

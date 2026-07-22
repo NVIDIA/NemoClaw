@@ -64,6 +64,21 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("pins the scorecard's current-run progress artifact download", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const download = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Download E2E progress artifacts",
+    )!;
+    download.uses = "actions/download-artifact@0000000000000000000000000000000000000000";
+    download.with!.pattern = "*";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "scorecard must download this run's E2E artifacts into the runtime audit directory",
+      ]),
+    );
+  });
+
   it("rejects controller protocol and PR validation drift", () => {
     const workflow = readE2eOperationsWorkflow();
     delete workflow.on?.workflow_dispatch?.inputs?.base_sha;
@@ -375,8 +390,15 @@ describe("E2E operations workflow boundary", () => {
         summaryMarkdown: "## 🌅 NemoClaw E2E Scorecard\n\n### Onboard Performance Budget",
       }),
     };
+    const runtimeAudit = {
+      auditTestRuntime: vi.fn().mockReturnValue([{ target: "full-e2e" }]),
+      formatRuntimeAuditSummary: vi
+        .fn()
+        .mockReturnValue("## E2E Test Phase Runtime\n\n| Target | Slowest observed phase |"),
+    };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
+      ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
       ["/workspace/scripts/scorecard/coordinate-scorecard.mts", coordinator],
       ["/workspace/scripts/scorecard/analyze-trace-timing.mts", traceTiming],
       ["/workspace/scripts/scorecard/summarize-jobs.mts", scorecardJobs],
@@ -391,6 +413,7 @@ describe("E2E operations workflow boundary", () => {
         EXPLICIT_ONLY_JOBS: "",
         GITHUB_WORKSPACE: "/workspace",
         JOBS: "",
+        RUNTIME_ARTIFACTS: "/runner/e2e-runtime-audit",
         TARGETS: "",
       },
     };
@@ -412,6 +435,7 @@ describe("E2E operations workflow boundary", () => {
     );
 
     expect(traceTiming.buildTraceTimingResult).toHaveBeenCalledWith({ github: {}, context, core });
+    expect(runtimeAudit.auditTestRuntime).toHaveBeenCalledWith(["/runner/e2e-runtime-audit"]);
     expect(warning).toHaveBeenCalledWith("Cloud onboard advisory performance budget exceeded");
     expect(coordinator.buildScorecard).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -427,7 +451,7 @@ describe("E2E operations workflow boundary", () => {
       }),
     );
     expect(summary.addRaw).toHaveBeenCalledWith(
-      expect.stringContaining("### Onboard Performance Budget"),
+      expect.stringMatching(/### Onboard Performance Budget[\s\S]*## E2E Test Phase Runtime/u),
     );
     expect(summary.write).toHaveBeenCalledOnce();
     expect(setOutput).toHaveBeenCalledWith("scorecardData", expect.any(String));
