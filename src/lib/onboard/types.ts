@@ -64,6 +64,8 @@ export interface SandboxCreateIntent {
   readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
   /** Non-secret upstream endpoint metadata for managed image config generation. */
   readonly endpointUrl?: string | null;
+  /** Provenance for the endpoint recorded with the created sandbox. */
+  readonly endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
   /** Internal authoritative rebuild tier used before replacement registration completes. */
   readonly policyTier?: string | null;
   /** Gateway-level extra providers reconciled immediately before sandbox creation. */
@@ -76,6 +78,8 @@ export type OnboardOptions = {
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
   authoritativeResumeConfig?: boolean;
+  /** Internal endpoint provenance preserved across an authoritative rebuild. */
+  endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
   /** Internal authoritative rebuild target; never exposed as a public CLI option. */
   targetGatewayName?: string | null;
   /** Internal authoritative rebuild target; must match targetGatewayName. */
@@ -92,6 +96,14 @@ export type OnboardOptions = {
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
+  /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
+  baseImageResolutionHint?:
+    | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata
+    | null;
+  /** Internal rebuild handoff for provenance already bound to an immutable local base ref. */
+  preResolvedBaseImageMetadata?:
+    | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata
+    | null;
   resume?: boolean;
   fresh?: boolean;
   fromDockerfile?: string | null;

@@ -40,8 +40,12 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
   return {
     model,
     baseUrl,
-    providerKey: env.NEMOCLAW_PROVIDER_KEY || "custom",
-    upstreamProvider: env.NEMOCLAW_UPSTREAM_PROVIDER || env.NEMOCLAW_PROVIDER_KEY || "custom",
+    providerKey: env.NEMOCLAW_INFERENCE_PROVIDER_ID || env.NEMOCLAW_PROVIDER_KEY || "custom",
+    upstreamProvider:
+      env.NEMOCLAW_UPSTREAM_PROVIDER ||
+      env.NEMOCLAW_INFERENCE_PROVIDER_ID ||
+      env.NEMOCLAW_PROVIDER_KEY ||
+      "custom",
     inferenceApi: env.NEMOCLAW_INFERENCE_API || "",
     contextWindow: readContextWindow(env),
     toolDisclosure: readToolDisclosureEnv(env),

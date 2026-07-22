@@ -1542,7 +1542,6 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
-
   it("approves only known client identities and does not reprocess handled requests", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
@@ -1569,7 +1568,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
       `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
-  printf 'list:%s:%s:%s\n' "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(envLog)}
+  printf 'list:%s:%s:%s:%s\n' "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" "\${NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING-unset}" >> ${JSON.stringify(envLog)}
   count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
   count=$((count + 1))
   echo "$count" > ${JSON.stringify(stateFile)}
@@ -1624,7 +1623,8 @@ exit 2
         "ok-agent-cli",
       ]);
       const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
-      expect(envLogLines).toContain("list:ws://127.0.0.1:18789:18789:test-gateway-token");
+      expect(envLogLines[0]).toBe("list:ws://127.0.0.1:18789:18789:test-gateway-token:1");
+      expect(envLogLines).toContain("list:unset:unset:unset:unset");
       expect(envLogLines).toContain("approve:ok-browser:unset:unset:unset");
       expect(envLogLines).toContain("approve:ok-agent-cli:unset:unset:unset");
       expect(envLogLines).not.toContain("approve:ok-webchat:unset:unset:unset");
@@ -3858,10 +3858,10 @@ describe("write_auth_profile (#1332)", () => {
     };
   }
 
-  it("writes profile under the provider key from NEMOCLAW_PROVIDER_KEY", () => {
+  it("writes profile under the route identifier from NEMOCLAW_INFERENCE_PROVIDER_ID", () => {
     const { home, authPath, status, stderr } = runWriteAuthProfile({
       NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_PROVIDER_KEY: "openai",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
     });
     try {
       expect(status, stderr).toBe(0);
@@ -3879,7 +3879,7 @@ describe("write_auth_profile (#1332)", () => {
     }
   });
 
-  it("falls back to 'inference' when NEMOCLAW_PROVIDER_KEY is unset", () => {
+  it("falls back to 'inference' when neither route identifier is set", () => {
     const { home, authPath, status, stderr } = runWriteAuthProfile({
       NVIDIA_INFERENCE_API_KEY: "secret",
     });
@@ -3914,7 +3914,7 @@ describe("write_auth_profile (#1332)", () => {
     // passed as argv, $(...) inside the value would execute and replace it.
     const { home, authPath, status, stderr } = runWriteAuthProfile({
       NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_PROVIDER_KEY: "$(echo pwned)",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "$(echo pwned)",
     });
     try {
       expect(status, stderr).toBe(0);
@@ -3940,7 +3940,7 @@ describe("write_auth_profile (#1332)", () => {
   it("writes the auth profile with 0600 permissions", () => {
     const { home, authPath, status } = runWriteAuthProfile({
       NVIDIA_INFERENCE_API_KEY: "secret",
-      NEMOCLAW_PROVIDER_KEY: "openai",
+      NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
     });
     try {
       expect(status).toBe(0);

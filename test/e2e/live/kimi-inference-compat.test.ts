@@ -28,7 +28,18 @@ const TIMEOUT_MS = 40 * 60_000;
 
 test("Kimi-compatible endpoint config enables plugin wiring and managed inference route", {
   timeout: TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets }) => {
+  meta: {
+    e2ePhases: [
+      "select the Kimi endpoint mode and credentials",
+      "confirm Docker and clear the Kimi sandbox",
+      "onboard the Kimi-compatible endpoint",
+      "inspect the generated Kimi OpenClaw configuration",
+      "probe the managed inference models route",
+      "exercise the Kimi tool-call trajectory",
+      "confirm Kimi upstream traffic",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets }) => {
   const mode = resolveKimiInferenceMode();
   const apiKey =
     mode === "public-nvidia"
@@ -62,6 +73,7 @@ test("Kimi-compatible endpoint config enables plugin wiring and managed inferenc
     model: KIMI_MODEL,
   });
 
+  progress.phase("confirm Docker and clear the Kimi sandbox");
   const docker = await host.command("docker", ["info"], {
     artifactName: "docker-info",
     env: buildAvailabilityProbeEnv(),
@@ -71,6 +83,7 @@ test("Kimi-compatible endpoint config enables plugin wiring and managed inferenc
 
   await cleanupKimi(host, sandbox);
 
+  progress.phase("onboard the Kimi-compatible endpoint");
   const onboard = await host.command(
     "node",
     [CLI, "onboard", "--fresh", "--non-interactive", "--yes-i-accept-third-party-software"],
@@ -84,6 +97,7 @@ test("Kimi-compatible endpoint config enables plugin wiring and managed inferenc
   );
   expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
+  progress.phase("inspect the generated Kimi OpenClaw configuration");
   const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.openclaw/openclaw.json"], {
     artifactName: "openclaw-config",
     env: env({}, { mode }),
@@ -108,6 +122,7 @@ test("Kimi-compatible endpoint config enables plugin wiring and managed inferenc
   expect(parsed.pluginEnabled).toBe(true);
   expect(parsed.toolSearch).toBe(false);
 
+  progress.phase("probe the managed inference models route");
   const modelsRoute = await sandbox.exec(
     SANDBOX_NAME,
     ["curl", "-sk", "--max-time", "20", "https://inference.local/v1/models"],
@@ -116,6 +131,7 @@ test("Kimi-compatible endpoint config enables plugin wiring and managed inferenc
   expect(modelsRoute.exitCode, resultText(modelsRoute)).toBe(0);
   expect(resultText(modelsRoute)).toContain(KIMI_MODEL);
 
+  progress.phase("exercise the Kimi tool-call trajectory");
   const toolAgent = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
@@ -130,5 +146,6 @@ test("Kimi-compatible endpoint config enables plugin wiring and managed inferenc
   );
   expect(toolAgent.exitCode, resultText(toolAgent)).toBe(0);
   await assertTrajectory(sandbox, mode);
+  progress.phase("confirm Kimi upstream traffic");
   await assertKimiUpstreamTraffic({ fake, host, mode, apiKey });
 });

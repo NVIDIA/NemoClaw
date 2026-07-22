@@ -109,6 +109,32 @@ export function registerRebuildFlowTargetImageTests(): void {
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     });
 
+    it("preserves replacement preflight failure when base-image disposal throws (#7144)", async () => {
+      const disposeImageRef = vi.fn(() => {
+        throw new Error("base-image cleanup failed");
+      });
+      const harness = createRebuildFlowHarness({
+        baseImagePreflight: {
+          ok: true,
+          imageRef: `nemoclaw-hermes-sandbox-base-local:rebuild-123-${"a".repeat(16)}-image-${"b".repeat(64)}`,
+          overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+          disposeImageRef,
+        },
+        customImagePreflight: {
+          ok: false,
+          detail: "replacement build failed",
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Replacement sandbox image preflight failed");
+
+      expect(disposeImageRef).toHaveBeenCalledOnce();
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    });
+
     it("recreates from the retained context after the source Dockerfile symlink changes", async () => {
       const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-source-link-"));
       const preparedDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-prepared-"));
@@ -355,6 +381,7 @@ export function registerRebuildFlowTargetImageTests(): void {
     it("marks recreate onboarding failures as terminal and preserves retry cleanup", async () => {
       const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
       const restoreEnv = snapshotEnv([overrideEnvVar]);
+      const disposeImageRef = vi.fn(() => true);
       process.env[overrideEnvVar] = "nemoclaw-hermes-sandbox-base-local:image-caller";
       try {
         const harness = createRebuildFlowHarness({
@@ -362,6 +389,7 @@ export function registerRebuildFlowTargetImageTests(): void {
             ok: true,
             imageRef: "nemoclaw-hermes-sandbox-base-local:image-preflighted",
             overrideEnvVar,
+            disposeImageRef,
           },
           onboard: (session) => {
             expect(process.env[overrideEnvVar]).toBe(
@@ -382,6 +410,7 @@ export function registerRebuildFlowTargetImageTests(): void {
           "sandbox",
           "Rebuild recreate failed",
         );
+        expect(disposeImageRef).toHaveBeenCalledOnce();
         expect(harness.session).toMatchObject({
           status: "failed",
           failure: { step: "sandbox", message: "Rebuild recreate failed" },
@@ -403,6 +432,47 @@ export function registerRebuildFlowTargetImageTests(): void {
       } finally {
         restoreEnv();
       }
+    });
+
+    it("runs every final cleanup when the base-image disposer throws", async () => {
+      const cleanupBuildCtx = vi.fn(() => true);
+      const preparedDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-cleanup-"));
+      const preparedDockerfile = path.join(preparedDir, "Dockerfile");
+      fs.writeFileSync(preparedDockerfile, "FROM scratch\n");
+      const harness = createRebuildFlowHarness({
+        baseImagePreflight: {
+          ok: true,
+          imageRef: "nemoclaw-hermes-sandbox-base-local:image-preflighted",
+          overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+          disposeImageRef: () => {
+            throw new Error("base cleanup boom");
+          },
+        },
+        customImagePreflight: {
+          ok: true,
+          imageTag: "nemoclaw-rebuild-preflight:test",
+          prepared: {
+            buildCtx: preparedDir,
+            stagedDockerfile: preparedDockerfile,
+            cleanupBuildCtx,
+            origin: "generated",
+            buildId: "rebuild-cleanup",
+            contextFingerprint: fingerprintBuildContext(preparedDir),
+            verifyBuildCtx: createBuildContextVerifier(
+              preparedDir,
+              fingerprintBuildContext(preparedDir),
+            ),
+            rebuildTarget: { agentName: "hermes", fromDockerfile: null },
+          },
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+      expect(harness.releaseOnboardLockSpy).toHaveBeenCalledOnce();
     });
   });
 }

@@ -37,9 +37,11 @@ navigation:
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.openclaw.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
                   - page: "Additional Setup for DGX Station"
                     path: _build/agent-variants/get-started/dgx-station-preparation.openclaw.generated.mdx
@@ -283,12 +285,9 @@ navigation:
             slug: deployment
             collapsed: open-by-default
             contents:
-              - page: "Deploy to Remote GPU Instances"
-                path: deployment/deploy-to-remote-gpu.mdx
-                slug: deploy-to-remote-gpu
-              - page: "Brev Web UI"
-                path: deployment/brev-web-ui.mdx
-                slug: brev-web-ui
+              - page: "Deploy to a Headless Server"
+                path: _build/agent-variants/deployment/deploy-to-headless-server.openclaw.generated.mdx
+                slug: deploy-to-headless-server
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default
@@ -402,9 +401,11 @@ navigation:
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.deepagents.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
                   - page: "Additional Setup for DGX Station"
                     path: _build/agent-variants/get-started/dgx-station-preparation.deepagents.generated.mdx
@@ -565,6 +566,13 @@ navigation:
                   - page: "Transfer State Manually"
                     path: _build/agent-variants/manage-sandboxes/transfer-state-manually.deepagents.generated.mdx
                     slug: transfer-state-manually
+          - section: "Deployment"
+            slug: deployment
+            collapsed: open-by-default
+            contents:
+              - page: "Deploy to a Headless Server"
+                path: _build/agent-variants/deployment/deploy-to-headless-server.deepagents.generated.mdx
+                slug: deploy-to-headless-server
           - section: "Security"
             slug: security
             collapsed: open-by-default
@@ -653,9 +661,11 @@ navigation:
             slug: get-started
             collapsed: open-by-default
             contents:
-              - section: "Prerequisites"
+              - page: "Prerequisites"
                 path: _build/agent-variants/get-started/prerequisites.hermes.generated.mdx
                 slug: prerequisites
+              - section: "Additional Setup"
+                slug: additional-setup
                 contents:
                   - page: "Additional Setup for DGX Station"
                     path: _build/agent-variants/get-started/dgx-station-preparation.hermes.generated.mdx
@@ -880,6 +890,13 @@ navigation:
               - page: "Integration Policy Examples"
                 path: _build/agent-variants/network-policy/integration-policy-examples.hermes.generated.mdx
                 slug: integration-policy-examples
+          - section: "Deployment"
+            slug: deployment
+            collapsed: open-by-default
+            contents:
+              - page: "Deploy to a Headless Server"
+                path: _build/agent-variants/deployment/deploy-to-headless-server.hermes.generated.mdx
+                slug: deploy-to-headless-server
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default

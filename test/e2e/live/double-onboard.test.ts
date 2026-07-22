@@ -442,7 +442,18 @@ async function prerequisiteOrSkip(
 
 test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers stale registry", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "validate double-onboard lifecycle prerequisites",
+      "onboard first sandbox",
+      "re-onboard same sandbox on existing gateway",
+      "onboard sibling sandbox with isolated dashboard",
+      "recover sandbox from stale registry",
+      "validate gateway-stop lifecycle guidance",
+      "remove double-onboard resources",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
@@ -518,6 +529,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
 
   await cleanupDoubleOnboardState(host, sandbox);
 
+  progress.phase("onboard first sandbox");
   // Phase 2: first onboard.
   const first = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-2-first-onboard");
   const firstText = resultText(first);
@@ -540,6 +552,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   expect(registryHas(SANDBOX_A), `${REGISTRY_FILE} missing ${SANDBOX_A}`).toBe(true);
   assertRegistryInferenceMetadata(SANDBOX_A, fake.baseUrl);
 
+  progress.phase("re-onboard same sandbox on existing gateway");
   // Phase 3: second onboard with the same name must reuse the healthy gateway.
   const gatewayBeforeSecond = await gatewayRuntimeId(host, "phase-3-gateway-id-before");
   const second = await runOnboard(host, SANDBOX_A, fake.baseUrl, "phase-3-second-onboard", true);
@@ -557,6 +570,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   });
   expect(sandboxAAfterSecond.exitCode, resultText(sandboxAAfterSecond)).toBe(0);
 
+  progress.phase("onboard sibling sandbox with isolated dashboard");
   // Phase 4: third onboard with a different name must not destroy A.
   await sandbox.openshell(
     ["gateway", "add", "--local", "--name", ALT_GATEWAY_NAME, gatewayAliasEndpoint()],
@@ -664,6 +678,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   );
   expect(retainedForwardA.owner, retainedForwardA.output).toBe(SANDBOX_A);
 
+  progress.phase("recover sandbox from stale registry");
   // Phase 5: direct OpenShell deletion leaves a stale registry entry that
   // status/connect preserve and rebuild can recover.
   await sandbox.openshell(["sandbox", "delete", SANDBOX_A], {
@@ -730,6 +745,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   });
   expect(registryHas(SANDBOX_A), "destroy did not purge recovered sandbox A").toBe(false);
 
+  progress.phase("validate gateway-stop lifecycle guidance");
   // Phase 6: gateway stop must produce explicit lifecycle guidance and keep B.
   await sandbox.openshell(["forward", "stop", "18789"], {
     artifactName: "phase-6-forward-stop-18789",
@@ -749,6 +765,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   );
   expect(registryHas(SANDBOX_B), "gateway-stop status removed sandbox B registry entry").toBe(true);
 
+  progress.phase("remove double-onboard resources");
   // Phase 7: final cleanup with explicit assertions.
   await cleanupDoubleOnboardState(host, sandbox);
   const sandboxAAfterCleanup = await sandbox.openshell(["sandbox", "get", SANDBOX_A], {
