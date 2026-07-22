@@ -71,10 +71,10 @@ describe("node-tar image remediation contract", () => {
     expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
     expect(patchCopy, file).toBeGreaterThan(reviewedCopy);
     expect(patchRun, file).toBeGreaterThan(patchCopy);
-    if (installsPatchDownloader) {
-      expect(source.indexOf("curl="), file).toBeGreaterThan(patchCopy);
-      expect(source.indexOf("curl="), file).toBeLessThan(patchRun);
-    }
+    const patchDownloader = source.indexOf("curl=");
+    expect(patchDownloader > patchCopy && patchDownloader < patchRun, file).toBe(
+      installsPatchDownloader,
+    );
     expect(scanCopy, file).toBeGreaterThan(patchRun);
     expect(scanRun, file).toBeGreaterThan(scanCopy);
     expect(source, file).toContain("> /usr/local/share/nemoclaw/node-tar-inventory.json");
