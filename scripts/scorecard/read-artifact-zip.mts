@@ -166,10 +166,15 @@ export function readValidatedArtifactZipEntry(
   }
 
   const compressedData = archive.subarray(compressedDataOffset, compressedDataEnd);
-  const contents =
-    compressionMethod === 0
-      ? Buffer.from(compressedData)
-      : zlib.inflateRawSync(compressedData, { maxOutputLength: options.maxBytes });
+  let contents: Buffer;
+  try {
+    contents =
+      compressionMethod === 0
+        ? Buffer.from(compressedData)
+        : zlib.inflateRawSync(compressedData, { maxOutputLength: options.maxBytes });
+  } catch {
+    return null;
+  }
   if (contents.length !== uncompressedSize || crc32(contents) !== expectedCrc) return null;
   return contents.toString("utf8");
 }
