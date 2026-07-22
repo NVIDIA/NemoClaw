@@ -134,7 +134,9 @@ jobs:
     timeout-minutes: 10
     permissions:
       actions: write
+      checks: write
       contents: read
+      pull-requests: read
     steps:
       - name: Checkout controller
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -153,17 +155,25 @@ jobs:
       - name: Cancel superseded E2E runs
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          SUPERSEDED_HEAD_SHA: ${{ github.event.before || github.event.pull_request.head.sha }}
         run: >-
           node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
           --mode cancel
           --pr "$PR_NUMBER"
+          --head "$HEAD_SHA"
+          --superseded-head "$SUPERSEDED_HEAD_SHA"
 
   coordinate:
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && ((github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/pr.yaml' && endsWith(github.event.workflow_run.display_title, ' gate true')) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'run-control-plane' && github.run_attempt == 1)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     outputs:
+      control_plane_approval_mode: ${{ steps.start.outputs.control_plane_approval_mode }}
+      control_plane_approval_pr_number: ${{ steps.start.outputs.control_plane_approval_pr_number }}
+      control_plane_approval_head_sha: ${{ steps.start.outputs.control_plane_approval_head_sha }}
+      control_plane_approval_base_sha: ${{ steps.start.outputs.control_plane_approval_base_sha }}
       fork_skip_mode: ${{ steps.start.outputs.fork_skip_mode }}
       fork_skip_pr_number: ${{ steps.start.outputs.fork_skip_pr_number }}
       fork_skip_head_sha: ${{ steps.start.outputs.fork_skip_head_sha }}
@@ -301,6 +311,134 @@ jobs:
           --evidence-outcome "${{ steps.evidence.outcome }}"
 
       - name: Close incomplete check
+        if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.finalized != 'true' && steps.finish.outputs.finalized != 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode abandon
+          --check-id "${{ steps.start.outputs.check_id }}"
+          --run-id "${{ steps.start.outputs.run_id }}"
+
+      - name: Remove private workspace
+        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
+        run: rm -rf -- "${{ steps.workspace.outputs.work_dir }}"
+
+  approve-internal-e2e:
+    name: Approve credentialed E2E for internal PR
+    needs: coordinate
+    if: ${{ needs.coordinate.result == 'success' && needs.coordinate.outputs.control_plane_approval_mode != '' && github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment:
+      name: approve-credentialed-e2e-for-internal-pr
+      deployment: false
+    permissions:
+      actions: write
+      checks: write
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: pr-e2e-gate-approve-internal-${{ needs.coordinate.outputs.control_plane_approval_pr_number }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install controller dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - id: workspace
+        name: Create private workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-pr-e2e-approved.XXXXXX")"
+          chmod 700 "$work_dir"
+          printf 'work_dir=%s\n' "$work_dir" >> "$GITHUB_OUTPUT"
+
+      - id: start
+        name: Start approved internal E2E
+        env:
+          APPROVAL_RUN_ATTEMPT: ${{ github.run_attempt }}
+          APPROVAL_RUN_ID: ${{ github.run_id }}
+          EXPECTED_BASE_SHA: ${{ needs.coordinate.outputs.control_plane_approval_base_sha }}
+          EXPECTED_HEAD_SHA: ${{ needs.coordinate.outputs.control_plane_approval_head_sha }}
+          GATE_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.coordinate.outputs.control_plane_approval_pr_number }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          WORK_DIR: ${{ steps.workspace.outputs.work_dir }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode start-approved-control-plane
+          --pr "$PR_NUMBER"
+          --head "$EXPECTED_HEAD_SHA"
+          --base "$EXPECTED_BASE_SHA"
+          --workflow-sha "$WORKFLOW_SHA"
+          --approval-run-id "$APPROVAL_RUN_ID"
+          --approval-run-attempt "$APPROVAL_RUN_ATTEMPT"
+          --gate-run-id "$GATE_RUN_ID"
+          --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT"
+          --work-dir "$WORK_DIR"
+
+      - name: Upload approved risk plan
+        if: ${{ always() && steps.workspace.outputs.work_dir != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr-e2e-approved-risk-plan-${{ needs.coordinate.outputs.control_plane_approval_head_sha }}
+          path: ${{ steps.workspace.outputs.work_dir }}/risk-plan.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - id: wait
+        name: Wait for approved E2E run
+        if: ${{ steps.start.outputs.dispatched == 'true' }}
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode wait
+          --run-id "${{ steps.start.outputs.run_id }}"
+
+      - id: evidence
+        name: Download approved evidence
+        if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode download
+          --work-dir "${{ steps.workspace.outputs.work_dir }}"
+          --run-id "${{ steps.start.outputs.run_id }}"
+
+      - id: finish
+        name: Verify approved evidence
+        if: ${{ always() && steps.start.outputs.dispatched == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types tools/e2e/pr-e2e-gate.mts
+          --mode finish
+          --work-dir "${{ steps.workspace.outputs.work_dir }}"
+          --state-hash "${{ steps.start.outputs.state_hash }}"
+          --check-id "${{ steps.start.outputs.check_id }}"
+          --run-id "${{ steps.start.outputs.run_id }}"
+          --evidence-outcome "${{ steps.evidence.outcome }}"
+
+      - name: Close incomplete approved check
         if: ${{ always() && steps.start.outputs.check_id != '' && steps.start.outputs.finalized != 'true' && steps.finish.outputs.finalized != 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
