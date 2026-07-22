@@ -96,7 +96,7 @@ NemoClaw records the following fields in the Documentation Writer Review section
 
 Keep one instance of each field.
 The pull-request number detects a receipt copied from another pull request.
-The head SHA binds the review to one implementation revision.
+The head SHA binds the review to one pull-request revision.
 The `AGENTS.md` blob SHA records which repository instruction version the review covered.
 
 Use the following sequence for a code-changing pull request:
@@ -105,11 +105,11 @@ Use the following sequence for a code-changing pull request:
 2. Update the canonical documentation or record why no documentation change is required.
 3. Commit all changes from the review.
 4. Complete the visible receipt and hidden metadata for the committed head.
-5. Rerun the documentation review after any later implementation commit.
+5. Rerun the documentation review after any later commit.
 
 The `CI / Documentation Writer Review` workflow runs when a pull request opens, changes, receives a new commit, or reopens.
 It compares the receipt with the pull-request number, current head, and current `AGENTS.md` blob.
-A new implementation commit makes the previous receipt stale until the documentation writer subagent runs again and refreshes the metadata.
+A new commit makes the previous receipt stale until the documentation writer subagent runs again and refreshes the metadata.
 The checker evaluates code-changing pull requests and classifies documentation-only pull requests as not required.
 NemoClaw keeps this check advisory during the data-collection pilot.
 
@@ -579,7 +579,7 @@ Before calling a documentation system agent-ready, confirm the following conditi
 - Variant generation is deterministic and variant behavior is tested.
 - Agent workflows define scope, approvals, stop conditions, and completion evidence.
 - Code-changing pull requests record a documentation-review result tied to the pull-request number, current head, and instruction version.
-- New implementation commits invalidate the recorded review until the documentation writer subagent runs again.
+- New commits invalidate the recorded review until the documentation writer subagent runs again.
 - Pull requests validate generated output, routes, links, product parity, and rendered previews.
 - Release publication uses an approved immutable revision.
 - Retrieval, citation, task, variant, safety, and freshness regressions have repeatable evaluations.
