@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -16,9 +17,10 @@ const guide = fs.readFileSync(guidePath, "utf-8");
 function sectionBetween(content: string, startHeading: string, endHeading: string): string {
   const startIndex = content.indexOf(startHeading);
   const endIndex = content.indexOf(endHeading);
-  if (startIndex < 0 || endIndex <= startIndex) {
-    throw new Error(`invalid documentation section: ${startHeading} -> ${endHeading}`);
-  }
+  assert(
+    startIndex >= 0 && endIndex > startIndex,
+    `invalid documentation section: ${startHeading} -> ${endHeading}`,
+  );
   return content.slice(startIndex, endIndex);
 }
 
