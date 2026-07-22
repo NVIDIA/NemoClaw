@@ -59,16 +59,22 @@ to use `ubuntu-latest`. The trusted `generate-matrix` job builds one runner map
 before checking out test code, and it consumes the variable only when the
 workflow repository is `NVIDIA/NemoClaw` and the ref is `refs/heads/main`.
 
-The initial eligible set is limited to the measured heavy lanes:
+The eligible set is limited to the measured or repeatedly interrupted heavy
+lanes:
 
 - `common-egress-agent`;
+- `hermes-e2e`, `hermes-dashboard`, and `hermes-discord`;
+- both `hermes-inference-switch` modes;
+- `hermes-shields-config`;
+- the Hermes shards of `security-posture` and `channels-stop-start`;
 - `rebuild-hermes`;
 - `rebuild-hermes-stale-base`;
 - the `hermes` and `deepagents` shards of `mcp-bridge`.
 
-The `openclaw` MCP shard and `mcp-bridge-dev` remain on `ubuntu-latest`;
-unrelated jobs retain their existing runner assignments. Before setting the
-variable, an organization owner must:
+The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard, and
+`mcp-bridge-dev` remain on `ubuntu-latest`; unrelated jobs retain their
+existing runner assignments. Before setting the variable, an organization
+owner must:
 
 1. Create a GitHub-hosted Ubuntu x64 larger runner with 8 vCPU, 32 GB RAM, and
    300 GB SSD in a dedicated runner group.

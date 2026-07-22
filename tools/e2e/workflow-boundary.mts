@@ -156,20 +156,38 @@ const RUNNER_ROUTING_SCRIPT = [
   "  fi",
   '  larger_runner="${LARGER_RUNNER_LABEL}"',
   "fi",
-  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"common-egress-agent":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger}\')"',
+  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-dashboard":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}\')"',
   'printf \'runner_routing=%s\\n\' "${runner_routing}" >> "${GITHUB_OUTPUT}"',
 ].join("\n");
 const ROUTED_JOB_RUNNER_EXPRESSIONS = {
   "common-egress-agent":
     "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}",
+  "hermes-dashboard":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-dashboard'] }}",
+  "hermes-discord":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-discord'] }}",
+  "hermes-e2e": "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}",
+  "hermes-inference-switch":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-inference-switch'] }}",
+  "hermes-shields-config":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-shields-config'] }}",
   "rebuild-hermes":
     "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes'] }}",
   "rebuild-hermes-stale-base":
     "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes-stale-base'] }}",
 } as const;
-const MCP_BRIDGE_RUNNER_EXPRESSION =
-  "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('mcp-bridge-{0}', matrix.agent)] }}";
-const ROUTED_JOB_NAMES = new Set([...Object.keys(ROUTED_JOB_RUNNER_EXPRESSIONS), "mcp-bridge"]);
+const MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS = {
+  "channels-stop-start":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('channels-stop-start-{0}', matrix.agent)] }}",
+  "mcp-bridge":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('mcp-bridge-{0}', matrix.agent)] }}",
+  "security-posture":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('security-posture-{0}', matrix.agent)] }}",
+} as const;
+const ROUTED_JOB_NAMES = new Set([
+  ...Object.keys(ROUTED_JOB_RUNNER_EXPRESSIONS),
+  ...Object.keys(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS),
+]);
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -760,8 +778,10 @@ function validateLargerRunnerRouting(
       errors.push(`${jobName} job must use the trusted larger-runner routing map`);
     }
   }
-  if (asRecord(jobs["mcp-bridge"])["runs-on"] !== MCP_BRIDGE_RUNNER_EXPRESSION) {
-    errors.push("mcp-bridge job must route each agent through the trusted runner map");
+  for (const [jobName, expected] of Object.entries(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS)) {
+    if (asRecord(jobs[jobName])["runs-on"] !== expected) {
+      errors.push(`${jobName} job must route each matrix entry through the trusted runner map`);
+    }
   }
   if (asRecord(jobs["mcp-bridge-dev"])["runs-on"] !== "ubuntu-latest") {
     errors.push("mcp-bridge-dev job must remain on ubuntu-latest");
@@ -1789,7 +1809,6 @@ function validateRebuildHermesJob(
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
-
 }
 
 function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2591,9 +2610,6 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     return;
   }
 
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("hermes-e2e job must run on ubuntu-latest");
-  }
   if (job.needs !== "generate-matrix") {
     errors.push("hermes-e2e job must depend on generate-matrix validation");
   }
@@ -3506,9 +3522,6 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
     return;
   }
 
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("channels-stop-start job must run on ubuntu-latest");
-  }
   validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
   if (job["timeout-minutes"] !== 90) {
     errors.push("channels-stop-start job must keep the 90 minute timeout");

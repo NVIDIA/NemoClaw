@@ -64,12 +64,21 @@ function evaluateRouting(
 }
 
 const standardRouting = {
+  "channels-stop-start-hermes": "ubuntu-latest",
+  "channels-stop-start-openclaw": "ubuntu-latest",
   "common-egress-agent": "ubuntu-latest",
+  "hermes-dashboard": "ubuntu-latest",
+  "hermes-discord": "ubuntu-latest",
+  "hermes-e2e": "ubuntu-latest",
+  "hermes-inference-switch": "ubuntu-latest",
+  "hermes-shields-config": "ubuntu-latest",
   "mcp-bridge-deepagents": "ubuntu-latest",
   "mcp-bridge-hermes": "ubuntu-latest",
   "mcp-bridge-openclaw": "ubuntu-latest",
   "rebuild-hermes": "ubuntu-latest",
   "rebuild-hermes-stale-base": "ubuntu-latest",
+  "security-posture-hermes": "ubuntu-latest",
+  "security-posture-openclaw": "ubuntu-latest",
 };
 
 describe("larger-runner workflow routing boundary", () => {
@@ -114,11 +123,18 @@ describe("larger-runner workflow routing boundary", () => {
       }),
     ).toEqual({
       ...standardRouting,
+      "channels-stop-start-hermes": largerRunner,
       "common-egress-agent": largerRunner,
+      "hermes-dashboard": largerRunner,
+      "hermes-discord": largerRunner,
+      "hermes-e2e": largerRunner,
+      "hermes-inference-switch": largerRunner,
+      "hermes-shields-config": largerRunner,
       "mcp-bridge-deepagents": largerRunner,
       "mcp-bridge-hermes": largerRunner,
       "rebuild-hermes": largerRunner,
       "rebuild-hermes-stale-base": largerRunner,
+      "security-posture-hermes": largerRunner,
     });
   });
 
@@ -157,7 +173,10 @@ describe("larger-runner workflow routing boundary", () => {
   it("rejects routing any lane outside the centralized eligible set (#7145)", () => {
     const workflow = readWorkflow() as RoutingWorkflow;
     workflow.jobs["common-egress-agent"]["runs-on"] = "ubuntu-latest";
+    workflow.jobs["hermes-e2e"]["runs-on"] = "ubuntu-latest";
     workflow.jobs["mcp-bridge"]["runs-on"] = "ubuntu-latest";
+    workflow.jobs["security-posture"]["runs-on"] = "ubuntu-latest";
+    workflow.jobs["channels-stop-start"]["runs-on"] = "ubuntu-latest";
     workflow.jobs["mcp-bridge-dev"]["runs-on"] =
       "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['mcp-bridge-deepagents'] }}";
     workflow.jobs["network-policy"]["runs-on"] = "${{ vars.E2E_LARGER_RUNNER_LABEL }}";
@@ -167,7 +186,10 @@ describe("larger-runner workflow routing boundary", () => {
     expect(validateE2eWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "common-egress-agent job must use the trusted larger-runner routing map",
-        "mcp-bridge job must route each agent through the trusted runner map",
+        "hermes-e2e job must use the trusted larger-runner routing map",
+        "mcp-bridge job must route each matrix entry through the trusted runner map",
+        "security-posture job must route each matrix entry through the trusted runner map",
+        "channels-stop-start job must route each matrix entry through the trusted runner map",
         "mcp-bridge-dev job must remain on ubuntu-latest",
         "network-policy job must not consume E2E_LARGER_RUNNER_LABEL directly",
         "shields-config job must not use the larger-runner routing map",
