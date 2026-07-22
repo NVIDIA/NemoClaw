@@ -65,8 +65,8 @@ export const WARMUP_POLL_LIST_TIMEOUT_S = 2;
 // the approval pass that runs immediately after could otherwise list devices
 // before the gateway has registered the upgrade. The poll bounds are
 // interpolated so the cap is asserted on real values, not source text. OpenClaw
-// 2026.7.1 otherwise omits CLI device identity for loopback shared-token auth;
-// force pairing only on the provoke command so it can request operator.write.
+// 2026.7.1 otherwise omits CLI device identity for loopback shared-token auth
+// before a stored device credential exists; force pairing only on the provoke.
 export const WARMUP_SCRIPT = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"

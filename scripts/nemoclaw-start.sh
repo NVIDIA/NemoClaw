@@ -2876,15 +2876,13 @@ def brief_child_error(out, err):
     return (lines[-1] if lines else '')[:400]
 
 # Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
-# runtime environment, so list calls resolve the same live gateway through
-# local loopback instead of the injected private-interface URL. List and
-# The first successful list call retains the loopback shared token and sets a
-# private child marker. The reviewed 2026.7.1 dist patch uses that marker only
-# to retain the CLI device identity that OpenClaw otherwise omits for loopback
-# shared-token calls, so OpenClaw can perform its canonical silent local
-# pairing transaction. Later list and approval calls drop the gateway env
-# triplet and use the stored device credential. Remove both pieces when
-# upstream supports that flow.
+# runtime environment, so its first list call resolves the live gateway through
+# local loopback and retains the shared token plus a private child marker. The
+# reviewed 2026.7.1 dist patch uses that marker to retain CLI identity before a
+# stored device credential exists. Once OpenClaw issues that credential, the
+# patch retains identity for ordinary loopback CLI calls automatically. Later
+# list and approval calls drop the gateway env triplet and use the stored device
+# credential. Remove both pieces when upstream supports that flow.
 def run(*args, strip_gateway_env=False, force_device_pairing=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with

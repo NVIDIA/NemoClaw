@@ -199,9 +199,12 @@ the loopback shared token and sets a child-only marker. The compiled
 gateway-call patch uses that marker only to retain the CLI device identity that
 OpenClaw `2026.7.1` otherwise omits for loopback shared-token calls. OpenClaw
 then performs its canonical silent local-pairing transaction and issues the
-stored device token. After bootstrap, list calls and every `devices approve`
-remove the gateway URL, port, and shared token so the bounded approval flow uses
-that device credential.
+stored device token. Once that credential exists, the patch automatically
+retains CLI identity on ordinary loopback shared-token calls; the upstream
+local-backend omission remains unchanged. This restores device-scope
+enforcement without moving the gateway credential into OpenClaw state. After
+bootstrap, list calls and every `devices approve` remove the gateway URL, port,
+and shared token so the bounded approval flow uses that device credential.
 
 ## Gateway Startup Migration Compatibility
 

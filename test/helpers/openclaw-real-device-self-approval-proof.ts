@@ -148,6 +148,16 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
     "opts.requiredStoredDeviceAuthScopes",
     "scopes: useStoredDeviceAuth ? void 0 : scopes",
   ]);
+  const gatewayHandshake = requireExactlyOneDistSource(
+    sources,
+    "shared-auth paired-device scope enforcement",
+    [
+      "async function resolveConnectAuthDecisionCore(params)",
+      "if (!params.hasDeviceIdentity || !params.deviceId || authOk || !deviceTokenCandidate) return finish();",
+      "if (device && devicePublicKey) {",
+      'if (!await requirePairing("scope-upgrade", paired)) return;',
+    ],
+  );
   requireOrderedMarkers(
     gatewayCall.source,
     [
@@ -155,8 +165,28 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
       "NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING",
       "nemoclaw: force device identity for loopback pairing bootstrap",
       "const mode = params.opts.mode",
+      "const isLocalCliSharedAuth =",
+      "!hasStoredOperatorDeviceAuthToken(resolveDeviceIdentityForGatewayCall())",
+      "nemoclaw: retain stored CLI device identity for loopback shared-token scope enforcement",
+      "return isLocalBackendSharedAuth || isLocalCliSharedAuth;",
     ],
-    "loopback pairing-bootstrap device identity",
+    "loopback CLI shared-token stored device identity",
+  );
+  requireOrderedMarkers(
+    gatewayHandshake.source,
+    [
+      "async function resolveConnectAuthDecisionCore(params)",
+      "let authOk = params.state.authOk;",
+      "if (!params.hasDeviceIdentity || !params.deviceId || authOk || !deviceTokenCandidate) return finish();",
+      "if (device && devicePublicKey) {",
+      "const paired = await getPairedDevice(device.id);",
+      "const pairedScopes = resolvePairedAccessScopes(paired);",
+      "if (scopes.length > 0) {",
+      "requestedScopes: scopes,",
+      "allowedScopes: pairedScopes",
+      'if (!await requirePairing("scope-upgrade", paired)) return;',
+    ],
+    "shared-token identity to paired-scope upgrade linkage",
   );
   requireOrderedMarkers(
     gatewayCall.source,
