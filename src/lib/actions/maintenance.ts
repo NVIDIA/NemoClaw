@@ -98,11 +98,10 @@ export async function backupAll(): Promise<void> {
   //   longer reach backup-all), or when the installer runs its recovery
   //   phase before the strict pre-upgrade backup.
   //
-  // The container-absence gate (checked per candidate at skip time) plus the
-  // confirming second listing after the loop are what make the exemption
-  // race-safe: a reconnecting or sibling-healthy sandbox still has a
-  // container, and a candidate the gateway observes again reverts to a
-  // genuine strict skip.
+  // The container-absence gate (checked per candidate at skip time and again
+  // after the confirming listing) makes the exemption race-safe: a
+  // reconnecting or sibling-healthy sandbox still has a container, and a
+  // candidate the gateway observes again reverts to a genuine strict skip.
   const orphanNames = new Set(
     classifyOrphanedRegistrySandboxes(sandboxes, {
       observedNames: parseLiveSandboxNames(liveList.output || ""),
@@ -249,8 +248,11 @@ export async function backupAll(): Promise<void> {
       { gatewayName: selectedGatewayName },
     );
     const observedOnRecheck = parseLiveSandboxNames(confirmation.output || "");
-    confirmedStranded = strandedOrphans.filter((name) => !observedOnRecheck.has(name));
-    for (const name of strandedOrphans.filter((entry) => observedOnRecheck.has(entry))) {
+    confirmedStranded = strandedOrphans.filter(
+      (name) => !observedOnRecheck.has(name) && isSandboxContainerDefinitivelyAbsent(name),
+    );
+    const confirmedNames = new Set(confirmedStranded);
+    for (const name of strandedOrphans.filter((entry) => !confirmedNames.has(entry))) {
       console.log(`  ${D}${notRunningBackupSkipMessage(name)}${R}`);
       skipped++;
       notRunningSkipped++;

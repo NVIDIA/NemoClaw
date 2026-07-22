@@ -854,6 +854,38 @@ describe("backupAll", () => {
     expect(logOutput).toContain("0 backed up, 0 failed, 1 skipped");
     expect(logOutput).not.toContain("were not found on their recorded gateway");
   });
+
+  it("reverts a stranded candidate to a strict skip when its container reappears (#6520)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-flapping" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set());
+    mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
+      status: 0,
+      output: "",
+    });
+    mocks.parseLiveSandboxNames.mockReturnValue(new Set());
+    mocks.isSandboxContainerDefinitivelyAbsent.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).toHaveBeenCalledTimes(2);
+    expect(mocks.isSandboxContainerDefinitivelyAbsent).toHaveBeenCalledTimes(2);
+    expect(mocks.isSandboxContainerDefinitivelyAbsent).toHaveBeenNthCalledWith(1, "sb-flapping");
+    expect(mocks.isSandboxContainerDefinitivelyAbsent).toHaveBeenNthCalledWith(2, "sb-flapping");
+    const logOutput = logSpy.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("Skipping 'sb-flapping' (not running");
+    expect(logOutput).toContain("0 backed up, 0 failed, 1 skipped");
+    expect(logOutput).not.toContain("were not found on their recorded gateway");
+  });
 });
 
 describe("shouldSkipUnreachableSandboxBackup", () => {
