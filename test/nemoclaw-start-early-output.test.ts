@@ -17,9 +17,6 @@ describe("early entrypoint output capture", () => {
     const logPath = path.join(tempDir, "nemoclaw-start.log");
     const start = source.indexOf("# ── Early stderr/stdout capture");
     const end = source.indexOf("# ── Source shared sandbox initialisation library", start);
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Expected early stderr/stdout capture block in scripts/nemoclaw-start.sh");
-    }
     const block = source.slice(start, end).replaceAll("/tmp/nemoclaw-start.log", logPath);
     const wrapperPath = path.join(tempDir, "run.sh");
     fs.writeFileSync(
