@@ -424,6 +424,19 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
   });
 
+  it("copies the legacy OpenClaw remediation helper before the base build invokes it", () => {
+    const dockerfile = readFileSync(path.join(REPO_ROOT, "Dockerfile.base"), "utf-8");
+    const helperCopy = dockerfile.indexOf(
+      "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
+    );
+    const helperInvocation = dockerfile.indexOf(
+      "node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts",
+    );
+
+    expect(helperCopy).toBeGreaterThanOrEqual(0);
+    expect(helperInvocation).toBeGreaterThan(helperCopy);
+  });
+
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
     const result = spawnSync(
       "bash",
