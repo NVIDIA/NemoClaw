@@ -211,13 +211,30 @@ An internal PR can run automatically when it changes only these files:
 - `.github/workflows/pr-e2e-gate.yaml`
 - `tools/e2e/pr-e2e-gate.mts`
 
-Another control-plane change fails with `Maintainer authorization required to run E2E`.
+Another control-plane change leaves `E2E / PR Gate` in progress with
+`E2E reviewer authorization required to run E2E`.
 The gate must not run selected jobs or expose secrets before authorization.
 
-Review the PR SHA and non-secret CI.
-Then, select **Run workflow** on `main` and select `run-control-plane`.
-Provide the PR number, 40-character `expected_head_sha`, 40-character `expected_base_sha`, and a `review_reason` of 10 to 500 characters.
-Read both SHAs before dispatch.
+Review the exact PR SHA, base SHA, risk plan, and non-secret CI.
+The same controller run starts **Approve credentialed E2E for internal PR** on
+the protected `approve-credentialed-e2e-for-internal-pr` environment.
+Open the linked run, choose **Review deployments**, select that environment,
+and approve it. GitHub records the reviewer and optional comment. The controller
+then revalidates the internal repository origin, open PR, exact head and base
+SHAs, deterministic plan, pending required-check identity, trusted controller
+commit, and final live revision before it dispatches selected work.
+
+Configure the environment before rollout. Require reviewers with `maintain` or
+`admin` access. Do not add secrets, variables, or a protection app. Disable
+administrator bypass when possible. If **Review deployments** is absent, the
+environment might be missing, unprotected, or no longer waiting. Configure it,
+update the PR to create a new head, and run PR CI again. Do not rerun the waiting
+workflow. The controller accepts a protected approval only on the first attempt.
+
+The manual maintainer path remains available as a fallback. Select **Run
+workflow** on `main`, select `run-control-plane`, and provide the PR number,
+40-character `expected_head_sha`, 40-character `expected_base_sha`, and a
+`review_reason` of 10 to 500 characters. Read both SHAs before dispatch.
 
 The first attempt requires the actor to have `maintain` or `admin` access.
 The workflow rejects forks, stale or closed PRs, plans that need no authorization, and empty selections.
