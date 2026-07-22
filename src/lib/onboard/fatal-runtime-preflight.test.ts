@@ -26,7 +26,7 @@ function hostWithRuntime(runtime: HostAssessment["runtime"]): HostAssessment {
     cdiNvidiaGpuSpecMissing: false,
     nvidiaContainerToolkitInstalled: false,
     notes: [],
-  } as HostAssessment;
+  };
 }
 
 describe("rejectUnsupportedContainerRuntime (#7320)", () => {
