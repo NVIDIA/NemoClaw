@@ -3589,15 +3589,16 @@ express_wsl_docker_operating_system() {
   timeout 10 docker info --format '{{.OperatingSystem}}' 2>/dev/null
 }
 
-# True only when the Docker CLI targets the LOCAL daemon. A remote DOCKER_HOST or
-# a non-local DOCKER_CONTEXT (which overrides DOCKER_HOST) can point at a remote
+# True only when the Docker CLI targets the LOCAL daemon: no explicit remote
+# selector. A DOCKER_HOST, or any named DOCKER_CONTEXT, can point at a remote
 # Docker Desktop whose sandbox containers cannot reach this machine's Windows-host
-# Ollama (PRA-1) — same local-only intent as the DGX Station path.
+# Ollama. A context name (e.g. desktop-linux) is not proof of a local endpoint —
+# it can be pointed at a remote daemon — so only the ambient/default context with
+# no DOCKER_HOST qualifies (PRA-1). Same local-only intent as the DGX Station path.
 express_wsl_docker_target_is_local() {
   case "${DOCKER_CONTEXT:-}" in
-    "" | default) ;;           # defer to DOCKER_HOST
-    desktop-linux) return 0 ;; # Docker Desktop's own local context
-    *) return 1 ;;             # explicit named context — may be remote
+    "" | default) ;; # ambient/default context — defer to DOCKER_HOST
+    *) return 1 ;;   # any explicit named context may target a remote daemon
   esac
   [ -z "${DOCKER_HOST:-}" ]
 }

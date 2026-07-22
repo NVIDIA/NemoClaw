@@ -1387,6 +1387,19 @@ printf 'PROMPT_REACHED\n'
     expect(output).toContain("PROVIDER=install-ollama");
   });
 
+  it("activate_express_install does not trust a desktop-linux context name as local", () => {
+    // A context named desktop-linux can be pointed at a remote daemon, so the
+    // name alone must not select Windows-host Ollama (PRA-1 round 2).
+    const { result, output } = runInstallerSourced(
+      `export DOCKER_CONTEXT=desktop-linux\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama");
+  });
+
   it.skipIf(process.platform === "darwin")(
     "skips express install without a controlling TTY",
     () => {
