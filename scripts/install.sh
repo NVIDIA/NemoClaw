@@ -3589,14 +3589,26 @@ express_wsl_docker_operating_system() {
   timeout 10 docker info --format '{{.OperatingSystem}}' 2>/dev/null
 }
 
-# Express install on WSL defaults to Windows-host Ollama, which only works under
-# Docker Desktop WSL integration (it bridges the Windows-host loopback into
-# sandbox containers via host.docker.internal). Native Docker Engine inside WSL
-# cannot reach the Windows host's Ollama (#3695), so auto-selecting
-# install-windows-ollama there aborts onboarding at [3/8] with no fallback
-# (#7318). Only a Docker Desktop runtime is usable here; every other result
-# (native engine, or the empty probe above) falls back to WSL-local Ollama.
+# True only when the Docker CLI targets the LOCAL daemon. A remote DOCKER_HOST or
+# a non-local DOCKER_CONTEXT (which overrides DOCKER_HOST) can point at a remote
+# Docker Desktop whose sandbox containers cannot reach this machine's Windows-host
+# Ollama (PRA-1) — same local-only intent as the DGX Station path.
+express_wsl_docker_target_is_local() {
+  case "${DOCKER_CONTEXT:-}" in
+    "" | default) ;;           # defer to DOCKER_HOST
+    desktop-linux) return 0 ;; # Docker Desktop's own local context
+    *) return 1 ;;             # explicit named context — may be remote
+  esac
+  [ -z "${DOCKER_HOST:-}" ]
+}
+
+# Windows-host Ollama only works through LOCAL Docker Desktop WSL integration
+# (host.docker.internal routes to the Windows host). Native Docker Engine (#3695),
+# a remote/unknown target, or a failed probe can't reach it, so fall back to
+# WSL-local Ollama rather than auto-selecting install-windows-ollama, which aborts
+# onboarding at [3/8] (#7318).
 express_wsl_can_use_windows_host_ollama() {
+  express_wsl_docker_target_is_local || return 1
   express_wsl_docker_operating_system | grep -qi 'docker desktop'
 }
 

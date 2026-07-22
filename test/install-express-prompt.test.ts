@@ -1363,6 +1363,30 @@ printf 'PROMPT_REACHED\n'
     expect(output).toContain("PROVIDER=install-ollama");
   });
 
+  it("activate_express_install rejects a remote Docker Desktop target via DOCKER_HOST", () => {
+    // A remote daemon that reports "Docker Desktop" must NOT select Windows-host
+    // Ollama — the sandbox runs remotely and cannot reach this Windows host (PRA-1).
+    const { result, output } = runInstallerSourced(
+      `export DOCKER_HOST=tcp://10.0.0.5:2375\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama");
+  });
+
+  it("activate_express_install rejects a remote Docker Desktop target via DOCKER_CONTEXT", () => {
+    const { result, output } = runInstallerSourced(
+      `export DOCKER_CONTEXT=my-remote\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama");
+  });
+
   it.skipIf(process.platform === "darwin")(
     "skips express install without a controlling TTY",
     () => {
