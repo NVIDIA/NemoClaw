@@ -18,8 +18,15 @@ export default class ShieldsUpCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(ShieldsUpCommand);
-    await withSandboxMutationLock(args.sandboxName, () =>
-      shields.shieldsUp(args.sandboxName, { throwOnError: true }),
-    );
+    try {
+      await withSandboxMutationLock(args.sandboxName, () =>
+        shields.shieldsUp(args.sandboxName, { throwOnError: true }),
+      );
+    } catch (error) {
+      if (!(error instanceof shields.DeferredShieldsExit)) throw error;
+      // Diagnostics were already printed before the sentinel was thrown;
+      // translate it to an exit code now that the mutation lock is released.
+      this.setExitCode(error.exitCode);
+    }
   }
 }

@@ -764,7 +764,7 @@ function ensureConfigHashSensitiveFile<T extends AgentConfigTarget>(target: T): 
   return { ...target, sensitiveFiles: [...sensitiveFiles, hashPath] } as T;
 }
 
-class DeferredShieldsExit extends Error {
+export class DeferredShieldsExit extends Error {
   readonly exitCode: number;
 
   constructor(message: string, exitCode: number) {

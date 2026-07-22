@@ -24,13 +24,20 @@ export default class ShieldsDownCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(ShieldsDownCommand);
-    await withSandboxMutationLock(args.sandboxName, () =>
-      shields.shieldsDown(args.sandboxName, {
-        timeout: flags.timeout ?? null,
-        reason: flags.reason ?? null,
-        policy: flags.policy ?? "permissive",
-        throwOnError: true,
-      }),
-    );
+    try {
+      await withSandboxMutationLock(args.sandboxName, () =>
+        shields.shieldsDown(args.sandboxName, {
+          timeout: flags.timeout ?? null,
+          reason: flags.reason ?? null,
+          policy: flags.policy ?? "permissive",
+          throwOnError: true,
+        }),
+      );
+    } catch (error) {
+      if (!(error instanceof shields.DeferredShieldsExit)) throw error;
+      // Diagnostics were already printed before the sentinel was thrown;
+      // translate it to an exit code now that the mutation lock is released.
+      this.setExitCode(error.exitCode);
+    }
   }
 }
