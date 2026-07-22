@@ -13,6 +13,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import http2 from "node:http2";
+import { isIP } from "node:net";
 import path from "node:path";
 
 import { getGatewayHttpEndpoint, getGatewayHttpsEndpoint } from "../core/gateway-address";
@@ -232,12 +233,15 @@ function dockerDriverGatewayHttp2ConnectOptions(
   const localTlsDir = env.OPENSHELL_LOCAL_TLS_DIR;
   if (!localTlsDir) return undefined;
   try {
+    const hostname = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
+    // Node 25 rejects an IP literal as SNI. The connection host still enforces IP-SAN verification.
+    const servername = isIP(hostname) === 0 ? hostname : undefined;
     return {
       ca: fs.readFileSync(path.join(localTlsDir, "ca.crt")),
       cert: fs.readFileSync(path.join(localTlsDir, "client", "tls.crt")),
       key: fs.readFileSync(path.join(localTlsDir, "client", "tls.key")),
       rejectUnauthorized: true,
-      servername: parsed.hostname,
+      ...(servername ? { servername } : {}),
     };
   } catch {
     return undefined;

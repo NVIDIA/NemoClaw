@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import http from "node:http";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
+import http from "node:http";
+import http2 from "node:http2";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 
@@ -108,5 +110,33 @@ describe("isDockerDriverGatewayHttpReady TLS env", () => {
 
     expect(readFileSync).toHaveBeenCalled();
     expect(readPaths[0]).toBe(path.join(tlsDir, "ca.crt"));
+  });
+
+  it("omits IP literals from TLS SNI while retaining the direct gRPC health probe", async () => {
+    vi.spyOn(fs, "readFileSync").mockReturnValue(Buffer.from("test TLS material") as never);
+    const stream = Object.assign(new EventEmitter(), {
+      close: vi.fn(),
+      end: vi.fn(),
+    });
+    const session = Object.assign(new EventEmitter(), {
+      close: vi.fn(),
+      request: vi.fn(() => stream),
+    });
+    const connect = vi.spyOn(http2, "connect").mockReturnValue(session as never);
+
+    const probe = isDockerDriverGatewayHttpReady(
+      1_000,
+      "https://127.0.0.1:8080/openshell.v1.OpenShell/Health",
+      { OPENSHELL_LOCAL_TLS_DIR: "/tmp/nemoclaw-probe-tls" },
+    );
+    stream.emit("response", { ":status": 200, "content-type": "application/grpc" });
+    stream.emit("trailers", { "grpc-status": "0" });
+    stream.emit("end");
+
+    await expect(probe).resolves.toBe(true);
+    expect(connect).toHaveBeenCalledWith(
+      "https://127.0.0.1:8080",
+      expect.not.objectContaining({ servername: expect.anything() }),
+    );
   });
 });
