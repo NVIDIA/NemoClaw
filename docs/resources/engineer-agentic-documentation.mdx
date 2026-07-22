@@ -83,7 +83,7 @@ Routine pull-request updates that already meet the documentation contract do not
 ## Make Documentation Review Observable
 
 A repository instruction can require a documentation writer subagent, but the instruction alone does not show whether an engineering agent followed it.
-Add a structured pull-request receipt so each code change produces observable documentation-review evidence.
+Add a structured pull-request receipt so each code or documentation change produces observable documentation-review evidence.
 
 NemoClaw records the following fields in the Documentation Writer Review section of the pull-request description:
 
@@ -99,18 +99,20 @@ The pull-request number detects a receipt copied from another pull request.
 The head SHA binds the review to one pull-request revision.
 The `AGENTS.md` blob SHA records which repository instruction version the review covered.
 
-Use the following sequence for a code-changing pull request:
+Use the following sequence for a pull request that changes code or documentation:
 
-1. Run the documentation writer subagent after implementation and targeted tests are complete.
-2. Update the canonical documentation or record why no documentation change is required.
-3. Commit all changes from the review.
-4. Complete the visible receipt and hidden metadata for the committed head.
-5. Rerun the documentation review after any later commit.
+1. Run the documentation writer subagent after the changes and applicable validation are complete.
+2. For code changes, update the canonical documentation or record why no documentation change is required.
+3. For documentation changes, verify the writing rules and documentation style.
+4. Commit all changes from the review.
+5. Complete the visible receipt and hidden metadata for the committed head.
+6. Rerun the documentation review after any later commit.
 
-The `CI / Documentation Writer Review` workflow runs when a pull request opens, its description is edited, receives a new commit, or reopens.
+The `CI / Documentation Writer Review` workflow runs when a pull request opens or reopens, when its description is edited, or when it receives a new commit.
 It compares the receipt with the pull-request number, current head, and current `AGENTS.md` blob.
 A new commit makes the previous receipt stale until the documentation writer subagent runs again and refreshes the metadata.
-The checker evaluates code-changing pull requests and classifies documentation-only pull requests as not required.
+The checker evaluates code-changing and documentation-only pull requests.
+For documentation-only changes, the receipt records the agent's review of writing rules and documentation style.
 NemoClaw keeps this check advisory during the data-collection pilot.
 
 <Note>
@@ -131,12 +133,13 @@ Use a consistent reporting window and track the following measures:
 
 | Measure | What it shows |
 |---|---|
-| Receipt coverage | The share of eligible code-changing pull requests that contain a receipt. |
+| Eligible pull requests | The total in `eligiblePrs`, plus the code and documentation-only counts in `eligibleCodePrs` and `eligibleDocsOnlyPrs`. |
+| Receipt coverage | The share of eligible code-changing and documentation-only pull requests that contain a receipt. |
 | Valid receipt rate | The share of eligible pull requests whose receipt has one complete and consistent set of fields. |
 | Fresh receipt rate | The share of recorded receipts tied to the pull request's current head. |
-| Result distribution | The number of reviews that updated docs, required no docs, or were blocked. |
+| Result distribution | The number of receipts that report `docs-updated`, `no-docs-needed`, or `blocked`. |
 | Agent surface | The agent products and surfaces recorded by valid receipts. |
-| Unclassified pull requests | Pull requests whose Type of Change selection does not establish whether code changed. |
+| Unclassified pull requests | Pull requests whose Type of Change selection does not establish whether code or documentation changed. |
 
 Receipt trends show whether the repository workflow is being followed.
 They do not establish that the instructions caused a documentation improvement.
@@ -578,7 +581,7 @@ Before calling a documentation system agent-ready, confirm the following conditi
 - Routing prompts and skills point to the source instead of copying it.
 - Variant generation is deterministic and variant behavior is tested.
 - Agent workflows define scope, approvals, stop conditions, and completion evidence.
-- Code-changing pull requests record a documentation-review result tied to the pull-request number, current head, and instruction version.
+- Code-changing and documentation-only pull requests record a documentation-review result tied to the pull-request number, current head, and instruction version.
 - New commits invalidate the recorded review until the documentation writer subagent runs again.
 - Pull requests validate generated output, routes, links, product parity, and rendered previews.
 - Release publication uses an approved immutable revision.
