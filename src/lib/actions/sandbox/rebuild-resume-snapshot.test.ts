@@ -155,9 +155,17 @@ describe("rebuild resume snapshot repair", () => {
           policyPresets: [],
         },
       } as never),
-      vi
-        .spyOn(openshellRuntime, "runOpenshell")
-        .mockReturnValue({ status: 0, output: "" } as never),
+      vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args: unknown) => {
+        const argv = Array.isArray(args) ? args.map(String) : [];
+        return argv.join(" ") === "sandbox get alpha"
+          ? ({
+              status: 1,
+              output: "sandbox alpha not found",
+              stdout: "",
+              stderr: "sandbox alpha not found",
+            } as never)
+          : ({ status: 0, output: "", stdout: "", stderr: "" } as never);
+      }),
       vi.spyOn(destroy, "removeSandboxRegistryEntry").mockReturnValue(true),
       vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined),
       vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined),
