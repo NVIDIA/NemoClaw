@@ -148,7 +148,7 @@ The helper extracts and rebuilds archives with `tar` instead of invoking a packa
 It binds each patched package manifest and shrinkwrap to a committed SHA-512 metadata value.
 The core value also covers the bundled `@openclaw/fs-safe`, `@modelcontextprotocol/sdk`, `@hono/node-server`, and all 17 MCP client runtime package manifests.
 The diagnostics value also covers the patched SDK Node, Jaeger, and nested OpenTelemetry core package manifests.
-The expected values are `sha512-QJH/wyJBl7eEnjIMmWQs8jCoUXAHFNxvYCv0y+yh2WaDFJh3ptlHlgH7N+quLWRUSHPcmjcyOlKYIYXYtiDNiA==` for OpenClaw core, `sha512-QmgyGI7AQJrNGoWAYolunc18wUr6Q4iOK4n9YXCOo3Cxh+e2GONtOAbeu+OFpQW8PsF6x/iGInDQmeKD+jnOug==` for diagnostics OTEL, `sha512-WLZDX4gR+IlchildC9ZI2o4252gEXxNWFaeGprL1JYfB+w8b2YuLYwH6Or0M9RxIWC9giTFCUSyi0Rvcg05PnQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
+The expected values are `sha512-QJH/wyJBl7eEnjIMmWQs8jCoUXAHFNxvYCv0y+yh2WaDFJh3ptlHlgH7N+quLWRUSHPcmjcyOlKYIYXYtiDNiA==` for OpenClaw core, `sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==` for diagnostics OTEL, `sha512-WLZDX4gR+IlchildC9ZI2o4252gEXxNWFaeGprL1JYfB+w8b2YuLYwH6Or0M9RxIWC9giTFCUSyi0Rvcg05PnQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
 Both the library and command-line entry points enforce the same committed values.
 `Dockerfile.base` records `ignore-scripts+reviewed-lifecycle+transitive-remediation-v3` in its protected provenance marker.
 The production Dockerfile rejects stale base provenance and repeats the remediation when the marker does not match.

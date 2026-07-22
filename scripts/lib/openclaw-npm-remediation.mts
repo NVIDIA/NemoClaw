@@ -270,7 +270,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "@openclaw/diagnostics-otel@2026.6.10": {
     kind: "otel-plugin",
     expectedPatchedMetadataIntegrity:
-      "sha512-QmgyGI7AQJrNGoWAYolunc18wUr6Q4iOK4n9YXCOo3Cxh+e2GONtOAbeu+OFpQW8PsF6x/iGInDQmeKD+jnOug==",
+      "sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==",
   },
   "openclaw@2026.6.10": {
     kind: "core",
