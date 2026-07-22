@@ -132,7 +132,7 @@ export function verifiedRunnerLossEvidence(options: {
     !options.jobDetailsAvailable ||
     !options.jobDetailsComplete ||
     options.jobs.length === 0 ||
-    !["failure", "cancelled"].includes(options.workflowConclusion ?? "")
+    options.workflowConclusion !== "failure"
   ) {
     return null;
   }
@@ -144,7 +144,7 @@ export function verifiedRunnerLossEvidence(options: {
   );
   return {
     terminalClassificationPresent: ordinaryFailureEvidencePresent,
-    jobConclusion: options.workflowConclusion as "failure" | "cancelled",
+    jobConclusion: "failure",
     runnerLostMarkerCount,
   };
 }

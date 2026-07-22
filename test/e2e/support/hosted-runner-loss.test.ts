@@ -122,6 +122,25 @@ describe("hosted-runner-loss workflow evidence (#7146)", () => {
     expect(detectRunnerLoss(evidence!)).toBe(false);
   });
 
+  it("rejects a cancelled workflow even when a job has the runner-loss marker", () => {
+    expect(
+      verifiedRunnerLossEvidence({
+        workflowConclusion: "cancelled",
+        jobs: [
+          lostRunnerJob(),
+          lostRunnerJob({
+            id: 8,
+            name: "cancelled-job",
+            conclusion: "cancelled",
+            steps: [{ name: "Run tests", status: "completed", conclusion: "cancelled" }],
+          }),
+        ],
+        jobDetailsAvailable: true,
+        jobDetailsComplete: true,
+      }),
+    ).toBeNull();
+  });
+
   it("requires a complete job listing before confirming runner loss", () => {
     expect(
       verifiedRunnerLossEvidence({
