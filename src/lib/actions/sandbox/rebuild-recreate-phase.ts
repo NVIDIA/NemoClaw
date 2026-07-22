@@ -181,7 +181,11 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
 
   const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
+  const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
+  // The rebuild backup phase already made the data-preservation decision before
+  // delete. Stale gateway state must not make inner onboard attempt a second backup.
+  process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   if (recreateOptions.policyTier) {
     process.env.NEMOCLAW_POLICY_TIER = recreateOptions.policyTier;
   }
@@ -201,6 +205,11 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     restoreAmbientRecreateEnv();
     if (previousSandboxName === undefined) delete process.env.NEMOCLAW_SANDBOX_NAME;
     else process.env.NEMOCLAW_SANDBOX_NAME = previousSandboxName;
+    if (previousRecreateWithoutBackup === undefined) {
+      delete process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+    } else {
+      process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = previousRecreateWithoutBackup;
+    }
   }
 
   if (!onboardFailed) onCreated();
