@@ -64,18 +64,27 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
-  it("pins the scorecard's current-run progress artifact download", () => {
+  it("pins the scorecard's current-run progress artifact action", () => {
     const workflow = readE2eOperationsWorkflow();
     const download = workflow.jobs.scorecard.steps!.find(
       (step) => step.name === "Download E2E progress artifacts",
     )!;
     download.uses = "actions/download-artifact@0000000000000000000000000000000000000000";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must download this run's E2E artifacts into the runtime audit directory",
+    );
+  });
+
+  it("limits the scorecard artifact download to E2E progress sources", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const download = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Download E2E progress artifacts",
+    )!;
     download.with!.pattern = "*";
 
-    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "scorecard must download this run's E2E artifacts into the runtime audit directory",
-      ]),
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must download this run's E2E artifacts into the runtime audit directory",
     );
   });
 
@@ -436,6 +445,9 @@ describe("E2E operations workflow boundary", () => {
 
     expect(traceTiming.buildTraceTimingResult).toHaveBeenCalledWith({ github: {}, context, core });
     expect(runtimeAudit.auditTestRuntime).toHaveBeenCalledWith(["/runner/e2e-runtime-audit"]);
+    expect(runtimeAudit.auditTestRuntime.mock.invocationCallOrder[0]).toBeLessThan(
+      traceTiming.buildTraceTimingResult.mock.invocationCallOrder[0],
+    );
     expect(warning).toHaveBeenCalledWith("Cloud onboard advisory performance budget exceeded");
     expect(coordinator.buildScorecard).toHaveBeenCalledWith(
       expect.objectContaining({

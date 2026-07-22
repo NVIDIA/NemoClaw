@@ -5116,8 +5116,6 @@ jobs:
             // collapses every matrix target into one result and has no job URL.
             // The typed helper owns and tests the degraded `needs` fallback.
             const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
-            const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
-            if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
             let runtimeSummaryMarkdown;
             try {
               const runtimeRows = runtimeAudit.auditTestRuntime([process.env.RUNTIME_ARTIFACTS]);
@@ -5131,6 +5129,8 @@ jobs:
                 '',
               ].join('\n');
             }
+            const trace = await traceTiming.buildTraceTimingResult({ github, context, core });
+            if (trace.budgetWarningMessage) core.warning(trace.budgetWarningMessage);
 
             const { summaryMarkdown, scorecardData, slackData } = buildScorecard({
               eventName: context.eventName,
