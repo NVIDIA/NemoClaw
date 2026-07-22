@@ -52,8 +52,11 @@ const ASSET_DIGESTS = new Map([
     "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
     "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0",
   ],
+  ["openshell.rb", "f53c62777fed23b42427822d231670451ee4358efeb2660c41a7a38919211b23"],
 ]);
-const ASSETS = [...ASSET_DIGESTS.keys()];
+const FORMULA_ASSET = "openshell.rb";
+const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
+const ASSETS = [...ASSET_DIGESTS.keys()].filter((asset) => asset !== FORMULA_ASSET);
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_ASSET = "openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_DIGEST =
@@ -532,6 +535,7 @@ function renderBrevTemplate(openshellVersion: string, pinFunction: string): stri
 function createFixture(
   openshellVersion = "0.0.72",
   formatting: PinFormatting = "canonical",
+  includeFormula = false,
 ): string {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-hash-"));
   const scriptsDir = path.join(fixtureRoot, "scripts");
@@ -561,7 +565,12 @@ function createFixture(
     path.join(scriptsDir, "install-openshell.sh"),
     renderInstallerTemplate(
       openshellVersion,
-      renderPinFunction("openshell_pinned_sha256", ASSETS, openshellVersion, formatting),
+      renderPinFunction(
+        "openshell_pinned_sha256",
+        includeFormula ? [...ASSETS, FORMULA_ASSET] : ASSETS,
+        openshellVersion,
+        formatting,
+      ),
     ),
   );
   fs.writeFileSync(
@@ -613,6 +622,9 @@ case "$url" in
       openshell-sandbox-checksums-sha256.txt)
         printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-sandbox-checksums-sha256.txt")}' >"$output"
         ;;
+      openshell.rb)
+        printf '%s\n' 'class Openshell < Formula; end' >"$output"
+        ;;
     esac
     ;;
   *) exit 22 ;;
@@ -620,6 +632,24 @@ esac
 `,
   );
   fs.chmodSync(path.join(binDir, "curl"), 0o755);
+  fs.writeFileSync(
+    path.join(binDir, "sha256sum"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  */openshell.rb)
+    printf '%s  %s\\n' '${FORMULA_DIGEST}' "$1"
+    ;;
+  *)
+    case "$(uname -s)" in
+      Darwin) /usr/bin/shasum -a 256 "$@" ;;
+      *) /usr/bin/sha256sum "$@" ;;
+    esac
+    ;;
+esac
+`,
+  );
+  fs.chmodSync(path.join(binDir, "sha256sum"), 0o755);
   return fixtureRoot;
 }
 
@@ -628,8 +658,9 @@ function runFixture(
   openshellVersion?: string,
   trustedChecker = false,
   formatting: PinFormatting = "canonical",
+  includeFormula = false,
 ) {
-  const fixtureRoot = createFixture(openshellVersion, formatting);
+  const fixtureRoot = createFixture(openshellVersion, formatting, includeFormula);
   const targetChecker = path.join(fixtureRoot, "scripts", "check-installer-hash.sh");
   const trustedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trusted-hash-check-"));
   const trustedCheckerPath = path.join(trustedRoot, "scripts", "check-installer-hash.sh");
@@ -692,6 +723,14 @@ describe("installer hash verification", () => {
     const result = runFixture("complete");
 
     expect(result.status).toBe(0);
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("verifies the reviewed Homebrew formula during the trust-anchor transition", () => {
+    const result = runFixture("complete", undefined, true, "canonical", true);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(`OK: installer ${FORMULA_ASSET} (${FORMULA_DIGEST})`);
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
