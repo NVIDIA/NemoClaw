@@ -11,8 +11,11 @@
 # ambiguous, informational-only path), and "malware" records (npm malware
 # advisories naming an inventory package). Matches surface as a rolling,
 # security-labeled tracking issue — a traceable, NON-blocking investigation
-# signal. Enforcement stays with the reviewed npm audit gate; this workflow
-# never fails a build or mutates a release.
+# signal. Signals that carry a CVE id are additionally reconciled against NVD,
+# a SUPPLEMENTARY informational source that never overrides the reviewed npm
+# mapping and whose outages degrade gracefully. Enforcement stays with the
+# reviewed npm audit gate; this workflow never fails a build or mutates a
+# release.
 
 name: Security / Advisory Early Warning
 
@@ -33,7 +36,9 @@ jobs:
   early-warning:
     if: github.repository == 'NVIDIA/NemoClaw'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # NVD reconciliation worst case adds ~12 minutes (20 requests, 7 s apart,
+    # 30 s timeout each), on top of the advisory fetch.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -93,6 +98,59 @@ jobs:
             --advisories "$RUNNER_TEMP/advisories.json" \
             --output "$RUNNER_TEMP/signals.json"
 
+      - name: Reconcile signals with NVD (supplementary, non-blocking)
+        run: |
+          set -euo pipefail
+          signals="$RUNNER_TEMP/signals.json"
+          # NVD is a SUPPLEMENTARY reconciliation source (#7338). This is a
+          # deliberate contrast with the GitHub advisory fetch above, which
+          # fails loudly because no signals can exist without it: losing NVD
+          # data only loses an informational annotation, so NVD being down or
+          # rate-limited degrades gracefully to an "NVD: unavailable"
+          # annotation and never fails the workflow.
+          : >"$RUNNER_TEMP/nvd-unavailable.txt"
+          : >"$RUNNER_TEMP/nvd-skipped.txt"
+          : >"$RUNNER_TEMP/nvd-records.jsonl"
+          jq -r '[.[] | .cveId // empty] | unique | .[]' "$signals" \
+            >"$RUNNER_TEMP/nvd-cve-ids.txt"
+          mapfile -t cve_ids <"$RUNNER_TEMP/nvd-cve-ids.txt"
+          total="${#cve_ids[@]}"
+          cap=20
+          if [ "$total" -gt "$cap" ]; then
+            # No silent caps: unauthenticated NVD allows ~5 requests per 30 s,
+            # so one run reconciles at most $cap CVE ids; the rest are listed
+            # in the rolling issue without an NVD annotation.
+            echo "NVD reconciliation capped at $cap of $total CVE ids this run (unauthenticated NVD rate limit); $((total - cap)) CVE ids left unannotated."
+            printf '%s\n' "${cve_ids[@]:$cap}" >"$RUNNER_TEMP/nvd-skipped.txt"
+          fi
+          first=1
+          for cve_id in "${cve_ids[@]:0:$cap}"; do
+            # cveId values only reach signals when they match
+            # ^CVE-\d{4}-\d{4,}$ (scripts/lib/nvd-reconciliation.mts), so they
+            # are URL-safe as-is. Space requests ~7 s apart to respect the
+            # ~5-requests-per-30-s unauthenticated NVD rate limit.
+            [ "$first" -eq 1 ] || sleep 7
+            first=0
+            # Only a response carrying the NVD envelope (a vulnerabilities
+            # array — empty for reserved ids) counts as answered; a 200 with a
+            # JSON error body degrades to "unavailable" like any other outage.
+            if response="$(curl -sS --fail --max-time 30 \
+                 "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=$cve_id")" \
+               && record="$(jq -ce 'select(.vulnerabilities | type == "array")' \
+                 <<<"$response" 2>/dev/null)"; then
+              printf '%s\n' "$record" >>"$RUNNER_TEMP/nvd-records.jsonl"
+              echo "Fetched NVD record for $cve_id"
+            else
+              echo "NVD unavailable for $cve_id; annotating the signal with 'NVD: unavailable'."
+              printf '%s\n' "$cve_id" >>"$RUNNER_TEMP/nvd-unavailable.txt"
+            fi
+          done
+          jq -s '.' "$RUNNER_TEMP/nvd-records.jsonl" >"$RUNNER_TEMP/nvd-records.json"
+          node --experimental-strip-types scripts/advisory-early-warning-scan.mts \
+            --advisories "$RUNNER_TEMP/advisories.json" \
+            --nvd-records "$RUNNER_TEMP/nvd-records.json" \
+            --output "$signals"
+
       - name: Create or update the rolling early-warning issue
         env:
           GH_TOKEN: ${{ github.token }}
@@ -114,15 +172,34 @@ jobs:
           # "(no range)"), so existing bodies are checked with a fixed-string
           # grep for "<key> " — a prefix-sibling package (tar vs tar-stream)
           # can never falsely dedupe. Advisory free text is sanitized so it
-          # cannot split lines or corrupt the TSV.
-          jq -r '.[] |
+          # cannot split lines or corrupt the TSV. The NVD reconciliation
+          # extends the line TEXT only, never the dedupe key: a line appended
+          # before its NVD annotation was available is not re-appended later.
+          # Fetch-failed CVE ids override the re-scan's "nvd-missing" (which
+          # would falsely claim NVD answered), and capped-out CVE ids carry no
+          # NVD note at all.
+          jq -r --rawfile nvd_unavailable "$RUNNER_TEMP/nvd-unavailable.txt" \
+            --rawfile nvd_skipped "$RUNNER_TEMP/nvd-skipped.txt" '
+            ($nvd_unavailable | split("\n") | map(select(length > 0))) as $nvdDown |
+            ($nvd_skipped | split("\n") | map(select(length > 0))) as $nvdSkipped |
+            .[] |
+            (.cveId // "") as $cve |
             (.advisoryId + " " + (.package | gsub("[\\r\\n\\t]"; " "))) as $key |
+            (if ($nvdDown | index($cve)) != null then " — NVD: unavailable"
+             elif ($nvdSkipped | index($cve)) != null then ""
+             elif .nvd then
+               " — NVD: " + .nvd.agreement +
+               (if .nvd.nvdPublished != null
+                then " (published " + (.nvd.nvdPublished | .[0:10]) + ")"
+                else "" end)
+             else "" end) as $nvdNote |
             [$key,
              "- [ ] " + $key + " " +
              (if .vulnerableRange == "" then "(no range)"
               else (.vulnerableRange | gsub("[\\r\\n\\t]"; " ")) end) +
              " [" + .action + ", " + .confidence + ", matched " +
-             (.matchedVersions | join(" ")) + "] (source: " + .source + ")"] |
+             (.matchedVersions | join(" ")) + "] (source: " + .source + ")" +
+             $nvdNote] |
             @tsv' "$signals" >"$RUNNER_TEMP/signal-lines.tsv"
           # Only trust a rolling issue this workflow created itself: it must be
           # authored by the Actions bot AND carry the embedded marker. A

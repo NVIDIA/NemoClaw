@@ -10,18 +10,23 @@
 //
 // Usage:
 //   advisory-early-warning-scan.mts --list-packages
-//   advisory-early-warning-scan.mts --advisories <advisories.json> [--output <signals.json>]
+//   advisory-early-warning-scan.mts --advisories <advisories.json>
+//     [--nvd-records <nvd-responses.json>] [--output <signals.json>]
+//
+// --nvd-records attaches supplementary NVD reconciliations from a file of
+// previously fetched NVD 2.0 API responses. The CLI itself never performs
+// network requests; the caller (the early-warning workflow) fetches.
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  type AdvisorySignal,
   correlateAdvisories,
   type InventoryEntry,
   parseInventoryFromAuditConfig,
   parseInventoryFromPackageLock,
 } from "./lib/advisory-early-warning.mts";
+import { attachNvdReconciliations, type NvdAnnotatedSignal } from "./lib/nvd-reconciliation.mts";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG_RELATIVE_PATH = path.join("ci", "reviewed-npm-audit.json");
@@ -49,8 +54,20 @@ function loadAdvisories(advisoriesPath: string): unknown[] {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
-function describeSignal(signal: AdvisorySignal): string {
-  return `${signal.advisoryId} ${signal.package} ${signal.vulnerableRange || "(no range)"} -> ${signal.action} (${signal.confidence}, matched ${signal.matchedVersions.join(", ")})`;
+function loadNvdResponses(nvdRecordsPath: string): unknown[] {
+  const parsed = JSON.parse(fs.readFileSync(nvdRecordsPath, "utf-8")) as unknown;
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+function describeNvd(signal: NvdAnnotatedSignal): string {
+  if (!signal.nvd) return "";
+  const published =
+    signal.nvd.nvdPublished === null ? "" : ` (published ${signal.nvd.nvdPublished.slice(0, 10)})`;
+  return ` — NVD: ${signal.nvd.agreement}${published}`;
+}
+
+function describeSignal(signal: NvdAnnotatedSignal): string {
+  return `${signal.advisoryId} ${signal.package} ${signal.vulnerableRange || "(no range)"} -> ${signal.action} (${signal.confidence}, matched ${signal.matchedVersions.join(", ")})${describeNvd(signal)}`;
 }
 
 function readFlagValue(argv: readonly string[], flag: string): string | undefined {
@@ -73,11 +90,17 @@ function main(argv: readonly string[]): void {
   const advisoriesPath = readFlagValue(argv, "--advisories");
   if (!advisoriesPath) {
     throw new Error(
-      "usage: advisory-early-warning-scan.mts --list-packages | --advisories <file> [--output <file>]",
+      "usage: advisory-early-warning-scan.mts --list-packages | --advisories <file> [--nvd-records <file>] [--output <file>]",
     );
   }
   const advisories = loadAdvisories(advisoriesPath);
-  const signals = correlateAdvisories(advisories, inventory);
+  const correlated = correlateAdvisories(advisories, inventory);
+  const nvdRecordsPath = readFlagValue(argv, "--nvd-records");
+  // NVD reconciliation is offline here by design: responses come from a file
+  // the caller fetched, and annotations are informational only.
+  const signals: readonly NvdAnnotatedSignal[] = nvdRecordsPath
+    ? attachNvdReconciliations(correlated, loadNvdResponses(nvdRecordsPath))
+    : correlated;
   const outputPath = readFlagValue(argv, "--output");
   if (outputPath) {
     fs.writeFileSync(outputPath, `${JSON.stringify(signals, null, 2)}\n`);
