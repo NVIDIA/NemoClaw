@@ -58,8 +58,9 @@ afterAll(() => {
     ]);
   } finally {
     for (const [key, value] of Object.entries(previousEnvironment)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+      value === undefined
+        ? Reflect.deleteProperty(process.env, key)
+        : Reflect.set(process.env, key, value);
     }
     fs.rmSync(artifactRoot, { force: true, recursive: true });
   }

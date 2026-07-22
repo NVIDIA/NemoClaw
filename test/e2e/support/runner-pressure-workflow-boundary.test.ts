@@ -76,8 +76,10 @@ describe("runner-pressure E2E workflow boundary (#7146)", () => {
     expect(namedStep(workflow, "mcp-bridge", SUMMARIZE_MEASUREMENT_STEP).if).toBe(
       "${{ always() && (matrix.agent == 'hermes' || matrix.agent == 'deepagents') }}",
     );
-    for (const [jobId, job] of Object.entries(workflow.jobs)) {
-      if ((MEASUREMENT_JOBS as readonly string[]).includes(jobId)) continue;
+    const unrelatedJobs = Object.entries(workflow.jobs).filter(
+      ([jobId]) => !(MEASUREMENT_JOBS as readonly string[]).includes(jobId),
+    );
+    for (const [, job] of unrelatedJobs) {
       expect(job.steps.some((step) => step.name === INITIALIZE_MEASUREMENT_STEP)).toBe(false);
       expect(job.steps.some((step) => step.name === SUMMARIZE_MEASUREMENT_STEP)).toBe(false);
     }
