@@ -618,13 +618,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           isTty: false,
           log: (line) => logs.push(line),
           rmSync: fs.rmSync,
-          run: (command, args) => {
-            if (command === "openshell") openshellCalls.push(args);
+          run: (_command, args) => {
+            openshellCalls.push(args);
             // OpenShell knows only the default gateway; nemoclaw-18790 is gone.
-            if (args[0] === "gateway" && args[1] === "list") {
-              return ok(JSON.stringify([{ name: "nemoclaw" }]));
-            }
-            return ok();
+            return args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+              : ok();
           },
           runDocker: () => ok(""),
         },
@@ -668,13 +667,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           isTty: false,
           log: (line) => logs.push(line),
           rmSync: fs.rmSync,
-          run: (command, args) => {
-            if (command === "openshell") openshellCalls.push(args);
+          run: (_command, args) => {
+            openshellCalls.push(args);
             // OpenShell knows only the default gateway; nemoclaw-9124 is gone.
-            if (args[0] === "gateway" && args[1] === "list") {
-              return ok(JSON.stringify([{ name: "nemoclaw" }]));
-            }
-            return ok();
+            return args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+              : ok();
           },
           runDocker: () => ok(""),
         },
@@ -717,13 +715,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           isTty: false,
           log: (line) => logs.push(line),
           rmSync: fs.rmSync,
-          run: (command, args) => {
-            if (command === "openshell") openshellCalls.push(args);
+          run: (_command, args) => {
+            openshellCalls.push(args);
             // nemoclaw-9124 is a genuinely live sibling gateway.
-            if (args[0] === "gateway" && args[1] === "list") {
-              return ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-9124" }]));
-            }
-            return ok();
+            return args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-9124" }]))
+              : ok();
           },
           runDocker: () => ok(""),
         },
@@ -764,13 +761,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           isTty: false,
           log: (line) => logs.push(line),
           rmSync: fs.rmSync,
-          run: (command, args) => {
-            if (command === "openshell") openshellCalls.push(args);
+          run: (_command, args) => {
+            openshellCalls.push(args);
             // nemoclaw-8091 is a genuinely live sibling gateway.
-            if (args[0] === "gateway" && args[1] === "list") {
-              return ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-8091" }]));
-            }
-            return ok();
+            return args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-8091" }]))
+              : ok();
           },
           runDocker: () => ok(""),
         },
