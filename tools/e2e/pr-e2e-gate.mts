@@ -1774,11 +1774,12 @@ function ciFailureReport(options: {
 const GITHUB_HOSTED_RUNNER_NAME_PATTERN = /^GitHub Actions [1-9][0-9]*$/u;
 
 /**
- * GitHub records a lost hosted runner as a completed failed job whose active
- * step never received a terminal conclusion. This is stronger than a
- * cancellation: user and concurrency cancellations finish the active step and
- * run cleanup, while the release-run failures tracked by #7146 retained one
- * `in_progress` step after the job itself became terminal.
+ * GitHub records a lost hosted runner as a completed failed job with no
+ * ordinary failed step. Older Jobs API responses left the interrupted step
+ * `in_progress`; current responses can terminalize it as `cancelled`, skip the
+ * remaining cleanup, and append the synthetic successful `Complete job` step.
+ * A user or concurrency cancellation concludes the job itself as `cancelled`,
+ * while an ordinary assertion records a failed step, so neither shape matches.
  */
 function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
   if (
@@ -1796,12 +1797,31 @@ function hasTrustedHostedRunnerLossMarker(job: WorkflowJob): boolean {
   const strandedSteps = job.steps.filter(
     (step) => step.status === "in_progress" && step.conclusion === null,
   );
-  return (
+  const legacyStrandedStep =
     strandedSteps.length === 1 &&
     job.steps.every(
       (step) =>
         step.conclusion === "success" ||
         (step.conclusion === null && ["in_progress", "pending"].includes(step.status ?? "")),
+    );
+  if (legacyStrandedStep) return true;
+
+  const cancelledStepIndexes = job.steps.flatMap((step, index) =>
+    step.status === "completed" && step.conclusion === "cancelled" ? [index] : [],
+  );
+  if (cancelledStepIndexes.length !== 1) return false;
+  const cancelledIndex = cancelledStepIndexes[0]!;
+  const beforeCancellation = job.steps.slice(0, cancelledIndex);
+  const afterCancellation = job.steps.slice(cancelledIndex + 1);
+  return (
+    beforeCancellation.every((step) => ["success", "skipped"].includes(step.conclusion ?? "")) &&
+    afterCancellation.some((step) => step.conclusion === "skipped") &&
+    afterCancellation.every(
+      (step) =>
+        step.conclusion === "skipped" ||
+        (step.name === "Complete job" &&
+          step.status === "completed" &&
+          step.conclusion === "success"),
     )
   );
 }
