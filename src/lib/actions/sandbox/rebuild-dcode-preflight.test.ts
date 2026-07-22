@@ -224,6 +224,27 @@ describe("rebuildSandbox DCode flow: preflight", () => {
     expect(harness.disposePreparedDcodeRebuildImageSpy).not.toHaveBeenCalled();
     expectNoDcodeMutation(harness);
   });
+  it("trusts only the base image built for the current DCode replacement preflight", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.pinTrustedAgentBaseImageOverrideForOperationSpy).toHaveBeenCalledOnce();
+    expect(harness.pinTrustedAgentBaseImageOverrideForOperationSpy).toHaveBeenCalledWith(
+      "NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF",
+      {
+        ref: "nemoclaw-langchain-deepagents-code-base:test",
+        provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
+      },
+    );
+    expect(harness.restoreTrustedAgentBaseImageOverrideSpy).toHaveBeenCalledOnce();
+  });
   it("rejects a managed DCode session with a recorded custom Dockerfile before image preparation (#6195)", async () => {
     const harness = createRebuildFlowHarness({
       agentName: "langchain-deepagents-code",
