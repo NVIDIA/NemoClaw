@@ -183,13 +183,13 @@ network_policies:
       - { path: /usr/local/bin/node }
 ```
 
-Save it under `nemoclaw-blueprint/policies/presets/my-mcp.yaml` and apply it to the running sandbox:
+Save it as `nemoclaw-blueprint/policies/presets/my-mcp.yaml` (the filename without `.yaml` must match `preset.name`) and apply it to the running sandbox by name:
 
 ```bash
-$$nemoclaw my-assistant policy-add --from-file nemoclaw-blueprint/policies/presets/my-mcp.yaml
+$$nemoclaw my-assistant policy-add my-mcp
 ```
 
-NemoClaw prompts for confirmation because the preset targets a custom host that is not part of the vetted allowlist, then reports `Widening sandbox egress — adding: mcp.example.com`.
+NemoClaw previews the effective egress scope that the preset would open, including `mcp.example.com`, and prompts for confirmation before applying.
 For a publicly routed host that passes the separate SSRF checks, re-invoke the MCP tool and confirm that the CONNECT tunnel to `mcp.example.com:443` succeeds.
 
 <Note>
@@ -208,6 +208,52 @@ If the MCP hostname resolves to a private, loopback, or link-local address, addi
 Refer to [Agent cannot reach a host-side HTTP service](../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service) for routing and private-destination diagnostics.
 `preset.name` must be a lowercase RFC 1123 label (letters, digits, and hyphens; no underscores).
 The `network_policies` key can use underscores because that field feeds the policy schema rather than the preset filename.
+</Warning>
+
+### Custom Recipe: Raw TLS Passthrough with `tls: skip`
+
+OpenShell's egress proxy terminates TLS for allowed HTTPS endpoints and re-originates a new handshake toward the upstream so it can inspect the traffic, and it does this even when the endpoint declares `access: full`.
+Some CDN-fronted upstreams — Cloudflare-fronted APIs are the common case — reset that re-originated handshake, so the connection fails even though the host is in the allowlist.
+The symptom is a reset or abort during the TLS handshake against a host that `$$nemoclaw my-assistant policy-list` shows as allowed, for example `curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL` or `ECONNRESET` from a client library.
+Protocols that need to negotiate directly with the origin inside TLS break the same way: the proxy negotiates h2 ALPN when it terminates TLS, which is why WhatsApp's HTTP/1.1-only Noise-over-WebSocket handshake cannot pass through it.
+
+Declare the endpoint as a raw L4 CONNECT tunnel with `access: full` and `tls: skip`.
+The proxy then passes the encrypted bytes through unmodified, and the client inside the sandbox negotiates TLS directly with the origin:
+
+```yaml
+preset:
+  name: cf-fronted-api
+  description: "Cloudflare-fronted API that resets re-originated TLS"
+network_policies:
+  cf_fronted_api:
+    name: cf_fronted_api
+    endpoints:
+      - host: api.example.com
+        port: 443
+        access: full
+        tls: skip
+    binaries:
+      - { path: /usr/local/bin/node }
+```
+
+Save the file as `nemoclaw-blueprint/policies/presets/cf-fronted-api.yaml` so it joins the preset catalog, then apply it to the running sandbox by name:
+
+```bash
+$$nemoclaw my-assistant policy-add cf-fronted-api
+```
+
+The filename without `.yaml` must match `preset.name`.
+The preset catalog lists the `preset.name` header, but `policy-add <name>` loads `presets/<name>.yaml` by filename, so a preset saved under a mismatched filename appears in the catalog yet reports `Preset not found` and applies nothing.
+If you edit the preset file later, re-run the same command: `policy-add` compares the preset with the live policy and re-applies it when they no longer match.
+
+The `whatsapp` channel preset (`src/lib/messaging/channels/whatsapp/policy/openclaw.yaml`) uses the same shape for `web.whatsapp.com`, whose Noise handshake does not survive TLS re-origination.
+Use it as a reference for combining `tls: skip` tunnel endpoints with ordinary inspected `protocol: rest` endpoints in one preset.
+
+<Warning>
+`tls: skip` disables L7 inspection for that endpoint.
+The proxy cannot see or filter the HTTP method, path, or body inside the tunnel, so `rules` cannot constrain what the agent sends once the tunnel is established.
+Only the policy's declared host, port, and `binaries` scoping remains for that endpoint.
+Scope `tls: skip` to the specific hosts that need it — never a broad wildcard — and keep the default inspected path for every endpoint that tolerates it.
 </Warning>
 
 ### Export, Edit, and Set the Base Policy

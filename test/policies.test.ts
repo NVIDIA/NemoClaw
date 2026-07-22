@@ -16,6 +16,9 @@ const REPO_ROOT = path.join(import.meta.dirname, "..");
 const policies = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "policy", "index.ts"),
 ) as typeof import("../src/lib/policy");
+const { CLI_NAME } = requireForTest(
+  path.join(REPO_ROOT, "src", "lib", "cli", "branding.ts"),
+) as typeof import("../src/lib/cli/branding");
 const resolveOpenshellModule = requireForTest(
   path.join(REPO_ROOT, "src", "lib", "adapters", "openshell", "resolve.ts"),
 ) as { resolveOpenshell: (...args: unknown[]) => string | null };
@@ -1191,6 +1194,9 @@ exit 1
       const result = await runSelectionPrompt("selectFromList", "1\n", { applied: ["npm"] });
 
       expect(result.stderr).toContain("Preset 'npm' is already applied.");
+      expect(result.stderr).toContain(
+        `If its preset file changed, run '${CLI_NAME} <sandbox> policy-add npm' to re-apply it.`,
+      );
       expect(result.selected).toBeNull();
     });
 
