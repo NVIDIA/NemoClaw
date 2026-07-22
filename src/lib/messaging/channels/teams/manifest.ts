@@ -202,11 +202,11 @@ export const teamsManifest = {
       spec: "npm:@openclaw/msteams@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.6.10":
-          "sha512-GjHnCPvjbnI0C7mEFcdT2uKDH4/WwOe2dZBfQiWxBtkE76m6TNG0J9dJjD4mc8/pk8rXSO0cWw+KV9jzWtF9VA==",
+        "2026.7.1":
+          "sha512-gG/Yk6HZAguHwrmKjsqdONbFz5WNy126PEAXQWNW/TulO1kIifQ6tktM16BQPNLnkmWqLbj+TrrO55Cjas1aFg==",
       },
       tarballUrlByVersion: {
-        "2026.6.10": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.6.10.tgz",
+        "2026.7.1": "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.7.1.tgz",
       },
       required: true,
     },

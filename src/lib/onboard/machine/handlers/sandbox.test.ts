@@ -53,7 +53,7 @@ describe("handleSandboxState", () => {
     });
     calls.setupMessaging.mockResolvedValue(["telegram"]);
 
-    const result = await handleSandboxState(baseOptions(deps));
+    const result = await handleSandboxState({ ...baseOptions(deps), fresh: true });
 
     expect(calls.startStep).toHaveBeenCalledWith("sandbox", {
       sandboxName: "my-assistant",
@@ -82,6 +82,7 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: "onboard",
         extraProviders: [],
       },
     );
@@ -532,6 +533,7 @@ describe("handleSandboxState", () => {
         recreate: false,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: null,
         extraProviders: [],
       },
     );
@@ -797,6 +799,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: null,
         extraProviders: [],
       },
     );
@@ -1015,6 +1018,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: null,
         extraProviders: [],
         reuseRegisteredCredentials: true,
       },
@@ -1136,6 +1140,7 @@ describe("handleSandboxState", () => {
         recreate: true,
         toolDisclosure: "progressive",
         observabilityEnabled: false,
+        endpointSource: null,
         extraProviders: [],
         reuseRegisteredCredentials: true,
       },

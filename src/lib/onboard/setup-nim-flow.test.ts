@@ -288,6 +288,7 @@ describe("createSetupNim", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
       provider: "nvidia-prod",
       endpointUrl: "https://integrate.api.nvidia.com/v1",
+      endpointSource: null,
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       hermesAuthMethod: null,
       hermesToolGateways: [],
@@ -592,6 +593,7 @@ describe("createSetupNim", () => {
       provider: "openai-api",
       model: "handoff-model",
       endpointUrl: "https://handoff.example.com/v1",
+      endpointSource: "inference-set",
       preferredInferenceApi: "openai-responses",
       source: "registry",
     } as const;
@@ -645,6 +647,7 @@ describe("createSetupNim", () => {
       model: "handoff-model",
       provider: "openai-api",
       endpointUrl: "https://handoff.example.com/v1",
+      endpointSource: "inference-set",
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: null,
       skipHostInferenceSmoke: true,

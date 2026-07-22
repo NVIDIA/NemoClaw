@@ -62,6 +62,11 @@ outcome, the smallest change, and how it was verified. Explore alternatives only
 change behavior, security, data safety, or a supported contract. Once the smallest safe change is
 clear and testable, stop exploring and implement it.
 
+### Writing Guide
+
+Follow the [NemoClaw Writing Guide](WRITING.md) when you add or modify explanatory text.
+The guide defines its scope, terms, rules, examples, and review policy.
+
 ## Before You Open an Issue
 
 Open an issue when you encounter one of the following situations.
@@ -298,8 +303,13 @@ existing contract.
 Write `describe` and `it` titles so the Vitest tree reads as behavioral documentation. Start test
 titles with behavior or context rather than issue numbers, flags, or scenario labels, and put local
 issue references in a final suffix such as `(#1234)`. Prefer
-`it("reticulates splines correctly (#1234)")` over
+`it("reticulates splines for valid control points (#1234)")` over
 `it("#1234 fixes spline reticulation")`.
+
+Apply the [NemoClaw Writing Guide](WRITING.md) to each added or modified test title.
+The title checker enforces objective title shape only. A language finding can block when ambiguity
+changes the test meaning. Other findings are suggestions. Reviewers must not request unrelated title
+cleanup.
 
 Run `npm run test:spec` to render the suite with Vitest's hierarchical tree reporter. Run
 `npm run test:titles:check` to enforce the objective title-shape conventions without attempting to

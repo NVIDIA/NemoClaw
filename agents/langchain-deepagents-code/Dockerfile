@@ -12,6 +12,14 @@ FROM ${BASE_IMAGE}
 
 USER root
 
+COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+
+# The final managed image owns the shipped dependency boundary independently
+# of base freshness. Reassert the idempotent npm-private node-tar fix here.
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
 RUN set -eu; \
     dcode_path="$(command -v dcode 2>/dev/null || true)"; \
     if [ "$dcode_path" != "/usr/local/bin/dcode" ]; then \
@@ -79,7 +87,7 @@ RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-dee
     && install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/deepagents-code
 
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b
-ARG NEMOCLAW_PROVIDER_KEY=inference
+ARG NEMOCLAW_INFERENCE_PROVIDER_ID=inference
 ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia
 ARG NEMOCLAW_UPSTREAM_ENDPOINT_URL=
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
@@ -126,7 +134,7 @@ ENV HOME=/sandbox \
     VIRTUAL_ENV=/opt/venv \
     PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin" \
     NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
-    NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
+    NEMOCLAW_INFERENCE_PROVIDER_ID=${NEMOCLAW_INFERENCE_PROVIDER_ID} \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_UPSTREAM_ENDPOINT_URL=${NEMOCLAW_UPSTREAM_ENDPOINT_URL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
@@ -179,6 +187,14 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod a+rw /sandbox/.nemoclaw/config.json; \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
+
+# Gate the completed local filesystem for dynamically built managed images.
+COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+RUN install -d -m 0755 /usr/local/share/nemoclaw \
+    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+        --root / --image build:deepagents-code \
+        > /usr/local/share/nemoclaw/node-tar-inventory.json \
+    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
 
 USER sandbox
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]

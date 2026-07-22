@@ -67,6 +67,52 @@ run_apply
 `);
 }
 
+function runPackageKitBoundary(body: string, extraEnv: Record<string, string> = {}) {
+  return runSourced(
+    `
+CALLS="$HOME/packagekit-calls"
+: >"$CALLS"
+systemctl() {
+  printf 'systemctl %s\n' "$*" >>"$CALLS"
+  case "$*" in
+    'show packagekit.service -p LoadState --value') printf 'loaded\n' ;;
+    'show packagekit.service -p UnitFileState --value')
+      if [[ -e "$HOME/packagekit-mask" ]]; then printf 'masked-runtime\n'; else printf 'static\n'; fi
+      ;;
+    'show packagekit.service -p ActiveState --value')
+      if [[ -e "$HOME/packagekit-inactive" ]]; then printf 'inactive\n'; else printf 'active\n'; fi
+      ;;
+    'mask --runtime packagekit.service') : >"$HOME/packagekit-mask" ;;
+    'unmask --runtime packagekit.service') rm -f "$HOME/packagekit-mask" ;;
+    'start packagekit.service') rm -f "$HOME/packagekit-inactive" ;;
+    *) return 1 ;;
+  esac
+}
+busctl() {
+  printf 'busctl %s\n' "$*" >>"$CALLS"
+  case "$*" in
+    *GetTransactionList) printf '%s\n' "$PACKAGEKIT_TRANSACTIONS" ;;
+    *SuggestDaemonQuit)
+      [[ "$PACKAGEKIT_QUIT_RESULT" == 'inactive' ]] && : >"$HOME/packagekit-inactive"
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+sudo() { if [[ "$1" == '-n' ]]; then shift; fi; "$@"; }
+sleep() { :; }
+STATION_HOST_PROFILE=generic-ubuntu
+MODE='--apply'
+${body}
+`,
+    {
+      PACKAGEKIT_TRANSACTIONS: "ao 0",
+      PACKAGEKIT_QUIT_RESULT: "inactive",
+      ...extraEnv,
+    },
+  );
+}
+
 describe("DGX Station package state", () => {
   it.each([
     { label: "missing", queryStatus: "1", record: "", expected: "missing" },
@@ -185,7 +231,6 @@ assert_no_package_mismatches
 
   it.each([
     "unattended-upgr",
-    "packagekitd",
     "apt.systemd.dai",
   ])("detects the Linux package-manager process name %s", (processName) => {
     const { result, output } = runSourced(
@@ -200,6 +245,114 @@ check_package_managers_idle test
 
     expect(result.status, output).not.toBe(0);
     expect(output).toContain(`4242 ${processName}`);
+    expect(output).toMatch(/package-manager process is active/);
+  });
+
+  it("allows an idle PackageKit daemon on generic Ubuntu", () => {
+    const { result, output } = runSourced(
+      `
+STATION_HOST_PROFILE=generic-ubuntu
+ps() { printf '4242 packagekitd\n'; }
+lslocks() { :; }
+check_package_managers_idle test
+`,
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("package_manager=idle phase=test");
+  });
+
+  it("holds an idle PackageKit daemon outside the complete package critical section", () => {
+    const { result, output } = runPackageKitBoundary(`
+quiesce_packagekit_for_transaction
+printf 'CRITICAL_SECTION\n' >>"$CALLS"
+restore_packagekit_after_transaction
+cat "$CALLS"
+[[ ! -e "$HOME/packagekit-mask" ]]
+[[ ! -e "$HOME/packagekit-inactive" ]]
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain(
+      "packagekit=quiesced scope=station_package_transaction mask=runtime_only",
+    );
+    expect(output).toContain("packagekit=runtime_state_restored");
+    const mask = output.indexOf("systemctl mask --runtime packagekit.service");
+    const inspect = output.indexOf("GetTransactionList");
+    const quit = output.indexOf("SuggestDaemonQuit");
+    const critical = output.indexOf("CRITICAL_SECTION");
+    const unmask = output.indexOf("systemctl unmask --runtime packagekit.service");
+    const restart = output.indexOf("systemctl start packagekit.service");
+    expect(mask).toBeGreaterThanOrEqual(0);
+    expect(inspect).toBeGreaterThan(mask);
+    expect(quit).toBeGreaterThan(inspect);
+    expect(critical).toBeGreaterThan(quit);
+    expect(unmask).toBeGreaterThan(critical);
+    expect(restart).toBeGreaterThan(unmask);
+  });
+
+  it("rejects an active lock-free PackageKit transaction before package mutation", () => {
+    const { result, output } = runPackageKitBoundary(
+      `
+trap 'restore_packagekit_after_transaction || true; cat "$CALLS"' EXIT
+quiesce_packagekit_for_transaction
+printf 'PACKAGE_MUTATION\n' >>"$CALLS"
+`,
+      { PACKAGEKIT_TRANSACTIONS: 'ao 1 "/42_deadbeef"' },
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toMatch(/active PackageKit transaction blocks Station package preparation/);
+    expect(output).toContain("GetTransactionList");
+    expect(output).toContain("systemctl unmask --runtime packagekit.service");
+    expect(output).not.toContain("SuggestDaemonQuit");
+    expect(output).not.toContain("PACKAGE_MUTATION");
+  });
+
+  it("rejects PackageKit activity that appears after the initial idle inspection", () => {
+    const { result, output } = runPackageKitBoundary(
+      `
+ps() { printf '4242 packagekitd\n'; }
+lslocks() { :; }
+check_package_managers_idle 'initial Station package preflight'
+trap 'restore_packagekit_after_transaction || true; cat "$CALLS"' EXIT
+quiesce_packagekit_for_transaction
+printf 'PACKAGE_MUTATION\n' >>"$CALLS"
+`,
+      { PACKAGEKIT_QUIT_RESULT: "active" },
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("package_manager=idle phase=initial_Station_package_preflight");
+    expect(output).toMatch(/did not become inactive before the Station package critical section/);
+    expect(output).toContain("systemctl unmask --runtime packagekit.service");
+    expect(output).not.toContain("PACKAGE_MUTATION");
+  });
+
+  it("rejects PackageKit when it holds an APT lock", () => {
+    const { result, output } = runSourced(`
+STATION_HOST_PROFILE=generic-ubuntu
+MODE='--apply'
+ps() { printf '4242 packagekitd\n'; }
+lslocks() { printf '4242 packagekitd /var/lib/apt/lists/lock\n'; }
+sudo() { if [[ "$1" == "-n" ]]; then shift; fi; "$@"; }
+check_package_managers_idle test
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("4242 packagekitd /var/lib/apt/lists/lock");
+    expect(output).toMatch(/APT or dpkg lock is active/);
+  });
+
+  it("keeps PackageKit process detection fail-closed outside generic Ubuntu", () => {
+    const { result, output } = runSourced(`
+STATION_HOST_PROFILE=colossus-baseos
+ps() { printf '4242 packagekitd\n'; }
+check_package_managers_idle test
+`);
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("4242 packagekitd");
     expect(output).toMatch(/package-manager process is active/);
   });
 

@@ -76,7 +76,8 @@ export function validateRunnerPressureWorkflow(workflowValue: unknown): string[]
       !script.includes(
         'classification_file="$E2E_ARTIFACT_DIR/runner-pressure-classification.jsonl"',
       ) ||
-      script.indexOf('export E2E_TERMINAL_CLASSIFICATION_FILE="$classification_file"') >= liveTest ||
+      script.indexOf('export E2E_TERMINAL_CLASSIFICATION_FILE="$classification_file"') >=
+        liveTest ||
       !script.includes('test_status="$?"') ||
       !script.includes('exit "$test_status"')
     ) {

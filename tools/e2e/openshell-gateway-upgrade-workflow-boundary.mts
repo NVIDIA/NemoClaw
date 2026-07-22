@@ -57,6 +57,21 @@ const EXPECTED_V074_FIXTURE: WorkflowRecord = {
   openclaw_version: "2026.5.27",
 };
 
+const EXPECTED_V089_FIXTURE: WorkflowRecord = {
+  id: "v0.0.89-x86_64",
+  runner: "ubuntu-latest",
+  shard: "v0-0-89-x86-64",
+  nemoclaw_ref: "v0.0.89",
+  nemoclaw_commit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
+  installer_sha256: "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2",
+  sandbox_base_image_ref:
+    "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
+  openshell_version: "0.0.85",
+  openclaw_version: "2026.6.10",
+  current_openclaw_version: "2026.7.1",
+  openclaw_state_upgrade: "1",
+};
+
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as WorkflowRecord)
@@ -78,6 +93,13 @@ function v074Fixture(job: WorkflowRecord): WorkflowRecord {
   const include = record(record(job.strategy).matrix).include;
   return Array.isArray(include)
     ? (include.map(record).find((fixture) => fixture.nemoclaw_ref === "v0.0.74") ?? {})
+    : {};
+}
+
+function v089Fixture(job: WorkflowRecord): WorkflowRecord {
+  const include = record(record(job.strategy).matrix).include;
+  return Array.isArray(include)
+    ? (include.map(record).find((fixture) => fixture.nemoclaw_ref === "v0.0.89") ?? {})
     : {};
 }
 
@@ -106,8 +128,18 @@ export function validateOpenShellGatewayUpgradeWorkflow(workflow: WorkflowRecord
   if (!isDeepStrictEqual(v074Fixture(job), EXPECTED_V074_FIXTURE)) {
     errors.push(`${JOB_NAME} matrix must pin the immediate v0.0.74 x86_64 upgrade fixture`);
   }
-  if (record(job.env).NEMOCLAW_E2E_SHARD !== "${{ matrix.shard }}") {
+  if (!isDeepStrictEqual(v089Fixture(job), EXPECTED_V089_FIXTURE)) {
+    errors.push(`${JOB_NAME} matrix must pin the v0.0.89 OpenClaw state-upgrade fixture`);
+  }
+  const env = record(job.env);
+  if (env.NEMOCLAW_E2E_SHARD !== "${{ matrix.shard }}") {
     errors.push(`${JOB_NAME} must publish one risk-signal shard per legacy fixture`);
+  }
+  if (env.NEMOCLAW_CURRENT_OPENCLAW_VERSION !== "${{ matrix.current_openclaw_version }}") {
+    errors.push(`${JOB_NAME} must bind the current OpenClaw version from its fixture`);
+  }
+  if (env.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF !== "${{ matrix.openclaw_state_upgrade }}") {
+    errors.push(`${JOB_NAME} must bind the OpenClaw state-upgrade proof flag from its fixture`);
   }
 
   const run = jobSteps(job).find((step) => step.name === RUN_STEP_NAME) ?? {};
