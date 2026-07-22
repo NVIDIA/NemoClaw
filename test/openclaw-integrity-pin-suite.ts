@@ -100,7 +100,7 @@ function openClawBaseProvenance(
 ): string {
   const recipe =
     version === PINNED_OPENCLAW_VERSION
-      ? "ignore-scripts+reviewed-lifecycle+transitive-remediation-v2"
+      ? "ignore-scripts+reviewed-lifecycle+transitive-remediation-v3"
       : "ignore-scripts+reviewed-lifecycle-v1";
   return [
     "schema=2",
@@ -828,7 +828,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         for (const calls of [production.calls, base.calls]) {
           expect(calls).toContain(
-            "npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe eventsource-parser pkce-challenge zod tar jszip",
+            "npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe ajv ajv-formats cross-spawn eventsource eventsource-parser fast-deep-equal fast-uri isexe json-schema-traverse path-key pkce-challenge require-from-string shebang-command shebang-regex which zod zod-to-json-schema tar jszip",
           );
         }
         for (const calls of [production.calls, base.calls]) {
@@ -923,7 +923,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "wrong lifecycle recipe",
           {
             baseProvenance: openClawBaseProvenance().replace(
-              "recipe=ignore-scripts+reviewed-lifecycle+transitive-remediation-v2",
+              "recipe=ignore-scripts+reviewed-lifecycle+transitive-remediation-v3",
               "recipe=ignore-scripts-only-v1",
             ),
           },

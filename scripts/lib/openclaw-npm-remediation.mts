@@ -29,6 +29,16 @@ type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity: string;
 }>;
 
+type ReviewedPackageIdentity = Readonly<{
+  integrity: string;
+  name: string;
+  sourceIntegrity?: string;
+  sourceTarball?: string;
+  sourceVersion?: string;
+  tarball: string;
+  version: string;
+}>;
+
 type RemediationRequest = Readonly<{
   archivePath: string;
   env?: NodeJS.ProcessEnv;
@@ -103,6 +113,138 @@ const PKCE_CHALLENGE_INTEGRITY =
   "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==";
 const PKCE_CHALLENGE_TARBALL =
   "https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz";
+const MODEL_CONTEXT_PROTOCOL_RUNTIME_PACKAGES: readonly ReviewedPackageIdentity[] = [
+  {
+    name: "ajv",
+    version: "8.20.0",
+    integrity:
+      "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==",
+    tarball: "https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz",
+  },
+  {
+    name: "ajv-formats",
+    version: "3.0.1",
+    integrity:
+      "sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==",
+    tarball: "https://registry.npmjs.org/ajv-formats/-/ajv-formats-3.0.1.tgz",
+  },
+  {
+    name: "cross-spawn",
+    version: "7.0.6",
+    integrity:
+      "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==",
+    tarball: "https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz",
+  },
+  {
+    name: "eventsource",
+    version: "3.0.7",
+    integrity:
+      "sha512-CRT1WTyuQoD771GW56XEZFQ/ZoSfWid1alKGDYMmkt2yl8UXrVR4pspqWNEcqKvVIzg6PAltWjxcSSPrboA4iA==",
+    tarball: "https://registry.npmjs.org/eventsource/-/eventsource-3.0.7.tgz",
+  },
+  {
+    name: "eventsource-parser",
+    version: EVENTSOURCE_PARSER_VERSION,
+    integrity: EVENTSOURCE_PARSER_INTEGRITY,
+    tarball: EVENTSOURCE_PARSER_TARBALL,
+  },
+  {
+    name: "fast-deep-equal",
+    version: "3.1.3",
+    integrity:
+      "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
+    tarball: "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz",
+  },
+  {
+    name: "fast-uri",
+    version: "3.1.4",
+    integrity:
+      "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==",
+    tarball: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz",
+    sourceVersion: "3.1.2",
+    sourceIntegrity:
+      "sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==",
+    sourceTarball: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.2.tgz",
+  },
+  {
+    name: "isexe",
+    version: "2.0.0",
+    integrity:
+      "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==",
+    tarball: "https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz",
+  },
+  {
+    name: "json-schema-traverse",
+    version: "1.0.0",
+    integrity:
+      "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==",
+    tarball: "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz",
+  },
+  {
+    name: "path-key",
+    version: "3.1.1",
+    integrity:
+      "sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==",
+    tarball: "https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz",
+  },
+  {
+    name: "pkce-challenge",
+    version: PKCE_CHALLENGE_VERSION,
+    integrity: PKCE_CHALLENGE_INTEGRITY,
+    tarball: PKCE_CHALLENGE_TARBALL,
+  },
+  {
+    name: "require-from-string",
+    version: "2.0.2",
+    integrity:
+      "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==",
+    tarball: "https://registry.npmjs.org/require-from-string/-/require-from-string-2.0.2.tgz",
+  },
+  {
+    name: "shebang-command",
+    version: "2.0.0",
+    integrity:
+      "sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==",
+    tarball: "https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz",
+  },
+  {
+    name: "shebang-regex",
+    version: "3.0.0",
+    integrity:
+      "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==",
+    tarball: "https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz",
+  },
+  {
+    name: "which",
+    version: "2.0.2",
+    integrity:
+      "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==",
+    tarball: "https://registry.npmjs.org/which/-/which-2.0.2.tgz",
+  },
+  {
+    name: "zod",
+    version: ZOD_VERSION,
+    integrity: ZOD_INTEGRITY,
+    tarball: ZOD_TARBALL,
+  },
+  {
+    name: "zod-to-json-schema",
+    version: "3.25.2",
+    integrity:
+      "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==",
+    tarball: "https://registry.npmjs.org/zod-to-json-schema/-/zod-to-json-schema-3.25.2.tgz",
+  },
+];
+const MODEL_CONTEXT_PROTOCOL_CLIENT_DEPENDENCIES = Object.freeze({
+  ajv: "^8.17.1",
+  "ajv-formats": "^3.0.1",
+  "cross-spawn": "^7.0.5",
+  eventsource: "^3.0.2",
+  "eventsource-parser": "^3.0.0",
+  "pkce-challenge": "^5.0.0",
+  zod: "^3.25 || ^4.0",
+  "zod-to-json-schema": "^3.25.1",
+});
 const OTEL_PROPAGATOR_JAEGER_VERSION = "2.9.0";
 const OTEL_PROPAGATOR_JAEGER_INTEGRITY =
   "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==";
@@ -133,7 +275,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "openclaw@2026.6.10": {
     kind: "core",
     expectedPatchedMetadataIntegrity:
-      "sha512-y+I2MqDPfxsxwU92PeLU+8f+8L0yL8XQOgLZArS6c07ah6nd7NrCv0B0TpqixjTZxM6Y7SAQ4g87hQBCq2UBFg==",
+      "sha512-12xx2zL4oZ/cljBNFJF5nYH1BBGWbXnAkVdhKZQJp7zeKh3lh77NETa/ol5GXYzDt1UaP9oh3Mh548qW2xTlcw==",
   },
 });
 
@@ -223,9 +365,9 @@ function hashPatchedMetadata(packageDirectory: string): string {
     "node_modules/@hono/node-server/package.json",
     "node_modules/@modelcontextprotocol/sdk/package.json",
     "node_modules/@openclaw/fs-safe/package.json",
-    "node_modules/eventsource-parser/package.json",
-    "node_modules/pkce-challenge/package.json",
-    "node_modules/zod/package.json",
+    ...MODEL_CONTEXT_PROTOCOL_RUNTIME_PACKAGES.map(
+      ({ name }) => `node_modules/${name}/package.json`,
+    ),
     "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core/package.json",
     "node_modules/@opentelemetry/propagator-jaeger/package.json",
     "node_modules/@opentelemetry/sdk-node/package.json",
@@ -451,9 +593,6 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   const modelContextProtocolSdk = packages["node_modules/@modelcontextprotocol/sdk"] as
     | JsonObject
     | undefined;
-  const eventsourceParser = packages["node_modules/eventsource-parser"] as JsonObject | undefined;
-  const pkceChallenge = packages["node_modules/pkce-challenge"] as JsonObject | undefined;
-  const zod = packages["node_modules/zod"] as JsonObject | undefined;
   if (root.dependencies?.tar !== "7.5.16" || tar?.version !== "7.5.16") {
     throw new Error("openclaw@2026.6.10 tar shrinkwrap state changed after review");
   }
@@ -465,10 +604,6 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
     root.dependencies?.["@modelcontextprotocol/sdk"] !== "1.29.0" ||
     modelContextProtocolSdk?.version !== "1.29.0" ||
     modelContextProtocolSdk.dependencies?.["@hono/node-server"] !== "^1.19.9" ||
-    modelContextProtocolSdk.dependencies?.["eventsource-parser"] !== "^3.0.0" ||
-    eventsourceParser?.version !== EVENTSOURCE_PARSER_VERSION ||
-    eventsourceParser.resolved !== EVENTSOURCE_PARSER_TARBALL ||
-    eventsourceParser.integrity !== EVENTSOURCE_PARSER_INTEGRITY ||
     honoNodeServer?.version !== "1.19.14" ||
     honoNodeServer.resolved !==
       "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.14.tgz" ||
@@ -477,21 +612,28 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   ) {
     throw new Error("openclaw@2026.6.10 Hono node server layout changed after review");
   }
-  if (
-    packageJson.dependencies?.zod !== ZOD_VERSION ||
-    root.dependencies?.zod !== ZOD_VERSION ||
-    zod?.version !== ZOD_VERSION ||
-    zod?.resolved !== ZOD_TARBALL ||
-    zod?.integrity !== ZOD_INTEGRITY
-  ) {
-    throw new Error("openclaw@2026.6.10 Zod layout changed after review");
+  for (const [name, expectedRange] of Object.entries(MODEL_CONTEXT_PROTOCOL_CLIENT_DEPENDENCIES)) {
+    if (modelContextProtocolSdk.dependencies?.[name] !== expectedRange) {
+      throw new Error(`openclaw@2026.6.10 MCP SDK ${name} dependency changed after review`);
+    }
   }
-  if (
-    pkceChallenge?.version !== PKCE_CHALLENGE_VERSION ||
-    pkceChallenge?.resolved !== PKCE_CHALLENGE_TARBALL ||
-    pkceChallenge?.integrity !== PKCE_CHALLENGE_INTEGRITY
-  ) {
-    throw new Error("openclaw@2026.6.10 PKCE challenge layout changed after review");
+  for (const identity of MODEL_CONTEXT_PROTOCOL_RUNTIME_PACKAGES) {
+    const lockedPackage = packages[`node_modules/${identity.name}`] as JsonObject | undefined;
+    if (
+      lockedPackage?.version !== (identity.sourceVersion ?? identity.version) ||
+      lockedPackage.resolved !== (identity.sourceTarball ?? identity.tarball) ||
+      lockedPackage.integrity !== (identity.sourceIntegrity ?? identity.integrity)
+    ) {
+      throw new Error(
+        `openclaw@2026.6.10 MCP runtime package ${identity.name} changed after review`,
+      );
+    }
+    lockedPackage.version = identity.version;
+    lockedPackage.resolved = identity.tarball;
+    lockedPackage.integrity = identity.integrity;
+  }
+  if (packageJson.dependencies?.zod !== ZOD_VERSION || root.dependencies?.zod !== ZOD_VERSION) {
+    throw new Error("openclaw@2026.6.10 Zod layout changed after review");
   }
   if (
     fsSafe?.optionalDependencies?.jszip !== "^3.10.1" ||
@@ -515,9 +657,7 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
     "@hono/node-server",
     "@modelcontextprotocol/sdk",
     "@openclaw/fs-safe",
-    "eventsource-parser",
-    "pkce-challenge",
-    "zod",
+    ...MODEL_CONTEXT_PROTOCOL_RUNTIME_PACKAGES.map(({ name }) => name),
   ];
   root.dependencies.tar = TAR_VERSION;
   root.bundleDependencies = [...packageJson.bundledDependencies];
@@ -525,9 +665,6 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   honoNodeServer.version = HONO_NODE_SERVER_VERSION;
   honoNodeServer.resolved = HONO_NODE_SERVER_TARBALL;
   honoNodeServer.integrity = HONO_NODE_SERVER_INTEGRITY;
-  eventsourceParser.version = EVENTSOURCE_PARSER_VERSION;
-  eventsourceParser.resolved = EVENTSOURCE_PARSER_TARBALL;
-  eventsourceParser.integrity = EVENTSOURCE_PARSER_INTEGRITY;
   tar.version = TAR_VERSION;
   tar.resolved = TAR_TARBALL;
   tar.integrity = TAR_INTEGRITY;
@@ -572,10 +709,19 @@ function patchModelContextProtocolPackageGraph(packageDirectory: string): void {
     MODEL_CONTEXT_PROTOCOL_SDK_VERSION,
     "OpenClaw MCP SDK remediation package",
   );
+  if (packageJson.dependencies?.["@hono/node-server"] !== "^1.19.9") {
+    throw new Error(
+      "@modelcontextprotocol/sdk@1.29.0 runtime dependency graph changed; review the remediation",
+    );
+  }
+  for (const [name, expectedRange] of Object.entries(MODEL_CONTEXT_PROTOCOL_CLIENT_DEPENDENCIES)) {
+    if (packageJson.dependencies?.[name] !== expectedRange) {
+      throw new Error(
+        "@modelcontextprotocol/sdk@1.29.0 runtime dependency graph changed; review the remediation",
+      );
+    }
+  }
   if (
-    packageJson.dependencies?.["@hono/node-server"] !== "^1.19.9" ||
-    packageJson.dependencies?.["pkce-challenge"] !== "^5.0.0" ||
-    packageJson.dependencies?.zod !== "^3.25 || ^4.0" ||
     packageJson.peerDependencies?.zod !== "^3.25 || ^4.0" ||
     packageJson.peerDependenciesMeta?.zod?.optional !== false
   ) {
@@ -656,7 +802,7 @@ function createCanonicalArchive(
   cwd: string,
   env: NodeJS.ProcessEnv,
 ): void {
-  const archiveMembers = normalizeArchiveContents(sourcePackage, basename(sourcePackage));
+  const archiveMembers = normalizeArchiveContents(sourcePackage, basename(sourcePackage)).sort();
   const tarPath = `${archivePath}.tar`;
   const canonicalEnv: NodeJS.ProcessEnv = { ...env, LANG: "C", LC_ALL: "C", TZ: "UTC" };
   delete canonicalEnv.GZIP;
@@ -771,27 +917,28 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       remediationRoot,
       env,
     );
-    const eventsourceParserArchive = packReplacement(
-      `eventsource-parser@${EVENTSOURCE_PARSER_VERSION}`,
-      EVENTSOURCE_PARSER_INTEGRITY,
-      EVENTSOURCE_PARSER_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const zodArchive = packReplacement(
-      `zod@${ZOD_VERSION}`,
-      ZOD_INTEGRITY,
-      ZOD_TARBALL,
-      remediationRoot,
-      env,
-    );
-    const pkceChallengeArchive = packReplacement(
-      `pkce-challenge@${PKCE_CHALLENGE_VERSION}`,
-      PKCE_CHALLENGE_INTEGRITY,
-      PKCE_CHALLENGE_TARBALL,
-      remediationRoot,
-      env,
-    );
+    const runtimePackages = MODEL_CONTEXT_PROTOCOL_RUNTIME_PACKAGES.map((identity) => {
+      const archive = packReplacement(
+        `${identity.name}@${identity.version}`,
+        identity.integrity,
+        identity.tarball,
+        remediationRoot,
+        env,
+      );
+      const packageDirectory = extractArchive(
+        archive.archivePath,
+        join(remediationRoot, `mcp-runtime-${identity.name}`),
+        remediationRoot,
+        env,
+      );
+      requirePackageIdentity(
+        readJson(join(packageDirectory, "package.json")),
+        identity.name,
+        identity.version,
+        `OpenClaw MCP SDK ${identity.name} runtime package`,
+      );
+      return { identity, packageDirectory };
+    });
     const modelContextProtocolSdkPackage = extractArchive(
       modelContextProtocolSdkArchive.archivePath,
       join(remediationRoot, "modelcontextprotocol-sdk"),
@@ -803,42 +950,6 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       join(remediationRoot, "hono-node-server"),
       remediationRoot,
       env,
-    );
-    const eventsourceParserPackage = extractArchive(
-      eventsourceParserArchive.archivePath,
-      join(remediationRoot, "eventsource-parser"),
-      remediationRoot,
-      env,
-    );
-    const zodPackage = extractArchive(
-      zodArchive.archivePath,
-      join(remediationRoot, "zod"),
-      remediationRoot,
-      env,
-    );
-    const pkceChallengePackage = extractArchive(
-      pkceChallengeArchive.archivePath,
-      join(remediationRoot, "pkce-challenge"),
-      remediationRoot,
-      env,
-    );
-    requirePackageIdentity(
-      readJson(join(eventsourceParserPackage, "package.json")),
-      "eventsource-parser",
-      EVENTSOURCE_PARSER_VERSION,
-      "OpenClaw MCP SDK eventsource parser remediation package",
-    );
-    requirePackageIdentity(
-      readJson(join(zodPackage, "package.json")),
-      "zod",
-      ZOD_VERSION,
-      "OpenClaw MCP SDK Zod remediation package",
-    );
-    requirePackageIdentity(
-      readJson(join(pkceChallengePackage, "package.json")),
-      "pkce-challenge",
-      PKCE_CHALLENGE_VERSION,
-      "OpenClaw MCP SDK PKCE remediation package",
     );
     patchFsSafePackageGraph(fsSafePackage);
     patchModelContextProtocolPackageGraph(modelContextProtocolSdkPackage);
@@ -854,15 +965,9 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       honoNodeServerPackage,
       join(sourcePackage, "node_modules", "@hono", "node-server"),
     );
-    copyReplacementPackage(
-      eventsourceParserPackage,
-      join(sourcePackage, "node_modules", "eventsource-parser"),
-    );
-    copyReplacementPackage(zodPackage, join(sourcePackage, "node_modules", "zod"));
-    copyReplacementPackage(
-      pkceChallengePackage,
-      join(sourcePackage, "node_modules", "pkce-challenge"),
-    );
+    for (const { identity, packageDirectory } of runtimePackages) {
+      copyReplacementPackage(packageDirectory, join(sourcePackage, "node_modules", identity.name));
+    }
     patchOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "otel-plugin") {
     const jaegerArchive = packReplacement(

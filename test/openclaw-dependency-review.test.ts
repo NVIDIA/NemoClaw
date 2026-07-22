@@ -258,9 +258,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("direct `tar@7.5.19` and `jszip@3.10.1` dependencies");
     expect(review).toContain("`@modelcontextprotocol/sdk@1.29.0`");
     expect(review).toContain("exact `@hono/node-server@2.0.5`");
-    expect(review).toContain(
-      "lock-pinned `eventsource-parser@3.1.0`, `pkce-challenge@5.0.1`, and `zod@4.4.3` runtime dependencies",
-    );
+    expect(review).toContain("complete 17-package, lock-pinned runtime closure");
     expect(review).toContain("`@opentelemetry/propagator-jaeger@2.8.0` with `2.9.0`");
     expect(review).toContain("nested `@opentelemetry/core@2.9.0`");
     expect(review).toContain("`axios@1.16.0` with `axios@1.18.0`");
@@ -270,9 +268,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "rejects unsafe archive members before extraction and after repacking",
     );
     expect(review).toContain("committed SHA-512 metadata value");
-    expect(review).toContain(
-      "core value also covers the bundled `@openclaw/fs-safe`, `@modelcontextprotocol/sdk`, `@hono/node-server`, `eventsource-parser`, `pkce-challenge`, and `zod` package manifests",
-    );
+    expect(review).toContain("all 17 MCP client runtime package manifests");
     for (const integrity of [
       "sha512-4LeEWl96twnS2Q7Bz4MGqgazLqO+hJN63GZxXoIqh1T3VweYD997gbU1ItNsQafqqXTXd5WFyFdReLtwvRBNiw==",
       "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
@@ -287,7 +283,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
       "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",
       "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
-      "sha512-y+I2MqDPfxsxwU92PeLU+8f+8L0yL8XQOgLZArS6c07ah6nd7NrCv0B0TpqixjTZxM6Y7SAQ4g87hQBCq2UBFg==",
+      "sha512-12xx2zL4oZ/cljBNFJF5nYH1BBGWbXnAkVdhKZQJp7zeKh3lh77NETa/ol5GXYzDt1UaP9oh3Mh548qW2xTlcw==",
       "sha512-QmgyGI7AQJrNGoWAYolunc18wUr6Q4iOK4n9YXCOo3Cxh+e2GONtOAbeu+OFpQW8PsF6x/iGInDQmeKD+jnOug==",
       "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
@@ -311,7 +307,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     ]) {
       expect(review).toContain(tarball);
     }
-    expect(review).toContain("ignore-scripts+reviewed-lifecycle+transitive-remediation-v2");
+    expect(review).toContain("ignore-scripts+reviewed-lifecycle+transitive-remediation-v3");
     expect(review).toContain("The replacement graph has no repository-generated lock-derived SBOM");
     expect(review).toContain(
       "`https-proxy-agent@5.0.1` and `agent-base@6.0.2` tarballs declare MIT in package metadata but contain no license file",
@@ -453,8 +449,8 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_not_contains "$openclaw_block" 'REGISTRY_INTEGRITY=$(npm view' "$dockerfile inline integrity lookup"
   check_not_contains "$openclaw_block" 'pack_reviewed_npm_tarball' "$dockerfile inline pack helper"
   check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
-  check_contains "$openclaw_block" 'ignore-scripts+reviewed-lifecycle+transitive-remediation-v2' "$dockerfile base provenance recipe"
-  check_contains "$openclaw_block" 'npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe eventsource-parser pkce-challenge zod tar jszip' "$dockerfile installed remediation graph guard"
+  check_contains "$openclaw_block" 'ignore-scripts+reviewed-lifecycle+transitive-remediation-v3' "$dockerfile base provenance recipe"
+  check_contains "$openclaw_block" 'npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe ajv ajv-formats cross-spawn eventsource eventsource-parser fast-deep-equal fast-uri isexe json-schema-traverse path-key pkce-challenge require-from-string shebang-command shebang-regex which zod zod-to-json-schema tar jszip' "$dockerfile installed remediation graph guard"
   check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
   check_contains "$openclaw_block" 'mcporter-integrity=' "$dockerfile mcporter provenance integrity"
   check_contains "$openclaw_block" 'mcporter-lock-sha256=' "$dockerfile mcporter provenance lock hash"

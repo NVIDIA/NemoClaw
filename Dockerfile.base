@@ -279,7 +279,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         OPENCLAW_PACK_PATH="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
             --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
             --working-directory "$OPENCLAW_PACK_DIR")"; \
-        OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v2'; \
+        OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v3'; \
     fi; \
     npm install -g --ignore-scripts "$OPENCLAW_PACK_PATH" \
     && case "$OPENCLAW_VERSION" in \
@@ -293,7 +293,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         echo "Error: Installed OpenClaw ${OPENCLAW_INSTALLED_VERSION:-unknown} does not match reviewed target ${OPENCLAW_VERSION}"; exit 1; \
     fi \
     && if [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then \
-        npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe eventsource-parser pkce-challenge zod tar jszip >/dev/null; \
+        npm ls -g --depth=2 openclaw @modelcontextprotocol/sdk @hono/node-server @openclaw/fs-safe ajv ajv-formats cross-spawn eventsource eventsource-parser fast-deep-equal fast-uri isexe json-schema-traverse path-key pkce-challenge require-from-string shebang-command shebang-regex which zod zod-to-json-schema tar jszip >/dev/null; \
     fi \
     && MCPORTER_EXPECTED_INTEGRITY="" \
     && MCPORTER_EXPECTED_TARBALL="" \

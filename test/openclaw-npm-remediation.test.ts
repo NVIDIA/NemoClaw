@@ -23,6 +23,143 @@ import {
 } from "../scripts/lib/openclaw-npm-remediation.mts";
 
 const temporaryDirectories: string[] = [];
+const MCP_RUNTIME_PACKAGES = [
+  [
+    "ajv",
+    "8.20.0",
+    "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==",
+    {
+      "fast-deep-equal": "^3.1.3",
+      "fast-uri": "^3.0.1",
+      "json-schema-traverse": "^1.0.0",
+      "require-from-string": "^2.0.2",
+    },
+  ],
+  [
+    "ajv-formats",
+    "3.0.1",
+    "sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==",
+    { ajv: "^8.0.0" },
+  ],
+  [
+    "cross-spawn",
+    "7.0.6",
+    "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==",
+    { "path-key": "^3.1.0", "shebang-command": "^2.0.0", which: "^2.0.1" },
+  ],
+  [
+    "eventsource",
+    "3.0.7",
+    "sha512-CRT1WTyuQoD771GW56XEZFQ/ZoSfWid1alKGDYMmkt2yl8UXrVR4pspqWNEcqKvVIzg6PAltWjxcSSPrboA4iA==",
+    { "eventsource-parser": "^3.0.1" },
+  ],
+  [
+    "eventsource-parser",
+    "3.1.0",
+    "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
+    {},
+  ],
+  [
+    "fast-deep-equal",
+    "3.1.3",
+    "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
+    {},
+  ],
+  [
+    "fast-uri",
+    "3.1.4",
+    "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==",
+    {},
+  ],
+  [
+    "isexe",
+    "2.0.0",
+    "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==",
+    {},
+  ],
+  [
+    "json-schema-traverse",
+    "1.0.0",
+    "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==",
+    {},
+  ],
+  [
+    "path-key",
+    "3.1.1",
+    "sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q==",
+    {},
+  ],
+  [
+    "pkce-challenge",
+    "5.0.1",
+    "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==",
+    {},
+  ],
+  [
+    "require-from-string",
+    "2.0.2",
+    "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==",
+    {},
+  ],
+  [
+    "shebang-command",
+    "2.0.0",
+    "sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==",
+    { "shebang-regex": "^3.0.0" },
+  ],
+  [
+    "shebang-regex",
+    "3.0.0",
+    "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==",
+    {},
+  ],
+  [
+    "which",
+    "2.0.2",
+    "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==",
+    { isexe: "^2.0.0" },
+  ],
+  [
+    "zod",
+    "4.4.3",
+    "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
+    {},
+  ],
+  [
+    "zod-to-json-schema",
+    "3.25.2",
+    "sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==",
+    {},
+  ],
+] as const;
+const MCP_CLIENT_DEPENDENCIES = {
+  ajv: "^8.17.1",
+  "ajv-formats": "^3.0.1",
+  "cross-spawn": "^7.0.5",
+  eventsource: "^3.0.2",
+  "eventsource-parser": "^3.0.0",
+  "pkce-challenge": "^5.0.0",
+  zod: "^3.25 || ^4.0",
+  "zod-to-json-schema": "^3.25.1",
+};
+
+function npmTarball(name: string, version: string): string {
+  return `https://registry.npmjs.org/${name}/-/${name}-${version}.tgz`;
+}
+
+function sourceRuntimeIdentity(
+  name: string,
+  version: string,
+  integrity: string,
+): { integrity: string; version: string } {
+  return name === "fast-uri"
+    ? {
+        version: "3.1.2",
+        integrity:
+          "sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==",
+      }
+    : { integrity, version };
+}
 
 function writeFixture(axiosVersion = "1.16.0"): string {
   const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-npm-remediation-"));
@@ -129,32 +266,25 @@ function writeCoreFixture(tarVersion = "7.5.16"): string {
             version: "1.29.0",
             dependencies: {
               "@hono/node-server": "^1.19.9",
-              "eventsource-parser": "^3.0.0",
-              "pkce-challenge": "^5.0.0",
-              zod: "^3.25 || ^4.0",
+              ...MCP_CLIENT_DEPENDENCIES,
             },
             peerDependencies: { zod: "^3.25 || ^4.0" },
             peerDependenciesMeta: { zod: { optional: false } },
           },
-          "node_modules/eventsource-parser": {
-            version: "3.1.0",
-            resolved:
-              "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz",
-            integrity:
-              "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
-          },
-          "node_modules/zod": {
-            version: "4.4.3",
-            resolved: "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz",
-            integrity:
-              "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
-          },
-          "node_modules/pkce-challenge": {
-            version: "5.0.1",
-            resolved: "https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz",
-            integrity:
-              "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==",
-          },
+          ...Object.fromEntries(
+            MCP_RUNTIME_PACKAGES.map(([name, version, integrity, dependencies]) => {
+              const source = sourceRuntimeIdentity(name, version, integrity);
+              return [
+                `node_modules/${name}`,
+                {
+                  version: source.version,
+                  resolved: npmTarball(name, source.version),
+                  integrity: source.integrity,
+                  ...(Object.keys(dependencies).length > 0 ? { dependencies } : {}),
+                },
+              ];
+            }),
+          ),
           "node_modules/brace-expansion": {
             version: "5.0.6",
             resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.6.tgz",
@@ -305,9 +435,7 @@ function writeCoreArchiveFixtures(): {
         version: "1.29.0",
         dependencies: {
           "@hono/node-server": "^1.19.9",
-          "eventsource-parser": "^3.0.0",
-          "pkce-challenge": "^5.0.0",
-          zod: "^3.25 || ^4.0",
+          ...MCP_CLIENT_DEPENDENCIES,
         },
         peerDependencies: { zod: "^3.25 || ^4.0" },
         peerDependenciesMeta: { zod: { optional: false } },
@@ -336,40 +464,35 @@ function writeCoreArchiveFixtures(): {
   const honoNodeServerArchive = path.join(root, "node-server-2.0.5-source.tgz");
   packFixture(honoNodeServerDirectory, honoNodeServerArchive);
 
-  const eventsourceParserDirectory = path.join(root, "eventsource-parser-package");
-  mkdirSync(eventsourceParserDirectory, { recursive: true });
-  writeFileSync(
-    path.join(eventsourceParserDirectory, "package.json"),
-    `${JSON.stringify(
-      {
-        name: "eventsource-parser",
-        version: "3.1.0",
-        engines: { node: ">=18.0.0" },
-      },
-      null,
-      2,
-    )}\n`,
+  const runtimeFixtures = MCP_RUNTIME_PACKAGES.map(
+    ([name, version, integrity, dependencies], index) => {
+      const directory = path.join(root, `mcp-runtime-${index}`);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        path.join(directory, "package.json"),
+        `${JSON.stringify(
+          {
+            name,
+            version,
+            ...(Object.keys(dependencies).length > 0 ? { dependencies } : {}),
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      const archive = path.join(root, `${name}-${version}-source.tgz`);
+      packFixture(directory, archive);
+      return {
+        archive,
+        filename: `${name}-${version}.tgz`,
+        integrity,
+        name,
+        tarball: npmTarball(name, version),
+        variable: `mcp_runtime_archive_${index}`,
+        version,
+      };
+    },
   );
-  const eventsourceParserArchive = path.join(root, "eventsource-parser-3.1.0-source.tgz");
-  packFixture(eventsourceParserDirectory, eventsourceParserArchive);
-
-  const zodDirectory = path.join(root, "zod-package");
-  mkdirSync(zodDirectory, { recursive: true });
-  writeFileSync(
-    path.join(zodDirectory, "package.json"),
-    `${JSON.stringify({ name: "zod", version: "4.4.3" }, null, 2)}\n`,
-  );
-  const zodArchive = path.join(root, "zod-4.4.3-source.tgz");
-  packFixture(zodDirectory, zodArchive);
-
-  const pkceChallengeDirectory = path.join(root, "pkce-challenge-package");
-  mkdirSync(pkceChallengeDirectory, { recursive: true });
-  writeFileSync(
-    path.join(pkceChallengeDirectory, "package.json"),
-    `${JSON.stringify({ name: "pkce-challenge", version: "5.0.1" }, null, 2)}\n`,
-  );
-  const pkceChallengeArchive = path.join(root, "pkce-challenge-5.0.1-source.tgz");
-  packFixture(pkceChallengeDirectory, pkceChallengeArchive);
 
   const npmExecutable = path.join(root, "npm-fixture.sh");
   writeFileSync(
@@ -380,9 +503,7 @@ function writeCoreArchiveFixtures(): {
       `fs_safe_archive=${JSON.stringify(fsSafeArchive)}`,
       `modelcontextprotocol_sdk_archive=${JSON.stringify(modelContextProtocolSdkArchive)}`,
       `hono_node_server_archive=${JSON.stringify(honoNodeServerArchive)}`,
-      `eventsource_parser_archive=${JSON.stringify(eventsourceParserArchive)}`,
-      `zod_archive=${JSON.stringify(zodArchive)}`,
-      `pkce_challenge_archive=${JSON.stringify(pkceChallengeArchive)}`,
+      ...runtimeFixtures.map(({ archive, variable }) => `${variable}=${JSON.stringify(archive)}`),
       'if [ "$1" = "view" ]; then',
       '  case "$2:$3" in',
       '    "@openclaw/fs-safe@0.3.0:dist.integrity") value="sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==" ;;',
@@ -391,12 +512,10 @@ function writeCoreArchiveFixtures(): {
       '    "@modelcontextprotocol/sdk@1.29.0:dist.tarball") value="https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz" ;;',
       '    "@hono/node-server@2.0.5:dist.integrity") value="sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" ;;',
       '    "@hono/node-server@2.0.5:dist.tarball") value="https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz" ;;',
-      '    "eventsource-parser@3.1.0:dist.integrity") value="sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==" ;;',
-      '    "eventsource-parser@3.1.0:dist.tarball") value="https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz" ;;',
-      '    "zod@4.4.3:dist.integrity") value="sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==" ;;',
-      '    "zod@4.4.3:dist.tarball") value="https://registry.npmjs.org/zod/-/zod-4.4.3.tgz" ;;',
-      '    "pkce-challenge@5.0.1:dist.integrity") value="sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==" ;;',
-      '    "pkce-challenge@5.0.1:dist.tarball") value="https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz" ;;',
+      ...runtimeFixtures.flatMap(({ integrity, name, tarball, version }) => [
+        `    "${name}@${version}:dist.integrity") value="${integrity}" ;;`,
+        `    "${name}@${version}:dist.tarball") value="${tarball}" ;;`,
+      ]),
       "    *) exit 1 ;;",
       "  esac",
       '  printf "%s\\n" "$value"',
@@ -407,9 +526,10 @@ function writeCoreArchiveFixtures(): {
       '    "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz") archive="$fs_safe_archive"; filename="fs-safe-0.3.0.tgz"; integrity="sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==" ;;',
       '    "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz") archive="$modelcontextprotocol_sdk_archive"; filename="sdk-1.29.0.tgz"; integrity="sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==" ;;',
       '    "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz") archive="$hono_node_server_archive"; filename="node-server-2.0.5.tgz"; integrity="sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" ;;',
-      '    "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz") archive="$eventsource_parser_archive"; filename="eventsource-parser-3.1.0.tgz"; integrity="sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==" ;;',
-      '    "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz") archive="$zod_archive"; filename="zod-4.4.3.tgz"; integrity="sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==" ;;',
-      '    "https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz") archive="$pkce_challenge_archive"; filename="pkce-challenge-5.0.1.tgz"; integrity="sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==" ;;',
+      ...runtimeFixtures.map(
+        ({ filename, integrity, tarball, variable }) =>
+          `    "${tarball}") archive="$${variable}"; filename="${filename}"; integrity="${integrity}" ;;`,
+      ),
       "    *) exit 1 ;;",
       "  esac",
       '  destination=""',
@@ -656,18 +776,14 @@ describe("OpenClaw npm remediation", () => {
       "@hono/node-server",
       "@modelcontextprotocol/sdk",
       "@openclaw/fs-safe",
-      "eventsource-parser",
-      "pkce-challenge",
-      "zod",
+      ...MCP_RUNTIME_PACKAGES.map(([name]) => name),
     ]);
     expect(shrinkwrap.packages[""]).toMatchObject({
       bundleDependencies: [
         "@hono/node-server",
         "@modelcontextprotocol/sdk",
         "@openclaw/fs-safe",
-        "eventsource-parser",
-        "pkce-challenge",
-        "zod",
+        ...MCP_RUNTIME_PACKAGES.map(([name]) => name),
       ],
       dependencies: { tar: "7.5.19" },
     });
@@ -691,24 +807,13 @@ describe("OpenClaw npm remediation", () => {
         "@hono/node-server"
       ],
     ).toBe("2.0.5");
-    expect(shrinkwrap.packages["node_modules/eventsource-parser"]).toMatchObject({
-      version: "3.1.0",
-      resolved: "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz",
-      integrity:
-        "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
-    });
-    expect(shrinkwrap.packages["node_modules/zod"]).toMatchObject({
-      version: "4.4.3",
-      resolved: "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz",
-      integrity:
-        "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
-    });
-    expect(shrinkwrap.packages["node_modules/pkce-challenge"]).toMatchObject({
-      version: "5.0.1",
-      resolved: "https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz",
-      integrity:
-        "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==",
-    });
+    for (const [name, version, integrity] of MCP_RUNTIME_PACKAGES) {
+      expect(shrinkwrap.packages[`node_modules/${name}`]).toMatchObject({
+        version,
+        resolved: npmTarball(name, version),
+        integrity,
+      });
+    }
     expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
       version: "5.0.7",
       resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
@@ -800,23 +905,12 @@ describe("OpenClaw npm remediation", () => {
     const honoNodeServerPackageJson = readJson<{ name?: string; version?: string }>(
       path.join(extracted, "package", "node_modules", "@hono", "node-server", "package.json"),
     );
-    const eventsourceParserPackageJson = readJson<{ name?: string; version?: string }>(
-      path.join(extracted, "package", "node_modules", "eventsource-parser", "package.json"),
-    );
-    const zodPackageJson = readJson<{ name?: string; version?: string }>(
-      path.join(extracted, "package", "node_modules", "zod", "package.json"),
-    );
-    const pkceChallengePackageJson = readJson<{ name?: string; version?: string }>(
-      path.join(extracted, "package", "node_modules", "pkce-challenge", "package.json"),
-    );
     expect(packageJson).toMatchObject({
       bundledDependencies: [
         "@hono/node-server",
         "@modelcontextprotocol/sdk",
         "@openclaw/fs-safe",
-        "eventsource-parser",
-        "pkce-challenge",
-        "zod",
+        ...MCP_RUNTIME_PACKAGES.map(([name]) => name),
       ],
       dependencies: { jszip: "3.10.1", tar: "7.5.19" },
     });
@@ -826,15 +920,13 @@ describe("OpenClaw npm remediation", () => {
       name: "@hono/node-server",
       version: "2.0.5",
     });
-    expect(eventsourceParserPackageJson).toMatchObject({
-      name: "eventsource-parser",
-      version: "3.1.0",
-    });
-    expect(zodPackageJson).toMatchObject({ name: "zod", version: "4.4.3" });
-    expect(pkceChallengePackageJson).toMatchObject({
-      name: "pkce-challenge",
-      version: "5.0.1",
-    });
+    for (const [name, version] of MCP_RUNTIME_PACKAGES) {
+      expect(
+        readJson<{ name?: string; version?: string }>(
+          path.join(extracted, "package", "node_modules", name, "package.json"),
+        ),
+      ).toMatchObject({ name, version });
+    }
     expect(readFileSync(path.join(extracted, "package", fixture.longMemberPath), "utf-8")).toBe(
       "long archive member\n",
     );
