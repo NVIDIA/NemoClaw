@@ -169,6 +169,7 @@ export interface AssessHostOpts {
   procVersion?: string;
   dockerInfoOutput?: string;
   dockerInfoError?: string;
+  dockerVersionOutput?: string;
   readFileImpl?: (filePath: string, encoding: BufferEncoding) => string;
   readdirImpl?: (dir: string) => string[];
   runCaptureImpl?: RunCaptureFn;
@@ -213,6 +214,83 @@ function inferContainerRuntime(info = ""): ContainerRuntime {
   if (normalized.includes("docker desktop")) return "docker-desktop";
   if (normalized.includes("docker")) return "docker";
   return "unknown";
+}
+
+/**
+ * Detect Podman fronting the Docker CLI compatibility socket from the explicit
+ * `docker version --format '{{json .}}'` engine banner.
+ *
+ * Podman's docker-compat `/info` endpoint mimics Docker so closely that
+ * `docker info` carries no "podman" marker (observed on Apple Silicon macOS:
+ * `ServerVersion: "5.6.2"`, `OperatingSystem: "fedora"`, no "podman"
+ * substring), so `inferContainerRuntime` misclassifies it as plain Docker.
+ * The docker-compat `/version` payload still names the engine: a
+ * `Server.Components[].Name` of "Podman Engine" and a `Server.Platform.Name`
+ * like "linux/arm64/fedora-42". Real Docker reports
+ * `Server.Platform.Name: "Docker Engine - Community"` and components
+ * `Engine`/`containerd`/`runc`, so this stays false on Docker Engine,
+ * Docker Desktop, and Colima (#7320).
+ */
+function dockerVersionReportsPodman(versionOutput = ""): boolean {
+  const text = String(versionOutput || "").trim();
+  if (!text) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Plain-text `docker version` still prints the "Podman Engine" server banner.
+    return /podman/i.test(text);
+  }
+  const server = (parsed as Record<string, unknown> | null)?.Server;
+  if (!server || typeof server !== "object") return false;
+  const s = server as Record<string, unknown>;
+  const platformName = (s.Platform as Record<string, unknown> | undefined)?.Name;
+  if (typeof platformName === "string" && /podman/i.test(platformName)) return true;
+  const components = s.Components;
+  return (
+    Array.isArray(components) &&
+    components.some((component) => {
+      const name =
+        component && typeof component === "object"
+          ? (component as Record<string, unknown>).Name
+          : undefined;
+      return typeof name === "string" && /podman/i.test(name);
+    })
+  );
+}
+
+/**
+ * Backstop Podman signal from `docker info --format '{{json .}}'` when the
+ * `docker version` probe is unavailable: Podman's docker-compat `/info` reports
+ * `ProductLicense: "Apache-2.0"` (Podman is Apache-2.0 licensed), whereas Docker
+ * Engine omits `ProductLicense` (Docker CE) or reports a Docker license string.
+ * Observed Apache-2.0 on the reporter-equivalent Podman machine (#7320).
+ */
+function dockerInfoReportsPodmanCompat(infoOutput = ""): boolean {
+  const text = String(infoOutput || "").trim();
+  if (!text) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== "object") return false;
+  const license = (parsed as Record<string, unknown>).ProductLicense;
+  return typeof license === "string" && license.trim().toLowerCase() === "apache-2.0";
+}
+
+/**
+ * Reclassify a Docker CLI routed to Podman's compatibility socket as `podman`
+ * so the unsupported-runtime gate fires before the forced macOS/Linux
+ * Docker-driver gateway binds Podman's VM-only bridge address and exits
+ * `EADDRNOTAVAIL` (#7320).
+ */
+function isDockerCompatPodman(dockerInfoOutput = "", dockerVersionOutput = ""): boolean {
+  return (
+    dockerVersionReportsPodman(dockerVersionOutput) ||
+    dockerInfoReportsPodmanCompat(dockerInfoOutput)
+  );
 }
 
 function parseDockerCgroupVersion(info = ""): "v1" | "v2" | "unknown" {
@@ -536,6 +614,16 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     dockerRunning = true;
   }
 
+  // Capture the docker-compat engine banner so Podman fronting the Docker CLI
+  // socket is reclassified below. Only probed when the daemon is reachable so a
+  // down/absent Docker never pays for the extra call (#7320).
+  let dockerVersionOutput = opts.dockerVersionOutput;
+  if (dockerReachable && dockerVersionOutput === undefined) {
+    dockerVersionOutput = runCaptureImpl(["docker", "version", "--format", "{{json .}}"], {
+      ignoreError: true,
+    });
+  }
+
   const release = opts.release ?? os.release();
   const procVersion =
     opts.procVersion ??
@@ -547,6 +635,18 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
       }
     })();
   let runtime = inferContainerRuntime(dockerInfoOutput);
+  // Podman fronting the Docker CLI compatibility socket mimics Docker in
+  // `docker info`, so the grep above misclassifies it as `docker`. Reclassify
+  // from the explicit docker-compat signals so the unsupported-runtime gate
+  // fires before the forced Docker-driver gateway binds Podman's VM-only
+  // bridge IP and exits EADDRNOTAVAIL (#7320).
+  if (
+    dockerReachable &&
+    runtime !== "podman" &&
+    isDockerCompatPodman(dockerInfoOutput, dockerVersionOutput)
+  ) {
+    runtime = "podman";
+  }
   if (dockerReachable && runtime === "unknown" && platform === "linux") {
     runtime = "docker";
   }
