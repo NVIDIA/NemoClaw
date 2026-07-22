@@ -90,7 +90,7 @@ activate_station_local_vllm_continuation() {
 
 station_vllm_workload_active() {
   local processes containers
-  processes="$(ps -eo pid=,ppid=,comm=,args= 2>/dev/null || true)"
+  processes="$(ps -eo pid=,ppid=,comm=,args= 2>/dev/null)" || return 2
   if awk '
     {
       comm=tolower($3)
@@ -106,8 +106,8 @@ station_vllm_workload_active() {
     return 0
   fi
 
-  command -v docker >/dev/null 2>&1 || return 1
-  containers="$(docker ps --no-trunc --format '{{.Image}}|{{.Command}}' 2>/dev/null || true)"
+  command -v docker >/dev/null 2>&1 || return 2
+  containers="$(docker ps --no-trunc --format '{{.Image}}|{{.Command}}' 2>/dev/null)" || return 2
   awk -F '|' '
     tolower($1 " " $2) ~ /(^|[^[:alnum:]_])vllm([^[:alnum:]_]|$)/ { found=1 }
     END { exit found ? 0 : 1 }
@@ -116,7 +116,7 @@ station_vllm_workload_active() {
 
 consume_station_local_vllm_resume() {
   local state_file version_line gateway_port_line vllm_port_line saved_gateway_port saved_vllm_port
-  local current_gateway_port current_vllm_port line_count
+  local current_gateway_port current_vllm_port line_count workload_status=0
   state_file="$(station_local_vllm_resume_file)" || return 1
   assert_nemoclaw_state_path_safe "$state_file"
   [[ -e "$state_file" || -L "$state_file" ]] || return 1
@@ -136,11 +136,18 @@ consume_station_local_vllm_resume() {
   }; then
     error "DGX Station Local vLLM resume state is invalid. Remove ${state_file} and rerun the installer."
   fi
-  if ! station_vllm_workload_active; then
-    rm -f "$state_file"
-    info "The saved Local vLLM workload is no longer active. Express setup is available."
-    return 1
-  fi
+  station_vllm_workload_active || workload_status=$?
+  case "$workload_status" in
+    0) ;;
+    1)
+      rm -f "$state_file"
+      info "The saved Local vLLM workload is no longer active. Express setup is available."
+      return 1
+      ;;
+    *)
+      info "Docker access is not available yet. Preserving the selected manual Local vLLM setup."
+      ;;
+  esac
   if [[ -n "${NEMOCLAW_GATEWAY_PORT:-}" ]]; then
     current_gateway_port="$(resolve_nemoclaw_gateway_port)"
     [[ "$current_gateway_port" == "$saved_gateway_port" ]] \
@@ -155,7 +162,9 @@ consume_station_local_vllm_resume() {
   NEMOCLAW_VLLM_PORT="$saved_vllm_port"
   export NEMOCLAW_GATEWAY_PORT NEMOCLAW_VLLM_PORT
   clear_station_express_resume
-  rm -f "$state_file"
+  if [[ "$workload_status" == "0" ]]; then
+    rm -f "$state_file"
+  fi
   activate_station_local_vllm_continuation
 }
 

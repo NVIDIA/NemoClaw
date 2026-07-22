@@ -174,6 +174,28 @@ fi
     expect(fs.existsSync(path.join(home, ".nemoclaw", "station-local-vllm-resume"))).toBe(false);
   });
 
+  it("preserves Local vLLM when Docker cannot confirm whether its workload is active", () => {
+    const { home, result, output } = runInstallerSourced(`
+load_station_vllm_conflict_helpers
+switch_station_express_to_local_vllm
+ps() { printf '219655 1 docker-init docker-init\n'; }
+docker() { return 1; }
+if consume_station_local_vllm_resume; then
+  printf 'LOCAL_PRESERVED no_express=%s\n' "$NEMOCLAW_NO_EXPRESS"
+else
+  printf 'UNEXPECTED_EXPRESS\n'
+fi
+`);
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("LOCAL_PRESERVED no_express=1");
+    expect(output).toContain(
+      "Docker access is not available yet. Preserving the selected manual Local vLLM setup.",
+    );
+    expect(output).not.toContain("UNEXPECTED_EXPRESS");
+    expect(fs.existsSync(path.join(home, ".nemoclaw", "station-local-vllm-resume"))).toBe(true);
+  });
+
   it("preserves the Local vLLM choice when Docker access requires a login refresh", () => {
     const { home, result, output } = runInstallerSourced(`
 load_station_vllm_conflict_helpers
