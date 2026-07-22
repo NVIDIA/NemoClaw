@@ -1156,6 +1156,16 @@ function inspectOtherGatewayEnvironments(
       sharedRegistryMustBePreserved: true,
     };
   }
+  const liveNames = liveGatewayNames();
+  if (
+    liveNames !== null &&
+    [...liveNames].some((name) => name !== resolveGatewayName(GATEWAY_PORT))
+  ) {
+    return {
+      otherGatewayEnvironmentsRemain: true,
+      sharedRegistryMustBePreserved: false,
+    };
+  }
 
   if (!selectedIsDefault && pathEntryExists(sharedRoot, runtime)) {
     try {
@@ -1515,8 +1525,8 @@ export function runUninstallPlan(
   }
   const resolvedOptions = { ...options, gatewayName: expectedGatewayName };
   const { paths, plan } = buildRunPlan(resolvedOptions, { ...deps, env: runtime.env });
-  const gatewayInspection = inspectOtherGatewayEnvironments(paths, runtime);
-  const { otherGatewayEnvironmentsRemain: scopedToSelectedGateway } = gatewayInspection;
+  let gatewayInspection = inspectOtherGatewayEnvironments(paths, runtime);
+  let { otherGatewayEnvironmentsRemain: scopedToSelectedGateway } = gatewayInspection;
   let sandboxNames: string[] = [];
   if (scopedToSelectedGateway) {
     try {
@@ -1529,6 +1539,22 @@ export function runUninstallPlan(
   printBanner(runtime, scopedToSelectedGateway, expectedGatewayName);
   if (!confirm(resolvedOptions, runtime, paths, scopedToSelectedGateway)) {
     return { exitCode: 0, plan };
+  }
+  if (!scopedToSelectedGateway) {
+    const boundaryInspection = inspectOtherGatewayEnvironments(paths, runtime);
+    if (boundaryInspection.otherGatewayEnvironmentsRemain) {
+      gatewayInspection = boundaryInspection;
+      scopedToSelectedGateway = true;
+      try {
+        sandboxNames = selectedRegistrySandboxNames(paths, runtime);
+      } catch (error) {
+        runtime.error(error instanceof Error ? error.message : String(error));
+        return { exitCode: 1, plan };
+      }
+      runtime.warn(
+        "A sibling gateway appeared during uninstall preparation; switching to gateway-scoped cleanup.",
+      );
+    }
   }
   const preserveUnderStateDir = resolvePreserveSet(paths, resolvedOptions, runtime);
   const { ok } = executePlan(

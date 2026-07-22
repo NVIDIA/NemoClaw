@@ -736,7 +736,24 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     }
   });
 
-  it("keeps host-shared resources when the OpenShell gateway list is partially malformed (#7315)", () => {
+  it.each([
+    {
+      case: "the gateway list is partially malformed",
+      gatewayListResponse: ok(JSON.stringify([{ name: "nemoclaw" }, {}])),
+    },
+    {
+      case: "the gateway-list command fails",
+      gatewayListResponse: { status: 1, stdout: "", stderr: "gateway query failed" },
+    },
+    {
+      case: "the gateway list is invalid JSON",
+      gatewayListResponse: ok("{not-json"),
+    },
+    {
+      case: "the gateway list is not an array",
+      gatewayListResponse: ok(JSON.stringify({ name: "nemoclaw" })),
+    },
+  ])("keeps host-shared resources when $case (#7315)", ({ gatewayListResponse }) => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-malformed-list-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
@@ -764,9 +781,7 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           rmSync: fs.rmSync,
           run: (_command, args) => {
             openshellCalls.push(args);
-            return args[0] === "gateway" && args[1] === "list"
-              ? ok(JSON.stringify([{ name: "nemoclaw" }, {}]))
-              : ok();
+            return args[0] === "gateway" && args[1] === "list" ? gatewayListResponse : ok();
           },
           runDocker: () => ok(""),
         },
@@ -776,6 +791,58 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(openshellCalls).toContainEqual(["gateway", "select", "nemoclaw"]);
       expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(logs.join("\n")).toContain("Sibling gateways remain");
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("switches to scoped cleanup when a sibling gateway appears before destruction (#7315)", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-new-sibling-"));
+    try {
+      const stateDir = path.join(tmpHome, ".nemoclaw");
+      fs.mkdirSync(stateDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "my-assistant",
+          sandboxes: {
+            "my-assistant": { name: "my-assistant", gatewayName: "nemoclaw", gatewayPort: 8080 },
+          },
+        }),
+      );
+      const openshellCalls: string[][] = [];
+      const warnings: string[] = [];
+      let gatewayListCalls = 0;
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
+        {
+          commandExists: (command) => command === "openshell",
+          env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          rmSync: fs.rmSync,
+          run: (_command, args) => {
+            openshellCalls.push(args);
+            if (args[0] !== "gateway" || args[1] !== "list") return ok();
+            gatewayListCalls += 1;
+            return ok(
+              JSON.stringify(
+                gatewayListCalls === 1
+                  ? [{ name: "nemoclaw" }]
+                  : [{ name: "nemoclaw" }, { name: "nemoclaw-9124" }],
+              ),
+            );
+          },
+          runDocker: () => ok(""),
+          error: (line) => warnings.push(line),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(gatewayListCalls).toBe(2);
+      expect(openshellCalls).toContainEqual(["gateway", "select", "nemoclaw"]);
+      expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
+      expect(warnings.join("\n")).toContain("switching to gateway-scoped cleanup");
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
