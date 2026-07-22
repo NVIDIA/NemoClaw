@@ -107,7 +107,7 @@ Use the following sequence for a code-changing pull request:
 4. Complete the visible receipt and hidden metadata for the committed head.
 5. Rerun the documentation review after any later commit.
 
-The `CI / Documentation Writer Review` workflow runs when a pull request opens, changes, receives a new commit, or reopens.
+The `CI / Documentation Writer Review` workflow runs when a pull request opens, its description is edited, receives a new commit, or reopens.
 It compares the receipt with the pull-request number, current head, and current `AGENTS.md` blob.
 A new commit makes the previous receipt stale until the documentation writer subagent runs again and refreshes the metadata.
 The checker evaluates code-changing pull requests and classifies documentation-only pull requests as not required.
