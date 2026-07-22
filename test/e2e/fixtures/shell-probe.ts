@@ -60,6 +60,10 @@ export interface ShellProbeDeps {
   artifacts: ArtifactSink;
   redact: (text: string, extraValues?: string[]) => string;
   signal: AbortSignal;
+  /** Default timestamp-only observer applied to every command in this test. */
+  onOutput?: (event: ShellProbeOutputEvent) => void;
+  /** Content-free activity boundary applied to every command in this test. */
+  onActivity?: (label: string) => (() => void) | void;
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -153,11 +157,15 @@ export class ShellProbe {
   private readonly artifacts: ArtifactSink;
   private readonly redact: (text: string, extraValues?: string[]) => string;
   private readonly signal: AbortSignal;
+  private readonly onOutput?: (event: ShellProbeOutputEvent) => void;
+  private readonly onActivity?: (label: string) => (() => void) | void;
 
   constructor(deps: ShellProbeDeps) {
     this.artifacts = deps.artifacts;
     this.redact = deps.redact;
     this.signal = deps.signal;
+    this.onOutput = deps.onOutput;
+    this.onActivity = deps.onActivity;
   }
 
   async run(
@@ -191,7 +199,8 @@ export class ShellProbe {
         : redacted;
     };
     const redactedCommand = [command, ...args].map(redactProbeText);
-    const artifactBase = `shell/${safeArtifactBase(redactProbeText(options.artifactName ?? command))}`;
+    const activityName = safeArtifactBase(redactProbeText(options.artifactName ?? command));
+    const artifactBase = `shell/${activityName}`;
     const writeArtifacts = async (
       result: Omit<ShellProbeResult, "artifacts">,
     ): Promise<ShellProbeResult["artifacts"]> => ({
@@ -203,62 +212,84 @@ export class ShellProbe {
     const stdout = createTextCapture(options.captureLimitBytes);
     const stderr = createTextCapture(options.captureLimitBytes);
     const startedAtMs = Date.now();
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      detached: true,
-      env: { ...(options.env ?? {}) },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const supervised = await superviseChild(child, {
-      timeoutMs,
-      killGraceMs,
-      signal: this.signal,
-      onStdout: (chunk) => {
-        stdout.append(chunk);
-        try {
-          options.onOutput?.({ stream: "stdout", atMs: Date.now() });
-        } catch {
-          // Test instrumentation must not change command execution.
-        }
-      },
-      onStderr: (chunk) => {
-        stderr.append(chunk);
-        try {
-          options.onOutput?.({ stream: "stderr", atMs: Date.now() });
-        } catch {
-          // Test instrumentation must not change command execution.
-        }
-      },
-    });
+    let finishActivity: (() => void) | undefined;
+    try {
+      finishActivity = this.onActivity?.(`command: ${activityName}`) ?? undefined;
+    } catch {
+      // Test instrumentation must not change command execution.
+    }
+    const finishActivityBestEffort = () => {
+      try {
+        finishActivity?.();
+      } catch {
+        // Test instrumentation must not change command execution.
+      }
+    };
+    const observeOutput = (event: ShellProbeOutputEvent) => {
+      try {
+        this.onOutput?.(event);
+      } catch {
+        // Test instrumentation must not change command execution.
+      }
+      if (options.onOutput === this.onOutput) return;
+      try {
+        options.onOutput?.(event);
+      } catch {
+        // Test instrumentation must not change command execution.
+      }
+    };
+    try {
+      const child = spawn(command, args, {
+        cwd: options.cwd,
+        detached: true,
+        env: { ...(options.env ?? {}) },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const supervised = await superviseChild(child, {
+        timeoutMs,
+        killGraceMs,
+        signal: this.signal,
+        onStdout: (chunk) => {
+          stdout.append(chunk);
+          observeOutput({ stream: "stdout", atMs: Date.now() });
+        },
+        onStderr: (chunk) => {
+          stderr.append(chunk);
+          observeOutput({ stream: "stderr", atMs: Date.now() });
+        },
+      });
 
-    const redactedStdout = renderCapturedText(stdout);
-    const redactedStderr = renderCapturedText(stderr);
-    const durationMs = Date.now() - startedAtMs;
-    if (supervised.spawnError) {
-      const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
-      const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
-      await writeArtifacts({
+      const redactedStdout = renderCapturedText(stdout);
+      const redactedStderr = renderCapturedText(stderr);
+      const durationMs = Date.now() - startedAtMs;
+      if (supervised.spawnError) {
+        const redactedMessage = redactProbeText(errorMessage(supervised.spawnError));
+        const stderrWithError = [redactedStderr, redactedMessage].filter(Boolean).join("\n");
+        await writeArtifacts({
+          command: redactedCommand,
+          durationMs,
+          exitCode: null,
+          signal: null,
+          timedOut: supervised.timedOut,
+          stdout: redactedStdout,
+          stderr: stderrWithError,
+        });
+        throw redactedError(supervised.spawnError, redactedMessage);
+      }
+
+      const result: Omit<ShellProbeResult, "artifacts"> = {
         command: redactedCommand,
         durationMs,
-        exitCode: null,
-        signal: null,
+        exitCode: supervised.exitCode,
+        signal: supervised.signal,
         timedOut: supervised.timedOut,
         stdout: redactedStdout,
-        stderr: stderrWithError,
-      });
-      throw redactedError(supervised.spawnError, redactedMessage);
+        stderr: redactedStderr,
+      };
+      const artifacts = await writeArtifacts(result);
+      return { ...result, artifacts };
+    } finally {
+      finishActivityBestEffort();
     }
-
-    const result: Omit<ShellProbeResult, "artifacts"> = {
-      command: redactedCommand,
-      durationMs,
-      exitCode: supervised.exitCode,
-      signal: supervised.signal,
-      timedOut: supervised.timedOut,
-      stdout: redactedStdout,
-      stderr: redactedStderr,
-    };
-    const artifacts = await writeArtifacts(result);
-    return { ...result, artifacts };
   }
 }

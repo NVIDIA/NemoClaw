@@ -62,6 +62,11 @@ outcome, the smallest change, and how it was verified. Explore alternatives only
 change behavior, security, data safety, or a supported contract. Once the smallest safe change is
 clear and testable, stop exploring and implement it.
 
+### Writing Guide
+
+Follow the [NemoClaw Writing Guide](WRITING.md) when you add or modify explanatory text.
+The guide defines its scope, terms, rules, examples, and review policy.
+
 ## Before You Open an Issue
 
 Open an issue when you encounter one of the following situations.
@@ -206,6 +211,8 @@ These are the primary npm scripts for day-to-day development:
 | `npm run test:watch` | Watch the CLI, plugin, and E2E-support projects and rerun affected tests |
 | `npm run test:shuffle` | Shuffle test order in the focused source projects without collecting coverage |
 | `npm run test:diagnose:leaks` | Report async-resource leaks and diagnose a Vitest process that hangs during shutdown |
+| `npm run test:e2e-phases:check` | Validate semantic phase plans for every live E2E test without executing live bodies |
+| `npm run test:runtime-audit -- <artifact-dir> [...]` | Rank captured live E2E runs by median, p95, variability, and slowest phase |
 | `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
 | `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
 | `npm run test:live-e2e` | Opt into live E2E scenarios (mutates real external state) |
@@ -226,6 +233,16 @@ npx vitest run --project e2e-support
 
 This project is fast and does not run live targets. Live E2E remains opt-in through
 `npm run test:live-e2e` or the applicable GitHub Actions workflow.
+
+Every `e2e-live` test must declare its ordered, behavior-specific phase plan in
+`meta.e2ePhases`, call `progress.phase("literal phase label")` at those
+boundaries, and reach the final test-declared phase on every passing path. The
+harness then appends `release registered E2E resources` so cleanup duration and
+failures have their own phase. Run `npm run test:e2e-phases:check` after adding
+or changing a live E2E case; collection validates the plans without running
+infrastructure-mutating test bodies. See
+[`test/e2e/docs/README.md`](test/e2e/docs/README.md) for the logging and artifact
+contract.
 
 ### Test Declarative Behavior
 
@@ -298,8 +315,13 @@ existing contract.
 Write `describe` and `it` titles so the Vitest tree reads as behavioral documentation. Start test
 titles with behavior or context rather than issue numbers, flags, or scenario labels, and put local
 issue references in a final suffix such as `(#1234)`. Prefer
-`it("reticulates splines correctly (#1234)")` over
+`it("reticulates splines for valid control points (#1234)")` over
 `it("#1234 fixes spline reticulation")`.
+
+Apply the [NemoClaw Writing Guide](WRITING.md) to each added or modified test title.
+The title checker enforces objective title shape only. A language finding can block when ambiguity
+changes the test meaning. Other findings are suggestions. Reviewers must not request unrelated title
+cleanup.
 
 Run `npm run test:spec` to render the suite with Vitest's hierarchical tree reporter. Run
 `npm run test:titles:check` to enforce the objective title-shape conventions without attempting to

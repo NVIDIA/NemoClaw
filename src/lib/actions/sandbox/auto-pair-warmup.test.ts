@@ -70,6 +70,16 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     expect(WARMUP_SCRIPT).toContain(`--session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"`);
   });
 
+  it("forces device pairing only for the provoke command on OpenClaw 2026.7.1", () => {
+    const [provoke, poll] = WARMUP_SCRIPT.split("command -v python3", 2);
+    expect(WARMUP_SCRIPT).toContain(
+      'NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \\\n  openclaw agent --agent main -m "ping" \\',
+    );
+    expect(provoke.match(/NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1/g)).toHaveLength(1);
+    expect(poll).not.toContain("NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
+    expect(WARMUP_SCRIPT).not.toContain("export NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING");
+  });
+
   it("keeps the v2 provoke run foreground and within the original budget (#4504)", () => {
     expect(WARMUP_SCRIPT).toContain('openclaw agent --agent main -m "ping" \\');
     expect(WARMUP_SCRIPT).toContain(">/dev/null 2>&1 || true");

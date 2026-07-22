@@ -160,6 +160,7 @@ interface FixtureOptions {
   source?: string;
   version?: string;
   secondSource?: string;
+  secondRuntimeFileName?: string;
 }
 
 let tmpDir: string;
@@ -187,7 +188,7 @@ function writeFixture(options: FixtureOptions = {}) {
     [options.runtimeFileName ?? "pi-tools-fixture.js", options.source ?? RUNTIME_FIXTURE_SOURCE],
     ...(options.secondSource === undefined
       ? []
-      : [["pi-tools-second.js", options.secondSource] as const]),
+      : [[options.secondRuntimeFileName ?? "pi-tools-second.js", options.secondSource] as const]),
   ];
   for (const [name, source] of runtimeSources) {
     fs.writeFileSync(path.join(distDir, name), source);
@@ -225,12 +226,14 @@ describe("OpenClaw Tool Search pinned-runtime validator", () => {
     expect(result.visibleToolNames).toEqual(["nemoclaw_runtime_validator_probe"]);
   });
 
-  it("selects the exact 2026.6.10 agent-tools runtime layout", async () => {
+  it("selects the exact 2026.7.1 agent-tools runtime layout", async () => {
     const fixture = writeFixture({
       runtimeFileName: "agent-tools-fixture.js",
-      version: "2026.6.10",
+      secondRuntimeFileName: "tool-search-fixture.js",
+      secondSource: RUNTIME_FIXTURE_SOURCE,
+      version: "2026.7.1",
     });
-    const result = await validateFixture(fixture, "progressive", "2026.6.10");
+    const result = await validateFixture(fixture, "progressive", "2026.7.1");
 
     expect(result.runtimeModulePath).toMatch(/agent-tools-fixture\.js$/);
   });

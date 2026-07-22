@@ -736,6 +736,10 @@ async function runInferenceSetWithoutHostLock(
       entry.endpointUrl.trim().length > 0 &&
       typeof entry.preferredInferenceApi === "string" &&
       entry.preferredInferenceApi.trim().length > 0,
+    onboardEndpointUrl:
+      entry.provider === provider && entry.endpointSource === "onboard"
+        ? (entry.endpointUrl ?? null)
+        : null,
     getSandboxes: () => deps.listSandboxes().sandboxes,
     rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
   });
@@ -814,6 +818,7 @@ async function runInferenceSetWithoutHostLock(
       provider,
       model,
       endpointUrl: registryMetadata.endpointUrl ?? null,
+      endpointSource: registryMetadata.endpointSource ?? null,
       credentialEnv: registryMetadata.credentialEnv ?? null,
       preferredInferenceApi,
       nimContainer: registryMetadata.nimContainer ?? null,

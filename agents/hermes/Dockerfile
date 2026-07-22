@@ -11,6 +11,14 @@ ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:fa05221f5c7bca
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
+COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
+
+# The final Hermes image owns the shipped dependency boundary independently of
+# base freshness. Reassert the idempotent npm-private node-tar fix here.
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
 # Keep the final image contract explicit even when the published base image
 # changes independently of this Dockerfile.
 RUN set -eu; \
@@ -106,11 +114,12 @@ COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
-COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
+COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
     && chmod 444 /src/lib/tool-disclosure.ts \
-    && chmod 444 /scripts/lib/reviewed-npm-archive.mts \
+    && chmod 444 /scripts/lib/reviewed-npm-archive.mts /scripts/lib/openclaw-npm-remediation.mts \
+        /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
 # Copy blueprint (shared infrastructure)
@@ -207,7 +216,7 @@ PY
 # file has to also rewrite the Dockerfile-committed hash, which reviewers gate).
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py,finalize-tirith-marker.py}`.
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=ec8b0e4d6254175929d5a02240acd6af25e94774a30b36ba5c6f5a69c32fb9d7
-ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=3d9c099bfd06912fa0a4688e113555654e0952224c4226ad5f8c68b59c34895b
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=87c1b02e0fb2becd26f79ae5dec6e0d21f78c6b08862b880e926708faf46ecb3
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -262,10 +271,12 @@ RUN mv /usr/local/bin/hermes /usr/local/bin/hermes.real \
 
 # Build args for config that varies per deployment.
 ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
-ARG NEMOCLAW_PROVIDER_KEY=custom
+# Non-secret managed inference route identifier ("inference" for proxied
+# providers, or a provider family such as "openai"). Never a credential.
+ARG NEMOCLAW_INFERENCE_PROVIDER_ID=custom
 # User-selected upstream provider name (nvidia-prod, hermes-provider, ...).
-# Distinct from NEMOCLAW_PROVIDER_KEY, which carries the managed route key
-# ("inference" for proxied providers) needed at routing/runtime.
+# Distinct from NEMOCLAW_INFERENCE_PROVIDER_ID, which carries the managed route
+# identifier ("inference" for proxied providers) needed at routing/runtime.
 ARG NEMOCLAW_UPSTREAM_PROVIDER=custom
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
@@ -298,7 +309,7 @@ ARG NEMOCLAW_CONTEXT_WINDOW=
 # NEMOCLAW_MESSAGING_PLAN_B64 intentionally remains ARG-only: Docker exposes it
 # to build RUN processes without retaining the full plan in the final image env.
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
-    NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
+    NEMOCLAW_INFERENCE_PROVIDER_ID=${NEMOCLAW_INFERENCE_PROVIDER_ID} \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
@@ -593,6 +604,15 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
         chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
     fi
+
+# Gate the completed local filesystem too; CI repeats this scan in an isolated
+# container and retains evidence keyed to the final image ID.
+COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+RUN install -d -m 0755 /usr/local/share/nemoclaw \
+    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+        --root / --image build:hermes \
+        > /usr/local/share/nemoclaw/node-tar-inventory.json \
+    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
 
 # start.sh handles privilege separation: runs as root initially, then drops
 # to 'gateway' user via gosu for the agent process. See start.sh.
