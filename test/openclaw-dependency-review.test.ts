@@ -285,7 +285,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
       "sha512-12xx2zL4oZ/cljBNFJF5nYH1BBGWbXnAkVdhKZQJp7zeKh3lh77NETa/ol5GXYzDt1UaP9oh3Mh548qW2xTlcw==",
       "sha512-QmgyGI7AQJrNGoWAYolunc18wUr6Q4iOK4n9YXCOo3Cxh+e2GONtOAbeu+OFpQW8PsF6x/iGInDQmeKD+jnOug==",
-      "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
+      "sha512-WLZDX4gR+IlchildC9ZI2o4252gEXxNWFaeGprL1JYfB+w8b2YuLYwH6Or0M9RxIWC9giTFCUSyi0Rvcg05PnQ==",
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
     ]) {
       expect(review).toContain(integrity);

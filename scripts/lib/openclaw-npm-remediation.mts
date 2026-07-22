@@ -265,7 +265,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   "@openclaw/slack@2026.6.10": {
     kind: "axios-plugin",
     expectedPatchedMetadataIntegrity:
-      "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
+      "sha512-WLZDX4gR+IlchildC9ZI2o4252gEXxNWFaeGprL1JYfB+w8b2YuLYwH6Or0M9RxIWC9giTFCUSyi0Rvcg05PnQ==",
   },
   "@openclaw/diagnostics-otel@2026.6.10": {
     kind: "otel-plugin",
@@ -804,30 +804,35 @@ function createCanonicalArchive(
 ): void {
   const archiveMembers = normalizeArchiveContents(sourcePackage, basename(sourcePackage)).sort();
   const tarPath = `${archivePath}.tar`;
+  const manifestPath = `${archivePath}.members`;
   const canonicalEnv: NodeJS.ProcessEnv = { ...env, LANG: "C", LC_ALL: "C", TZ: "UTC" };
   delete canonicalEnv.GZIP;
   delete canonicalEnv.TAR_OPTIONS;
   const tarVersion = run("tar", ["--version"], cwd, canonicalEnv);
-  const common = ["-cf", tarPath, "-C", dirname(sourcePackage), "package"];
-  if (tarVersion.includes("GNU tar")) {
-    run(
-      "tar",
-      [
-        "--sort=name",
-        "--format=gnu",
-        "--mtime=@0",
-        "--owner=0",
-        "--group=0",
-        "--numeric-owner",
-        ...common,
-      ],
-      cwd,
-      canonicalEnv,
-    );
-  } else if (tarVersion.includes("bsdtar")) {
-    const manifestPath = `${archivePath}.members`;
-    writeFileSync(manifestPath, Buffer.from(`${archiveMembers.join("\0")}\0`), { mode: 0o600 });
-    try {
+  writeFileSync(manifestPath, Buffer.from(`${archiveMembers.join("\0")}\0`), { mode: 0o600 });
+  try {
+    if (tarVersion.includes("GNU tar")) {
+      run(
+        "tar",
+        [
+          "--format=gnu",
+          "--mtime=@0",
+          "--owner=0",
+          "--group=0",
+          "--numeric-owner",
+          "-cf",
+          tarPath,
+          "-C",
+          dirname(sourcePackage),
+          "--no-recursion",
+          "--null",
+          "-T",
+          manifestPath,
+        ],
+        cwd,
+        canonicalEnv,
+      );
+    } else if (tarVersion.includes("bsdtar")) {
       run(
         "tar",
         [
@@ -844,23 +849,23 @@ function createCanonicalArchive(
           "root",
           "--gname",
           "root",
-          "--no-recursion",
-          "--null",
-          "-T",
-          manifestPath,
           "-cf",
           tarPath,
           "-C",
           dirname(sourcePackage),
+          "--no-recursion",
+          "--null",
+          "-T",
+          manifestPath,
         ],
         cwd,
         canonicalEnv,
       );
-    } finally {
-      rmSync(manifestPath, { force: true });
+    } else {
+      throw new Error(`unsupported tar implementation for canonical npm archive: ${tarVersion}`);
     }
-  } else {
-    throw new Error(`unsupported tar implementation for canonical npm archive: ${tarVersion}`);
+  } finally {
+    rmSync(manifestPath, { force: true });
   }
   run("gzip", ["-n", "-f", tarPath], cwd, canonicalEnv);
   renameSync(`${tarPath}.gz`, archivePath);
