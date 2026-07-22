@@ -321,6 +321,78 @@ describe("OpenRouter Runtime adapter", () => {
     });
   });
 
+  it("streams upstream body chunks before the response ends (#7248)", async () => {
+    let finishUpstream: (() => void) | undefined;
+    const waitToFinish = new Promise<void>((resolve) => {
+      finishUpstream = resolve;
+    });
+    const upstream = http.createServer(async (req, res) => {
+      await readRequestBody(req);
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.write("data: first\n\n");
+      await waitToFinish;
+      res.end("data: second\n\n");
+    });
+    const upstreamBaseUrl = await listen(upstream);
+    const adapter = createTestAdapter({
+      upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
+      upstreamTimeoutMs: 1000,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    try {
+      const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [], stream: true }),
+      });
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      const first = await reader?.read();
+      expect(new TextDecoder().decode(first?.value)).toBe("data: first\n\n");
+      expect(first?.done).toBe(false);
+
+      finishUpstream?.();
+      const second = await reader?.read();
+      expect(new TextDecoder().decode(second?.value)).toBe("data: second\n\n");
+      expect((await reader?.read())?.done).toBe(true);
+    } finally {
+      finishUpstream?.();
+    }
+  });
+
+  it("returns a redacted timeout when upstream sends headers and then stalls (#7248)", async () => {
+    const upstream = http.createServer(async (req, res) => {
+      await readRequestBody(req);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.flushHeaders();
+      req.on("close", () => res.destroy());
+    });
+    const upstreamBaseUrl = await listen(upstream);
+    const adapter = createTestAdapter({
+      upstreamBaseUrl: `${upstreamBaseUrl}/api/v1`,
+      upstreamTimeoutMs: 25,
+    });
+    const adapterBaseUrl = await listen(adapter);
+
+    const response = await fetch(`${adapterBaseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENROUTER_TEST_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "moonshotai/kimi-k2.6", messages: [] }),
+    });
+
+    expect(response.status).toBe(504);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "upstream_timeout" },
+    });
+  });
+
   it("handles upstream mid-response aborts without crashing (#5826)", async () => {
     const upstream = http.createServer(async (req, res) => {
       await readRequestBody(req);
