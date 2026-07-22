@@ -26,7 +26,7 @@ export const TEAMS_APP_ID = "nemoclaw-ci-teams-app-id";
 export const TEAMS_TENANT_ID = "00000000-0000-0000-0000-000000000042";
 export const TEAMS_SECRET_PLACEHOLDER = "openshell:resolve:env:MSTEAMS_APP_PASSWORD";
 export const OPENCLAW_TEAMS_PACKAGE_SPEC = "npm:@openclaw/msteams@{{openclaw.version}}";
-export const OPENCLAW_TEAMS_PACKAGE_VERSION = "2026.6.10";
+export const OPENCLAW_TEAMS_PACKAGE_VERSION = "2026.7.1";
 export const HERMES_TEAMS_PACKAGE_SPEC = "microsoft-teams-apps==2.0.13.4";
 export const HERMES_AIOHTTP_PACKAGE_SPEC = "aiohttp==3.14.1";
 

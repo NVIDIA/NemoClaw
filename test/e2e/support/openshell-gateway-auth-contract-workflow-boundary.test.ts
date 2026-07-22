@@ -59,7 +59,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract must run only when explicitly selected",
         "openshell-gateway-auth-contract must run on ubuntu-latest",
         "openshell-gateway-auth-contract must retain its 20 minute resource budget",
-        "openshell-gateway-auth-contract must set DOCKER_GRPC_PROBE_IMAGE=node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d",
+        "openshell-gateway-auth-contract must set DOCKER_GRPC_PROBE_IMAGE=node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba",
         "openshell-gateway-auth-contract must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
         "openshell-gateway-auth-contract must set E2E_DEFAULT_ENABLED=0",
         "openshell-gateway-auth-contract must set NEMOCLAW_OPENSHELL_PIN_VERSION to an exact version",

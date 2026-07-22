@@ -145,6 +145,8 @@ describe("sandbox base-image source identity", () => {
       "agents/openclaw/mcporter-runtime/package-lock.json",
       "scripts/lib/openclaw-npm-remediation.mts",
       "scripts/lib/reviewed-npm-archive.mts",
+      "scripts/checks/node-tar-image-scan.mts",
+      "scripts/patch-bundled-npm-tar.mts",
       agentDockerfile,
     ]);
   });
