@@ -177,7 +177,7 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   if (upload.if !== ARTIFACT_SAFETY_GATED_UPLOAD) {
     errors.push(`${JOB_NAME} must upload artifacts only after this run attempt passes safety scan`);
   }
-  if (asRecord(upload.with).path !== APPROVED_ARTIFACT_PATH) {
+  if (upload.with?.path !== APPROVED_ARTIFACT_PATH) {
     errors.push(`${JOB_NAME} must upload only the immutable approved artifact payload`);
   }
 
