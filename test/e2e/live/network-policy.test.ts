@@ -380,7 +380,12 @@ function fail(code, detail) {
 function findDistFile(prefix) {
   const candidates = fs
     .readdirSync(distDir)
-    .filter((name) => name.startsWith(prefix) && name.endsWith(".js"))
+    .filter(
+      (name) =>
+        name.startsWith(prefix) &&
+        !name.startsWith(prefix + "serve-config-") &&
+        name.endsWith(".js"),
+    )
     .sort();
   if (candidates.length !== 1) {
     throw new Error(

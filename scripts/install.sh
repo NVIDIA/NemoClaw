@@ -3764,7 +3764,7 @@ describe_express_install() {
           ;;
       esac
       printf "  Host setup may add this trusted local account to the docker group, which grants root-equivalent control. This flow is only for trusted single-user development hosts; shared or managed hosts require an organization-approved Docker access path.\n"
-      printf "  DGX Station remains Deferred; one DGX OS 7.5 GB300 physical validation passed, with repeat clean-host qualification and CI coverage still pending.\n"
+      printf "  DGX Station is Tested with limitations across qualified profiles on one physical DGX Station GB300; dual-Station configurations are not yet validated, and dedicated CI coverage is not available.\n"
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")

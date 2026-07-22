@@ -1,20 +1,23 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Git and GitHub Access Hard Stop
+# Stop for Git and GitHub Access Errors
 
-Use this guardrail from any workflow that runs `git`, `ssh`, or `gh` commands.
+Use this rule in each workflow that runs `git`, `ssh`, or `gh` commands.
 
-If a Git/GitHub command fails because of authentication, authorization, missing credentials, SSO, token scope, SSH key setup, remote access, or push permissions, stop and ask the user to resolve access.
+Stop if a Git or GitHub command has an access error. Access errors include authentication, authorization, credentials, SSO, token scope, SSH keys, remote access, and push permissions.
+Ask the user to correct the access problem.
 
-Do **not** work around access failures by:
+Do not try to bypass an access error. Do not:
 
-- switching remote protocols or remotes;
-- editing credentials, tokens, or SSH config;
-- generating new tokens or SSH keys;
-- rewriting remotes to bypass permissions;
-- force-pushing or bypassing branch protections/required checks.
+- switch remote protocols or remotes
+- edit credentials, tokens, or SSH config
+- generate new tokens or SSH keys
+- rewrite remotes to bypass permissions
+- force-push or bypass branch protections or required checks.
 
-Report the command, the relevant error output, and the next action needed from the user, then wait.
+Report the command and the error. Tell the user which action is necessary. Then, wait.
 
-This hard stop is for access/authentication/authorization problems only. Normal Git workflow problems such as merge conflicts, stale branches, dirty worktrees, or mechanical rebase conflicts should be handled by the relevant workflow. Stop for user guidance only when conflict resolution would change behavior, alter contributor intent, or require a design decision.
+This rule applies only to access errors.
+Handle merge conflicts, stale branches, dirty worktrees, and rebase conflicts in the related workflow.
+Ask the user when a resolution can change behavior, contributor intent, or a design decision.

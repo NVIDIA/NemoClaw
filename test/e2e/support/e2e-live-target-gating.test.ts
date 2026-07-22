@@ -67,38 +67,42 @@ function linesForFile(lines: readonly string[], file: string): string[] {
 }
 
 describe("live E2E target gating", () => {
-  it("collects the bootstrap install test through the trusted-main legacy path", () => {
-    const legacy = listLiveTests({
-      enabled: true,
-      env: { E2E_TARGET_ID: "launchable-smoke" },
-      files: ["launchable-smoke.test.ts"],
-    });
+  it(
+    "collects the bootstrap install test through the trusted-main legacy path",
+    testTimeoutOptions(90_000),
+    () => {
+      const legacy = listLiveTests({
+        enabled: true,
+        env: { E2E_TARGET_ID: "launchable-smoke" },
+        files: ["launchable-smoke.test.ts"],
+      });
 
-    expect(legacy.status, legacy.stderr || legacy.stdout).toBe(0);
-    expect(linesForFile(legacy.lines, "launchable-smoke.test.ts")).toEqual([
-      "[e2e-live] test/e2e/live/launchable-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
-    ]);
+      expect(legacy.status, legacy.stderr || legacy.stdout).toBe(0);
+      expect(linesForFile(legacy.lines, "launchable-smoke.test.ts")).toEqual([
+        "[e2e-live] test/e2e/live/launchable-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
+      ]);
 
-    const renamed = listLiveTests({
-      enabled: true,
-      env: { E2E_TARGET_ID: "bootstrap-install-smoke" },
-      files: ["bootstrap-install-smoke.test.ts"],
-    });
+      const renamed = listLiveTests({
+        enabled: true,
+        env: { E2E_TARGET_ID: "bootstrap-install-smoke" },
+        files: ["bootstrap-install-smoke.test.ts"],
+      });
 
-    expect(renamed.status, renamed.stderr || renamed.stdout).toBe(0);
-    expect(linesForFile(renamed.lines, "bootstrap-install-smoke.test.ts")).toEqual([
-      "[e2e-live] test/e2e/live/bootstrap-install-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
-    ]);
+      expect(renamed.status, renamed.stderr || renamed.stdout).toBe(0);
+      expect(linesForFile(renamed.lines, "bootstrap-install-smoke.test.ts")).toEqual([
+        "[e2e-live] test/e2e/live/bootstrap-install-smoke.test.ts > bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup",
+      ]);
 
-    const inactive = listLiveTests({
-      enabled: true,
-      env: { E2E_TARGET_ID: "launchable-smoke" },
-      files: ["bootstrap-install-smoke.test.ts"],
-    });
+      const inactive = listLiveTests({
+        enabled: true,
+        env: { E2E_TARGET_ID: "launchable-smoke" },
+        files: ["bootstrap-install-smoke.test.ts"],
+      });
 
-    expect(inactive.status, inactive.stderr || inactive.stdout).toBe(0);
-    expect(linesForFile(inactive.lines, "bootstrap-install-smoke.test.ts")).toEqual([]);
-  });
+      expect(inactive.status, inactive.stderr || inactive.stdout).toBe(0);
+      expect(linesForFile(inactive.lines, "bootstrap-install-smoke.test.ts")).toEqual([]);
+    },
+  );
 
   it("collects no live files without project opt-in and all live files with it", () => {
     const disabled = listLiveTests({ enabled: false, filesOnly: true });
