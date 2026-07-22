@@ -139,15 +139,18 @@ function stageFrozenOptimizedBuildContext(
   nemoclawRef: ReviewedHistoricalRef,
 ): string {
   const modulePath = path.join(sourceRoot, HISTORICAL_BUILD_CONTEXT_MODULES[nemoclawRef]);
+  const outputPath = path.join(path.dirname(sourceRoot), "staged-context-path.txt");
   const runner = String.raw`
+import { writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const modulePath = process.argv[1];
 const sourceRoot = process.argv[2];
 const temporaryRoot = process.argv[3];
+const outputPath = process.argv[4];
 const buildContext = await import(pathToFileURL(modulePath).href);
 const staged = buildContext.stageOptimizedSandboxBuildContext(sourceRoot, temporaryRoot);
-process.stdout.write(staged.buildCtx);
+writeFileSync(outputPath, staged.buildCtx);
 `;
   const result = spawnSync(
     process.execPath,
@@ -160,11 +163,12 @@ process.stdout.write(staged.buildCtx);
       modulePath,
       sourceRoot,
       path.dirname(sourceRoot),
+      outputPath,
     ],
     { encoding: "utf8" },
   );
   expect(result.status, result.stderr).toBe(0);
-  return result.stdout;
+  return fs.readFileSync(outputPath, "utf8");
 }
 
 function runReviewedHistoricalFixture(nemoclawRef: ReviewedHistoricalRef): string {
