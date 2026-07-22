@@ -4306,6 +4306,11 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   requireUploadPathContains(
     errors,
     uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/test-progress.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
     "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
   );
   requireUploadPathContains(

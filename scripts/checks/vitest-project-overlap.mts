@@ -49,6 +49,7 @@ const INSTALLER_INTEGRATION_TESTS = new Set([
   "test/install-station-dgx-os.test.ts",
   "test/install-station-docker-repository.test.ts",
   "test/install-station-host-preparation.test.ts",
+  "test/install-station-vllm-continuation.test.ts",
   "test/install-station-package-state.test.ts",
   "test/install-station-package-transaction.test.ts",
 ]);
