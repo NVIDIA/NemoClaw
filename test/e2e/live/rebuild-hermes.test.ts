@@ -37,6 +37,7 @@ import {
   verifyRebuildHermesOldBaseIsStale,
 } from "./rebuild-hermes-base-identity.ts";
 import { buildRebuildHermesChildEnv, planRebuildHermesBaseReuse } from "./rebuild-hermes-env.ts";
+import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
 import {
   cleanupTrackedRebuildHermesImage,
   type RebuildHermesRegistryImageState,
@@ -50,7 +51,6 @@ import {
 import { buildRebuildHermesOldSandboxDockerfile } from "./rebuild-hermes-old-sandbox.ts";
 import { startRebuildHermesProgress } from "./rebuild-hermes-progress.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
-import { ensureRebuildHermesHostTools } from "./rebuild-hermes-host-tools.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
 // Protected PR E2E checks out the exact head while the trusted controller runs
@@ -1179,6 +1179,14 @@ test(STALE_BASE_REBUILD
     },
     session: sessionSummary,
   });
+  const preRebuildApiTokenDigest = await hermesApiTokenDigest(
+    host,
+    SANDBOX_NAME,
+    "phase-4-api-token-before-rebuild",
+    testEnv(apiKey, { SANDBOX_NAME }),
+    redactionValues,
+    OPENSHELL_TIMEOUT_MS,
+  );
 
   switch (STALE_BASE_REBUILD) {
     case false: {
@@ -1215,6 +1223,8 @@ test(STALE_BASE_REBUILD
   });
   expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
   const rebuildOutput = resultText(rebuild);
+  expect(rebuildOutput).toContain("Hermes API bearer token changed during rebuild");
+  expect(rebuildOutput).toContain(`nemoclaw ${SANDBOX_NAME} gateway-token --quiet`);
   expect(rebuildOutput).toContain(`Using Hermes Agent base image: ${phase1BaseResolution.ref}`);
   expect(rebuildOutput).not.toContain("Rebuilding Hermes Agent base image");
   await waitForSandboxReady(host, apiKey, "phase-6-post-rebuild");
@@ -1356,6 +1366,25 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(restoredEnv, "read Hermes .env after rebuild");
   expect(restoredEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
+
+  const postRebuildApiTokenDigest = await hermesApiTokenDigest(
+    host,
+    SANDBOX_NAME,
+    "phase-7-api-token-after-rebuild",
+    testEnv(apiKey, { SANDBOX_NAME }),
+    redactionValues,
+    OPENSHELL_TIMEOUT_MS,
+  );
+  const stablePostRebuildApiTokenDigest = await hermesApiTokenDigest(
+    host,
+    SANDBOX_NAME,
+    "phase-7-api-token-stability-check",
+    testEnv(apiKey, { SANDBOX_NAME }),
+    redactionValues,
+    OPENSHELL_TIMEOUT_MS,
+  );
+  expect(postRebuildApiTokenDigest).not.toBe(preRebuildApiTokenDigest);
+  expect(stablePostRebuildApiTokenDigest).toBe(postRebuildApiTokenDigest);
 
   const restoredConfig = await host.command(
     "openshell",

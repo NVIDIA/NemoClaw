@@ -1562,6 +1562,12 @@ Do not log it, share it, or commit it to version control.
 
 Print the Hermes API bearer token for a running sandbox to stdout.
 NemoClaw retrieves the sandbox's `API_SERVER_KEY`, which authenticates OpenAI-compatible clients on the forwarded API port.
+During a normal sandbox lifecycle, the token is generated once for each sandbox home.
+Different sandbox homes receive different tokens.
+NemoClaw preserves it across a gateway restart, sandbox stop and start, and host OpenShell gateway restart.
+When you rebuild or replace the sandbox, the replacement home receives a new token.
+At gateway startup, NemoClaw also generates a new token when `API_SERVER_KEY` is missing or is not exactly 64 lowercase hexadecimal characters.
+If an ordinary restart changes the token while the existing `API_SERVER_KEY` was present and valid, collect the before and after sandbox identity plus redacted mint logs and report it as a bug.
 Capture the token and pass it in the `Authorization` header:
 
 ```bash
@@ -1570,8 +1576,13 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
   http://127.0.0.1:8642/v1/models
 ```
 
+<Warning>
 Treat the token like a password.
 Do not log it, share it, or commit it to version control.
+</Warning>
+
+The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` to retrieve the token.
+Use this supported command instead of reading or editing `.hermes/.env` directly.
 For browser access to the dashboard, use `nemohermes my-assistant dashboard-url`.
 
 </AgentOnly>
@@ -2536,6 +2547,8 @@ After restore, the command runs `openclaw doctor --fix` for cross-version struct
 <AgentOnly variant="hermes">
 
 After restore, the command restores Hermes manifest-defined state and starts the rebuilt Hermes gateway with the regenerated `/sandbox/.hermes` config.
+A rebuild creates a new sandbox home and a new Hermes API bearer token.
+After the rebuild succeeds, retrieve the replacement token with `nemohermes my-assistant gateway-token --quiet` before reconnecting API clients.
 For an older Hermes image that predates sealed shields transitions, rebuild is the only workflow authorized to use the descriptor-safe compatibility transition.
 The compatibility path verifies the strict root-owned hash and the in-tree hash, publishes fresh config inodes to revoke retained write descriptors, and restores the trusted lock posture if the transition cannot finish.
 Ordinary `shields up` and `shields down` commands refuse the older protocol and direct you to rebuild.
