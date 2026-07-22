@@ -618,9 +618,25 @@ async function assertGatewayRecovery(
   return recoveryOutcome;
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
-  async ({ artifacts, cleanup, docker, environment, host, sandbox, secrets }) => {
+  {
+    timeout: 45 * 60_000,
+    meta: {
+      e2ePhases: [
+        "confirm Docker and clear the sandbox operation fixtures",
+        "onboard the primary sandbox",
+        "exercise primary CLI inference and logs",
+        "exercise terminal registry and process recovery",
+        "onboard the secondary sandbox",
+        "verify metadata and cross-sandbox isolation",
+        "destroy the secondary sandbox and recover the survivor",
+        "destroy the final sandbox and confirm port release",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, docker, environment, host, progress, sandbox, secrets }) => {
     const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.target.declare({
@@ -654,24 +670,33 @@ test(
     await host.cleanupSandbox(SANDBOX_B);
     await host.cleanupSandbox(SANDBOX_A);
 
+    progress.phase("onboard the primary sandbox");
     await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a", hosted);
 
+    progress.phase("exercise primary CLI inference and logs");
     await expectListed(host, SANDBOX_A, "tc-sbx-01-list-sandbox-a");
     await assertAgentCanAnswer(host, SANDBOX_A);
     await assertAgentJsonNonzeroExit(host, SANDBOX_A);
     await assertStatusFields(host, SANDBOX_A);
     await assertLogsStream(host, SANDBOX_A);
+
+    progress.phase("exercise terminal registry and process recovery");
     await assertTmuxPtyFlow(sandbox, SANDBOX_A);
     await assertRegistryRebuild(host, SANDBOX_A);
     await assertForcedGatewayRestart(host, sandbox, SANDBOX_A);
     await assertProcessRecovery(host, sandbox, SANDBOX_A);
 
+    progress.phase("onboard the secondary sandbox");
     await onboardSandbox(host, cleanup, SANDBOX_B, "tc-sbx-10-onboard-sandbox-b", hosted, {
       CHAT_UI_URL: "http://127.0.0.1:18790",
     });
+
+    progress.phase("verify metadata and cross-sandbox isolation");
     await assertMetadataForBothSandboxes(host, SANDBOX_A, SANDBOX_B);
     await assertNetworkIsolation(sandbox, SANDBOX_A, SANDBOX_B, "tc-sbx-11-a-cannot-reach-b");
     await assertNetworkIsolation(sandbox, SANDBOX_B, SANDBOX_A, "tc-sbx-11-b-cannot-reach-a");
+
+    progress.phase("destroy the secondary sandbox and recover the survivor");
     await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_B);
     await expectListed(host, SANDBOX_A, "tc-sbx-12-survivor-listed-after-destroy-b");
     await assertAgentCanAnswer(host, SANDBOX_A, "tc-sbx-12-survivor-agent-after-destroy-b");
@@ -679,6 +704,8 @@ test(
     const gatewayRecovery = await assertGatewayRecovery(host, SANDBOX_A);
     const finalDestroyCleanupMode =
       process.platform === "darwin" ? "macos-default" : "explicit-non-macos";
+
+    progress.phase("destroy the final sandbox and confirm port release");
     await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_A, {
       cleanupGateway: finalDestroyCleanupMode === "explicit-non-macos",
     });
@@ -693,5 +720,4 @@ test(
       legacySource: "test/e2e/test-sandbox-operations.sh",
     });
   },
-  45 * 60_000,
 );

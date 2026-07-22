@@ -166,7 +166,7 @@ describe("prepared provider reconfiguration handoff", () => {
     };
 
     const activated = rebuildProviderFlowOptions(
-      { ...authorizedOptions, providerRecoveryReceipt: receipt },
+      { ...authorizedOptions, endpointSource: "onboard", providerRecoveryReceipt: receipt },
       flowContext,
     );
     expect(activated.providerRecoveryReceipt?.sessionId).toBe("sess-alpha");

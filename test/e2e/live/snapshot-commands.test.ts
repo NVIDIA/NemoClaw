@@ -159,7 +159,19 @@ function snapshotManifestDirectories(): string[] {
 
 test("snapshot commands preserve create/list/latest restore/targeted restore/no-leak lifecycle", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm Docker and start hermetic inference",
+      "onboard the snapshot sandbox",
+      "create and list the first snapshot",
+      "create a second snapshot from changed workspace",
+      "restore latest and timestamped snapshots",
+      "audit snapshot credentials and command help",
+      "back up a stopped sandbox and restore its snapshot",
+      "record snapshot lifecycle evidence",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   await artifacts.target.declare({
     id: "snapshot-commands",
     boundary: "install.sh + nemoclaw snapshot commands + openshell sandbox exec",
@@ -245,6 +257,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   await precleanSnapshotGateway(sandbox, "pre-cleanup");
   fs.rmSync(BACKUP_DIR, { recursive: true, force: true });
 
+  progress.phase("onboard the snapshot sandbox");
   const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
     artifactName: "phase-1-install-nemoclaw",
     cwd: REPO_ROOT,
@@ -341,6 +354,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     "phase-2-read-marker",
   );
 
+  progress.phase("create and list the first snapshot");
   const firstCreate = await host.command("nemoclaw", [SANDBOX_NAME, "snapshot", "create"], {
     artifactName: "phase-3-snapshot-create-first",
     env: commandEnv(),
@@ -391,6 +405,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   });
   expect(destroyClone.exitCode, resultText(destroyClone)).toBe(0);
 
+  progress.phase("create a second snapshot from changed workspace");
   const modify = await sandbox.exec(
     SANDBOX_NAME,
     ["sh", "-lc", `rm -f ${MARKER_FILE} && printf '%s' '${secondContent}' > ${SECOND_MARKER}`],
@@ -428,6 +443,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   );
   expect(perturb.exitCode, resultText(perturb)).toBe(0);
 
+  progress.phase("restore latest and timestamped snapshots");
   const latestRestore = await host.command("nemoclaw", [SANDBOX_NAME, "snapshot", "restore"], {
     artifactName: "phase-6-snapshot-restore-latest",
     env: commandEnv(),
@@ -478,6 +494,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   });
   expect(secondGone.exitCode, resultText(secondGone)).toBe(0);
 
+  progress.phase("audit snapshot credentials and command help");
   const credentialLeaks = scanSnapshotCredentialLeaks(BACKUP_DIR);
   await artifacts.writeJson("phase-8-credential-scan.json", {
     backupDir: BACKUP_DIR,
@@ -495,6 +512,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(resultText(help)).toContain("snapshot list");
   expect(resultText(help)).toContain("snapshot restore");
 
+  progress.phase("back up a stopped sandbox and restore its snapshot");
   const snapshotsBeforeStoppedBackup = snapshotManifestDirectories();
   const containerLookup = await host.command(
     "docker",
@@ -614,6 +632,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     stoppedBackupTimestamp,
   });
 
+  progress.phase("record snapshot lifecycle evidence");
   await artifacts.target.complete({
     id: "snapshot-commands",
     status: "passed",
