@@ -3589,18 +3589,33 @@ express_wsl_docker_operating_system() {
   timeout 10 docker info --format '{{.OperatingSystem}}' 2>/dev/null
 }
 
-# True only when the Docker CLI targets the LOCAL daemon: no explicit remote
-# selector. A DOCKER_HOST, or any named DOCKER_CONTEXT, can point at a remote
-# Docker Desktop whose sandbox containers cannot reach this machine's Windows-host
-# Ollama. A context name (e.g. desktop-linux) is not proof of a local endpoint —
-# it can be pointed at a remote daemon — so only the ambient/default context with
-# no DOCKER_HOST qualifies (PRA-1). Same local-only intent as the DGX Station path.
+# Resolve Docker's effective context name: the DOCKER_CONTEXT override if set,
+# otherwise the persisted currentContext from Docker's config (what
+# `docker context use` writes), defaulting to "default". Read from config.json
+# directly so this needs no Docker CLI and stays cheap/hermetic.
+express_wsl_docker_active_context() {
+  if [ -n "${DOCKER_CONTEXT:-}" ]; then
+    printf '%s' "${DOCKER_CONTEXT}"
+    return 0
+  fi
+  local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
+  local ctx=""
+  if [ -r "$cfg" ]; then
+    ctx="$(sed -n 's/.*"currentContext"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | head -n1)"
+  fi
+  printf '%s' "${ctx:-default}"
+}
+
+# True only when the Docker CLI targets the LOCAL default daemon: the active
+# context is "default" and no DOCKER_HOST override is set. A DOCKER_HOST, a
+# DOCKER_CONTEXT override, or a persisted currentContext other than "default"
+# (a context name like desktop-linux is not proof of a local endpoint — it can be
+# pointed at a remote daemon) can reach a remote Docker Desktop whose sandbox
+# containers cannot reach this machine's Windows-host Ollama (PRA-1). Fails closed
+# (non-local) on any non-default or unreadable context.
 express_wsl_docker_target_is_local() {
-  case "${DOCKER_CONTEXT:-}" in
-    "" | default) ;; # ambient/default context — defer to DOCKER_HOST
-    *) return 1 ;;   # any explicit named context may target a remote daemon
-  esac
-  [ -z "${DOCKER_HOST:-}" ]
+  [ -z "${DOCKER_HOST:-}" ] || return 1
+  [ "$(express_wsl_docker_active_context)" = "default" ]
 }
 
 # Windows-host Ollama only works through LOCAL Docker Desktop WSL integration

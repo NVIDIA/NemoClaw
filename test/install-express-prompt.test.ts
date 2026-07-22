@@ -1400,6 +1400,33 @@ printf 'PROMPT_REACHED\n'
     expect(output).toContain("PROVIDER=install-ollama");
   });
 
+  it("activate_express_install fails closed on a persisted remote currentContext", () => {
+    // No DOCKER_CONTEXT/DOCKER_HOST env, but `docker context use` persisted a
+    // remote context to ~/.docker/config.json; the resolved context must not be
+    // treated as the local default (PRA-1 round 3).
+    const { result, output } = runInstallerSourced(
+      `mkdir -p "$HOME/.docker"\n` +
+        `printf '%s' '{"currentContext":"remote-prod"}' > "$HOME/.docker/config.json"\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama");
+  });
+
+  it("activate_express_install treats a default persisted currentContext as local", () => {
+    const { result, output } = runInstallerSourced(
+      `mkdir -p "$HOME/.docker"\n` +
+        `printf '%s' '{"currentContext":"default"}' > "$HOME/.docker/config.json"\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-windows-ollama");
+  });
+
   it.skipIf(process.platform === "darwin")(
     "skips express install without a controlling TTY",
     () => {
