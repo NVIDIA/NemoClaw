@@ -1,15 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { dockerRmi } from "../../adapters/docker/image";
 import {
   detectOpenShellStateRpcResultIssue,
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import { loadAgent } from "../../agent/defs";
 import {
+  bindLocalAgentBaseImageToPinnedProvenance,
   ensureAgentBaseImage,
   getAgentSandboxBaseImageEnvVar,
   pinAgentSandboxBaseImageRef,
+  pinTrustedAgentBaseImageOverrideForOperation,
+  pinTrustedAgentRemoteBaseImageOverrideForOperation,
 } from "../../agent/onboard";
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
@@ -56,7 +60,59 @@ export type RebuildAgentBaseImagePreflight = {
   ok: boolean;
   imageRef: string | null;
   overrideEnvVar: string | null;
+  resolutionMetadata?: SandboxBaseImageResolutionMetadata;
+  disposeImageRef?: () => boolean;
+  trustedLocalOverride?: import("../../sandbox-base-image").TrustedLocalBaseImageOverride;
+  trustedRemoteOverride?: import("../../agent/base-image").TrustedRemoteBaseImageOverride;
 };
+
+const rebuildAgentBaseImageDisposalResults = new WeakMap<RebuildAgentBaseImagePreflight, boolean>();
+
+function isCanonicalLocalBaseImageRef(agentName: string, imageRef: string): boolean {
+  const escapedAgentName = agentName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `^nemoclaw-${escapedAgentName}-sandbox-base-local:image-[0-9a-f]{64}$`,
+    "i",
+  ).test(imageRef);
+}
+
+function isImmutableRemoteBaseImageRef(imageRef: string): boolean {
+  return /^[^\s@]+@sha256:[0-9a-f]{64}$/i.test(imageRef);
+}
+
+export function disposeRebuildAgentBaseImagePreflight(
+  preflight: RebuildAgentBaseImagePreflight | null | undefined,
+): boolean {
+  if (!preflight?.disposeImageRef) return true;
+  const priorResult = rebuildAgentBaseImageDisposalResults.get(preflight);
+  if (priorResult === true) return true;
+  const result = preflight.disposeImageRef();
+  if (result) rebuildAgentBaseImageDisposalResults.set(preflight, true);
+  return result;
+}
+
+function createTemporaryBaseImageHandoffDisposer(imageRef: string): () => boolean {
+  let removed = false;
+  const dispose = (): boolean => {
+    if (removed) return true;
+    try {
+      const removal = dockerRmi(imageRef, {
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      if (!removal.error && removal.status === 0) {
+        removed = true;
+        process.removeListener("exit", dispose);
+        return true;
+      }
+    } catch {
+      // The caller reports the safe cleanup warning and can retry.
+    }
+    return false;
+  };
+  process.on("exit", dispose);
+  return dispose;
+}
 
 /**
  * Select, health-check, and process-pin the gateway recorded for this sandbox
@@ -215,20 +271,66 @@ export function ensureRebuildAgentBaseImage(
   if (!rebuildAgent) return { ok: true, imageRef: null, overrideEnvVar: null };
   const agentDef = loadAgent(rebuildAgent);
   const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentDef.name);
-  const hasExplicitOverride = Boolean(process.env[overrideEnvVar]?.trim());
+  const explicitOverride = process.env[overrideEnvVar]?.trim();
+  const hasExplicitOverride = Boolean(explicitOverride);
   try {
-    const result = ensureAgentBaseImage(agentDef, {
-      forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
-      ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
-      ...(options.forceBaseImageRefresh !== undefined
-        ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
-        : {}),
-    });
+    // Prove that a retained local alias names the tracked official image before
+    // the resolver sees it, and lease that proof only for this resolution call.
+    // Arbitrary local overrides still fail closed in resolveSandboxBaseImage.
+    const explicitOverrideResolution = explicitOverride
+      ? bindLocalAgentBaseImageToPinnedProvenance(agentDef, explicitOverride)
+      : null;
+    const restoreExplicitOverrideTrust =
+      explicitOverride && explicitOverrideResolution
+        ? pinTrustedAgentRemoteBaseImageOverrideForOperation(overrideEnvVar, {
+            ref: explicitOverride,
+            resolutionMetadata: explicitOverrideResolution,
+          })
+        : () => undefined;
+    let result: ReturnType<typeof ensureAgentBaseImage>;
+    try {
+      result = ensureAgentBaseImage(agentDef, {
+        forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
+        ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
+        ...(options.forceBaseImageRefresh !== undefined
+          ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
+          : {}),
+      });
+    } finally {
+      restoreExplicitOverrideTrust();
+    }
+    const needsTemporaryHandoff =
+      result.imageTag !== null &&
+      !isCanonicalLocalBaseImageRef(agentDef.name, result.imageTag) &&
+      !isImmutableRemoteBaseImageRef(result.imageTag);
     const imageRef =
-      hasExplicitOverride && result.imageTag
-        ? pinAgentSandboxBaseImageRef(agentDef.name, result.imageTag)
+      result.imageTag && !isImmutableRemoteBaseImageRef(result.imageTag)
+        ? pinAgentSandboxBaseImageRef(agentDef.name, result.imageTag, {
+            forceLocal: true,
+            ...(needsTemporaryHandoff ? { temporary: true } : {}),
+          })
         : result.imageTag;
-    return { ok: true, imageRef, overrideEnvVar };
+    const disposeImageRef =
+      needsTemporaryHandoff && imageRef && imageRef !== result.imageTag
+        ? createTemporaryBaseImageHandoffDisposer(imageRef)
+        : undefined;
+    const resolutionMetadata =
+      result.resolutionMetadata ??
+      explicitOverrideResolution ??
+      (hasExplicitOverride && imageRef
+        ? bindLocalAgentBaseImageToPinnedProvenance(agentDef, imageRef)
+        : null);
+    return {
+      ok: true,
+      imageRef,
+      overrideEnvVar,
+      ...(resolutionMetadata ? { resolutionMetadata } : {}),
+      ...(disposeImageRef ? { disposeImageRef } : {}),
+      ...(result.trustedLocalOverride ? { trustedLocalOverride: result.trustedLocalOverride } : {}),
+      ...(imageRef && resolutionMetadata && isImmutableRemoteBaseImageRef(imageRef)
+        ? { trustedRemoteOverride: { ref: imageRef, resolutionMetadata } }
+        : {}),
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
@@ -250,11 +352,22 @@ export function pinRebuildAgentBaseImageForRecreate(
 
   const hadPriorValue = Object.hasOwn(env, overrideEnvVar);
   const priorValue = env[overrideEnvVar];
+  const restoreTrustedOverride = preflight.trustedLocalOverride
+    ? pinTrustedAgentBaseImageOverrideForOperation(overrideEnvVar, preflight.trustedLocalOverride)
+    : () => undefined;
+  const restoreTrustedRemoteOverride = preflight.trustedRemoteOverride
+    ? pinTrustedAgentRemoteBaseImageOverrideForOperation(
+        overrideEnvVar,
+        preflight.trustedRemoteOverride,
+      )
+    : () => undefined;
   env[overrideEnvVar] = imageRef;
   let restored = false;
   return () => {
     if (restored) return;
     restored = true;
+    restoreTrustedRemoteOverride();
+    restoreTrustedOverride();
     if (hadPriorValue && priorValue !== undefined) {
       env[overrideEnvVar] = priorValue;
     } else {
@@ -290,7 +403,11 @@ export function backupSandboxStateForRebuild(
   // state dir unreadable, the sandbox-user tar backed up only 3 loose files,
   // and the old code proceeded and destroyed all 14 state directories.
   const allStateDirsFailed = backup.backedUpDirs.length === 0 && backup.failedDirs.length > 0;
-  if (!backup.success && (!hasAnyBackup || allStateDirsFailed)) {
+  // State files are individually declared durability contracts. Losing even
+  // one cannot be treated like a salvageable partial directory archive: the
+  // replacement would otherwise delete the only live copy. (#7144)
+  const requiredStateFileFailed = backup.failedFiles.length > 0;
+  if (!backup.success && (!hasAnyBackup || allStateDirsFailed || requiredStateFileFailed)) {
     if (options?.force) {
       console.warn(
         `  ${YW}⚠${R} Backup could not preserve sandbox state but --force was specified — continuing with any salvageable files and rebuilding from registry metadata.`,
