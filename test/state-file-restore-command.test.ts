@@ -44,13 +44,14 @@ describe("buildStateFileRestoreCommand (#5202)", () => {
     expect(cmd).toContain('mv -f "$tmp" "$dst"');
   });
 
-  it("uses the system Python runtime for SQLite restores", () => {
+  it("isolates SQLite restore from an agent-managed Python environment (#7144)", () => {
     const cmd = sandboxState.buildStateFileRestoreCommand(
       "/sandbox/.hermes",
       { path: "kanban.db", strategy: "sqlite_backup" },
       false,
     );
 
-    expect(cmd).toContain("/usr/bin/python3 -I -c");
+    expect(cmd).toContain("/usr/bin/python3 -I -S -c");
+    expect(cmd).not.toMatch(/(?:^|[; ])python3 -c/u);
   });
 });
