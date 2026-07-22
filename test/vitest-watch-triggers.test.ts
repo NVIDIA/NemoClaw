@@ -56,6 +56,7 @@ const OPAQUE_INPUTS = [
   "test/e2e/manifests/openclaw-nvidia.yaml",
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
+  ".github/workflows/e2e-main-runner-loss-retry.yaml",
   ".github/workflows/code-scanning.yaml",
   ".github/workflows/pr-e2e-gate.yaml",
   ".github/workflows/platform-vitest-main.yaml",
@@ -104,6 +105,9 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/e2e-migration-policy.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/e2e.yaml")).toEqual(E2E_WORKFLOW_CONTRACTS);
+    expect(triggeredBy(".github/workflows/e2e-main-runner-loss-retry.yaml")).toEqual([
+      "test/e2e/support/main-e2e-runner-loss-retry-workflow.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
     ]);
