@@ -210,6 +210,7 @@ function createFixture({
   );
 
   const sandboxName = rebuildTarget.name;
+  const deletedStatePath = path.join(tmpDir, "sandbox-deleted.txt");
 
   // ── Dummy workspace dir for the fake ssh tar call ─────────────
   const workspaceDir = path.join(tmpDir, "fake-sandbox-root", "workspace");
@@ -229,7 +230,9 @@ function createFixture({
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const a = process.argv.slice(2);
+const deletedStatePath = ${JSON.stringify(deletedStatePath)};
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
 if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.85\\n"); process.exit(0); }
 if (a[0]==="status")                            { process.stdout.write("Server Status\\n  Gateway: nemoclaw\\n  Status: Connected\\n"); process.exit(0); }
@@ -237,8 +240,10 @@ if (a[0]==="gateway" && a[1]==="info")          { const i=a.indexOf("-g"); const
 if (a[0]==="gateway" && a[1]==="select")        { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")         { process.stdout.write("Gateway inference:\\n  Provider: p\\n  Model: m\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="get")        { if (fs.existsSync(deletedStatePath)) { process.stderr.write("sandbox not found\\n"); process.exit(1); } process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(deletedStatePath, "deleted\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="create")     { process.exit(1); }
 process.exit(0);
 `,
     { mode: 0o755 },

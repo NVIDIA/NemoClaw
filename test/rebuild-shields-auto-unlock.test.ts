@@ -162,6 +162,7 @@ function createFixture(opts: { shieldsLocked: boolean }) {
   fs.writeFileSync(path.join(fakeRoot, "workspace", "marker.txt"), "test");
   const lockStatePath = path.join(tmpDir, "config-lock-state.txt");
   fs.writeFileSync(lockStatePath, opts.shieldsLocked ? "locked" : "unlocked");
+  const deletedStatePath = path.join(tmpDir, "sandbox-deleted.txt");
 
   // Fake openshell — also returns a parseable YAML policy for the
   // shields-down policy snapshot capture path.
@@ -176,12 +177,16 @@ function createFixture(opts: { shieldsLocked: boolean }) {
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const a = process.argv.slice(2);
+const deletedStatePath = ${JSON.stringify(deletedStatePath)};
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
 if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.85\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="get")        { if (fs.existsSync(deletedStatePath)) { process.stderr.write("sandbox not found\\n"); process.exit(1); } process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(deletedStatePath, "deleted\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="create")     { process.exit(1); }
 if (a[0]==="policy" && a[1]==="get")         { process.stdout.write("version: 1\\nnetwork_policies:\\n  test: {}\\n"); process.exit(0); }
 if (a[0]==="policy" && a[1]==="set")         { process.exit(0); }
 if (a[0]==="status")                         { process.stdout.write("Server Status\\n  Gateway: nemoclaw\\n  Status: Connected\\n"); process.exit(0); }
