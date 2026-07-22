@@ -20,7 +20,7 @@ function writeProgress(
   durationMs: number,
   phase: string,
   phaseDurationMs: number,
-  phaseOutcome: string | undefined = phase === "inference" ? "failed" : "passed",
+  phaseOutcome: string | undefined,
 ): void {
   const directory = path.join(root, run, scenario);
   fs.mkdirSync(directory, { recursive: true });
@@ -53,9 +53,9 @@ describe("test runtime audit", () => {
   it("ranks repeated artifact summaries by p95 and identifies the slowest phase", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-audit-"));
     try {
-      writeProgress(root, "run-1", "variable test", 10_000, "install", 8_000);
-      writeProgress(root, "run-2", "variable test", 50_000, "inference", 40_000);
-      writeProgress(root, "run-1", "steady test", 20_000, "sandbox", 15_000);
+      writeProgress(root, "run-1", "variable test", 10_000, "install", 8_000, "passed");
+      writeProgress(root, "run-2", "variable test", 50_000, "inference", 40_000, "failed");
+      writeProgress(root, "run-1", "steady test", 20_000, "sandbox", 15_000, "passed");
 
       const rows = auditTestRuntime([root]);
 
