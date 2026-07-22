@@ -256,7 +256,10 @@ rebootstrap_write_cli_to_pairing() {
   while [ "$attempt" -lt 10 ]; do
     (
       unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN
-      command openclaw devices list --json >/dev/null 2>&1
+      # OpenClaw 2026.7.1 omits CLI identity for loopback shared-token auth.
+      # Scope the compatibility marker to this deliberate re-pair provoke.
+      NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING=1 \
+        command openclaw devices list --json >/dev/null 2>&1
     ) || true
     state="$(state_json)"
     paired_record="$(printf '%s' "$state" | select_paired_cli_device 2>/dev/null || true)"
