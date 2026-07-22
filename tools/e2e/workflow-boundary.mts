@@ -1509,6 +1509,84 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-openclaw.test.ts");
 }
 
+export function validateRebuildHermesBootstrapBoundary(
+  jobName: "rebuild-hermes" | "rebuild-hermes-stale-base",
+  job: WorkflowRecord,
+): string[] {
+  const errors: string[] = [];
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push(`${jobName} job must point NEMOCLAW_CLI_BIN at the repo CLI`);
+  }
+
+  const steps = asSteps(job.steps);
+  const prepareWorkspace = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
+  if (Object.keys(asRecord(prepareWorkspace?.with)).length !== 0) {
+    errors.push(`${jobName} workspace preparation must use the default checked-out CLI build`);
+  }
+
+  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
+  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
+  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
+  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
+  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
+  requireRunContains(errors, installOpenShell, "-u GH_TOKEN");
+  const installEnv = asRecord(installOpenShell?.env);
+  for (const secret of [
+    "DOCKERHUB_USERNAME",
+    "DOCKERHUB_TOKEN",
+    "NVIDIA_API_KEY",
+    "NVIDIA_INFERENCE_API_KEY",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+  ]) {
+    requireEnvDoesNotExposeSecret(
+      errors,
+      `${jobName} step 'Install OpenShell'`,
+      installEnv,
+      secret,
+    );
+  }
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    jobName === "rebuild-hermes-stale-base"
+      ? "Run Hermes stale-base rebuild live test"
+      : "Run Hermes rebuild live test",
+  );
+  const runVitestEnv = asRecord(runVitest?.env);
+  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
+  }
+  requireEnvDoesNotExposeSecret(
+    errors,
+    `${jobName} step '${runVitest?.name ?? "<missing>"}'`,
+    runVitestEnv,
+    "NVIDIA_API_KEY",
+  );
+  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
+  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
+  requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
+
+  if (
+    prepareWorkspace &&
+    installOpenShell &&
+    runVitest &&
+    !(
+      steps.indexOf(prepareWorkspace) < steps.indexOf(installOpenShell) &&
+      steps.indexOf(installOpenShell) < steps.indexOf(runVitest)
+    )
+  ) {
+    errors.push(`${jobName} must build the CLI before installing OpenShell and running Vitest`);
+  }
+  return errors;
+}
+
 function validateRebuildHermesJob(
   errors: string[],
   jobs: WorkflowRecord,
@@ -1521,6 +1599,7 @@ function validateRebuildHermesJob(
     errors.push(`workflow missing ${jobName} job`);
     return;
   }
+  errors.push(...validateRebuildHermesBootstrapBoundary(jobName, job));
 
   if (job["runs-on"] !== "ubuntu-latest") {
     errors.push(`${jobName} job must run on ubuntu-latest`);
@@ -1569,9 +1648,11 @@ function validateRebuildHermesJob(
   }
   for (const secret of [
     "NVIDIA_INFERENCE_API_KEY",
+    "NVIDIA_API_KEY",
     "DOCKERHUB_USERNAME",
     "DOCKERHUB_TOKEN",
     "GITHUB_TOKEN",
+    "GH_TOKEN",
   ]) {
     requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
   }
@@ -1582,8 +1663,10 @@ function validateRebuildHermesJob(
   for (const step of steps) {
     const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
     const stepEnv = asRecord(step.env);
-    if (!step.name?.startsWith("Run Hermes")) {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    const isHermesRunStep = step.name?.startsWith("Run Hermes") ?? false;
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    if (!isHermesRunStep) {
+      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
     }
     if (step.name !== "Authenticate to Docker Hub") {
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
@@ -1591,6 +1674,7 @@ function validateRebuildHermesJob(
       requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
     }
     requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GH_TOKEN");
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
@@ -1600,18 +1684,6 @@ function validateRebuildHermesJob(
     errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
 
-  const runVitest = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    options.staleBase ? "Run Hermes stale-base rebuild live test" : "Run Hermes rebuild live test",
-  );
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
-  }
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
 }
 
 function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {

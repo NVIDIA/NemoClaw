@@ -261,15 +261,40 @@ process.exit(0);
   fs.writeFileSync(
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const a = process.argv.slice(2);
+const provenancePath = ${JSON.stringify(path.join(tmpDir, "docker-base-provenance"))};
+const readProvenance = () => fs.existsSync(provenancePath) ? JSON.parse(fs.readFileSync(provenancePath, "utf8")) : {};
 if (a[0]==="info") {
   process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
   process.exit(0);
 }
-if (a[0]==="build") { process.exit(0); }
+if (a[0]==="build") {
+  const labelIndex = a.indexOf("--label");
+  const tagIndex = a.indexOf("-t");
+  if (labelIndex >= 0 && tagIndex >= 0) {
+    const label = a[labelIndex + 1] || "";
+    const provenance = readProvenance();
+    const value = label.slice(label.indexOf("=") + 1);
+    provenance[a[tagIndex + 1]] = value;
+    provenance["sha256:${"a".repeat(64)}"] = value;
+    fs.writeFileSync(provenancePath, JSON.stringify(provenance));
+  }
+  process.exit(0);
+}
+if (a[0]==="tag") {
+  const provenance = readProvenance();
+  if (provenance[a[1]]) provenance[a[2]] = provenance[a[1]];
+  fs.writeFileSync(provenancePath, JSON.stringify(provenance));
+  process.exit(0);
+}
 if (a[0]==="image" && a[1]==="inspect" && a[2]==="--format") {
   if (a[3]==="{{.Id}}") process.stdout.write("sha256:${"a".repeat(64)}\\n");
   if (a[3]==="{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  if (a[3]==="{{json .}}") {
+    const provenance = readProvenance()[a[4]] || "";
+    process.stdout.write(JSON.stringify({Id:"sha256:${"a".repeat(64)}", RepoDigests:[], Os:"linux", Architecture:"amd64", Config:{Labels:provenance ? {"com.nvidia.nemoclaw.base-build-provenance":provenance} : {}}}) + "\\n");
+  }
   process.exit(0);
 }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
@@ -292,9 +317,10 @@ process.exit(0);
   );
 
   // ── Fake ssh ──────────────────────────────────────────────────
-  // backupSandboxState makes two ssh calls:
+  // backupSandboxState makes fixture-relevant SSH calls for:
   //   1. dir-existence check (command has "[ -d") → print "workspace"
   //   2. tar download (command has "tar") → produce a real tar archive
+  //   3. standalone state files (command starts with "src=") → report absent
   const fakeRoot = path.join(tmpDir, "fake-sandbox-root");
   fs.writeFileSync(
     path.join(tmpDir, "ssh"),
@@ -303,6 +329,11 @@ const cmd = process.argv[process.argv.length - 1] || "";
 if (cmd.includes("[ -d")) {
   process.stdout.write("workspace\\n");
   process.exit(0);
+}
+if (cmd.startsWith("src=")) {
+  // This fixture has no standalone agent state files. Match the real backup
+  // command's missing-file exit code instead of returning an empty success.
+  process.exit(2);
 }
 if (cmd.includes("tar")) {
   const { spawnSync } = require("child_process");
