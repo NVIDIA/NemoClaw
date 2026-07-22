@@ -1763,7 +1763,7 @@ Do not probe with `su -s /bin/sh gateway ...`: `su` does not initialize the gate
 A NemoClaw sandbox has two intentional permission states for `/sandbox/.openclaw`; `700/600` is not one of them:
 
 - **Mutable default:** `/sandbox/.openclaw` is `2770 sandbox:sandbox` and `openclaw.json` is `660 sandbox:sandbox`. Both the sandbox user and the gateway (same `sandbox` group, different UID) can write config, so control-UI toggles persist.
-- **Host-locked state:** `openclaw.json` is read-only for in-sandbox writers and the config dir is owned by `root`, with the immutable bit set where available. No in-sandbox writes are expected; use the host-side `nemoclaw <sandbox> config set` flow described in [`openclaw config set` fails with a permission error on Brev](#openclaw-config-set-fails-with-a-permission-error-on-brev).
+- **Host-locked state:** `openclaw.json` is read-only for in-sandbox writers and the config dir is owned by `root`, with the immutable bit set where available. No in-sandbox writes are expected; use the host-side `$$nemoclaw <sandbox> config set` flow described in [`openclaw config set` or `unset` is blocked inside the sandbox](#openclaw-config-set-or-unset-is-blocked-inside-the-sandbox).
 - **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `$$nemoclaw <sandbox> doctor --fix` or a sandbox restart.
 
 ### Discord bot logs in, but the channel still does not work
@@ -2550,93 +2550,6 @@ For first-time Hermes setup, refer to [Quickstart with Hermes](../get-started/qu
 Podman is not a tested runtime.
 OpenShell officially documents Docker-based runtimes only.
 If you encounter issues with Podman, switch to a tested runtime (Docker Engine, Docker Desktop, or Colima) and rerun onboarding.
-
-<AgentOnly variant="openclaw">
-
-## Brev
-
-For Brev setup instructions, refer to [Brev Web UI](../deployment/brev-web-ui).
-
-### Most OpenClaw skills show as blocked
-
-After deploying NemoClaw on Brev, the Skills page in the OpenClaw gateway dashboard shows most bundled skills with a `blocked` status.
-Only three skills are available by default: `healthcheck`, `skill-creator`, and `weather`.
-
-Skills are blocked for one of three reasons.
-
-- The skill requires a macOS-only binary (`memo`, `remindctl`, `grizzly`, and similar) that is not available on the Linux (GCP) instance Brev provisions.
-- The skill requires a CLI binary that is not pre-installed in the sandbox image, such as `gh` for the GitHub skill.
-- The skill requires API credentials that have not been configured, such as a Notion API key or Discord bot token.
-
-Skills that require macOS-only binaries cannot be enabled on Brev.
-Skills that require additional CLI binaries require a custom sandbox image rebuild.
-
-For credentials, use the supported host-side setup flow.
-Rerun onboarding for inference or web search credentials, or use `$$nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
-To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
-
-```bash
-$$nemoclaw <name> rebuild
-```
-
-After the rebuild completes, return to the Skills page to confirm the skill status has changed from `blocked` to `ready`.
-
-### `openclaw config set` fails with a permission error on Brev
-
-When the sandbox config has been locked from the host, `openclaw.json` is owned by root and mounted read-only inside the sandbox.
-Running `openclaw config set` inside the sandbox then returns:
-
-```text
-EACCES: permission denied, open '/sandbox/.openclaw/openclaw.json'
-```
-
-In the default sandbox state, `openclaw.json` is writable by the sandbox user.
-If you see this error, use the host-side config command instead:
-
-```bash
-$$nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
-```
-
-Refer to [Commands](commands) for the full list of supported configuration keys.
-
-### OpenClaw dashboard is unreachable after extended uptime on Brev
-
-After leaving NemoClaw running for an extended period on Brev, the OpenClaw dashboard may return `ERR_CONNECTION_RESET` or fail to load in the browser.
-The agent may still respond on messaging channels such as Telegram or Slack while the dashboard is unreachable.
-
-<Warning title="Back up your workspace first">
-
-Take a snapshot before running onboard to protect your workspace files.
-
-```bash
-$$nemoclaw <name> snapshot create
-```
-
-</Warning>
-
-Re-run onboarding to restore dashboard connectivity:
-
-```bash
-$$nemoclaw onboard
-```
-
-Depending on current sandbox state, onboarding may prompt before recreating resources.
-
-### Skill install buttons do not work on Brev
-
-Clicking **Install** on a skill in the OpenClaw gateway dashboard on Brev shows no response or fails silently.
-
-Skill installation runs against the sandbox environment.
-Installing packages on the Brev host does not make them available inside the sandbox.
-To install a skill dependency, add it to the sandbox image and rebuild:
-
-```bash
-$$nemoclaw <name> rebuild
-```
-
-After the rebuild completes, return to the Skills page to confirm the skill is ready.
-
-</AgentOnly>
 
 <AgentOnly variant="hermes">
 

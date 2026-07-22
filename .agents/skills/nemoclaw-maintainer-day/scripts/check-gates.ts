@@ -1214,6 +1214,7 @@ function checkCi(
   failingChecks?: string[];
   pendingChecks?: string[];
   missingChecks?: string[];
+  trustedCustomCheckId?: number;
 } {
   if (!statusCheckRollup || statusCheckRollup.length === 0) {
     return { pass: false, details: "No status checks found" };
@@ -1296,6 +1297,9 @@ function checkCi(
   return {
     pass: true,
     details: `All ${currentChecks.length} current checks green`,
+    ...(e2eCoordinationEvidence.trustedCustomCheckId !== undefined
+      ? { trustedCustomCheckId: e2eCoordinationEvidence.trustedCustomCheckId }
+      : {}),
   };
 }
 

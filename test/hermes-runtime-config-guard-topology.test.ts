@@ -18,7 +18,6 @@ const RUNTIME_CONFIG_GUARD = path.join(
 );
 const ROOT_RUNTIME_IMAGE =
   "python:3.12-slim@sha256:cab2dbf575e971934a81e4622f5aba17aa7929719bd7e31033a3a83b97fd0464";
-
 function dockerAvailable(): boolean {
   try {
     execFileSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 });

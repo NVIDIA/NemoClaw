@@ -16,9 +16,15 @@ const DEPENDENCY_REVIEW = path.join(
   "security",
   "openclaw-2026.6.10-dependency-review.md",
 );
+const ACTIVE_DEPENDENCY_REVIEW = path.join(
+  REPO_ROOT,
+  "docs",
+  "security",
+  "openclaw-2026.7.1-dependency-review.md",
+);
 const CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
-const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.10.tgz";
+const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
 const MESSAGING_BUILD_APPLIER = path.join(
   REPO_ROOT,
   "src",
@@ -37,6 +43,11 @@ const DEVICE_SELF_APPROVAL_PATCH = path.join(
   REPO_ROOT,
   "scripts",
   "patch-openclaw-device-self-approval.mts",
+);
+const SHARED_STATE_PERMISSIONS_PATCH = path.join(
+  REPO_ROOT,
+  "scripts",
+  "patch-openclaw-shared-state-permissions.mts",
 );
 const REBUILD_RESUME_SESSION = path.join(
   REPO_ROOT,
@@ -123,6 +134,36 @@ function runBaseImageBuildArgGuard(
 }
 
 describe("OpenClaw 2026.6.10 dependency review contract", () => {
+  it("pins the active diagnostics Jaeger remediation to the shipped install path", () => {
+    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+
+    expect(review).toContain("GHSA-45rx-2jwx-cxfr");
+    expect(review).toContain("@opentelemetry/propagator-jaeger@2.9.0");
+    expect(review).toContain("nested `@opentelemetry/core@2.9.0`");
+    expect(review).toContain(
+      "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==",
+    );
+    expect(review).toContain(
+      "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==",
+    );
+    expect(review).toContain(
+      "sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==",
+    );
+    expect(review).toContain("SDK Node `0.219.0`");
+    expect(review).toContain("preexisting nested Core");
+  });
+
+  it("records the active mcporter advisory remediations", () => {
+    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+
+    expect(review).toContain("GHSA-9mqv-5hh9-4cgg");
+    expect(review).toContain("@hono/node-server@^1.19.9");
+    expect(review).toContain("`2.0.11`");
+    expect(review).toContain("GHSA-v2hh-gcrm-f6hx");
+    expect(review).toContain("fast-uri@^3.0.1");
+    expect(review).toContain("`3.1.4`");
+  });
+
   it("keeps advisor disposition evidence in the dependency review note", () => {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
 
@@ -227,11 +268,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("npm audit result in this note remains a point-in-time snapshot");
     expect(review).toContain("Advisory audit revalidated: 2026-07-21");
     expect(review).toContain(
-      "`0` info, `1` low, `1` moderate, `0` high, and `0` critical findings across `766` total dependencies",
+      "`0` info, `1` low, `12` moderate, `0` high, and `0` critical findings across `767` total dependencies",
     );
     expect(review).toContain(
       "The mcporter locked graph reported no findings across `138` dependencies",
     );
+    expect(review).toContain("GHSA-frvp-7c67-39w9");
+    expect(review).toContain("Hono finding remains in the reviewed OpenClaw graph");
     expect(review).toContain("GHSA-v422-hmwv-36x6");
     expect(review).toContain("reviewed Slack and Microsoft Teams plugin graphs");
     expect(review).toContain("GHSA-j3f2-48v5-ccww");
@@ -249,6 +292,9 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("configured threshold in `ci/reviewed-npm-audit.json` is `high`");
     expect(review).toContain("Transitive Dependency Graph Rationale");
     expect(review).toContain("Transitive Remediation Boundary");
+    expect(review).toContain("point-in-time record of the remediation shipped for the");
+    expect(review).toContain("current 2026.7.1 path installs the reviewed core archive");
+    expect(review).toContain("openclaw-2026.7.1-dependency-review.md");
     expect(review).toContain("Transitive Remediation Concern Ledger");
     expect(review).toContain("`openclaw@2026.6.10`, the helper makes these changes");
     expect(review).toContain("`tar@7.5.16` with `tar@7.5.19`");
@@ -258,6 +304,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("direct `tar@7.5.19` and `jszip@3.10.1` dependencies");
     expect(review).toContain("`axios@1.16.0` with `axios@1.18.0`");
     expect(review).toContain("`https-proxy-agent@5.0.1` and `agent-base@6.0.2`");
+    expect(review).toContain("`@opentelemetry/propagator-jaeger@2.8.0` with `2.9.0`");
+    expect(review).toContain("bundled `@opentelemetry/sdk-node@0.219.0`");
+    expect(review).toContain("Nests reviewed `@opentelemetry/core@2.9.0`");
+    expect(review).toContain("complete published `v2.8.0..v2.9.0` range");
+    expect(review).toContain("`b1c196d49d54caae59741cca0a9d57d101d7ea88`");
+    expect(review).toContain("unrelated breaking notice only deprecates the OpenTracing shim");
+    expect(review).toContain("Node `^18.19.0 || >=20.6.0`");
     expect(review).toContain("exact registry SRI and tarball URL");
     expect(review).toContain(
       "rejects unsafe archive members before extraction and after repacking",
@@ -273,7 +326,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==",
       "sha512-dFcAjpTQFgoLMzC2VwU+C/CbS7uRL0lWmxDITmqm7C+7F0Odmj6s9l6alZc6AELXhrnggM2CeWSXHGOdX2YtwA==",
       "sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==",
+      "sha512-4mYGty27rYvSM0jtp1ZUOqd3LfVRCYg9H5G9OFzSx5HViYToU21MFhWfco7x1HwXr7ER8yGOiCIHZUwjPksc0Q==",
+      "sha512-m2nckMT80NnmjTYSPjJQObBJ+8dgkoajEOUbznL8AHZ3T3yHRk2P7gI1PhEBc1+lOnrYE9UWrWHqJDsmqjmNbw==",
       "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
+      "sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==",
       "sha512-AXllGzI+m33jUq3w1nCVXngLA1m9kH8c9XryHSoPzuVhGP6xwWpzgKl3yyfOMoIykN0GKcka59ZZbjEwkxFudQ==",
       "sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==",
     ]) {
@@ -286,6 +342,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
       "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz",
       "https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz",
+      "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz",
+      "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz",
     ]) {
       expect(review).toContain(tarball);
     }
@@ -296,7 +354,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     );
     expect(review).toContain("The other replacement tarballs include license files");
     expect(review).toContain("`tar@7.5.19` declares BlueOak-1.0.0");
-    expect(review).toContain("the others declare MIT");
+    expect(review).toContain("the OpenTelemetry packages declare Apache-2.0");
+    expect(review).toContain("the other packages declare MIT");
     expect(review).toContain(
       "The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transitive graph",
     );
@@ -365,6 +424,20 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
   });
 
+  // source-shape-contract: security -- The legacy archive remediation helper must be present in the base image before the fail-closed Docker build invokes it
+  it("copies the legacy OpenClaw remediation helper before the base build invokes it", () => {
+    const dockerfile = readFileSync(path.join(REPO_ROOT, "Dockerfile.base"), "utf-8");
+    const helperCopy = dockerfile.indexOf(
+      "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
+    );
+    const helperInvocation = dockerfile.indexOf(
+      "node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts",
+    );
+
+    expect(helperCopy).toBeGreaterThanOrEqual(0);
+    expect(helperInvocation).toBeGreaterThan(helperCopy);
+  });
+
   it("keeps every reviewed archive boundary on the shared invariant matrix (#5896)", () => {
     const result = spawnSync(
       "bash",
@@ -415,24 +488,25 @@ for dockerfile in Dockerfile Dockerfile.base; do
     Dockerfile) end_marker='# Patch OpenClaw media fetch' ;;
     Dockerfile.base) end_marker='# Baseline health check.' ;;
   esac
-  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.6.10/,/$end_marker/p" "$dockerfile")"
-  check_contains "$openclaw_block" "ARG OPENCLAW_2026_6_10_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
+  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.7.1/,/$end_marker/p" "$dockerfile")"
+  check_contains "$openclaw_block" "ARG OPENCLAW_2026_7_1_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
   check_contains "$openclaw_block" '/scripts/lib/reviewed-npm-archive.mts' "$dockerfile shared helper"
-  check_contains "$openclaw_block" '/scripts/lib/openclaw-npm-remediation.mts' "$dockerfile remediation helper"
   check_contains "$openclaw_block" '--package-spec "openclaw@\${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY"' "$dockerfile reviewed identity"
   check_contains "$openclaw_block" '--tarball-url "$EXPECTED_TARBALL"' "$dockerfile reviewed tarball"
   check_contains "$openclaw_block" '"$OPENCLAW_PACK_PATH"' "$dockerfile local install path"
-  check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_SOURCE_PACK_PATH")"' "$dockerfile pack directory"
-  check_contains "$openclaw_block" '--archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@\${OPENCLAW_VERSION}"' "$dockerfile remediated identity"
+  check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"' "$dockerfile pack directory"
   if [ "$dockerfile" = Dockerfile.base ]; then
-    check_contains "$openclaw_block" '[ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ]' "$dockerfile archive path guard"
+    check_contains "$openclaw_block" '[ ! -f "$OPENCLAW_SOURCE_PACK_PATH" ]' "$dockerfile source archive path guard"
   fi
+  check_contains "$openclaw_block" '--archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@\${OPENCLAW_VERSION}"' "$dockerfile legacy remediated identity"
+  check_contains "$openclaw_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "$dockerfile remediation result guard"
   check_contains "$openclaw_block" 'rm -rf "$OPENCLAW_PACK_DIR"' "$dockerfile cleanup"
   check_not_contains "$openclaw_block" 'REGISTRY_INTEGRITY=$(npm view' "$dockerfile inline integrity lookup"
   check_not_contains "$openclaw_block" 'pack_reviewed_npm_tarball' "$dockerfile inline pack helper"
   check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
-  check_contains "$openclaw_block" 'ignore-scripts+reviewed-lifecycle+transitive-remediation-v1' "$dockerfile base provenance recipe"
-  check_contains "$openclaw_block" 'npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip' "$dockerfile installed remediation graph guard"
+  check_contains "$openclaw_block" "OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'" "$dockerfile direct provenance recipe"
+  check_contains "$openclaw_block" "OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'" "$dockerfile remediated provenance recipe"
+  check_contains "$openclaw_block" '"recipe=\${OPENCLAW_RECIPE}"' "$dockerfile selected provenance recipe"
   check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
   check_contains "$openclaw_block" 'mcporter-integrity=' "$dockerfile mcporter provenance integrity"
   check_contains "$openclaw_block" 'mcporter-lock-sha256=' "$dockerfile mcporter provenance lock hash"
@@ -455,8 +529,14 @@ optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that 
 check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
 check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
-check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_archive}"' "optional plugin npm-pack install"
-check_contains "$optional_plugin_block" 'rm -rf "$(dirname "$plugin_archive")"' "optional plugin cleanup"
+check_contains "$optional_plugin_block" '/scripts/lib/openclaw-npm-remediation.mts' "optional plugin remediation helper"
+check_contains "$optional_plugin_block" '"@openclaw/diagnostics-otel@2026.7.1")' "diagnostics remediation identity"
+check_contains "$optional_plugin_block" '--working-directory "$plugin_root"' "diagnostics remediation workspace"
+check_contains "$optional_plugin_block" 'if (!value.remediated || typeof value.archivePath !== "string")' "diagnostics remediation result guard"
+check_contains "$optional_plugin_block" 'plugin_root="$(dirname "$plugin_archive")"' "optional plugin cleanup root"
+check_contains "$optional_plugin_block" 'plugin_install_archive="$plugin_archive"' "optional plugin default archive"
+check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_install_archive}"' "optional plugin npm-pack install"
+check_contains "$optional_plugin_block" 'rm -rf "$plugin_root"' "optional plugin cleanup"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
 	grep -Fq 'packReviewedNpmArchive({' "$messaging_build_applier"
@@ -464,14 +544,32 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'rmSync(packed.rootDir, { recursive: true, force: true })' "$messaging_build_applier"
 	grep -Fq 'from "../../../../../scripts/lib/reviewed-npm-archive.mts"' "$messaging_build_applier"
 	grep -Fq 'from "../../../../../scripts/lib/openclaw-npm-remediation.mts"' "$messaging_build_applier"
-	grep -Fq 'remediateReviewedOpenClawArchive({' "$messaging_build_applier"
+	grep -Fq 'remediateReviewedOpenClawPluginArchive({' "$messaging_build_applier"
 	grep -Fq 'spawnSync(request.npmExecutable ?? "npm", args' "$reviewed_archive_helper"
 	grep -Fq '["view", request.packageSpec, "dist.integrity"]' "$reviewed_archive_helper"
 	grep -Fq '["view", request.packageSpec, "dist.tarball"]' "$reviewed_archive_helper"
 	grep -Fq '["pack", request.tarballUrl, "--pack-destination", rootDirectory, "--json"]' "$reviewed_archive_helper"
 	grep -Fq 'reported unsafe archive filename' "$reviewed_archive_helper"
+	grep -Fq 'expectedPatchedTreeIntegrity' "$remediation_helper"
 	grep -Fq 'expectedPatchedMetadataIntegrity' "$remediation_helper"
+	grep -Fq 'hashPackageTree' "$remediation_helper"
+	grep -Fq 'patchOpenClawCorePackageGraph' "$remediation_helper"
+	grep -Fq 'patchOpenClawDiagnosticsPackageGraph' "$remediation_helper"
+	for package_spec in \
+		'openclaw@2026.3.11' \
+		'openclaw@2026.6.10' \
+		'@openclaw/diagnostics-otel@2026.6.10' \
+		'@openclaw/slack@2026.6.10' \
+		'@openclaw/msteams@2026.6.10' \
+		'@openclaw/diagnostics-otel@2026.7.1' \
+		'@openclaw/slack@2026.7.1' \
+		'@openclaw/msteams@2026.7.1'; do
+		grep -Fq "$package_spec" "$remediation_helper"
+	done
 	grep -Fq 'validateArchiveMembers(archivePath' "$remediation_helper"
+	remediation_cli_block="$(sed -n '/if (isMainModule())/,$p' "$remediation_helper")"
+	check_contains "$remediation_cli_block" 'remediateReviewedOpenClawPluginArchive({' "remediation CLI tree-integrity enforcement"
+	check_not_contains "$remediation_cli_block" 'buildRemediatedOpenClawPluginArchive({' "unenforced remediation CLI path"
 	! grep -Fq 'npmViewString(' "$messaging_build_applier"
 	! grep -Fq 'resolveNpmPackArchivePath(' "$messaging_build_applier"
 	issue_4434_patch=${JSON.stringify(ISSUE_4434_PATCH)}
@@ -489,6 +587,16 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 		grep -Fq 'nemoclaw: validate bounded self-approval inside pairing lock' "$device_self_approval_patch"
 		grep -Fq 'COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts' Dockerfile
 		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \\' Dockerfile
+	shared_state_permissions_patch=${JSON.stringify(SHARED_STATE_PERMISSIONS_PATCH)}
+	grep -Fq 'nemoclaw: group-shared OpenClaw state' "$shared_state_permissions_patch"
+	grep -Fq 'nemoclaw: group-shared OpenClaw agent state' "$shared_state_permissions_patch"
+	grep -Fq 'keep generic credential and identity stores owner-only' "$shared_state_permissions_patch"
+	! grep -Fq 'nemoclaw: group-shared OpenClaw private store' "$shared_state_permissions_patch"
+	! grep -Fq 'nemoclaw: group-shared OpenClaw file-store defaults' "$shared_state_permissions_patch"
+	grep -Fq 'nemoclaw: group-shared OpenClaw models file' "$shared_state_permissions_patch"
+	grep -Fq 'nemoclaw: ignore legacy OpenClaw update-check state' "$shared_state_permissions_patch"
+	grep -Fq 'COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts' Dockerfile
+	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \\' Dockerfile
 
 	phase_count="$(grep -Ec -- '--phase (runtime-setup|agent-install|post-agent-install)' Dockerfile)"
 test "$phase_count" -eq 3

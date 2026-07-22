@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 
 interface ProofOptions {
   dist: string;
+  nodeExecutable: string;
   patchScript: string;
   timeoutMs: number;
   tmp: string;
@@ -147,6 +148,46 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
     "opts.requiredStoredDeviceAuthScopes",
     "scopes: useStoredDeviceAuth ? void 0 : scopes",
   ]);
+  const gatewayHandshake = requireExactlyOneDistSource(
+    sources,
+    "shared-auth paired-device scope enforcement",
+    [
+      "async function resolveConnectAuthDecisionCore(params)",
+      "if (!params.hasDeviceIdentity || !params.deviceId || authOk || !deviceTokenCandidate) return finish();",
+      "if (device && devicePublicKey) {",
+      'if (!await requirePairing("scope-upgrade", paired)) return;',
+    ],
+  );
+  requireOrderedMarkers(
+    gatewayCall.source,
+    [
+      "function shouldOmitDeviceIdentityForGatewayCall(params)",
+      "NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING",
+      "nemoclaw: force device identity for loopback pairing bootstrap",
+      "const mode = params.opts.mode",
+      "const isLocalCliSharedAuth =",
+      "!hasStoredOperatorDeviceAuthToken(resolveDeviceIdentityForGatewayCall())",
+      "nemoclaw: retain stored CLI device identity for loopback shared-token scope enforcement",
+      "return isLocalBackendSharedAuth || isLocalCliSharedAuth;",
+    ],
+    "loopback CLI shared-token stored device identity",
+  );
+  requireOrderedMarkers(
+    gatewayHandshake.source,
+    [
+      "async function resolveConnectAuthDecisionCore(params)",
+      "let authOk = params.state.authOk;",
+      "if (!params.hasDeviceIdentity || !params.deviceId || authOk || !deviceTokenCandidate) return finish();",
+      "if (device && devicePublicKey) {",
+      "const paired = await getPairedDevice(device.id);",
+      "const pairedScopes = resolvePairedAccessScopes(paired);",
+      "if (scopes.length > 0) {",
+      "requestedScopes: scopes,",
+      "allowedScopes: pairedScopes",
+      'if (!await requirePairing("scope-upgrade", paired)) return;',
+    ],
+    "shared-token identity to paired-scope upgrade linkage",
+  );
   requireOrderedMarkers(
     gatewayCall.source,
     [
@@ -520,7 +561,7 @@ function runPairingCrashDirectionProof(
   const durablePath = durableSide === "pending" ? fixture.pendingPath : fixture.pairedPath;
   const interruptedPath = durableSide === "pending" ? fixture.pairedPath : fixture.pendingPath;
   const crash = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     [
       "--input-type=module",
       "-e",
@@ -620,7 +661,7 @@ throw new Error("injected crash did not terminate the process");
   );
 
   const restart = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     [
       "--input-type=module",
       "-e",
@@ -672,7 +713,7 @@ if (JSON.stringify(first) !== JSON.stringify(second)) throw new Error("second re
   requireIdlePairingJournal(fixture.journalPath, `real-dist ${durableSide}-first rollback journal`);
 
   const retry = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     [
       "--input-type=module",
       "-e",
@@ -724,7 +765,7 @@ function runRejectedRenameRollbackProof(
 ): void {
   const fixture = createPairingTransactionFixture(options.tmp, "rejected-rename", journalBasename);
   const proof = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     [
       "--input-type=module",
       "-e",
@@ -893,12 +934,12 @@ function gatewayLogDetail(logFile: string, secret: string): string {
   return log.slice(-20_000).replaceAll(secret, "<redacted-gateway-token>");
 }
 
-async function runLiveConfigTokenSelfApprovalProof(options: ProofOptions): Promise<void> {
+async function runLiveStoredDeviceAuthSelfApprovalProof(options: ProofOptions): Promise<void> {
   const packageDir = path.dirname(options.dist);
   const openclawEntry = path.join(packageDir, "openclaw.mjs");
   requireLiveProof(fs.existsSync(openclawEntry), "reviewed OpenClaw CLI entrypoint missing");
 
-  const liveRoot = path.join(options.tmp, "device-approval-live-config-token");
+  const liveRoot = path.join(options.tmp, "device-approval-live-stored-auth");
   const stateDir = path.join(liveRoot, "state");
   const homeDir = path.join(liveRoot, "home");
   const configPath = path.join(liveRoot, "openclaw.json");
@@ -907,17 +948,19 @@ async function runLiveConfigTokenSelfApprovalProof(options: ProofOptions): Promi
   fs.mkdirSync(homeDir, { recursive: true });
   const port = await reserveLoopbackPort();
   const gatewayToken = crypto.randomBytes(32).toString("hex");
-  fs.writeFileSync(
-    configPath,
-    JSON.stringify({
-      gateway: {
-        mode: "local",
-        bind: "loopback",
-        port,
-        auth: { mode: "token", token: gatewayToken },
-      },
-    }),
-  );
+  const writeGatewayConfig = (auth: Record<string, unknown>) =>
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        gateway: {
+          mode: "local",
+          bind: "loopback",
+          port,
+          auth,
+        },
+      }),
+    );
+  writeGatewayConfig({ mode: "none" });
   const {
     OPENCLAW_GATEWAY_PASSWORD: _gatewayPassword,
     OPENCLAW_GATEWAY_PORT: _gatewayPort,
@@ -937,28 +980,29 @@ async function runLiveConfigTokenSelfApprovalProof(options: ProofOptions): Promi
     OPENCLAW_STATE_DIR: stateDir,
   };
   const runCli = (args: string[]) =>
-    spawnSync(process.execPath, [openclawEntry, ...args], {
+    spawnSync(options.nodeExecutable, [openclawEntry, ...args], {
       cwd: packageDir,
       encoding: "utf8",
       env,
       timeout: Math.min(options.timeoutMs, 60_000),
     });
 
-  const gatewayLogFd = fs.openSync(gatewayLog, "w");
-  const gateway = spawn(process.execPath, [openclawEntry, "gateway", "run"], {
-    cwd: packageDir,
-    env,
-    stdio: ["ignore", gatewayLogFd, gatewayLogFd],
-  });
-  fs.closeSync(gatewayLogFd);
+  const startGateway = (gatewayEnv: NodeJS.ProcessEnv, append: boolean) => {
+    const gatewayLogFd = fs.openSync(gatewayLog, append ? "a" : "w");
+    const child = spawn(options.nodeExecutable, [openclawEntry, "gateway", "run"], {
+      cwd: packageDir,
+      env: gatewayEnv,
+      stdio: ["ignore", gatewayLogFd, gatewayLogFd],
+    });
+    fs.closeSync(gatewayLogFd);
+    return child;
+  };
+  let gateway = startGateway(env, false);
   try {
     await waitForGatewayReady(gateway, port, options.timeoutMs);
 
     const bootstrap = runCli(["devices", "list", "--json"]);
-    requireSuccess(
-      bootstrap,
-      "bootstrap real stored device identity with configured gateway token",
-    );
+    requireSuccess(bootstrap, "bootstrap real stored device identity through local pairing");
     const deviceAuthPath = path.join(stateDir, "identity", "device-auth.json");
     const identityPath = path.join(stateDir, "identity", "device.json");
     const authStore = readJsonObject(deviceAuthPath, "real stored device auth");
@@ -998,6 +1042,11 @@ async function runLiveConfigTokenSelfApprovalProof(options: ProofOptions): Promi
       "stored device credential does not match the server pairing token before repair",
     );
 
+    await stopChild(gateway);
+    writeGatewayConfig({ mode: "token" });
+    gateway = startGateway({ ...env, OPENCLAW_GATEWAY_TOKEN: gatewayToken }, true);
+    await waitForGatewayReady(gateway, port, options.timeoutMs);
+
     const createSession = runCli([
       "gateway",
       "call",
@@ -1023,7 +1072,13 @@ async function runLiveConfigTokenSelfApprovalProof(options: ProofOptions): Promi
       );
     requireLiveProof(
       repairRequests.length === 1,
-      `expected one exact real same-device repair, found ${repairRequests.length}`,
+      [
+        `expected one exact real same-device repair, found ${repairRequests.length}`,
+        `trigger status: ${String(createSession.status)}`,
+        `trigger stdout: ${String(createSession.stdout).trim()}`,
+        `trigger stderr: ${String(createSession.stderr).trim()}`,
+        `pending state: ${JSON.stringify(pending)}`,
+      ].join("\n"),
     );
     const repair = repairRequests[0] as Record<string, unknown>;
     requireLiveProof(
@@ -1046,15 +1101,12 @@ async function runLiveConfigTokenSelfApprovalProof(options: ProofOptions): Promi
     const configuredGateway = asRecord(configuredBeforeApproval.gateway);
     const configuredAuth = asRecord(configuredGateway?.auth);
     requireLiveProof(
-      configuredAuth?.token === gatewayToken,
-      "configured shared gateway token disappeared before approval",
+      configuredAuth?.mode === "token" && configuredAuth.token === undefined,
+      "gateway token auth was not isolated from the stored-device-auth client",
     );
 
     const approval = runCli(["devices", "approve", String(repair.requestId), "--json"]);
-    requireSuccess(
-      approval,
-      "approve real same-device repair with configured shared token present",
-    );
+    requireSuccess(approval, "approve real same-device repair with stored device auth");
 
     const pendingAfter = readJsonObject(pendingPath, "real pending state after approval");
     requireLiveProof(
@@ -1100,8 +1152,8 @@ async function runLiveConfigTokenSelfApprovalProof(options: ProofOptions): Promi
     const configuredGatewayAfter = asRecord(configuredAfterApproval.gateway);
     const configuredAuthAfter = asRecord(configuredGatewayAfter?.auth);
     requireLiveProof(
-      configuredAuthAfter?.token === gatewayToken,
-      "configured shared gateway token changed during stored-device-auth approval",
+      configuredAuthAfter?.mode === "token" && configuredAuthAfter.token === undefined,
+      "gateway token auth configuration changed during stored-device-auth approval",
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1116,7 +1168,7 @@ async function runLiveConfigTokenSelfApprovalProof(options: ProofOptions): Promi
 
 export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptions): Promise<void> {
   const patch = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     ["--experimental-strip-types", options.patchScript, options.dist],
     {
       encoding: "utf8",
@@ -1131,7 +1183,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   );
 
   const audit = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     ["--experimental-strip-types", options.patchScript, "--audit", options.dist],
     {
       encoding: "utf8",
@@ -1140,17 +1192,21 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   );
   requireSuccess(audit, "audit bounded device self-approval patch");
   for (const marker of [
+    "gateway call device-identity runtime:",
     "devices CLI approval runtime:",
+    "device-token scope-upgrade gateway auth runtime:",
     "device pairing gateway handler:",
     "canonical device pairing state runtime:",
-    "Summary: 3 OK · 0 missing",
+    "Summary: 5 OK · 0 missing",
   ]) {
     requireIncludes(audit.stdout, marker, "device self-approval audit");
   }
 
   const sources = readDistSources(options.dist);
   for (const marker of [
+    "nemoclaw: force device identity for loopback pairing bootstrap",
     "nemoclaw: reach gateway for bounded same-device scope approval",
+    "nemoclaw: route bounded CLI device-token scope upgrade into pairing",
     "nemoclaw: bounded same-device scope approval",
     "nemoclaw: validate bounded self-approval inside pairing lock",
     'CLI: "cli"',
@@ -1194,7 +1250,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   const packageDir = path.dirname(options.dist);
   const install = spawnSync(
     "npm",
-    ["install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
+    ["install", "--ignore-scripts", "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund"],
     { cwd: packageDir, encoding: "utf8", timeout: 120_000 },
   );
   requireSuccess(install, "install reviewed OpenClaw runtime dependencies without scripts");
@@ -1294,7 +1350,7 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   }
   const deviceBootstrapUrl = pathToFileURL(deviceBootstrapFile).href;
   const runtimeProof = spawnSync(
-    process.execPath,
+    options.nodeExecutable,
     [
       "--input-type=module",
       "-e",
@@ -1462,5 +1518,5 @@ if (!["operator.pairing", "operator.read", "operator.write"].every((scope) => sc
   runPairingCrashDirectionProof(options, deviceBootstrapUrl, journalBasename, "pending");
   runPairingCrashDirectionProof(options, deviceBootstrapUrl, journalBasename, "paired");
   runRejectedRenameRollbackProof(options, deviceBootstrapUrl, journalBasename);
-  await runLiveConfigTokenSelfApprovalProof(options);
+  await runLiveStoredDeviceAuthSelfApprovalProof(options);
 }

@@ -14,7 +14,7 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml"
 const JOB_NAME = "openclaw-plugin-runtime-exdev";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const RELEASE_BUILDER_IMAGE =
-  "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d";
+  "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
 
 type WorkflowStep = {
   env?: Record<string, unknown>;

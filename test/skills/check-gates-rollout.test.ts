@@ -28,7 +28,7 @@ describe("maintainer merge-gate check-name rollout", () => {
 
     expect(output).toMatchObject({
       allPass: true,
-      gates: { ci: { pass: true } },
+      gates: { ci: { pass: true, trustedCustomCheckId: 8000 } },
     });
   });
 });

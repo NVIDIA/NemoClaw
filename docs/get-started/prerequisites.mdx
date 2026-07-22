@@ -82,15 +82,15 @@ Refer to the [troubleshooting guide](../reference/troubleshooting) for the overr
 
 ## Platforms
 
-The following table lists tested platforms and deferred platforms with a documented preparation path.
-A Deferred row is available for evaluation only and is not a support claim.
+The following table lists platforms with a documented installation path.
+A Tested with limitations row applies only to the configuration in its notes.
 The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json), the single source of truth kept in sync by CI and QA.
 
 {/* platform-matrix:begin */}
 | OS | Container runtime | Status | Notes |
 |----|-------------------|--------|-------|
 | DGX OS (Spark) | Docker | Tested | Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
-| DGX OS (Station) | Docker | Deferred | Deferred. For evaluation on a qualifying DGX Station GB300, see [Additional Setup for DGX Station](additional-setup/dgx-station-preparation) before the Quickstart. |
+| DGX OS (Station) | Docker | Tested with limitations | Tested with limitations across qualified profiles on one physical DGX Station GB300. Dual-Station configurations are not yet validated, and dedicated CI coverage is not available. See [Additional Setup for DGX Station](additional-setup/dgx-station-preparation) before the Quickstart. |
 | Linux | Docker | Tested | Primary tested path. Ubuntu 24.04 has host-level onboarding validation. A digest-pinned Ubuntu 26.04 userspace lane builds the CLI and runs preflight, installer, and platform contracts on eligible main pushes; Docker-host, AppArmor, Landlock, and live onboarding validation on 26.04 remain pending. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Start the container runtime (Colima or Docker Desktop) before running the installer. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight. |
 | Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. See [Additional Setup for Windows Machines](additional-setup/windows-preparation) before the Quickstart. |
@@ -105,8 +105,9 @@ Use only the page that matches your host.
 
 ### DGX Station Express Preparation
 
-DGX Station remains Deferred.
-If you are evaluating a qualifying DGX Station GB300, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation) before the Quickstart.
+DGX Station is Tested with limitations on one qualifying DGX Station GB300.
+Dual-Station configurations are not yet validated.
+Follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation) before the Quickstart.
 
 ### Windows Preparation
 

@@ -89,7 +89,7 @@ describe("platform Vitest main workflow", () => {
     const fullSuite = step("wsl-vitest", "Run full Vitest suite in WSL").run ?? "";
     const rootSuite = step("wsl-vitest", "Run root-required Vitest contracts in WSL").run ?? "";
 
-    expect(job("wsl-vitest")["timeout-minutes"]).toBe(30);
+    expect(job("wsl-vitest")["timeout-minutes"]).toBe(90);
     expect(job("wsl-vitest").strategy).toMatchObject({
       "fail-fast": false,
       matrix: { shard: [1, 2, 3, 4] },

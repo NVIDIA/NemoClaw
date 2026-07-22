@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import crypto from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
-import { dockerBuild, dockerImageInspectFormat, dockerRmi } from "../../adapters/docker";
+import { dockerImageInspectFormat, dockerRmi } from "../../adapters/docker";
 import { loadAgent } from "../../agent/defs";
+import {
+  ensureAgentBaseImage,
+  pinTrustedAgentBaseImageOverrideForOperation,
+} from "../../agent/onboard";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import * as nim from "../../inference/nim";
@@ -16,8 +19,8 @@ import {
   getResumeSandboxGpuOverrides,
   resolveSandboxGpuConfig,
 } from "../../onboard/sandbox-gpu-mode";
-import { ROOT } from "../../runner";
 import { redact } from "../../security/redact";
+import type { TrustedLocalBaseImageOverride } from "../../sandbox-base-image";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
@@ -41,6 +44,7 @@ export type DcodeRebuildPreflightBail = (message: string, code?: number) => neve
 
 type PinnedDcodeBaseImage = {
   readonly imageRef: string;
+  readonly trustedLocalOverride: TrustedLocalBaseImageOverride;
   dispose(): boolean;
   verify(): boolean;
 };
@@ -271,21 +275,19 @@ function buildPinnedDcodeBaseImage(bail: DcodeRebuildPreflightBail): PinnedDcode
   if (!agent.dockerfileBasePath) {
     fail("DCode is missing its sandbox base Dockerfile", bail);
   }
-  const imageRef = `nemoclaw-dcode-rebuild-base:${String(process.pid)}-${crypto.randomUUID()}`;
-  const result = dockerBuild(agent.dockerfileBasePath, imageRef, ROOT, {
-    ignoreError: true,
-    stdio: ["ignore", "inherit", "inherit"],
-  });
-  if (result.error || result.status !== 0) {
-    try {
-      dockerRmi(imageRef, { ignoreError: true, suppressOutput: true });
-    } catch {
-      // The build failure is the actionable error.
-    }
-    const detail = result.error
-      ? `: ${result.error.message}`
-      : ` (exit ${String(result.status ?? "unknown")})`;
-    fail(`DCode base image could not be built${detail}`, bail);
+  let result: ReturnType<typeof ensureAgentBaseImage>;
+  try {
+    result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
+  } catch (error) {
+    fail(
+      `DCode base image could not be built: ${error instanceof Error ? error.message : String(error)}`,
+      bail,
+    );
+  }
+  const imageRef = result.imageTag;
+  const trustedLocalOverride = result.trustedLocalOverride;
+  if (!imageRef || !trustedLocalOverride || trustedLocalOverride.ref !== imageRef) {
+    fail("DCode base image did not retain its current build-operation proof", bail);
   }
   const imageId = inspectLocalImageId(imageRef);
   if (!imageId) {
@@ -320,6 +322,7 @@ function buildPinnedDcodeBaseImage(bail: DcodeRebuildPreflightBail): PinnedDcode
   process.on("exit", dispose);
   return {
     imageRef,
+    trustedLocalOverride,
     dispose,
     verify: () => inspectLocalImageId(imageRef) === imageId,
   };
@@ -332,10 +335,15 @@ async function withPinnedBaseImage<T>(
   const envName = "NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF";
   const hadPrevious = Object.hasOwn(process.env, envName);
   const previous = process.env[envName];
+  const restoreTrustedOverride = pinTrustedAgentBaseImageOverrideForOperation(
+    envName,
+    pinned.trustedLocalOverride,
+  );
   process.env[envName] = pinned.imageRef;
   try {
     return await action();
   } finally {
+    restoreTrustedOverride();
     if (hadPrevious && previous !== undefined) process.env[envName] = previous;
     else delete process.env[envName];
   }
