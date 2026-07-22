@@ -47,28 +47,6 @@ describe("security posture workflow boundary", () => {
     );
   });
 
-  it("requires bounded swap only for Hermes before the live test", () => {
-    const workflow = readSecurityPostureWorkflow();
-    const job = (workflow.jobs as Record<string, Record<string, unknown>>)["security-posture"];
-    const jobSteps = job.steps as Array<Record<string, unknown>>;
-    const swap = jobSteps.find((step) => step.name === "Add swap for Hermes security posture")!;
-    const run = jobSteps.find((step) => step.name === "Run security posture live Vitest test")!;
-
-    expect(swap).toBeDefined();
-    expect(swap.if).toBe("${{ matrix.agent == 'hermes' }}");
-    expect(jobSteps.indexOf(swap)).toBeLessThan(jobSteps.indexOf(run));
-    expect(validateSecurityPostureWorkflow(workflow)).toEqual([]);
-
-    swap.if = "${{ always() }}";
-    swap.run = String(swap.run).replace('sudo swapon "$swap_file"', 'echo "swap omitted"');
-    expect(validateSecurityPostureWorkflow(workflow)).toEqual(
-      expect.arrayContaining([
-        "security-posture swap must run only for the Hermes matrix entry",
-        "security-posture step 'Add swap for Hermes security posture' must run: sudo swapon \"$swap_file\"",
-      ]),
-    );
-  });
-
   it("rejects missing agent coverage, mode drift, and broadly scoped credentials", () => {
     const hermesMatrixEntry = [
       "          - agent: hermes",

@@ -8,8 +8,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildLiveVitestArgs,
+  HERMES_SECURITY_POSTURE_SWAP_BYTES,
   LIVE_VITEST_PROJECT,
   type LiveVitestSpawner,
+  needsHermesSecurityPostureSwap,
   RISK_SIGNAL_REPORTER,
   runLiveVitestCommand,
   validateLiveProject,
@@ -202,6 +204,54 @@ describe("runLiveVitestCommand (#6961)", () => {
     expect(() => runLiveVitestCommand(validArgs, spawn)).toThrow(launchError);
   });
 
+  it("provisions bounded swap before hosted Hermes security posture", () => {
+    const calls: Array<Parameters<LiveVitestSpawner>> = [];
+    const spawn: LiveVitestSpawner = (...args) => {
+      calls.push(args);
+      return { status: 0 };
+    };
+    const env = {
+      GITHUB_ACTIONS: "true",
+      NEMOCLAW_AGENT: "hermes",
+      NEMOCLAW_E2E_SECURITY_POSTURE: "1",
+    };
+
+    expect(
+      runLiveVitestCommand(["run", "--test-path", "test/e2e/live/hermes-e2e.test.ts"], spawn, env),
+    ).toBe(0);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.[0]).toBe("sudo");
+    expect(calls[0]?.[1]).toEqual(
+      expect.arrayContaining([
+        "bash",
+        "-c",
+        "hermes-security-posture-swap",
+        "/mnt/nemoclaw-hermes-security-posture.swap",
+        String(HERMES_SECURITY_POSTURE_SWAP_BYTES),
+      ]),
+    );
+    expect(calls[0]?.[1][2]).toContain('fallocate -l "$swap_size_bytes" "$swap_file"');
+    expect(calls[0]?.[1][2]).toContain('swapon "$swap_file"');
+    expect(calls[1]?.[0]).toBe("npx");
+  });
+
+  it("fails closed before Vitest when Hermes swap provisioning fails", () => {
+    const calls: string[] = [];
+    const spawn: LiveVitestSpawner = (command) => {
+      calls.push(command);
+      return { status: 23 };
+    };
+
+    expect(
+      runLiveVitestCommand(["run", "--test-path", "test/e2e/live/hermes-e2e.test.ts"], spawn, {
+        GITHUB_ACTIONS: "true",
+        NEMOCLAW_AGENT: "hermes",
+        NEMOCLAW_E2E_SECURITY_POSTURE: "true",
+      }),
+    ).toBe(23);
+    expect(calls).toEqual(["sudo"]);
+  });
+
   it.each([
     [
       "unknown option",
@@ -243,5 +293,33 @@ describe("runLiveVitestCommand (#6961)", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('expected "run"');
+  });
+});
+
+describe("needsHermesSecurityPostureSwap", () => {
+  const testPath = "test/e2e/live/hermes-e2e.test.ts";
+  const matchingEnv = {
+    GITHUB_ACTIONS: "true",
+    NEMOCLAW_AGENT: "hermes",
+    NEMOCLAW_E2E_SECURITY_POSTURE: "1",
+  };
+
+  it("matches only the hosted Hermes posture invocation", () => {
+    expect(needsHermesSecurityPostureSwap(testPath, matchingEnv)).toBe(true);
+    expect(needsHermesSecurityPostureSwap("test/e2e/live/full-e2e.test.ts", matchingEnv)).toBe(
+      false,
+    );
+    expect(needsHermesSecurityPostureSwap(testPath, { ...matchingEnv, GITHUB_ACTIONS: "" })).toBe(
+      false,
+    );
+    expect(
+      needsHermesSecurityPostureSwap(testPath, { ...matchingEnv, NEMOCLAW_AGENT: "openclaw" }),
+    ).toBe(false);
+    expect(
+      needsHermesSecurityPostureSwap(testPath, {
+        ...matchingEnv,
+        NEMOCLAW_E2E_SECURITY_POSTURE: "",
+      }),
+    ).toBe(false);
   });
 });

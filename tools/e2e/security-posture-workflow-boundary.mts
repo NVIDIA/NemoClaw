@@ -10,7 +10,6 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "security-posture";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
-const HERMES_SWAP_STEP_NAME = "Add swap for Hermes security posture";
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -141,33 +140,7 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
   }
   requireRunContains(errors, install, "bash scripts/install-openshell.sh");
 
-  const swapSteps = jobSteps.filter((step) => step.name === HERMES_SWAP_STEP_NAME);
-  if (swapSteps.length !== 1) {
-    errors.push(`${JOB_NAME} must provision Hermes security-posture swap exactly once`);
-  } else {
-    const swap = swapSteps[0]!;
-    if (swap.if !== "${{ matrix.agent == 'hermes' }}") {
-      errors.push(`${JOB_NAME} swap must run only for the Hermes matrix entry`);
-    }
-    for (const fragment of [
-      "swap_file=/mnt/nemoclaw-hermes-security-posture.swap",
-      'sudo fallocate -l 32G "$swap_file"',
-      'sudo chmod 0600 "$swap_file"',
-      'sudo mkswap "$swap_file"',
-      'sudo swapon "$swap_file"',
-      "swapon --show",
-      "free -h",
-      "df -h / /mnt",
-      "docker system df",
-    ]) {
-      requireRunContains(errors, swap, fragment);
-    }
-  }
-
   const run = namedStep(jobSteps, "Run security posture live Vitest test");
-  if (swapSteps.length === 1 && jobSteps.indexOf(swapSteps[0]!) >= jobSteps.indexOf(run)) {
-    errors.push(`${JOB_NAME} must provision Hermes swap before the live test`);
-  }
   if (record(run.env).NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push(`${JOB_NAME} inference key must be scoped to the live test step`);
   }

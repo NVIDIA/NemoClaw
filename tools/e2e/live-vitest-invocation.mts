@@ -20,6 +20,12 @@ const { spawnExitCode } = processExit;
 export const LIVE_VITEST_PROJECT = "e2e-live";
 export const LIVE_TEST_ROOT = "test/e2e/live/";
 export const RISK_SIGNAL_REPORTER = "test/e2e/risk-signal-reporter.ts";
+// Credentialed E2E trusts the workflow from main but executes this helper from
+// the reviewed PR checkout, so exact-head resource setup must live here.
+export const HERMES_SECURITY_POSTURE_SWAP_BYTES = 32 * 1024 * 1024 * 1024;
+
+const HERMES_SECURITY_POSTURE_TEST = "test/e2e/live/hermes-e2e.test.ts";
+const HERMES_SECURITY_POSTURE_SWAP_FILE = "/mnt/nemoclaw-hermes-security-posture.swap";
 
 const SHELL_METACHARACTER = /[^A-Za-z0-9_./^$=:@+-]/u;
 const TEST_PATH_PATTERN = /^[A-Za-z0-9_./-]+$/u;
@@ -138,23 +144,89 @@ export function buildLiveVitestArgs(invocation: LiveVitestInvocation): string[] 
   ];
 }
 
-export function runLiveVitestCli(cliArgs: string[], spawn: LiveVitestSpawner = spawnSync): number {
-  const argv = buildLiveVitestArgs(parseLiveVitestArgs(cliArgs));
-  const result = spawn("npx", argv, { stdio: "inherit" });
-  if (result.error) {
-    throw result.error;
-  }
+function enabled(value: string | undefined): boolean {
+  return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
+}
+
+export function needsHermesSecurityPostureSwap(testPath: string, env: NodeJS.ProcessEnv): boolean {
+  return (
+    testPath === HERMES_SECURITY_POSTURE_TEST &&
+    env.GITHUB_ACTIONS === "true" &&
+    env.NEMOCLAW_AGENT === "hermes" &&
+    enabled(env.NEMOCLAW_E2E_SECURITY_POSTURE)
+  );
+}
+
+function spawnResultExitCode(result: LiveVitestSpawnResult): number {
+  if (result.error) throw result.error;
   return spawnExitCode(result);
 }
 
-export function runLiveVitestCommand(argv: string[], spawn: LiveVitestSpawner = spawnSync): number {
+export function provisionHermesSecurityPostureSwap(
+  testPath: string,
+  env: NodeJS.ProcessEnv,
+  spawn: LiveVitestSpawner = spawnSync,
+): number {
+  if (!needsHermesSecurityPostureSwap(testPath, env)) return 0;
+
+  const script = `set -euo pipefail
+swap_file="$1"
+swap_size_bytes="$2"
+free -h
+df -h / /mnt
+swapon --show
+swapoff "$swap_file" 2>/dev/null || true
+rm -f "$swap_file"
+fallocate -l "$swap_size_bytes" "$swap_file"
+chmod 0600 "$swap_file"
+mkswap "$swap_file"
+swapon "$swap_file"
+swapon --show
+free -h
+df -h / /mnt
+docker system df`;
+  return spawnResultExitCode(
+    spawn(
+      "sudo",
+      [
+        "bash",
+        "-c",
+        script,
+        "hermes-security-posture-swap",
+        HERMES_SECURITY_POSTURE_SWAP_FILE,
+        String(HERMES_SECURITY_POSTURE_SWAP_BYTES),
+      ],
+      { stdio: "inherit" },
+    ),
+  );
+}
+
+export function runLiveVitestCli(
+  cliArgs: string[],
+  spawn: LiveVitestSpawner = spawnSync,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const invocation = parseLiveVitestArgs(cliArgs);
+  const testPath = validateLiveTestPath(invocation.testPath);
+  const argv = buildLiveVitestArgs({ ...invocation, testPath });
+  const swapExitCode = provisionHermesSecurityPostureSwap(testPath, env, spawn);
+  if (swapExitCode !== 0) return swapExitCode;
+  const result = spawn("npx", argv, { stdio: "inherit" });
+  return spawnResultExitCode(result);
+}
+
+export function runLiveVitestCommand(
+  argv: string[],
+  spawn: LiveVitestSpawner = spawnSync,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
   const [command, ...cliArgs] = argv;
   if (command !== "run") {
     throw new Error(
       `unsupported live Vitest command ${JSON.stringify(command ?? "")}; expected "run"`,
     );
   }
-  return runLiveVitestCli(cliArgs, spawn);
+  return runLiveVitestCli(cliArgs, spawn, env);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
