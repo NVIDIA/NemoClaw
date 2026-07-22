@@ -6,7 +6,7 @@ Advisory audit revalidated: 2026-07-21
 
 WeChat locked-graph audit revalidated: 2026-07-12
 
-Scope: NemoClaw runtime pin `openclaw@2026.6.10`, runtime helper pin `@zed-industries/codex-acp@0.11.1`, optional OpenClaw plugins, and built-in messaging OpenClaw plugins.
+Scope: NemoClaw runtime pin `openclaw@2026.6.10`, the locked `mcporter@0.7.3` runtime graph, runtime helper pin `@zed-industries/codex-acp@0.11.1`, optional OpenClaw plugins, and built-in messaging OpenClaw plugins.
 
 ## Issue #5591 Acceptance Mapping
 
@@ -67,7 +67,7 @@ The audit reports their affected dependency chains as separate moderate entries.
 These findings have upstream fixes, but applying them would change additional reviewed package shrinkwraps.
 The current remediation does not silently extend its authority to those graphs.
 
-This review is an advisory snapshot for the direct OpenClaw runtime package, Codex ACP runtime helper, optional plugins, messaging plugins, and their npm dependency graphs at review time. Default PR and main CI now rematerialize those exact direct packages from SRI-verified reviewed local archives under Node `22.22.2`, install with lifecycle scripts disabled, run `npm audit --omit=dev --json`, and upload the raw reports from `coverage/reviewed-npm-audit`. The configured threshold in `ci/reviewed-npm-audit.json` is `high`. The same job independently installs and audits the committed mcporter production lock. This gate complements, but does not replace, the committed npm integrity pins and install-time archive checks.
+This review is an advisory snapshot for the direct OpenClaw runtime package, the locked `mcporter@0.7.3` graph, Codex ACP runtime helper, optional plugins, messaging plugins, and their npm dependency graphs at review time. Default PR and main CI now rematerialize those exact direct packages from SRI-verified reviewed local archives under Node `22.22.2`, install with lifecycle scripts disabled, run `npm audit --omit=dev --json`, and upload the raw reports from `coverage/reviewed-npm-audit`. The configured threshold in `ci/reviewed-npm-audit.json` is `high`. The same job independently installs and audits the committed mcporter production lock. This gate complements, but does not replace, the committed npm integrity pins and install-time archive checks.
 
 ## Transitive Dependency Graph Rationale
 
