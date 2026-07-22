@@ -3,6 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */}
 
+## v0.0.92
+
+NemoClaw v0.0.92 updates OpenClaw and its sandbox Node.js runtime, documents headless deployment, and strengthens security, installer, platform, and live E2E validation.
+
+- OpenClaw sandboxes now use OpenClaw 2026.7.1 and Node.js 22.23.1.
+  The reviewed build remediates vulnerable Axios plugin copies and the affected OpenTelemetry Jaeger diagnostics graph with integrity-pinned packages.
+  It also locks patched `mcporter` dependencies, preserves device-scope enforcement and private state during upgrades, and validates upgrades from NemoClaw v0.0.89.
+  A real-artifact regression confirms malformed Jaeger trace and baggage headers do not terminate the diagnostics process.
+- Remote deployment guidance now uses one provider-neutral headless Linux server workflow for OpenClaw, Hermes, and Deep Agents Code.
+  The guide covers unattended installation, loopback-only access, readiness checks, policy setup, updates, and recovery after a host reboot.
+  Retired Brev deployment routes redirect to the shared workflow.
+  For more information, refer to [Deploy NemoClaw to a Headless Server](/user-guide/openclaw/deployment/deploy-to-headless-server).
+- Live E2E tests now report ordered semantic phases, outcomes, durations, resource-release timing, and secret-safe stall diagnostics.
+  Each run saves a progress artifact that identifies where failures or stalls occurred.
+  Collection-time validation rejects missing or invalid phase plans before tests use live infrastructure.
+- Installer integrity checks now accept the reviewed OpenShell Homebrew formula transition only when the template hash matches its exact release asset set.
+  This maintains the fail-closed boundary while preserving the current archive-only installer contract.
+- Platform and image validation now compares canonical macOS watcher targets, raises the full WSL suite limit from 60 to 90 minutes, and capability-gates its Docker-only Hermes contract.
+  The WSL tag test still verifies that a rejected concurrent update cannot replace `latest`.
+  Hosted Hermes image exports now provision bounded swap before the final layer export.
+  Hermes guard tests raise the child-process allowance from 5 to 90 seconds and use WSL fixtures that match production ownership.
+  The validation and test changes do not alter runtime behavior or final image contents.
+- The canonical changelog now includes the previously missed v0.0.91 entry and corrects its legacy inference-selector guidance to match the tagged code.
+  This restores release-history validation without changing the immutable v0.0.91 tag.
+
 ## v0.0.91
 
 NemoClaw v0.0.91 strengthens completed sandbox images, makes rebuild replacement safer, documents the Hermes API token lifecycle, expands qualified DGX Station guidance, and restores historical release validation.
