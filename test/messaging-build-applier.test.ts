@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyMessagingBuildPhase,
   describeMessagingBuildPhase,
@@ -16,6 +16,24 @@ import {
 } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { execTimeout, testTimeout } from "./helpers/timeouts";
 import { withLegacyMessagingPlanEnvDirect } from "./messaging-plan-test-helper";
+
+const { remediateReviewedArchive } = vi.hoisted(() => ({
+  remediateReviewedArchive: vi.fn(({ archivePath }: { archivePath: string }) => ({
+    archivePath,
+    integrity: "sha512-messaging-test-remediation",
+    remediated: false,
+  })),
+}));
+
+vi.mock("../scripts/lib/openclaw-npm-remediation.mts", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("../scripts/lib/openclaw-npm-remediation.mts")>();
+  return { ...original, remediateReviewedOpenClawArchive: remediateReviewedArchive };
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
