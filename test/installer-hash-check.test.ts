@@ -57,6 +57,10 @@ const ASSET_DIGESTS = new Map([
 const FORMULA_ASSET = "openshell.rb";
 const FORMULA_DIGEST = ASSET_DIGESTS.get(FORMULA_ASSET)!;
 const ASSETS = [...ASSET_DIGESTS.keys()].filter((asset) => asset !== FORMULA_ASSET);
+const ARCHIVE_INSTALLER_TEMPLATE_SHA256 =
+  "a101f002bd8e02aa7b38960ddcb76c9fca419bc3766f6870446f6a7e99e14d78";
+const FORMULA_INSTALLER_TEMPLATE_SHA256 =
+  "2b6a6195241d6b946fe29503d8d2d99d5b864864458f510ca129e3396248ac58";
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_ASSET = "openshell-driver-vm-x86_64-unknown-linux-gnu.tar.gz";
 const OFFICIAL_UNEXPECTED_INSTALLER_DIGEST =
@@ -543,6 +547,19 @@ function renderBrevTemplate(openshellVersion: string, pinFunction: string): stri
   );
 }
 
+function mapFixtureTemplateToFormulaContract(source: string): string {
+  // The fixture renders the current archive-only installer. Rebind the hashes
+  // in the copied parser so this test exercises the formula contract without
+  // copying the dependent PR's installer implementation into this branch.
+  const withoutArchiveContract = source.replace(ARCHIVE_INSTALLER_TEMPLATE_SHA256, "0".repeat(64));
+  const formulaContract = withoutArchiveContract.replace(
+    FORMULA_INSTALLER_TEMPLATE_SHA256,
+    ARCHIVE_INSTALLER_TEMPLATE_SHA256,
+  );
+  assert.notEqual(formulaContract, source, "trusted parser formula contract fixture must change");
+  return formulaContract;
+}
+
 function createFixture(
   openshellVersion = "0.0.72",
   formatting: PinFormatting = "canonical",
@@ -674,6 +691,7 @@ function runFixture(
   trustedChecker = false,
   formatting: PinFormatting = "canonical",
   includeFormula = false,
+  formulaTemplate = false,
 ) {
   const fixtureRoot = createFixture(openshellVersion, formatting, includeFormula);
   const targetChecker = path.join(fixtureRoot, "scripts", "check-installer-hash.sh");
@@ -688,9 +706,15 @@ function runFixture(
   tempDirs.push(trustedRoot);
   fs.mkdirSync(path.dirname(trustedParserPath), { recursive: true });
   fs.copyFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), trustedCheckerPath);
-  fs.copyFileSync(
+  const trustedParserSource = fs.readFileSync(
     path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
+    "utf8",
+  );
+  fs.writeFileSync(
     trustedParserPath,
+    formulaTemplate
+      ? mapFixtureTemplateToFormulaContract(trustedParserSource)
+      : trustedParserSource,
   );
   fs.writeFileSync(
     targetChecker,
@@ -742,7 +766,7 @@ describe("installer hash verification", () => {
   });
 
   it("verifies the reviewed Homebrew formula during the trust-anchor transition", () => {
-    const result = runFixture("complete", undefined, true, "canonical", true);
+    const result = runFixture("complete", undefined, true, "canonical", true, true);
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(`OK: installer ${FORMULA_ASSET} (${FORMULA_DIGEST})`);
@@ -750,12 +774,30 @@ describe("installer hash verification", () => {
   });
 
   it("fails closed when the Homebrew formula digest does not match", () => {
-    const result = runFixture("formula-mismatch", undefined, true, "canonical", true);
+    const result = runFixture("formula-mismatch", undefined, true, "canonical", true, true);
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
       "STALE: installer openshell.rb digest does not match the pinned v0.0.72 release asset",
     );
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("rejects a formula pin when the installer keeps the archive-only template", () => {
+    const result = runFixture("complete", undefined, true, "canonical", true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).toContain("unexpected=[openshell.rb]");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("rejects the formula installer template when its formula pin is missing", () => {
+    const result = runFixture("complete", undefined, true, "canonical", false, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).toContain("missing=[openshell.rb]");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
