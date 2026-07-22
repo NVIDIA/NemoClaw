@@ -222,8 +222,9 @@ describe("runRebuildRecreatePhase handoff", () => {
     const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
     process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "0";
     try {
+      let observedBackupMarker: string | undefined;
       vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
-        expect(process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBe("1");
+        observedBackupMarker = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
         throw new Error("inner onboard failed");
       });
 
@@ -231,6 +232,7 @@ describe("runRebuildRecreatePhase handoff", () => {
         "bail: Recreate failed (stale-sandbox recovery).",
       );
 
+      expect(observedBackupMarker).toBe("1");
       expect(process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBe("0");
     } finally {
       restoreEnv("NEMOCLAW_RECREATE_WITHOUT_BACKUP", previousRecreateWithoutBackup);
