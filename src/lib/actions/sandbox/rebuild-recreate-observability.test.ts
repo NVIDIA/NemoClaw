@@ -106,7 +106,7 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
   };
 }
 
-describe("runRebuildRecreatePhase observability handoff", () => {
+describe("runRebuildRecreatePhase handoff", () => {
   let session: Session;
 
   beforeEach(() => {
@@ -188,6 +188,54 @@ describe("runRebuildRecreatePhase observability handoff", () => {
       expect(process.env.NEMOCLAW_POLICY_TIER).toBe("open");
     } finally {
       restoreEnv("NEMOCLAW_POLICY_TIER", previousPolicyTier);
+    }
+  });
+
+  it("does not take a second backup during the inner recreate", async () => {
+    const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+    delete process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+    try {
+      let observedBackupMarker: string | undefined;
+      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+        observedBackupMarker = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+      });
+
+      await expect(
+        runRebuildRecreatePhase(
+          makeInput({
+            backupManifest: {
+              backupPath: "/tmp/rebuild-backups/alpha/2026-07-22T04-36-37-633Z",
+              timestamp: "2026-07-22T04-36-37-633Z",
+            } as never,
+          }),
+        ),
+      ).resolves.toBe(true);
+
+      expect(observedBackupMarker).toBe("1");
+      expect(process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBeUndefined();
+    } finally {
+      restoreEnv("NEMOCLAW_RECREATE_WITHOUT_BACKUP", previousRecreateWithoutBackup);
+    }
+  });
+
+  it("restores the caller backup marker after inner recreate failure", async () => {
+    const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+    process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "0";
+    try {
+      let observedBackupMarker: string | undefined;
+      vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async () => {
+        observedBackupMarker = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
+        throw new Error("inner onboard failed");
+      });
+
+      await expect(runRebuildRecreatePhase(makeInput())).rejects.toThrow(
+        "bail: Recreate failed (stale-sandbox recovery).",
+      );
+
+      expect(observedBackupMarker).toBe("1");
+      expect(process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP).toBe("0");
+    } finally {
+      restoreEnv("NEMOCLAW_RECREATE_WITHOUT_BACKUP", previousRecreateWithoutBackup);
     }
   });
 
