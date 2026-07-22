@@ -95,6 +95,16 @@ export function printSuccessfulRebuildSummary(
   printBaselineExclusionsRebuildSummary(input.sandboxName, writeLine);
 }
 
+function printHermesApiTokenChangeNotice(sandboxName: string, targetAgentName: string): void {
+  if (targetAgentName !== "hermes") {
+    return;
+  }
+  console.log(`    ${YW}\u26a0${R} Hermes API bearer token changed during rebuild.`);
+  console.log(
+    `    Retrieve the new token with \`${CLI_NAME} ${sandboxName} gateway-token --quiet\`.`,
+  );
+}
+
 export function resolveRestoredPolicyRegistryState(
   sandboxEntry: Pick<RebuildSandboxEntry, "policyPresetsFinalized">,
   restoredBuiltinPresets: readonly string[],
@@ -340,5 +350,7 @@ export async function runRebuildPostRestorePhase(
     bail(
       `Prepared backup recovery for '${sandboxName}' completed with unverified post-restore state.`,
     );
+    return;
   }
+  printHermesApiTokenChangeNotice(sandboxName, targetAgentName);
 }

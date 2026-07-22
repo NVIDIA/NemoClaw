@@ -92,6 +92,7 @@ Use these details when your first-run path needs more control.
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
       NEMOCLAW_NON_INTERACTIVE=1 \
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+      NEMOCLAW_AGENT=openclaw \
       NEMOCLAW_PROVIDER=build \
       NVIDIA_INFERENCE_API_KEY=<your-key> \
       NEMOCLAW_SANDBOX_NAME=my-gpt-claw \
@@ -99,7 +100,16 @@ Use these details when your first-run path needs more control.
     ```
 
     The example uses NVIDIA Endpoints.
+    Set `NEMOCLAW_AGENT` to `hermes` or `langchain-deepagents-code` to install another agent.
     Set `NEMOCLAW_PROVIDER` and the matching credential variable for another provider, then use a sandbox name that does not depend on a previous onboarding session.
+    To select a specific NemoClaw release, replace `vX.Y.Z` with its versioned release tag.
+    `NEMOCLAW_INSTALL_REF` is a higher-priority development override, so clear it when pinning a release tag.
+
+    ```bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_REF= NEMOCLAW_INSTALL_TAG=vX.Y.Z bash
+    ```
+
+    Keep both install variables on the `bash` side of the pipeline so the installer can read them.
     Do not place `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before `curl`, because the installer process cannot read it there.
     Refer to the [Commands reference](../reference/commands#nemoclaw-onboard) for the full non-interactive configuration.
   </Accordion>
@@ -119,13 +129,21 @@ Use these details when your first-run path needs more control.
     If the installer adds you to the `docker` group, run the printed `newgrp docker` command before you rerun it.
     On macOS, start Docker Desktop or Colima first.
 
+    When a coding agent reports that its execution sandbox blocked Docker, use its command-scoped approval flow, if available.
+    Approve only the exact Docker-dependent command that the coding agent requests to rerun outside the sandbox.
+    Do not change Docker socket permissions or grant broad host access only to bypass the restriction.
+    If your organization blocks command-scoped approval, stop the coding-agent setup and contact the administrator who manages coding-agent permissions.
+
     DGX Spark, qualifying Station GB300 hosts, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
     Station accepts the generic Ubuntu 24.04 ARM64 image and stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
+    It also accepts the exact April 2026 NVIDIA Colossus BaseOS and June 2026 NVIDIA AI Developer Tools profiles described in the Station preparation guide.
     On a qualifying Station, accepting the prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
     [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation) defines Station qualification, generic Ubuntu preparation, stock DGX OS validation, repair limits, and reboot handoff.
-    By default, unknown versions, unsafe release markers, NVIDIA BaseOS images, and other Station generations stop before host preparation; set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to bypass Station host automation.
+    By default, unknown versions, unsafe release markers, unmatched no-OTA factory images, and other Station generations stop before host preparation; set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to bypass Station host automation.
     For an explicit temporary override on genuine Station GB300 hardware with unrecognized release metadata, follow the `--force-station-install` safeguards in the Station preparation guide.
-    One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
+    Physical single-Station validation covers generic Ubuntu 24.04 ARM64, stock DGX OS `7.5.0`, the April 2026 NVIDIA Colossus BaseOS profile, and the June 2026 NVIDIA AI Developer Tools profile.
+    Clean-host end-to-end validation passed on generic Ubuntu and Colossus BaseOS; stock DGX OS and AI Developer Tools completed Station Express validation.
+    Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
     Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead; the flag selects the interactive prompt and requires terminal access.
     Refer to [Platform Support](../reference/platform-support) and [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for the current platform behavior.
 
@@ -199,8 +217,9 @@ Use these details when your first-run path needs more control.
     Before Station host preparation begins, the installer stores the accepted Express recipe in owner-only local state.
     If preparation requires a reboot or a new login, run the printed command to restore the recorded revision, agent, model, sandbox, policy tier, and gateway, dashboard, and vLLM ports without repeating the Express prompt.
     Generic Ubuntu preparation can change pinned packages and then exits with status `10`; reboot, sign in, and run that printed command to resume.
-    Stock DGX OS validation checks the factory stack in place without installing packages, restarting services, or rewriting the Docker runtime.
-    One physical DGX OS `7.5.0` GB300 validation completed, but Station remains Deferred pending repeat clean-host qualification and CI coverage.
+    Qualified DGX OS and factory-image validation checks the factory stack in place, with only the bounded repairs documented in the Station preparation guide.
+    Physical validation on one DGX Station GB300 covers the qualified generic Ubuntu, stock DGX OS `7.5.0`, April 2026 NVIDIA Colossus BaseOS, and June 2026 NVIDIA AI Developer Tools profiles.
+    Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
     To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
     The `--station-deepseek` flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
     The temporary `--force-station-install` flag has the same terminal requirement and bypasses only DGX release-metadata qualification on genuine Station GB300 hardware.
@@ -223,8 +242,8 @@ Use these details when your first-run path needs more control.
     Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer to choose a provider yourself.
 
     <Warning>
-    Express install automates the configuration but does not change DGX Station's Deferred support status.
-    One physical DGX OS 7.5 GB300 validation completed; repeat qualification from a clean host and CI coverage remain pending.
+    DGX Station is Tested with limitations across qualified profiles on one physical DGX Station GB300.
+    Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
     </Warning>
 
     The installer auto-launches `nemoclaw onboard` when it can find the new binary.

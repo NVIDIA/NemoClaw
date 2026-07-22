@@ -212,6 +212,7 @@ export async function preflightRebuildTargetRuntime(
       toolDisclosure: target.durableConfig.toolDisclosure,
       hermesToolGateways: target.hermesToolGateways,
       sandboxGpuConfig,
+      preResolvedBaseImageMetadata: recreateOptions.preResolvedBaseImageMetadata ?? null,
       gatewayPort: recreateOptions.targetGatewayPort,
       chatUiUrl: managesDashboard
         ? `http://127.0.0.1:${String(recreateOptions.controlUiPort)}`
