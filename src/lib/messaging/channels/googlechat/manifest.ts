@@ -253,11 +253,11 @@ export const googlechatManifest = {
       spec: "npm:@openclaw/googlechat@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.6.10":
-          "sha512-3ay7CEcNs2BKj4Y3IkqLIp2B+8RXRmWDFFGPkWk3qSjHRl3rsROpBFUDBbJI+33SzNsAubWum7mOo08by5i7LQ==",
+        "2026.7.1":
+          "sha512-Dv0xOmcxAThEr6hoK+ioofHNu18hfbIceQrEHX3AHZPpOUiTJvToVpA5eX87NQINewwfSJf0gVhE6kSbSk2Aew==",
       },
       tarballUrlByVersion: {
-        "2026.6.10": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.6.10.tgz",
+        "2026.7.1": "https://registry.npmjs.org/@openclaw/googlechat/-/googlechat-2026.7.1.tgz",
       },
       required: true,
     },
