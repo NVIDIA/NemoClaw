@@ -20,6 +20,7 @@ function writeProgress(
   durationMs: number,
   phase: string,
   phaseDurationMs: number,
+  phaseOutcome: string | undefined = phase === "inference" ? "failed" : "passed",
 ): void {
   const directory = path.join(root, run, scenario);
   fs.mkdirSync(directory, { recursive: true });
@@ -35,7 +36,7 @@ function writeProgress(
       phases: [
         {
           label: phase,
-          outcome: phase === "inference" ? "failed" : "passed",
+          ...(phaseOutcome === undefined ? {} : { outcome: phaseOutcome }),
           startedAtMs: 1_000,
           finishedAtMs: 1_000 + phaseDurationMs,
           durationMs: phaseDurationMs,
@@ -109,6 +110,19 @@ describe("test runtime audit", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-audit-invalid-"));
     try {
       fs.writeFileSync(path.join(root, "test-progress.json"), '{"version":1}\n', "utf8");
+      expect(() => auditTestRuntime([root])).toThrow(/invalid test progress summary/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unknown", "unexpected"],
+  ])("rejects a valid progress artifact with a %s phase outcome", (_case, outcome) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-audit-outcome-"));
+    try {
+      writeProgress(root, "run-1", "invalid outcome", 10_000, "install", 8_000, outcome);
       expect(() => auditTestRuntime([root])).toThrow(/invalid test progress summary/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
