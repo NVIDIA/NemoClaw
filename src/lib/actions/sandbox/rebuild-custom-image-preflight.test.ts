@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { ROOT } from "../../runner";
+import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import {
   preflightRebuildImage,
   type RebuildImagePreflightResult,
@@ -48,6 +49,61 @@ function input(fromDockerfile: string | null) {
 }
 
 describe("preflightRebuildImage", () => {
+  it("carries verified base provenance into the retained managed context (#7144)", async () => {
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-provenance-"));
+    const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    const metadata = {
+      schema: 1,
+      key: "current-base",
+      imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+      ref: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`,
+      digest: `sha256:${"a".repeat(64)}`,
+      source: "pinned",
+      pinnedRemoteRef: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`,
+      imageId: `sha256:${"b".repeat(64)}`,
+      os: "linux",
+      architecture: "amd64",
+      glibcVersion: "2.41",
+      requireOpenshellSandboxAbi: true,
+      minGlibcVersion: "2.39",
+    } satisfies SandboxBaseImageResolutionMetadata;
+    const prepareDockerfilePatch = vi.fn(async () => ({
+      buildId: "provenance",
+      dashboardRemoteBindPrepared: false,
+      resolvedBaseImage: null,
+    }));
+    const cleanupBuildCtx = vi.fn(() => {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+      return true;
+    });
+    try {
+      const result = successful(
+        await preflightRebuildImage(
+          { ...input(null), preResolvedBaseImageMetadata: metadata },
+          {
+            stageBuildContext: vi.fn(() => ({
+              buildCtx,
+              stagedDockerfile,
+              cleanupBuildCtx,
+              origin: "generated" as const,
+            })),
+            prepareDockerfilePatch,
+            buildImage: vi.fn(() => ({ status: 0 }) as never),
+            removeImage: vi.fn(() => ({ status: 0 }) as never),
+          },
+        ),
+      );
+
+      expect(prepareDockerfilePatch).toHaveBeenCalledWith(
+        expect.objectContaining({ preResolvedBaseImageMetadata: metadata }),
+      );
+      expect(disposePreparedBuildContext(result.prepared)).toBe(true);
+    } finally {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+    }
+  });
+
   it("prebuilds the managed OpenClaw image instead of deferring its first build until delete", async () => {
     const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-preflight-"));
     const stagedDockerfile = path.join(buildCtx, "Dockerfile");

@@ -141,6 +141,8 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   const openclawVersion = readDockerfileOpenClawVersion();
   const reviewedArchiveDir = path.join(tmp, "reviewed-pack");
   const reviewedArchive = path.join(reviewedArchiveDir, `openclaw-${openclawVersion}.tgz`);
+  const remediatedArchive = path.join(tmp, "openclaw-remediated.tgz");
+  const remediationHelper = path.join(tmp, "openclaw-npm-remediation.cjs");
   const expectedMcporterVersion = readDockerfileMcporterVersion();
   const openclawIntegrity = readDockerfileOpenClawIntegrity();
   const openclawTarball = readDockerfileOpenClawTarball();
@@ -158,6 +160,17 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   fs.writeFileSync(openclawShim, "");
   fs.writeFileSync(mcporterShim, "");
   fs.writeFileSync(reviewedArchive, "fake reviewed OpenClaw archive");
+  fs.writeFileSync(
+    remediationHelper,
+    [
+      'const fs = require("node:fs");',
+      "const args = process.argv.slice(2);",
+      "const value = (name) => args[args.indexOf(name) + 1];",
+      `fs.copyFileSync(value("--archive"), ${JSON.stringify(remediatedArchive)});`,
+      `console.log(${JSON.stringify(remediatedArchive)});`,
+      "",
+    ].join("\n"),
+  );
   const command = dockerRunCommandBetween(
     "# OPENCLAW_VERSION is the NemoClaw runtime build target",
     "# Patch OpenClaw media fetch",
@@ -167,7 +180,8 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     .replaceAll("/usr/local/bin/openclaw", openclawShim)
     .replaceAll("/usr/local/lib/node_modules/mcporter", mcporterInstall)
     .replaceAll("/usr/local/lib/nemoclaw/mcporter-runtime", mcporterInstall)
-    .replaceAll("/usr/local/bin/mcporter", mcporterShim);
+    .replaceAll("/usr/local/bin/mcporter", mcporterShim)
+    .replaceAll("/scripts/lib/openclaw-npm-remediation.mts", remediationHelper);
   const script = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
@@ -229,6 +243,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     '    printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$pack_file" "$OPENCLAW_2026_6_10_INTEGRITY";',
     "    return 0",
     "  fi",
+    '  if [ "${1:-}" = "ls" ]; then return 0; fi',
     '  if [ "${1:-}" = "install" ]; then return 0; fi',
     '  if [ "${1:-}" = "--prefix" ]; then return 0; fi',
     "  return 1",
@@ -340,6 +355,7 @@ describe("fetch-guard patch regression guard", () => {
       "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
     );
     expect(stale.calls).toContain("postinstall-bundled-plugins.mjs");
+    expect(stale.calls).toContain("npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip");
     expect(stale.calls).toContain(
       `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,
     );
@@ -356,6 +372,7 @@ describe("fetch-guard patch regression guard", () => {
       "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
     );
     expect(current.calls).toContain("postinstall-bundled-plugins.mjs");
+    expect(current.calls).toContain("npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip");
     expect(current.calls).toContain(
       `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,
     );

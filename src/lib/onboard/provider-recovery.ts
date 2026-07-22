@@ -4,6 +4,10 @@
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
+import {
+  type InferenceEndpointSource,
+  normalizeInferenceEndpointSource,
+} from "../inference/selection";
 
 export type RemoteProviderConfigEntryLike = { providerName?: string };
 
@@ -74,6 +78,7 @@ export interface RecordedInferenceRoute {
   provider: string;
   model: string;
   endpointUrl: string | null;
+  endpointSource?: InferenceEndpointSource | null;
   preferredInferenceApi: string;
   source: "registry" | "session";
 }
@@ -150,6 +155,7 @@ function completeRecordedInferenceRoute(
     provider?: unknown;
     model?: unknown;
     endpointUrl?: unknown;
+    endpointSource?: unknown;
     preferredInferenceApi?: unknown;
   },
   source: RecordedInferenceRoute["source"],
@@ -165,7 +171,10 @@ function completeRecordedInferenceRoute(
     typeof value.endpointUrl === "string" && value.endpointUrl.trim()
       ? value.endpointUrl.trim()
       : null;
-  return { ...inference, endpointUrl, preferredInferenceApi, source };
+  const endpointSource = endpointUrl
+    ? normalizeInferenceEndpointSource(value.endpointSource)
+    : null;
+  return { ...inference, endpointUrl, endpointSource, preferredInferenceApi, source };
 }
 
 export function createProviderRecoveryHelpers(deps: ProviderRecoveryDeps): ProviderRecoveryHelpers {

@@ -1,18 +1,18 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# PR CI and Review Follow-Up
+# Follow Up on PR CI and Reviews
 
-Use this workflow after creating a PR and after every push to an open PR.
+Use this workflow after you create a PR or push to an open PR.
 
-## Watch checks
+## Monitor checks
 
 ```bash
 PR_NUMBER=${PR_NUMBER:-$(gh pr view --json number -q .number)}
 gh pr checks "$PR_NUMBER" --watch
 ```
 
-Then inspect the settled check state:
+When the checks stop, inspect their status:
 
 ```bash
 gh pr view "$PR_NUMBER" --json url,statusCheckRollup,comments,reviews,reviewDecision
@@ -20,7 +20,7 @@ gh pr view "$PR_NUMBER" --json url,statusCheckRollup,comments,reviews,reviewDeci
 
 ## Review feedback
 
-Check sticky PR comments and inline review comments from CodeRabbit and the PR Review Advisor:
+Check PR comments and inline review comments from CodeRabbit and the PR Review Advisor:
 
 ```bash
 gh api "repos/NVIDIA/NemoClaw/issues/${PR_NUMBER}/comments" --paginate \
@@ -30,16 +30,26 @@ gh api "repos/NVIDIA/NemoClaw/pulls/${PR_NUMBER}/comments" --paginate \
   --jq '.[] | select((.body // "") | test("CodeRabbit|coderabbit|PR Review Advisor|nemoclaw-pr-review-advisor"; "i")) | {author: .user.login, path, line, updated_at, body}'
 ```
 
-## Triage
+## Handle results
 
-- Before acting on feedback, state the concrete problem and intended outcome.
-- Do not add a generalized helper, configuration switch, fallback, migration, or compatibility path solely to satisfy reviewer wording.
-- If feedback cannot be tied to a concrete defect, demonstrated security or data-safety risk, supported contract, or needless complexity in changed code, treat it as a suggestion rather than implementation work.
-- **CI failure:** inspect the failing job logs, fix the root cause, rerun relevant local checks, commit, push, and monitor again.
-- **CodeRabbit or PR Review Advisor correctness/security/test-coverage finding:** address it when valid, rerun relevant checks, commit, push, and monitor again.
-- **Style nits or false positives:** avoid unnecessary churn. Note the rationale in your final report or comment on the PR when reviewer-visible context is useful.
-- **Ambiguous, risky, broad, or design-changing feedback:** stop and consult the user before changing code.
+- Apply [NemoClaw Technical English](../../../CONTRIBUTING.md#nemoclaw-technical-english) to review comments and proposed rewrites.
+- During the changed-text pilot, block on language only when ambiguity can change behavior, security, data safety, test meaning, or release meaning.
+- Treat other language findings as suggestions. Include a proposed rewrite and do not request unrelated cleanup.
+- Before you act on feedback, state the problem and the intended result.
+- Do not add a helper, configuration switch, fallback, migration, or compatibility path only to satisfy reviewer wording.
+- Treat feedback as a suggestion if you cannot connect it to one of these conditions:
+  - A defect.
+  - A demonstrated security or data-safety risk.
+  - A supported contract.
+  - Unnecessary complexity in changed code.
+  - Ambiguity in changed text that can change behavior, security, data safety, test meaning, or release meaning.
+- **CI failure:** Inspect the job logs and fix the cause. Run the related local checks. Commit, push, and monitor the PR again.
+- **Valid CodeRabbit or PR Review Advisor finding:** Fix correctness, security, or test-coverage problems. Run the related checks. Commit, push, and monitor the PR again.
+- **Style comment or false positive:** Avoid unnecessary changes. Explain your decision in the final report. Comment on the PR when reviewers need the explanation.
+- **Ambiguous, risky, broad, or design-changing feedback:** Stop and ask the user before you change code.
 
-Repeat until required CI is green and there are no unresolved actionable CodeRabbit or PR Review Advisor findings, or until the user tells you to stop.
+Repeat this workflow until required CI passes and no actionable automated-review findings remain. Stop if the user tells you to stop.
 
-If any follow-up push or `gh`/GitHub query hits SSH, authentication, remote access, authorization, or permission problems, follow [Git and GitHub Access Hard Stop](git-github-hard-stop.md). Do not stop for ordinary merge conflicts or dirty-worktree state; resolve mechanical conflicts in the relevant workflow and ask the user only when resolution would change behavior or contributor intent.
+If a push or GitHub query has an access error, follow [Git and GitHub Access Hard Stop](git-github-hard-stop.md).
+Resolve merge conflicts and dirty-worktree problems in the PR workflow.
+Ask the user when a resolution can change behavior or contributor intent.

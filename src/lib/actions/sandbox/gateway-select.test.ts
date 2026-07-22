@@ -20,8 +20,24 @@ describe("selectSandboxOwningGateway", () => {
     expect(selected).toEqual({ outcome: "selected", gatewayName: "nemoclaw-8091" });
     expect(run).toHaveBeenCalledWith(
       ["gateway", "select", "nemoclaw-8091"],
-      expect.objectContaining({ ignoreError: true }),
+      expect.objectContaining({
+        ignoreError: true,
+        stdio: ["inherit", "pipe", "inherit"],
+      }),
     );
+  });
+
+  it("replays selection output through the stdio adapter", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ gatewayPort: 8080 } as never);
+    const output = "\u001b[32m✓ Active gateway set to 'nemoclaw'\u001b[0m\n";
+    const run = vi.fn(() => ({ status: 0, stdout: output }) as never);
+    const write = vi.fn();
+
+    expect(selectSandboxOwningGateway("alpha", run, write)).toEqual({
+      outcome: "selected",
+      gatewayName: "nemoclaw",
+    });
+    expect(write).toHaveBeenCalledWith(output);
   });
 
   it("keeps the bare default gateway name for a default-port sandbox", () => {

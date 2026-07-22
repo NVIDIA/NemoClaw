@@ -30,6 +30,9 @@ type WorkflowPlanCliOptions = WorkflowPlanSelectors & {
 
 const SAFE_SELECTOR_LIST_PATTERN = /^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/;
 const HERMES_JOB_ID = "hermes-e2e";
+const LEGACY_BOOTSTRAP_INSTALL_JOB_ID = "launchable-smoke";
+const BOOTSTRAP_INSTALL_JOB_ID = "bootstrap-install-smoke";
+const COMMIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const INFERENCE_MODES = new Set(["mock", "internal-nvidia", "public-nvidia"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -127,6 +130,30 @@ function selectTestRows(
   return rows.filter((row) => selected.has(row.id));
 }
 
+function mapTrustedControllerBootstrapJob(
+  selectors: WorkflowPlanSelectors,
+  environment: NodeJS.ProcessEnv,
+): WorkflowPlanSelectors {
+  if (!COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "")) return selectors;
+
+  const jobs = selectorIds(selectors.jobs, "jobs");
+  if (!jobs.includes(LEGACY_BOOTSTRAP_INSTALL_JOB_ID)) return selectors;
+
+  const inventory = readFreeStandingJobsInventory();
+  if (!inventory.allowedJobs.includes(BOOTSTRAP_INSTALL_JOB_ID)) return selectors;
+
+  // Trusted main selects the old job ID until this workflow rename merges, while
+  // the checked-out PR planner already reads the renamed inventory.
+  return {
+    ...selectors,
+    jobs: jobs
+      .map((job) =>
+        job === LEGACY_BOOTSTRAP_INSTALL_JOB_ID ? BOOTSTRAP_INSTALL_JOB_ID : job,
+      )
+      .join(","),
+  };
+}
+
 export function buildE2eWorkflowPlan(selectors: WorkflowPlanSelectors = {}): E2eWorkflowPlan {
   const jobs = selectorIds(selectors.jobs, "jobs");
   const targets = selectorIds(selectors.targets, "targets");
@@ -213,8 +240,9 @@ export function writeE2eWorkflowPlanCiOutput(
   if (!INFERENCE_MODES.has(inferenceMode)) {
     throw new Error(`Invalid inference_mode: ${inferenceMode}`);
   }
-  const plan = validateE2eWorkflowPlan(buildE2eWorkflowPlan(selectors));
-  if (plan.hermesSelected !== expectedHermesSelection(selectors)) {
+  const plannerSelectors = mapTrustedControllerBootstrapJob(selectors, environment);
+  const plan = validateE2eWorkflowPlan(buildE2eWorkflowPlan(plannerSelectors));
+  if (plan.hermesSelected !== expectedHermesSelection(plannerSelectors)) {
     throw new Error("E2E planner changed the trusted Hermes selection");
   }
   const output = environment.GITHUB_OUTPUT;

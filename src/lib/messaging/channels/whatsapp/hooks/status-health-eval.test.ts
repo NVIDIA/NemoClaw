@@ -8,15 +8,14 @@ import {
   parseWhatsappHeartbeat,
   summarizeWhatsappLogLines,
   type WhatsappProbeInput,
-} from "./whatsapp-diagnostics";
+} from "./status-health-eval";
 
 const PROBED_AT = "2026-05-28T04:00:00.000Z";
 
 function baseInput(overrides: Partial<WhatsappProbeInput> = {}): WhatsappProbeInput {
   return {
     agent: "openclaw",
-    stateDirs: ["/sandbox/.openclaw/whatsapp"],
-    stateDirPopulated: true,
+    paired: true,
     heartbeat: null,
     heartbeatParseError: null,
     bridgeProcessAlive: true,
@@ -35,7 +34,7 @@ describe("evaluateWhatsappDiagnostics", () => {
     const report = evaluateWhatsappDiagnostics(
       baseInput({
         probeReachable: false,
-        stateDirPopulated: null,
+        paired: null,
         bridgeProcessAlive: null,
         presetOnGateway: null,
       }),
@@ -62,18 +61,17 @@ describe("evaluateWhatsappDiagnostics", () => {
     expect(policy?.detail).toMatch(/preset is not applied/);
   });
 
-  it("returns unpaired when the bridge state directory is empty", () => {
-    const report = evaluateWhatsappDiagnostics(baseInput({ stateDirPopulated: false }));
+  it("returns unpaired when the channel runtime reports no link", () => {
+    const report = evaluateWhatsappDiagnostics(baseInput({ paired: false }));
     expect(report.verdict).toBe("unpaired");
     const pairing = report.signals.find((s) => s.label === "Pairing / session");
     expect(pairing?.severity).toBe("warn");
+    expect(pairing?.detail).toBe("channel runtime reports WhatsApp is not paired");
     expect(pairing?.hint).toMatch(/QR code/);
   });
 
   it("returns the hermes-flavored pairing hint when the agent is hermes", () => {
-    const report = evaluateWhatsappDiagnostics(
-      baseInput({ agent: "hermes", stateDirPopulated: false }),
-    );
+    const report = evaluateWhatsappDiagnostics(baseInput({ agent: "hermes", paired: false }));
     const pairing = report.signals.find((s) => s.label === "Pairing / session");
     expect(pairing?.hint).toMatch(/hermes whatsapp/);
     expect(report.hints.join(" ")).toMatch(/hermes whatsapp/);
@@ -111,6 +109,9 @@ describe("evaluateWhatsappDiagnostics", () => {
       }),
     );
     expect(report.verdict).toBe("healthy");
+    expect(report.signals.find((s) => s.label === "Pairing / session")?.detail).toBe(
+      "paired (reported by channel runtime)",
+    );
     const inbound = report.signals.find((s) => s.label === "Inbound delivery");
     expect(inbound?.severity).toBe("ok");
     expect(inbound?.detail).toMatch(/messagesHandled=5/);
