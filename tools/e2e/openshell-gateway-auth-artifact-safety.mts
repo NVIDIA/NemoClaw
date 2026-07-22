@@ -139,29 +139,32 @@ export function openShellGatewayAuthArtifactSafetyMarkerName(
 function copyApprovedArtifacts(sourceRoot: string, approvedRoot: string): void {
   const copyRegularFile = (sourcePath: string, approvedPath: string): void => {
     const source = fs.openSync(sourcePath, fs.constants.O_RDONLY | NO_FOLLOW);
-    const approved = fs.openSync(
-      approvedPath,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NO_FOLLOW,
-      0o600,
-    );
     try {
-      const sourceStat = fs.fstatSync(source);
-      if (!sourceStat.isFile() || sourceStat.nlink !== 1) {
-        throw new Error(`${sourcePath} must be a single-link regular file`);
-      }
-      const buffer = Buffer.allocUnsafe(64 * 1024);
-      let count = fs.readSync(source, buffer, 0, buffer.length, null);
-      while (count > 0) {
-        let written = 0;
-        while (written < count) {
-          written += fs.writeSync(approved, buffer, written, count - written);
+      const approved = fs.openSync(
+        approvedPath,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NO_FOLLOW,
+        0o600,
+      );
+      try {
+        const sourceStat = fs.fstatSync(source);
+        if (!sourceStat.isFile() || sourceStat.nlink !== 1) {
+          throw new Error(`${sourcePath} must be a single-link regular file`);
         }
-        count = fs.readSync(source, buffer, 0, buffer.length, null);
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        let count = fs.readSync(source, buffer, 0, buffer.length, null);
+        while (count > 0) {
+          let written = 0;
+          while (written < count) {
+            written += fs.writeSync(approved, buffer, written, count - written);
+          }
+          count = fs.readSync(source, buffer, 0, buffer.length, null);
+        }
+        fs.fchmodSync(approved, 0o600);
+        fs.fsyncSync(approved);
+      } finally {
+        fs.closeSync(approved);
       }
-      fs.fchmodSync(approved, 0o600);
-      fs.fsyncSync(approved);
     } finally {
-      fs.closeSync(approved);
       fs.closeSync(source);
     }
   };

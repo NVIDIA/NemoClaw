@@ -322,4 +322,33 @@ describe("OpenShell gateway auth source contract helpers", () => {
       fs.rmSync(approved, { recursive: true, force: true });
     }
   });
+
+  it("closes the source when the approved artifact cannot be opened (#7101)", () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auth-artifact-open-failure-"));
+    const dir = path.join(parent, "uploadable-auth-artifacts");
+    const artifactPath = path.join(dir, "scenario.json");
+    fs.mkdirSync(dir);
+    fs.writeFileSync(artifactPath, '{"status":"passed"}\n');
+    const sourceFd = fs.openSync(artifactPath, fs.constants.O_RDONLY);
+    const openSpy = vi
+      .spyOn(fs, "openSync")
+      .mockImplementationOnce(() => sourceFd)
+      .mockImplementationOnce(() => {
+        throw new Error("simulated approved destination open failure");
+      });
+    try {
+      expect(() => scanAndApproveOpenShellGatewayAuthArtifacts(dir)).toThrow(
+        "simulated approved destination open failure",
+      );
+      expect(() => fs.fstatSync(sourceFd)).toThrowError(expect.objectContaining({ code: "EBADF" }));
+    } finally {
+      openSpy.mockRestore();
+      try {
+        fs.closeSync(sourceFd);
+      } catch {
+        // The implementation already closed the descriptor.
+      }
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
 });

@@ -20,6 +20,8 @@ const GATEWAY_PROBE_IMAGE =
 const ARTIFACT_SAFETY_GATED_UPLOAD =
   "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const APPROVED_ARTIFACT_PATH = "${{ steps.artifact_safety.outputs.approved_path }}";
+const ARTIFACT_SAFETY_COMMAND =
+  'node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"';
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
@@ -164,11 +166,11 @@ export function validateOpenShellGatewayAuthContractWorkflow(
   if (artifactSafety.id !== "artifact_safety" || artifactSafety.if !== "always()") {
     errors.push(`${JOB_NAME} final artifact safety scan must run unconditionally with a stable id`);
   }
-  requireRunContains(
-    errors,
-    artifactSafety,
-    'node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"',
-  );
+  if (artifactSafety.run?.trim() !== ARTIFACT_SAFETY_COMMAND) {
+    errors.push(
+      `${JOB_NAME} step '${artifactSafety.name ?? "<missing>"}' must run exactly: ${ARTIFACT_SAFETY_COMMAND}`,
+    );
+  }
 
   const upload = findStep(job, "Upload OpenShell gateway auth contract artifacts");
   if (upload.uses !== UPLOAD_E2E_ARTIFACTS_ACTION) {

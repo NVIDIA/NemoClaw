@@ -82,13 +82,25 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
         "openshell-gateway-auth-contract step 'Pre-pull pinned gateway auth probe image' must run: docker pull \"$DOCKER_GRPC_PROBE_IMAGE\"",
         "openshell-gateway-auth-contract live test must not receive workflow credentials",
         "openshell-gateway-auth-contract final artifact safety scan must run unconditionally with a stable id",
-        "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must run: node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts \"$E2E_ARTIFACT_DIR\"",
+        "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must run exactly: node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts \"$E2E_ARTIFACT_DIR\"",
         "openshell-gateway-auth-contract must use the reviewed artifact uploader",
         "openshell-gateway-auth-contract must upload artifacts only after this run attempt passes safety scan",
         "openshell-gateway-auth-contract must upload only the immutable approved artifact payload",
         "openshell-gateway-auth-contract step 'Pre-pull pinned gateway auth probe image' must precede 'Run OpenShell gateway auth contract live test'",
         "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must precede 'Upload OpenShell gateway auth contract artifacts'",
       ]),
+    );
+  });
+
+  it("rejects artifact safety commands that can mask scanner failures (#7101)", () => {
+    const workflow = readOpenShellGatewayAuthContractWorkflow();
+    const artifactSafety = workflow.jobs["openshell-gateway-auth-contract"].steps!.find(
+      (step) => step.name === "Validate final OpenShell gateway auth contract artifacts",
+    )!;
+    artifactSafety.run = `${artifactSafety.run} || true`;
+
+    expect(validateOpenShellGatewayAuthContractWorkflow(workflow)).toContain(
+      "openshell-gateway-auth-contract step 'Validate final OpenShell gateway auth contract artifacts' must run exactly: node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts \"$E2E_ARTIFACT_DIR\"",
     );
   });
 });
