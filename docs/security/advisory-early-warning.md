@@ -3,17 +3,20 @@
 
 # Advisory Early Warning and Audit Provenance
 
-Status: implemented mechanism, proposed policy (issue #7338; evidence from #7276)
+Status: correlation module, scan CLI, and audit provenance implemented.
+Scheduled operation and the response policy are a separate follow-up, gated on
+product/security-owner sign-off recorded on issue #7338 (evidence from #7276).
 
 Public upstream GitHub Security Advisories are often published weeks before the
 global reviewed ecosystem record that `npm audit` enforces. For
 `fast-uri` (GHSA-4c8g-83qw-93j6) the upstream repository advisory appeared on
 June 29 while the reviewed record propagated on July 21, so the same vulnerable
 version audited clean at 18:46 UTC and reported High at 20:09 UTC. This page
-documents the early-warning path that narrows that gap and the provenance every
-audit now records so such timelines are provable from retained artifacts.
+documents the early-warning correlation that narrows that gap and the
+provenance every audit now records so such timelines are provable from retained
+artifacts.
 
-The scheduled scan draws on all three types of the global advisory database, which
+The correlation draws on all three types of the global advisory database, which
 contribute differently:
 
 - reviewed records are the corpus `npm audit` enforces — a match here means
@@ -32,7 +35,7 @@ e.g. `fastify/fast-uri`'s own advisory) needs a package-to-repository map and
 is the planned extension; the correlation module already accepts that record
 shape unchanged.
 
-## How the early-warning path works
+## How the early-warning correlation works
 
 - `scripts/lib/advisory-early-warning.mts` correlates GitHub Security Advisory
   JSON (repository-level and global records share the shape) with the reviewed
@@ -46,21 +49,32 @@ shape unchanged.
   `action: "investigate"`. Name collisions from non-npm (CPE-derived) records
   and unparseable ranges yield `confidence: "ambiguous"` and
   `action: "informational"`. Ambiguous matches never block or mutate a release.
-- `.github/workflows/advisory-early-warning.yaml` runs every six hours (and on
-  manual dispatch): it fetches reviewed, unreviewed, and malware advisories
-  naming inventory packages (paginated, batched by package), runs
-  `scripts/advisory-early-warning-scan.mts`, and routes signals into one
-  rolling GitHub issue labeled `security`, deduplicated by advisory id plus
-  package. Only an OPEN issue authored by the Actions bot that carries the
-  workflow's embedded marker is reused; otherwise a fresh issue is created.
-  Closing the rolling issue while its signals still apply therefore makes the
-  next run open a fresh issue re-listing them (the dedupe state lives in the
-  open issue body), so close it only once the listed advisories are resolved
-  for the inventory. The workflow is non-blocking by design and never fails a
-  build.
 - The reviewed npm audit gate (`scripts/audit-reviewed-npm-graph.mts`, enforced
   in CI) remains enabled and authoritative for exact npm package/version-range
   decisions. The early-warning path only triggers investigation and rescanning.
+
+`scripts/advisory-early-warning-scan.mts` is the CLI over the module. It reads
+only local files, exits 0 whether or not signals are found, and never mutates
+anything:
+
+```sh
+# List inventory package names (one per line), the input for advisory queries.
+node --experimental-strip-types scripts/advisory-early-warning-scan.mts \
+  --list-packages
+
+# Correlate fetched advisory records with the inventory.
+node --experimental-strip-types scripts/advisory-early-warning-scan.mts \
+  --advisories advisories.json --output signals.json
+```
+
+Advisory records come from the GitHub `/advisories` API — all three types,
+paginated, filtered by `affects=` batches of the inventory package names.
+
+Running this correlation on a schedule and routing signals to an alert
+destination is deliberately not wired up yet: #7338 requires product/security
+owners to define the supported historical-image scope, rescan ownership, alert
+destination, and response expectations first. A follow-up adds the scheduled
+workflow once that sign-off is recorded on the issue.
 
 ## Provenance recorded per audit
 
@@ -83,22 +97,3 @@ the WeChat locked runtime graph audit) recording:
 Comparing the `advisoryIds` of consecutive retained runs identifies the last
 comparable non-detection and the first detection of a newly surfaced advisory,
 even when an unrelated finding failed the earlier run.
-
-## Proposed policy defaults (pending maintainer confirmation)
-
-The following defaults answer #7338's open policy questions. They are
-proposals only and take effect when product/security owners confirm them.
-
-- Scope: the reviewed graphs committed in `ci/reviewed-npm-audit.json`
-  (archive packages and locked graphs). Historical immutable image digests are
-  out of scope until owners define a supported-image list.
-- Rescan ownership: repository maintainers, driven by the rolling
-  `security`-labeled early-warning issue; the six-hour schedule is the default
-  rescan trigger for advisory-database changes.
-- Alert destination: the rolling GitHub issue created by the early-warning
-  workflow (one issue, deduplicated by advisory id plus package).
-- Response expectation for `action: "investigate"` signals: acknowledge
-  Critical within 1 business day and resolve or escalate within 3; acknowledge
-  High within 2 business days and resolve or escalate within 5. While a
-  reviewed mapping is unavailable, unresolved High/Critical signals escalate to
-  a maintainer decision rather than automatically blocking a release.
