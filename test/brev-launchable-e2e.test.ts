@@ -22,6 +22,7 @@ function executable(file: string, source: string): void {
 
 function fixture(
   options: {
+    bakedSha?: string;
     deleteFails?: boolean;
     e2eFails?: boolean;
     imageId?: string;
@@ -86,7 +87,7 @@ case "$1" in
     case "$3" in
       *provision_sha*)
         printf 'NEMOCLAW_IDENTITY='
-        jq -cn --arg sha "$CANDIDATE_SHA" --arg id "$FAKE_IMAGE_ID" '{repoSha:$sha,provisionSha:($sha[0:12]),image:"https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/image-a",imageId:$id}'
+        jq -cn --arg sha "$FAKE_BAKED_SHA" --arg id "$FAKE_IMAGE_ID" '{repoSha:$sha,provisionSha:($sha[0:12]),image:"https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/image-a",imageId:$id}'
         printf '%s\\n' "$INSTANCE_NAME" ;;
       *) exit 2 ;;
     esac ;;
@@ -116,6 +117,7 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     BREV_LAUNCHABLE_ID: "env-staging123",
     CANDIDATE_SHA: candidateSha,
     CORRELATION_ID: "11111111-1111-4111-8111-111111111111",
+    FAKE_BAKED_SHA: options.bakedSha ?? candidateSha,
     FAKE_CALLS: calls,
     FAKE_DELETE_FAILS: options.deleteFails ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
@@ -177,12 +179,13 @@ describe("focused staging Brev Launchable lane", () => {
     expect(fs.readFileSync(receipt.calls, "utf8")).not.toMatch(/brev create|full-e2e\.test\.ts/u);
     expect(fs.existsSync(receipt.state)).toBe(false);
 
-    const boot = fixture({ imageId: "987654321" });
-    const bootResult = run(boot.env);
-    expect(bootResult.status).not.toBe(0);
-    expect(bootResult.stderr).toContain("baked SHA or immutable boot image does not match");
-    expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
-    expect(fs.existsSync(boot.state)).toBe(false);
+    for (const boot of [fixture({ bakedSha: "b".repeat(40) }), fixture({ imageId: "987654321" })]) {
+      const bootResult = run(boot.env);
+      expect(bootResult.status).not.toBe(0);
+      expect(bootResult.stderr).toContain("baked SHA or immutable boot image does not match");
+      expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
+      expect(fs.existsSync(boot.state)).toBe(false);
+    }
   });
 
   it("reports E2E failure only after verified workspace cleanup", () => {
