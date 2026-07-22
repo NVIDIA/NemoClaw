@@ -116,7 +116,7 @@ test/e2e/
   applies it independently without model output.
 
 - `.github/workflows/pr-e2e-gate.yaml` reserves the internal
-  `E2E / PR Gate Coordination` check on every exact PR head, including forks,
+  `E2E / PR Gate Coordination` check for every PR SHA, including forks,
   before `CI / Pull Request` completes. Its default-branch
   `pull_request_target` path also publishes the native GitHub Actions job named
   `E2E / PR Gate`. The read-only observer runs from `github.workflow_sha`,
@@ -125,13 +125,13 @@ test/e2e/
   job. Its summary is static, while the job log includes the validated trusted
   controller-run link. Authorization states remain pending while the maintainer
   decision is recorded. During rollout, the observer also accepts the former
-  `E2E / PR Gate` custom-check name for the same exact-diff identity. The
+  `E2E / PR Gate` custom-check name for the same PR/base SHA identity. The
   controller builds the risk plan from GitHub's complete file list. Internal
   revisions normally dispatch every selected job and verify each expected
   `risk-signal.json`; this remains automatic when their `e2e-control-plane`
   matches are drawn only from the trusted controller workflow and scripts.
   Other or mixed internal
-  control-plane revisions require a maintainer-authorized exact-SHA run; only
+  control-plane revisions require a maintainer-authorized run for the PR SHA; only
   its verified evidence can pass coordination. Risky forks retain the audited
   credentialed-E2E skip approval. See [NemoClaw E2E CI](../README.md) for the
   full lifecycle.
@@ -147,7 +147,7 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  PR E2E dispatches validate the PR head commit and controller metadata before
+  PR E2E dispatches validate the PR SHA and controller metadata before
   preparation, attach `test/e2e/risk-signal-reporter.ts` to live Vitest
   invocations, and suppress PR reporting and scorecards. The workflow boundary
   requires every selected job shard to upload its evidence artifact.

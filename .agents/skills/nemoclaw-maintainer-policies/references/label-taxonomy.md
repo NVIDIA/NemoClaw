@@ -5,7 +5,7 @@
 
 Status: canonical maintainer policy.
 
-Labels should exist only when maintainers, agents, dashboards, or reviewers act differently because the label is present.
+Use a label only when it changes an action, route, or report.
 
 ## Native Fields Before Labels
 
@@ -60,18 +60,31 @@ Reporting labels apply when maintainers need to identify items that feed a recur
 |---|---|---|---|---|
 | `PRR` | Issue, PR | Reserved Product Readiness Review label for reports or follow-up used to assess product readiness and user experience. | Maintainer-applied or dedicated PRR workflow-applied Product Readiness Review report, PRR follow-up, readiness assessment, or user experience assessment tied to a PRR. | Generic readiness concern, ordinary UX bug, release validation, QA issue, daily release activity, or normal triage output. |
 
-Do not recommend `PRR` during normal triage. It is reserved for maintainers or dedicated PRR workflows, and must not be used as a lifecycle status, release-readiness claim, generic UX label, or substitute for Project Status.
+Do not recommend `PRR` during triage.
+Maintainers and PRR workflows reserve it for Product Readiness Reviews.
+Do not use it for lifecycle, release readiness, UX routing, or Project Status.
 
 ### Routing Areas
 
 Area labels apply to issues and PRs when the affected surface is clear.
 
-Use area labels for the affected product or code surface, not for every concept mentioned in the report. For overlapping areas, prefer the label that best describes the owner of the next action:
+Use area labels for the affected product or code surface.
+Do not label each concept that the report mentions.
+For overlapping areas, prefer the label that routes the next action:
 
-- `area: install` for prerequisites or setup mechanics; `area: onboarding` for first-run flow and onboarding state; `area: packaging` for shipped artifacts, images, registries, or distribution.
-- `area: inference` for model execution or output behavior; `area: providers` for provider integration, configuration, or selection work; `area: routing` for dispatch, fallback, or model-selection logic; `area: local-models` for local runtime, download, launch, or connectivity.
-- `area: integrations` for external app or bridge behavior; `area: messaging` when message delivery or channel lifecycle is the affected subsystem; add the specific `integration:*` label when one listed integration is named or clearly implicated. Do not use only `area: integrations` when the affected integration is one of the canonical `integration:*` values.
-- `area: ci` for workflow, check, release automation, nightly-runner, or test infrastructure failures. Do not add `area: ci` merely because an e2e failure was observed in CI; use both `area: ci` and `area: e2e` only when the CI workflow, runner, scheduling, logs, or test infrastructure is part of the affected surface.
+- Use `area: install` for prerequisites and setup mechanics.
+  Use `area: onboarding` for the first-run flow and its state.
+  Use `area: packaging` for artifacts, images, registries, and distribution.
+- Use `area: inference` for model execution and output.
+  Use `area: providers` for provider integration, configuration, and selection.
+  Use `area: routing` for dispatch, fallback, and model selection.
+  Use `area: local-models` for local runtime, download, launch, and connectivity.
+- Use `area: integrations` for external app and bridge behavior.
+  Use `area: messaging` for message delivery and channel lifecycle.
+  Add the matching `integration:*` label for a listed integration.
+- Use `area: ci` for failures in workflows, checks, release automation, runners, or test infrastructure.
+  Do not add it only because CI found an E2E failure.
+  Add both `area: ci` and `area: e2e` when CI or test infrastructure is part of the failure.
 
 | Label | Description |
 |---|---|
@@ -101,15 +114,16 @@ Use area labels for the affected product or code surface, not for every concept 
 
 ### Platform
 
-Platform labels apply when the issue or PR is specific to a platform or is more likely relevant to that platform, not merely because the author happened to test there. This is one of the hardest label families to infer.
+Do not infer a platform from the test environment alone.
+Add a platform label when the error, code path, install behavior, runtime behavior, or repeated reports identify that platform.
+When evidence is not conclusive, add the label only if the platform is likely causal or changes routing.
+Otherwise, omit it.
+Prefer the narrower platform label unless both labels route work to different owners.
+Do not add a platform label only because the environment template names Docker, a CPU, or an operating system.
 
-Positive signals include platform-specific errors, platform-specific code paths, platform-specific install/runtime behavior, or repeated evidence from the same platform. Weak signals include reproduction setup only, "all platforms" reports, or logs that mention a platform without showing platform-specific behavior.
-
-When evidence is ambiguous, use the platform label only when the platform seems routing-relevant or likely causal. Otherwise, leave it off and explain what evidence would make it platform-specific.
-
-When a more specific platform label applies, prefer it over a broader one unless both are independently routing-relevant. Do not add `platform: container`, `platform: arm64`, or an OS label just because the environment template mentions Docker, CPU architecture, or OS.
-
-Use the specific platform labels when the platform appears in the reported failure signature, title, or affected install path. For example, `Windows ARM`, `Windows ARM64`, or `aarch64` failure text supports `platform: arm64`; `WSL`, `WSL2`, or "Windows Subsystem for Linux" supports `platform: wsl`.
+Use a platform label when the platform appears in the error, title, or affected install path.
+`Windows ARM`, `Windows ARM64`, and `aarch64` support `platform: arm64`.
+`WSL`, `WSL2`, and `Windows Subsystem for Linux` support `platform: wsl`.
 
 | Label | Description |
 |---|---|
@@ -134,7 +148,10 @@ Do not create or apply `platform: all`.
 
 Provider labels apply when the issue or PR is specific to a recurring inference provider.
 
-Use `area: providers` for provider integration work, and add `provider:*` when a listed provider is specifically involved. When a provider exposes an OpenAI-compatible API but has its own provider label, use the more specific provider label instead of `provider: openai`. For unknown or proposed providers, use `area: providers` and name the provider in the rationale.
+Add `area: providers` for provider work.
+Also add the matching `provider:*` label for a listed provider.
+Prefer that label over `provider: openai` for an OpenAI-compatible provider with its own label.
+For an unlisted provider, add `area: providers` and name the provider in the rationale.
 
 | Label | Description |
 |---|---|
@@ -148,9 +165,11 @@ Use `area: providers` for provider integration work, and add `provider:*` when a
 
 Integration labels apply when a recurring external app, channel, tool, or agent integration is specifically involved.
 
-Use `area: integrations` for integration subsystem work, and add `integration:*` when a listed integration is named or clearly implicated. Use `area: messaging` when delivery, channel lifecycle, manifests, or bridge messages are the affected subsystem; combine it with `integration:*` when the messaging issue is specific to a listed integration.
-
-Specific integration labels are routing labels. If the title, body, linked issue, test name, file path, or PR prefix names `Hermes`, `OpenClaw`, `LangChain Deep Code`, `Deep Code`, `Discord`, `Slack`, `Telegram`, `WeChat`, `WhatsApp`, or `Brave` as the affected subject, include the corresponding `integration:*` label. Do not replace the specific label with only `area: integrations`.
+Add `area: integrations` for integration subsystem work.
+Add `area: messaging` for delivery, channel lifecycle, manifests, or bridge messages.
+Add the matching `integration:*` label when a listed integration is the affected subject.
+Do not replace that label with only `area: integrations`.
+Use the title, body, linked issue, tests, file paths, and PR prefix as evidence.
 
 | Label | Description |
 |---|---|
@@ -166,7 +185,9 @@ Specific integration labels are routing labels. If the title, body, linked issue
 
 ### Needs
 
-`needs:*` labels are blocking action queues. Remove them when the action is complete. `Needs Review` is a Project Status value, not a label. Normal initial triage should not add `needs: triage`; that label is an inbox/placeholder signal for unprocessed items.
+`needs:*` labels identify blocked actions. Remove them when the action is complete.
+`Needs Review` is a Project Status value, not a label.
+Do not add `needs: triage` during triage. It identifies items that have not been processed.
 
 | Label | Applies To | Description |
 |---|---|---|
@@ -186,19 +207,28 @@ Do not combine:
 
 | Label | Applies To | Description |
 |---|---|---|
-| `good first issue` | Issue | Small, clear, safe task for new contributors with tiny blast radius and no permission, secret, security, release, or policy risk. |
+| `good first issue` | Issue | Small, clear task for new contributors. Do not use it for permission, secret, security, release, or policy work. |
 | `help wanted` | Issue | Accepted work where maintainers welcome external contribution. |
 
 ### Release Train
 
-Daily `v0.0.x` labels activate open PRs for daily release work. After a PR merges to `main`, authorized post-merge automation adds the next patch label only while the merge is ahead of the latest release tag. After that tag and workflow-managed `latest` are verified, release housekeeping moves open stragglers and deletes the released label. Tags and commit ancestry own durable release membership. Issues may use a daily label as a tracking or attention signal, but issue labels do not determine release inclusion. Released labels must never be renamed or reused. See `release-train.md`.
+Daily `v0.0.x` labels activate open PRs for release work.
+After a PR merges, authorized automation adds the next patch label while the merge is ahead of the release tag.
+After verification of the tag and `latest`, release housekeeping moves open items and deletes the released label.
+Tags and commit ancestry record release membership.
+An issue label can track attention or PR work. It does not include the issue in a release.
+Do not rename or reuse a released label. See `release-train.md`.
 
 ### Agent-Owned
 
-`agt: *` labels are agent-owned coordination labels. Agents may create, apply, remove, and delete them inside an authorized agent-owned workflow. They must not encode product type, priority, project status, sprint, or release version.
+`agt: *` labels are agent-owned coordination labels.
+Agents may create, apply, remove, and delete them in an authorized agent workflow.
+They must not encode product type, priority, Project Status, sprint, or release version.
 
 ## Unknown Labels
 
-Labels not listed in this taxonomy are not canonical and must not be created, applied, or recreated by agents or maintainers. The only exception is the agent-owned `agt: *` namespace described above.
+Do not create, apply, or recreate a label that is absent from this taxonomy.
+The `agt: *` namespace is the exception.
 
-If an old or unknown label is found on an existing item, report it in an audit or cleanup dry run. Do not use it as permission to apply the same label elsewhere.
+Report an old or unknown label in an audit or cleanup dry run.
+Do not apply it to another item.

@@ -191,7 +191,7 @@ describe("native PR E2E required job", () => {
     expect(urls[0]).toContain("E2E%20%2F%20PR%20Gate%20Coordination");
   });
 
-  it("selects the newest exact-diff check after marker-backed immutable history", async () => {
+  it("selects the newest PR/base SHA check after marker-backed immutable history", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       githubResponse(
         listing([
@@ -236,9 +236,9 @@ describe("native PR E2E required job", () => {
         check(undefined, { status: "in_progress", conclusion: null }),
         check(undefined, { id: 18, status: "in_progress", conclusion: null }),
       ],
-      expectedError: "Multiple active exact-diff coordination checks exist",
+      expectedError: "Multiple active coordination checks exist for one PR/base SHA pair",
     },
-  ])("rejects exact-diff coordination history with $label", async ({ checks, expectedError }) => {
+  ])("rejects PR/base SHA coordination history with $label", async ({ checks, expectedError }) => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(githubResponse(listing(checks)));
 
     await expect(findCoordinationCheck(identity)).rejects.toThrow(expectedError);
@@ -257,7 +257,7 @@ describe("native PR E2E required job", () => {
     });
   });
 
-  it("rejects an exact-diff identity claimed by another app", async () => {
+  it("rejects a PR/base SHA identity claimed by another app", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       githubResponse(listing([check(undefined, { app: { id: 1 } })])),
     );
@@ -422,6 +422,6 @@ describe("native PR E2E required job", () => {
 
     await expect(
       waitForRequiredGate(identity, { timeoutMs: 100, pollIntervalMs: 10 }),
-    ).rejects.toThrow("no longer matches the exact head and base revision");
+    ).rejects.toThrow("not the expected open PR with the observed PR SHA and base SHA");
   });
 });
