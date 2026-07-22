@@ -17,6 +17,8 @@ const OPENCLAW_CONFIG_GENERATOR_RE =
 const SAFE_VALIDATION_GENERATOR_RE =
   /^RUN\s+validation_home="\$validation_root\/progressive";\s+HOME=(?:"\$validation_home"|\$validation_home)\s+node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/;
 const PASSIVE_FINAL_STAGE_INSTRUCTION_RE = /^(?:ARG|ENV|WORKDIR|USER|HEALTHCHECK|ENTRYPOINT|CMD)\b/;
+const NODE_TAR_IMAGE_SCAN_COPY_RE =
+  /^COPY scripts\/checks\/node-tar-image-scan\.mts \/scripts\/checks\/node-tar-image-scan\.mts$/;
 const CONFIG_MODE_RE = /^RUN\s+chmod\s+660\s+\/sandbox\/\.openclaw\/openclaw\.json$/;
 const CONFIG_HASH_RE =
   /^RUN\s+sha256sum\s+\/sandbox\/\.openclaw\/openclaw\.json\s+>\s+\/sandbox\/\.openclaw\/\.config-hash(?:\s+&&\s+chmod\s+660\s+\/sandbox\/\.openclaw\/\.config-hash)?(?:\s+&&\s+chown\s+sandbox:sandbox\s+\/sandbox\/\.openclaw\/\.config-hash)?$/;
@@ -34,7 +36,7 @@ const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [
 // A lifecycle test verifies these digests against the checked-in Dockerfile.
 const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
   "e7256f12c618bb424f53fec801378d92446d880c5935965ebb3b548694866b63",
-  "862807dd20a2879f49862a7d9d02fbdc2aa1be00539d05c86814b23f451b4a29",
+  "9f9b30bc814dd5bd36536c9061063d2b81b6041f453cda46b8dfdfb3e8693a19",
   "737edaaa69f80cf10d42fd349e0be068c1ef6e7375d5dcb4055b012420b58736",
   "5b814e92449a6778385f588877fe72ebed80e601f8eb0c90c2842b17a489f3da",
   "0e1a9a7bab2fab0a974577c3af8785157b4b9be2b4db32d5f4f9e5aa3c8c8171",
@@ -48,6 +50,7 @@ const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
   "42ef0b12e92ebe146c25367831b4ce3a2664f0fa99fd5e4fb98a8939d3af8800",
   "8b49e78185185f1b7e24d01631186554fef21d2300db65c9bc9998e7ec00469f",
   "a0a554d474cb70087e50686d998915eae06201d6182a2410d3ccc4879e5058e6",
+  "1197b99bdb996b37a3e4e386a507dfabcdfb2c26a40b015d617f97208668187d",
 ]);
 
 function instructionSha256(text: string): string {
@@ -57,6 +60,7 @@ function instructionSha256(text: string): string {
 const postGeneratorInstructionAllowed = (instruction: DockerfileInstruction): boolean => {
   const { text } = instruction;
   if (PASSIVE_FINAL_STAGE_INSTRUCTION_RE.test(text)) return true;
+  if (NODE_TAR_IMAGE_SCAN_COPY_RE.test(text)) return true;
   if (SAFE_VALIDATION_GENERATOR_RE.test(text)) return true;
   if (EXACT_CUSTOM_POST_GENERATOR_RUN_RE.some((pattern) => pattern.test(text))) return true;
   return CANONICAL_POST_GENERATOR_RUN_SHA256.has(instructionSha256(text));

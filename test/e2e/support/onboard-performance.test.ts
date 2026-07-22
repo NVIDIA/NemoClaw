@@ -197,6 +197,7 @@ describe("onboard performance evidence", () => {
     const trace = readOnboardTraceWindow(traceArtifact());
     const budget = readColdOnboardPerformanceBudget({
       fullE2eColdPath: {
+        authoritativeLocalBaseBuildAllowanceMs: 500,
         rootStartToFirstTurnCompletionBudgetMs: 5_000,
         rootEndToFirstTurnCompletionBudgetMs: 1_000,
         phaseBudgetsMs: completePhaseBudgets(),
@@ -204,12 +205,14 @@ describe("onboard performance evidence", () => {
     });
 
     expect(evaluateColdOnboardPerformance(trace, 6_000, budget)).toEqual({
+      appliedAuthoritativeLocalBaseBuildAllowanceMs: 0,
       passed: true,
       rootStartToFirstTurnCompletionMs: 5_000,
       rootEndToFirstTurnCompletionMs: 0,
       violations: [],
     });
     expect(evaluateColdOnboardPerformance(trace, 7_500, budget)).toEqual({
+      appliedAuthoritativeLocalBaseBuildAllowanceMs: 0,
       passed: false,
       rootStartToFirstTurnCompletionMs: 6_500,
       rootEndToFirstTurnCompletionMs: 1_500,
@@ -223,11 +226,18 @@ describe("onboard performance evidence", () => {
     expect(evaluateColdOnboardPerformance(trace, 6_000, budget).violations).toEqual([
       "nemoclaw.onboard.phase.sandbox 1501ms exceeds 1500ms",
     ]);
+    expect(evaluateColdOnboardPerformance(trace, 6_500, budget, true)).toMatchObject({
+      appliedAuthoritativeLocalBaseBuildAllowanceMs: 500,
+      passed: true,
+      rootStartToFirstTurnCompletionMs: 5_500,
+      violations: [],
+    });
   });
 
   it("rejects malformed or incomplete cold-path budget configuration", () => {
     expect(() => readColdOnboardPerformanceBudget({})).toThrow("fullE2eColdPath");
     const fullE2eColdPath = {
+      authoritativeLocalBaseBuildAllowanceMs: 0,
       rootStartToFirstTurnCompletionBudgetMs: 1_000,
       rootEndToFirstTurnCompletionBudgetMs: 1_001,
       phaseBudgetsMs: completePhaseBudgets(),
@@ -267,6 +277,7 @@ describe("onboard performance evidence", () => {
     const trace = readOnboardTraceWindow(traceArtifact());
     const budget = readColdOnboardPerformanceBudget({
       fullE2eColdPath: {
+        authoritativeLocalBaseBuildAllowanceMs: 0,
         rootStartToFirstTurnCompletionBudgetMs: 5_000,
         rootEndToFirstTurnCompletionBudgetMs: 1_000,
         phaseBudgetsMs: completePhaseBudgets(),
