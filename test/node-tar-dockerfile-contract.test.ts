@@ -10,12 +10,24 @@ import { NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH } from "../scripts/patch-bun
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const dockerfiles = [
-  { file: "Dockerfile.base", installsWithNpm: true },
-  { file: "Dockerfile", installsWithNpm: true },
-  { file: "agents/hermes/Dockerfile.base", installsWithNpm: true },
-  { file: "agents/hermes/Dockerfile", installsWithNpm: true },
-  { file: "agents/langchain-deepagents-code/Dockerfile.base", installsWithNpm: false },
-  { file: "agents/langchain-deepagents-code/Dockerfile", installsWithNpm: false },
+  { file: "Dockerfile.base", installsPatchDownloader: false, installsWithNpm: true },
+  { file: "Dockerfile", installsPatchDownloader: false, installsWithNpm: true },
+  {
+    file: "agents/hermes/Dockerfile.base",
+    installsPatchDownloader: false,
+    installsWithNpm: true,
+  },
+  { file: "agents/hermes/Dockerfile", installsPatchDownloader: false, installsWithNpm: true },
+  {
+    file: "agents/langchain-deepagents-code/Dockerfile.base",
+    installsPatchDownloader: true,
+    installsWithNpm: false,
+  },
+  {
+    file: "agents/langchain-deepagents-code/Dockerfile",
+    installsPatchDownloader: false,
+    installsWithNpm: false,
+  },
 ] as const;
 
 function completedStage(source: string): string {
@@ -38,7 +50,7 @@ describe("node-tar image remediation contract", () => {
   it.each(
     dockerfiles,
   )("patches npm before use and scans the completed $file filesystem", (entry) => {
-    const { file, installsWithNpm } = entry;
+    const { file, installsPatchDownloader, installsWithNpm } = entry;
     const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
     const reviewedCopy = source.indexOf(
       "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
@@ -59,6 +71,10 @@ describe("node-tar image remediation contract", () => {
     expect(reviewedCopy, file).toBeGreaterThanOrEqual(0);
     expect(patchCopy, file).toBeGreaterThan(reviewedCopy);
     expect(patchRun, file).toBeGreaterThan(patchCopy);
+    const patchDownloader = source.indexOf("curl=");
+    expect(patchDownloader > patchCopy && patchDownloader < patchRun, file).toBe(
+      installsPatchDownloader,
+    );
     expect(scanCopy, file).toBeGreaterThan(patchRun);
     expect(scanRun, file).toBeGreaterThan(scanCopy);
     expect(source, file).toContain("> /usr/local/share/nemoclaw/node-tar-inventory.json");

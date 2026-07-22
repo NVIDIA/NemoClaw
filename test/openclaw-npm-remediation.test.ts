@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -17,6 +18,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildRemediatedOpenClawArchive,
+  patchLegacyOpenClawCorePackageGraph,
   patchOpenClawCorePackageGraph,
   patchOpenClawOtelPluginPackageGraph,
   patchOpenClawPluginPackageGraph,
@@ -360,6 +362,24 @@ function writeOtelFixture(jaegerVersion = "2.8.0"): string {
             },
           },
         },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return directory;
+}
+
+function writeLegacyCoreFixture(tarVersion = "7.5.11"): string {
+  const directory = mkdtempSync(path.join(tmpdir(), "nemoclaw-legacy-openclaw-core-remediation-"));
+  temporaryDirectories.push(directory);
+  writeFileSync(
+    path.join(directory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "openclaw",
+        version: "2026.3.11",
+        dependencies: { commander: "14.0.3", tar: tarVersion },
       },
       null,
       2,
@@ -828,6 +848,54 @@ describe("OpenClaw npm remediation", () => {
     expect(() => patchOpenClawCorePackageGraph(directory)).toThrow(
       "must declare reviewed tar@7.5.16 before remediation",
     );
+  });
+
+  it("rejects a legacy rebuild fixture tar graph that changed after review", () => {
+    const directory = writeLegacyCoreFixture("7.5.12");
+
+    expect(() => patchLegacyOpenClawCorePackageGraph(directory)).toThrow(
+      "must declare reviewed tar@7.5.11 before remediation",
+    );
+  });
+
+  it("rebuilds the legacy fixture archive without adding mutable lock metadata", () => {
+    const directory = writeLegacyCoreFixture();
+    const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-legacy-openclaw-build-remediation-"));
+    temporaryDirectories.push(root);
+    const archivePath = path.join(root, "openclaw-2026.3.11.tgz");
+    packFixture(directory, archivePath);
+    const request = {
+      archivePath,
+      packageSpec: "openclaw@2026.3.11",
+      workingDirectory: path.join(root, "work"),
+    };
+    let metadataIntegrity = "";
+    try {
+      buildRemediatedOpenClawArchive({
+        ...request,
+        expectedPatchedMetadataIntegrity: "sha512-deliberate-mismatch",
+      });
+    } catch (error) {
+      metadataIntegrity = String(error).match(/got (sha512-\S+)/u)?.[1] ?? "";
+    }
+    expect(metadataIntegrity).toMatch(/^sha512-/u);
+
+    const remediated = buildRemediatedOpenClawArchive({
+      ...request,
+      expectedPatchedMetadataIntegrity: metadataIntegrity,
+    });
+    const extracted = path.join(root, "asserted");
+    mkdirSync(extracted, { recursive: true });
+    const extraction = spawnSync("tar", ["-xzf", remediated.archivePath, "-C", extracted], {
+      encoding: "utf8",
+    });
+    expect(extraction.status, extraction.stderr).toBe(0);
+    expect(existsSync(path.join(extracted, "package", "npm-shrinkwrap.json"))).toBe(false);
+    expect(
+      readJson<{ dependencies?: Record<string, string> }>(
+        path.join(extracted, "package", "package.json"),
+      ).dependencies?.tar,
+    ).toBe("7.5.19");
   });
 
   // source-shape-contract: security -- Archive metadata proves the rebuilt package carries every reviewed bundled core remediation

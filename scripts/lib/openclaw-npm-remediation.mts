@@ -25,7 +25,7 @@ import { packReviewedNpmArchive } from "./reviewed-npm-archive.mts";
 type JsonObject = Record<string, any>;
 
 type Remediation = Readonly<{
-  kind: "axios-plugin" | "core" | "otel-plugin";
+  kind: "axios-plugin" | "core" | "legacy-core" | "otel-plugin";
   expectedPatchedMetadataIntegrity: string;
 }>;
 
@@ -277,6 +277,11 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
     expectedPatchedMetadataIntegrity:
       "sha512-QJH/wyJBl7eEnjIMmWQs8jCoUXAHFNxvYCv0y+yh2WaDFJh3ptlHlgH7N+quLWRUSHPcmjcyOlKYIYXYtiDNiA==",
   },
+  "openclaw@2026.3.11": {
+    kind: "legacy-core",
+    expectedPatchedMetadataIntegrity:
+      "sha512-c+3QxBJidAFb8xZSmz4azC7KHFvXUAY9vN1AlXJ243LwMCFN5it5MW0r6FBuxIFvlBCnGlzcqRCvU5ghUec/ng==",
+  },
 });
 
 function run(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv) {
@@ -360,7 +365,10 @@ function writeJson(path: string, value: JsonObject): void {
 
 function hashPatchedMetadata(packageDirectory: string): string {
   const hash = createHash("sha512");
-  const names = ["package.json", "npm-shrinkwrap.json"];
+  const names = ["package.json"];
+  if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
+    names.push("npm-shrinkwrap.json");
+  }
   for (const bundledPackageJson of [
     "node_modules/@hono/node-server/package.json",
     "node_modules/@modelcontextprotocol/sdk/package.json",
@@ -680,6 +688,24 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
 
   writeJson(packageJsonPath, packageJson);
   writeJson(shrinkwrapPath, shrinkwrap);
+}
+
+export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(packageJson, "openclaw", "2026.3.11", "Legacy OpenClaw core");
+  if (packageJson.dependencies?.tar !== "7.5.11") {
+    throw new Error("openclaw@2026.3.11 must declare reviewed tar@7.5.11 before remediation");
+  }
+  if (packageJson.bundledDependencies !== undefined) {
+    throw new Error("openclaw@2026.3.11 unexpectedly declares bundled dependencies");
+  }
+  if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
+    throw new Error("openclaw@2026.3.11 unexpectedly ships an npm shrinkwrap");
+  }
+
+  packageJson.dependencies.tar = TAR_VERSION;
+  writeJson(packageJsonPath, packageJson);
 }
 
 export function patchOpenClawDiagnosticsPackageGraph(packageDirectory: string): void {
@@ -1070,6 +1096,8 @@ export function buildRemediatedOpenClawArchive(request: BuildRequest): Remediate
       copyReplacementPackage(packageDirectory, join(sourcePackage, "node_modules", identity.name));
     }
     patchOpenClawCorePackageGraph(sourcePackage);
+  } else if (remediation.kind === "legacy-core") {
+    patchLegacyOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "otel-plugin") {
     const jaegerArchive = packReplacement(
       `@opentelemetry/propagator-jaeger@${OTEL_PROPAGATOR_JAEGER_VERSION}`,

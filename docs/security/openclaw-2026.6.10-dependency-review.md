@@ -83,7 +83,7 @@ The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transi
 
 ### Transitive Remediation Boundary
 
-`scripts/lib/openclaw-npm-remediation.mts` remediates only four exact reviewed identities.
+`scripts/lib/openclaw-npm-remediation.mts` remediates only five exact reviewed identities.
 It rejects an unexpected source dependency shape before it changes or installs an archive.
 The helper verifies every replacement package by exact registry SRI and tarball URL.
 It also rejects unsafe archive members before extraction and after repacking.
@@ -95,6 +95,9 @@ For `openclaw@2026.6.10`, the helper makes these changes:
 - Bundles the reviewed `@openclaw/fs-safe@0.3.0` package and removes its duplicate optional `tar` and `jszip` declarations. The bundled package resolves OpenClaw's reviewed direct `tar@7.5.19` and `jszip@3.10.1` dependencies instead, including during a global npm install.
 - Bundles the reviewed `@modelcontextprotocol/sdk@1.29.0` package with its Hono dependency pinned to exact `@hono/node-server@2.0.11`, and bundles that reviewed Hono package so a global npm install cannot re-resolve the vulnerable `1.19.14` subtree or the subsequently affected `2.0.5` revision. The archive also bundles the complete 17-package, lock-pinned runtime closure statically imported by OpenClaw's MCP client paths, including AJV validation and the stdio, SSE, and streamable HTTP transports, with `fast-uri@3.1.2` replaced by `3.1.4`.
 - Verifies the installed global dependency tree before either the reviewed base image or production image can complete.
+
+For the E2E-only `openclaw@2026.3.11` identity, the helper replaces the exact `tar@7.5.11` declaration with reviewed `tar@7.5.19`.
+It rejects a source archive that has different dependency metadata or an unexpected npm shrinkwrap.
 
 For `@openclaw/slack@2026.6.10` and `@openclaw/msteams@2026.6.10`, the helper makes these changes:
 
@@ -149,8 +152,9 @@ It binds each patched package manifest and shrinkwrap to a committed SHA-512 met
 The core value also covers the bundled `@openclaw/fs-safe`, `@modelcontextprotocol/sdk`, `@hono/node-server`, and all 17 MCP client runtime package manifests.
 The diagnostics value also covers the patched SDK Node, Jaeger, and nested OpenTelemetry core package manifests.
 The expected values are `sha512-QJH/wyJBl7eEnjIMmWQs8jCoUXAHFNxvYCv0y+yh2WaDFJh3ptlHlgH7N+quLWRUSHPcmjcyOlKYIYXYtiDNiA==` for OpenClaw core, `sha512-ByLYBs3KXz3u0mPuj9DcP/xPTJNgQaLTPxazybhyIC1VjyftEmKQuoZufPZ8z8CjwBsOPm6NbjMQB2BfX36TTg==` for diagnostics OTEL, `sha512-WLZDX4gR+IlchildC9ZI2o4252gEXxNWFaeGprL1JYfB+w8b2YuLYwH6Or0M9RxIWC9giTFCUSyi0Rvcg05PnQ==` for Slack, and `sha512-eTTIpA8HzcBwXBLt6UZDoFgOUmkRgIhcZFBOwg+5Jfgt8HDwtfPnqKo6vm2DdDdPMPhu08FbEzU5Gt3RoL5fIw==` for Microsoft Teams.
+The E2E-only `openclaw@2026.3.11` value is `sha512-c+3QxBJidAFb8xZSmz4azC7KHFvXUAY9vN1AlXJ243LwMCFN5it5MW0r6FBuxIFvlBCnGlzcqRCvU5ghUec/ng==`.
 Both the library and command-line entry points enforce the same committed values.
-`Dockerfile.base` records `ignore-scripts+reviewed-lifecycle+transitive-remediation-v3` in its protected provenance marker.
+`Dockerfile.base` records `ignore-scripts+reviewed-lifecycle+transitive-remediation-v3` for `2026.6.10` in its protected provenance marker; the E2E-only `2026.3.11` fixture records the legacy `transitive-remediation-v1` recipe.
 The production Dockerfile rejects stale base provenance and repeats the remediation when the marker does not match.
 Both image paths run a depth-bounded `npm ls` against the installed OpenClaw, MCP SDK, Hono node server, `eventsource-parser`, `fs-safe`, `tar`, and `jszip` graph so a missing or invalid reviewed dependency fails during image assembly without traversing the unrelated global tree.
 The optional plugin installer applies the same remediation before it installs diagnostics OTEL, and the messaging installer applies it before installing the reviewed Slack or Microsoft Teams archive.
@@ -277,6 +281,14 @@ The reviewed `@openclaw/diagnostics-otel@2026.6.10` package dist imports `OTLPTr
 ### Legacy Fixture Pins
 
 The legacy `2026.3.11` and `2026.4.24` OpenClaw pins are retained only for stale-upgrade fixture builds. Production Dockerfile install blocks now reject those versions unless `NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1` is set explicitly. The E2E-scoped name is intentionally noisy so production build workflows do not treat it as a general override. Production image workflows run `scripts/check-production-build-args.sh` before production Docker builds so the fixture flag, both legacy version values, and every integrity/tarball Docker ARG declared by a production Dockerfile cannot be overridden through production build args or their corresponding environment variables. The guard also rejects future positional `*_INTEGRITY` and `*_TARBALL` names, keeping reviewed pin values repository-controlled even before the Dockerfile's registry and downloaded-archive checks run. The stale-upgrade E2E build contexts pass their fixture values only on fixture-specific build paths, and the integrity-pin contract suite verifies the default rejection, the explicit fixture opt-in, and the production workflow guard.
+
+Frozen OpenShell gateway-upgrade fixtures select only the SRI-pinned OpenClaw `2026.4.24`, `2026.5.22`, or `2026.5.27` archive.
+The live test uses `packReviewedNpmArchive` to verify exact registry metadata, the reviewed tarball URL, and the downloaded SRI.
+The adapter copies only that verified local archive into the historical build context.
+It installs the archive with lifecycle scripts disabled and invokes `postinstall-bundled-plugins.mjs` directly.
+The fixtures retain npm registry signature verification for the historical mcporter lock.
+The adapter requires exactly one advisory audit statement before it replaces that statement with a test-only skip.
+`test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts` verifies these constraints.
 
 Invalid state: a production image build overriding `OPENCLAW_VERSION` to an old fixture pin or replacing any repository-reviewed integrity/tarball value while still passing the workflow boundary. Source boundary: Dockerfile and Dockerfile.base install blocks plus the guard that precedes every production image build. Source-fix constraint: keep stale-upgrade E2Es able to build old images without normalizing those pins or accepting caller-controlled production package identity. Regression tests: the integrity-pin contract suite rejects the flag, both legacy versions, all declared integrity/tarball ARG overrides through direct, `--build-arg`, and environment paths, and a future-shaped positional pin name; `test/openclaw-dependency-review.test.ts` proves all seven production image builds are guard-protected and carry no literal fixture selectors. Removal condition: issue #5896 section 9 retires the old-base fixture strategy and fixture flag; the general repository-owned production pin guard remains until production builds no longer expose package identity as Docker ARGs.
 
