@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-type TunnelServices = Pick<typeof import("./services"), "resolveServicePidDir" | "stopCloudflared">;
-type WebhookProxy = Pick<typeof import("./googlechat-webhook-proxy"), "stopGooglechatWebhookProxy">;
+type TunnelServices = Pick<
+  typeof import("../../../../tunnel/services"),
+  "resolveServicePidDir" | "stopCloudflared"
+>;
+type WebhookProxy = Pick<typeof import("./proxy"), "stopGooglechatWebhookProxy">;
 
 export type GooglechatWebhookLifecycleDeps = {
   readonly services?: TunnelServices;
@@ -17,8 +20,8 @@ export function stopGooglechatWebhookTunnel(
   sandboxName: string,
   deps: GooglechatWebhookLifecycleDeps = {},
 ): string {
-  const services = deps.services ?? (require("./services") as TunnelServices);
-  const webhookProxy = deps.webhookProxy ?? (require("./googlechat-webhook-proxy") as WebhookProxy);
+  const services = deps.services ?? (require("../../../../tunnel/services") as TunnelServices);
+  const webhookProxy = deps.webhookProxy ?? (require("./proxy") as WebhookProxy);
   const pidDir = googlechatWebhookTunnelPidDir(services.resolveServicePidDir({ sandboxName }));
   services.stopCloudflared({ pidDir });
   webhookProxy.stopGooglechatWebhookProxy(pidDir);

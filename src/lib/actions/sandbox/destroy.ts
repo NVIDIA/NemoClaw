@@ -29,8 +29,8 @@ import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
 import { confirmSandboxDestroy } from "./destroy-confirmation";
 import { executeSandboxDestroy } from "./destroy-execution";
-import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
+import { shouldCleanupGatewayAfterConfirmedFinalDestroy } from "./destroy-gateway-cleanup";
 import { prepareSandboxDestroy } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
@@ -142,7 +142,7 @@ export function cleanupSandboxServices(
     deps.stopGooglechatWebhookTunnel ??
     ((name: string) => {
       const lifecycle =
-        require("../../tunnel/googlechat-webhook-lifecycle") as typeof import("../../tunnel/googlechat-webhook-lifecycle");
+        require("../../messaging/channels/googlechat/tunnel/lifecycle") as typeof import("../../messaging/channels/googlechat/tunnel/lifecycle");
       return lifecycle.stopGooglechatWebhookTunnel(name);
     });
 

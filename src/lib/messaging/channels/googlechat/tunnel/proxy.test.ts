@@ -11,7 +11,7 @@ import {
   readGooglechatWebhookProxyState,
   startGooglechatWebhookProxy,
   stopGooglechatWebhookProxy,
-} from "./googlechat-webhook-proxy";
+} from "./proxy";
 
 const cleanupDirs = new Set<string>();
 const cleanupServers = new Set<Server>();

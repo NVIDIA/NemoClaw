@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { buildSubprocessEnv } from "../subprocess-env";
+import { buildSubprocessEnv } from "../../../../subprocess-env";
 
 const PROCESS_MARKER = "nemoclaw-googlechat-webhook-proxy";
 const PID_FILE = `${PROCESS_MARKER}.pid`;

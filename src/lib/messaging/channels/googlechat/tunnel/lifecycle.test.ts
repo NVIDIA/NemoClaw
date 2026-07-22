@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import {
-  googlechatWebhookTunnelPidDir,
-  stopGooglechatWebhookTunnel,
-} from "./googlechat-webhook-lifecycle";
+import { googlechatWebhookTunnelPidDir, stopGooglechatWebhookTunnel } from "./lifecycle";
 
 describe("Google Chat webhook tunnel lifecycle", () => {
   it("stops the sandbox-scoped cloudflared process and route proxy", () => {

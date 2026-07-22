@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { DASHBOARD_PORT } from "../../../../core/ports";
-import { googlechatWebhookTunnelPidDir } from "../../../../tunnel/googlechat-webhook-lifecycle";
+import { googlechatWebhookTunnelPidDir } from "../tunnel/lifecycle";
 import type { GooglechatTunnelAudienceGateHookOptions } from "./tunnel-audience-gate";
 
 type TunnelServices = Pick<
@@ -10,7 +10,7 @@ type TunnelServices = Pick<
   "getTunnelUrl" | "readCloudflaredState" | "resolveServicePidDir" | "startAll" | "stopCloudflared"
 >;
 type WebhookProxy = Pick<
-  typeof import("../../../../tunnel/googlechat-webhook-proxy"),
+  typeof import("../tunnel/proxy"),
   "readGooglechatWebhookProxyState" | "startGooglechatWebhookProxy" | "stopGooglechatWebhookProxy"
 >;
 
@@ -38,8 +38,7 @@ export function createDefaultGooglechatTunnelGateOptions(
   const loadServices =
     deps.loadServices ?? (() => require("../../../../tunnel/services") as TunnelServices);
   const loadWebhookProxy =
-    deps.loadWebhookProxy ??
-    (() => require("../../../../tunnel/googlechat-webhook-proxy") as WebhookProxy);
+    deps.loadWebhookProxy ?? (() => require("../tunnel/proxy") as WebhookProxy);
   const resolveGooglechatPidDir = (): string =>
     googlechatWebhookTunnelPidDir(loadServices().resolveServicePidDir());
   return {
