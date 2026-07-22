@@ -240,6 +240,8 @@ export interface GatewayAttachmentProbe {
   listenerPids: readonly number[];
   /** False when the listener set could not be authoritatively enumerated. */
   listenerScanComplete: boolean;
+  /** Linux process start time proving which generation of the PID was inspected. */
+  listenerStartTime: string | null;
   /** Whether the declared supervisor unit reports active; null when unprobeable. */
   supervisorActive: boolean | null;
   /**

@@ -170,6 +170,7 @@ describe("gateway host runtime attachment probe", () => {
       portOccupied: true,
       listenerPids: [SYSTEMD_GATEWAY_PID],
       listenerScanComplete: true,
+      listenerStartTime: "710024",
       supervisorActive: true,
       listenerExecPath: SYSTEMD_GATEWAY_EXEC,
       listenerSupervisorMatch: true,
@@ -265,6 +266,28 @@ describe("gateway host runtime attachment probe", () => {
 
     const probe = await runtime.probeGatewayAttachment(owner);
 
+    expect(probe.listenerExecPath).toBeNull();
+    expect(probe.listenerSupervisorMatch).toBeNull();
+    expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({
+      ok: false,
+      code: "unknown_listener",
+    });
+  });
+
+  it("fails closed when the listener PID is reused between identity and port confirmation (#6576)", async () => {
+    declareExternalSupervision();
+    const readProcStartTime = vi
+      .fn()
+      .mockReturnValueOnce("710024")
+      .mockReturnValueOnce("710024")
+      .mockReturnValueOnce("710025")
+      .mockReturnValueOnce("710025");
+    const runtime = createGatewayHostRuntime(createDeps({ readProcStartTime }));
+    const owner = runtime.getGatewayOwner();
+
+    const probe = await runtime.probeGatewayAttachment(owner);
+
+    expect(probe.listenerStartTime).toBeNull();
     expect(probe.listenerExecPath).toBeNull();
     expect(probe.listenerSupervisorMatch).toBeNull();
     expect(evaluateGatewayAttachment(owner, probe)).toMatchObject({
@@ -369,6 +392,33 @@ describe("gateway host runtime attachment probe", () => {
     const runtime = createGatewayHostRuntime(
       createDeps({ getGatewayPortListenerRawScan, runOpenshell }),
     );
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+
+    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
+      code: "identity_mismatch",
+    });
+    expect(runOpenshell).toHaveBeenLastCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
+  });
+
+  it("removes the registration when the listener process generation changes (#6576)", async () => {
+    declareExternalSupervision();
+    const readProcStartTime = vi
+      .fn()
+      .mockReturnValueOnce("710024")
+      .mockReturnValueOnce("710024")
+      .mockReturnValueOnce("710024")
+      .mockReturnValueOnce("710024")
+      .mockReturnValueOnce("710025")
+      .mockReturnValueOnce("710025")
+      .mockReturnValueOnce("710025")
+      .mockReturnValueOnce("710025");
+    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
+    const runtime = createGatewayHostRuntime(createDeps({ readProcStartTime, runOpenshell }));
     const owner = runtime.getGatewayOwner();
     const expectedProbe = await runtime.probeGatewayAttachment(owner);
 

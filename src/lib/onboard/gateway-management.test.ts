@@ -182,6 +182,20 @@ describe("gateway management declaration", () => {
     expect(result.ok === false && result.reason).toMatch(/unsupported capability/);
   });
 
+  it("does not echo malformed declaration values in errors (#6576)", () => {
+    const secret = "sk-live-not-a-real-token";
+    for (const declaration of [
+      externalDeclaration({ version: secret }),
+      externalDeclaration({ mode: secret }),
+      externalDeclaration({ endpoint: secret }),
+      externalDeclaration({ requiredCapabilities: [secret] }),
+    ]) {
+      const result = parseGatewayManagementDeclaration(declaration);
+      expect(result).toMatchObject({ ok: false });
+      expect(result.ok === false && result.reason).not.toContain(secret);
+    }
+  });
+
   it("rejects a relative state directory (#6576)", () => {
     const result = parseGatewayManagementDeclaration(
       externalDeclaration({ stateDir: "relative/state" }),
@@ -222,12 +236,14 @@ describe("gateway management declaration loading", () => {
   });
 
   it("fails closed on malformed JSON rather than self-managing the gateway (#6576)", () => {
+    const secret = "sk-live-not-a-real-token";
     const result = loadGatewayManagementDeclaration({
       env: { [GATEWAY_MANAGEMENT_ENV_VAR]: "/etc/nemoclaw/gateway.json" },
-      readFile: () => "{ not json",
+      readFile: () => `{ "token": "${secret}"`,
     });
 
     expect(result.ok === false && result.reason).toMatch(/not valid JSON/);
+    expect(result.ok === false && result.reason).not.toContain(secret);
   });
 
   it("prefers an in-process profile declaration over the environment file (#6576)", () => {

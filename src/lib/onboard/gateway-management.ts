@@ -135,10 +135,10 @@ function parseEndpoint(value: unknown): string | { error: string } {
   try {
     url = new URL(raw);
   } catch {
-    return { error: `endpoint is not a valid URL: ${raw}` };
+    return { error: "endpoint is not a valid URL" };
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return { error: `endpoint must use http or https, got ${url.protocol.replace(":", "")}` };
+    return { error: "endpoint must use http or https" };
   }
   if (url.username || url.password) {
     return { error: "endpoint must not embed credentials" };
@@ -152,7 +152,7 @@ function parseEndpoint(value: unknown): string | { error: string } {
   if (!SUPPORTED_GATEWAY_ENDPOINT_HOSTS.has(url.hostname)) {
     return {
       error:
-        `endpoint host ${url.hostname} is not a supported local gateway origin; ` +
+        `endpoint host is not a supported local gateway origin; ` +
         `the declared gateway is supervised on this machine, so the endpoint must be loopback ` +
         `(one of: ${[...SUPPORTED_GATEWAY_ENDPOINT_HOSTS].join(", ")})`,
     };
@@ -167,7 +167,7 @@ function parseStateDir(value: unknown): string | { error: string } {
   const raw = requireNonEmptyString(value, "stateDir");
   if (typeof raw !== "string") return raw;
   if (!path.isAbsolute(raw)) {
-    return { error: `stateDir must be an absolute path, got ${raw}` };
+    return { error: "stateDir must be an absolute path" };
   }
   return raw;
 }
@@ -183,7 +183,7 @@ function parseCapabilities(value: unknown): readonly GatewayCapability[] | { err
     if (typeof entry !== "string" || !supported.has(entry)) {
       return {
         error:
-          `unsupported capability ${JSON.stringify(entry)}; ` +
+          `unsupported capability; ` +
           `this NemoClaw build provides: ${SUPPORTED_GATEWAY_CAPABILITIES.join(", ")}`,
       };
     }
@@ -230,7 +230,7 @@ function parseSupervisor(
   const execPath = requireNonEmptyString(value.execPath, "supervisor.execPath");
   if (typeof execPath !== "string") return execPath;
   if (!path.isAbsolute(execPath)) {
-    return { error: `supervisor.execPath must be an absolute path, got ${execPath}` };
+    return { error: "supervisor.execPath must be an absolute path" };
   }
 
   return { kind: kind as GatewaySupervisorKind, serviceName, execPath };
@@ -251,7 +251,7 @@ export function parseGatewayManagementDeclaration(raw: unknown): GatewayManageme
     return {
       ok: false,
       reason:
-        `unsupported gateway-management contract version ${JSON.stringify(raw.version)}; ` +
+        "unsupported gateway-management contract version; " +
         `this NemoClaw build supports version ${GATEWAY_MANAGEMENT_CONTRACT_VERSION}`,
     };
   }
@@ -260,7 +260,7 @@ export function parseGatewayManagementDeclaration(raw: unknown): GatewayManageme
   if (mode !== "nemoclaw-managed" && mode !== "externally-supervised") {
     return {
       ok: false,
-      reason: `mode must be nemoclaw-managed or externally-supervised, got ${JSON.stringify(mode)}`,
+      reason: "mode must be nemoclaw-managed or externally-supervised",
     };
   }
 
@@ -342,22 +342,20 @@ export function loadGatewayManagementDeclaration(
   let contents: string;
   try {
     contents = readFile(path.resolve(configuredPath));
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+  } catch {
     return {
       ok: false,
-      reason: `${GATEWAY_MANAGEMENT_ENV_VAR}=${configuredPath} could not be read: ${detail}`,
+      reason: `${GATEWAY_MANAGEMENT_ENV_VAR} declaration file could not be read`,
     };
   }
 
   let raw: unknown;
   try {
     raw = JSON.parse(contents);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+  } catch {
     return {
       ok: false,
-      reason: `${GATEWAY_MANAGEMENT_ENV_VAR}=${configuredPath} is not valid JSON: ${detail}`,
+      reason: `${GATEWAY_MANAGEMENT_ENV_VAR} declaration file is not valid JSON`,
     };
   }
 
@@ -365,7 +363,7 @@ export function loadGatewayManagementDeclaration(
   if (!parsed.ok) {
     return {
       ok: false,
-      reason: `${GATEWAY_MANAGEMENT_ENV_VAR}=${configuredPath}: ${parsed.reason}`,
+      reason: `${GATEWAY_MANAGEMENT_ENV_VAR} declaration file: ${parsed.reason}`,
     };
   }
   return { ok: true, declaration: parsed.declaration, source: "file" };

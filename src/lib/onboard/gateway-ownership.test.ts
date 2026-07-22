@@ -42,6 +42,7 @@ function probe(overrides: Partial<GatewayAttachmentProbe> = {}): GatewayAttachme
     portOccupied: true,
     listenerPids: [4242],
     listenerScanComplete: true,
+    listenerStartTime: "710024",
     supervisorActive: true,
     listenerExecPath: "/usr/local/bin/openshell-gateway",
     listenerSupervisorMatch: true,

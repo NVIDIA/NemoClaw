@@ -217,7 +217,9 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     const execPath = readListenerExecPath(pid);
     const supervisorMatch = readListenerSupervisorMatch(owner, pid);
     const endTime = readProcStartTime(pid);
-    return startTime !== null && endTime === startTime ? { execPath, supervisorMatch } : null;
+    return startTime !== null && endTime === startTime
+      ? { startTime, execPath, supervisorMatch }
+      : null;
   }
 
   /**
@@ -255,7 +257,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       gatewayBin,
     });
     const [firstPid] = scan.pids;
-    const identity =
+    const initialIdentity =
       scan.complete && scan.pids.length === 1 && typeof firstPid === "number"
         ? readStableListenerIdentity(owner, firstPid)
         : null;
@@ -265,12 +267,26 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
             gatewayBin,
           })
         : scan;
+    const confirmedIdentity =
+      scan.complete &&
+      verifiedScan.complete &&
+      scan.pids.length === 1 &&
+      verifiedScan.pids.length === 1 &&
+      verifiedScan.pids[0] === firstPid &&
+      typeof firstPid === "number"
+        ? readStableListenerIdentity(owner, firstPid)
+        : null;
     const listenerStayedStable =
       scan.complete &&
       verifiedScan.complete &&
       scan.pids.length === 1 &&
       verifiedScan.pids.length === 1 &&
-      verifiedScan.pids[0] === firstPid;
+      verifiedScan.pids[0] === firstPid &&
+      initialIdentity !== null &&
+      confirmedIdentity !== null &&
+      initialIdentity.startTime === confirmedIdentity.startTime &&
+      initialIdentity.execPath === confirmedIdentity.execPath &&
+      initialIdentity.supervisorMatch === confirmedIdentity.supervisorMatch;
     return {
       gatewayPort: deps.gatewayPort(),
       httpReady,
@@ -278,9 +294,10 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       portOccupied: !portCheck.ok,
       listenerPids: verifiedScan.pids,
       listenerScanComplete: scan.complete && verifiedScan.complete,
+      listenerStartTime: listenerStayedStable ? confirmedIdentity.startTime : null,
       supervisorActive,
-      listenerExecPath: listenerStayedStable ? (identity?.execPath ?? null) : null,
-      listenerSupervisorMatch: listenerStayedStable ? (identity?.supervisorMatch ?? null) : null,
+      listenerExecPath: listenerStayedStable ? confirmedIdentity.execPath : null,
+      listenerSupervisorMatch: listenerStayedStable ? confirmedIdentity.supervisorMatch : null,
     };
   }
 
@@ -324,6 +341,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       expected.httpReady === actual.httpReady &&
       expected.portOccupied === actual.portOccupied &&
       expected.listenerScanComplete === actual.listenerScanComplete &&
+      expected.listenerStartTime === actual.listenerStartTime &&
       expected.supervisorActive === actual.supervisorActive &&
       expected.listenerExecPath === actual.listenerExecPath &&
       expected.listenerSupervisorMatch === actual.listenerSupervisorMatch &&
