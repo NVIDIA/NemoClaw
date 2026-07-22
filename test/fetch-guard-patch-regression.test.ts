@@ -198,6 +198,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     `MCPORTER_0_7_3_TARBALL=${JSON.stringify(mcporterTarball)}`,
     "node() {",
     '  if [ "${1:-}" = "$postinstall_path" ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
+    '  if [ "${1:-}" = "--input-type=module" ] && [ "${2:-}" = "-e" ] && printf "%s\\n" "${3:-}" | grep -q "StreamableHTTPServerTransport"; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
     '  if [ "${2:-}" = "/scripts/lib/reviewed-npm-archive.mts" ]; then',
     '    if [ "${3:-}" = "--verify-only" ]; then',
     '      [ "$#" -eq 11 ] && [ "${4:-}" = "--package-spec" ] && [ "${5:-}" = "mcporter@${MCPORTER_VERSION}" ] || return 91;',
@@ -399,6 +400,7 @@ describe("fetch-guard patch regression guard", () => {
     expect(invocation.calls).toMatch(
       /npm --prefix \S+ ci --ignore-scripts --omit=dev --no-audit --no-fund --no-progress/,
     );
+    expect(invocation.calls).toContain("StreamableHTTPServerTransport");
     readRequiredMatch(
       DOCKERFILE_BASE,
       /(npm --prefix \/usr\/local\/lib\/nemoclaw\/mcporter-runtime ci\s*\\\s*--ignore-scripts --omit=dev --no-audit --no-fund --no-progress)/,
