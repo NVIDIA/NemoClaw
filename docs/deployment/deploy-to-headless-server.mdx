@@ -277,7 +277,8 @@ $$nemoclaw headless-agent dashboard-url --quiet
 ```
 
 The Hermes OpenAI-compatible API uses the loopback forward on port `8642`.
-Retrieve its `API_SERVER_KEY` through the supported command, use it as a bearer token, then clear the shell variable:
+For a Hermes sandbox, `gateway-token` is agent-aware and retrieves `API_SERVER_KEY` through the registered `bearer_token` web-auth contract.
+Use it as a bearer token, then clear the shell variable:
 
 ```bash
 TOKEN=$($$nemoclaw headless-agent gateway-token --quiet)
@@ -358,11 +359,19 @@ Create a named snapshot before host maintenance or a manual update:
 
 ```bash
 $$nemoclaw headless-agent snapshot create --name before-maintenance
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+export NEMOCLAW_INSTALL_REF="<next-reviewed-40-character-commit-sha>"
+[[ "$NEMOCLAW_INSTALL_REF" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "NEMOCLAW_INSTALL_REF must be a reviewed full commit SHA" >&2
+  exit 1
+}
+curl -fsSL "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${NEMOCLAW_INSTALL_REF}/install.sh" | \
+  NEMOCLAW_INSTALL_REF="$NEMOCLAW_INSTALL_REF" \
+  bash
 $$nemoclaw upgrade-sandboxes --check
 ```
 
-The installer follows `lkg` by default and requires current backups before it changes an existing managed installation.
+Use a newly reviewed commit SHA for each planned update instead of relying on the mutable installer default.
+The installer requires current backups before it changes an existing managed installation.
 Use `$$nemoclaw headless-agent rebuild` when you need the current agent image while preserving supported state.
 
 | Item | Same-container restart | Snapshot and restore | Rebuild or sandbox upgrade |

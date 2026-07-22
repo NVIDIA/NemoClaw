@@ -12,9 +12,20 @@ import { DEFAULT_INSTALL_REF } from "../src/lib/domain/installer/ref";
 const repoRoot = path.join(import.meta.dirname, "..");
 const guidePath = path.join(repoRoot, "docs", "deployment", "deploy-to-headless-server.mdx");
 const guide = fs.readFileSync(guidePath, "utf-8");
-const unattendedGuide = guide.slice(
-  guide.indexOf("## Run Unattended Onboarding"),
-  guide.indexOf("## Verify Readiness"),
+
+function sectionBetween(content: string, startHeading: string, endHeading: string): string {
+  const startIndex = content.indexOf(startHeading);
+  const endIndex = content.indexOf(endHeading);
+  if (startIndex < 0 || endIndex <= startIndex) {
+    throw new Error(`invalid documentation section: ${startHeading} -> ${endHeading}`);
+  }
+  return content.slice(startIndex, endIndex);
+}
+
+const unattendedGuide = sectionBetween(
+  guide,
+  "## Run Unattended Onboarding",
+  "## Verify Readiness",
 );
 const overview = fs.readFileSync(path.join(repoRoot, "docs", "about", "overview.mdx"), "utf-8");
 const commands = fs.readFileSync(path.join(repoRoot, "docs", "reference", "commands.mdx"), "utf-8");
@@ -33,7 +44,7 @@ describe("headless server deployment guide contracts", () => {
       "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${NEMOCLAW_INSTALL_REF}/install.sh",
     );
     expect(unattendedGuide).toContain('NEMOCLAW_INSTALL_REF="$NEMOCLAW_INSTALL_REF"');
-    expect(unattendedGuide).not.toContain("https://www.nvidia.com/nemoclaw.sh");
+    expect(guide).not.toContain("https://www.nvidia.com/nemoclaw.sh");
     expect(unattendedGuide).toContain("NEMOCLAW_NON_INTERACTIVE=1");
     expect(unattendedGuide).toContain("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
     expect(unattendedGuide).toContain('NEMOCLAW_AGENT="$NEMOCLAW_AGENT"');
@@ -85,10 +96,15 @@ describe("headless server deployment guide contracts", () => {
     expect(hermesGuide).toContain(
       "Hermes preserves its `API_SERVER_KEY` when the same sandbox container restarts.",
     );
+    expect(hermesGuide).toContain(
+      "`gateway-token` is agent-aware and retrieves `API_SERVER_KEY` through the registered `bearer_token` web-auth contract.",
+    );
+    expect(hermesGuide).toContain("TOKEN=$(nemohermes headless-agent gateway-token --quiet)");
     expect(hermesGuide).toContain("| Hermes `API_SERVER_KEY` | Preserved |");
     expect(hermesGuide).not.toContain("OpenClaw generates a new gateway token each time");
 
     expect(deepAgentsGuide).not.toContain("### Dashboard or Token Retrieval Fails");
+    expect(deepAgentsGuide).not.toContain("gateway-token --quiet");
     expect(deepAgentsGuide).not.toContain("OpenClaw gateway token | Rotated");
     expect(deepAgentsGuide).not.toContain("Hermes `API_SERVER_KEY` | Preserved");
   });
