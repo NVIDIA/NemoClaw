@@ -329,6 +329,17 @@ export function ensureMessagingBridgeProfiles(
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
 
   for (const profile of active) {
+    // Idempotent: a fresh onboard registers bridge providers twice — once when
+    // credentials are staged for resume, once during create-plan materialization.
+    // Skip the import when the profile is already registered so the second pass
+    // does not surface OpenShell's "provider profile ... already exists / import
+    // failed" diagnostic. The import and tolerance below stay as a race fallback.
+    const alreadyRegistered = deps.runOpenshell(
+      ["provider", "profile", "export", profile.profileId],
+      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    if (alreadyRegistered.status === 0) continue;
+
     const result = deps.runOpenshell(
       ["provider", "profile", "import", "--file", profile.profilePath],
       { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },

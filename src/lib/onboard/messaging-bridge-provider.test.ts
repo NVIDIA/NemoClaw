@@ -227,14 +227,27 @@ describe("ensureMessagingBridgeProfiles", () => {
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("imports the profile from its co-located path and does not exit on success", () => {
+  it("imports the profile from its co-located path when not yet registered", () => {
+    const runOpenshell = vi.fn((args: string[], _opts: unknown) =>
+      args.includes("export") ? { status: 1 } : { status: 0 },
+    );
+    const exit = vi.fn(() => undefined as never);
+    ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
+    const importCall = runOpenshell.mock.calls.find((call) => call[0].includes("import"));
+    expect(importCall?.[0].slice(0, 4)).toEqual(["provider", "profile", "import", "--file"]);
+    expect(importCall?.[0]).toContain(GC_PROFILE.profilePath);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("skips the import when the profile is already registered", () => {
+    // A fresh onboard registers bridge providers twice; the second pass must not
+    // re-import and trigger OpenShell's "already exists / import failed" output.
     const runOpenshell = vi.fn((_args: string[], _opts: unknown) => ({ status: 0 }));
     const exit = vi.fn(() => undefined as never);
     ensureMessagingBridgeProfiles([BRIDGE_DEF], { ...baseDeps(), runOpenshell, exit });
-    expect(runOpenshell).toHaveBeenCalledTimes(1);
-    const args = runOpenshell.mock.calls[0][0];
-    expect(args.slice(0, 4)).toEqual(["provider", "profile", "import", "--file"]);
-    expect(args).toContain(GC_PROFILE.profilePath);
+    expect(runOpenshell.mock.calls.some((call) => call[0].includes("import"))).toBe(false);
+    const exportCall = runOpenshell.mock.calls.find((call) => call[0].includes("export"));
+    expect(exportCall?.[0]).toEqual(["provider", "profile", "export", GC_PROFILE.profileId]);
     expect(exit).not.toHaveBeenCalled();
   });
 
