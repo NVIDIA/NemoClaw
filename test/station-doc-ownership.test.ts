@@ -135,9 +135,10 @@ describe("DGX Station documentation ownership", () => {
       ["/nemoclaw", "/nemoclaw/user-guide/openclaw"],
     ]) {
       for (const page of pages) {
-        for (const suffix of ["", ".html", "/index.html"]) {
+        for (const suffix of ["", ".html", "/index.html", ".md", ".mdx"]) {
+          const destinationSuffix = suffix === ".md" || suffix === ".mdx" ? suffix : "";
           expect(redirects).toContain(
-            `- source: "${legacyPrefix}/get-started/prerequisites/${page}${suffix}"\n    destination: "${destinationPrefix}/get-started/additional-setup/${page}"`,
+            `- source: "${legacyPrefix}/get-started/prerequisites/${page}${suffix}"\n    destination: "${destinationPrefix}/get-started/additional-setup/${page}${destinationSuffix}"`,
           );
         }
       }
