@@ -368,9 +368,6 @@ function hashPatchedMetadata(packageDirectory: string): string {
     ...MODEL_CONTEXT_PROTOCOL_RUNTIME_PACKAGES.map(
       ({ name }) => `node_modules/${name}/package.json`,
     ),
-    "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core/package.json",
-    "node_modules/@opentelemetry/propagator-jaeger/package.json",
-    "node_modules/@opentelemetry/sdk-node/package.json",
   ]) {
     if (existsSync(join(packageDirectory, bundledPackageJson))) names.push(bundledPackageJson);
   }
