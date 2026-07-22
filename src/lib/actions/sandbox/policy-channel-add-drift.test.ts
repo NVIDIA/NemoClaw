@@ -50,13 +50,12 @@ let gatewayStateMock: MockInstance;
 let refreshSpy: MockInstance;
 
 async function captureExit(action: () => Promise<void>): Promise<number | undefined> {
-  try {
-    await action();
-  } catch (error) {
-    if (error instanceof ExitError) return error.code;
-    throw error;
-  }
-  throw new Error("Expected process.exit to be called");
+  const outcome: unknown = await action().then(
+    () => new Error("Expected process.exit to be called"),
+    (error: unknown) => error,
+  );
+  expect(outcome).toBeInstanceOf(ExitError);
+  return (outcome as ExitError).code;
 }
 
 beforeEach(() => {
