@@ -23,6 +23,7 @@ interface ParsedReceipt {
   agent: string | null;
   agentsBlobSha: string | null;
   completed: boolean;
+  duplicateFields: string[];
   duplicateSections: boolean;
   evidence: string | null;
   prNumber: number | null;
@@ -222,6 +223,11 @@ function evaluateReceipt(
     if (parsed.duplicateSections) {
       issues.push("The PR description contains more than one Documentation Writer Review section.");
     }
+    if (parsed.duplicateFields.length > 0) {
+      issues.push(
+        `The Documentation Writer Review section repeats singleton fields: ${parsed.duplicateFields.join(", ")}.`,
+      );
+    }
     if (!parsed.completed) {
       issues.push("Mark the documentation writer subagent review as completed.");
     }
@@ -297,6 +303,7 @@ function parseReceipt(body: string): ParsedReceipt {
       agent: null,
       agentsBlobSha: null,
       completed: false,
+      duplicateFields: [],
       duplicateSections: false,
       evidence: null,
       prNumber: null,
@@ -312,6 +319,17 @@ function parseReceipt(body: string): ParsedReceipt {
   const nextHeading = /^##\s+/mu.exec(remaining);
   const section = remaining.slice(0, nextHeading?.index ?? remaining.length);
   const lines = section.split(/\r?\n/u).map((line) => line.trim());
+  const completionPattern =
+    /^- \[[xX]\] Documentation writer subagent reviewed the completed implementation$/u;
+  const duplicateFields = ["Result", "Evidence", "Agent", "PR"].filter(
+    (name) => fieldValues(lines, name).length > 1,
+  );
+  for (const name of ["docs-review-head-sha", "docs-review-agents-blob-sha"]) {
+    if (hiddenFieldValues(lines, name).length > 1) duplicateFields.push(name);
+  }
+  if (lines.filter((line) => completionPattern.test(line)).length > 1) {
+    duplicateFields.push("review completion checkbox");
+  }
   const resultValue = fieldValue(lines, "Result");
   const resultMatch = resultValue?.match(/^`(blocked|docs-updated|no-docs-needed)`$/u);
   const result =
@@ -325,11 +343,8 @@ function parseReceipt(body: string): ParsedReceipt {
   return {
     agent: nonEmpty(fieldValue(lines, "Agent")),
     agentsBlobSha,
-    completed: lines.some((line) =>
-      /^- \[[xX]\] Documentation writer subagent reviewed the completed implementation$/u.test(
-        line,
-      ),
-    ),
+    completed: lines.some((line) => completionPattern.test(line)),
+    duplicateFields,
     duplicateSections: matches.length > 1,
     evidence: nonEmpty(fieldValue(lines, "Evidence")),
     prNumber,
@@ -340,18 +355,26 @@ function parseReceipt(body: string): ParsedReceipt {
 }
 
 function fieldValue(lines: string[], name: string): string | null {
+  return fieldValues(lines, name)[0] ?? null;
+}
+
+function fieldValues(lines: string[], name: string): string[] {
   const prefix = `- ${name}:`;
-  const line = lines.find((candidate) => candidate.startsWith(prefix));
-  return line ? line.slice(prefix.length).trim() : null;
+  return lines
+    .filter((candidate) => candidate.startsWith(prefix))
+    .map((line) => line.slice(prefix.length).trim());
 }
 
 function hiddenFieldValue(lines: string[], name: string): string | null {
+  return hiddenFieldValues(lines, name)[0] ?? null;
+}
+
+function hiddenFieldValues(lines: string[], name: string): string[] {
   const prefix = `<!-- ${name}:`;
   const suffix = "-->";
-  const line = lines.find(
-    (candidate) => candidate.startsWith(prefix) && candidate.endsWith(suffix),
-  );
-  return line ? line.slice(prefix.length, -suffix.length).trim() : null;
+  return lines
+    .filter((candidate) => candidate.startsWith(prefix) && candidate.endsWith(suffix))
+    .map((line) => line.slice(prefix.length, -suffix.length).trim());
 }
 
 function parsePrNumber(value: string | null): number | null {
@@ -423,7 +446,7 @@ function classifyPrType(body: string): ChangeClassification {
 }
 
 function isCodeFile(file: string): boolean {
-  return !file.startsWith("docs/") && !file.toLowerCase().endsWith(".md");
+  return !isDocumentationFile(file);
 }
 
 function isDocumentationFile(file: string): boolean {

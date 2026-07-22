@@ -27,7 +27,7 @@
 - [ ] Non-success, skipped, or missing CI check accepted by maintainer — check name, approval link, and follow-up issue:
 
 ## Documentation Writer Review
-<!-- Required for code changes after implementation is complete. Keep one Result value. For Evidence, list changed doc paths or name the reason that no doc change is needed or the review is blocked. For Agent, use a consistent product and surface name, such as Codex Desktop, Codex CLI, Claude Code, or Cursor. Record this PR number. After committing all review changes, put `git rev-parse --short HEAD` and `git rev-parse --short HEAD:AGENTS.md` in the hidden metadata below. Rerun the review and refresh that metadata after new implementation commits. This receipt is advisory during the data-collection pilot. -->
+<!-- Required for code changes after implementation is complete. Keep one review checkbox and one instance of each visible or hidden field. For Evidence, list changed doc paths or name the reason that no doc change is needed or the review is blocked. For Agent, use a consistent product and surface name, such as Codex Desktop, Codex CLI, Claude Code, or Cursor. Record this PR number. After committing all review changes, put `git rev-parse --short HEAD` and `git rev-parse --short HEAD:AGENTS.md` in the hidden metadata below. Rerun the review and refresh that metadata after new implementation commits. This receipt is advisory during the data-collection pilot. -->
 - [ ] Documentation writer subagent reviewed the completed implementation
 - Result: `docs-updated` | `no-docs-needed` | `blocked`
 - Evidence:

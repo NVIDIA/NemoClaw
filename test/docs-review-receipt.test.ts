@@ -133,6 +133,31 @@ describe("documentation writer review receipt", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("does not require a receipt for an MDX file outside docs", () => {
+    const result = runCheck("## Summary\n\nUpdate prose.\n", ["examples/guide.mdx"]);
+
+    expect(result.status).toBe(0);
+    expect(result.output).toMatchObject({
+      status: "not-required",
+      codeChanged: false,
+      docsChanged: true,
+    });
+    expect(result.stderr).toBe("");
+  });
+
+  it("rejects repeated singleton receipt fields", () => {
+    const body = receipt().replace(
+      "- Result: `docs-updated`",
+      "- Result: `docs-updated`\n- Result: `no-docs-needed`",
+    );
+    const result = runCheck(body, ["src/lib/example.ts", "docs/index.mdx"]);
+
+    expect(result.output.status).toBe("invalid");
+    expect(result.output.issues).toContain(
+      "The Documentation Writer Review section repeats singleton fields: Result.",
+    );
+  });
+
   it("reports a copied PR number and stale head and AGENTS.md revisions", () => {
     const result = runCheck(
       receipt({

@@ -404,6 +404,7 @@ During release prep, run that skill first, make any doc version bumps, then open
 
 After you complete a code change, a documentation writer subagent must review the implementation.
 Complete the Documentation Writer Review section in the PR description after that review.
+Keep one review completion checkbox and one instance of each visible or hidden field.
 
 Record one result:
 
