@@ -196,7 +196,7 @@ describe("messaging provider installed-runtime proofs", () => {
       fs.mkdirSync(slackPackageRoot, { recursive: true });
       fs.writeFileSync(
         path.join(slackProject, "package.json"),
-        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.6.10" } }),
+        JSON.stringify({ dependencies: { "@openclaw/slack": "2026.7.1" } }),
       );
       fs.mkdirSync(path.join(unrelatedProject, "node_modules", "@openclaw", "slack"), {
         recursive: true,
@@ -270,7 +270,7 @@ describe("messaging provider installed-runtime proofs", () => {
     );
   });
 
-  it("requires the reviewed Slack pipeline/runtime proof in the default 2026.6.10 live lane", () => {
+  it("requires the reviewed Slack pipeline/runtime proof in the default 2026.7.1 live lane", () => {
     expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
       'installedSlackProof.proof === "openclaw-pipeline-runtime"',
     );

@@ -158,7 +158,18 @@ async function expectSandboxInference42(
 
 test("gpu double onboard keeps Ollama auth proxy token consistent after re-onboard", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "validate GPU and Docker prerequisites",
+      "install Ollama runtime",
+      "perform first Ollama onboard",
+      "validate first proxy token and inference",
+      "re-onboard GPU sandbox",
+      "validate persisted proxy auth and inference",
+      "remove GPU double-onboard sandbox",
+    ],
+  },
+}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, skip }) => {
   await artifacts.target.declare({
     id: "gpu-double-onboard",
     sandboxName: SANDBOX_NAME,
@@ -278,6 +289,7 @@ exit "$status"`,
   );
   await cleanup(host, sandbox);
 
+  progress.phase("install Ollama runtime");
   const installOllama = await host.command(
     "bash",
     ["-lc", "command -v ollama >/dev/null 2>&1 || curl -fsSL https://ollama.com/install.sh | sh"],
@@ -301,6 +313,7 @@ exit "$status"`,
     },
   );
 
+  progress.phase("perform first Ollama onboard");
   const first = await host.command("bash", ["install.sh", "--non-interactive"], {
     artifactName: "phase-2-install-sh-first-onboard",
     cwd: REPO_ROOT,
@@ -309,6 +322,7 @@ exit "$status"`,
   });
   expect(first.exitCode, resultText(first)).toBe(0);
 
+  progress.phase("validate first proxy token and inference");
   const list = await nemoclaw(host, ["list"], "phase-3-nemoclaw-list");
   expect(list.exitCode, resultText(list)).toBe(0);
   expect(list.stdout).toContain(SANDBOX_NAME);
@@ -328,6 +342,7 @@ exit "$status"`,
   expect(firstTokenStatus.stdout.trim(), resultText(firstTokenStatus)).toBe("200");
   await expectSandboxInference42(sandbox, model, "phase-3-sandbox-inference-first-onboard");
 
+  progress.phase("re-onboard GPU sandbox");
   const reonboard = await nemoclaw(
     host,
     ["onboard", "--non-interactive", "--yes"],
@@ -342,6 +357,7 @@ exit "$status"`,
   expect(fileMode(TOKEN_FILE)).toBe("600");
   expect(tokenAfterSecond).toBe(tokenAfterFirst);
 
+  progress.phase("validate persisted proxy auth and inference");
   const liveStatus = await httpStatus(
     host,
     `http://127.0.0.1:${PROXY_PORT}/api/tags`,
@@ -374,6 +390,7 @@ exit "$status"`,
 
   await expectSandboxInference42(sandbox, model, "phase-6-sandbox-inference-after-reonboard");
 
+  progress.phase("remove GPU double-onboard sandbox");
   await cleanup(host, sandbox);
   const registryFile = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
   const registryText = fs.existsSync(registryFile) ? fs.readFileSync(registryFile, "utf8") : "";
