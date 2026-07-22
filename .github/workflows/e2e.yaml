@@ -114,7 +114,7 @@ jobs:
           esac
           printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           fetch-depth: 0
@@ -200,7 +200,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -393,7 +393,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -434,7 +434,7 @@ jobs:
       NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85"
       DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -502,7 +502,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: ghcr.io/nvidia/openshell/supervisor@sha256:f4226253a3525c3832adac5b38b419a0f27d1e915effe565b5885e20f93cd5e9
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -625,7 +625,7 @@ jobs:
       NEMOCLAW_OPENSHELL_CHANNEL: dev
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -729,7 +729,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -804,7 +804,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-skill-cli"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -841,7 +841,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/inference-routing
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -885,7 +885,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-cloud-inference"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -936,7 +936,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -993,7 +993,7 @@ jobs:
       NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1049,7 +1049,7 @@ jobs:
       NEMOCLAW_E2E_INFERENCE_MODE: "mock"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1115,7 +1115,7 @@ jobs:
       NEMOCLAW_SWITCH_MOCK_ANTHROPIC: ${{ matrix.switch_mock_anthropic }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1163,7 +1163,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-brave-search"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1218,7 +1218,7 @@ jobs:
       NEMOCLAW_E2E_OLLAMA_PORT: "11434"
       NEMOCLAW_E2E_OLLAMA_PROXY_PORT: "11435"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1261,7 +1261,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-cron-preflight"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1319,7 +1319,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1387,7 +1387,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-credential-sanitization"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1431,7 +1431,7 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-cred-migration"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1482,7 +1482,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-sessions-agents-cli"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1539,7 +1539,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-hermes-slack
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1592,7 +1592,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-hermes
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1647,14 +1647,14 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-hermes-gpu-startup-${{ matrix.scenario }}
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
 
       - name: Checkout trusted Hermes GPU runtime fixture
         if: ${{ matrix.scenario == 'fallback' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NVIDIA/NemoClaw
           ref: ${{ github.workflow_sha }}
@@ -1900,7 +1900,7 @@ jobs:
       NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1943,7 +1943,7 @@ jobs:
       NEMOCLAW_POLICY_TIER: open
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -1993,7 +1993,7 @@ jobs:
       # no active gateway selected on the runner.
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2057,7 +2057,7 @@ jobs:
       NEMOCLAW_RECREATE_SANDBOX: "1"
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2125,7 +2125,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-shields
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2176,7 +2176,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-hermes-shields
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2215,7 +2215,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2285,7 +2285,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2387,7 +2387,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes-base
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2481,7 +2481,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2544,7 +2544,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-rlimits-connect
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2607,7 +2607,7 @@ jobs:
       NEMOCLAW_E2E_TIMEOUT_SECONDS: "1500"
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2650,7 +2650,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-state-backup
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2712,7 +2712,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-upgrade-stale"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2770,7 +2770,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2835,7 +2835,7 @@ jobs:
       NEMOCLAW_PROVIDER: "ollama"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2901,7 +2901,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -2956,7 +2956,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-resume"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3010,7 +3010,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-full"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3088,7 +3088,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
       OPENSHELL_GATEWAY: nemoclaw
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3138,7 +3138,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-cloud-onboard"
       NEMOCLAW_PUBLIC_INSTALL_REF: "${{ inputs.checkout_sha || github.sha }}"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3251,7 +3251,7 @@ jobs:
       NEMOCLAW_PROVIDER: "ollama"
       NEMOCLAW_OLLAMA_PROXY_PORT: "11435"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3304,7 +3304,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-repair"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3358,7 +3358,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-issue-4462"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3410,7 +3410,7 @@ jobs:
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3461,7 +3461,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-msg-compat"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3569,7 +3569,7 @@ jobs:
       NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF: ${{ matrix.openclaw_state_upgrade }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3619,7 +3619,7 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3678,7 +3678,7 @@ jobs:
       NEMOCLAW_PREFERRED_API: openai-completions
       SKIP_DOCKER_PULL: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3722,7 +3722,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3766,7 +3766,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-snapshot"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3816,7 +3816,7 @@ jobs:
       NEMOCLAW_POLICY_TIER: "open"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3874,7 +3874,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-survival"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3921,7 +3921,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-diag"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -3974,7 +3974,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-plugin-exdev"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4040,7 +4040,7 @@ jobs:
       NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4117,7 +4117,7 @@ jobs:
       # GATEWAY FLAGS: env: OPENSHELL_GATEWAY=).
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4212,7 +4212,7 @@ jobs:
       NEMOCLAW_SWITCH_MOCK_ANTHROPIC: ${{ matrix.switch_mock_anthropic }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4270,7 +4270,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4316,7 +4316,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4357,7 +4357,7 @@ jobs:
       NEMOCLAW_DASHBOARD_PORT: "18789"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4412,7 +4412,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-channels-add-remove"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4481,7 +4481,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-telegram-injection"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4553,7 +4553,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-channels-stop-start-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4626,7 +4626,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-slack-pairing"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4690,7 +4690,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-2478"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4747,7 +4747,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-discord-pairing"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4811,7 +4811,7 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-lifecycle"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -4888,7 +4888,7 @@ jobs:
       NEMOCLAW_PROVIDER: "cloud"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false
@@ -5015,7 +5015,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Check out the trusted E2E reporting helper
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
@@ -5070,7 +5070,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout scorecard builders
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.checkout_sha || github.sha }}
           persist-credentials: false

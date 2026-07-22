@@ -104,7 +104,7 @@ jobs:
       ADVISOR_DIR: ${{ github.workspace }}/advisor
     steps:
       - name: Checkout trusted advisor code (workflow revision)
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NVIDIA/NemoClaw
           ref: ${{ github.workflow_sha }}
@@ -118,7 +118,7 @@ jobs:
       # read-only data and never supplies executable advisor code.
       - name: Checkout dispatch workspace (read-only data)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' && inputs.target_pr == '' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           path: pr-workdir
@@ -284,7 +284,7 @@ jobs:
       PR_REVIEW_ADVISOR_MAX_SUMMARY_BYTES: "1048576"
     steps:
       - name: Checkout trusted comment publisher (workflow revision)
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NVIDIA/NemoClaw
           ref: ${{ github.workflow_sha }}
