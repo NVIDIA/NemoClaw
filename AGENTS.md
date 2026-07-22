@@ -253,6 +253,8 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 
 - Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
 - After completing development changes, run a documentation writer subagent before final handoff. Give it the changed files, behavior summary, and test evidence so it can update docs or report that no doc changes are needed.
+- After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, agent surface, and PR number. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
+- If implementation changes after the hidden head SHA, rerun the documentation writer review and refresh the hidden metadata. The receipt check runs again when new commits are pushed.
 - For normal docs changes, include source pages under `docs/`.
 - Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent docs routing guidance changes.
 - During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
