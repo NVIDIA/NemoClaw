@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
+import { detectNvidiaPlatform, type NvidiaPlatform } from "../inference/nim";
 import { selectVllmModelFromEnv, type VllmModelDef } from "../inference/vllm-models";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { getNemoclawStateRoot, resolveHome, STATE_DIR_NAME } from "../state/state-root";
@@ -62,7 +63,12 @@ interface StationExpressResumeDeps {
   exitProcess(code: number): never;
 }
 
-type StationExpressFailureDeps = Pick<StationExpressResumeDeps, "error" | "exitProcess">;
+interface StationExpressCaptureDeps {
+  detectNvidiaPlatform(): NvidiaPlatform;
+}
+
+type StationExpressFailureDeps = Pick<StationExpressResumeDeps, "error" | "exitProcess"> &
+  Partial<StationExpressCaptureDeps>;
 
 type IntentResult =
   | { ok: true; intent: StationExpressResumeIntent | null }
@@ -844,6 +850,7 @@ function validateExpectedEnvironment(
 function getSparkExpressResumeIntent(
   env: NodeJS.ProcessEnv,
   sandboxName: string | null,
+  deps: StationExpressCaptureDeps,
 ): IntentResult {
   const provider = String(env.NEMOCLAW_PROVIDER ?? "")
     .trim()
@@ -851,6 +858,7 @@ function getSparkExpressResumeIntent(
   const nonInteractive = String(env.NEMOCLAW_NON_INTERACTIVE ?? "").trim() === "1";
   if (provider !== SPARK_EXPRESS_PROVIDER || !nonInteractive) return { ok: true, intent: null };
   if (!sandboxName || !validSandboxName(sandboxName)) return { ok: true, intent: null };
+  if (deps.detectNvidiaPlatform() !== "spark") return { ok: true, intent: null };
   const pinned = sparkModel(env.NEMOCLAW_VLLM_MODEL);
   return {
     ok: true,
@@ -866,9 +874,10 @@ function getSparkExpressResumeIntent(
 export function getStationExpressResumeIntent(
   env: NodeJS.ProcessEnv,
   sandboxName: string | null,
+  deps: StationExpressCaptureDeps = { detectNvidiaPlatform },
 ): IntentResult {
   const marker = String(env[STATION_EXPRESS_ENV] ?? "").trim();
-  if (!marker) return getSparkExpressResumeIntent(env, sandboxName);
+  if (!marker) return getSparkExpressResumeIntent(env, sandboxName, deps);
   if (marker !== "1") {
     return { ok: false, message: `${STATION_EXPRESS_ENV} must be 1 when set.` };
   }
@@ -929,10 +938,13 @@ export function requireStationExpressResumeIntent(
   deps: StationExpressFailureDeps = {
     error: (message) => console.error(message),
     exitProcess: (code) => process.exit(code),
+    detectNvidiaPlatform,
   },
 ): StationExpressResumeIntent | null {
   if (resume) return null;
-  const result = getStationExpressResumeIntent(env, sandboxName);
+  const result = getStationExpressResumeIntent(env, sandboxName, {
+    detectNvidiaPlatform: deps.detectNvidiaPlatform ?? detectNvidiaPlatform,
+  });
   if (!result.ok) {
     deps.error(`  ${result.message}`);
     deps.exitProcess(1);

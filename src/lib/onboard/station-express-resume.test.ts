@@ -927,6 +927,7 @@ const sparkIntent = {
   kind: "spark" as const,
   sandboxName: "my-assistant",
 };
+const sparkCaptureDeps = { detectNvidiaPlatform: () => "spark" as const };
 
 function sparkExpressEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return { NEMOCLAW_PROVIDER: "install-vllm", NEMOCLAW_NON_INTERACTIVE: "1", ...overrides };
@@ -934,7 +935,9 @@ function sparkExpressEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 
 describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
   it("captures a marker-free spark intent from a non-interactive install-vllm run", () => {
-    expect(getStationExpressResumeIntent(sparkExpressEnv(), "my-assistant")).toEqual({
+    expect(
+      getStationExpressResumeIntent(sparkExpressEnv(), "my-assistant", sparkCaptureDeps),
+    ).toEqual({
       ok: true,
       intent: sparkIntent,
     });
@@ -945,6 +948,7 @@ describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
       getStationExpressResumeIntent(
         sparkExpressEnv({ NEMOCLAW_VLLM_MODEL: sparkModelEnv }),
         "my-assistant",
+        sparkCaptureDeps,
       ),
     ).toEqual({ ok: true, intent: { ...sparkIntent, model: sparkModelEnv } });
   });
@@ -954,6 +958,7 @@ describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
       getStationExpressResumeIntent(
         sparkExpressEnv({ NEMOCLAW_VLLM_MODEL: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4" }),
         "my-assistant",
+        sparkCaptureDeps,
       ),
     ).toEqual({ ok: true, intent: sparkIntent });
   });
@@ -963,15 +968,30 @@ describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
       getStationExpressResumeIntent(
         sparkExpressEnv({ NEMOCLAW_PROVIDER: "build" }),
         "my-assistant",
+        sparkCaptureDeps,
       ),
     ).toEqual({ ok: true, intent: null });
     expect(
-      getStationExpressResumeIntent({ NEMOCLAW_PROVIDER: "install-vllm" }, "my-assistant"),
+      getStationExpressResumeIntent(
+        { NEMOCLAW_PROVIDER: "install-vllm" },
+        "my-assistant",
+        sparkCaptureDeps,
+      ),
     ).toEqual({ ok: true, intent: null });
-    expect(getStationExpressResumeIntent(sparkExpressEnv(), null)).toEqual({
+    expect(getStationExpressResumeIntent(sparkExpressEnv(), null, sparkCaptureDeps)).toEqual({
       ok: true,
       intent: null,
     });
+  });
+
+  it("does not capture a generic Linux install-vllm run as Spark (#7231)", () => {
+    expect(
+      getStationExpressResumeIntent(
+        sparkExpressEnv({ NEMOCLAW_VLLM_MODEL: "nemotron-3-nano-4b" }),
+        "my-assistant",
+        { detectNvidiaPlatform: () => "linux" },
+      ),
+    ).toEqual({ ok: true, intent: null });
   });
 
   it("round-trips and strictly validates a persisted spark intent", () => {
@@ -1060,6 +1080,13 @@ describe("DGX Spark managed-vLLM Express resume (#7231)", () => {
       { NEMOCLAW_PROVIDER: "install-vllm", NEMOCLAW_NON_INTERACTIVE: "1" },
       "my-assistant",
       false,
+      {
+        detectNvidiaPlatform: () => "spark",
+        error: vi.fn(),
+        exitProcess: vi.fn((code: number): never => {
+          throw new Error(`exit ${String(code)}`);
+        }),
+      },
     );
     expect(captured).toEqual(sparkIntent);
 
