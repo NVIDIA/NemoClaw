@@ -3883,23 +3883,31 @@ function validateInferenceModeGeneration(
 
 function validateStagingBrevLaunchableJob(errors: string[], jobs: WorkflowRecord): void {
   const job = asRecord(jobs["staging-brev-launchable"]);
-  const trustedCandidate = "inputs.checkout_sha == ''";
-  if (!stringValue(job.if).includes(trustedCandidate)) {
-    errors.push("staging-brev-launchable job must reject an explicit checkout_sha");
+  const environment = asRecord(job.environment);
+  if (environment.name !== "approve-brev-launchable-e2e" || environment.deployment !== false) {
+    errors.push("staging-brev-launchable must use its protected non-deployment environment");
+  }
+  const trustedRun = "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main'";
+  if (
+    !stringValue(job.if).includes(trustedRun) ||
+    stringValue(job.if).includes("checkout_sha == ''")
+  ) {
+    errors.push("staging-brev-launchable must allow only protected trusted-main dispatches");
   }
   const steps = asSteps(job.steps);
   const prepareEnv = asRecord(requireStep(errors, steps, "Prepare the trusted lane")?.env);
   const runEnv = asRecord(
     requireStep(errors, steps, "Build, deploy, verify, test, and clean up")?.env,
   );
-  for (const [env, key] of [
-    [prepareEnv, "BREV_API_KEY"],
-    [prepareEnv, "BREV_ORG_ID"],
-    [runEnv, "GH_TOKEN"],
-    [runEnv, "NVIDIA_INFERENCE_API_KEY"],
+  for (const [env, key, secret] of [
+    [prepareEnv, "BREV_API_KEY", "BREV_API_KEY"],
+    [prepareEnv, "BREV_ORG_ID", "BREV_ORG_ID"],
+    [runEnv, "GH_TOKEN", "NEMOCLAW_IMAGE_DISPATCH_TOKEN"],
+    [runEnv, "NVIDIA_INFERENCE_API_KEY", "NVIDIA_INFERENCE_API_KEY"],
   ] as const) {
-    if (!stringValue(env[key]).includes(trustedCandidate)) {
-      errors.push(`staging-brev-launchable ${key} must reject an explicit checkout_sha`);
+    const expected = `\${{ ${trustedRun} && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.${secret} || '' }}`;
+    if (env[key] !== expected) {
+      errors.push(`staging-brev-launchable ${key} must use the trusted-run secret guard`);
     }
   }
 }
