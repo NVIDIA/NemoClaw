@@ -122,6 +122,11 @@ jobs:
           NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
         run: npx vitest run --project integration test/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default
 
+      - name: Verify reviewed Jaeger header handling
+        env:
+          NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS: "1"
+        run: npx vitest run --project integration test/openclaw-diagnostics-jaeger-runtime.test.ts --silent=false --reporter=default
+
       - name: Audit managed OpenClaw security finding suppressions
         env:
           NEMOCLAW_REAL_OPENCLAW_AUDIT_HARNESS: "1"
