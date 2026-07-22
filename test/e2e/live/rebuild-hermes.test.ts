@@ -91,6 +91,9 @@ const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
 const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
+const PRE_REBUILD_API_SERVER_KEY = createHash("sha256")
+  .update(`${MARKER_CONTENT}:api-server-key`)
+  .digest("hex");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
@@ -564,7 +567,7 @@ test(STALE_BASE_REBUILD
   timeout: LIVE_TIMEOUT_MS,
 }, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-  const redactionValues = [apiKey, DISCORD_FAKE_TOKEN];
+  const redactionValues = [apiKey, DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY];
   const expectedVersion = expectedHermesVersion();
   const progress = startRebuildHermesProgress("setup");
   cleanup.trackDisposable("stop Hermes rebuild progress", progress.stop);
@@ -904,6 +907,7 @@ test(STALE_BASE_REBUILD
   fs.writeFileSync(
     oldDockerfile,
     buildRebuildHermesOldSandboxDockerfile({
+      apiServerKey: PRE_REBUILD_API_SERVER_KEY,
       baseTag: OLD_BASE_TAG,
       baseResolutionMetadata: STALE_BASE_REBUILD ? oldBaseResolutionMetadata : null,
       discordPlaceholder: DISCORD_PLACEHOLDER,
@@ -1408,7 +1412,7 @@ test(STALE_BASE_REBUILD
     true,
   );
   const leaks = listCredentialLeakPaths(sandboxBackupRoot, {
-    extraSecrets: [apiKey, DISCORD_FAKE_TOKEN],
+    extraSecrets: [apiKey, DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
   });
   await artifacts.writeJson("phase-7-backup-credential-scan.json", {
     backupRoot: sandboxBackupRoot,

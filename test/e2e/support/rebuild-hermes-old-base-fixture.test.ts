@@ -18,7 +18,9 @@ const validVersion = `Hermes Agent v${fixture.hermesSemver} (${fixture.hermesCal
 
 describe("rebuild-Hermes historical base fixture", () => {
   it("seeds kanban with the historical CLI before OpenShell isolation (#7144)", () => {
+    const apiServerKey = "a".repeat(64);
     const dockerfile = buildRebuildHermesOldSandboxDockerfile({
+      apiServerKey,
       baseTag: "nemoclaw-hermes-old-base:test",
       baseResolutionMetadata: null,
       discordPlaceholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
@@ -31,6 +33,7 @@ describe("rebuild-Hermes historical base fixture", () => {
       "&& /usr/local/bin/hermes kanban create 'NEMOCLAW_REBUILD_KANBAN_TEST' --initial-status blocked --json",
     );
     expect(dockerfile).toContain("&& test -s /sandbox/.hermes/kanban.db");
+    expect(dockerfile).toContain(`'API_SERVER_KEY=${apiServerKey}'`);
     expect(dockerfile.indexOf("hermes kanban init")).toBeLessThan(
       dockerfile.indexOf('CMD ["/bin/bash"]'),
     );
