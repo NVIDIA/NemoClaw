@@ -91,9 +91,7 @@ const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
 const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
-const PRE_REBUILD_API_SERVER_KEY = createHash("sha256")
-  .update(`${MARKER_CONTENT}:api-server-key`)
-  .digest("hex");
+const PRE_REBUILD_API_SERVER_KEY = createHash("sha256").update(MARKER_CONTENT).digest("hex");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
@@ -242,7 +240,7 @@ async function bestEffortPrecleanHermesResources(
   await host.nemoclaw([SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"], {
     artifactName: `${artifactName}-nemoclaw-destroy`,
     env: testEnv(apiKey),
-    redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN],
+    redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
     timeoutMs: 3 * 60_000,
   });
   await host.command(
@@ -266,7 +264,7 @@ async function bestEffortPrecleanHermesResources(
         CURRENT_BASE_REUSE_TAG,
         OLD_BASE_TAG,
       }),
-      redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN],
+      redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
       timeoutMs: 3 * 60_000,
     },
   );
@@ -281,7 +279,7 @@ function hermesCleanupEnv(apiKey: string | undefined): NodeJS.ProcessEnv {
 }
 
 function hermesCleanupRedactions(apiKey: string | undefined): string[] {
-  return [apiKey ?? "", DISCORD_FAKE_TOKEN];
+  return [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY];
 }
 
 async function cleanupHermesNemoClawSandbox(
@@ -357,7 +355,7 @@ async function waitForSandboxReady(
     const list = await host.command("openshell", ["sandbox", "list"], {
       artifactName: `${artifactPrefix}-sandbox-list-${attempt}`,
       env: testEnv(apiKey),
-      redactionValues: [apiKey],
+      redactionValues: [apiKey, PRE_REBUILD_API_SERVER_KEY],
       timeoutMs: 30_000,
     });
     switch (new RegExp(`${SANDBOX_NAME}.*Ready`).test(resultText(list))) {
@@ -907,9 +905,9 @@ test(STALE_BASE_REBUILD
   fs.writeFileSync(
     oldDockerfile,
     buildRebuildHermesOldSandboxDockerfile({
-      apiServerKey: PRE_REBUILD_API_SERVER_KEY,
       baseTag: OLD_BASE_TAG,
       baseResolutionMetadata: STALE_BASE_REBUILD ? oldBaseResolutionMetadata : null,
+      apiServerKey: PRE_REBUILD_API_SERVER_KEY,
       discordPlaceholder: DISCORD_PLACEHOLDER,
       kanbanTaskTitle: KANBAN_TASK_TITLE,
     }),

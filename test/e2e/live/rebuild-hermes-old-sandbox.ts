@@ -5,9 +5,9 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { formatSandboxBaseImageResolutionLabels } from "../../../src/lib/sandbox-base-image";
 
 interface RebuildHermesOldSandboxDockerfileOptions {
-  apiServerKey: string;
   baseTag: string;
   baseResolutionMetadata: Parameters<typeof formatSandboxBaseImageResolutionLabels>[0] | null;
+  apiServerKey: string;
   discordPlaceholder: string;
   kanbanTaskTitle: string;
 }
@@ -48,7 +48,7 @@ export function buildRebuildHermesOldSandboxDockerfile(
     "    && printf '%s\\n' \\",
     "      'API_SERVER_PORT=18642' \\",
     "      'API_SERVER_HOST=127.0.0.1' \\",
-    `      ${shellQuote(`API_SERVER_KEY=${options.apiServerKey}`)} \\`,
+    `      'API_SERVER_KEY=${options.apiServerKey}' \\`,
     `      'DISCORD_BOT_TOKEN=${options.discordPlaceholder}' \\`,
     "      > /sandbox/.hermes/.env",
     "RUN /usr/local/bin/hermes kanban init \\",

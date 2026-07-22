@@ -101,6 +101,24 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     expect(() =>
       validateLegacyGatewayUpgradeFixture({
         ...fixture,
+        nemoclawCommit: "3351fbdd4eb7d9b80ec471545083956327da2b10",
+      }),
+    ).toThrow(/exact reviewed ref\/commit\/OpenClaw profile/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        openclawVersion: "2026.4.24",
+      }),
+    ).toThrow(/exact reviewed ref\/commit\/OpenClaw profile/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        nemoclawRef: "v0.0.36",
+      }),
+    ).toThrow(/exact reviewed ref\/commit\/OpenClaw profile/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
         nemoclawRef: "v0.0.55; echo injected",
       }),
     ).toThrow(/NEMOCLAW_OLD_NEMOCLAW_REF/);
