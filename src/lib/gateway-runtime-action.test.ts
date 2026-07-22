@@ -153,6 +153,11 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
         .filter((args: string[]) => args[0] === "gateway" && args[1] === "select");
       expect(selectCalls).toContainEqual(["gateway", "select", "nemoclaw-8090"]);
       expect(selectCalls.every((args: string[]) => args[2] === "nemoclaw-8090")).toBe(true);
+      expect(
+        runSpy.mock.calls
+          .filter(([args]) => args[0] === "gateway" && args[1] === "select")
+          .every(([, options]) => options.stdio === "ignore"),
+      ).toBe(true);
       expect(result.recovered).toBe(true);
       expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-8090");
     });

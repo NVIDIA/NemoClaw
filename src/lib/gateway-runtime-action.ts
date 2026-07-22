@@ -156,6 +156,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
 
   gatewayRuntimeDependencies.runOpenshell(["gateway", "select", gatewayName], {
     ignoreError: true,
+    stdio: "ignore",
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   let after = getNamedGatewayLifecycleState(gatewayName);
@@ -182,6 +183,7 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     }
     gatewayRuntimeDependencies.runOpenshell(["gateway", "select", gatewayName], {
       ignoreError: true,
+      stdio: "ignore",
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     after = getNamedGatewayLifecycleState(gatewayName);
