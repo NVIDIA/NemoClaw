@@ -827,6 +827,38 @@ describe("createSetupNim", () => {
     expect(result).toMatchObject({ provider: "vllm" });
   });
 
+  it("does not extend the Spark automatic default to DGX Station (#7293)", async () => {
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async ({ selected }, state) => {
+        expect(selected.key).toBe("build");
+        state.model = "nvidia/nemotron-3-ultra-550b-a55b";
+        state.provider = "nvidia-prod";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => null,
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmProfile: { name: "DGX Station" } as VllmProfile,
+            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Station)" }],
+          }),
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const stationGpu = { platform: "station" } as unknown as Parameters<typeof setupNim>[0];
+    const result = await setupNim(stationGpu);
+
+    expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ provider: "nvidia-prod" });
+  });
+
   it("threads the DGX Station express model through the standard managed-vLLM selection contract", async () => {
     const profile = { name: "DGX Station", platform: "station" } as VllmProfile;
     const servedModel = "nvidia/nemotron-3-ultra-550b-a55b";

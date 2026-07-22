@@ -27,7 +27,6 @@ import { promptForInferenceProviderSelection } from "./provider-selection-prompt
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
-import { isManagedVllmDefaultPlatform } from "./vllm-menu";
 
 export type SetupNimGpu = ReturnType<typeof import("../inference/nim").detectGpu>;
 export type SetupNimSelectionState = BaseSetupNimSelectionState<HermesAuthMethod>;
@@ -404,7 +403,7 @@ export function createSetupNim(
             isWindowsHostOllama,
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
             hermesProviderAvailable,
-            preferManagedVllmDefault: isManagedVllmDefaultPlatform(gpu?.platform),
+            preferManagedVllmDefault: gpu?.platform === "spark",
             ...recordedProviderReaders,
           });
           if (providerSelection.kind === "failure") {
