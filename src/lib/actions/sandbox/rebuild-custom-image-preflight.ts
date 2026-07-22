@@ -16,6 +16,7 @@ import {
   formatBuildFailureDiagnostics,
   OPENCLAW_SANDBOX_BASE_IMAGE,
   SANDBOX_BASE_TAG,
+  type SandboxBaseImageResolutionMetadata,
 } from "../../sandbox-base-image";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
@@ -37,6 +38,7 @@ type PreflightInput = {
   sandboxGpuConfig: SandboxGpuConfig;
   gatewayPort: number;
   chatUiUrl: string;
+  preResolvedBaseImageMetadata?: SandboxBaseImageResolutionMetadata | null;
 };
 
 type PreflightDeps = {
@@ -115,6 +117,7 @@ export async function preflightRebuildImage(
       toolDisclosure: input.toolDisclosure,
       hermesToolGateways: input.hermesToolGateways,
       sandboxGpuConfig: input.sandboxGpuConfig,
+      preResolvedBaseImageMetadata: input.preResolvedBaseImageMetadata ?? null,
       gatewayPort: input.gatewayPort,
       log: () => {},
       warn: () => {},

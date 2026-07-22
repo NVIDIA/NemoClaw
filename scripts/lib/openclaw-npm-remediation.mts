@@ -89,11 +89,11 @@ const BRACE_EXPANSION_INTEGRITY =
   "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==";
 const BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz";
-const HONO_NODE_SERVER_VERSION = "2.0.5";
+const HONO_NODE_SERVER_VERSION = "2.0.11";
 const HONO_NODE_SERVER_INTEGRITY =
-  "sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==";
+  "sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==";
 const HONO_NODE_SERVER_TARBALL =
-  "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz";
+  "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
 const MODEL_CONTEXT_PROTOCOL_SDK_VERSION = "1.29.0";
 const MODEL_CONTEXT_PROTOCOL_SDK_INTEGRITY =
   "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==";
@@ -373,6 +373,14 @@ function hashPatchedMetadata(packageDirectory: string): string {
     "node_modules/@opentelemetry/sdk-node/package.json",
   ]) {
     if (existsSync(join(packageDirectory, bundledPackageJson))) names.push(bundledPackageJson);
+  }
+  const diagnosticsMetadata = [
+    "node_modules/@opentelemetry/sdk-node/package.json",
+    "node_modules/@opentelemetry/propagator-jaeger/package.json",
+    "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core/package.json",
+  ];
+  if (diagnosticsMetadata.every((name) => existsSync(join(packageDirectory, name)))) {
+    names.push(...diagnosticsMetadata);
   }
   for (const name of names) {
     const contents = readFileSync(join(packageDirectory, name));
@@ -673,6 +681,97 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
   braceExpansion.resolved = BRACE_EXPANSION_TARBALL;
   braceExpansion.integrity = BRACE_EXPANSION_INTEGRITY;
 
+  writeJson(packageJsonPath, packageJson);
+  writeJson(shrinkwrapPath, shrinkwrap);
+}
+
+export function patchOpenClawDiagnosticsPackageGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const shrinkwrapPath = join(packageDirectory, "npm-shrinkwrap.json");
+  const sdkPackageJsonPath = join(
+    packageDirectory,
+    "node_modules",
+    "@opentelemetry",
+    "sdk-node",
+    "package.json",
+  );
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(
+    packageJson,
+    "@openclaw/diagnostics-otel",
+    "2026.6.10",
+    "OpenClaw diagnostics OTEL plugin",
+  );
+  if (
+    packageJson.dependencies?.["@opentelemetry/sdk-node"] !== "0.219.0" ||
+    !Array.isArray(packageJson.bundledDependencies) ||
+    !packageJson.bundledDependencies.includes("@opentelemetry/sdk-node")
+  ) {
+    throw new Error(
+      "@openclaw/diagnostics-otel@2026.6.10 SDK bundle changed; review the remediation",
+    );
+  }
+
+  const shrinkwrap = readJson(shrinkwrapPath);
+  if (shrinkwrap.lockfileVersion !== 3 || !shrinkwrap.packages?.[""]) {
+    throw new Error(
+      "@openclaw/diagnostics-otel@2026.6.10 must ship an npm lockfileVersion 3 shrinkwrap",
+    );
+  }
+  const packages = shrinkwrap.packages as JsonObject;
+  const sdk = packages["node_modules/@opentelemetry/sdk-node"] as JsonObject | undefined;
+  const jaeger = packages["node_modules/@opentelemetry/propagator-jaeger"] as
+    | JsonObject
+    | undefined;
+  const nestedCoreKey =
+    "node_modules/@opentelemetry/propagator-jaeger/node_modules/@opentelemetry/core";
+  if (
+    sdk?.version !== "0.219.0" ||
+    sdk.dependencies?.["@opentelemetry/propagator-jaeger"] !== "2.8.0" ||
+    jaeger?.version !== "2.8.0" ||
+    jaeger.dependencies?.["@opentelemetry/core"] !== "2.8.0" ||
+    packages[nestedCoreKey] !== undefined
+  ) {
+    throw new Error(
+      "@openclaw/diagnostics-otel@2026.6.10 Jaeger graph changed; review the remediation",
+    );
+  }
+
+  const sdkPackageJson = readJson(sdkPackageJsonPath);
+  requirePackageIdentity(
+    sdkPackageJson,
+    "@opentelemetry/sdk-node",
+    "0.219.0",
+    "bundled OpenTelemetry SDK",
+  );
+  if (sdkPackageJson.dependencies?.["@opentelemetry/propagator-jaeger"] !== "2.8.0") {
+    throw new Error(
+      "@opentelemetry/sdk-node@0.219.0 Jaeger dependency changed; review the remediation",
+    );
+  }
+
+  sdk.dependencies["@opentelemetry/propagator-jaeger"] = OTEL_PROPAGATOR_JAEGER_VERSION;
+  sdkPackageJson.dependencies["@opentelemetry/propagator-jaeger"] = OTEL_PROPAGATOR_JAEGER_VERSION;
+  packages["node_modules/@opentelemetry/propagator-jaeger"] = {
+    version: OTEL_PROPAGATOR_JAEGER_VERSION,
+    resolved: OTEL_PROPAGATOR_JAEGER_TARBALL,
+    integrity: OTEL_PROPAGATOR_JAEGER_INTEGRITY,
+    license: "Apache-2.0",
+    dependencies: { "@opentelemetry/core": OTEL_CORE_VERSION },
+    engines: { node: "^18.19.0 || >=20.6.0" },
+    peerDependencies: { "@opentelemetry/api": ">=1.0.0 <1.10.0" },
+  };
+  packages[nestedCoreKey] = {
+    version: OTEL_CORE_VERSION,
+    resolved: OTEL_CORE_TARBALL,
+    integrity: OTEL_CORE_INTEGRITY,
+    license: "Apache-2.0",
+    dependencies: { "@opentelemetry/semantic-conventions": "^1.29.0" },
+    engines: { node: "^18.19.0 || >=20.6.0" },
+    peerDependencies: { "@opentelemetry/api": ">=1.0.0 <1.10.0" },
+  };
+
+  writeJson(sdkPackageJsonPath, sdkPackageJson);
   writeJson(packageJsonPath, packageJson);
   writeJson(shrinkwrapPath, shrinkwrap);
 }

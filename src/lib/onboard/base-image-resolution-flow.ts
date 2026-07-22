@@ -37,11 +37,12 @@ export function isSandboxBaseImageRefreshRequested(env: NodeJS.ProcessEnv): bool
 export function createBaseImageResolutionContext(options: {
   fresh: boolean;
   initialHint?: SandboxBaseImageResolutionMetadata | null;
+  initialPreResolvedMetadata?: SandboxBaseImageResolutionMetadata | null;
   env?: NodeJS.ProcessEnv;
 }): BaseImageResolutionContext {
   return {
     resolutionHint: options.initialHint ?? null,
-    preResolvedMetadata: null,
+    preResolvedMetadata: options.initialPreResolvedMetadata ?? null,
     forceRefresh: options.fresh || isSandboxBaseImageRefreshRequested(options.env ?? process.env),
   };
 }
@@ -64,7 +65,7 @@ export function createAgentSandboxWithResolution(
     resolutionHint: context.resolutionHint,
     forceBaseImageRefresh: context.forceRefresh,
   });
-  context.preResolvedMetadata = staged.baseImageResolutionMetadata;
+  context.preResolvedMetadata = staged.baseImageResolutionMetadata ?? context.preResolvedMetadata;
   return staged;
 }
 

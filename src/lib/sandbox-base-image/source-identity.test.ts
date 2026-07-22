@@ -13,6 +13,7 @@ import {
   baseImageInputsDirty,
   buildLocalBaseTag,
   getNearestVersionedBaseImageTags,
+  getSourceRevisionIds,
   getSourceShortShaTags,
   getVersionedBaseImageTags,
   normalizeBaseImageInputPaths,
@@ -76,6 +77,7 @@ function createGitFixture() {
   writeFixture(root, "Dockerfile.base", "FROM node:22\n");
   writeFixture(root, "agents/langchain-deepagents-code/Dockerfile.base", "FROM python:3.13\n");
   writeFixture(root, "nemoclaw-blueprint/blueprint.yaml", "min_openclaw_version: 2026.4.24\n");
+  writeFixture(root, "scripts/lib/openclaw-npm-remediation.mts", "export const version = 1;\n");
   writeFixture(root, "src/other.ts", "export const value = 1;\n");
   git(root, ["add", "."]);
   git(root, ["commit", "-m", "initial"]);
@@ -141,6 +143,7 @@ describe("sandbox base-image source identity", () => {
       "scripts/lib/sandbox-rlimits.sh",
       "agents/openclaw/mcporter-runtime/package.json",
       "agents/openclaw/mcporter-runtime/package-lock.json",
+      "scripts/lib/openclaw-npm-remediation.mts",
       "scripts/lib/reviewed-npm-archive.mts",
       agentDockerfile,
     ]);
@@ -164,6 +167,15 @@ describe("sandbox base-image source identity", () => {
       GITHUB_SHA: "1E94F2E207C5456EBC35E2BD5BB380D4430292C6",
     } as NodeJS.ProcessEnv);
     expect(tags).toEqual(["1e94f2e2", "1e94f2e"]);
+  });
+
+  it("retains the full source revision for build provenance", () => {
+    const revision = "1E94F2E207C5456EBC35E2BD5BB380D4430292C6";
+    expect(
+      getSourceRevisionIds("/definitely/not/a/git/repo", {
+        GITHUB_SHA: revision,
+      } as NodeJS.ProcessEnv),
+    ).toEqual([revision.toLowerCase()]);
   });
 
   it("derives versioned sandbox-base tags from pinned install refs", () => {
@@ -243,6 +255,17 @@ describe("sandbox base-image source identity", () => {
     writeFixture(root, "Dockerfile.base", "FROM node:22\nRUN echo changed\n");
     git(root, ["add", "Dockerfile.base"]);
     git(root, ["commit", "-m", "change base"]);
+
+    expect(baseImageInputsDirty(root, gitEnv)).toBe(false);
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("detects committed npm remediation helper changes relative to origin/main", () => {
+    const root = createGitFixture();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "scripts/lib/openclaw-npm-remediation.mts", "export const version = 2;\n");
+    git(root, ["add", "scripts/lib/openclaw-npm-remediation.mts"]);
+    git(root, ["commit", "-m", "change remediation helper"]);
 
     expect(baseImageInputsDirty(root, gitEnv)).toBe(false);
     expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);

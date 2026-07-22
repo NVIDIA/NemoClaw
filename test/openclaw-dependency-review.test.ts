@@ -236,6 +236,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("reviewed Slack and Microsoft Teams plugin graphs");
     expect(review).toContain("GHSA-j3f2-48v5-ccww");
     expect(review).toContain("reviewed diagnostics OTEL and WhatsApp plugin graphs");
+    expect(review).toContain("GHSA-frvp-7c67-39w9");
+    expect(review).toContain("The OpenClaw artifact carries the reviewed SDK");
     expect(review).toContain("Node `v22.22.2`");
     expect(review).toContain("public npm registry");
     expect(review).toContain("engine requirement of `>=22.19.0`");
@@ -257,12 +259,19 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("removes its duplicate optional `tar` and `jszip` declarations");
     expect(review).toContain("direct `tar@7.5.19` and `jszip@3.10.1` dependencies");
     expect(review).toContain("`@modelcontextprotocol/sdk@1.29.0`");
-    expect(review).toContain("exact `@hono/node-server@2.0.5`");
+    expect(review).toContain("exact `@hono/node-server@2.0.11`");
     expect(review).toContain("complete 17-package, lock-pinned runtime closure");
     expect(review).toContain("`@opentelemetry/propagator-jaeger@2.8.0` with `2.9.0`");
-    expect(review).toContain("nested `@opentelemetry/core@2.9.0`");
+    expect(review).toContain("Nests reviewed `@opentelemetry/core@2.9.0`");
     expect(review).toContain("`axios@1.16.0` with `axios@1.18.0`");
     expect(review).toContain("`https-proxy-agent@5.0.1` and `agent-base@6.0.2`");
+    expect(review).toContain("`@opentelemetry/propagator-jaeger@2.8.0` with `2.9.0`");
+    expect(review).toContain("bundled `@opentelemetry/sdk-node@0.219.0`");
+    expect(review).toContain("Nests reviewed `@opentelemetry/core@2.9.0`");
+    expect(review).toContain("complete published `v2.8.0..v2.9.0` range");
+    expect(review).toContain("`b1c196d49d54caae59741cca0a9d57d101d7ea88`");
+    expect(review).toContain("unrelated breaking notice only deprecates the OpenTracing shim");
+    expect(review).toContain("Node `^18.19.0 || >=20.6.0`");
     expect(review).toContain("exact registry SRI and tarball URL");
     expect(review).toContain(
       "rejects unsafe archive members before extraction and after repacking",
@@ -274,7 +283,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==",
       "sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==",
       "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==",
-      "sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==",
+      "sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==",
       "sha512-kJezFj9YFAMLeORyi7aCLxLbD5/qWMQnoMVlVPyHIll7lgRJCc3JVln9Vgl9nwQi0YkMnhdGTMNn7CkRRAptMg==",
       "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==",
       "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
@@ -295,7 +304,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz",
       "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz",
       "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz",
-      "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz",
+      "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz",
       "https://registry.npmjs.org/eventsource-parser/-/eventsource-parser-3.1.0.tgz",
       "https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz",
       "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz",
@@ -304,6 +313,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "https://registry.npmjs.org/axios/-/axios-1.18.0.tgz",
       "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-5.0.1.tgz",
       "https://registry.npmjs.org/agent-base/-/agent-base-6.0.2.tgz",
+      "https://registry.npmjs.org/@opentelemetry/propagator-jaeger/-/propagator-jaeger-2.9.0.tgz",
+      "https://registry.npmjs.org/@opentelemetry/core/-/core-2.9.0.tgz",
     ]) {
       expect(review).toContain(tarball);
     }
@@ -314,7 +325,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     );
     expect(review).toContain("The other replacement tarballs include license files");
     expect(review).toContain("`tar@7.5.19` declares BlueOak-1.0.0");
-    expect(review).toContain("the others declare MIT");
+    expect(review).toContain("the other packages declare MIT");
     expect(review).toContain(
       "The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transitive graph",
     );

@@ -454,14 +454,14 @@ function writeCoreArchiveFixtures(): {
     `${JSON.stringify(
       {
         name: "@hono/node-server",
-        version: "2.0.5",
+        version: "2.0.11",
         peerDependencies: { hono: "^4" },
       },
       null,
       2,
     )}\n`,
   );
-  const honoNodeServerArchive = path.join(root, "node-server-2.0.5-source.tgz");
+  const honoNodeServerArchive = path.join(root, "node-server-2.0.11-source.tgz");
   packFixture(honoNodeServerDirectory, honoNodeServerArchive);
 
   const runtimeFixtures = MCP_RUNTIME_PACKAGES.map(
@@ -510,8 +510,8 @@ function writeCoreArchiveFixtures(): {
       '    "@openclaw/fs-safe@0.3.0:dist.tarball") value="https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz" ;;',
       '    "@modelcontextprotocol/sdk@1.29.0:dist.integrity") value="sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==" ;;',
       '    "@modelcontextprotocol/sdk@1.29.0:dist.tarball") value="https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz" ;;',
-      '    "@hono/node-server@2.0.5:dist.integrity") value="sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" ;;',
-      '    "@hono/node-server@2.0.5:dist.tarball") value="https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz" ;;',
+      '    "@hono/node-server@2.0.11:dist.integrity") value="sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==" ;;',
+      '    "@hono/node-server@2.0.11:dist.tarball") value="https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz" ;;',
       ...runtimeFixtures.flatMap(({ integrity, name, tarball, version }) => [
         `    "${name}@${version}:dist.integrity") value="${integrity}" ;;`,
         `    "${name}@${version}:dist.tarball") value="${tarball}" ;;`,
@@ -525,7 +525,7 @@ function writeCoreArchiveFixtures(): {
       '  case "$2" in',
       '    "https://registry.npmjs.org/@openclaw/fs-safe/-/fs-safe-0.3.0.tgz") archive="$fs_safe_archive"; filename="fs-safe-0.3.0.tgz"; integrity="sha512-uIBE441CIt1kIURoP9qRGKZ8LkGyfD9ZzeESjwAd29ZPWtghws/5GR3Pjb67jKdcJHP1I6roNXcvnhzAU7lHlA==" ;;',
       '    "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.29.0.tgz") archive="$modelcontextprotocol_sdk_archive"; filename="sdk-1.29.0.tgz"; integrity="sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==" ;;',
-      '    "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz") archive="$hono_node_server_archive"; filename="node-server-2.0.5.tgz"; integrity="sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==" ;;',
+      '    "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz") archive="$hono_node_server_archive"; filename="node-server-2.0.11.tgz"; integrity="sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==" ;;',
       ...runtimeFixtures.map(
         ({ filename, integrity, tarball, variable }) =>
           `    "${tarball}") archive="$${variable}"; filename="${filename}"; integrity="${integrity}" ;;`,
@@ -797,16 +797,16 @@ describe("OpenClaw npm remediation", () => {
       undefined,
     );
     expect(shrinkwrap.packages["node_modules/@hono/node-server"]).toMatchObject({
-      version: "2.0.5",
-      resolved: "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.5.tgz",
+      version: "2.0.11",
+      resolved: "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz",
       integrity:
-        "sha512-yQFvDmyDo3y6rEOJZDUYPJ49DIKTPpIk4kGvm40xx4Ejne0Pu9a1+exxPN+C1UppWK/WGZX9F++/Xs231tE86g==",
+        "sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==",
     });
     expect(
       shrinkwrap.packages["node_modules/@modelcontextprotocol/sdk"]?.dependencies?.[
         "@hono/node-server"
       ],
-    ).toBe("2.0.5");
+    ).toBe("2.0.11");
     for (const [name, version, integrity] of MCP_RUNTIME_PACKAGES) {
       expect(shrinkwrap.packages[`node_modules/${name}`]).toMatchObject({
         version,
@@ -915,10 +915,10 @@ describe("OpenClaw npm remediation", () => {
       dependencies: { jszip: "3.10.1", tar: "7.5.19" },
     });
     expect(fsSafePackageJson.optionalDependencies).toBeUndefined();
-    expect(modelContextProtocolSdkPackageJson.dependencies?.["@hono/node-server"]).toBe("2.0.5");
+    expect(modelContextProtocolSdkPackageJson.dependencies?.["@hono/node-server"]).toBe("2.0.11");
     expect(honoNodeServerPackageJson).toMatchObject({
       name: "@hono/node-server",
-      version: "2.0.5",
+      version: "2.0.11",
     });
     for (const [name, version] of MCP_RUNTIME_PACKAGES) {
       expect(
