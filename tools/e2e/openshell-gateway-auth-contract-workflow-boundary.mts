@@ -17,9 +17,12 @@ const EXPLICIT_ONLY_CONDITION =
   "${{ contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-auth-contract,') }}";
 const GATEWAY_PROBE_IMAGE =
   "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d";
+const ARTIFACT_SAFETY_GATED_UPLOAD =
+  "${{ always() && steps.artifact_safety.outcome == 'success' && hashFiles(format('e2e-artifacts/live/openshell-gateway-auth-contract/artifact-safety-{0}-{1}.passed', github.run_id, github.run_attempt)) != '' }}";
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
+  id?: string;
   if?: string;
   name?: string;
   run?: string;
@@ -155,9 +158,23 @@ export function validateOpenShellGatewayAuthContractWorkflow(
     errors.push(`${JOB_NAME} live test must not receive workflow credentials`);
   }
 
+  const artifactSafetyName = "Validate final OpenShell gateway auth contract artifacts";
+  const artifactSafety = findStep(job, artifactSafetyName);
+  if (artifactSafety.id !== "artifact_safety" || artifactSafety.if !== "always()") {
+    errors.push(`${JOB_NAME} final artifact safety scan must run unconditionally with a stable id`);
+  }
+  requireRunContains(
+    errors,
+    artifactSafety,
+    'node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"',
+  );
+
   const upload = findStep(job, "Upload OpenShell gateway auth contract artifacts");
-  if (upload.uses !== UPLOAD_E2E_ARTIFACTS_ACTION || upload.if !== "always()") {
-    errors.push(`${JOB_NAME} must always use the reviewed artifact uploader`);
+  if (upload.uses !== UPLOAD_E2E_ARTIFACTS_ACTION) {
+    errors.push(`${JOB_NAME} must use the reviewed artifact uploader`);
+  }
+  if (upload.if !== ARTIFACT_SAFETY_GATED_UPLOAD) {
+    errors.push(`${JOB_NAME} must upload artifacts only after this run attempt passes safety scan`);
   }
 
   requireStepOrder(errors, steps, "Prepare E2E workspace", "Install OpenShell CLI");
@@ -168,6 +185,13 @@ export function validateOpenShellGatewayAuthContractWorkflow(
     "Pre-pull pinned gateway auth probe image",
   );
   requireStepOrder(errors, steps, "Pre-pull pinned gateway auth probe image", runName);
+  requireStepOrder(errors, steps, runName, artifactSafetyName);
+  requireStepOrder(
+    errors,
+    steps,
+    artifactSafetyName,
+    "Upload OpenShell gateway auth contract artifacts",
+  );
   requireStepOrder(errors, steps, runName, "Upload OpenShell gateway auth contract artifacts");
 
   return errors;

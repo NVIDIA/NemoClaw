@@ -48,8 +48,18 @@ function connectAcceptanceScript(cliPath: string): string {
 
 runConnectRlimitTest(
   "connect shell enforces sandbox rlimits through rebuilt OpenClaw runtime (#2173)",
-  { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, secrets }) => {
+  {
+    timeout: LIVE_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "confirm Docker and sandbox ownership",
+        "onboard the rebuilt OpenClaw runtime",
+        "open connected shells and saturate the process limit",
+        "validate login and interactive rlimits",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, secrets }) => {
     const apiKey = secrets.required("NVIDIA_API_KEY");
     const redactionValues = secrets.redactionValues([apiKey]);
     await artifacts.target.declare({
@@ -86,6 +96,7 @@ runConnectRlimitTest(
       timeoutMs: 15 * 60_000,
     });
 
+    progress.phase("onboard the rebuilt OpenClaw runtime");
     const onboard = await host.nemoclaw(
       ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
       {
@@ -106,6 +117,7 @@ runConnectRlimitTest(
     );
     expect(onboard.exitCode, resultText(onboard)).toBe(0);
 
+    progress.phase("open connected shells and saturate the process limit");
     const connect = await host.command("bash", ["-lc", connectAcceptanceScript(host.commandPath)], {
       artifactName: "phase-2-connect-rlimits",
       env: buildAvailabilityProbeEnv(),
@@ -119,6 +131,7 @@ runConnectRlimitTest(
     expect(output).toContain("__NEMOCLAW_RLIMIT_CONNECT_END__");
     expectNoRlimitStartupDiagnostics(output);
 
+    progress.phase("validate login and interactive rlimits");
     expect(numericProbe(output, "login_nproc")).toBeLessThanOrEqual(4096);
     expect(numericProbe(output, "login_nofile")).toBeLessThanOrEqual(65536);
     expect(numericProbe(output, "interactive_nproc")).toBeLessThanOrEqual(4096);

@@ -5,12 +5,13 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { ProviderClient, trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { startTestProgress } from "../fixtures/progress.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -372,11 +373,18 @@ describe("hosted inference E2E config", () => {
   });
 
   it("serves fake OpenAI-compatible chat and responses contracts", async () => {
+    const progressLines: string[] = [];
+    const progress = startTestProgress(
+      "fake compatible server support",
+      ["serve compatible API", "verify compatible API"],
+      { logLine: (line) => progressLines.push(line) },
+    );
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: "fake-compatible-key",
       chatContent: "CHAT_OK",
       forbiddenMarkers: ["FORBIDDEN_REQUEST_MARKER"],
       model: "nvidia/nvidia/fake-model",
+      progress,
       requireAuth: true,
       responseText: "RESP_OK",
     });
@@ -454,5 +462,11 @@ describe("hosted inference E2E config", () => {
     } finally {
       await fake.close();
     }
+    expect(progressLines).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("event: fake OpenAI-compatible server started"),
+        expect.stringContaining("event: fake OpenAI-compatible server stopped"),
+      ]),
+    );
   });
 });
