@@ -151,6 +151,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     );
     expect(review).toContain("SDK Node `0.219.0`");
     expect(review).toContain("preexisting nested Core");
+    expect(review).toContain("test/openclaw-diagnostics-jaeger-runtime.test.ts");
+    expect(review).toContain("NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS=1");
   });
 
   it("records the active mcporter advisory remediations", () => {
@@ -716,6 +718,12 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     );
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").run).toContain(
       "test/openclaw-real-patched-dist-harness.test.ts",
+    );
+    expect(requiredStep(mainJob, "Verify reviewed Jaeger header handling").env).toEqual({
+      NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS: "1",
+    });
+    expect(requiredStep(mainJob, "Verify reviewed Jaeger header handling").run).toContain(
+      "test/openclaw-diagnostics-jaeger-runtime.test.ts",
     );
     expect(
       requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").env,

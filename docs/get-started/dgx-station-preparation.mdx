@@ -26,14 +26,23 @@ By default, an unknown version, malformed or unsafe marker, unmatched no-OTA fac
 On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
 
 Station preparation preserves existing stopped Docker container records, captures their IDs before its probes, and stops if that inventory changes during preparation.
-Running containers still block initial preparation and every Docker configuration change.
+Running containers block initial preparation and every Docker configuration change.
 Before a Docker restart or host reboot, stopped containers with a restart policy other than `no` also block preparation because they could start automatically.
+
+If preparation detects an existing vLLM workload, the installer shows the requested model and the model reported by the configured vLLM port when available, then offers two choices:
+
+1. Keep the managed Express recipe. This default leaves the host unchanged and prints the workload stop command and exact Express resume command.
+2. Leave vLLM running and continue in the same installer run through advanced manual Local vLLM validation and configuration.
+
+For the manual Local vLLM choice, NemoClaw records the exact installer revision until installation succeeds.
+If Docker access requires a new login or a later step fails, run the printed command to continue the same choice and revision.
+Without an interactive terminal or a choice, the installer safely selects the first option.
 
 <Warning title="Temporary Metadata Override">
 Use `--force-station-install` only on a genuine DGX Station GB300 when automatic Station detection rejects its DGX release metadata.
 The flag handles metadata variants not yet recognized by NemoClaw; it is not a general compatibility bypass.
 The flag bypasses only the `/etc/dgx-release` allowlist.
-It still requires ARM64 Ubuntu 24.04, DGX Station GB300 hardware identity, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent, inference, or Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
+It still requires ARM64 Ubuntu 24.04, DGX Station GB300 hardware identity, exactly one healthy GB300 for inference, zero volatile GB300 ECC errors, adequate storage, healthy required system services, no active agent or unrelated Docker workloads, and working Docker, Buildx, NVIDIA Container Toolkit, CDI, and container GPU-visibility probes.
 The override preserves the existing factory driver, packages, and container-runtime configuration; it does not install or repair missing factory components.
 It cannot enable Station Express on another Station generation or hardware platform.
 This override exists for current genuine Station factory images whose `/etc/dgx-release` metadata omits or varies fields used by the exact automatic allowlist.
