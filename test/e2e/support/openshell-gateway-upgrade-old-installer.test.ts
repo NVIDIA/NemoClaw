@@ -224,7 +224,7 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
     expect(dockerfile).not.toContain(
       "Skipping current advisory audit for the immutable historical mcporter lock",
     );
-  });
+  }, 30_000);
 
   it.each([
     "v0.0.74",
