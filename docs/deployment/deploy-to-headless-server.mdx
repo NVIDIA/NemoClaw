@@ -136,9 +136,11 @@ Use `--fresh` only when you intend to discard the saved onboarding session and s
 
 ## Run Unattended Onboarding
 
-The hosted installer uses the maintained last-known-good `lkg` reference when `NEMOCLAW_INSTALL_REF` and `NEMOCLAW_INSTALL_TAG` are unset.
+Select a reviewed NemoClaw commit and set its full 40-character SHA before unattended installation.
+The example uses that SHA in both the immutable bootstrap URL and `NEMOCLAW_INSTALL_REF`, so the bootstrap and cloned installer payload come from the same repository state.
+Do not use the mutable `lkg` or `latest` references as the primary install source for a persistent server.
 Inject provider credentials from your secret manager into the host environment before you run this example.
-The example fails before the network install if `NVIDIA_INFERENCE_API_KEY` is missing.
+The example fails before the network install if the commit SHA or `NVIDIA_INFERENCE_API_KEY` is missing or invalid.
 
 <AgentOnly variant="openclaw">
 
@@ -163,12 +165,18 @@ export NEMOCLAW_AGENT=langchain-deepagents-code
 </AgentOnly>
 
 ```bash
+export NEMOCLAW_INSTALL_REF="<reviewed-40-character-commit-sha>"
 : "${NVIDIA_INFERENCE_API_KEY:?Inject NVIDIA_INFERENCE_API_KEY from a secret store}"
+[[ "$NEMOCLAW_INSTALL_REF" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "NEMOCLAW_INSTALL_REF must be a reviewed full commit SHA" >&2
+  exit 1
+}
 export NEMOCLAW_PROVIDER=build
 export NEMOCLAW_SANDBOX_NAME=headless-agent
 export NEMOCLAW_POLICY_TIER=balanced
 
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+curl -fsSL "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${NEMOCLAW_INSTALL_REF}/install.sh" | \
+  NEMOCLAW_INSTALL_REF="$NEMOCLAW_INSTALL_REF" \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_AGENT="$NEMOCLAW_AGENT" \
@@ -180,7 +188,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
   bash
 ```
 
-Keep every `NEMOCLAW_*` assignment on the `bash` side of the pipeline so the downloaded installer can read it.
+Pass every onboarding `NEMOCLAW_*` value on the `bash` side of the pipeline so the downloaded installer can read it.
+The commit pin also appears in the bootstrap URL so no mutable tag selects the code that enters the pipeline.
 Do not put a credential before `curl`, in a command-line argument, or in a committed script.
 Unset the credential from the interactive shell after onboarding completes:
 
@@ -201,8 +210,8 @@ Refer to the [CLI commands reference](../reference/commands#nemoclaw-onboard) fo
 | `NEMOCLAW_SANDBOX_NAME` | Required for a deterministic sandbox name | No | Names the sandbox and its host registry entry. |
 | `NEMOCLAW_POLICY_TIER` | Optional, default `balanced` | No | Selects the initial policy tier. |
 | `NEMOCLAW_WEB_SEARCH_PROVIDER` | Optional | No | Selects a supported search provider or `none`. |
-| `NEMOCLAW_INSTALL_TAG` | Optional, default `lkg` | No | Pins a release tag when the maintained default is not desired. |
-| `NEMOCLAW_INSTALL_REF` | Development override only | No | Overrides `NEMOCLAW_INSTALL_TAG` when nonempty. |
+| `NEMOCLAW_INSTALL_REF` | Required for this unattended server flow | No | Selects the reviewed full commit SHA used by both the bootstrap URL and installer. |
+| `NEMOCLAW_INSTALL_TAG` | Optional convenience path, default `lkg` | No | Selects a tag only when `NEMOCLAW_INSTALL_REF` is unset. Mutable tags are not the primary persistent-server path. |
 
 ## Verify Readiness
 

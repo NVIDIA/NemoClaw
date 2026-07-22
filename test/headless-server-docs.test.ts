@@ -12,6 +12,10 @@ import { DEFAULT_INSTALL_REF } from "../src/lib/domain/installer/ref";
 const repoRoot = path.join(import.meta.dirname, "..");
 const guidePath = path.join(repoRoot, "docs", "deployment", "deploy-to-headless-server.mdx");
 const guide = fs.readFileSync(guidePath, "utf-8");
+const unattendedGuide = guide.slice(
+  guide.indexOf("## Run Unattended Onboarding"),
+  guide.indexOf("## Verify Readiness"),
+);
 const overview = fs.readFileSync(path.join(repoRoot, "docs", "about", "overview.mdx"), "utf-8");
 const commands = fs.readFileSync(path.join(repoRoot, "docs", "reference", "commands.mdx"), "utf-8");
 const openclawGuide = renderAgentVariantPage(guide, "openclaw", { sourcePath: guidePath });
@@ -19,15 +23,23 @@ const hermesGuide = renderAgentVariantPage(guide, "hermes", { sourcePath: guideP
 const deepAgentsGuide = renderAgentVariantPage(guide, "deepagents", { sourcePath: guidePath });
 
 describe("headless server deployment guide contracts", () => {
-  it("keeps unattended onboarding aligned with the maintained installer default (#7180)", () => {
+  it("pins unattended onboarding to a reviewed immutable commit (#7180)", () => {
     expect(DEFAULT_INSTALL_REF).toBe("lkg");
-    expect(guide).toContain("maintained last-known-good `lkg` reference");
-    expect(guide).toContain("NEMOCLAW_NON_INTERACTIVE=1");
-    expect(guide).toContain("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
-    expect(guide).toContain('NEMOCLAW_AGENT="$NEMOCLAW_AGENT"');
-    expect(guide).toContain('NEMOCLAW_PROVIDER="$NEMOCLAW_PROVIDER"');
-    expect(guide).toContain('NVIDIA_INFERENCE_API_KEY="$NVIDIA_INFERENCE_API_KEY"');
-    expect(guide).toContain('NEMOCLAW_SANDBOX_NAME="$NEMOCLAW_SANDBOX_NAME"');
+    expect(unattendedGuide).toContain(
+      'export NEMOCLAW_INSTALL_REF="<reviewed-40-character-commit-sha>"',
+    );
+    expect(unattendedGuide).toContain("^[0-9a-f]{40}$");
+    expect(unattendedGuide).toContain(
+      "https://raw.githubusercontent.com/NVIDIA/NemoClaw/${NEMOCLAW_INSTALL_REF}/install.sh",
+    );
+    expect(unattendedGuide).toContain('NEMOCLAW_INSTALL_REF="$NEMOCLAW_INSTALL_REF"');
+    expect(unattendedGuide).not.toContain("https://www.nvidia.com/nemoclaw.sh");
+    expect(unattendedGuide).toContain("NEMOCLAW_NON_INTERACTIVE=1");
+    expect(unattendedGuide).toContain("NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
+    expect(unattendedGuide).toContain('NEMOCLAW_AGENT="$NEMOCLAW_AGENT"');
+    expect(unattendedGuide).toContain('NEMOCLAW_PROVIDER="$NEMOCLAW_PROVIDER"');
+    expect(unattendedGuide).toContain('NVIDIA_INFERENCE_API_KEY="$NVIDIA_INFERENCE_API_KEY"');
+    expect(unattendedGuide).toContain('NEMOCLAW_SANDBOX_NAME="$NEMOCLAW_SANDBOX_NAME"');
   });
 
   it("keeps the supported noninteractive policy and skill commands copyable (#7180)", () => {
