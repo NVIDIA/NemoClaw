@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-
+import * as dockerImage from "../../adapters/docker/image";
 import * as agentDefs from "../../agent/defs";
 import * as agentOnboard from "../../agent/onboard";
 import * as gatewayRuntime from "../../gateway-runtime-action";
@@ -10,6 +10,7 @@ import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
   backupSandboxStateForRebuild,
+  disposeRebuildAgentBaseImagePreflight,
   ensureRebuildAgentBaseImage,
   ensureRebuildTargetGatewaySelected,
   pinRebuildAgentBaseImageForRecreate,
@@ -138,10 +139,19 @@ describe("rebuild agent base image preflight", () => {
     const ensureAgentBaseImage = vi
       .spyOn(agentOnboard, "ensureAgentBaseImage")
       .mockReturnValue({ imageTag: imageRef, built: true });
+    const bindLocalAgentBaseImageToPinnedProvenance = vi
+      .spyOn(agentOnboard, "bindLocalAgentBaseImageToPinnedProvenance")
+      .mockReturnValue(null);
     const pinAgentSandboxBaseImageRef = vi
       .spyOn(agentOnboard, "pinAgentSandboxBaseImageRef")
       .mockImplementation((_agentName, ref) => String(ref));
-    return { ensureAgentBaseImage, pinAgentSandboxBaseImageRef };
+    const dockerRmi = vi.spyOn(dockerImage, "dockerRmi").mockReturnValue({ status: 0 } as never);
+    return {
+      ensureAgentBaseImage,
+      bindLocalAgentBaseImageToPinnedProvenance,
+      pinAgentSandboxBaseImageRef,
+      dockerRmi,
+    };
   }
 
   it("forces a repository-local build and returns its exact ref when no override exists", () => {
@@ -160,8 +170,11 @@ describe("rebuild agent base image preflight", () => {
     process.env[overrideEnvVar] = "nemoclaw-hermes-sandbox-base-local:caller";
     const mutableRef = "nemoclaw-hermes-sandbox-base-local:resolved";
     const immutableRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;
-    const { ensureAgentBaseImage, pinAgentSandboxBaseImageRef } =
-      mockBaseImagePreflight(mutableRef);
+    const {
+      ensureAgentBaseImage,
+      bindLocalAgentBaseImageToPinnedProvenance,
+      pinAgentSandboxBaseImageRef,
+    } = mockBaseImagePreflight(mutableRef);
     pinAgentSandboxBaseImageRef.mockReturnValue(immutableRef);
 
     const result = ensureRebuildAgentBaseImage("hermes", makeBail());
@@ -169,8 +182,102 @@ describe("rebuild agent base image preflight", () => {
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.objectContaining({ name: "hermes" }), {
       forceBaseImageRebuild: false,
     });
-    expect(pinAgentSandboxBaseImageRef).toHaveBeenCalledWith("hermes", mutableRef);
-    expect(result).toEqual({ ok: true, imageRef: immutableRef, overrideEnvVar });
+    expect(pinAgentSandboxBaseImageRef).toHaveBeenCalledWith("hermes", mutableRef, {
+      forceLocal: true,
+      temporary: true,
+    });
+    expect(bindLocalAgentBaseImageToPinnedProvenance).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "hermes" }),
+      immutableRef,
+    );
+    expect(result).toEqual({
+      ok: true,
+      imageRef: immutableRef,
+      overrideEnvVar,
+      disposeImageRef: expect.any(Function),
+    });
+    expect(disposeRebuildAgentBaseImagePreflight(result)).toBe(true);
+  });
+
+  it("proves a caller alias before resolving it as the pinned remote image (#7144)", () => {
+    const callerAlias = "nemoclaw-hermes-sandbox-base-local:e2e-current";
+    const remoteRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+    const resolutionMetadata = { key: "verified-remote" } as never;
+    process.env[overrideEnvVar] = callerAlias;
+    const { ensureAgentBaseImage, bindLocalAgentBaseImageToPinnedProvenance } =
+      mockBaseImagePreflight(remoteRef);
+    bindLocalAgentBaseImageToPinnedProvenance.mockReturnValue(resolutionMetadata);
+    const restoreTrust = vi.fn();
+    const pinTrust = vi
+      .spyOn(agentOnboard, "pinTrustedAgentRemoteBaseImageOverrideForOperation")
+      .mockReturnValue(restoreTrust);
+    ensureAgentBaseImage.mockImplementation(() => {
+      expect(pinTrust).toHaveBeenCalledWith(overrideEnvVar, {
+        ref: callerAlias,
+        resolutionMetadata,
+      });
+      expect(restoreTrust).not.toHaveBeenCalled();
+      return { imageTag: remoteRef, built: false, resolutionMetadata };
+    });
+
+    const result = ensureRebuildAgentBaseImage("hermes", makeBail());
+
+    expect(bindLocalAgentBaseImageToPinnedProvenance).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "hermes" }),
+      callerAlias,
+    );
+    expect(restoreTrust).toHaveBeenCalledOnce();
+    expect(result).toEqual({
+      ok: true,
+      imageRef: remoteRef,
+      overrideEnvVar,
+      resolutionMetadata,
+      trustedRemoteOverride: { ref: remoteRef, resolutionMetadata },
+    });
+  });
+
+  it("retains a resolved platform digest for the immutable remote handoff (#7144)", () => {
+    const platformRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+    const { pinAgentSandboxBaseImageRef } = mockBaseImagePreflight(platformRef);
+
+    const result = ensureRebuildAgentBaseImage("hermes", makeBail(), {
+      resolutionHint: { key: "stale-base" } as never,
+    });
+
+    expect(pinAgentSandboxBaseImageRef).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      ok: true,
+      imageRef: platformRef,
+      overrideEnvVar,
+    });
+  });
+
+  it("disposes a temporary recreate handoff at most once (#7144)", () => {
+    const disposeImageRef = vi.fn(() => true);
+    const preflight = {
+      ok: true,
+      imageRef: `nemoclaw-hermes-sandbox-base-local:rebuild-1-${"a".repeat(16)}-image-${"b".repeat(64)}`,
+      overrideEnvVar,
+      disposeImageRef,
+    };
+
+    expect(disposeRebuildAgentBaseImagePreflight(preflight)).toBe(true);
+    expect(disposeRebuildAgentBaseImagePreflight(preflight)).toBe(true);
+    expect(disposeImageRef).toHaveBeenCalledOnce();
+  });
+
+  it("retries a temporary recreate handoff after cleanup fails (#7144)", () => {
+    const disposeImageRef = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const preflight = {
+      ok: true,
+      imageRef: `nemoclaw-hermes-sandbox-base-local:rebuild-1-${"a".repeat(16)}-image-${"b".repeat(64)}`,
+      overrideEnvVar,
+      disposeImageRef,
+    };
+
+    expect(disposeRebuildAgentBaseImagePreflight(preflight)).toBe(false);
+    expect(disposeRebuildAgentBaseImagePreflight(preflight)).toBe(true);
+    expect(disposeImageRef).toHaveBeenCalledTimes(2);
   });
 
   it("pins the preflighted ref only for recreation and restores caller state", () => {
@@ -191,6 +298,62 @@ describe("rebuild agent base image preflight", () => {
     expect(env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:image-caller");
     restore();
     expect(env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:image-caller");
+  });
+
+  it("leases a local-build proof only for the recreation scope", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const trustedLocalOverride = {
+      ref: `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`,
+      provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
+    };
+    const restoreTrust = vi.fn();
+    const pinTrust = vi
+      .spyOn(agentOnboard, "pinTrustedAgentBaseImageOverrideForOperation")
+      .mockReturnValue(restoreTrust);
+
+    const restore = pinRebuildAgentBaseImageForRecreate(
+      {
+        ok: true,
+        imageRef: trustedLocalOverride.ref,
+        overrideEnvVar,
+        trustedLocalOverride,
+      },
+      env,
+    );
+
+    expect(pinTrust).toHaveBeenCalledWith(overrideEnvVar, trustedLocalOverride);
+    expect(env[overrideEnvVar]).toBe(trustedLocalOverride.ref);
+    restore();
+    expect(restoreTrust).toHaveBeenCalledOnce();
+    expect(Object.hasOwn(env, overrideEnvVar)).toBe(false);
+  });
+
+  it("leases pinned remote provenance only for the recreation scope (#7144)", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const trustedRemoteOverride = {
+      ref: `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`,
+      resolutionMetadata: { key: "verified-remote" } as never,
+    };
+    const restoreTrust = vi.fn();
+    const pinTrust = vi
+      .spyOn(agentOnboard, "pinTrustedAgentRemoteBaseImageOverrideForOperation")
+      .mockReturnValue(restoreTrust);
+
+    const restore = pinRebuildAgentBaseImageForRecreate(
+      {
+        ok: true,
+        imageRef: trustedRemoteOverride.ref,
+        overrideEnvVar,
+        trustedRemoteOverride,
+      },
+      env,
+    );
+
+    expect(pinTrust).toHaveBeenCalledWith(overrideEnvVar, trustedRemoteOverride);
+    expect(env[overrideEnvVar]).toBe(trustedRemoteOverride.ref);
+    restore();
+    expect(restoreTrust).toHaveBeenCalledOnce();
+    expect(Object.hasOwn(env, overrideEnvVar)).toBe(false);
   });
 
   it("removes a scoped recreation pin when the caller had no override", () => {
@@ -387,6 +550,59 @@ describe("backupSandboxStateForRebuild with --force", () => {
     expect(errorLines.some((line: string) => line.includes("wrong ownership or permissions"))).toBe(
       false,
     );
+  });
+
+  it("aborts before replacement when a required state file backup fails (#7144)", () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: ["memories", "sessions"],
+      backedUpFiles: ["SOUL.md"],
+      failedDirs: [],
+      failedFiles: ["kanban.db"],
+      manifest: makeBackupResult().manifest,
+    });
+
+    expect(() =>
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+      ),
+    ).toThrow("bail: Failed to back up sandbox state.");
+
+    const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(errorLines.some((line: string) => line.includes("Failed files: kanban.db"))).toBe(true);
+    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(warnLines.some((line: string) => line.includes("Rebuild will continue"))).toBe(false);
+  });
+
+  it("allows a required state file backup failure only with --force (#7144)", () => {
+    const manifest = makeBackupResult().manifest!;
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: ["memories", "sessions"],
+      backedUpFiles: ["SOUL.md"],
+      failedDirs: [],
+      failedFiles: ["kanban.db"],
+      manifest,
+    });
+
+    const result = backupSandboxStateForRebuild(
+      "alpha",
+      makeSandboxEntry(),
+      false,
+      () => undefined,
+      () => true,
+      makeBail(),
+      { force: true },
+    );
+
+    expect(result).toBe(manifest);
+    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(warnLines.some((line: string) => line.includes("--force was specified"))).toBe(true);
   });
 
   it("keeps the salvageable partial manifest when all dirs failed but --force is set (#6972)", () => {

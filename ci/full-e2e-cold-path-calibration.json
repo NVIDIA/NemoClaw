@@ -1,5 +1,5 @@
 {
-  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nFive independent workflow_dispatch full-e2e samples of current-main baseline 1a74b8348c2182fbf806726341186f008444e28e with the phase-measurement changes at 4544d07c8bfd500c3b64a74380ef5cd0e62089f5. All runs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn. Each baseline budget is derived independently so phase caps diagnose regressions; they are not portions that must sum to the root-start budget. The separate validation adjustment records four existing full-e2e job observations from three descendant heads after f62c278bd737f4f47be2e85436f65b270d5b4280 added the reviewed WeChat runtime graph to the supported sandbox image. The relevant image-building inputs listed in imageInputPaths were unchanged through 2adc8481ff3053a5a7be37d130cb183e222934ff; repository tests enforce that ancestry and unchanged-input boundary. All four jobs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn; two exceeded the prior root-start and/or sandbox-phase caps. The conclusion fields record the full-e2e job conclusions, not aggregate workflow conclusions. The adjustment raises only those two caps from the maximum observed value plus the existing headroom, rounded up to one second. This is a bounded post-change validation adjustment, not a replacement five-run single-SHA calibration. Retire it by replacing the baseline and removing validationAdjustment after five successful full-e2e samples from one SHA that contains the image change.",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nFive independent workflow_dispatch full-e2e samples of current-main baseline 1a74b8348c2182fbf806726341186f008444e28e with the phase-measurement changes at 4544d07c8bfd500c3b64a74380ef5cd0e62089f5. All runs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn. Each baseline budget is derived independently so phase caps diagnose regressions; they are not portions that must sum to the root-start budget. The separate validation adjustment records four existing full-e2e job observations from three descendant heads after f62c278bd737f4f47be2e85436f65b270d5b4280 added the reviewed WeChat runtime graph to the supported sandbox image. The relevant image-building inputs listed in imageInputPaths were unchanged through 2adc8481ff3053a5a7be37d130cb183e222934ff; repository tests enforce that ancestry and unchanged-input boundary. All four jobs completed install, BuildKit prebuild without fallback, the silence assertion, and the expected first turn; two exceeded the prior root-start and/or sandbox-phase caps. The conclusion fields record the full-e2e job conclusions, not aggregate workflow conclusions. The adjustment raises only those two caps from the maximum observed value plus the existing headroom, rounded up to one second. This is a bounded post-change validation adjustment, not a replacement five-run single-SHA calibration. Retire it by replacing the baseline and removing validationAdjustment after five successful full-e2e samples from one SHA that contains the image change. The authoritative-local-build adjustment records two functional same-head PR runs that emitted the required local base-build reason. Its allowance is the maximum excess over the normal root-start or sandbox-phase budget plus the larger of 5 seconds or 10 percent, rounded up to one second. It applies only when that reason is observed and does not alter published-image budgets.",
   "schemaVersion": 1,
   "calibratedAt": "2026-07-13",
   "baselineMainSha": "1a74b8348c2182fbf806726341186f008444e28e",
@@ -326,6 +326,37 @@
       "rootStartToFirstTurnCompletionBudgetMs": 228000,
       "sandboxPhaseBudgetMs": 171000
     }
+  },
+  "authoritativeLocalBaseBuildAdjustment": {
+    "validatedAt": "2026-07-21",
+    "triggerOutput": "Building OpenClaw sandbox base image locally because no compatible published base image was found.",
+    "adjustedMetrics": [
+      "rootStartToFirstTurnCompletion",
+      "nemoclaw.onboard.phase.sandbox"
+    ],
+    "derivation": {
+      "statistic": "maximum-budget-excess",
+      "minimumHeadroomMs": 5000,
+      "relativeHeadroomPercent": 10,
+      "roundUpMs": 1000
+    },
+    "runs": [
+      {
+        "runId": 29806262836,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29806262836",
+        "headSha": "6752f3e7918d588f53d5a3d3ebd37b8e7bf7aaab",
+        "rootStartToFirstTurnCompletionMs": 247993,
+        "sandboxPhaseMs": 196679
+      },
+      {
+        "runId": 29806391548,
+        "runUrl": "https://github.com/NVIDIA/NemoClaw/actions/runs/29806391548",
+        "headSha": "6752f3e7918d588f53d5a3d3ebd37b8e7bf7aaab",
+        "rootStartToFirstTurnCompletionMs": 248833,
+        "sandboxPhaseMs": 196916
+      }
+    ],
+    "derivedAllowanceMs": 31000
   },
   "derivedBudgetsMs": {
     "rootStartToFirstTurnCompletionBudgetMs": 205000,

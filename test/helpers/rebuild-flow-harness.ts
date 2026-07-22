@@ -276,6 +276,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
   const agentName = overrides.agentName ?? "openclaw";
+  const agentBaseImageRef = `nemoclaw-${agentName}-base:test`;
   const agentDef = {
     name: agentName,
     expectedVersion: "0.2.0",
@@ -294,16 +295,36 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ok: true,
     imageTag: null,
   });
+  const agentBaseImageId = `sha256:${"a".repeat(64)}`;
+  const imageIdsByRef = new Map([
+    [agentBaseImageRef, agentBaseImageId],
+    [agentBaseImageId, agentBaseImageId],
+  ]);
   const dcodeBaseImageIds = [...(overrides.dcodeBaseImageIds ?? [])];
-  vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation((...args: unknown[]) =>
-    args[0] === "{{json .Config.Labels}}" && overrides.sandboxBaseImageLabelsOutput !== undefined
-      ? overrides.sandboxBaseImageLabelsOutput
-      : (dcodeBaseImageIds.shift() ?? "sha256:dcode-base"),
-  );
+  vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation((...args: unknown[]) => {
+    if (
+      args[0] === "{{json .Config.Labels}}" &&
+      overrides.sandboxBaseImageLabelsOutput !== undefined
+    ) {
+      return overrides.sandboxBaseImageLabelsOutput;
+    }
+    if (args[0] === "{{.Id}}") {
+      const imageId = imageIdsByRef.get(String(args[1]));
+      if (imageId) return imageId;
+    }
+    return dcodeBaseImageIds.shift() ?? "sha256:dcode-base";
+  });
   vi.spyOn(dockerImage, "dockerRmi").mockReturnValue({ status: 0 });
+  vi.spyOn(dockerImage, "dockerTag").mockImplementation((source: unknown, target: unknown) => {
+    const sourceRef = String(source);
+    const sourceId =
+      imageIdsByRef.get(sourceRef) ?? (sourceRef.startsWith("sha256:") ? sourceRef : null);
+    if (sourceId) imageIdsByRef.set(String(target), sourceId);
+    return { status: 0 };
+  });
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
   const ensureAgentBaseImageSpy = vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
-    imageTag: `nemoclaw-${agentName}-base:test`,
+    imageTag: agentBaseImageRef,
     built: true,
   });
   const sessionAgentName =
