@@ -76,11 +76,14 @@ const OLD_SANDBOX_BASE_IMAGE_REF =
 const OLD_OPENCLAW_VERSION = process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ?? "2026.4.24";
 const CURRENT_OPENCLAW_VERSION = process.env.NEMOCLAW_CURRENT_OPENCLAW_VERSION ?? "";
 const OPENCLAW_STATE_UPGRADE_PROOF = process.env.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF === "1";
-const { sandboxBaseDigest: OLD_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgradeFixture({
-  nemoclawRef: OLD_NEMOCLAW_REF,
+const OLD_INSTALLER_FIXTURE_IDENTITY = Object.freeze({
   nemoclawCommit: OLD_NEMOCLAW_COMMIT,
-  installerSha256: OLD_INSTALLER_SHA256,
+  nemoclawRef: OLD_NEMOCLAW_REF,
   openclawVersion: OLD_OPENCLAW_VERSION,
+});
+const { sandboxBaseDigest: OLD_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgradeFixture({
+  ...OLD_INSTALLER_FIXTURE_IDENTITY,
+  installerSha256: OLD_INSTALLER_SHA256,
   sandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
 });
 const SURVIVOR_SANDBOX =
@@ -728,7 +731,7 @@ async function installOldNemoclawAndClaw(
     `downloaded ${OLD_NEMOCLAW_REF} installer must match its pinned SHA-256`,
   ).toBe(OLD_INSTALLER_SHA256);
   fs.chmodSync(oldInstaller, 0o755);
-  patchOldInstallerFixture(oldInstaller);
+  patchOldInstallerFixture(oldInstaller, OLD_INSTALLER_FIXTURE_IDENTITY);
 
   const reviewedOpenClaw = packReviewedNpmArchive(reviewedOldOpenClawArchive(OLD_OPENCLAW_VERSION));
 
