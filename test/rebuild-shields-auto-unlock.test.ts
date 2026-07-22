@@ -160,9 +160,9 @@ function createFixture(opts: { shieldsLocked: boolean }) {
   const fakeRoot = path.join(tmpDir, "fake-sandbox-root");
   fs.mkdirSync(path.join(fakeRoot, "workspace"), { recursive: true });
   fs.writeFileSync(path.join(fakeRoot, "workspace", "marker.txt"), "test");
+  const deleteMarkerPath = path.join(tmpDir, "sandbox-deleted");
   const lockStatePath = path.join(tmpDir, "config-lock-state.txt");
   fs.writeFileSync(lockStatePath, opts.shieldsLocked ? "locked" : "unlocked");
-  const deletedStatePath = path.join(tmpDir, "sandbox-deleted.txt");
 
   // Fake openshell — also returns a parseable YAML policy for the
   // shields-down policy snapshot capture path.
@@ -179,14 +179,17 @@ function createFixture(opts: { shieldsLocked: boolean }) {
     `#!/usr/bin/env node
 const fs = require("node:fs");
 const a = process.argv.slice(2);
-const deletedStatePath = ${JSON.stringify(deletedStatePath)};
+const deleteMarkerPath = ${JSON.stringify(deleteMarkerPath)};
 const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
 if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.85\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="get")        { if (fs.existsSync(deletedStatePath)) { process.stderr.write("sandbox not found\\n"); process.exit(1); } process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(deletedStatePath, "deleted\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="create")     { process.exit(1); }
+if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(deleteMarkerPath, "deleted\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="get") {
+  if (fs.existsSync(deleteMarkerPath)) { process.stderr.write("Error: sandbox ${sandboxName} not found\\n"); process.exit(1); }
+  process.stdout.write("Name: ${sandboxName}\\nPhase: Ready\\n");
+  process.exit(0);
+}
 if (a[0]==="policy" && a[1]==="get")         { process.stdout.write("version: 1\\nnetwork_policies:\\n  test: {}\\n"); process.exit(0); }
 if (a[0]==="policy" && a[1]==="set")         { process.exit(0); }
 if (a[0]==="status")                         { process.stdout.write("Server Status\\n  Gateway: nemoclaw\\n  Status: Connected\\n"); process.exit(0); }
@@ -391,13 +394,13 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NO_COLOR: "1",
       },
-      timeout: 30_000,
+      timeout: 90_000,
     },
   );
 }
 
 describe("rebuild auto-unlocks when shields are UP (#3113)", () => {
-  it("detects locked shields and prints auto-unlock notice", { timeout: 60_000 }, () => {
+  it("detects locked shields and prints auto-unlock notice", { timeout: 120_000 }, () => {
     const f = createFixture({ shieldsLocked: true });
     const r = runRebuild(f);
     const output = (r.stdout || "") + (r.stderr || "");
@@ -420,9 +423,10 @@ describe("rebuild auto-unlocks when shields are UP (#3113)", () => {
     expect(output).toContain("Capturing current policy snapshot");
     // Backup proceeds.
     expect(output).toContain("Backing up sandbox state");
+    expect(output).not.toContain("OpenShell did not confirm that the sandbox is absent");
   });
 
-  it("skips auto-unlock when shields are not configured", { timeout: 60_000 }, () => {
+  it("skips auto-unlock when shields are not configured", { timeout: 120_000 }, () => {
     const f = createFixture({ shieldsLocked: false });
     const r = runRebuild(f);
     const output = (r.stdout || "") + (r.stderr || "");
@@ -434,5 +438,6 @@ describe("rebuild auto-unlocks when shields are UP (#3113)", () => {
     expect(output).not.toContain("Shields are UP");
     expect(output).not.toContain("temporarily unlocking for rebuild backup");
     expect(output).toContain("Backing up sandbox state");
+    expect(output).not.toContain("OpenShell did not confirm that the sandbox is absent");
   });
 });

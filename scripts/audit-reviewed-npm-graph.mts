@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { remediateReviewedOpenClawArchive } from "./lib/openclaw-npm-remediation.mts";
+import { remediateReviewedOpenClawPluginArchive } from "./lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive, verifyReviewedNpmMetadata } from "./lib/reviewed-npm-archive.mts";
 
 type Severity = "info" | "low" | "moderate" | "high" | "critical";
@@ -294,7 +294,7 @@ function materializeArchiveGraphs(
     tempRoot,
   );
   const remediatedPaths = archives.map(({ packageSpec, packed }) =>
-    remediateReviewedOpenClawArchive({
+    remediateReviewedOpenClawPluginArchive({
       archivePath: packed.archivePath,
       packageSpec,
       workingDirectory: packed.rootDirectory,

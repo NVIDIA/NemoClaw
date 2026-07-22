@@ -113,7 +113,7 @@ describe("reviewed npm lifecycle policy", () => {
     ).toBe(true);
 
     const messagingPackageSpecs = Object.keys(
-      reviewedOpenClawPluginIntegrityByPackageSpec({ OPENCLAW_VERSION: "2026.6.10" }),
+      reviewedOpenClawPluginIntegrityByPackageSpec({ OPENCLAW_VERSION: "2026.7.1" }),
     );
     const result = spawnSync(process.execPath, ["-e", PRODUCTION_BOUNDARY_AUDIT], {
       cwd: REPO_ROOT,
