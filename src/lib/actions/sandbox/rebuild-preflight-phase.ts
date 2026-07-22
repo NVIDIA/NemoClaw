@@ -20,6 +20,7 @@ import {
   isDcodeRebuildAgent,
 } from "./rebuild-dcode-orchestrator";
 import {
+  disposeRebuildAgentBaseImagePreflight,
   type RebuildAgentBaseImagePreflight,
   type RebuildLiveState,
   type RebuildSandboxEntry,
@@ -190,6 +191,8 @@ export async function runRebuildPreflightPhase(
   let retainDcodePreflight = false;
   let preparedImage: PreparedRebuildImage | null = null;
   let retainPreparedImage = false;
+  let baseImagePreflight: RebuildAgentBaseImagePreflight | null = null;
+  let retainBaseImagePreflight = false;
   try {
     const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
     let retainOnboardLock = false;
@@ -215,6 +218,7 @@ export async function runRebuildPreflightPhase(
         bail,
       });
       if (!preparedTarget) return null;
+      baseImagePreflight = preparedTarget.baseImagePreflight;
       preparedImage = preparedTarget.preparedImage;
 
       const liveState = await resolveRebuildLiveState(sandboxName, expectedSandboxEntry, log, bail);
@@ -252,6 +256,7 @@ export async function runRebuildPreflightPhase(
       retainOnboardLock = true;
       retainDcodePreflight = true;
       retainPreparedImage = true;
+      retainBaseImagePreflight = true;
       return {
         sandboxEntry: expectedSandboxEntry,
         rebuildAgent,
@@ -273,5 +278,12 @@ export async function runRebuildPreflightPhase(
   } finally {
     if (!retainDcodePreflight) dcodePreflight.cleanup();
     if (!retainPreparedImage && preparedImage) disposePreparedBuildContext(preparedImage);
+    if (
+      !retainBaseImagePreflight &&
+      baseImagePreflight &&
+      !disposeRebuildAgentBaseImagePreflight(baseImagePreflight)
+    ) {
+      console.warn("  Warning: temporary rebuild base-image handoff could not be removed.");
+    }
   }
 }

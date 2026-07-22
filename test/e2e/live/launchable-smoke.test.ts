@@ -22,17 +22,17 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 // This is intentionally a single live test instead of a new fixture
-// family: the contract is the real Ubuntu launchable path, so the test invokes
-// scripts/brev-launchable-ci-cpu.sh via sudo, then proves the launchable-built
-// CLI can onboard, route inference.local, and run an OpenClaw agent turn.
+// family: the contract is the real Ubuntu bootstrap path, so the test invokes
+// scripts/brev-launchable-ci-cpu.sh via sudo, then proves the bootstrap-built
+// CLI can onboard, route inference.local, and run an OpenClaw agent turn
 // through Vitest.
 
-const LAUNCHABLE_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
-const SENTINEL = "/var/run/nemoclaw-launchable-ready";
+const BOOTSTRAP_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
+const BOOTSTRAP_SENTINEL = "/var/run/nemoclaw-launchable-ready";
 const MODEL =
   process.env.NEMOCLAW_MODEL ?? process.env.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
 const EXPECTED_ROUTE_PROVIDER = HOSTED_INFERENCE_PROVIDER_NAME;
-const DEFAULT_SANDBOX_NAME = `e2e-launchable-${randomUUID().slice(0, 8)}`;
+const DEFAULT_SANDBOX_NAME = `e2e-bootstrap-${randomUUID().slice(0, 8)}`;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SANDBOX_NAME;
 const TEST_TIMEOUT_MS = 30 * 60_000;
 const INSTALL_TIMEOUT_MS = 30 * 60_000;
@@ -122,12 +122,12 @@ function parseAgentText(raw: string): string {
     .join("\n");
 }
 
-async function preseedLaunchableClone(
+async function preseedBootstrapClone(
   host: HostCliClient,
   cloneDir: string,
   artifacts: ArtifactSink,
 ): Promise<void> {
-  await artifacts.writeJson("launchable-clone.json", { cloneDir, ref: "main" });
+  await artifacts.writeJson("bootstrap-clone.json", { cloneDir, ref: "main" });
   const result = await runBash(
     host,
     [
@@ -137,15 +137,15 @@ async function preseedLaunchableClone(
       `git -C ${JSON.stringify(cloneDir)} remote set-url origin ${JSON.stringify(cloneDir)}`,
     ].join(" && "),
     {
-      artifactName: "phase-0-preseed-launchable-clone",
+      artifactName: "phase-0-preseed-bootstrap-clone",
       env: runEnv(),
       timeoutMs: 120_000,
     },
   );
-  expectExitZero(result, "preseed launchable clone");
+  expectExitZero(result, "preseed bootstrap clone");
 }
 
-async function cleanupLaunchableState(host: HostCliClient, cloneDir: string): Promise<void> {
+async function cleanupBootstrapState(host: HostCliClient, cloneDir: string): Promise<void> {
   await runBash(
     host,
     [
@@ -155,7 +155,7 @@ async function cleanupLaunchableState(host: HostCliClient, cloneDir: string): Pr
       `sudo rm -rf ${JSON.stringify(cloneDir)} 2>/dev/null || rm -rf ${JSON.stringify(cloneDir)} || true`,
     ].join("\n"),
     {
-      artifactName: "cleanup-launchable-state",
+      artifactName: "cleanup-bootstrap-state",
       env: runEnv({ PATH: `/usr/local/bin:${process.env.PATH ?? ""}` }),
       timeoutMs: 180_000,
     },
@@ -209,19 +209,19 @@ async function expectPongFromSandboxInference(
   );
 }
 
-test("launchable smoke: bootstrap, onboard, sandbox health, live inference, cleanup", {
+test("bootstrap install smoke: bootstrap, onboard, sandbox health, live inference, cleanup", {
   timeout: TEST_TIMEOUT_MS,
 }, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
   validateSandboxName(SANDBOX_NAME);
 
   await artifacts.target.declare({
-    id: "launchable-smoke",
-    boundary: "ubuntu-launchable-install-flow",
+    id: "bootstrap-install-smoke",
+    boundary: "ubuntu-bootstrap-install-flow",
     refs: ["#2599", "#5098"],
     phases: [
-      "preseed-launchable-clone",
+      "preseed-bootstrap-clone",
       "prerequisites",
-      "brev-launchable-ci-cpu",
+      "brev-bootstrap-script",
       "install-artifacts",
       "onboard",
       "sandbox-health",
@@ -233,14 +233,14 @@ test("launchable smoke: bootstrap, onboard, sandbox health, live inference, clea
   const hosted = requireHostedInferenceConfig(secrets);
   const apiKey = hosted.apiKey;
 
-  expect(fs.existsSync(LAUNCHABLE_SCRIPT), `${LAUNCHABLE_SCRIPT} missing`).toBe(true);
+  expect(fs.existsSync(BOOTSTRAP_SCRIPT), `${BOOTSTRAP_SCRIPT} missing`).toBe(true);
 
   const sudo = await host.command("sudo", ["-n", "true"], {
     artifactName: "prereq-passwordless-sudo",
     env: runEnv(),
     timeoutMs: 30_000,
   });
-  if (sudo.exitCode !== 0) skip("passwordless sudo is required for launchable smoke");
+  if (sudo.exitCode !== 0) skip("passwordless sudo is required for bootstrap install smoke");
 
   const dockerInfo = await host.command("docker", ["info"], {
     artifactName: "prereq-docker-info",
@@ -267,16 +267,16 @@ test("launchable smoke: bootstrap, onboard, sandbox health, live inference, clea
   );
   expectExitZero(network, "inference-api.nvidia.com reachable");
 
-  const cloneDir = path.join(os.tmpdir(), `NemoClaw-launchable-${randomUUID()}`);
-  cleanup.add(`remove launchable clone ${cloneDir}`, async () =>
-    cleanupLaunchableState(host, cloneDir),
+  const cloneDir = path.join(os.tmpdir(), `NemoClaw-bootstrap-${randomUUID()}`);
+  cleanup.add(`remove bootstrap clone ${cloneDir}`, async () =>
+    cleanupBootstrapState(host, cloneDir),
   );
-  await cleanupLaunchableState(host, cloneDir);
-  await preseedLaunchableClone(host, cloneDir, artifacts);
+  await cleanupBootstrapState(host, cloneDir);
+  await preseedBootstrapClone(host, cloneDir, artifacts);
 
-  const installLog = artifacts.pathFor("launch-plugin.log");
-  const install = await host.command("sudo", ["-E", "bash", LAUNCHABLE_SCRIPT], {
-    artifactName: "phase-2-brev-launchable-ci-cpu",
+  const installLog = artifacts.pathFor("bootstrap.log");
+  const install = await host.command("sudo", ["-E", "bash", BOOTSTRAP_SCRIPT], {
+    artifactName: "phase-2-brev-bootstrap-script",
     env: runEnv({
       LAUNCH_LOG: installLog,
       NEMOCLAW_CLONE_DIR: cloneDir,
@@ -285,7 +285,7 @@ test("launchable smoke: bootstrap, onboard, sandbox health, live inference, clea
     }),
     timeoutMs: INSTALL_TIMEOUT_MS,
   });
-  expectExitZero(install, "brev-launchable-ci-cpu.sh completed");
+  expectExitZero(install, "Brev bootstrap script completed");
 
   const pathEnv = runEnv({ PATH: `/usr/local/bin:${process.env.PATH ?? ""}` });
 
@@ -322,7 +322,7 @@ test("launchable smoke: bootstrap, onboard, sandbox health, live inference, clea
   await artifacts.writeJson("node-version.json", node);
   expect(
     node.major,
-    `Node.js too old after launchable install: ${node.version}`,
+    `Node.js too old after bootstrap install: ${node.version}`,
   ).toBeGreaterThanOrEqual(20);
 
   const dockerAfterInstall = await host.command("docker", ["info"], {
@@ -331,7 +331,7 @@ test("launchable smoke: bootstrap, onboard, sandbox health, live inference, clea
     timeoutMs: 30_000,
   });
   expectExitZero(dockerAfterInstall, "Docker running after install");
-  expect(fs.existsSync(SENTINEL), `${SENTINEL} missing`).toBe(true);
+  expect(fs.existsSync(BOOTSTRAP_SENTINEL), `${BOOTSTRAP_SENTINEL} missing`).toBe(true);
   expect(fs.existsSync(path.join(cloneDir, ".git")), `${cloneDir}/.git missing`).toBe(true);
   expect(fs.existsSync(path.join(cloneDir, "dist")), `${cloneDir}/dist missing`).toBe(true);
   expect(
@@ -361,7 +361,7 @@ test("launchable smoke: bootstrap, onboard, sandbox health, live inference, clea
     }
     if (isTransientProviderValidationFailure(onboard) && process.env.GITHUB_ACTIONS === "true") {
       await artifacts.writeJson("transient-provider-validation.skip.json", {
-        reason: "transient NVIDIA Endpoints validation failure during launchable onboard",
+        reason: "transient NVIDIA Endpoints validation failure during bootstrap onboard",
         attempts: ONBOARD_ATTEMPTS,
         sourceBoundary: "external NVIDIA Endpoints provider availability",
         removalCondition:
@@ -446,7 +446,7 @@ test("launchable smoke: bootstrap, onboard, sandbox health, live inference, clea
     });
   await expectPongFromSandboxInference(sandboxExec);
 
-  const sessionId = `e2e-launchable-${Date.now()}-${randomUUID()}`;
+  const sessionId = `e2e-bootstrap-${Date.now()}-${randomUUID()}`;
   const agent = await sandboxExec(
     [
       "openclaw",
@@ -491,5 +491,5 @@ test("launchable smoke: bootstrap, onboard, sandbox health, live inference, clea
     expect(fs.readFileSync(registryFile, "utf8")).not.toContain(`"${SANDBOX_NAME}"`);
   }
 
-  await cleanupLaunchableState(host, cloneDir);
+  await cleanupBootstrapState(host, cloneDir);
 });

@@ -22,6 +22,7 @@ import type { PreparedRebuildImage } from "./rebuild-custom-image-preflight";
 import { isDcodeRebuildAgent } from "./rebuild-dcode-orchestrator";
 import { validatedRebuildRegistryUpdate } from "./rebuild-durable-config";
 import {
+  disposeRebuildAgentBaseImagePreflight,
   ensureRebuildAgentBaseImage,
   ensureRebuildTargetGatewaySelected,
   pinRebuildAgentBaseImageForRecreate,
@@ -74,6 +75,33 @@ export interface RebuildPreparedTarget {
   messagingPlan: SandboxMessagingPlan | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   preparedImage: PreparedRebuildImage | null;
+}
+
+/** Carry the outer resolver's verified provenance into the inner onboard build. */
+export function stageRebuildBaseImageResolutionHandoff(
+  recreateOptions: Pick<RebuildRecreateOnboardOpts, "preResolvedBaseImageMetadata">,
+  preflight: RebuildAgentBaseImagePreflight,
+): void {
+  const metadata = preflight.resolutionMetadata;
+  if (!metadata) return;
+  const imageId = metadata.imageId.match(/^sha256:([0-9a-f]{64})$/i)?.[1]?.toLowerCase();
+  const localHandoffPattern = imageId
+    ? new RegExp(
+        `^nemoclaw-[a-z0-9][a-z0-9._-]*-sandbox-base-local:(?:image-|rebuild-[1-9][0-9]*-[0-9a-f]{16}-image-)${imageId}$`,
+        "i",
+      )
+    : null;
+  const imageRef = preflight.imageRef ?? "";
+  const remoteDigest = metadata.digest?.match(/^sha256:([0-9a-f]{64})$/i)?.[1]?.toLowerCase();
+  const immutableRemoteHandoff =
+    remoteDigest !== undefined &&
+    metadata.source !== "local" &&
+    metadata.ref === imageRef &&
+    imageRef.toLowerCase() === `${metadata.imageName}@sha256:${remoteDigest}`.toLowerCase();
+  if (!localHandoffPattern?.test(imageRef) && !immutableRemoteHandoff) {
+    throw new Error("Rebuild base-image provenance did not match its immutable handoff");
+  }
+  recreateOptions.preResolvedBaseImageMetadata = metadata;
 }
 
 /** Resolve, validate, and persist the complete non-destructive recreate target. */
@@ -204,71 +232,86 @@ export async function prepareRebuildTargetPreflights(args: {
         forceBaseImageRefresh,
       });
   if (!baseImagePreflight.ok) return null;
-  const restoreBaseImageOverride = pinRebuildAgentBaseImageForRecreate(baseImagePreflight);
-  let targetRuntimePreflight: Awaited<ReturnType<typeof preflightRebuildTargetRuntime>> = {
-    ok: false,
-  };
+  let retainBaseImagePreflight = false;
   try {
-    targetRuntimePreflight = await preflightRebuildTargetRuntime(
-      targetConfig,
-      sandboxEntry,
-      recreateOptions,
-      log,
-      bail,
-      {
-        allowMissingGatewayProviderWithHostCredential: preparedBackupRecovery,
-        skipImagePreflight: rebuildsDcodeSandbox,
-      },
-    );
-  } finally {
-    restoreBaseImageOverride();
-  }
-  if (!targetRuntimePreflight.ok) return null;
-
-  if (targetRuntimePreflight.requiresGatewayProviderReconfigure) {
-    if (!resumeConfig.credentialEnv) {
-      bail("Prepared provider reconfiguration is missing its credential binding");
-      return null;
-    }
-    recreateOptions.rebuildProviderReconfigure = createRebuildProviderReconfigureHandoff({
-      sandboxName,
-      provider: resumeConfig.provider,
-      model: resumeConfig.model,
-      credentialEnv: resumeConfig.credentialEnv,
-      endpointUrl: resumeConfig.endpointUrl,
-    });
-  }
-
-  const preparedImage = targetRuntimePreflight.preparedImage;
-  let retainPreparedImage = false;
-  try {
-    const validatedRegistryUpdate = validatedRebuildRegistryUpdate(
-      resumeConfig,
-      durableConfig,
-      fromDockerfile,
-      credentialEnv,
-    );
-    if (!registry.updateSandbox(sandboxName, validatedRegistryUpdate)) {
-      bail("Sandbox registry entry disappeared during rebuild preflight");
-      return null;
-    }
-    Object.assign(sandboxEntry, validatedRegistryUpdate);
-    if (preparedImage) {
-      recreateOptions.preparedImageRebuild = {
-        buildContext: preparedImage,
-        gatewayName: recreateOptions.targetGatewayName,
-      };
-    }
-
-    retainPreparedImage = true;
-    return {
-      targetConfig,
-      recreateOptions,
-      messagingPlan,
-      baseImagePreflight,
-      preparedImage,
+    stageRebuildBaseImageResolutionHandoff(recreateOptions, baseImagePreflight);
+    const restoreBaseImageOverride = pinRebuildAgentBaseImageForRecreate(baseImagePreflight);
+    let targetRuntimePreflight: Awaited<ReturnType<typeof preflightRebuildTargetRuntime>> = {
+      ok: false,
     };
+    try {
+      targetRuntimePreflight = await preflightRebuildTargetRuntime(
+        targetConfig,
+        sandboxEntry,
+        recreateOptions,
+        log,
+        bail,
+        {
+          allowMissingGatewayProviderWithHostCredential: preparedBackupRecovery,
+          skipImagePreflight: rebuildsDcodeSandbox,
+        },
+      );
+    } finally {
+      restoreBaseImageOverride();
+    }
+    if (!targetRuntimePreflight.ok) return null;
+
+    if (targetRuntimePreflight.requiresGatewayProviderReconfigure) {
+      if (!resumeConfig.credentialEnv) {
+        bail("Prepared provider reconfiguration is missing its credential binding");
+        return null;
+      }
+      recreateOptions.rebuildProviderReconfigure = createRebuildProviderReconfigureHandoff({
+        sandboxName,
+        provider: resumeConfig.provider,
+        model: resumeConfig.model,
+        credentialEnv: resumeConfig.credentialEnv,
+        endpointUrl: resumeConfig.endpointUrl,
+      });
+    }
+
+    const preparedImage = targetRuntimePreflight.preparedImage;
+    let retainPreparedImage = false;
+    try {
+      const validatedRegistryUpdate = validatedRebuildRegistryUpdate(
+        resumeConfig,
+        durableConfig,
+        fromDockerfile,
+        credentialEnv,
+      );
+      if (!registry.updateSandbox(sandboxName, validatedRegistryUpdate)) {
+        bail("Sandbox registry entry disappeared during rebuild preflight");
+        return null;
+      }
+      Object.assign(sandboxEntry, validatedRegistryUpdate);
+      if (preparedImage) {
+        recreateOptions.preparedImageRebuild = {
+          buildContext: preparedImage,
+          gatewayName: recreateOptions.targetGatewayName,
+        };
+      }
+
+      retainPreparedImage = true;
+      retainBaseImagePreflight = true;
+      return {
+        targetConfig,
+        recreateOptions,
+        messagingPlan,
+        baseImagePreflight,
+        preparedImage,
+      };
+    } finally {
+      if (!retainPreparedImage && preparedImage) disposePreparedBuildContext(preparedImage);
+    }
   } finally {
-    if (!retainPreparedImage && preparedImage) disposePreparedBuildContext(preparedImage);
+    if (!retainBaseImagePreflight) {
+      try {
+        if (!disposeRebuildAgentBaseImagePreflight(baseImagePreflight)) {
+          console.warn("  Warning: temporary rebuild base-image handoff could not be removed.");
+        }
+      } catch {
+        // Best effort; preserve the original preflight result or error.
+      }
+    }
   }
 }

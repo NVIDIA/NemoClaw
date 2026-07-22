@@ -12,6 +12,8 @@ SUMMARY_PATH="${GITHUB_STEP_SUMMARY:-/dev/null}"
 lkg_commit="unresolved"
 release_tag="none"
 dispatch_result="not attempted"
+downstream_run_id="unavailable"
+downstream_run_url=""
 
 write_summary() {
   {
@@ -21,6 +23,13 @@ write_summary() {
     echo "- Release tag: \`$release_tag\`"
     echo "- Target: \`$TARGET_REPOSITORY/.github/workflows/$TARGET_WORKFLOW@$TARGET_REF\`"
     echo "- Dispatch result: \`$dispatch_result\`"
+    if [[ -n "$downstream_run_url" ]]; then
+      echo "- Downstream run: [$downstream_run_id]($downstream_run_url)"
+      echo
+      echo "Follow the downstream run to terminal success and verify production image promotion."
+    else
+      echo "- Downstream run: \`$downstream_run_id\`"
+    fi
   } >>"$SUMMARY_PATH"
 }
 
@@ -70,21 +79,32 @@ if ! command -v gh >/dev/null 2>&1; then
   fail "GitHub CLI is required to dispatch $TARGET_REPOSITORY"
 fi
 
-payload="$(printf '{"ref":"%s","inputs":{"nemoclaw_ref":"%s"}}' "$TARGET_REF" "$release_tag")"
+payload="$(printf '{"ref":"%s","inputs":{"nemoclaw_ref":"%s"},"return_run_details":true}' "$TARGET_REF" "$release_tag")"
 endpoint="repos/$TARGET_REPOSITORY/actions/workflows/$TARGET_WORKFLOW/dispatches"
 
-if ! printf '%s\n' "$payload" \
-  | env -u GH_DEBUG GH_TOKEN="$NEMOCLAW_IMAGE_DISPATCH_TOKEN" gh api \
-    --method POST \
-    -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2022-11-28" \
-    "$endpoint" \
-    --input - \
-    >/dev/null; then
+if ! dispatch_details="$(
+  printf '%s\n' "$payload" \
+    | env -u GH_DEBUG GH_TOKEN="$NEMOCLAW_IMAGE_DISPATCH_TOKEN" gh api \
+      --method POST \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2026-03-10" \
+      "$endpoint" \
+      --input - \
+      --jq '[.workflow_run_id, .html_url] | @tsv'
+)"; then
   dispatch_result="rejected"
   fail "GitHub rejected the production image dispatch to $TARGET_REPOSITORY/$TARGET_WORKFLOW"
 fi
 
-dispatch_result="accepted (HTTP 204)"
-printf 'release-lkg-brev-image: dispatched %s for %s (%s)\n' \
-  "$TARGET_WORKFLOW" "$release_tag" "$lkg_commit"
+IFS=$'\t' read -r downstream_run_id downstream_run_url <<<"$dispatch_details"
+expected_run_url="https://github.com/$TARGET_REPOSITORY/actions/runs/$downstream_run_id"
+if [[ ! "$downstream_run_id" =~ ^[0-9]+$ || "$downstream_run_url" != "$expected_run_url" ]]; then
+  downstream_run_id="unavailable"
+  downstream_run_url=""
+  dispatch_result="rejected (invalid run details)"
+  fail "GitHub accepted the dispatch but did not return valid downstream run details"
+fi
+
+dispatch_result="accepted (HTTP 200)"
+printf 'release-lkg-brev-image: dispatched %s for %s (%s): %s\n' \
+  "$TARGET_WORKFLOW" "$release_tag" "$lkg_commit" "$downstream_run_url"

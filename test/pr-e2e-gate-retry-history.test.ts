@@ -267,7 +267,7 @@ describe("PR E2E controller retry history", () => {
         },
       });
       expect(JSON.stringify(completion?.body)).toContain(
-        "run `run-control-plane` with the PR number, exact head and base SHAs",
+        "run `run-control-plane` with the PR number, PR SHA, base SHA",
       );
       expect(fs.readFileSync(outputPath, "utf8")).not.toContain("fork_skip_mode=");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("check_id=18");

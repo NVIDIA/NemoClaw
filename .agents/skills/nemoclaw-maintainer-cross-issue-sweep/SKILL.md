@@ -1,15 +1,18 @@
 ---
 name: nemoclaw-maintainer-cross-issue-sweep
-description: Scans other open issues to find ones a given PR may also fix or accidentally break. Outputs adjacent-fix opportunities and contradiction risks with file:line evidence. Use when reviewing a PR to discover bundling opportunities or downstream impact across the issue queue.
+description: Scan open issues to find issues that a PR can also fix or conflict with. Report each relationship with file and line evidence. Use this skill during PR review to find related fixes and risks.
 user_invocable: true
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Cross-Issue Regression Sweep
 
-Surfaces the issues a single PR may also fix or accidentally break beyond the one it claims to address. Two outputs:
+Find open issues that a PR can affect in addition to its linked issue. Report two relationship types:
 
-- **Adjacent fixes** — "PR may also close #X" → bundling intel (ship one PR, close multiple issues)
-- **Contradicting risks** — "PR may break what #Y wants" → coordination needed before merge
+- **Adjacent fix** — The PR can also resolve another issue.
+- **Conflict** — The PR can prevent the behavior that another issue requests.
 
 ## Prerequisites
 
@@ -19,7 +22,7 @@ Surfaces the issues a single PR may also fix or accidentally break beyond the on
 
 ## Repo policy
 
-Defaults assume NemoClaw conventions. Edit `repo-policy.md` to override per-repo (bot logins, candidate caps, language regex).
+The defaults use NemoClaw conventions. Edit `repo-policy.md` for another repository.
 
 ## Workflow
 
@@ -41,7 +44,8 @@ Cross-issue sweep progress:
 scripts/extract-fingerprint.sh <pr-number>
 ```
 
-Pulls four dimensions: touched files, touched symbols (per-language regex), error-string tokens, and the PR's primary linked issue (for exclusion). See `checks/fingerprint-extraction.md`.
+The script collects changed files, changed symbols, error strings, and the linked issue.
+See `checks/fingerprint-extraction.md`.
 
 ### Step 2: Search candidate issues
 
@@ -49,40 +53,40 @@ Pulls four dimensions: touched files, touched symbols (per-language regex), erro
 scripts/search-candidate-issues.sh <fingerprint-json>
 ```
 
-Three search dimensions, capped at 30 total candidates:
+Search these three inputs. Keep no more than 30 candidates:
 
 - Per symbol: top 10 by recency
 - Per file path: top 5 by recency
 - Per error string: top 5 by recency
 
-Dedupes; excludes the PR's primary linked issue.
+Remove duplicates and the linked issue.
 
 ### Step 3: Classify each candidate
 
-For each candidate, the LLM classifies as one of four classes per `checks/relationship-judgment.md`:
+Classify each candidate with the rules in `checks/relationship-judgment.md`:
 
-- **ADJACENT_FIX** — PR's changes likely also resolve this issue
-- **CONTRADICTING** — PR's approach blocks what this issue wants
+- **ADJACENT_FIX** — The PR can resolve this issue.
+- **CONTRADICTING** — The PR conflicts with the requested behavior.
 - **SAME_ISSUE_DIFF** — same root bug as PR's primary issue (dedup filter)
 - **UNRELATED** — no meaningful relationship
 
-Required for ADJACENT_FIX or CONTRADICTING:
+For ADJACENT_FIX or CONTRADICTING, cite:
 
-- Cite specific PR diff line
-- Cite specific issue symptom
+- A PR diff line.
+- An issue symptom.
 - Confidence: high / medium / low
 
-If no specific evidence can be cited, the LLM must answer UNRELATED. This floors hallucination.
+Classify the issue as UNRELATED if this evidence is not available.
 
 ### Step 4: Reverse-link boost
 
-If the candidate issue's body or comments already mention this PR's number, the relationship is already in someone's mental model. Boost confidence by one tier (low → medium, medium → high).
+Increase confidence by one level if the issue body or comments mention the PR number.
 
 ### Step 5: Filter
 
-- Suppress UNRELATED + SAME_ISSUE_DIFF
-- Drop low-confidence judgments
-- Keep ADJACENT_FIX and CONTRADICTING with high or medium confidence
+- Remove UNRELATED and SAME_ISSUE_DIFF results.
+- Remove low-confidence results.
+- Keep high- and medium-confidence ADJACENT_FIX and CONTRADICTING results.
 
 ### Step 6: Render report
 
@@ -94,27 +98,29 @@ See `templates/report.md` for the format.
 
 ## Reference files
 
-- `repo-policy.md` — configurable per-repo defaults
-- `relationship-rules.md` — 4-class definitions with worked examples
-- `checks/fingerprint-extraction.md` — what to pull from the diff, per language
-- `checks/relationship-judgment.md` — LLM judgment criteria + evidence requirement
-- `templates/report.md` — output template
-- `validation/backtest.md` — backtest the skill against historical PRs
+- [repo-policy.md](repo-policy.md) — Repository settings.
+- [relationship-rules.md](relationship-rules.md) — Four relationship classes and examples.
+- [checks/fingerprint-extraction.md](checks/fingerprint-extraction.md) — Diff evidence by language.
+- [checks/relationship-judgment.md](checks/relationship-judgment.md) — Classification and evidence rules.
+- [templates/report.md](templates/report.md) — Output template.
+- [validation/backtest.md](validation/backtest.md) — Historical test cases for the skill.
 
 ## Scripts (execute, do not read)
 
-- `scripts/extract-fingerprint.sh` — symbols + paths + error strings, deterministic
+- `scripts/extract-fingerprint.sh` — symbols, paths, and error strings
 - `scripts/search-candidate-issues.sh` — GitHub Search wrapper, dedupe, cap
 - `scripts/render-report.py` — report renderer
 
 ## Composition with other skills
 
-This skill is a separate, optional follow-up to `nemoclaw-maintainer-pr-comparator`. The comparator does not call it or include its findings in the deterministic score. Run the sweep explicitly when a maintainer wants adjacent-fix or contradiction evidence alongside the comparator verdict, and report that evidence separately.
+This skill is an optional follow-up to `nemoclaw-maintainer-pr-comparator`.
+The comparator does not run this skill or use its findings in the score.
+Run this skill when a maintainer asks for related-issue evidence. Report the evidence separately.
 
-## What this skill does NOT do (deferred)
+## Limits
 
-These would raise the ceiling but require infrastructure beyond GitHub API + LLM:
+The skill does not:
 
-- Run PR code against adversarial inputs (sandboxed)
-- Static-analyzer dataflow tracing (CodeQL, Semgrep)
-- ML-based symbol disambiguation across codebases
+- run PR code against adversarial inputs
+- trace data flow with a static analyzer such as CodeQL or Semgrep
+- disambiguate symbols across codebases with a machine-learning model
