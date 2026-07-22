@@ -166,6 +166,22 @@ describe("rebuild post-restore phase", () => {
     expect(output).toContain("nemoclaw alpha gateway-token --quiet");
   });
 
+  it("does not print the Hermes API token notice when prepared backup recovery is incomplete (#7175)", async () => {
+    agentName = "hermes";
+    vi.mocked(messagingHostForward.ensureMessagingHostForwardAfterRebuild).mockReturnValue(false);
+    const args = input();
+    args.preparedBackupRecovery = true;
+
+    await runRebuildPostRestorePhase(args);
+
+    const output = vi.mocked(console.log).mock.calls.flat().join("\n");
+    expect(output).not.toContain("Hermes API bearer token changed during rebuild");
+    expect(output).not.toContain("gateway-token --quiet");
+    expect(args.bail).toHaveBeenCalledWith(
+      "Prepared backup recovery for 'alpha' completed with unverified post-restore state.",
+    );
+  });
+
   it("prints the Hermes API token notice after gateway recovery (#7175)", async () => {
     agentName = "hermes";
     vi.mocked(rebuildHermesPostRestore.ensureHermesGatewayAfterStateRestore).mockReturnValue(
