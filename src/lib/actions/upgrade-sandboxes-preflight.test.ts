@@ -113,7 +113,7 @@ describe("upgrade-sandboxes gateway preflight adapter (#6237)", () => {
     expect(logSpy.mock.calls.flat().join("\n")).toContain("All sandboxes are up to date");
   });
 
-  it("does not classify, assess backups, or rebuild when the read-only list exits on drift", async () => {
+  it("does not classify, assess backups, or rebuild when the read-only list exits on drift (#7279)", async () => {
     vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
     // State-RPC drift is the only hard exit on the read-only check path; a plain
     // connectivity failure stays non-fatal (empty output → unobserved sandbox).
@@ -147,6 +147,56 @@ describe("upgrade-sandboxes gateway preflight adapter (#6237)", () => {
         command: "nemoclaw upgrade-sandboxes",
       },
       "nemoclaw-18080",
+    );
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();
+  });
+
+  it("uses the ambient gateway when registered sandboxes span gateways (#7279)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [
+        { name: "alpha", provider: "nvidia-prod", model: "nemotron", gatewayPort: 18080 },
+        { name: "beta", provider: "nvidia-prod", model: "nemotron", gatewayPort: 18081 },
+      ],
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await upgradeSandboxes({ check: true });
+
+    expect(mocks.captureNamedGatewaySandboxListReadOnly).toHaveBeenCalledWith(
+      {
+        action: "checking sandbox upgrade state",
+        command: "nemoclaw upgrade-sandboxes",
+      },
+      "nemoclaw",
+    );
+    expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();
+  });
+
+  it("warns and uses the ambient gateway when all recorded bindings are invalid (#7279)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [
+        {
+          name: "alpha",
+          provider: "nvidia-prod",
+          model: "nemotron",
+          gatewayName: "outside-nemoclaw",
+        },
+      ],
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await upgradeSandboxes({ check: true });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      '  Warning: sandbox "alpha" has an invalid persisted gateway binding; excluding it from check-mode gateway resolution.',
+    );
+    expect(mocks.captureNamedGatewaySandboxListReadOnly).toHaveBeenCalledWith(
+      {
+        action: "checking sandbox upgrade state",
+        command: "nemoclaw upgrade-sandboxes",
+      },
+      "nemoclaw",
     );
     expect(mocks.captureSandboxListWithGatewayPreflightOrExit).not.toHaveBeenCalled();
   });

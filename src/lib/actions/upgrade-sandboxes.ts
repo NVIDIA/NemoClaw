@@ -229,7 +229,9 @@ function resolveCheckGatewayName(
     try {
       recorded.add(resolveSandboxGatewayName(sandbox));
     } catch {
-      // Invalid persisted binding — never drive a list against it.
+      console.warn(
+        `  Warning: sandbox ${JSON.stringify(sandbox.name)} has an invalid persisted gateway binding; excluding it from check-mode gateway resolution.`,
+      );
     }
   }
   return recorded.size === 1 ? [...recorded][0] : fallbackGatewayName;
