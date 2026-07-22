@@ -790,16 +790,17 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   }
 
   if (normalized.stationExpressIntent) {
+    const intent = normalized.stationExpressIntent;
     const providerComplete = normalized.steps.provider_selection?.status === "complete";
     const providerBound = Boolean(
-      normalized.stationExpressIntent.servedModel &&
-        normalized.stationExpressIntent.checkpointModel,
+      intent.kind !== "spark" && intent.servedModel && intent.checkpointModel,
     );
     if (
       providerComplete !== providerBound ||
       (providerComplete &&
-        (normalized.provider !== "vllm-local" ||
-          normalized.model !== normalized.stationExpressIntent.servedModel)) ||
+        (intent.kind === "spark" ||
+          normalized.provider !== "vllm-local" ||
+          normalized.model !== intent.servedModel)) ||
       (!providerComplete && (normalized.provider !== null || normalized.model !== null))
     ) {
       return null;
@@ -1608,7 +1609,10 @@ export function completeSession(
   let wasComplete = false;
   let receiptGeneration: string | null = null;
   let updatedSession = updateSession((session) => {
-    const intentReceiptGeneration = session.stationExpressIntent?.receiptGeneration ?? null;
+    const intentReceiptGeneration =
+      session.stationExpressIntent?.kind === "spark"
+        ? null
+        : (session.stationExpressIntent?.receiptGeneration ?? null);
     receiptGeneration = session.stationExpressReceiptRetirement ?? intentReceiptGeneration;
     if (intentReceiptGeneration) {
       assertStationExpressInstallerResumeMatches(intentReceiptGeneration);

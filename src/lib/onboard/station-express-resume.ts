@@ -16,20 +16,25 @@ export const INSTALLER_AUTO_FRESH_RECEIPT_GENERATION_ENV =
   "NEMOCLAW_INSTALLER_AUTO_FRESH_RECEIPT_GENERATION";
 export const STATION_EXPRESS_INTENT_VERSION = 1;
 
-export interface StationExpressResumeIntent {
+interface StationResumeIntent {
   version: typeof STATION_EXPRESS_INTENT_VERSION;
-  // Managed-vLLM Express platform. Absent means the DGX Station Express path
-  // (the original #7048 contract). "spark" is the DGX Spark managed-vLLM path
-  // (#7231): it never carries the Station-only receipt/served/checkpoint fields
-  // and its model is optional because the default model is not resolved until
-  // after host detection, well past the up-front capture site.
-  kind?: "spark";
-  model?: string;
+  kind?: undefined;
+  model: string;
   sandboxName: string;
   receiptGeneration?: string;
   servedModel?: string;
   checkpointModel?: string;
 }
+
+interface SparkResumeIntent {
+  version: typeof STATION_EXPRESS_INTENT_VERSION;
+  kind: "spark";
+  // The default model is resolved after host detection, after intent capture.
+  model?: string;
+  sandboxName: string;
+}
+
+export type StationExpressResumeIntent = StationResumeIntent | SparkResumeIntent;
 
 export interface StationExpressSessionLike {
   resumable?: boolean;
@@ -699,10 +704,12 @@ export function bindStationExpressProviderSelection(
   checkpointModel: unknown,
 ): StationExpressResumeIntent {
   const intent = parseStationExpressResumeIntent(intentValue);
-  const selectedModel = intent ? stationModel(intent.model) : null;
-  if (!intent || !selectedModel) {
+  if (!intent || intent.kind === "spark") {
     throw new Error("Cannot record an invalid DGX Station Express provider selection.");
   }
+  const selectedModel = stationModel(intent.model);
+  if (!selectedModel)
+    throw new Error("Cannot record an invalid DGX Station Express provider selection.");
   if (intent.servedModel !== undefined) {
     if (provider === "vllm-local" && model === intent.servedModel) return intent;
     throw new Error("Cannot record an invalid DGX Station Express provider selection.");
@@ -928,6 +935,9 @@ function matchesRecordedStationExpressSelection(
   if (session.sandboxName != null && session.sandboxName !== intent.sandboxName) return false;
 
   const providerComplete = session.steps?.provider_selection?.status === "complete";
+  if (intent.kind === "spark") {
+    return !providerComplete && session.provider == null && session.model == null;
+  }
   const providerBound = Boolean(intent.servedModel && intent.checkpointModel);
   if (providerComplete !== providerBound) return false;
   if (!providerComplete) return session.provider == null && session.model == null;
