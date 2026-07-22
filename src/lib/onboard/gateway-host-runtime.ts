@@ -28,6 +28,7 @@ import {
   assertGatewayEffectAllowed,
   cgroupBelongsToUnit,
   describeGatewayOwnerForError,
+  evaluateGatewayAttachment,
   type GatewayAttachmentProbe,
   type GatewayOwner,
   GatewayOwnershipError,
@@ -84,7 +85,7 @@ export interface GatewayHostRuntime {
    * owns. Applies to onboarding, rebuild, and recovery alike.
    */
   assertGatewayStartAllowed(exitOnFailure: boolean): void;
-  attachGateway(owner: GatewayOwner): void;
+  attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
   bindGatewayOwner(owner: GatewayOwner): void;
   /** HTTPS endpoint of the gateway this process operates. */
   getGatewayLocalEndpoint(): string;
@@ -97,7 +98,7 @@ export interface GatewayHostRuntime {
   machineGatewayOwnerDeps: {
     probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
     resolveGatewayOwner(): GatewayOwner;
-    attachGateway(owner: GatewayOwner): void;
+    attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
   };
   probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
 }
@@ -314,10 +315,43 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
     process.env.OPENSHELL_LOCAL_TLS_DIR = localTlsDir;
   }
 
+  function sameAttachmentEvidence(
+    expected: GatewayAttachmentProbe,
+    actual: GatewayAttachmentProbe,
+  ): boolean {
+    return (
+      expected.gatewayPort === actual.gatewayPort &&
+      expected.httpReady === actual.httpReady &&
+      expected.portOccupied === actual.portOccupied &&
+      expected.listenerScanComplete === actual.listenerScanComplete &&
+      expected.supervisorActive === actual.supervisorActive &&
+      expected.listenerExecPath === actual.listenerExecPath &&
+      expected.listenerSupervisorMatch === actual.listenerSupervisorMatch &&
+      expected.listenerPids.length === actual.listenerPids.length &&
+      expected.listenerPids.every((pid, index) => pid === actual.listenerPids[index])
+    );
+  }
+
   /** Register and select the exact endpoint whose listener identity was validated. */
-  function attachGateway(owner: GatewayOwner): void {
+  async function attachGateway(
+    owner: GatewayOwner,
+    expectedProbe: GatewayAttachmentProbe,
+  ): Promise<void> {
     if (!isExternallySupervised(owner) || !owner.endpoint) return;
+    const expectedAttachment = evaluateGatewayAttachment(owner, expectedProbe);
+    if (!expectedAttachment.ok) {
+      throw new GatewayOwnershipError(expectedAttachment.code, expectedAttachment.message, owner);
+    }
     prepareExternalGatewayClient(owner);
+    const removeAttemptedRegistration = () => {
+      deps.runOpenshell(["gateway", "remove", owner.gatewayName], {
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      if (process.env.OPENSHELL_GATEWAY === owner.gatewayName) {
+        delete process.env.OPENSHELL_GATEWAY;
+      }
+    };
     const add = () =>
       deps.runOpenshell(
         ["gateway", "add", owner.endpoint as string, "--local", "--name", owner.gatewayName],
@@ -325,10 +359,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       );
     let addResult = add();
     if (addResult.status !== 0) {
-      deps.runOpenshell(["gateway", "remove", owner.gatewayName], {
-        ignoreError: true,
-        suppressOutput: true,
-      });
+      removeAttemptedRegistration();
       addResult = add();
     }
     const selectResult = deps.runOpenshell(["gateway", "select", owner.gatewayName], {
@@ -345,16 +376,31 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       selectResult.status !== 0 ||
       !(deps.isGatewayHealthy ?? isGatewayHealthy)(status, namedInfo, activeInfo, owner.gatewayName)
     ) {
-      deps.runOpenshell(["gateway", "remove", owner.gatewayName], {
-        ignoreError: true,
-        suppressOutput: true,
-      });
-      if (process.env.OPENSHELL_GATEWAY === owner.gatewayName) {
-        delete process.env.OPENSHELL_GATEWAY;
-      }
+      removeAttemptedRegistration();
       throw new GatewayOwnershipError(
         "gateway_registration_failed",
         `Failed to register and select externally supervised gateway '${owner.gatewayName}' at ${owner.endpoint}.`,
+        owner,
+      );
+    }
+
+    let currentProbe: GatewayAttachmentProbe;
+    try {
+      currentProbe = await probeGatewayAttachment(owner);
+    } catch (error) {
+      removeAttemptedRegistration();
+      throw error;
+    }
+    const currentAttachment = evaluateGatewayAttachment(owner, currentProbe);
+    if (!currentAttachment.ok || !sameAttachmentEvidence(expectedProbe, currentProbe)) {
+      removeAttemptedRegistration();
+      if (!currentAttachment.ok) {
+        throw new GatewayOwnershipError(currentAttachment.code, currentAttachment.message, owner);
+      }
+      throw new GatewayOwnershipError(
+        "identity_mismatch",
+        `The externally supervised gateway listener changed while '${owner.gatewayName}' was registered. ` +
+          "The registration was removed; stabilize the supervisor and re-run onboarding.",
         owner,
       );
     }

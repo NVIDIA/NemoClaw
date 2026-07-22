@@ -115,7 +115,8 @@ The exact endpoint must answer its health check.
 After validation, NemoClaw registers the exact endpoint under the canonical gateway name and selects it as the active OpenShell gateway.
 Port `8080` uses the name `nemoclaw`, and another port uses `nemoclaw-<port>`.
 NemoClaw verifies the named and active registrations before advancing to provider selection.
-If registration, selection, or verification fails, onboarding stops instead of continuing with a different gateway.
+It then repeats the health, supervisor, listener, executable, cgroup, and process identity checks and compares them with the initial evidence.
+If registration, selection, or repeated validation fails, NemoClaw removes the attempted registration and stops before provider selection.
 
 Onboarding fails when any of the following conditions applies:
 

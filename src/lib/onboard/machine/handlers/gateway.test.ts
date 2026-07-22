@@ -72,7 +72,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
           hasPackagedService: false,
         }),
     ),
-    attachGateway: vi.fn(),
+    attachGateway: vi.fn(async () => undefined),
     probeAttachment: vi.fn(
       async (): Promise<GatewayAttachmentProbe> => ({
         gatewayPort: 8080,
@@ -483,7 +483,9 @@ describe("externally supervised gateway lifecycle authority", () => {
   it("attaches to the supervised gateway without running any lifecycle effect (#6576)", async () => {
     const order: string[] = [];
     const { calls, deps } = externalDeps();
-    calls.attachGateway.mockImplementation(() => order.push("attach"));
+    calls.attachGateway.mockImplementation(async () => {
+      order.push("attach");
+    });
     calls.complete.mockImplementation(async () => {
       order.push("complete");
       return createSession();
@@ -492,7 +494,10 @@ describe("externally supervised gateway lifecycle authority", () => {
     const result = await handleGatewayState(baseOptions(deps, "missing"));
 
     expect(calls.startGateway).not.toHaveBeenCalled();
-    expect(calls.attachGateway).toHaveBeenCalledWith(EXTERNAL_OWNER);
+    expect(calls.attachGateway).toHaveBeenCalledWith(
+      EXTERNAL_OWNER,
+      expect.objectContaining({ listenerPids: [4242], listenerSupervisorMatch: true }),
+    );
     expect(calls.destroy).not.toHaveBeenCalled();
     expect(calls.destroyForReuse).not.toHaveBeenCalled();
     expect(calls.retireLegacy).not.toHaveBeenCalled();
@@ -505,7 +510,7 @@ describe("externally supervised gateway lifecycle authority", () => {
 
   it("does not cross the provider-mutation boundary when exact registration fails (#6576)", async () => {
     const { calls, deps } = externalDeps();
-    calls.attachGateway.mockImplementation(() => {
+    calls.attachGateway.mockImplementation(async () => {
       throw new GatewayOwnershipError(
         "gateway_registration_failed",
         "registration failed",

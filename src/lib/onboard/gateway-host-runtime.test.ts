@@ -299,13 +299,15 @@ describe("gateway host runtime attachment probe", () => {
     expect(runtime.getGatewayStartEnv()).toMatchObject({ OPENSHELL_SERVER_PORT: "9443" });
   });
 
-  it("registers and selects the exact declared endpoint without prior gateway metadata (#6576)", () => {
+  it("registers and selects the exact declared endpoint without prior gateway metadata (#6576)", async () => {
     declareExternalSupervision();
     process.env.OPENSHELL_GATEWAY = "ambient-sibling";
     const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
     const runtime = createGatewayHostRuntime(createDeps({ runOpenshell }));
 
-    runtime.attachGateway(runtime.getGatewayOwner());
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+    await runtime.attachGateway(owner, expectedProbe);
 
     expect(runOpenshell.mock.calls).toEqual([
       [
@@ -317,13 +319,15 @@ describe("gateway host runtime attachment probe", () => {
     expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw");
   });
 
-  it("replaces stale registration before selecting the declared endpoint (#6576)", () => {
+  it("replaces stale registration before selecting the declared endpoint (#6576)", async () => {
     declareExternalSupervision();
     const statuses = [1, 0, 0];
     const runOpenshell = vi.fn((_args: string[]) => ({ status: statuses.shift() ?? 0 }));
     const runtime = createGatewayHostRuntime(createDeps({ runOpenshell }));
 
-    runtime.attachGateway(runtime.getGatewayOwner());
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+    await runtime.attachGateway(owner, expectedProbe);
 
     expect(runOpenshell.mock.calls.map(([args]) => args)).toEqual([
       ["gateway", "add", "http://127.0.0.1:8080", "--local", "--name", "nemoclaw"],
@@ -333,16 +337,44 @@ describe("gateway host runtime attachment probe", () => {
     ]);
   });
 
-  it("removes the attempted registration when exact gateway selection is unhealthy (#6576)", () => {
+  it("removes the attempted registration when exact gateway selection is unhealthy (#6576)", async () => {
     declareExternalSupervision();
     const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
     const runtime = createGatewayHostRuntime(
       createDeps({ isGatewayHealthy: () => false, runOpenshell }),
     );
 
-    expect(() => runtime.attachGateway(runtime.getGatewayOwner())).toThrow(
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+
+    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toThrow(
       /Failed to register and select/,
     );
+    expect(runOpenshell).toHaveBeenLastCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(process.env.OPENSHELL_GATEWAY).toBeUndefined();
+  });
+
+  it("removes the registration when the listener changes during attachment (#6576)", async () => {
+    declareExternalSupervision();
+    const getGatewayPortListenerRawScan = vi
+      .fn()
+      .mockReturnValueOnce({ pids: [SYSTEMD_GATEWAY_PID], complete: true })
+      .mockReturnValueOnce({ pids: [SYSTEMD_GATEWAY_PID], complete: true })
+      .mockReturnValueOnce({ pids: [4343], complete: true })
+      .mockReturnValueOnce({ pids: [4343], complete: true });
+    const runOpenshell = vi.fn((_args: string[]) => ({ status: 0 }));
+    const runtime = createGatewayHostRuntime(
+      createDeps({ getGatewayPortListenerRawScan, runOpenshell }),
+    );
+    const owner = runtime.getGatewayOwner();
+    const expectedProbe = await runtime.probeGatewayAttachment(owner);
+
+    await expect(runtime.attachGateway(owner, expectedProbe)).rejects.toMatchObject({
+      code: "identity_mismatch",
+    });
     expect(runOpenshell).toHaveBeenLastCalledWith(["gateway", "remove", "nemoclaw"], {
       ignoreError: true,
       suppressOutput: true,

@@ -34,7 +34,7 @@ export interface GatewayStateOptions<Gpu> {
      */
     resolveGatewayOwner(): GatewayOwner;
     probeGatewayAttachment(owner: GatewayOwner): Promise<GatewayAttachmentProbe>;
-    attachGateway(owner: GatewayOwner): void;
+    attachGateway(owner: GatewayOwner, expectedProbe: GatewayAttachmentProbe): Promise<void>;
     refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
     gatewayCliSupportsLifecycleCommands(): boolean;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
@@ -281,11 +281,12 @@ async function attachToExternallySupervisedGateway<Gpu>(
   deps: GatewayStateOptions<Gpu>["deps"],
 ): Promise<GatewayStateResult> {
   const supervisor = owner.supervisor?.serviceName ?? "an external supervisor";
-  const attachment = evaluateGatewayAttachment(owner, await deps.probeGatewayAttachment(owner));
+  const probe = await deps.probeGatewayAttachment(owner);
+  const attachment = evaluateGatewayAttachment(owner, probe);
   if (!attachment.ok) {
     throw new GatewayOwnershipError(attachment.code, attachment.message, owner);
   }
-  deps.attachGateway(owner);
+  await deps.attachGateway(owner, probe);
 
   deps.skippedStepMessage("gateway", `supervised by ${supervisor}`, "reuse");
   deps.note(`  Attached to externally supervised OpenShell gateway (${supervisor}).`);
