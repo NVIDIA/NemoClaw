@@ -183,8 +183,11 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
   const previousRecreateWithoutBackup = process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP;
   process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
-  // The rebuild backup phase already made the data-preservation decision before
-  // delete. Stale gateway state must not make inner onboard attempt a second backup.
+  // The outer rebuild already made its sole backup before the destroy phase deleted
+  // the sandbox without tearing down the gateway/session needed by onboard --resume.
+  // That retained state can send inner onboard through generic recreate protection,
+  // where a second backup is impossible after deletion. Keep the bypass scoped to
+  // this call; remove it when onboard accepts an explicit outer-backup handoff.
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   if (recreateOptions.policyTier) {
     process.env.NEMOCLAW_POLICY_TIER = recreateOptions.policyTier;
