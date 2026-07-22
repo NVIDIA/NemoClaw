@@ -99,7 +99,7 @@ function openClawBaseProvenance(
   tarball = PINNED_OPENCLAW_TARBALL,
 ): string {
   const recipe =
-    version === PINNED_OPENCLAW_VERSION
+    version === PINNED_OPENCLAW_VERSION || version === LEGACY_REBUILD_OPENCLAW_VERSION
       ? "ignore-scripts+reviewed-lifecycle+transitive-remediation-v1"
       : "ignore-scripts+reviewed-lifecycle-v1";
   return [
@@ -1229,6 +1229,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         );
         expect(fixtureBase.calls).toContain(`openclaw-${LEGACY_REBUILD_OPENCLAW_VERSION}.tgz`);
         expect(fixtureBase.calls).toContain("npm install -g --ignore-scripts ");
+        expect(fixtureBase.calls).toContain("openclaw-remediated.tgz");
         expect(fixtureBase.calls).not.toContain("postinstall-bundled-plugins.mjs");
         expect(gatewayFixtureBase.result.status).toBe(0);
         expect(gatewayFixtureBase.calls).toContain("npm install -g --ignore-scripts ");

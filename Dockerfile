@@ -297,7 +297,7 @@ RUN set -eu; \
         echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin" >&2; exit 1; \
     fi; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
-    if [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'; fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.3.11" ] || [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'; fi; \
     MCPORTER_EXPECTED_INTEGRITY=""; \
     MCPORTER_EXPECTED_TARBALL=""; \
     if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; MCPORTER_EXPECTED_TARBALL="$MCPORTER_0_7_3_TARBALL"; fi; \
@@ -353,7 +353,7 @@ RUN set -eu; \
             --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
         OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_SOURCE_PACK_PATH")"; \
         OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
-        if [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then \
+        if [ "$OPENCLAW_VERSION" = "2026.3.11" ] || [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then \
             OPENCLAW_PACK_PATH="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
                 --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
                 --working-directory "$OPENCLAW_PACK_DIR")"; \
@@ -370,9 +370,10 @@ RUN set -eu; \
         esac; \
         rm -rf "$OPENCLAW_PACK_DIR"; \
     fi; \
-    if [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then \
-        npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip >/dev/null; \
-    fi; \
+    case "$OPENCLAW_VERSION" in \
+        2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
+        2026.6.10) npm ls -g --depth=1 openclaw @openclaw/fs-safe tar jszip >/dev/null ;; \
+    esac; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
         echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with exact lock provenance"; \
     else \
