@@ -573,7 +573,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
         };
         const lockedTar = packageLock.packages?.["node_modules/tar"];
 
-        expect(packageJson.dependencies?.tar).toBe(`^${PINNED_NEMOCLAW_TAR_VERSION}`);
+        expect(packageJson.dependencies?.tar).toBe(PINNED_NEMOCLAW_TAR_VERSION);
         expect(lockedTar).toEqual(
           expect.objectContaining({
             integrity: PINNED_NEMOCLAW_TAR_INTEGRITY,
