@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { type DependencyNode, findDependency } from "./fixtures/dependency-graph.ts";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const runtimeDirectory = path.join(repoRoot, "agents", "openclaw", "mcporter-runtime");
@@ -27,22 +28,6 @@ const expectedHonoNodeServerTarball =
 const expectedFastUriVersion = "3.1.4";
 const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
-
-type DependencyNode = {
-  dependencies?: Record<string, DependencyNode>;
-  overridden?: boolean;
-  resolved?: string;
-  version?: string;
-};
-
-function findDependency(root: DependencyNode, name: string): DependencyNode | undefined {
-  return (
-    root.dependencies?.[name] ??
-    Object.values(root.dependencies ?? {})
-      .map((dependency) => findDependency(dependency, name))
-      .find((dependency) => dependency !== undefined)
-  );
-}
 
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';

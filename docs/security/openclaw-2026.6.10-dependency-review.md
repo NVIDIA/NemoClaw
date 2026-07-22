@@ -56,7 +56,7 @@ NPM_CONFIG_REGISTRY=https://registry.npmjs.org \
 Revalidated on 2026-07-21: the command exited `0` under Node `v22.22.2`.
 This runtime satisfies the OpenClaw engine requirement of `>=22.19.0`.
 The remediated reviewed-archive graph reported `0` info, `1` low, `12` moderate, `0` high, and `0` critical findings across `767` total dependencies.
-The mcporter locked graph reported no findings across `138` dependencies after its manifest and lock remediated `GHSA-frvp-7c67-39w9` by overriding `@hono/node-server` from `1.19.14` to exact version `2.0.11`; `2.0.5` is the first patched release.
+The mcporter locked graph reported no findings across `138` dependencies.
 The configured `high` threshold therefore passed.
 
 The retained low finding is `GHSA-v422-hmwv-36x6` in `body-parser@2.0.0` through `2.2.2`.

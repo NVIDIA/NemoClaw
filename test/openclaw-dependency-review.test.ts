@@ -469,7 +469,8 @@ optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that 
 check_contains "$optional_plugin_block" '/scripts/lib/reviewed-npm-archive.mts' "optional plugin shared helper"
 check_contains "$optional_plugin_block" '--package-spec "$plugin_spec" --integrity "$expected_integrity"' "optional plugin reviewed identity"
 check_contains "$optional_plugin_block" '--tarball-url "$expected_tarball"' "optional plugin reviewed tarball"
-check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_archive}"' "optional plugin npm-pack install"
+check_contains "$optional_plugin_block" 'openclaw plugins install "npm-pack:\${plugin_install_archive}"' "optional plugin npm-pack install"
+check_contains "$optional_plugin_block" '--archive "$plugin_archive" --package-spec "$plugin_spec"' "optional plugin remediated identity"
 check_contains "$optional_plugin_block" 'rm -rf "$(dirname "$plugin_archive")"' "optional plugin cleanup"
 check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optional plugin inline pack helper"
 
