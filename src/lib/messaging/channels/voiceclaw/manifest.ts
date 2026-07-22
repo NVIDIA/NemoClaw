@@ -3,6 +3,8 @@
 
 import type { ChannelManifest } from "../../manifest";
 
+export const VOICECLAW_AUDIO_BRIDGE_URL = "http://host.openshell.internal:7880";
+
 export const voiceclawManifest = {
   schemaVersion: 1,
   id: "voiceclaw",
@@ -32,8 +34,8 @@ export const voiceclawManifest = {
       required: false,
       envKey: "VOICECLAW_AUDIO_BRIDGE_URL",
       statePath: "voiceclaw.audioBridgeUrl",
-      validValues: ["http://host.openshell.internal:7880"],
-      defaultValue: "http://host.openshell.internal:7880",
+      validValues: [VOICECLAW_AUDIO_BRIDGE_URL],
+      defaultValue: VOICECLAW_AUDIO_BRIDGE_URL,
       prompt: {
         label: "VoiceClaw audio bridge URL",
         help: "Host-local VoiceClaw audio bridge base URL.",

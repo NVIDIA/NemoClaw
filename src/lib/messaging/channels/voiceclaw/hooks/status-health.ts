@@ -10,6 +10,7 @@ import {
   type DiagnosticSignal,
   MESSAGING_CHANNEL_HEALTH_OUTPUT_TYPE,
 } from "../../channel-health";
+import { VOICECLAW_AUDIO_BRIDGE_URL } from "../manifest";
 
 export const VOICECLAW_STATUS_HEALTH_HOOK_HANDLER_ID = "voiceclaw.statusHealth";
 const DEFAULT_TIMEOUT_MS = 8_000;
@@ -80,8 +81,8 @@ export function createVoiceClawStatusHealthHookRegistration(
   };
 }
 
-function buildVoiceClawProbeScript(): string {
-  const nodeScript = String.raw`
+export function buildVoiceClawProbeNodeScript(): string {
+  return String.raw`
 const fs = require("fs");
 (async () => {
 const result = {
@@ -98,18 +99,22 @@ try {
   result.pluginEnabled = plugin?.enabled === true;
   result.voiceModeEnabled = plugin?.config?.voiceModeEnabled === true;
   const bridgeUrl = plugin?.config?.audioBridgeUrl;
-  if (typeof bridgeUrl === "string" && bridgeUrl.trim()) {
-    const url = new URL("/health", bridgeUrl);
-    if ((url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password) {
-      result.bridgeConfigured = true;
-      const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
-      result.bridgeReachable = response.ok;
-    }
+  const supportedBridgeUrl = ${JSON.stringify(VOICECLAW_AUDIO_BRIDGE_URL)};
+  if (bridgeUrl === supportedBridgeUrl) {
+    result.bridgeConfigured = true;
+    const response = await fetch(new URL("/health", supportedBridgeUrl), {
+      signal: AbortSignal.timeout(3000),
+    });
+    result.bridgeReachable = response.ok;
   }
 } catch {}
 process.stdout.write(JSON.stringify(result) + "\n");
 })().catch(() => process.stdout.write("{}\n"));
 `;
+}
+
+function buildVoiceClawProbeScript(): string {
+  const nodeScript = buildVoiceClawProbeNodeScript();
   return [
     "set +e",
     `node --input-type=commonjs -e ${shellQuote(nodeScript)}`,

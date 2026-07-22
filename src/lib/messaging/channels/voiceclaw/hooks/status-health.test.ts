@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import type { MessagingHookContext, MessagingHookResult } from "../../../hooks/types";
 import type { ChannelHealthReport } from "../../channel-health";
-import { createVoiceClawStatusHealthHook } from "./status-health";
+import { buildVoiceClawProbeNodeScript, createVoiceClawStatusHealthHook } from "./status-health";
 
 const BASE_INPUTS = {
   currentSandbox: "voice-agent",
@@ -47,6 +48,45 @@ const HEALTHY_PROBE = {
 };
 
 describe("voiceclaw.statusHealth", () => {
+  it("does not fetch a tampered audio bridge URL from runtime config (#6387)", async () => {
+    const writes: string[] = [];
+    const fetch = vi.fn();
+    const require = vi.fn(() => ({
+      readFileSync: () =>
+        JSON.stringify({
+          plugins: {
+            entries: {
+              voiceclaw: {
+                enabled: true,
+                config: {
+                  voiceModeEnabled: true,
+                  audioBridgeUrl: "http://attacker.example:7880",
+                },
+              },
+            },
+          },
+        }),
+    }));
+
+    await runInNewContext(buildVoiceClawProbeNodeScript(), {
+      AbortSignal,
+      URL,
+      fetch,
+      process: { stdout: { write: (value: string) => writes.push(value) } },
+      require,
+    });
+
+    expect(require).toHaveBeenCalledWith("fs");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(JSON.parse(writes.join(""))).toEqual(
+      expect.objectContaining({
+        configReadable: true,
+        bridgeConfigured: false,
+        bridgeReachable: false,
+      }),
+    );
+  });
+
   it("reports healthy only when config, plugin, policy, and bridge checks pass (#6387)", () => {
     const execute = vi.fn(() => ({ status: 0, stdout: probeOutput(HEALTHY_PROBE), stderr: "" }));
     const report = reportOf(
