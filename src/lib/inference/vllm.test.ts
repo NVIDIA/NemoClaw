@@ -1065,7 +1065,7 @@ describe("installVllm model resolution", () => {
     expect(summary).not.toContain(token);
   });
 
-  it("redacts a present token split across 429 output streams and prints resumable recovery (#7157)", async () => {
+  it("redacts chunked 429 output while preserving stdout and stderr ownership (#7157)", async () => {
     const token = `hf_${"r".repeat(32)}`;
     process.env.HF_TOKEN = token;
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
@@ -1078,11 +1078,13 @@ describe("installVllm model resolution", () => {
       mockDockerSpawnFailure([
         { stream: "stdout", data: unicodeOutput.subarray(0, unicodeSplitAt) },
         { stream: "stdout", data: unicodeOutput.subarray(unicodeSplitAt) },
+        { stream: "stdout", data: "Downloading 50%" },
         {
-          stream: "stdout",
+          stream: "stderr",
           data: `HTTP 429 Too Many Requests token=${token.slice(0, splitAt)}`,
         },
         { stream: "stderr", data: `${token.slice(splitAt)}\n` },
+        { stream: "stdout", data: "\n" },
       ]),
     );
 
@@ -1100,6 +1102,8 @@ describe("installVllm model resolution", () => {
     const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
     expect(`${stdout}\n${stderr}\n${logs}\n${errors}`).not.toContain(token);
     expect(stdout).toContain("Downloading café");
+    expect(stdoutWrite).toHaveBeenCalledWith("Downloading 50%\n");
+    expect(stderrWrite).not.toHaveBeenCalledWith("Downloading 50%\n");
     expect(`${stdout}\n${stderr}`).not.toContain("�");
     expect(stderr).toContain("HTTP 429 Too Many Requests token=<REDACTED>");
     expect(stderr).toContain("Hugging Face rate limiting was detected");

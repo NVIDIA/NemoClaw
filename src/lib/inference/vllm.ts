@@ -478,13 +478,9 @@ function downloadModel(
     );
 
     const tail: string[] = [];
-    const outputState: { pending: string; stream: NodeJS.WriteStream } = {
-      pending: "",
-      stream: process.stdout,
-    };
-    const outputDecoders = [
-      { decoder: new StringDecoder("utf8"), stream: process.stdout },
-      { decoder: new StringDecoder("utf8"), stream: process.stderr },
+    const outputStates = [
+      { decoder: new StringDecoder("utf8"), pending: "", stream: process.stdout },
+      { decoder: new StringDecoder("utf8"), pending: "", stream: process.stderr },
     ];
     const TAIL_MAX = 50;
     let resolved = false;
@@ -518,15 +514,14 @@ function downloadModel(
       }
     }
 
-    function flushOutput(flushAll = false): void {
+    function flushOutput(state: (typeof outputStates)[number], flushAll = false): void {
       const end = flushAll
-        ? outputState.pending.length
-        : Math.max(outputState.pending.lastIndexOf("\n"), outputState.pending.lastIndexOf("\r")) +
-          1;
+        ? state.pending.length
+        : Math.max(state.pending.lastIndexOf("\n"), state.pending.lastIndexOf("\r")) + 1;
       if (end <= 0) return;
-      const safeText = redactHfDownloadOutput(outputState.pending.slice(0, end), tokenValue);
-      outputState.pending = outputState.pending.slice(end);
-      outputState.stream.write(safeText);
+      const safeText = redactHfDownloadOutput(state.pending.slice(0, end), tokenValue);
+      state.pending = state.pending.slice(end);
+      state.stream.write(safeText);
       lastOutputEndedCleanly = /[\r\n]$/.test(safeText);
       rememberTail(safeText);
     }
@@ -534,37 +529,28 @@ function downloadModel(
     function finalizeOutputDecoders(): void {
       if (decodersFinalized) return;
       decodersFinalized = true;
-      for (const { decoder, stream } of outputDecoders) {
-        const text = decoder.end();
-        if (!text) continue;
-        outputState.pending += text;
-        outputState.stream = stream;
+      for (const state of outputStates) {
+        state.pending += state.decoder.end();
+        flushOutput(state, true);
       }
     }
 
-    function onChunk(buf: Buffer, stream: NodeJS.WriteStream, decoder: StringDecoder): void {
+    function onChunk(buf: Buffer, state: (typeof outputStates)[number]): void {
       lastOutputAt = Date.now();
-      outputState.pending += decoder.write(buf);
-      outputState.stream = stream;
-      flushOutput();
+      state.pending += state.decoder.write(buf);
+      flushOutput(state);
     }
 
-    proc.stdout?.on("data", (buf: Buffer) =>
-      onChunk(buf, process.stdout, outputDecoders[0].decoder),
-    );
-    proc.stderr?.on("data", (buf: Buffer) =>
-      onChunk(buf, process.stderr, outputDecoders[1].decoder),
-    );
+    proc.stdout?.on("data", (buf: Buffer) => onChunk(buf, outputStates[0]));
+    proc.stderr?.on("data", (buf: Buffer) => onChunk(buf, outputStates[1]));
 
     proc.on("error", (err: Error) => {
       finalizeOutputDecoders();
-      flushOutput(true);
       done({ ok: false, reason: `spawn error: ${err.message}` });
     });
 
     proc.on("exit", (code: number | null) => {
       finalizeOutputDecoders();
-      flushOutput(true);
       if (code === 0) {
         if (!lastOutputEndedCleanly) process.stdout.write("\n");
         emit("Model download complete");
