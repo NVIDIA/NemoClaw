@@ -142,21 +142,16 @@ jq -e --arg sha "$CANDIDATE_SHA" --arg correlation "$CORRELATION_ID" \
   .producerWorkflow == ".github/workflows/build-qualification-image.yml" and
   .workflowRunId == $run and .workflowRunAttempt == 1 and .status == "READY" and
   .channel == "staging" and .variant == "cpu" and
-  .observedFamily == "nemoclaw-brev-staging-cpu" and
-  (.imageId | type == "string" and test("^[1-9][0-9]*$")) and
-  (.imageSelfLink == ("https://www.googleapis.com/compute/v1/projects/" + .project + "/global/images/" + .imageName))' \
+  .observedFamily == "nemoclaw-brev-staging-cpu"' \
   "$manifest" >/dev/null || die "producer receipt does not match the candidate"
-image_id="$(jq -r .imageId "$manifest")"
-image_link="$(jq -r .imageSelfLink "$manifest")"
-image_name="$(jq -r .imageName "$manifest")"
 rm -rf "$WORK_DIR/handoff"
 
-# The standing Launchable resolves the staging family; post-boot identity is authority.
+# The standing Launchable resolves the staging family; the guest must contain the exact clean candidate.
 existing="$(workspace)" || die "Brev workspace inventory failed"
 [ -z "$existing" ] || die "workspace name already exists"
 cleanup_required=1
 timeout 900s brev create "$INSTANCE_NAME" --launchable "$BREV_LAUNCHABLE_ID" --detached --timeout 900
-deadline=$((SECONDS + 1200))
+deadline=$((SECONDS + ${BREV_READY_TIMEOUT_SECONDS:-1200}))
 ready=""
 while [ "$SECONDS" -lt "$deadline" ]; do
   ready="$(workspace || true)"
@@ -166,37 +161,35 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   [[ "$state" =~ FAILURE|FAILED|ERROR|CREATE_FAILED ]] && die "workspace entered $state"
   sleep "${POLL_SECONDS:-15}"
 done
-jq -e '.status == "RUNNING"' <<<"${ready:-null}" >/dev/null || die "workspace readiness timed out"
+jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
+  (.build_status // .buildStatus) == "COMPLETED"' \
+  <<<"${ready:-null}" >/dev/null || die "workspace readiness timed out"
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
 
-# qualification-identity: return only baked SHA and immutable boot source.
+# qualification-identity: return only the baked SHA and clean-checkout verdict.
 # The remote shell expands the single-quoted command.
 # shellcheck disable=SC2016
 identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
   repo_sha=$(git -C "$HOME/NemoClaw" rev-parse HEAD)
   provision_sha=$(sudo -n jq -er .gitSha /etc/nemoclaw/provision.json)
-  metadata=http://metadata.google.internal/computeMetadata/v1; header="Metadata-Flavor: Google"
-  project=$(curl -fsS -H "$header" "$metadata/project/project-id")
-  zone=$(curl -fsS -H "$header" "$metadata/instance/zone"); zone=${zone##*/}
-  disk=$(curl -fsS -H "$header" "$metadata/instance/disks/0/device-name")
-  token=$(curl -fsS -H "$header" "$metadata/instance/service-accounts/default/token" | jq -er .access_token)
-  source=$(curl -fsS -H "Authorization: Bearer $token" "https://compute.googleapis.com/compute/v1/projects/$project/zones/$zone/disks/$disk")
+  if [ -z "$(git -C "$HOME/NemoClaw" status --porcelain --untracked-files=normal)" ]; then
+    repo_clean=true
+  else
+    repo_clean=false
+  fi
   printf "NEMOCLAW_IDENTITY="
   jq -cn --arg repoSha "$repo_sha" --arg provisionSha "$provision_sha" \
-    --arg image "$(jq -r .sourceImage <<<"$source")" --arg imageId "$(jq -r .sourceImageId <<<"$source")" \
-    "{repoSha:\$repoSha,provisionSha:\$provisionSha,image:\$image,imageId:\$imageId}"' --host \
+    --argjson repoClean "$repo_clean" \
+    "{repoSha:\$repoSha,provisionSha:\$provisionSha,repoClean:\$repoClean}"' --host \
   | sed -n 's/^NEMOCLAW_IDENTITY=//p' | tail -n 1)"
-jq -e --arg sha "$CANDIDATE_SHA" --arg image "$image_link" --arg id "$image_id" '
-  .provisionSha as $provision | .repoSha == $sha and
-  ($provision | type == "string" and test("^[0-9a-f]{7,40}$")) and ($sha | startswith($provision)) and
-  .image == $image and .imageId == $id' \
-  <<<"$identity" >/dev/null || die "baked SHA or immutable boot image does not match"
+jq -e --arg sha "$CANDIDATE_SHA" '
+  .repoSha == $sha and .provisionSha == $sha and .repoClean == true' \
+  <<<"$identity" >/dev/null || die "booted checkout does not match candidate"
 
 jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
-  --arg imageName "$image_name" --arg imageId "$image_id" --arg imageSelfLink "$image_link" \
-  --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
-  '{candidateSha:$candidateSha,producerRun:$producerRun,image:{name:$imageName,id:$imageId,selfLink:$imageSelfLink},workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending"}' \
+  --argjson boot "$identity" --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
+  '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:$boot,workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending"}' \
   >"$WORK_DIR/qualification.json"
 
 # Run the existing suite from the baked checkout; no source copy, install, or rebuild.

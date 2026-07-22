@@ -22,11 +22,13 @@ function executable(file: string, source: string): void {
 
 function fixture(
   options: {
-    bakedSha?: string;
     deleteFails?: boolean;
     e2eFails?: boolean;
-    imageId?: string;
+    provisionSha?: string;
+    ready?: boolean;
     receiptSha?: string;
+    repoClean?: boolean;
+    repoSha?: string;
   } = {},
 ) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launchable-e2e-"));
@@ -64,9 +66,7 @@ elif [ "$1 $2" = 'run download' ]; then
     requesterWorkflowRunId:"789",requesterWorkflowRunAttempt:1,
     imageRepository:"brevdev/nemoclaw-image",producerWorkflow:".github/workflows/build-qualification-image.yml",
     workflowRunId:"123",workflowRunAttempt:1,
-    status:"READY",channel:"staging",variant:"cpu",observedFamily:"nemoclaw-brev-staging-cpu",
-    project:"brevdevprod",imageName:"image-a",imageId:"123456789",
-    imageSelfLink:"https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/image-a"
+    status:"READY",channel:"staging",variant:"cpu",observedFamily:"nemoclaw-brev-staging-cpu"
   }' > "$directory/nemoclaw-image-manifest.v1.json"
 else
   exit 2
@@ -82,12 +82,15 @@ case "$1" in
   ls)
     if [ -f "$FAKE_STATE" ]; then cat "$FAKE_STATE"; else printf '{"workspaces":[]}\\n'; fi ;;
   create)
-    jq -cn --arg name "$INSTANCE_NAME" '{workspaces:[{id:"ws-1",name:$name,status:"RUNNING",shell_status:"READY",build_status:"COMPLETED"}]}' > "$FAKE_STATE" ;;
+    if [ "$FAKE_READY" = 1 ]; then shell=READY; build=COMPLETED; else shell=STARTING; build=BUILDING; fi
+    jq -cn --arg name "$INSTANCE_NAME" --arg shell "$shell" --arg build "$build" \
+      '{workspaces:[{id:"ws-1",name:$name,status:"RUNNING",shell_status:$shell,build_status:$build}]}' > "$FAKE_STATE" ;;
   exec)
     case "$3" in
-      *provision_sha*)
+      *repo_clean*)
         printf 'NEMOCLAW_IDENTITY='
-        jq -cn --arg sha "$FAKE_BAKED_SHA" --arg id "$FAKE_IMAGE_ID" '{repoSha:$sha,provisionSha:($sha[0:12]),image:"https://www.googleapis.com/compute/v1/projects/brevdevprod/global/images/image-a",imageId:$id}'
+        jq -cn --arg repo "$FAKE_REPO_SHA" --arg provision "$FAKE_PROVISION_SHA" \
+          --argjson clean "$FAKE_REPO_CLEAN" '{repoSha:$repo,provisionSha:$provision,repoClean:$clean}'
         printf '%s\\n' "$INSTANCE_NAME" ;;
       *) exit 2 ;;
     esac ;;
@@ -114,15 +117,18 @@ printf 'NEMOCLAW_FULL_E2E_PASSED\\n'
     ...process.env,
     PATH: `${bin}:${process.env.PATH ?? ""}`,
     BREV_DELETE_TIMEOUT_SECONDS: "5",
+    BREV_READY_TIMEOUT_SECONDS: "5",
     BREV_LAUNCHABLE_ID: "env-staging123",
     CANDIDATE_SHA: candidateSha,
     CORRELATION_ID: "11111111-1111-4111-8111-111111111111",
-    FAKE_BAKED_SHA: options.bakedSha ?? candidateSha,
     FAKE_CALLS: calls,
     FAKE_DELETE_FAILS: options.deleteFails ? "1" : "0",
     FAKE_E2E_FAILS: options.e2eFails ? "1" : "0",
-    FAKE_IMAGE_ID: options.imageId ?? "123456789",
+    FAKE_PROVISION_SHA: options.provisionSha ?? candidateSha,
+    FAKE_READY: options.ready === false ? "0" : "1",
     FAKE_RECEIPT_SHA: options.receiptSha ?? candidateSha,
+    FAKE_REPO_CLEAN: options.repoClean === false ? "false" : "true",
+    FAKE_REPO_SHA: options.repoSha ?? candidateSha,
     FAKE_STATE: state,
     GH_TOKEN: "github-test-token",
     GITHUB_RUN_ATTEMPT: "1",
@@ -141,7 +147,7 @@ function run(env: NodeJS.ProcessEnv) {
 }
 
 describe("focused staging Brev Launchable lane", () => {
-  it("binds the receipt, verifies the booted image, runs preinstalled E2E, and deletes (#80)", () => {
+  it("binds the producer run, verifies the clean booted SHA, runs E2E, and deletes (#6943)", () => {
     const { calls, env, state, workDir } = fixture();
     const result = run(env);
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -166,23 +172,33 @@ describe("focused staging Brev Launchable lane", () => {
     ).toMatchObject({
       candidateSha,
       fullE2e: "passed",
-      image: { id: "123456789" },
+      producer: { runId: "123", status: "success" },
+      boot: { repoSha: candidateSha, provisionSha: candidateSha, repoClean: true },
       workspace: { id: "ws-1" },
     });
   });
 
-  it("blocks E2E when the receipt or post-boot immutable identity mismatches", () => {
+  it("blocks E2E for a wrong receipt, incomplete readiness, or booted checkout mismatch", () => {
     const receipt = fixture({ receiptSha: "b".repeat(40) });
     const receiptResult = run(receipt.env);
     expect(receiptResult.status).not.toBe(0);
     expect(receiptResult.stderr).toContain("producer receipt does not match the candidate");
     expect(fs.readFileSync(receipt.calls, "utf8")).not.toMatch(/brev create|full-e2e\.test\.ts/u);
-    expect(fs.existsSync(receipt.state)).toBe(false);
 
-    for (const boot of [fixture({ bakedSha: "b".repeat(40) }), fixture({ imageId: "987654321" })]) {
+    const unready = fixture({ ready: false });
+    const unreadyResult = run({ ...unready.env, BREV_READY_TIMEOUT_SECONDS: "1" });
+    expect(unreadyResult.status).not.toBe(0);
+    expect(fs.readFileSync(unready.calls, "utf8")).not.toMatch(/brev exec|full-e2e\.test\.ts/u);
+    expect(fs.existsSync(unready.state)).toBe(false);
+
+    for (const boot of [
+      fixture({ repoSha: "b".repeat(40) }),
+      fixture({ provisionSha: "b".repeat(40) }),
+      fixture({ repoClean: false }),
+    ]) {
       const bootResult = run(boot.env);
       expect(bootResult.status).not.toBe(0);
-      expect(bootResult.stderr).toContain("baked SHA or immutable boot image does not match");
+      expect(bootResult.stderr).toContain("booted checkout does not match candidate");
       expect(fs.readFileSync(boot.calls, "utf8")).not.toContain("full-e2e.test.ts");
       expect(fs.existsSync(boot.state)).toBe(false);
     }
