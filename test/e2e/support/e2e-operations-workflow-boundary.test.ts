@@ -88,6 +88,18 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("pins the bounded rolling runtime summary artifact", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const upload = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Upload E2E runtime summary",
+    )!;
+    upload.with!.path = "${{ runner.temp }}";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must upload only the bounded runtime summary for rolling history",
+    );
+  });
+
   it("rejects controller protocol and PR validation drift", () => {
     const workflow = readE2eOperationsWorkflow();
     delete workflow.on?.workflow_dispatch?.inputs?.base_sha;
@@ -405,11 +417,15 @@ describe("E2E operations workflow boundary", () => {
         .fn()
         .mockReturnValue("## E2E Test Phase Runtime\n\n| Target | Slowest observed phase |"),
     };
+    const runtimeHistory = {
+      buildRuntimeHistory: vi.fn().mockResolvedValue("## E2E Nightly Runtime Trend\n"),
+    };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
       ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
       ["/workspace/scripts/scorecard/coordinate-scorecard.mts", coordinator],
       ["/workspace/scripts/scorecard/analyze-trace-timing.mts", traceTiming],
+      ["/workspace/scripts/scorecard/analyze-runtime-history.mts", runtimeHistory],
       ["/workspace/scripts/scorecard/summarize-jobs.mts", scorecardJobs],
     ]);
     const runtimeRequire = (specifier: string) => {
@@ -423,6 +439,7 @@ describe("E2E operations workflow boundary", () => {
         GITHUB_WORKSPACE: "/workspace",
         JOBS: "",
         RUNTIME_ARTIFACTS: "/runner/e2e-runtime-audit",
+        RUNTIME_SUMMARY_FILE: "/runner/e2e-runtime-summary.json",
         TARGETS: "",
       },
     };
@@ -445,6 +462,11 @@ describe("E2E operations workflow boundary", () => {
 
     expect(traceTiming.buildTraceTimingResult).toHaveBeenCalledWith({ github: {}, context, core });
     expect(runtimeAudit.auditTestRuntime).toHaveBeenCalledWith(["/runner/e2e-runtime-audit"]);
+    expect(runtimeHistory.buildRuntimeHistory).toHaveBeenCalledWith(
+      { github: {}, context, core },
+      [{ target: "full-e2e" }],
+      "/runner/e2e-runtime-summary.json",
+    );
     expect(runtimeAudit.auditTestRuntime.mock.invocationCallOrder[0]).toBeLessThan(
       traceTiming.buildTraceTimingResult.mock.invocationCallOrder[0],
     );
@@ -488,9 +510,13 @@ describe("E2E operations workflow boundary", () => {
       }),
       formatRuntimeAuditSummary: vi.fn(),
     };
+    const runtimeHistory = {
+      buildRuntimeHistory: vi.fn().mockResolvedValue("## E2E Nightly Runtime Trend\n"),
+    };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
       ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
+      ["/workspace/scripts/scorecard/analyze-runtime-history.mts", runtimeHistory],
       [
         "/workspace/scripts/scorecard/coordinate-scorecard.mts",
         {
@@ -527,6 +553,7 @@ describe("E2E operations workflow boundary", () => {
         GITHUB_WORKSPACE: "/workspace",
         JOBS: "",
         RUNTIME_ARTIFACTS: "/runner/e2e-runtime-audit",
+        RUNTIME_SUMMARY_FILE: "/runner/e2e-runtime-summary.json",
         TARGETS: "",
       },
     };

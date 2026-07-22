@@ -113,6 +113,22 @@ function renderSummaryLines(input: {
       lines.push(job.url ? `  - [${job.name}](${job.url})` : `  - \`${job.name}\``);
     }
   }
+  if (summary.timingRows.length > 0) {
+    lines.push(
+      "",
+      "### Slowest job timing",
+      "",
+      "| Job | Runner class | Queue | Execution |",
+      "| --- | --- | ---: | ---: |",
+    );
+    for (const row of summary.timingRows) {
+      const duration = (milliseconds: number | null) =>
+        milliseconds === null ? "n/a" : `${(milliseconds / 1_000).toFixed(1)}s`;
+      lines.push(
+        `| ${row.name.replaceAll("|", "\\|")} | ${row.runnerClass} | ${duration(row.queueMs)} | ${duration(row.executionMs)} |`,
+      );
+    }
+  }
   if (input.perfect) lines.push("", "🎉 **All jobs passed!**");
   lines.push(
     "",

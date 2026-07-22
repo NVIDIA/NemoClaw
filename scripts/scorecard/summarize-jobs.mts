@@ -4,15 +4,25 @@
 type ApiJob = {
   completed_at?: string | null;
   conclusion?: string | null;
+  created_at?: string | null;
   html_url?: string | null;
+  labels?: string[] | null;
   name: string;
   run_attempt?: number | null;
+  started_at?: string | null;
   status?: string | null;
 };
 
 type NeedResult = { result?: string };
 
 type FailedJob = { name: string; url: string | null };
+
+export type JobTimingRow = {
+  executionMs: number | null;
+  name: string;
+  queueMs: number | null;
+  runnerClass: "custom" | "standard" | "unknown";
+};
 
 export type JobSummary = {
   cancelled: number;
@@ -21,6 +31,7 @@ export type JobSummary = {
   ran: number;
   skipped: number;
   success: number;
+  timingRows: JobTimingRow[];
   total: number;
 };
 
@@ -66,7 +77,9 @@ function classifyNeed(value: NeedResult): CountedResult {
   return "failure";
 }
 
-function countResults(results: CountedResult[]): Omit<JobSummary, "failedJobs" | "ran" | "total"> {
+function countResults(
+  results: CountedResult[],
+): Omit<JobSummary, "failedJobs" | "ran" | "timingRows" | "total"> {
   return {
     cancelled: results.filter((result) => result === "cancelled").length,
     failure: results.filter((result) => result === "failure").length,
@@ -100,6 +113,43 @@ function normalizeApiJobs(
     }
   }
   return [...dedupedByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function elapsedMs(
+  start: string | null | undefined,
+  finish: string | null | undefined,
+): number | null {
+  if (!start || !finish) return null;
+  const startMs = Date.parse(start);
+  const finishMs = Date.parse(finish);
+  return Number.isFinite(startMs) && Number.isFinite(finishMs) && finishMs >= startMs
+    ? finishMs - startMs
+    : null;
+}
+
+function runnerClass(labels: string[] | null | undefined): JobTimingRow["runnerClass"] {
+  if (!labels || labels.length === 0) return "unknown";
+  return labels.includes("ubuntu-latest") ? "standard" : "custom";
+}
+
+function summarizeJobTimings(jobs: ApiJob[]): JobTimingRow[] {
+  return jobs
+    .map(
+      (job): JobTimingRow => ({
+        executionMs: elapsedMs(job.started_at, job.completed_at),
+        name: job.name,
+        queueMs: elapsedMs(job.created_at, job.started_at),
+        runnerClass: runnerClass(job.labels),
+      }),
+    )
+    .filter((row) => row.executionMs !== null || row.queueMs !== null)
+    .sort(
+      (left, right) =>
+        (right.executionMs ?? 0) +
+          (right.queueMs ?? 0) -
+          ((left.executionMs ?? 0) + (left.queueMs ?? 0)) || left.name.localeCompare(right.name),
+    )
+    .slice(0, 10);
 }
 
 async function loadWorkflowRunJobs({
@@ -142,6 +192,7 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
         .filter(({ result }) => result === "failure")
         .map(({ job }) => ({ name: job.name, url: job.html_url ?? null })),
       ran: jobs.length - counts.skipped,
+      timingRows: summarizeJobTimings(jobs),
       total: jobs.length,
     };
   }
@@ -158,6 +209,7 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
       .filter(({ result }) => result === "failure")
       .map(({ name }) => ({ name, url: null })),
     ran: entries.length - counts.skipped,
+    timingRows: [],
     total: entries.length,
   };
 }

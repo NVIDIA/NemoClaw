@@ -24,6 +24,10 @@
  *                    descriptor when `E2E_TERMINAL_CLASSIFICATION_FILE` is
  *                    configured. Requires the baseline file named by
  *                    `E2E_RESOURCE_BASELINE_FILE`.
+ * - `initialize-measurement` — create one private job-level resource ledger
+ *                    and summary, then append the initial lightweight sample.
+ * - `summarize-measurement` — append the final lightweight sample and reduce
+ *                    the ledger into the numeric comparison artifact.
  * - `validate-classification` — fail closed unless the named classification
  *                    artifact contains exactly one canonical terminal line.
  * - `decide-retry` — print a JSON retry decision from `E2E_RUNNER_LOSS`,
@@ -53,11 +57,13 @@ import {
   parseCgroupMemoryEvents,
   parseCgroupScalar,
   parseClassificationLine,
+  parseCpuTimes,
   parseDockerStats,
   parseDockerSystemDf,
   parseLoadAverages,
   parseMeminfo,
   parsePressure,
+  parseSnapshotLine,
   parseTopProcesses,
   type ResourceBaseline,
   type ResourceSnapshot,
@@ -65,6 +71,7 @@ import {
   renderClassificationLine,
   renderSnapshotLine,
   selectFailureBaseline,
+  summarizeResourceSnapshots,
   TERMINAL_CLASSIFICATIONS,
   type TerminalClassification,
 } from "./runner-pressure-core.mts";
@@ -74,6 +81,8 @@ const CONTAINER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const BASELINE_FILE_MAX_BYTES = 4096;
 const PHASE_BASELINES_FILE_MAX_BYTES = 128 * BASELINE_FILE_MAX_BYTES;
 const CLASSIFICATION_FILE_MAX_BYTES = 2048;
+const RESOURCE_SNAPSHOTS_FILE_MAX_BYTES = 512 * 1024;
+const RESOURCE_SNAPSHOT_MAX_LINES = 128;
 
 function readTextOrNull(path: string): string | null {
   try {
@@ -106,21 +115,34 @@ function collectDisk(): ResourceSnapshot["disk"] {
   }
 }
 
-export function collectResourceSnapshot(phase: string): ResourceSnapshot {
+export function collectResourceSnapshot(
+  phase: string,
+  options: { includeDiagnostics?: boolean } = {},
+): ResourceSnapshot {
+  const includeDiagnostics = options.includeDiagnostics ?? true;
+  const at = new Date().toISOString();
+  const cpuText = readTextOrNull("/proc/stat");
   const meminfoText = readTextOrNull("/proc/meminfo");
-  const loadText = readTextOrNull("/proc/loadavg");
+  const loadText = includeDiagnostics ? readTextOrNull("/proc/loadavg") : null;
   const current = readTextOrNull(`${CGROUP_ROOT}/memory.current`);
   const peak = readTextOrNull(`${CGROUP_ROOT}/memory.peak`);
   const limit = readTextOrNull(`${CGROUP_ROOT}/memory.max`);
   const events = readTextOrNull(`${CGROUP_ROOT}/memory.events`);
-  const memoryPressure = readTextOrNull(`${CGROUP_ROOT}/memory.pressure`);
-  const ioPressure = readTextOrNull(`${CGROUP_ROOT}/io.pressure`);
-  const psText = runOrNull("ps", ["-eo", "rss="]);
-  const statsText = runOrNull("docker", ["stats", "--no-stream", "--format", "{{json .}}"]);
-  const dfText = runOrNull("docker", ["system", "df", "--format", "{{json .}}"]);
+  const memoryPressure = includeDiagnostics
+    ? readTextOrNull(`${CGROUP_ROOT}/memory.pressure`)
+    : null;
+  const ioPressure = includeDiagnostics ? readTextOrNull(`${CGROUP_ROOT}/io.pressure`) : null;
+  const psText = includeDiagnostics ? runOrNull("ps", ["-eo", "rss="]) : null;
+  const statsText = includeDiagnostics
+    ? runOrNull("docker", ["stats", "--no-stream", "--format", "{{json .}}"])
+    : null;
+  const dfText = includeDiagnostics
+    ? runOrNull("docker", ["system", "df", "--format", "{{json .}}"])
+    : null;
   return {
     phase,
-    at: new Date().toISOString(),
+    at,
+    cpu: cpuText === null ? null : parseCpuTimes(cpuText),
     meminfo: meminfoText === null ? null : parseMeminfo(meminfoText),
     load: loadText === null ? null : parseLoadAverages(loadText),
     cgroup:
@@ -144,6 +166,69 @@ export function collectResourceSnapshot(phase: string): ResourceSnapshot {
 function runSnapshot(): void {
   const phase = assertPhaseLabel(process.env.E2E_PHASE);
   console.log(renderSnapshotLine(collectResourceSnapshot(phase)));
+}
+
+/** Append one already-collected snapshot without collecting diagnostics twice. */
+export function appendResourceSnapshot(path: string, snapshot: ResourceSnapshot): void {
+  appendPrivateRegularFile(
+    assertEvidencePath(path, "E2E_RESOURCE_SNAPSHOTS_FILE"),
+    `${renderSnapshotLine(snapshot)}\n`,
+    { maxBytes: RESOURCE_SNAPSHOTS_FILE_MAX_BYTES },
+  );
+}
+
+function measurementPhase(suffix: "start" | "finish"): string {
+  const targetId = assertPhaseLabel(process.env.E2E_TARGET_ID);
+  return assertPhaseLabel(`${targetId}.measurement-${suffix}`);
+}
+
+function runInitializeMeasurement(): void {
+  const snapshotsPath = assertEvidencePath(
+    process.env.E2E_RESOURCE_SNAPSHOTS_FILE,
+    "E2E_RESOURCE_SNAPSHOTS_FILE",
+  );
+  const summaryPath = assertEvidencePath(
+    process.env.E2E_RESOURCE_SUMMARY_FILE,
+    "E2E_RESOURCE_SUMMARY_FILE",
+  );
+  writePrivateRegularFile(snapshotsPath, "");
+  writePrivateRegularFile(summaryPath, "");
+  appendResourceSnapshot(
+    snapshotsPath,
+    collectResourceSnapshot(measurementPhase("start"), { includeDiagnostics: false }),
+  );
+}
+
+function runSummarizeMeasurement(): void {
+  const snapshotsPath = assertEvidencePath(
+    process.env.E2E_RESOURCE_SNAPSHOTS_FILE,
+    "E2E_RESOURCE_SNAPSHOTS_FILE",
+  );
+  const summaryPath = assertEvidencePath(
+    process.env.E2E_RESOURCE_SUMMARY_FILE,
+    "E2E_RESOURCE_SUMMARY_FILE",
+  );
+  appendResourceSnapshot(
+    snapshotsPath,
+    collectResourceSnapshot(measurementPhase("finish"), { includeDiagnostics: false }),
+  );
+  const text = readPrivateRegularFile(snapshotsPath, {
+    maxBytes: RESOURCE_SNAPSHOTS_FILE_MAX_BYTES,
+  });
+  if (text === null) throw new Error("E2E_RESOURCE_SNAPSHOTS_FILE could not be read");
+  const lines = text.split(/\r?\n/u).filter((line) => line.length > 0);
+  if (lines.length < 2 || lines.length > RESOURCE_SNAPSHOT_MAX_LINES) {
+    throw new Error(
+      `resource measurement ledger must contain 2-${RESOURCE_SNAPSHOT_MAX_LINES} snapshots`,
+    );
+  }
+  const targetId = assertPhaseLabel(process.env.E2E_TARGET_ID);
+  const shardId = process.env.NEMOCLAW_E2E_SHARD;
+  const summary = summarizeResourceSnapshots(lines.map(parseSnapshotLine), {
+    targetId,
+    ...(shardId ? { shardId: assertPhaseLabel(shardId) } : {}),
+  });
+  writePrivateRegularFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
 }
 
 function containerOomKilled(name: string | undefined): boolean {
@@ -319,6 +404,12 @@ function main(): number {
     case "initialize-evidence":
       runInitializeEvidence();
       return 0;
+    case "initialize-measurement":
+      runInitializeMeasurement();
+      return 0;
+    case "summarize-measurement":
+      runSummarizeMeasurement();
+      return 0;
     case "classify":
       runClassify();
       return 0;
@@ -330,7 +421,7 @@ function main(): number {
       return 0;
     default:
       console.error(
-        "usage: runner-pressure.mts <snapshot|baseline|initialize-evidence|classify|validate-classification|decide-retry>",
+        "usage: runner-pressure.mts <snapshot|baseline|initialize-evidence|initialize-measurement|summarize-measurement|classify|validate-classification|decide-retry>",
       );
       return 2;
   }

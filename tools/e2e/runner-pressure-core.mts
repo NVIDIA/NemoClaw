@@ -82,6 +82,32 @@ export interface LoadSample {
   load15: number;
 }
 
+export interface CpuTimesSample {
+  logicalCpuCount: number;
+  idleTicks: number;
+  totalTicks: number;
+}
+
+/**
+ * Parse the aggregate CPU counters and logical processor rows from
+ * `/proc/stat`. Guest counters are excluded because Linux already includes
+ * them in user/nice and counting them again would inflate utilization.
+ */
+export function parseCpuTimes(text: string): CpuTimesSample | null {
+  const lines = text.split("\n");
+  const aggregate = lines.find((line) => /^cpu\s+/u.test(line));
+  const logicalCpuCount = lines.filter((line) => /^cpu\d+\s+/u.test(line)).length;
+  if (!aggregate || logicalCpuCount < 1) return null;
+  const values = aggregate.trim().split(/\s+/u).slice(1, 9);
+  if (values.length !== 8 || values.some((value) => !/^\d+$/u.test(value))) return null;
+  const counters = values.map(Number);
+  if (counters.some((value) => !Number.isSafeInteger(value) || value < 0)) return null;
+  const idleTicks = (counters[3] ?? 0) + (counters[4] ?? 0);
+  const totalTicks = counters.reduce((total, value) => total + value, 0);
+  if (!Number.isSafeInteger(idleTicks) || !Number.isSafeInteger(totalTicks)) return null;
+  return { logicalCpuCount, idleTicks, totalTicks };
+}
+
 /** Parse `/proc/loadavg`; null when the shape is unrecognized. */
 export function parseLoadAverages(text: string): LoadSample | null {
   const match = /^(\d+\.\d+)\s+(\d+\.\d+)\s+(\d+\.\d+)\s/u.exec(text.trim());
@@ -271,6 +297,7 @@ export interface DiskSample {
 export interface ResourceSnapshot {
   phase: string;
   at: string;
+  cpu: CpuTimesSample | null;
   meminfo: MeminfoSample | null;
   load: LoadSample | null;
   cgroup: {
@@ -330,6 +357,14 @@ export function renderSnapshotLine(snapshot: ResourceSnapshot): string {
       v: 1,
       phase: assertPhaseLabel(snapshot.phase),
       at: assertCanonicalTimestamp(snapshot.at),
+      cpu:
+        snapshot.cpu === null
+          ? null
+          : {
+              logicalCpuCount: number_(snapshot.cpu.logicalCpuCount),
+              idleTicks: number_(snapshot.cpu.idleTicks),
+              totalTicks: number_(snapshot.cpu.totalTicks),
+            },
       meminfo:
         snapshot.meminfo === null
           ? null
@@ -411,6 +446,386 @@ function renderPressure(sample: PressureSample | null): PressureSample | null {
     someAvg60: number_(sample.someAvg60),
     fullAvg10: number_(sample.fullAvg10),
     fullAvg60: number_(sample.fullAvg60),
+  };
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function record_(value: unknown, field: string): UnknownRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${field} must be an object`);
+  }
+  return value as UnknownRecord;
+}
+
+function exactKeys(record: UnknownRecord, keys: readonly string[], field: string): void {
+  if (Object.keys(record).sort().join(",") !== [...keys].sort().join(",")) {
+    throw new Error(`${field} has an unsupported shape`);
+  }
+}
+
+function nullableNonNegativeNumber(value: unknown, field: string): number | null {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${field} must be null or a non-negative finite number`);
+  }
+  return value;
+}
+
+function nullableNonNegativeInteger(value: unknown, field: string): number | null {
+  const parsed = nullableNonNegativeNumber(value, field);
+  if (parsed !== null && !Number.isSafeInteger(parsed)) {
+    throw new Error(`${field} must be null or a non-negative safe integer`);
+  }
+  return parsed;
+}
+
+function parseNullableRecord<T>(
+  value: unknown,
+  field: string,
+  parser: (record: UnknownRecord, field: string) => T,
+): T | null {
+  return value === null ? null : parser(record_(value, field), field);
+}
+
+function parseCpuRecord(record: UnknownRecord, field: string): CpuTimesSample {
+  exactKeys(record, ["logicalCpuCount", "idleTicks", "totalTicks"], field);
+  const logicalCpuCount = nullableNonNegativeInteger(
+    record.logicalCpuCount,
+    `${field}.logicalCpuCount`,
+  );
+  const idleTicks = nullableNonNegativeInteger(record.idleTicks, `${field}.idleTicks`);
+  const totalTicks = nullableNonNegativeInteger(record.totalTicks, `${field}.totalTicks`);
+  if (
+    logicalCpuCount === null ||
+    logicalCpuCount < 1 ||
+    idleTicks === null ||
+    totalTicks === null
+  ) {
+    throw new Error(`${field} must contain complete CPU counters`);
+  }
+  if (idleTicks > totalTicks) throw new Error(`${field}.idleTicks cannot exceed totalTicks`);
+  return { logicalCpuCount, idleTicks, totalTicks };
+}
+
+function parseMeminfoRecord(record: UnknownRecord, field: string): MeminfoSample {
+  const keys = [
+    "memTotalKb",
+    "memFreeKb",
+    "memAvailableKb",
+    "cachedKb",
+    "sReclaimableKb",
+    "swapTotalKb",
+    "swapFreeKb",
+  ] as const;
+  exactKeys(record, keys, field);
+  return {
+    memTotalKb: nullableNonNegativeNumber(record.memTotalKb, `${field}.memTotalKb`),
+    memFreeKb: nullableNonNegativeNumber(record.memFreeKb, `${field}.memFreeKb`),
+    memAvailableKb: nullableNonNegativeNumber(record.memAvailableKb, `${field}.memAvailableKb`),
+    cachedKb: nullableNonNegativeNumber(record.cachedKb, `${field}.cachedKb`),
+    sReclaimableKb: nullableNonNegativeNumber(record.sReclaimableKb, `${field}.sReclaimableKb`),
+    swapTotalKb: nullableNonNegativeNumber(record.swapTotalKb, `${field}.swapTotalKb`),
+    swapFreeKb: nullableNonNegativeNumber(record.swapFreeKb, `${field}.swapFreeKb`),
+  };
+}
+
+function parseLoadRecord(record: UnknownRecord, field: string): LoadSample {
+  exactKeys(record, ["load1", "load5", "load15"], field);
+  const load1 = nullableNonNegativeNumber(record.load1, `${field}.load1`);
+  const load5 = nullableNonNegativeNumber(record.load5, `${field}.load5`);
+  const load15 = nullableNonNegativeNumber(record.load15, `${field}.load15`);
+  if (load1 === null || load5 === null || load15 === null) {
+    throw new Error(`${field} must contain complete load averages`);
+  }
+  return { load1, load5, load15 };
+}
+
+function parseEventsRecord(record: UnknownRecord, field: string): CgroupMemoryEvents {
+  exactKeys(record, ["oom", "oomKill"], field);
+  const oom = nullableNonNegativeInteger(record.oom, `${field}.oom`);
+  const oomKill = nullableNonNegativeInteger(record.oomKill, `${field}.oomKill`);
+  if (oom === null || oomKill === null) throw new Error(`${field} must contain complete counters`);
+  return { oom, oomKill };
+}
+
+function parseCgroupRecord(
+  record: UnknownRecord,
+  field: string,
+): NonNullable<ResourceSnapshot["cgroup"]> {
+  exactKeys(record, ["currentBytes", "peakBytes", "limitBytes", "events"], field);
+  return {
+    currentBytes: nullableNonNegativeNumber(record.currentBytes, `${field}.currentBytes`),
+    peakBytes: nullableNonNegativeNumber(record.peakBytes, `${field}.peakBytes`),
+    limitBytes: nullableNonNegativeNumber(record.limitBytes, `${field}.limitBytes`),
+    events: parseNullableRecord(record.events, `${field}.events`, parseEventsRecord),
+  };
+}
+
+function parsePressureRecord(record: UnknownRecord, field: string): PressureSample {
+  exactKeys(record, ["someAvg10", "someAvg60", "fullAvg10", "fullAvg60"], field);
+  return {
+    someAvg10: nullableNonNegativeNumber(record.someAvg10, `${field}.someAvg10`),
+    someAvg60: nullableNonNegativeNumber(record.someAvg60, `${field}.someAvg60`),
+    fullAvg10: nullableNonNegativeNumber(record.fullAvg10, `${field}.fullAvg10`),
+    fullAvg60: nullableNonNegativeNumber(record.fullAvg60, `${field}.fullAvg60`),
+  };
+}
+
+function parseTopProcessList(value: unknown): ProcessSample[] {
+  if (!Array.isArray(value) || value.length > TOP_PROCESS_LIMIT) {
+    throw new Error("snapshot.topProcesses must be a bounded array");
+  }
+  return value.map((entry, index) => {
+    const record = record_(entry, `snapshot.topProcesses[${index}]`);
+    exactKeys(record, ["rank", "rssKb"], `snapshot.topProcesses[${index}]`);
+    if (record.rank !== index + 1) throw new Error("snapshot.topProcesses ranks must be ordered");
+    const rssKb = nullableNonNegativeNumber(record.rssKb, `snapshot.topProcesses[${index}].rssKb`);
+    if (rssKb === null) throw new Error("snapshot.topProcesses.rssKb cannot be null");
+    return { rssKb };
+  });
+}
+
+function parseContainerList(value: unknown): ContainerStatSample[] {
+  if (!Array.isArray(value) || value.length > CONTAINER_STAT_LIMIT) {
+    throw new Error("snapshot.containers must be a bounded array");
+  }
+  return value.map((entry, index) => {
+    const record = record_(entry, `snapshot.containers[${index}]`);
+    exactKeys(
+      record,
+      ["rank", "cpuPercent", "memBytes", "memLimitBytes"],
+      `snapshot.containers[${index}]`,
+    );
+    if (record.rank !== index + 1) throw new Error("snapshot.containers ranks must be ordered");
+    return {
+      cpuPercent: nullableNonNegativeNumber(
+        record.cpuPercent,
+        `snapshot.containers[${index}].cpuPercent`,
+      ),
+      memBytes: nullableNonNegativeNumber(
+        record.memBytes,
+        `snapshot.containers[${index}].memBytes`,
+      ),
+      memLimitBytes: nullableNonNegativeNumber(
+        record.memLimitBytes,
+        `snapshot.containers[${index}].memLimitBytes`,
+      ),
+    };
+  });
+}
+
+function parseDockerDiskRecord(record: UnknownRecord, field: string): DockerDiskSample {
+  exactKeys(record, ["imagesBytes", "containersBytes", "buildCacheBytes"], field);
+  return {
+    imagesBytes: nullableNonNegativeNumber(record.imagesBytes, `${field}.imagesBytes`),
+    containersBytes: nullableNonNegativeNumber(record.containersBytes, `${field}.containersBytes`),
+    buildCacheBytes: nullableNonNegativeNumber(record.buildCacheBytes, `${field}.buildCacheBytes`),
+  };
+}
+
+function parseDiskRecord(record: UnknownRecord, field: string): DiskSample {
+  exactKeys(record, ["freeBytes", "totalBytes", "inodesFree", "inodesTotal"], field);
+  return {
+    freeBytes: nullableNonNegativeNumber(record.freeBytes, `${field}.freeBytes`),
+    totalBytes: nullableNonNegativeNumber(record.totalBytes, `${field}.totalBytes`),
+    inodesFree: nullableNonNegativeNumber(record.inodesFree, `${field}.inodesFree`),
+    inodesTotal: nullableNonNegativeNumber(record.inodesTotal, `${field}.inodesTotal`),
+  };
+}
+
+/** Strictly parse one allowlisted snapshot line; unknown fields are rejected. */
+export function parseSnapshotLine(line: string): ResourceSnapshot {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith(SNAPSHOT_LINE_PREFIX)) {
+    throw new Error(`resource snapshot must start with ${SNAPSHOT_LINE_PREFIX.trim()}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed.slice(SNAPSHOT_LINE_PREFIX.length));
+  } catch {
+    throw new Error("resource snapshot must contain valid JSON");
+  }
+  const record = record_(parsed, "snapshot");
+  exactKeys(
+    record,
+    [
+      "v",
+      "phase",
+      "at",
+      "cpu",
+      "meminfo",
+      "load",
+      "cgroup",
+      "memoryPressure",
+      "ioPressure",
+      "topProcesses",
+      "containers",
+      "dockerDisk",
+      "disk",
+    ],
+    "snapshot",
+  );
+  if (record.v !== 1) throw new Error("resource snapshot has an unsupported version");
+  return {
+    phase: assertPhaseLabel(typeof record.phase === "string" ? record.phase : undefined),
+    at: assertCanonicalTimestamp(typeof record.at === "string" ? record.at : undefined),
+    cpu: parseNullableRecord(record.cpu, "snapshot.cpu", parseCpuRecord),
+    meminfo: parseNullableRecord(record.meminfo, "snapshot.meminfo", parseMeminfoRecord),
+    load: parseNullableRecord(record.load, "snapshot.load", parseLoadRecord),
+    cgroup: parseNullableRecord(record.cgroup, "snapshot.cgroup", parseCgroupRecord),
+    memoryPressure: parseNullableRecord(
+      record.memoryPressure,
+      "snapshot.memoryPressure",
+      parsePressureRecord,
+    ),
+    ioPressure: parseNullableRecord(record.ioPressure, "snapshot.ioPressure", parsePressureRecord),
+    topProcesses: parseTopProcessList(record.topProcesses),
+    containers: parseContainerList(record.containers),
+    dockerDisk: parseNullableRecord(
+      record.dockerDisk,
+      "snapshot.dockerDisk",
+      parseDockerDiskRecord,
+    ),
+    disk: parseNullableRecord(record.disk, "snapshot.disk", parseDiskRecord),
+  };
+}
+
+export interface RunnerResourceSummary {
+  version: 1;
+  targetId: string;
+  shardId?: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  sampleCount: number;
+  cpu: {
+    logicalCpuCount: number | null;
+    peakSampledPercent: number | null;
+    intervalCount: number;
+  };
+  memory: {
+    peakBytes: number | null;
+    capacityBytes: number | null;
+    source: "cgroup-peak" | "mem-available" | null;
+  };
+  disk: {
+    peakDeltaBytes: number | null;
+    minimumFreeBytes: number | null;
+    capacityBytes: number | null;
+  };
+}
+
+function consistentValue(values: readonly number[]): number | null {
+  const first = values[0];
+  return first !== undefined && values.every((value) => value === first) ? first : null;
+}
+
+function maximum(values: readonly number[]): number | null {
+  return values.length > 0 ? Math.max(...values) : null;
+}
+
+/** Reduce one serialized job ledger into a numeric, runner-comparable summary. */
+export function summarizeResourceSnapshots(
+  snapshots: readonly ResourceSnapshot[],
+  identity: { targetId: string; shardId?: string },
+): RunnerResourceSummary {
+  const first = snapshots[0];
+  const last = snapshots.at(-1);
+  if (!first || !last) throw new Error("resource measurement ledger must contain a snapshot");
+  const startedAtMs = Date.parse(first.at);
+  const finishedAtMs = Date.parse(last.at);
+  if (finishedAtMs < startedAtMs) {
+    throw new Error("resource measurement ledger timestamps must be monotonic");
+  }
+  for (let index = 1; index < snapshots.length; index += 1) {
+    if (Date.parse(snapshots[index]!.at) < Date.parse(snapshots[index - 1]!.at)) {
+      throw new Error("resource measurement ledger timestamps must be monotonic");
+    }
+  }
+
+  const cpuCounts = snapshots.flatMap((snapshot) =>
+    snapshot.cpu === null ? [] : [snapshot.cpu.logicalCpuCount],
+  );
+  let peakSampledPercent: number | null = null;
+  let intervalCount = 0;
+  for (let index = 1; index < snapshots.length; index += 1) {
+    const previous = snapshots[index - 1]!;
+    const current = snapshots[index]!;
+    if (
+      previous.cpu === null ||
+      current.cpu === null ||
+      previous.cpu.logicalCpuCount !== current.cpu.logicalCpuCount ||
+      Date.parse(current.at) - Date.parse(previous.at) < 1_000
+    ) {
+      continue;
+    }
+    const totalDelta = current.cpu.totalTicks - previous.cpu.totalTicks;
+    const idleDelta = current.cpu.idleTicks - previous.cpu.idleTicks;
+    if (totalDelta <= 0 || idleDelta < 0 || idleDelta > totalDelta) continue;
+    const percent = Math.round(((totalDelta - idleDelta) / totalDelta) * 10_000) / 100;
+    peakSampledPercent = Math.max(peakSampledPercent ?? 0, percent);
+    intervalCount += 1;
+  }
+
+  const hostCapacities = snapshots.flatMap((snapshot) =>
+    snapshot.meminfo?.memTotalKb === null || snapshot.meminfo?.memTotalKb === undefined
+      ? []
+      : [snapshot.meminfo.memTotalKb * 1024],
+  );
+  const cgroupPeaks = snapshots.flatMap((snapshot) =>
+    snapshot.cgroup?.peakBytes === null || snapshot.cgroup?.peakBytes === undefined
+      ? []
+      : [snapshot.cgroup.peakBytes],
+  );
+  const sampledMemoryUsed = snapshots.flatMap((snapshot) => {
+    const total = snapshot.meminfo?.memTotalKb;
+    const available = snapshot.meminfo?.memAvailableKb;
+    return total === null || total === undefined || available === null || available === undefined
+      ? []
+      : [Math.max(0, total - available) * 1024];
+  });
+  const memorySource =
+    cgroupPeaks.length > 0 ? "cgroup-peak" : sampledMemoryUsed.length > 0 ? "mem-available" : null;
+
+  const diskSamples = snapshots.flatMap((snapshot) =>
+    snapshot.disk?.freeBytes === null || snapshot.disk?.freeBytes === undefined
+      ? []
+      : [{ freeBytes: snapshot.disk.freeBytes, totalBytes: snapshot.disk.totalBytes }],
+  );
+  const baselineFreeBytes = diskSamples[0]?.freeBytes;
+  const minimumFreeBytes = maximum(diskSamples.map((sample) => -sample.freeBytes));
+  const normalizedMinimumFreeBytes = minimumFreeBytes === null ? null : -minimumFreeBytes;
+  const diskCapacities = diskSamples.flatMap((sample) =>
+    sample.totalBytes === null ? [] : [sample.totalBytes],
+  );
+
+  return {
+    version: 1,
+    targetId: assertPhaseLabel(identity.targetId),
+    ...(identity.shardId ? { shardId: assertPhaseLabel(identity.shardId) } : {}),
+    startedAt: first.at,
+    finishedAt: last.at,
+    durationMs: finishedAtMs - startedAtMs,
+    sampleCount: snapshots.length,
+    cpu: {
+      logicalCpuCount: consistentValue(cpuCounts),
+      peakSampledPercent,
+      intervalCount,
+    },
+    memory: {
+      peakBytes: maximum(cgroupPeaks.length > 0 ? cgroupPeaks : sampledMemoryUsed),
+      capacityBytes: consistentValue(hostCapacities),
+      source: memorySource,
+    },
+    disk: {
+      peakDeltaBytes:
+        baselineFreeBytes === undefined || normalizedMinimumFreeBytes === null
+          ? null
+          : Math.max(0, baselineFreeBytes - normalizedMinimumFreeBytes),
+      minimumFreeBytes: normalizedMinimumFreeBytes,
+      capacityBytes: consistentValue(diskCapacities),
+    },
   };
 }
 

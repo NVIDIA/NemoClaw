@@ -30,12 +30,14 @@ import {
   parseCgroupMemoryEvents,
   parseCgroupScalar,
   parseClassificationLine,
+  parseCpuTimes,
   parseDockerSize,
   parseDockerStats,
   parseDockerSystemDf,
   parseLoadAverages,
   parseMeminfo,
   parsePressure,
+  parseSnapshotLine,
   parseTopProcesses,
   type ResourceSnapshot,
   renderBaselineLine,
@@ -44,6 +46,7 @@ import {
   SNAPSHOT_LINE_MAX_LENGTH,
   SNAPSHOT_LINE_PREFIX,
   selectFailureBaseline,
+  summarizeResourceSnapshots,
 } from "../../../tools/e2e/runner-pressure-core.mts";
 
 const HELPER = path.resolve(
@@ -118,6 +121,7 @@ function baseSnapshot(): ResourceSnapshot {
   return {
     phase: "rebuild-hermes.image-build",
     at: "2026-07-18T00:00:00.000Z",
+    cpu: { logicalCpuCount: 4, idleTicks: 4_000, totalTicks: 10_000 },
     meminfo: parseMeminfo(MEMINFO_FIXTURE),
     load: { load1: 3.5, load5: 2.1, load15: 1.0 },
     cgroup: {
@@ -151,6 +155,20 @@ function baseSnapshot(): ResourceSnapshot {
 }
 
 describe("host measurement parsers (#7146)", () => {
+  it("reads aggregate host CPU counters without double-counting guest time", () => {
+    expect(
+      parseCpuTimes(
+        [
+          "cpu  100 20 30 400 50 10 20 5 80 10",
+          "cpu0 1 2 3 4 5 6 7 8 9 10",
+          "cpu1 1 2 3 4 5 6 7 8 9 10",
+          "intr 123",
+        ].join("\n"),
+      ),
+    ).toEqual({ logicalCpuCount: 2, idleTicks: 450, totalTicks: 635 });
+    expect(parseCpuTimes("cpu malformed\ncpu0 1 2 3\n")).toBeNull();
+  });
+
   it("reads MemAvailable, Cached, SReclaimable, and swap from /proc/meminfo", () => {
     const sample = parseMeminfo(MEMINFO_FIXTURE);
     expect(sample).toEqual({
@@ -261,6 +279,7 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
       "at",
       "cgroup",
       "containers",
+      "cpu",
       "disk",
       "dockerDisk",
       "ioPressure",
@@ -272,6 +291,7 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
       "v",
     ]);
     expect(payload.meminfo.memAvailableKb).toBe(12288000);
+    expect(payload.cpu).toEqual({ logicalCpuCount: 4, idleTicks: 4000, totalTicks: 10000 });
     expect(payload.cgroup.limitBytes).toBeNull();
     expect(payload.topProcesses[0]).toEqual({ rank: 1, rssKb: 900000 });
     expect(payload.containers[0]).toEqual({
@@ -294,6 +314,17 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
     expect(line).not.toContain("AWS_SECRET_ACCESS_KEY");
     expect(line).not.toContain("ghp_process_secret");
     expect(line).not.toContain("ghp_container_secret");
+  });
+
+  it("strictly round-trips the allowlisted snapshot and rejects extra fields", () => {
+    const line = renderSnapshotLine(baseSnapshot());
+    expect(parseSnapshotLine(line)).toEqual(baseSnapshot());
+    expect(() => parseSnapshotLine(line.replace('"v":1', '"v":1,"token":"ghp_secret"'))).toThrow(
+      /unsupported shape/,
+    );
+    expect(() => parseSnapshotLine(line.replace('"idleTicks":4000', '"idleTicks":12000'))).toThrow(
+      /cannot exceed/,
+    );
   });
 
   it("stays within the line bound by limiting ranked lists before rendering", () => {
@@ -333,6 +364,119 @@ describe("bounded secret-safe snapshot line (#7146)", () => {
     ]) {
       expect(() => assertCanonicalTimestamp(bad)).toThrow(/timestamp/);
     }
+  });
+});
+
+describe("job-level runner resource summary (#7145)", () => {
+  function measuredSnapshot(
+    at: string,
+    cpu: ResourceSnapshot["cpu"],
+    peakBytes: number | null,
+    availableKb: number,
+    freeBytes: number,
+  ): ResourceSnapshot {
+    const snapshot = baseSnapshot();
+    return {
+      ...snapshot,
+      at,
+      cpu,
+      meminfo: { ...snapshot.meminfo!, memAvailableKb: availableKb },
+      cgroup: { ...snapshot.cgroup!, peakBytes },
+      disk: { ...snapshot.disk!, freeBytes, totalBytes: 100 * 1024 ** 3 },
+    };
+  }
+
+  it("reports sampled CPU, cgroup memory peak, and disk growth across one lane", () => {
+    const snapshots = [
+      measuredSnapshot(
+        "2026-07-18T00:00:00.000Z",
+        { logicalCpuCount: 2, idleTicks: 400, totalTicks: 1_000 },
+        4 * 1024 ** 3,
+        12_000_000,
+        80 * 1024 ** 3,
+      ),
+      measuredSnapshot(
+        "2026-07-18T00:00:00.500Z",
+        { logicalCpuCount: 2, idleTicks: 450, totalTicks: 1_500 },
+        5 * 1024 ** 3,
+        11_000_000,
+        79 * 1024 ** 3,
+      ),
+      measuredSnapshot(
+        "2026-07-18T00:00:02.000Z",
+        { logicalCpuCount: 2, idleTicks: 800, totalTicks: 3_000 },
+        8 * 1024 ** 3,
+        9_000_000,
+        70 * 1024 ** 3,
+      ),
+      measuredSnapshot(
+        "2026-07-18T00:00:04.000Z",
+        { logicalCpuCount: 2, idleTicks: 20, totalTicks: 100 },
+        7 * 1024 ** 3,
+        10_000_000,
+        75 * 1024 ** 3,
+      ),
+      measuredSnapshot(
+        "2026-07-18T00:00:06.000Z",
+        { logicalCpuCount: 2, idleTicks: 220, totalTicks: 1_100 },
+        6 * 1024 ** 3,
+        11_000_000,
+        60 * 1024 ** 3,
+      ),
+    ];
+
+    expect(
+      summarizeResourceSnapshots(snapshots, {
+        targetId: "mcp-bridge",
+        shardId: "deepagents",
+      }),
+    ).toEqual({
+      version: 1,
+      targetId: "mcp-bridge",
+      shardId: "deepagents",
+      startedAt: "2026-07-18T00:00:00.000Z",
+      finishedAt: "2026-07-18T00:00:06.000Z",
+      durationMs: 6_000,
+      sampleCount: 5,
+      cpu: {
+        logicalCpuCount: 2,
+        peakSampledPercent: 80,
+        intervalCount: 2,
+      },
+      memory: {
+        peakBytes: 8 * 1024 ** 3,
+        capacityBytes: 16_384_000 * 1024,
+        source: "cgroup-peak",
+      },
+      disk: {
+        peakDeltaBytes: 20 * 1024 ** 3,
+        minimumFreeBytes: 60 * 1024 ** 3,
+        capacityBytes: 100 * 1024 ** 3,
+      },
+    });
+  });
+
+  it("falls back to sampled MemAvailable and exposes an incomplete CPU interval", () => {
+    const snapshot = measuredSnapshot(
+      "2026-07-18T00:00:00.000Z",
+      null,
+      null,
+      12_000_000,
+      80 * 1024 ** 3,
+    );
+    const summary = summarizeResourceSnapshots([snapshot], { targetId: "common-egress-agent" });
+    expect(summary.durationMs).toBe(0);
+    expect(summary.sampleCount).toBe(1);
+    expect(summary.cpu).toEqual({
+      logicalCpuCount: null,
+      peakSampledPercent: null,
+      intervalCount: 0,
+    });
+    expect(summary.memory).toEqual({
+      peakBytes: (16_384_000 - 12_000_000) * 1024,
+      capacityBytes: 16_384_000 * 1024,
+      source: "mem-available",
+    });
   });
 });
 
@@ -659,6 +803,64 @@ describe("runner-pressure CLI fail-closed entrypoint (#7146)", () => {
       for (const file of [baselinePath, phaseBaselinesPath, classificationPath]) {
         expect(fs.statSync(file).mode & 0o777).toBe(0o600);
       }
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  it("initializes and summarizes one private job-level measurement ledger", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runner-measurement-"));
+    const snapshotsPath = path.join(directory, "runner-resource-snapshots.jsonl");
+    const summaryPath = path.join(directory, "runner-resource-summary.json");
+    const environment = {
+      E2E_TARGET_ID: "common-egress-agent",
+      E2E_RESOURCE_SNAPSHOTS_FILE: snapshotsPath,
+      E2E_RESOURCE_SUMMARY_FILE: summaryPath,
+    };
+    try {
+      expect(runHelper(["initialize-measurement"], environment).status).toBe(0);
+      expect(fs.readFileSync(snapshotsPath, "utf8").trim().split("\n")).toHaveLength(1);
+      expect(fs.readFileSync(summaryPath, "utf8")).toBe("");
+
+      const result = runHelper(["summarize-measurement"], environment);
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(snapshotsPath, "utf8").trim().split("\n")).toHaveLength(2);
+      const summary = JSON.parse(fs.readFileSync(summaryPath, "utf8"));
+      expect(summary).toMatchObject({
+        version: 1,
+        targetId: "common-egress-agent",
+        sampleCount: 2,
+        cpu: { intervalCount: expect.any(Number) },
+        disk: { minimumFreeBytes: expect.any(Number) },
+      });
+      expect(Object.keys(summary.memory).sort()).toEqual(["capacityBytes", "peakBytes", "source"]);
+      for (const file of [snapshotsPath, summaryPath]) {
+        expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+      }
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  it.each([
+    "symlink",
+    "hardlink",
+  ] as const)("rejects a %s-substituted measurement ledger", (linkKind) => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-linked-measurement-"));
+    const snapshotsPath = path.join(directory, "runner-resource-snapshots.jsonl");
+    const summaryPath = path.join(directory, "runner-resource-summary.json");
+    const protectedPath = path.join(directory, "protected.jsonl");
+    const protectedContents = "protected\n";
+    const environment = {
+      E2E_TARGET_ID: "common-egress-agent",
+      E2E_RESOURCE_SNAPSHOTS_FILE: snapshotsPath,
+      E2E_RESOURCE_SUMMARY_FILE: summaryPath,
+    };
+    try {
+      fs.writeFileSync(protectedPath, protectedContents, { mode: 0o600 });
+      LINK_CREATORS[linkKind](protectedPath, snapshotsPath);
+      expect(runHelper(["initialize-measurement"], environment).status).not.toBe(0);
+      expect(fs.readFileSync(protectedPath, "utf8")).toBe(protectedContents);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

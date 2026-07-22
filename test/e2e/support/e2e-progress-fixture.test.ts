@@ -6,14 +6,25 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterAll, expect, it, vi } from "vitest";
-import { assertPhaseLabel } from "../../../tools/e2e/runner-pressure-core.mts";
+import { assertPhaseLabel, parseSnapshotLine } from "../../../tools/e2e/runner-pressure-core.mts";
 import { E2E_TEARDOWN_PHASE, resourcePhaseLabel, test } from "../fixtures/e2e-test.ts";
 import type { ProgressSummary } from "../fixtures/progress.ts";
 
 const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-progress-fixture-"));
+const resourceSnapshots = path.join(artifactRoot, "runner-resource-snapshots.jsonl");
 let progressArtifact = "";
 
-vi.stubEnv("E2E_ARTIFACT_DIR", artifactRoot);
+const fixtureEnvironment = {
+  E2E_ARTIFACT_DIR: artifactRoot,
+  E2E_TARGET_ID: "fixture-progress-target",
+  NEMOCLAW_E2E_SHARD: "fixture-progress-shard",
+  E2E_RESOURCE_SNAPSHOTS_FILE: resourceSnapshots,
+} as const;
+const previousEnvironment = Object.fromEntries(
+  Object.keys(fixtureEnvironment).map((key) => [key, process.env[key]]),
+) as Record<keyof typeof fixtureEnvironment, string | undefined>;
+Object.assign(process.env, fixtureEnvironment);
+fs.writeFileSync(resourceSnapshots, "", { mode: 0o600 });
 
 afterAll(() => {
   try {
@@ -35,8 +46,21 @@ afterAll(() => {
       label: E2E_TEARDOWN_PHASE,
       outcome: "passed",
     });
+    const snapshots = fs
+      .readFileSync(resourceSnapshots, "utf8")
+      .trim()
+      .split("\n")
+      .map(parseSnapshotLine);
+    expect(snapshots.map((snapshot) => snapshot.phase)).toEqual([
+      "fixture-progress-target.prepare-progress-artifact",
+      "fixture-progress-target.record-final-fixture-phase",
+      "fixture-progress-target.release-registered-e2e-resources",
+    ]);
   } finally {
-    vi.unstubAllEnvs();
+    for (const [key, value] of Object.entries(previousEnvironment)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     fs.rmSync(artifactRoot, { force: true, recursive: true });
   }
 });

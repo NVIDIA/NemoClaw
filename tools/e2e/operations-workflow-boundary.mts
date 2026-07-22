@@ -17,6 +17,8 @@ const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
 const DOWNLOAD_ARTIFACT_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
+const UPLOAD_E2E_ARTIFACTS_ACTION =
+  "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57";
 const PR_GATE_REPORTER = "test/e2e/risk-signal-reporter.ts";
 const LIVE_VITEST_HELPER = "tools/e2e/live-vitest-invocation.mts run --test-path";
 const E2E_ARTIFACT_ACTION = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
@@ -462,6 +464,8 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "scripts/audit-test-runtime.mts",
     "runtimeAudit.auditTestRuntime",
     "runtimeAudit.formatRuntimeAuditSummary",
+    "scripts/scorecard/analyze-runtime-history.mts",
+    "runtimeHistory.buildRuntimeHistory",
     "core.summary",
     "scorecardData",
     "slackData",
@@ -476,6 +480,21 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   }
   if (generate.env?.RUNTIME_ARTIFACTS !== "${{ runner.temp }}/e2e-runtime-audit") {
     errors.push("scorecard generator must read the downloaded runtime audit directory");
+  }
+  if (generate.env?.RUNTIME_SUMMARY_FILE !== "${{ runner.temp }}/e2e-runtime-summary.json") {
+    errors.push("scorecard generator must write the bounded runtime summary file");
+  }
+
+  const upload = findStep(job, "Upload E2E runtime summary");
+  requirePinnedAction(errors, upload, "scorecard runtime summary upload");
+  if (
+    upload.uses !== UPLOAD_E2E_ARTIFACTS_ACTION ||
+    upload.if !== "${{ always() && steps.scorecard.outcome == 'success' }}" ||
+    upload.with?.name !== "e2e-runtime-summary" ||
+    upload.with?.path !== "${{ runner.temp }}/e2e-runtime-summary.json" ||
+    Object.keys(upload.with ?? {}).length !== 2
+  ) {
+    errors.push("scorecard must upload only the bounded runtime summary for rolling history");
   }
 
   const slack = findStep(job, "Post scorecard to Slack");

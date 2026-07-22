@@ -6,11 +6,24 @@ import { describe, expect, it } from "vitest";
 import { validateRunnerPressureWorkflow } from "../../../tools/e2e/runner-pressure-workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
 
-type WorkflowStep = Record<string, unknown> & { if?: string; name?: string; run?: string };
+type WorkflowStep = Record<string, unknown> & {
+  "continue-on-error"?: boolean;
+  if?: string;
+  name?: string;
+  run?: string;
+};
 type WorkflowJob = { steps: WorkflowStep[] };
 type Workflow = { jobs: Record<string, WorkflowJob> };
 
 const JOBS = ["rebuild-hermes", "rebuild-hermes-stale-base"] as const;
+const MEASUREMENT_JOBS = [
+  "common-egress-agent",
+  "rebuild-hermes",
+  "rebuild-hermes-stale-base",
+  "mcp-bridge",
+] as const;
+const INITIALIZE_MEASUREMENT_STEP = "Initialize runner comparison evidence";
+const SUMMARIZE_MEASUREMENT_STEP = "Summarize runner comparison evidence";
 
 function loadWorkflow(): Workflow {
   return readWorkflow() as Workflow;
@@ -26,8 +39,12 @@ function swapStep(workflow: Workflow, jobId: (typeof JOBS)[number]): WorkflowSte
   )!;
 }
 
+function namedStep(workflow: Workflow, jobId: string, name: string): WorkflowStep {
+  return workflow.jobs[jobId]!.steps.find((step) => step.name === name)!;
+}
+
 describe("runner-pressure E2E workflow boundary (#7146)", () => {
-  it("accepts the canonical Hermes heartbeat and terminal-consumer wiring", () => {
+  it("accepts the canonical pressure classification and runner comparison wiring", () => {
     expect(validateRunnerPressureWorkflow(loadWorkflow())).toEqual([]);
   });
 
@@ -45,6 +62,25 @@ describe("runner-pressure E2E workflow boundary (#7146)", () => {
     expect(provision.run).toContain("chmod 0600 /mnt/nemoclaw-hermes-rebuild.swap");
     expect(provision.run).toContain("mkswap /mnt/nemoclaw-hermes-rebuild.swap");
     expect(provision.run).toContain("swapon /mnt/nemoclaw-hermes-rebuild.swap");
+  });
+
+  it("limits job-level comparison evidence to the five larger-runner candidates", () => {
+    const workflow = loadWorkflow();
+    for (const jobId of MEASUREMENT_JOBS) {
+      expect(namedStep(workflow, jobId, INITIALIZE_MEASUREMENT_STEP)).toBeDefined();
+      expect(namedStep(workflow, jobId, SUMMARIZE_MEASUREMENT_STEP)).toBeDefined();
+    }
+    expect(namedStep(workflow, "mcp-bridge", INITIALIZE_MEASUREMENT_STEP).if).toBe(
+      "${{ matrix.agent == 'hermes' || matrix.agent == 'deepagents' }}",
+    );
+    expect(namedStep(workflow, "mcp-bridge", SUMMARIZE_MEASUREMENT_STEP).if).toBe(
+      "${{ always() && (matrix.agent == 'hermes' || matrix.agent == 'deepagents') }}",
+    );
+    for (const [jobId, job] of Object.entries(workflow.jobs)) {
+      if ((MEASUREMENT_JOBS as readonly string[]).includes(jobId)) continue;
+      expect(job.steps.some((step) => step.name === INITIALIZE_MEASUREMENT_STEP)).toBe(false);
+      expect(job.steps.some((step) => step.name === SUMMARIZE_MEASUREMENT_STEP)).toBe(false);
+    }
   });
 
   it.each([
@@ -116,6 +152,173 @@ describe("runner-pressure E2E workflow boundary (#7146)", () => {
 
     expect(validateRunnerPressureWorkflow(workflow)).toEqual(
       JOBS.map((jobId) => `${jobId} must upload runner-pressure evidence after every outcome`),
+    );
+  });
+
+  it("rejects a missing initializer in every comparison job", () => {
+    const workflow = loadWorkflow();
+    for (const jobId of MEASUREMENT_JOBS) {
+      workflow.jobs[jobId]!.steps = workflow.jobs[jobId]!.steps.filter(
+        (step) => step.name !== INITIALIZE_MEASUREMENT_STEP,
+      );
+    }
+
+    const errors = validateRunnerPressureWorkflow(workflow);
+    for (const jobId of MEASUREMENT_JOBS) {
+      expect(errors).toContain(
+        `${jobId} must initialize one runner comparison ledger after workspace preparation and before execution`,
+      );
+      expect(errors).toContain(
+        `${jobId} must export the exact private runner comparison paths to later test processes`,
+      );
+    }
+  });
+
+  it("rejects mutable or missing comparison artifact paths", () => {
+    const workflow = loadWorkflow();
+    for (const jobId of MEASUREMENT_JOBS) {
+      const initialize = namedStep(workflow, jobId, INITIALIZE_MEASUREMENT_STEP);
+      initialize.run = initialize.run!.replaceAll(
+        "runner-resource-snapshots.jsonl",
+        "mutable-snapshots.jsonl",
+      );
+    }
+
+    const errors = validateRunnerPressureWorkflow(workflow);
+    for (const jobId of MEASUREMENT_JOBS) {
+      expect(errors).toContain(
+        `${jobId} must export the exact private runner comparison paths to later test processes`,
+      );
+    }
+  });
+
+  it("rejects initialization after lane-specific setup has already started", () => {
+    const workflow = loadWorkflow();
+    for (const jobId of MEASUREMENT_JOBS) {
+      const steps = workflow.jobs[jobId]!.steps;
+      const initializeIndex = steps.findIndex((step) => step.name === INITIALIZE_MEASUREMENT_STEP);
+      const [initialize] = steps.splice(initializeIndex, 1);
+      const runIndex = steps.findIndex((step) => step.name?.startsWith("Run "));
+      steps.splice(runIndex, 0, initialize!);
+    }
+
+    const errors = validateRunnerPressureWorkflow(workflow);
+    for (const jobId of MEASUREMENT_JOBS) {
+      expect(errors).toContain(
+        `${jobId} must initialize one runner comparison ledger after workspace preparation and before execution`,
+      );
+    }
+  });
+
+  it("rejects summaries that run after artifact scanning or upload", () => {
+    const workflow = loadWorkflow();
+    const publicationSteps = new Map<string, string>([
+      ["common-egress-agent", "Upload common-egress agent artifacts"],
+      ["rebuild-hermes", "Upload Hermes rebuild artifacts"],
+      ["rebuild-hermes-stale-base", "Upload Hermes stale-base rebuild artifacts"],
+      ["mcp-bridge", "Scan MCP artifacts for fixture credentials"],
+    ]);
+    for (const jobId of MEASUREMENT_JOBS) {
+      const steps = workflow.jobs[jobId]!.steps;
+      const summaryIndex = steps.findIndex((step) => step.name === SUMMARIZE_MEASUREMENT_STEP);
+      const [summary] = steps.splice(summaryIndex, 1);
+      const publicationIndex = steps.findIndex((step) => step.name === publicationSteps.get(jobId));
+      steps.splice(publicationIndex + 1, 0, summary!);
+    }
+
+    const errors = validateRunnerPressureWorkflow(workflow);
+    for (const jobId of MEASUREMENT_JOBS) {
+      expect(errors).toContain(
+        `${jobId} must append a final runner snapshot and summarize before artifact publication`,
+      );
+    }
+  });
+
+  it("rejects comparison evidence that can replace live-test outcomes", () => {
+    const workflow = loadWorkflow();
+    for (const jobId of MEASUREMENT_JOBS) {
+      const initialize = namedStep(workflow, jobId, INITIALIZE_MEASUREMENT_STEP);
+      const summary = namedStep(workflow, jobId, SUMMARIZE_MEASUREMENT_STEP);
+      initialize["continue-on-error"] = false;
+      summary.if = "success()";
+      summary["continue-on-error"] = false;
+    }
+
+    const errors = validateRunnerPressureWorkflow(workflow);
+    for (const jobId of MEASUREMENT_JOBS.filter((jobId) => jobId !== "mcp-bridge")) {
+      expect(errors).toContain(
+        `${jobId} runner comparison evidence must remain best-effort after every outcome`,
+      );
+    }
+    expect(errors).toContain(
+      "mcp-bridge runner comparison evidence must be best-effort and limited to Hermes and Deep Agents shards",
+    );
+  });
+
+  it("rejects comparison wiring in MCP OpenClaw, dev, or unrelated jobs", () => {
+    const workflow = loadWorkflow();
+    namedStep(workflow, "mcp-bridge", INITIALIZE_MEASUREMENT_STEP).if = "always()";
+    workflow.jobs["mcp-bridge-dev"]!.steps.push({
+      name: INITIALIZE_MEASUREMENT_STEP,
+      run: "export E2E_RESOURCE_SNAPSHOTS_FILE=unexpected",
+    });
+    workflow.jobs["shields-config"]!.steps.push({
+      name: SUMMARIZE_MEASUREMENT_STEP,
+      run: "npx tsx tools/e2e/runner-pressure.mts summarize-measurement",
+    });
+
+    const errors = validateRunnerPressureWorkflow(workflow);
+    expect(errors).toContain(
+      "mcp-bridge runner comparison evidence must be best-effort and limited to Hermes and Deep Agents shards",
+    );
+    expect(errors).toContain(
+      "runner comparison evidence must not be wired to out-of-scope job mcp-bridge-dev",
+    );
+    expect(errors).toContain(
+      "runner comparison evidence must not be wired to out-of-scope job shields-config",
+    );
+  });
+
+  it.each([
+    {
+      label: "backgrounding the primary MCP test",
+      mutate: (script: string) =>
+        script.replace(
+          "npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts",
+          "npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts &",
+        ),
+    },
+    {
+      label: "backgrounding the primary MCP test without whitespace",
+      mutate: (script: string) =>
+        script.replace(
+          "npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts",
+          "npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts&",
+        ),
+    },
+    {
+      label: "parallelizing the Deep Agents follow-up",
+      mutate: (script: string) => script.replace("--no-file-parallelism", "--file-parallelism"),
+    },
+    {
+      label: "running the follow-up before the primary test",
+      mutate: (script: string) => {
+        const main =
+          "npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/mcp-bridge.test.ts";
+        const followUp = "test/e2e/live/openshell-credential-generation-window.test.ts";
+        return script
+          .replace(main, "PRIMARY_TEST_PLACEHOLDER")
+          .replace(followUp, main)
+          .replace("PRIMARY_TEST_PLACEHOLDER", followUp);
+      },
+    },
+  ])("rejects $label because the shared ledger requires serialized appends", ({ mutate }) => {
+    const workflow = loadWorkflow();
+    const run = namedStep(workflow, "mcp-bridge", "Run MCP OpenShell provider live test");
+    run.run = mutate(run.run!);
+
+    expect(validateRunnerPressureWorkflow(workflow)).toContain(
+      "mcp-bridge Deep Agents runner comparison tests must remain serialized in one job ledger",
     );
   });
 });

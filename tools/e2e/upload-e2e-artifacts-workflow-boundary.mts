@@ -55,6 +55,13 @@ type ExplicitUploadContract = {
 
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
+    "scorecard",
+    {
+      name: "e2e-runtime-summary",
+      path: "${{ runner.temp }}/e2e-runtime-summary.json",
+    },
+  ],
+  [
     "live",
     {
       name: "e2e-${{ matrix.id }}",
@@ -174,6 +181,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
+  ["scorecard", "${{ always() && steps.scorecard.outcome == 'success' }}"],
 ]);
 
 const EXPECTED_ACTION_INPUTS = {
@@ -279,6 +287,7 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         const env = record(job.env);
         return (
           jobName === "live" ||
+          jobName === "scorecard" ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||
           SHARED_E2E_JOBS.has(jobName) ||

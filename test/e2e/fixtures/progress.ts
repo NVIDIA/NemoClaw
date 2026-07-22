@@ -50,6 +50,7 @@ export interface TestProgressOptions {
   sampleResources?: () => ResourceSnapshot;
   sampleResourceEvidence?: (phase: string) => string;
   recordResourceBaseline?: (phase: string) => void;
+  recordResourceSnapshot?: (phase: string) => void;
   terminalPhase?: string;
   taskStatus?: () => { errorCount: number; outcome?: ProgressPhaseOutcome };
 }
@@ -163,6 +164,7 @@ export function startTestProgress(
   const sampleResources = options.sampleResources ?? defaultResourceSnapshot;
   const sampleResourceEvidence = options.sampleResourceEvidence;
   const recordResourceBaseline = options.recordResourceBaseline;
+  const recordResourceSnapshot = options.recordResourceSnapshot;
   const taskStatus = options.taskStatus;
   const stallThresholdMs = options.stallThresholdMs ?? DEFAULT_STALL_THRESHOLD_MS;
   const stallReminderIntervalMs =
@@ -202,6 +204,14 @@ export function startTestProgress(
   const recordBaselineBestEffort = () => {
     try {
       recordResourceBaseline?.(currentPhase());
+    } catch {
+      // Diagnostics must not change the live test result.
+    }
+  };
+
+  const recordSnapshotBestEffort = () => {
+    try {
+      recordResourceSnapshot?.(currentPhase());
     } catch {
       // Diagnostics must not change the live test result.
     }
@@ -371,10 +381,12 @@ export function startTestProgress(
       },
     );
     recordBaselineBestEffort();
+    recordSnapshotBestEffort();
     resetStallTimer();
   };
 
   recordBaselineBestEffort();
+  recordSnapshotBestEffort();
   logTransitionBestEffort();
   scheduleStall(stallThresholdMs);
 

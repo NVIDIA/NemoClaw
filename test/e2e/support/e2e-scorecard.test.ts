@@ -184,7 +184,14 @@ describe("E2E scorecard", () => {
   it("loads typed scorecard helpers through the native github-script require boundary", () => {
     const script = `
       const path = require('node:path');
-      for (const file of ['analyze-trace-timing.mts', 'summarize-jobs.mts', 'build-slack-blocks.mts', 'coordinate-scorecard.mts']) {
+      for (const file of [
+        'analyze-runtime-history.mts',
+        'analyze-trace-timing.mts',
+        'summarize-jobs.mts',
+        'build-slack-blocks.mts',
+        'coordinate-scorecard.mts',
+        'read-artifact-zip.mts',
+      ]) {
         const loaded = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard', file));
         if (Object.keys(loaded).length === 0) process.exit(2);
       }
@@ -474,6 +481,7 @@ describe("E2E scorecard", () => {
       ran: 4,
       skipped: 0,
       success: 3,
+      timingRows: [],
       total: 4,
     });
   });
@@ -501,6 +509,7 @@ describe("E2E scorecard", () => {
       ran: 2,
       skipped: 1,
       success: 1,
+      timingRows: [],
       total: 3,
     });
   });

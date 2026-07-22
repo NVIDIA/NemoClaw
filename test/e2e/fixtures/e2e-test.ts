@@ -8,6 +8,7 @@ import { test as base, expect } from "vitest";
 
 import {
   appendResourcePhaseBaseline,
+  appendResourceSnapshot,
   collectResourceSnapshot,
 } from "../../../tools/e2e/runner-pressure.mts";
 import { renderSnapshotLine } from "../../../tools/e2e/runner-pressure-core.mts";
@@ -113,6 +114,7 @@ export const test = base.extend<E2ETargetFixtures>({
     async ({ artifacts, onTestFinished, secrets, task }, use) => {
       const targetId = process.env.E2E_TARGET_ID;
       const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
+      const snapshotsPath = process.env.E2E_RESOURCE_SNAPSHOTS_FILE;
       const phasePlan = task.meta.e2ePhases;
       assert.ok(
         task.file.projectName !== "e2e-live" || phasePlan,
@@ -135,12 +137,41 @@ export const test = base.extend<E2ETargetFixtures>({
             : () => {
                 // Keep fixture and support tests quiet; live runs need phase progress.
               },
-        ...(targetId && baselinePath
+        ...(targetId && (baselinePath || snapshotsPath)
           ? {
-              sampleResourceEvidence: (phase: string) =>
-                renderSnapshotLine(collectResourceSnapshot(resourcePhaseLabel(targetId, phase))),
-              recordResourceBaseline: (phase: string) =>
-                appendResourcePhaseBaseline(baselinePath, resourcePhaseLabel(targetId, phase)),
+              sampleResourceEvidence: (phase: string) => {
+                const snapshot = collectResourceSnapshot(resourcePhaseLabel(targetId, phase), {
+                  includeDiagnostics: Boolean(baselinePath),
+                });
+                if (snapshotsPath) {
+                  try {
+                    appendResourceSnapshot(snapshotsPath, snapshot);
+                  } catch {
+                    // Comparison telemetry must not change the live test result.
+                  }
+                }
+                return renderSnapshotLine(snapshot);
+              },
+              ...(snapshotsPath
+                ? {
+                    recordResourceSnapshot: (phase: string) =>
+                      appendResourceSnapshot(
+                        snapshotsPath,
+                        collectResourceSnapshot(resourcePhaseLabel(targetId, phase), {
+                          includeDiagnostics: false,
+                        }),
+                      ),
+                  }
+                : {}),
+              ...(baselinePath
+                ? {
+                    recordResourceBaseline: (phase: string) =>
+                      appendResourcePhaseBaseline(
+                        baselinePath,
+                        resourcePhaseLabel(targetId, phase),
+                      ),
+                  }
+                : {}),
             }
           : {}),
       });

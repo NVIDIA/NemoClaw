@@ -51,6 +51,44 @@ discovery command locally to inspect the generated test matrix:
 npx tsx tools/e2e/credential-free-tests.mts
 ```
 
+## Heavy-runner comparison evidence
+
+Issue #7145 requires before-and-after evidence before moving heavy lanes to a
+larger runner. The initial measurement set is limited to:
+
+- `common-egress-agent`;
+- `rebuild-hermes`;
+- `rebuild-hermes-stale-base`;
+- the `hermes` and `deepagents` shards of `mcp-bridge`.
+
+The `openclaw` MCP shard, `mcp-bridge-dev`, and unrelated jobs do not emit this
+comparison artifact. This change records the standard-runner baseline only; a
+separate reviewed routing change is required before any lane uses a larger
+runner.
+
+Each eligible job has a best-effort initialization step for
+`runner-resource-snapshots.jsonl` immediately after the shared workspace
+preparation step. When initialization succeeds, the initial sample, automatic
+live-test heartbeats and phase changes, and an `always()`-conditioned
+best-effort final sample share that one private ledger. This keeps both
+serialized Deep Agents Vitest invocations in one job-level measurement. A
+best-effort finalizer writes `runner-resource-summary.json` before artifact
+scanning and upload. The summary
+contains the measured window, sample and valid CPU-interval counts, logical CPU
+capacity, peak sampled host CPU percentage, the highest sampled cgroup
+`memory.peak` counter (or a sampled `MemAvailable` fallback), memory capacity,
+peak workspace growth, minimum free workspace bytes, and workspace capacity.
+The cgroup peak can include activity before the ledger starts because the
+kernel counter is cumulative for that cgroup. Resource fields are numeric; the
+remaining strings are canonical timestamps and fixed lane or source labels.
+
+A comparison needs at least two snapshots to form a measured window, and CPU
+requires adjacent samples at least one second apart. Treat these values as
+sampled evidence rather than exact instantaneous peaks. Queue time, execution
+time, and outcome come from the GitHub Actions job metadata in the scorecard.
+Retain at least five standard-runner samples per eligible lane before reviewing
+a larger-runner routing proposal.
+
 ## Scheduled operations
 
 The consolidated workflow keeps its operational reporting in the same job
@@ -63,9 +101,13 @@ graph as the live targets:
   exceptional threshold, such as the same lane failing twice consecutively or
   remaining broken for 24 hours, rather than posting on every failed schedule.
 - `scorecard` writes the scheduled/manual result summary, adds this run's
-  semantic phase runtime table, compares the trusted cloud-onboard timing
-  summary with the latest prior-release `e2e.yaml` run, and posts to the daily
-  or full-run Slack route.
+  semantic phase runtime table, separates job queue time from execution time,
+  compares the current test medians with up to ten prior scheduled summaries,
+  compares the trusted cloud-onboard timing summary with the latest
+  prior-release `e2e.yaml` run, and posts to the daily or full-run Slack route.
+- The rolling comparison uses only the bounded `e2e-runtime-summary.json`
+  artifact retained for 14 days. It does not download historical raw test
+  artifacts, include manual runs in the baseline, or expose runner names.
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.
@@ -123,7 +165,9 @@ npm run test:runtime-audit -- path/to/run-1 path/to/run-2
 The audit groups each test by target and optional shard, ranks the groups by
 p95 runtime, and reports variability plus the slowest observed phase's duration
 and outcome. Scheduled and ordinary manual runs include the same table for that
-run in the GitHub Actions scorecard summary. Keep phase
+run in the GitHub Actions scorecard summary. The scorecard also shows a bounded
+nightly trend table with prior median, prior p95, delta, and pass rate; the
+first run explicitly starts the history instead of inventing a baseline. Keep phase
 labels specific to test behavior, call `progress.phase("literal phase label")`
 at the declared boundaries in order, and transition through the final
 test-declared phase on every passing path. The fixture rejects a passing live

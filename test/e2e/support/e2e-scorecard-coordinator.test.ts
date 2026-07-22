@@ -150,6 +150,38 @@ describe("scorecard coordinator assembly", () => {
     expect(slackData.channel).toBe("fullrun");
   });
 
+  it("separates runner queue time from execution time without exposing runner names", () => {
+    const { summaryMarkdown } = coordinator.buildScorecard(
+      coordinatorInput({
+        apiJobs: [
+          {
+            completed_at: "2026-07-16T00:03:10.000Z",
+            conclusion: "success",
+            created_at: "2026-07-16T00:00:00.000Z",
+            labels: ["ubuntu-latest"],
+            name: "rebuild-hermes | shard",
+            started_at: "2026-07-16T00:00:10.000Z",
+            status: "completed",
+          },
+          {
+            completed_at: "2026-07-16T00:01:30.000Z",
+            conclusion: "success",
+            created_at: "2026-07-16T00:00:00.000Z",
+            labels: ["larger-linux"],
+            name: "mcp-bridge",
+            started_at: "2026-07-16T00:00:30.000Z",
+            status: "completed",
+          },
+        ],
+      }),
+    );
+
+    expect(summaryMarkdown).toContain("### Slowest job timing");
+    expect(summaryMarkdown).toContain("| rebuild-hermes \\| shard | standard | 10.0s | 180.0s |");
+    expect(summaryMarkdown).toContain("| mcp-bridge | custom | 30.0s | 60.0s |");
+    expect(summaryMarkdown).not.toContain("runner_name");
+  });
+
   it("falls back to needs results when the jobs API is unavailable", () => {
     const { scorecardData } = coordinator.buildScorecard(
       coordinatorInput({
