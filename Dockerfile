@@ -304,6 +304,8 @@ RUN set -eu; \
     if [ -z "$EXPECTED_INTEGRITY" ]; then \
         echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin" >&2; exit 1; \
     fi; \
+    OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
+    if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle+transitive-remediation-v1'; fi; \
     MCPORTER_EXPECTED_INTEGRITY=""; \
     MCPORTER_EXPECTED_TARBALL=""; \
     if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; MCPORTER_EXPECTED_TARBALL="$MCPORTER_0_7_3_TARBALL"; fi; \
@@ -324,7 +326,7 @@ RUN set -eu; \
         "package=openclaw@${OPENCLAW_VERSION}" \
         "integrity=${EXPECTED_INTEGRITY}" \
         "tarball=${EXPECTED_TARBALL}" \
-        'recipe=ignore-scripts+reviewed-lifecycle-v1' \
+        "recipe=${OPENCLAW_RECIPE}" \
         "mcporter-package=mcporter@${MCPORTER_VERSION}" \
         "mcporter-integrity=${MCPORTER_EXPECTED_INTEGRITY}" \
         "mcporter-tarball=${MCPORTER_EXPECTED_TARBALL}" \
@@ -354,10 +356,17 @@ RUN set -eu; \
         echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
     else \
         echo "INFO: Base image OpenClaw $CUR_VER lacks exact reviewed provenance; installing $OPENCLAW_VERSION"; \
-        OPENCLAW_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
+        OPENCLAW_SOURCE_PACK_PATH="$(node --experimental-strip-types /scripts/lib/reviewed-npm-archive.mts \
             --package-spec "openclaw@${OPENCLAW_VERSION}" --integrity "$EXPECTED_INTEGRITY" \
             --tarball-url "$EXPECTED_TARBALL" --label "OpenClaw ${OPENCLAW_VERSION}")"; \
-        OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_PACK_PATH")"; \
+        OPENCLAW_PACK_DIR="$(dirname "$OPENCLAW_SOURCE_PACK_PATH")"; \
+        OPENCLAW_PACK_PATH="$OPENCLAW_SOURCE_PACK_PATH"; \
+        if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then \
+            OPENCLAW_REMEDIATION_JSON="$(node --experimental-strip-types /scripts/lib/openclaw-npm-remediation.mts \
+                --archive "$OPENCLAW_SOURCE_PACK_PATH" --package-spec "openclaw@${OPENCLAW_VERSION}" \
+                --working-directory "$OPENCLAW_PACK_DIR")"; \
+            OPENCLAW_PACK_PATH="$(node -e 'const value = JSON.parse(process.argv[1]); if (!value.remediated || typeof value.archivePath !== "string") process.exit(1); process.stdout.write(value.archivePath)' "$OPENCLAW_REMEDIATION_JSON")"; \
+        fi; \
         # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
         # install spans image layers. Removing it first also prevents unreviewed
         # files from surviving a same-version reinstall.
@@ -370,6 +379,9 @@ RUN set -eu; \
         esac; \
         rm -rf "$OPENCLAW_PACK_DIR"; \
     fi; \
+    case "$OPENCLAW_VERSION" in \
+        2026.3.11) npm ls -g --depth=1 openclaw tar >/dev/null ;; \
+    esac; \
     if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
         echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with exact lock provenance"; \
     else \

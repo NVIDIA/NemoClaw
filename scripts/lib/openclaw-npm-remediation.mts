@@ -27,8 +27,8 @@ type JsonObject = Record<string, any>;
 type Remediation = Readonly<{
   expectedPatchedMetadataIntegrity?: string;
   expectedPatchedTreeIntegrity?: string;
-  kind: "axios" | "core" | "jaeger";
-  version: "2026.6.10" | "2026.7.1";
+  kind: "axios" | "core" | "jaeger" | "legacy-core";
+  version: "2026.3.11" | "2026.6.10" | "2026.7.1";
 }>;
 
 type RemediationRequest = Readonly<{
@@ -130,6 +130,12 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
       "sha512-B5O6Gu3YGY52w+Px8diL5zBtk8mj0u7E1ZvVK7KOLWX9H+S3B7kYUxnGfyB239mVYSluecfiWGvFFMk5eFhwKg==",
     kind: "core",
     version: "2026.6.10",
+  },
+  "openclaw@2026.3.11": {
+    kind: "legacy-core",
+    expectedPatchedMetadataIntegrity:
+      "sha512-c+3QxBJidAFb8xZSmz4azC7KHFvXUAY9vN1AlXJ243LwMCFN5it5MW0r6FBuxIFvlBCnGlzcqRCvU5ghUec/ng==",
+    version: "2026.3.11",
   },
 });
 
@@ -246,7 +252,10 @@ export function hashPackageTree(packageDirectory: string): string {
 // 2026.7.1 continues to use the stronger complete-tree digest above.
 function hashPatchedMetadata(packageDirectory: string): string {
   const hash = createHash("sha512");
-  const names = ["package.json", "npm-shrinkwrap.json"];
+  const names = ["package.json"];
+  if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
+    names.push("npm-shrinkwrap.json");
+  }
   const bundledFsSafePackageJson = "node_modules/@openclaw/fs-safe/package.json";
   if (existsSync(join(packageDirectory, bundledFsSafePackageJson))) {
     names.push(bundledFsSafePackageJson);
@@ -445,6 +454,24 @@ export function patchOpenClawCorePackageGraph(packageDirectory: string): void {
 
   writeJson(packageJsonPath, packageJson);
   writeJson(shrinkwrapPath, shrinkwrap);
+}
+
+export function patchLegacyOpenClawCorePackageGraph(packageDirectory: string): void {
+  const packageJsonPath = join(packageDirectory, "package.json");
+  const packageJson = readJson(packageJsonPath);
+  requirePackageIdentity(packageJson, "openclaw", "2026.3.11", "Legacy OpenClaw core");
+  if (packageJson.dependencies?.tar !== "7.5.11") {
+    throw new Error("openclaw@2026.3.11 must declare reviewed tar@7.5.11 before remediation");
+  }
+  if (packageJson.bundledDependencies !== undefined) {
+    throw new Error("openclaw@2026.3.11 unexpectedly declares bundled dependencies");
+  }
+  if (existsSync(join(packageDirectory, "npm-shrinkwrap.json"))) {
+    throw new Error("openclaw@2026.3.11 unexpectedly ships an npm shrinkwrap");
+  }
+
+  packageJson.dependencies.tar = TAR_VERSION;
+  writeJson(packageJsonPath, packageJson);
 }
 
 export function patchOpenClawDiagnosticsPackageGraph(packageDirectory: string): void {
@@ -687,6 +714,8 @@ export function buildRemediatedOpenClawPluginArchive(request: BuildRequest): Rem
       join(sourcePackage, "node_modules", "@openclaw", "fs-safe"),
     );
     patchOpenClawCorePackageGraph(sourcePackage);
+  } else if (remediation.kind === "legacy-core") {
+    patchLegacyOpenClawCorePackageGraph(sourcePackage);
   } else if (remediation.kind === "axios") {
     const axiosArchive = packReplacement(
       `axios@${AXIOS_VERSION}`,
