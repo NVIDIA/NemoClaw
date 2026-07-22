@@ -16,9 +16,9 @@ import {
 } from "../../../tools/e2e/workflow-boundary.mts";
 import {
   currentGatewayUpgradeInstallerArgs,
+  currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
-  patchHistoricalInstallerAdvisoryThreshold,
   upgradeGatewayCleanupScript,
   validateLegacyGatewayUpgradeFixture,
 } from "../live/openshell-gateway-upgrade-helpers.ts";
@@ -80,60 +80,25 @@ describe("OpenShell gateway upgrade workflow boundary", () => {
     );
   });
 
-  it("keeps frozen installer setup deterministic without weakening the candidate audit", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-historical-audit-"));
-    const installer = path.join(tmp, "install.sh");
-    const payload = path.join(tmp, "payload.sh");
-    const oldSource = path.join(tmp, "old-source");
-    const dockerfile = path.join(oldSource, "Dockerfile");
-    fs.mkdirSync(oldSource);
-    fs.writeFileSync(
-      dockerfile,
-      [
-        "RUN npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\",
-        "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures",
-      ].join("\n"),
-    );
-    fs.writeFileSync(
-      payload,
-      `#!/usr/bin/env bash
-set -euo pipefail
-nemoclaw_src="$1"
-_CLI_DISPLAY=NemoClaw
-release_ref=v0.0.89
-spin() { :; }
-    spin "Cloning \${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
-`,
-    );
-    const installerSource = `#!/usr/bin/env bash
-set -euo pipefail
-payload_script="$1"
-source_root=${JSON.stringify(tmp)}
-  legacy_script="\${source_root}/install.sh"
-`;
-    const patchedInstaller = patchHistoricalInstallerAdvisoryThreshold(installerSource);
-    expect(patchHistoricalInstallerAdvisoryThreshold(patchedInstaller)).toBe(patchedInstaller);
-    expect(() => patchHistoricalInstallerAdvisoryThreshold("#!/usr/bin/env bash\n")).toThrow(
-      /bootstrap payload hook not found/,
-    );
-    fs.writeFileSync(installer, patchedInstaller);
-
-    try {
-      const patchPayload = spawnSync("bash", [installer, payload], {
-        encoding: "utf8",
-        env: { ...process.env, NEMOCLAW_OLD_OPENCLAW_VERSION: "2026.6.10" },
-      });
-      expect(patchPayload.status, patchPayload.stderr).toBe(0);
-      const patchDockerfile = spawnSync("bash", [payload, oldSource], { encoding: "utf8" });
-      expect(patchDockerfile.status, patchDockerfile.stderr).toBe(0);
-
-      const result = fs.readFileSync(dockerfile, "utf8");
-      expect(result).toContain("mcporter-runtime audit --omit=dev --audit-level=high");
-      expect(result).toContain("mcporter-runtime audit signatures");
-      expect(result).not.toContain("mcporter-runtime audit --omit=dev --audit-level=low");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
+  it("installs the selected E2E checkout instead of the trusted workflow SHA", () => {
+    expect(
+      currentNemoclawUpgradeRef({
+        NEMOCLAW_E2E_EXPECTED_SHA: "candidate-sha",
+        GITHUB_SHA: "trusted-main-sha",
+      }),
+    ).toBe("candidate-sha");
+    expect(
+      currentNemoclawUpgradeRef({
+        NEMOCLAW_CURRENT_NEMOCLAW_REF: "explicit-ref",
+        NEMOCLAW_E2E_EXPECTED_SHA: "candidate-sha",
+        GITHUB_SHA: "trusted-main-sha",
+      }),
+    ).toBe("explicit-ref");
+    expect(currentNemoclawUpgradeRef({ GITHUB_SHA: "workflow-sha" })).toBe("workflow-sha");
+    expect(
+      currentNemoclawUpgradeRef({ NEMOCLAW_E2E_EXPECTED_SHA: "", GITHUB_SHA: "workflow-sha" }),
+    ).toBe("workflow-sha");
+    expect(currentNemoclawUpgradeRef({})).toBe("HEAD");
   });
 
   it("pins the registry metadata written by each historical release fixture", () => {
@@ -166,6 +131,36 @@ source_root=${JSON.stringify(tmp)}
     expect(validateLegacyGatewayUpgradeFixture(fixture)).toEqual({
       sandboxBaseDigest: "10433a8cd2f2b809dd0fdf983514679e04c0f8aa1ff5bbff675029046033b108",
     });
+    expect(
+      validateLegacyGatewayUpgradeFixture({
+        nemoclawRef: "v0.0.89",
+        nemoclawCommit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e",
+        installerSha256: "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2",
+        openclawVersion: "2026.6.10",
+        sandboxBaseImageRef:
+          "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
+      }),
+    ).toEqual({
+      sandboxBaseDigest: "3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1",
+    });
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        nemoclawCommit: "3351fbdd4eb7d9b80ec471545083956327da2b10",
+      }),
+    ).toThrow(/exact reviewed ref\/commit\/OpenClaw profile/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        openclawVersion: "2026.4.24",
+      }),
+    ).toThrow(/exact reviewed ref\/commit\/OpenClaw profile/);
+    expect(() =>
+      validateLegacyGatewayUpgradeFixture({
+        ...fixture,
+        nemoclawRef: "v0.0.36",
+      }),
+    ).toThrow(/exact reviewed ref\/commit\/OpenClaw profile/);
     expect(() =>
       validateLegacyGatewayUpgradeFixture({
         ...fixture,

@@ -21,6 +21,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  packReviewedNpmArchive,
+  removeReviewedNpmArchive,
+} from "../../../scripts/lib/reviewed-npm-archive.mts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -37,13 +41,17 @@ import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   currentGatewayUpgradeInstallerArgs,
+  currentNemoclawUpgradeRef,
   expectedLegacyRegistryMetadata,
   oldGatewayUpgradeInstallerArgs,
-  patchHistoricalInstallerAdvisoryThreshold,
   upgradeGatewayCleanupScript,
   upgradeGatewayStateCleanupScript,
   validateLegacyGatewayUpgradeFixture,
 } from "./openshell-gateway-upgrade-helpers.ts";
+import {
+  patchOldInstallerFixture,
+  reviewedOldOpenClawArchive,
+} from "./openshell-gateway-upgrade-old-installer.ts";
 
 const INSTALL_OPENSHELL = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 const STATE_DIR = path.join(
@@ -68,11 +76,14 @@ const OLD_SANDBOX_BASE_IMAGE_REF =
 const OLD_OPENCLAW_VERSION = process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ?? "2026.4.24";
 const CURRENT_OPENCLAW_VERSION = process.env.NEMOCLAW_CURRENT_OPENCLAW_VERSION ?? "";
 const OPENCLAW_STATE_UPGRADE_PROOF = process.env.NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF === "1";
-const { sandboxBaseDigest: OLD_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgradeFixture({
-  nemoclawRef: OLD_NEMOCLAW_REF,
+const OLD_INSTALLER_FIXTURE_IDENTITY = Object.freeze({
   nemoclawCommit: OLD_NEMOCLAW_COMMIT,
-  installerSha256: OLD_INSTALLER_SHA256,
+  nemoclawRef: OLD_NEMOCLAW_REF,
   openclawVersion: OLD_OPENCLAW_VERSION,
+});
+const { sandboxBaseDigest: OLD_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgradeFixture({
+  ...OLD_INSTALLER_FIXTURE_IDENTITY,
+  installerSha256: OLD_INSTALLER_SHA256,
   sandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
 });
 const SURVIVOR_SANDBOX =
@@ -510,82 +521,6 @@ const verifyOpenClawStateUpgradeProof: (
   ? verifyUpgradedOpenClawStateUpgradeProof
   : () => Promise.resolve();
 
-// The frozen release installers are the source of truth, but their embedded
-// Dockerfiles predate the fixture pins needed for a deterministic upgrade test.
-// Keep this adapter scoped to the frozen historical lanes and retire it with
-// them; changing the tagged release payloads is not viable.
-function patchOldInstallerFixture(installer: string): void {
-  const needle = '  legacy_script="${source_root}/install.sh"\n';
-  const hook =
-    String.raw`  if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" && -f "$payload_script" ]]; then
-    python3 - "$payload_script" <<'NEMOCLAW_OLD_PAYLOAD_PIN_PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-needle = '    spin "Cloning \${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"\n'
-hook = r'''    if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" ]]; then
-      python3 - "$nemoclaw_src/Dockerfile" "$NEMOCLAW_OLD_OPENCLAW_VERSION" <<'NEMOCLAW_OLD_DOCKERFILE_PIN_PY'
-from pathlib import Path
-import sys
-
-path = Path(sys.argv[1])
-version = sys.argv[2]
-text = path.read_text(encoding="utf-8")
-injection = (
-    "# E2E old-upgrade fixture: force the historical OpenClaw before the old Dockerfile's version gate.\n"
-    "RUN rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw \\\n"
-    f"    && npm install -g --no-audit --no-fund --no-progress \"openclaw@{version}\" \\\n"
-    "    && openclaw --version\n\n"
-)
-if injection not in text:
-    arg_markers = [
-        line for line in text.splitlines(keepends=True)
-        if line.startswith("ARG OPENCLAW_VERSION=")
-    ]
-    if len(arg_markers) == 1:
-        marker = arg_markers[0]
-        text = text.replace(marker, marker + "\n" + injection, 1)
-    elif len(arg_markers) > 1:
-        raise SystemExit(
-            f"{path}: found {len(arg_markers)} OpenClaw version ARGs; expected exactly one"
-        )
-    else:
-        marker = "RUN set -eu; \\\n    MIN_VER=$(grep -m 1 'min_openclaw_version'"
-        if marker not in text:
-            raise SystemExit(f"{path}: old OpenClaw version gate not found")
-        text = text.replace(marker, injection + marker, 1)
-    path.write_text(text, encoding="utf-8")
-print(f"INFO: Forced OpenClaw {version} in old upgrade fixture Dockerfile", flush=True)
-NEMOCLAW_OLD_DOCKERFILE_PIN_PY
-    fi
-'''
-if hook not in text:
-    if needle not in text:
-        raise SystemExit(f"{path}: old source clone hook not found")
-    text = text.replace(needle, needle + hook, 1)
-    path.write_text(text, encoding="utf-8")
-NEMOCLAW_OLD_PAYLOAD_PIN_PY
-  fi
-`.replaceAll("\\${", "${");
-
-  const text = fs.readFileSync(installer, "utf8");
-  const patchedText = text.includes(hook)
-    ? text
-    : text.includes(needle)
-      ? text.replace(needle, needle + hook)
-      : (() => {
-          throw new Error(`${installer}: old bootstrap payload hook not found`);
-        })();
-  fs.writeFileSync(installer, patchedText, "utf8");
-}
-
-function patchOldInstallerAdvisoryThresholdFixture(installer: string): void {
-  const text = fs.readFileSync(installer, "utf8");
-  fs.writeFileSync(installer, patchHistoricalInstallerAdvisoryThreshold(text), "utf8");
-}
-
 function createOldDockerWrapper(artifacts: ArtifactSink): string {
   const wrapperDir = artifacts.pathFor("old-docker-wrapper");
   const logFile = artifacts.pathFor("old-docker-wrapper.log");
@@ -796,19 +731,9 @@ async function installOldNemoclawAndClaw(
     `downloaded ${OLD_NEMOCLAW_REF} installer must match its pinned SHA-256`,
   ).toBe(OLD_INSTALLER_SHA256);
   fs.chmodSync(oldInstaller, 0o755);
-  // v0.0.89 already contains the reviewed 2026.6.10 integrity/tarball pins, so
-  // it does not need the old version-pin adapter. Both frozen releases whose
-  // Dockerfiles run a live advisory query need the bounded threshold adapter;
-  // otherwise advisory publication can block fixture setup before migration.
-  const oldInstallerFixturePatches = [
-    ...(OLD_NEMOCLAW_REF === "v0.0.89" ? [] : [patchOldInstallerFixture]),
-    ...(["v0.0.74", "v0.0.89"].includes(OLD_NEMOCLAW_REF)
-      ? [patchOldInstallerAdvisoryThresholdFixture]
-      : []),
-  ];
-  for (const patchInstaller of oldInstallerFixturePatches) {
-    patchInstaller(oldInstaller);
-  }
+  patchOldInstallerFixture(oldInstaller, OLD_INSTALLER_FIXTURE_IDENTITY);
+
+  const reviewedOpenClaw = packReviewedNpmArchive(reviewedOldOpenClawArchive(OLD_OPENCLAW_VERSION));
 
   const installEnv = liveEnv({
     PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
@@ -816,6 +741,7 @@ async function installOldNemoclawAndClaw(
     NEMOCLAW_REAL_DOCKER: process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker",
     NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
     NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
+    NEMOCLAW_OLD_OPENCLAW_ARCHIVE: reviewedOpenClaw.archivePath,
     NEMOCLAW_OLD_OPENCLAW_VERSION: OLD_OPENCLAW_VERSION,
     NEMOCLAW_OLD_DOCKER_WRAPPER_LOG: oldDockerLog,
     NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
@@ -834,13 +760,17 @@ async function installOldNemoclawAndClaw(
   // A transient gateway import failure leaves the old installer session in a
   // failed state. Keep Vitest retries independent without applying --fresh to
   // the later current-version upgrade, which must preserve the survivor.
-  await runInstallerPayload(
-    host,
-    `old-${OLD_NEMOCLAW_REF}`,
-    oldGatewayUpgradeInstallerArgs(oldInstaller),
-    oldInstallLog,
-    installEnv,
-  );
+  try {
+    await runInstallerPayload(
+      host,
+      `old-${OLD_NEMOCLAW_REF}`,
+      oldGatewayUpgradeInstallerArgs(oldInstaller),
+      oldInstallLog,
+      installEnv,
+    );
+  } finally {
+    removeReviewedNpmArchive(reviewedOpenClaw);
+  }
   await artifacts.writeText(
     "old-docker-wrapper.log",
     fs.existsSync(oldDockerLog) ? fs.readFileSync(oldDockerLog, "utf8") : "",
@@ -864,11 +794,6 @@ async function installOldNemoclawAndClaw(
   expect(oldLog, `old fixture must show pinned OpenClaw ${OLD_OPENCLAW_VERSION}`).toMatch(
     new RegExp(`OpenClaw ${oldOpenClawVersionPattern}|openclaw@${oldOpenClawVersionPattern}`),
   );
-  expect(
-    oldLog.includes(
-      "INFO: Historical upgrade fixture retains npm audit at the reviewed high threshold",
-    ),
-  ).toBe(["v0.0.74", "v0.0.89"].includes(OLD_NEMOCLAW_REF));
 
   const openshellVersion = await bash(host, `openshell --version`, {
     artifactName: "old-openshell-version",
@@ -991,7 +916,7 @@ async function installCurrentNemoclawUpgrade(
   currentInstallLog: string,
   hiddenOldOpenShellDir?: string,
 ): Promise<void> {
-  const currentRef = process.env.NEMOCLAW_CURRENT_NEMOCLAW_REF ?? process.env.GITHUB_SHA ?? "HEAD";
+  const currentRef = currentNemoclawUpgradeRef(process.env);
   const currentRefResult = await bash(
     host,
     currentRef === "HEAD" ? "git rev-parse HEAD" : `printf '%s' ${shellQuote(currentRef)}`,
@@ -1190,8 +1115,19 @@ const runLinuxOpenShellGatewayUpgrade = test.skipIf(process.platform !== "linux"
 
 runLinuxOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: upgrades old working OpenClaw claw and restores survivor state",
-  { timeout: TEST_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox }) => {
+  {
+    timeout: TEST_TIMEOUT_MS,
+    meta: {
+      e2ePhases: [
+        "clear the prior gateway and start compatible inference",
+        "install pinned legacy NemoClaw and its sandbox",
+        "start the survivor agent and workspace marker",
+        "upgrade to the current OpenShell gateway",
+        "confirm survivor state and registry after upgrade",
+      ],
+    },
+  },
+  async ({ artifacts, cleanup, host, progress, sandbox }) => {
     await artifacts.writeJson("live-upgrade-target.json", {
       id: "openshell-gateway-upgrade",
       runner: "vitest",
@@ -1261,18 +1197,25 @@ runLinuxOpenShellGatewayUpgrade(
       baseUrl: fake.baseUrl,
     });
 
+    progress.phase("install pinned legacy NemoClaw and its sandbox");
     await installOldNemoclawAndClaw(host, artifacts, fake.baseUrl);
     const legacyStateContract = await captureOpenClawStateUpgradeProof(host, fake, artifacts);
     const hiddenOldOpenShellDir =
       OLD_NEMOCLAW_REF === "v0.0.55" ? await stageOldOpenShellInUserLocalBin(host) : undefined;
+
+    progress.phase("start the survivor agent and workspace marker");
     const survivorPid = await startSurvivorAgentInExistingClaw(host);
     expect(Number.isInteger(survivorPid) && survivorPid > 0).toBe(true);
+
+    progress.phase("upgrade to the current OpenShell gateway");
     await installCurrentNemoclawUpgrade(
       host,
       fake.baseUrl,
       artifacts.pathFor("current-install.log"),
       hiddenOldOpenShellDir,
     );
+
+    progress.phase("confirm survivor state and registry after upgrade");
     await assertSurvivorSandboxAfterUpgrade(host);
     await verifyOpenClawStateUpgradeProof(host, fake, artifacts, legacyStateContract);
   },
@@ -1280,8 +1223,18 @@ runLinuxOpenShellGatewayUpgrade(
 
 runOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: macOS incomplete current install fetches Darwin gateway asset",
-  async ({ artifacts }) => {
+  {
+    meta: {
+      e2ePhases: [
+        "stage a Darwin install with the gateway missing",
+        "run the installer asset recovery path",
+        "inspect the requested Darwin gateway assets",
+      ],
+    },
+  },
+  async ({ artifacts, progress }) => {
     const curlLog = artifacts.pathFor("macos-missing-gateway/curl.log");
+    progress.phase("run the installer asset recovery path");
     const result = runMacInstallerProbe(artifacts, "missing-gateway", (fakeBin) => {
       fs.mkdirSync(path.dirname(curlLog), { recursive: true });
       writeFakeDarwinUname(fakeBin);
@@ -1311,6 +1264,7 @@ exit 0
     const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
     expect(result.status, output).not.toBe(0);
     expect(result.stdout).toContain("missing Docker-driver binaries");
+    progress.phase("inspect the requested Darwin gateway assets");
     const downloads = fs.readFileSync(curlLog, "utf8");
     expect(downloads).toContain("openshell-gateway-aarch64-apple-darwin.tar.gz");
     expect(downloads).not.toContain("openshell-driver-vm-aarch64-apple-darwin.tar.gz");
@@ -1319,9 +1273,19 @@ exit 0
 
 runOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: macOS installer does not require VM driver Hypervisor entitlement",
-  async ({ artifacts }) => {
+  {
+    meta: {
+      e2ePhases: [
+        "stage a Darwin install with current binaries",
+        "run the installer entitlement path",
+        "confirm the VM driver remains unsigned",
+      ],
+    },
+  },
+  async ({ artifacts, progress }) => {
     const signLog = artifacts.pathFor("macos-vm-driver-entitlement/codesign.log");
     const stateFile = artifacts.pathFor("macos-vm-driver-entitlement/codesign-state");
+    progress.phase("run the installer entitlement path");
     const result = runMacInstallerProbe(artifacts, "vm-driver-entitlement", (fakeBin) => {
       fs.mkdirSync(path.dirname(signLog), { recursive: true });
       writeFakeDarwinUname(fakeBin);
@@ -1359,6 +1323,7 @@ exit 0
     });
     const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
     expect(result.status, output).toBe(0);
+    progress.phase("confirm the VM driver remains unsigned");
     const signLogText = fs.existsSync(signLog) ? fs.readFileSync(signLog, "utf8") : "";
     expect(signLogText).not.toContain("--force --sign - --entitlements");
     expect(result.stdout).not.toContain("Installing OpenShell from release");
@@ -1367,7 +1332,16 @@ exit 0
 
 runOpenShellGatewayUpgrade(
   "openshell-gateway-upgrade: macOS Docker sandbox builds keep VM rootfs compatibility disabled",
-  async ({ artifacts }) => {
+  {
+    meta: {
+      e2ePhases: [
+        "read the Docker compatibility sources",
+        "confirm OpenClaw Docker defaults disable Darwin VM mode",
+        "confirm Hermes Docker defaults disable Darwin VM mode",
+      ],
+    },
+  },
+  async ({ artifacts, progress }) => {
     await artifacts.writeJson("macos-docker-rootfs-permissions-target.json", {
       id: "openshell-gateway-upgrade-macos-docker-rootfs-permissions",
       runner: "vitest",
@@ -1387,12 +1361,15 @@ runOpenShellGatewayUpgrade(
       "utf8",
     );
 
+    progress.phase("confirm OpenClaw Docker defaults disable Darwin VM mode");
     expect(dockerfile).toContain("ARG NEMOCLAW_DARWIN_VM_COMPAT=0");
     expect(dockerfilePatch).toContain(
       'ARG NEMOCLAW_DARWIN_VM_COMPAT=${sanitizeDockerArg(darwinVmCompat ? "1" : "0")}',
     );
     expect(patchFlow).toContain("const darwinVmCompat = false;");
     expect(dockerfile).toContain("chmod -R a+rwX /sandbox/.openclaw");
+
+    progress.phase("confirm Hermes Docker defaults disable Darwin VM mode");
     expect(hermesDockerfile).toContain("ARG NEMOCLAW_DARWIN_VM_COMPAT=0");
     expect(hermesDockerfile).toContain("chmod -R a+rwX /sandbox/.hermes");
     expect(hermesDockerfile).toContain("chmod a+rw /sandbox/.bashrc /sandbox/.profile");

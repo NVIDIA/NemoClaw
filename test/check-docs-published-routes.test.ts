@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 import {
   buildPublishedRouteIndex,
@@ -57,6 +58,14 @@ navigation:
             title: Release Notes
             slug: release-notes
 `;
+
+const repoRoot = path.join(import.meta.dirname, "..");
+const fernYaml = readFileSync(path.join(repoRoot, "fern", "docs.yml"), "utf8");
+const fernRedirects = (
+  parse(fernYaml) as {
+    redirects?: Array<{ source: string; destination: string }>;
+  }
+).redirects;
 
 function withDocsSource(source: string, run: (docsDir: string) => void): void {
   const docsDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-doc-routes-"));
@@ -431,6 +440,72 @@ describe("Manage Sandboxes extension routes", () => {
     expect(
       index.routes.has("/user-guide/deepagents/manage-sandboxes/install-openclaw-plugins"),
     ).toBe(false);
+  });
+});
+
+describe("headless server deployment routes", () => {
+  const index = buildPublishedRouteIndex();
+
+  it("publishes the guide for every agent variant (#7180)", () => {
+    for (const variant of ["openclaw", "hermes", "deepagents"]) {
+      expect(index.routes.has(`/user-guide/${variant}/deployment/deploy-to-headless-server`)).toBe(
+        true,
+      );
+    }
+  });
+
+  it("resolves every guide link against generated published routes (#7180)", () => {
+    expect(findBrokenPublishedRoutes("deployment/deploy-to-headless-server.mdx", index)).toEqual(
+      [],
+    );
+  });
+
+  it("retires Brev-specific deployment pages in favor of the shared guide (#7180)", () => {
+    expect(index.routes.has("/user-guide/openclaw/deployment/deploy-to-remote-gpu")).toBe(false);
+    expect(index.routes.has("/user-guide/openclaw/deployment/brev-web-ui")).toBe(false);
+  });
+
+  it("redirects every retired Brev deployment route directly to the shared guide (#7180)", () => {
+    const redirects = fernRedirects ?? [];
+    const destinations = new Map(redirects.map(({ source, destination }) => [source, destination]));
+    const redirectIndexes = new Map(redirects.map(({ source }, index) => [source, index]));
+
+    for (const retiredSlug of ["deploy-to-remote-gpu", "brev-web-ui"]) {
+      for (const [sourceBase, destinationBase] of [
+        [
+          `/nemoclaw/latest/user-guide/openclaw/deployment/${retiredSlug}`,
+          "/nemoclaw/latest/user-guide/openclaw/deployment/deploy-to-headless-server",
+        ],
+        [
+          `/nemoclaw/user-guide/openclaw/deployment/${retiredSlug}`,
+          "/nemoclaw/user-guide/openclaw/deployment/deploy-to-headless-server",
+        ],
+        [
+          `/nemoclaw/latest/deployment/${retiredSlug}`,
+          "/nemoclaw/latest/user-guide/openclaw/deployment/deploy-to-headless-server",
+        ],
+        [
+          `/nemoclaw/deployment/${retiredSlug}`,
+          "/nemoclaw/user-guide/openclaw/deployment/deploy-to-headless-server",
+        ],
+      ]) {
+        expect(destinations.get(sourceBase)).toBe(destinationBase);
+        expect(destinations.get(`${sourceBase}.html`)).toBe(destinationBase);
+        expect(destinations.get(`${sourceBase}/index.html`)).toBe(destinationBase);
+        expect(destinations.get(`${sourceBase}.md`)).toBe(`${destinationBase}.md`);
+        expect(destinations.get(`${sourceBase}.mdx`)).toBe(`${destinationBase}.mdx`);
+
+        expect(redirectIndexes.get(`${sourceBase}.html`)).toBeLessThan(
+          redirectIndexes.get("/nemoclaw/:path*.html") ?? -1,
+        );
+        const genericIndexSource = sourceBase.startsWith("/nemoclaw/latest/")
+          ? "/nemoclaw/latest/:path*/index.html"
+          : "/nemoclaw/:path*/index.html";
+        expect(redirectIndexes.get(`${sourceBase}/index.html`)).toBeLessThan(
+          redirectIndexes.get(genericIndexSource) ?? -1,
+        );
+      }
+    }
   });
 });
 

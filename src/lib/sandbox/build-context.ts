@@ -163,6 +163,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "checks", "verify-openshell-policy-boundary-dependencies.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "checks", "node-tar-image-scan.mts"),
+    path.join(stagedScriptsDir, "checks", "node-tar-image-scan.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
@@ -255,6 +259,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-shared-state-permissions.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-shared-state-permissions.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-bundled-npm-tar.mts"),
+    path.join(stagedScriptsDir, "patch-bundled-npm-tar.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "verify-wechat-runtime-lock.mts"),

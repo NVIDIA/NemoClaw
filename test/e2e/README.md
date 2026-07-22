@@ -85,6 +85,53 @@ artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
 
+Every `e2e-live` test declares an ordered semantic phase plan in
+`meta.e2ePhases` and uses the automatic progress fixture. Normal live output
+shows only the phase number, semantic label, and the completed phase's outcome
+and duration. It deliberately does not repeat the test identity, test start or
+finish, or total test elapsed time already reported by Vitest and GitHub
+Actions. A transition looks like:
+
+```text
+[e2e phase 2/4] onboard the sandbox — passed in 2m 14s; next 3/4: verify hosted inference
+```
+
+The harness appends `release registered E2E resources` after the test-declared
+plan, so the displayed phase count includes that terminal phase. Registered
+cleanup duration, failures, and stall diagnostics are attributed there. Soft
+assertion failures remain attributed to the semantic phase in which they
+occurred rather than being reassigned to resource release.
+
+If one phase remains active for five minutes, a content-free diagnostic adds
+the phase duration, age of the last child output, current redacted command
+activity, and runner resources. It repeats every ten minutes while that same
+phase remains active. Child output contents are never forwarded by progress
+logging.
+
+During fixture teardown, the fixture writes `test-progress.json` into each
+test's existing artifact directory for passing and failing tests. The summary
+keeps the test identity and overall timestamps, plus each recorded phase's
+timestamps, duration, outcome, output-event count, and last-output timestamp.
+It also records `E2E_TARGET_ID` and `NEMOCLAW_E2E_SHARD` when those values are
+set. Compare extracted artifacts from multiple runs with:
+
+```bash
+npm run test:runtime-audit -- path/to/run-1 path/to/run-2
+```
+
+The audit groups each test by target and optional shard, ranks the groups by
+p95 runtime, and reports variability and the slowest observed phase. Keep phase
+labels specific to test behavior, call `progress.phase("literal phase label")`
+at the declared boundaries in order, and transition through the final
+test-declared phase on every passing path. The fixture rejects a passing live
+test that never reaches that phase; the harness enters the resource-release
+phase automatically.
+Validate phase coverage without executing live test bodies with:
+
+```bash
+npm run test:e2e-phases:check
+```
+
 ## PR E2E gate
 
 The controller, coordination check, and required job deliberately use
@@ -404,19 +451,20 @@ phase limits in the budget file, and limits the longest onboard output gap to
 `full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
 
 When changed base-image inputs require the authoritative local OpenClaw base
-build, the target applies the separately calibrated 31-second allowance only to
+build, the target applies the separately calibrated 90-second allowance only to
 the root-start and sandbox-phase limits. The installer must emit the exact local
 base-build reason before the allowance applies. Published-image runs retain the
 normal limits, and output silence, first-turn, and all other phase requirements
 remain unchanged.
 
-The two Hermes rebuild jobs add a bounded 32 GiB swap file on their ephemeral
-hosted runners before invoking the live fixture. The fixture verifies that
-floor and provisions the same swap file on GitHub Actions when a trusted
-control-plane run uses the workflow definition from `main`. Those jobs build
-both old and current Hermes image layers and can otherwise exhaust the runner's
-default memory and swap during Docker layer export. Other E2E jobs keep the
-standard runner memory configuration.
+The two Hermes rebuild jobs and both reusable-workflow Hermes image exporters
+add a bounded 32 GiB swap file on their ephemeral hosted runners before the
+memory-heavy image build. The rebuild fixture verifies that floor and
+provisions the same swap file on GitHub Actions when a trusted control-plane
+run uses the workflow definition from `main`. Those paths build large Hermes
+image layers and can otherwise exhaust the runner's default memory and swap
+during Docker layer export. Other E2E jobs keep the standard runner memory
+configuration.
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first

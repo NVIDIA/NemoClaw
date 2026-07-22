@@ -20,7 +20,10 @@ function gatewayCallFixture(): string {
 const process = { env: {} };
 const GATEWAY_CLIENT_NAMES = { CLI: "cli", GATEWAY_CLIENT: "gateway-client" };
 const GATEWAY_CLIENT_MODES = { CLI: "cli", BACKEND: "backend" };
+let storedOperatorDeviceAuthToken = false;
 function isLoopbackGatewayUrl(url) { return url.startsWith("ws://127.0.0.1:"); }
+function resolveDeviceIdentityForGatewayCall() { return { deviceId: "device-1" }; }
+function hasStoredOperatorDeviceAuthToken() { return storedOperatorDeviceAuthToken; }
 function shouldOmitDeviceIdentityForGatewayCall(params) {
   const mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;
   const clientName = params.opts.clientName ?? GATEWAY_CLIENT_NAMES.CLI;
@@ -34,6 +37,7 @@ function setForceDevicePairing(value) {
   if (value) process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING = "1";
   else delete process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING;
 }
+function setStoredOperatorDeviceAuthToken(value) { storedOperatorDeviceAuthToken = value; }
 `);
 }
 

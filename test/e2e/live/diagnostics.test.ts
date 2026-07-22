@@ -114,7 +114,17 @@ function assertNoSecretInExtractedArchive(extractDir: string, apiKey: string): v
 
 test("diagnostics CLI creates sanitized archives and validates sandbox/credential diagnostics", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "validate diagnostics runtime prerequisites",
+      "exercise quick debug archive",
+      "install diagnostics sandbox",
+      "inspect sanitized full and scoped archives",
+      "validate sandbox status and config",
+      "audit and reset gateway credentials",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   expect(
     fs.existsSync(CLI_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI targets",
@@ -191,6 +201,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
     }),
   );
 
+  progress.phase("exercise quick debug archive");
   const version = await host.command("node", [CLI_ENTRYPOINT, "--version"], {
     artifactName: "diagnostics-nemoclaw-version",
     env: testEnv(home),
@@ -222,6 +233,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
     "debug --quick must complete within the legacy 30s process timeout plus harness scheduling grace",
   ).toBeLessThanOrEqual(DEBUG_QUICK_TIMEOUT_MS + 5_000);
 
+  progress.phase("install diagnostics sandbox");
   const install = await host.command(
     "bash",
     ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
@@ -235,6 +247,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
   );
   expect(install.exitCode, resultText(install)).toBe(0);
 
+  progress.phase("inspect sanitized full and scoped archives");
   const fullDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-debug-full-"));
   const fullArchive = path.join(fullDir, "debug-full.tar.gz");
   const extractDir = path.join(fullDir, "extracted");
@@ -296,6 +309,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
     false,
   );
 
+  progress.phase("validate sandbox status and config");
   const config = await sandbox.exec(
     SANDBOX_NAME,
     ["sh", "-lc", "cat /sandbox/.openclaw/openclaw.json"],
@@ -318,6 +332,7 @@ test("diagnostics CLI creates sanitized archives and validates sandbox/credentia
   expect(status.exitCode, resultText(status)).toBe(0);
   expect(resultText(status)).toMatch(/Model/i);
 
+  progress.phase("audit and reset gateway credentials");
   const rawCredentialsList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
   const credentialsOutput = rawResultText(rawCredentialsList);
   const credentialsStdout = rawCredentialsList.stdout;

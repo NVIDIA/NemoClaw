@@ -8,7 +8,7 @@
 NemoClaw v0.0.90 keeps managed-image routing identifiers out of secret-shaped build arguments, remediates reviewed OpenClaw dependency vulnerabilities, restores provider-reset recovery, corrects WhatsApp health reporting, and aligns DGX Station guidance with the versioned installer.
 
 - Managed OpenClaw, Hermes, and Deep Agents images now use `NEMOCLAW_INFERENCE_PROVIDER_ID` for the non-secret inference route selector, while provider credentials stay in OpenShell storage and the host-side credential alias remains unchanged.
-  Existing custom images can use the legacy selector through v0.0.90 and should migrate before the fallback is removed in v0.0.91.
+  Existing custom images can still use the legacy selector in v0.0.91, but should migrate to `NEMOCLAW_INFERENCE_PROVIDER_ID` before the compatibility fallback is removed in a future release.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - OpenClaw core, Slack, and Microsoft Teams installations now replace reviewed vulnerable transitive packages with integrity-verified remediated versions while retaining the `openclaw@2026.6.10` release pin.
   Archive validation fails closed, and the dependency audit records the remaining reviewed low- and moderate-severity findings.

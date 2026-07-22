@@ -11,14 +11,17 @@
  * that valid device token during authentication, before its canonical pairing
  * path can create the scope-upgrade request. Its operator.admin retry fails the
  * same way, after which NemoClaw historically repaired the two JSON state files
- * directly. A configured gateway.auth.token would otherwise
- * take precedence over the already-issued device credential and reach the
- * handler as shared-token auth. Keep the entire approval in OpenClaw instead:
- * for the exact bounded CLI mismatch, continue only into OpenClaw's pairing
- * gate; for the resulting same-device repair, explicitly use OpenClaw's stored
- * device credential with operator.pairing, then let the gateway's canonical
- * approveDevicePairing path reload, lock, rotate the token, persist, broadcast,
- * and respond.
+ * directly. OpenClaw 2026.7.1 also omits CLI identity for loopback shared-token
+ * calls. Preserve that identity whenever a stored operator device credential
+ * exists, while retaining the upstream omission during bootstrap and for the
+ * local backend. The shared token may authenticate the connection, but the
+ * signed identity keeps the paired-device scope check authoritative and lets
+ * OpenClaw create a canonical pending scope-upgrade request. Keep the entire
+ * approval in OpenClaw instead: for the exact bounded CLI mismatch, continue
+ * only into OpenClaw's pairing gate; for the resulting same-device repair,
+ * explicitly use OpenClaw's stored device credential with operator.pairing,
+ * then let the gateway's canonical approveDevicePairing path reload, lock,
+ * rotate the token, persist, broadcast, and respond.
  *
  * Remove this patch when upstream OpenClaw supports same-device, operator-only
  * scope approval through the gateway using the already-approved pairing scope
@@ -40,6 +43,8 @@ const CLI_SCOPE_MARKER = "nemoclaw: reach gateway for bounded same-device scope 
 const CLI_RETRY_MARKER = "nemoclaw: keep bounded stored device auth fail closed";
 const CLI_LIST_MARKER = "nemoclaw: preflight bounded stored device auth before live pairing list";
 const CALL_FORCE_IDENTITY_MARKER = "nemoclaw: force device identity for loopback pairing bootstrap";
+const CALL_STORED_IDENTITY_MARKER =
+  "nemoclaw: retain stored CLI device identity for loopback shared-token scope enforcement";
 const CLI_APPLIED_MARKERS = [
   CLI_MARKER,
   CLI_APPROVE_MARKER,
@@ -72,6 +77,16 @@ const CALL_OMIT_IDENTITY_REPLACEMENT = [
   "function shouldOmitDeviceIdentityForGatewayCall(params) {",
   `\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") return false; // ${CALL_FORCE_IDENTITY_MARKER} (#4462)`,
   "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
+].join("\n");
+const CALL_STORED_IDENTITY_TARGET =
+  "\tconst isLocalCliSharedAuth = mode === GATEWAY_CLIENT_MODES.CLI && clientName === GATEWAY_CLIENT_NAMES.CLI && hasSharedSecretAuth && isLoopback;";
+const CALL_STORED_IDENTITY_REPLACEMENT = [
+  "\tconst isLocalCliSharedAuth =",
+  "\t\tmode === GATEWAY_CLIENT_MODES.CLI &&",
+  "\t\tclientName === GATEWAY_CLIENT_NAMES.CLI &&",
+  "\t\thasSharedSecretAuth &&",
+  "\t\tisLoopback &&",
+  `\t\t!hasStoredOperatorDeviceAuthToken(resolveDeviceIdentityForGatewayCall()); // ${CALL_STORED_IDENTITY_MARKER} (#4462)`,
 ].join("\n");
 
 type PatchStatus = "already-applied" | "no-match" | "would-apply";
@@ -813,28 +828,43 @@ const FILE_SPECS: FileSpec[] = [
   {
     id: "gateway-call-device-identity",
     label: "gateway call device-identity runtime",
-    marker: CALL_FORCE_IDENTITY_MARKER,
+    marker: CALL_STORED_IDENTITY_MARKER,
     selector(source) {
       return (
         source.includes("function shouldOmitDeviceIdentityForGatewayCall(params) {") &&
         source.includes("const isLocalCliSharedAuth =") &&
-        (source.includes(CALL_OMIT_IDENTITY_TARGET) || source.includes(CALL_FORCE_IDENTITY_MARKER))
+        (source.includes(CALL_OMIT_IDENTITY_TARGET) ||
+          source.includes(CALL_FORCE_IDENTITY_MARKER)) &&
+        (source.includes(CALL_STORED_IDENTITY_TARGET) ||
+          source.includes(CALL_STORED_IDENTITY_MARKER))
       );
     },
     patch(source, file) {
-      if (source.includes(CALL_FORCE_IDENTITY_MARKER)) {
-        return { source, status: "already-applied" };
+      let result: ReplacementResult = { source };
+      let changed = false;
+      if (!result.source.includes(CALL_FORCE_IDENTITY_MARKER)) {
+        result = replaceExactlyOnce(
+          result.source,
+          CALL_OMIT_IDENTITY_TARGET,
+          CALL_OMIT_IDENTITY_REPLACEMENT,
+          "gateway call forced device-identity target",
+          file,
+        );
+        if (result.error) return { source, status: "no-match", error: result.error };
+        changed = true;
       }
-      const result = replaceExactlyOnce(
-        source,
-        CALL_OMIT_IDENTITY_TARGET,
-        CALL_OMIT_IDENTITY_REPLACEMENT,
-        "gateway call device-identity omission target",
-        file,
-      );
-      return result.error
-        ? { source, status: "no-match", error: result.error }
-        : { source: result.source, status: "would-apply" };
+      if (!result.source.includes(CALL_STORED_IDENTITY_MARKER)) {
+        result = replaceExactlyOnce(
+          result.source,
+          CALL_STORED_IDENTITY_TARGET,
+          CALL_STORED_IDENTITY_REPLACEMENT,
+          "gateway call stored device-identity target",
+          file,
+        );
+        if (result.error) return { source, status: "no-match", error: result.error };
+        changed = true;
+      }
+      return { source: result.source, status: changed ? "would-apply" : "already-applied" };
     },
   },
   {

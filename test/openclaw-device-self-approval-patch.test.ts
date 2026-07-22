@@ -174,7 +174,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
-  it("retains device identity only for the explicitly marked loopback bootstrap child", () => {
+  it("retains a stored CLI identity while preserving bootstrap and backend shared auth", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-identity-bootstrap-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -184,20 +184,77 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       const source = fs.readFileSync(path.join(dist, "call-fixture.js"), "utf8");
       const runtime = runFixture<{
         setForceDevicePairing(value: boolean): void;
+        setStoredOperatorDeviceAuthToken(value: boolean): void;
         shouldOmitDeviceIdentityForGatewayCall(params: Record<string, unknown>): boolean;
-      }>(source, "({ setForceDevicePairing, shouldOmitDeviceIdentityForGatewayCall })");
-      const params = {
+      }>(
+        source,
+        "({ setForceDevicePairing, setStoredOperatorDeviceAuthToken, shouldOmitDeviceIdentityForGatewayCall })",
+      );
+      const cliParams = {
         authMode: "token",
         opts: { clientName: "cli", mode: "cli" },
         token: "loopback-token",
         url: "ws://127.0.0.1:18789",
       };
+      const backendParams = {
+        authMode: "token",
+        opts: { clientName: "gateway-client", mode: "backend" },
+        token: "loopback-token",
+        url: "ws://127.0.0.1:18789",
+      };
 
-      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(params)).toBe(true);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(cliParams)).toBe(true);
       runtime.setForceDevicePairing(true);
-      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(params)).toBe(false);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(cliParams)).toBe(false);
       runtime.setForceDevicePairing(false);
-      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(params)).toBe(true);
+      runtime.setStoredOperatorDeviceAuthToken(true);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(cliParams)).toBe(false);
+      runtime.setStoredOperatorDeviceAuthToken(false);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(cliParams)).toBe(true);
+      expect(runtime.shouldOmitDeviceIdentityForGatewayCall(backendParams)).toBe(true);
+      expect(
+        runtime.shouldOmitDeviceIdentityForGatewayCall({
+          ...backendParams,
+          url: "wss://gateway.example.test",
+        }),
+      ).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades a force-only patched local base with stored-device identity retention", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-identity-upgrade-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      const callFile = path.join(dist, "call-fixture.js");
+      const source = fs.readFileSync(callFile, "utf8");
+      const target = [
+        "function shouldOmitDeviceIdentityForGatewayCall(params) {",
+        "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
+      ].join("\n");
+      const forceOnly = [
+        "function shouldOmitDeviceIdentityForGatewayCall(params) {",
+        '\tif (process.env.NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING === "1") return false; // nemoclaw: force device identity for loopback pairing bootstrap (#4462)',
+        "\tconst mode = params.opts.mode ?? GATEWAY_CLIENT_MODES.CLI;",
+      ].join("\n");
+      expect(source).toContain(target);
+      fs.writeFileSync(callFile, source.replace(target, forceOnly));
+
+      const apply = runPatch(dist);
+      expect(apply.status, `${apply.stdout}${apply.stderr}`).toBe(0);
+      const patched = fs.readFileSync(callFile, "utf8");
+      expect(patched.match(/force device identity for loopback pairing bootstrap/gu)).toHaveLength(
+        1,
+      );
+      expect(
+        patched.match(
+          /retain stored CLI device identity for loopback shared-token scope enforcement/gu,
+        ),
+      ).toHaveLength(1);
+      expect(runPatch(dist).status).toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
