@@ -65,16 +65,24 @@ ARG CODEX_ACP_0_11_1_INTEGRITY=sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLr
 ARG MCPORTER_VERSION=0.7.3
 ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
 ARG MCPORTER_0_7_3_TARBALL=https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz
+
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
+# credential chains from attempting an impossible metadata discovery path.
+ENV AWS_EC2_METADATA_DISABLED=true
+
 COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
 COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
 COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json
 COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
+COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 
-# OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
-# credential chains from attempting an impossible metadata discovery path.
-ENV AWS_EC2_METADATA_DISABLED=true
+# The final image owns the shipped dependency boundary independently of base
+# freshness. Reassert the npm-private node-tar fix here; the helper is
+# idempotent for a remediated base and fails closed on unexpected npm layouts.
+RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
+    --npm-root /usr/local/lib/node_modules/npm
 
 # OpenClaw 2026.6.10 loads some generated source through jiti. Disable its
 # filesystem transform cache so source fragments that mention provider marker
@@ -377,6 +385,10 @@ RUN set -eu; \
         rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
         npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
             --ignore-scripts --omit=dev --no-audit --no-fund --no-progress; \
+        npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ls \
+            --omit=dev --all @hono/node-server @modelcontextprotocol/sdk mcporter >/dev/null; \
+        node --input-type=module -e \
+            'const { StreamableHTTPServerTransport } = await import("file:///usr/local/lib/nemoclaw/mcporter-runtime/node_modules/@modelcontextprotocol/sdk/dist/esm/server/streamableHttp.js"); const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }); await transport.close();'; \
         ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
         test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
         npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \
@@ -1454,6 +1466,15 @@ RUN set -eu; \
             echo "INFO: patched OpenTelemetry OTLP proxy handling in $target"; \
         fi; \
     fi
+
+# Gate the completed local filesystem too; CI repeats this scan in an isolated
+# container and retains evidence keyed to the final image ID.
+COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
+RUN install -d -m 0755 /usr/local/share/nemoclaw \
+    && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
+        --root / --image build:openclaw \
+        > /usr/local/share/nemoclaw/node-tar-inventory.json \
+    && chmod 0444 /usr/local/share/nemoclaw/node-tar-inventory.json
 
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)
 # can detect and restart unhealthy containers in standalone deployments.
