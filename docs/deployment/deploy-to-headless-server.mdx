@@ -14,6 +14,12 @@ skill:
 Run NemoClaw on a remote Linux server through SSH without exposing the OpenShell gateway or dashboard to the network.
 This guide covers unattended onboarding, verified readiness, routine updates, and manual recovery after a host reboot.
 
+<Note title="Headless Describes Operation, Not a Provider">
+A Linux VM that you provision through Brev is one example of a headless server.
+These instructions also apply to Linux hosts on other clouds, VPS services, or on-premises infrastructure.
+NemoClaw setup starts after server provisioning and does not depend on Brev or its web UI.
+</Note>
+
 <Warning title="Host Reboot Recovery Is Manual">
 NemoClaw does not guarantee that Docker, the OpenShell gateway, sandboxes, tunnels, or host forwards start automatically after a host reboot.
 Use the [manual recovery sequence](#recover-after-a-host-reboot) after each reboot.

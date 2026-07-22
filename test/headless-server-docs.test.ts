@@ -36,6 +36,12 @@ const hermesGuide = renderAgentVariantPage(guide, "hermes", { sourcePath: guideP
 const deepAgentsGuide = renderAgentVariantPage(guide, "deepagents", { sourcePath: guidePath });
 
 describe("headless server deployment guide contracts", () => {
+  it("distinguishes provider provisioning from headless operation (#7180)", () => {
+    expect(guide).toContain("Headless Describes Operation, Not a Provider");
+    expect(guide).toContain("A Linux VM that you provision through Brev is one example");
+    expect(guide).toContain("does not depend on Brev or its web UI");
+  });
+
   it("pins unattended onboarding to a reviewed immutable commit (#7180)", () => {
     expect(DEFAULT_INSTALL_REF).toBe("lkg");
     expect(unattendedGuide).toContain(
@@ -123,7 +129,9 @@ describe("headless server deployment guide contracts", () => {
   });
 
   it("does not retain the retired Brev-specific deployment flow (#7180)", () => {
-    expect(guide).not.toContain("Brev");
+    expect(guide).not.toContain("## Launch NemoClaw from Brev");
+    expect(guide).not.toContain("## Configure Your Agent");
+    expect(guide).not.toContain("brev.nvidia.com/launchable");
     expect(overview).toContain("| Headless server deployment |");
     expect(overview).not.toContain("| Remote GPU deployment |");
     expect(commands).toContain("### Deprecated Brev Deployment");
