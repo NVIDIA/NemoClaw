@@ -288,12 +288,6 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.openclaw.generated.mdx
                 slug: deploy-to-headless-server
-              - page: "Deploy to Remote GPU Instances"
-                path: deployment/deploy-to-remote-gpu.mdx
-                slug: deploy-to-remote-gpu
-              - page: "Brev Web UI"
-                path: deployment/brev-web-ui.mdx
-                slug: brev-web-ui
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default

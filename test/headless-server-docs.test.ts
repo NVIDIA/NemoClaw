@@ -12,6 +12,8 @@ import { DEFAULT_INSTALL_REF } from "../src/lib/domain/installer/ref";
 const repoRoot = path.join(import.meta.dirname, "..");
 const guidePath = path.join(repoRoot, "docs", "deployment", "deploy-to-headless-server.mdx");
 const guide = fs.readFileSync(guidePath, "utf-8");
+const overview = fs.readFileSync(path.join(repoRoot, "docs", "about", "overview.mdx"), "utf-8");
+const commands = fs.readFileSync(path.join(repoRoot, "docs", "reference", "commands.mdx"), "utf-8");
 const openclawGuide = renderAgentVariantPage(guide, "openclaw", { sourcePath: guidePath });
 const hermesGuide = renderAgentVariantPage(guide, "hermes", { sourcePath: guidePath });
 const deepAgentsGuide = renderAgentVariantPage(guide, "deepagents", { sourcePath: guidePath });
@@ -88,5 +90,18 @@ describe("headless server deployment guide contracts", () => {
     expect(guide).toContain("| Manually installed system or global packages |");
     expect(guide).toContain("| Direct edits to generated profile, config, or environment files |");
     expect(guide).toContain("| Host tunnel process |");
+  });
+
+  it("does not retain the retired Brev-specific deployment flow (#7180)", () => {
+    expect(guide).not.toContain("Brev");
+    expect(overview).toContain("| Headless server deployment |");
+    expect(overview).not.toContain("| Remote GPU deployment |");
+    expect(commands).toContain("### Deprecated Brev Deployment");
+    expect(commands).not.toContain("onboard --remote");
+    expect(commands).not.toContain("For a remote Brev instance");
+    expect(
+      fs.existsSync(path.join(repoRoot, "docs", "deployment", "deploy-to-remote-gpu.mdx")),
+    ).toBe(false);
+    expect(fs.existsSync(path.join(repoRoot, "docs", "deployment", "brev-web-ui.mdx"))).toBe(false);
   });
 });
