@@ -27,13 +27,14 @@
 - [ ] Non-success, skipped, or missing CI check accepted by maintainer — check name, approval link, and follow-up issue:
 
 ## Documentation Writer Review
-<!-- Required for code changes after implementation is complete. Keep one Result value. For Evidence, list changed doc paths or name the reason that no doc change is needed or the review is blocked. For Agent, use a consistent product and surface name, such as Codex Desktop, Codex CLI, Claude Code, or Cursor. Commit all review changes, then use `git rev-parse --short HEAD` and `git rev-parse --short HEAD:AGENTS.md`. Rerun the review if the implementation changes after the recorded PR SHA. This receipt is advisory during the data-collection pilot. -->
+<!-- Required for code changes after implementation is complete. Keep one Result value. For Evidence, list changed doc paths or name the reason that no doc change is needed or the review is blocked. For Agent, use a consistent product and surface name, such as Codex Desktop, Codex CLI, Claude Code, or Cursor. Record this PR number. After committing all review changes, put `git rev-parse --short HEAD` and `git rev-parse --short HEAD:AGENTS.md` in the hidden metadata below. Rerun the review and refresh that metadata after new implementation commits. This receipt is advisory during the data-collection pilot. -->
 - [ ] Documentation writer subagent reviewed the completed implementation
 - Result: `docs-updated` | `no-docs-needed` | `blocked`
 - Evidence:
 - Agent:
-- Reviewed PR SHA:
-- Reviewed `AGENTS.md` blob SHA:
+- PR: #<number>
+<!-- docs-review-head-sha: -->
+<!-- docs-review-agents-blob-sha: -->
 
 ## DGX Station Hardware Evidence
 <!-- Required only when scripts/prepare-dgx-station-host.sh changes. Maintainers must review the linked evidence before approving or merging. This is human-reviewed evidence, not authenticated hardware provenance. Exceptional bypasses use existing repository governance and must be documented on the PR. -->

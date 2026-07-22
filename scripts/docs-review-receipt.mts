@@ -25,9 +25,10 @@ interface ParsedReceipt {
   completed: boolean;
   duplicateSections: boolean;
   evidence: string | null;
+  prNumber: number | null;
   present: boolean;
   result: ReviewResult | null;
-  reviewedPrSha: string | null;
+  reviewedHeadSha: string | null;
 }
 
 interface ReceiptRecord {
@@ -37,10 +38,12 @@ interface ReceiptRecord {
   codeChanged: boolean | null;
   docsChanged: boolean | null;
   evidence: string | null;
+  headShaMatches: boolean | null;
   issues: string[];
-  prShaMatches: boolean | null;
+  prNumber: number | null;
+  prNumberMatches: boolean | null;
   result: ReviewResult | null;
-  reviewedPrSha: string | null;
+  reviewedHeadSha: string | null;
   status: ReceiptStatus;
 }
 
@@ -112,6 +115,7 @@ function runCheck(args: string[]): void {
   const record = evaluateReceipt(
     pullRequest.body ?? "",
     classifyChangedFiles(changedFiles),
+    pullRequest.number ?? null,
     headPrSha,
     expectedAgentsBlob,
   );
@@ -167,6 +171,7 @@ function runReport(args: string[]): void {
 function evaluateReceipt(
   body: string,
   changes: ChangeClassification,
+  expectedPrNumber: number | null,
   headPrSha: string,
   expectedAgentsBlob?: string,
 ): ReceiptRecord {
@@ -183,10 +188,12 @@ function evaluateReceipt(
       codeChanged,
       docsChanged,
       evidence: parsed.evidence,
+      headShaMatches: null,
       issues,
-      prShaMatches: null,
+      prNumber: parsed.prNumber,
+      prNumberMatches: null,
       result: parsed.result,
-      reviewedPrSha: parsed.reviewedPrSha,
+      reviewedHeadSha: parsed.reviewedHeadSha,
       status: "unclassified",
     };
   }
@@ -199,10 +206,12 @@ function evaluateReceipt(
       codeChanged,
       docsChanged,
       evidence: parsed.evidence,
+      headShaMatches: null,
       issues,
-      prShaMatches: null,
+      prNumber: parsed.prNumber,
+      prNumberMatches: null,
       result: parsed.result,
-      reviewedPrSha: parsed.reviewedPrSha,
+      reviewedHeadSha: parsed.reviewedHeadSha,
       status: "not-required",
     };
   }
@@ -225,8 +234,11 @@ function evaluateReceipt(
     if (!parsed.agent || looksLikePlaceholder(parsed.agent)) {
       issues.push("Record the agent surface that ran the documentation writer review.");
     }
-    if (!parsed.reviewedPrSha) {
-      issues.push("Record a valid reviewed PR SHA with 7 to 40 hexadecimal characters.");
+    if (parsed.prNumber === null) {
+      issues.push("Record this pull request number in the documentation review receipt.");
+    }
+    if (!parsed.reviewedHeadSha) {
+      issues.push("Refresh the hidden head SHA after the documentation writer review.");
     }
     if (!parsed.agentsBlobSha) {
       issues.push("Record a valid AGENTS.md blob SHA with 7 to 40 hexadecimal characters.");
@@ -236,11 +248,19 @@ function evaluateReceipt(
     }
   }
 
-  const prShaMatches = parsed.reviewedPrSha
-    ? headPrSha.toLowerCase().startsWith(parsed.reviewedPrSha)
+  const prNumberMatches =
+    parsed.prNumber !== null && expectedPrNumber !== null
+      ? parsed.prNumber === expectedPrNumber
+      : null;
+  if (prNumberMatches === false) {
+    issues.push("The receipt PR number does not match this pull request.");
+  }
+
+  const headShaMatches = parsed.reviewedHeadSha
+    ? headPrSha.toLowerCase().startsWith(parsed.reviewedHeadSha)
     : null;
-  if (prShaMatches === false) {
-    issues.push("The reviewed PR SHA does not match the pull request head SHA.");
+  if (headShaMatches === false) {
+    issues.push("The documentation writer review is stale after a new implementation commit.");
   }
 
   const normalizedAgentsBlob = expectedAgentsBlob?.trim().toLowerCase();
@@ -259,10 +279,12 @@ function evaluateReceipt(
     codeChanged,
     docsChanged,
     evidence: parsed.evidence,
+    headShaMatches,
     issues,
-    prShaMatches,
+    prNumber: parsed.prNumber,
+    prNumberMatches,
     result: parsed.result,
-    reviewedPrSha: parsed.reviewedPrSha,
+    reviewedHeadSha: parsed.reviewedHeadSha,
     status: parsed.present ? (issues.length === 0 ? "valid" : "invalid") : "missing",
   };
 }
@@ -277,9 +299,10 @@ function parseReceipt(body: string): ParsedReceipt {
       completed: false,
       duplicateSections: false,
       evidence: null,
+      prNumber: null,
       present: false,
       result: null,
-      reviewedPrSha: null,
+      reviewedHeadSha: null,
     };
   }
 
@@ -295,8 +318,9 @@ function parseReceipt(body: string): ParsedReceipt {
     resultMatch && RESULTS.has(resultMatch[1] as ReviewResult)
       ? (resultMatch[1] as ReviewResult)
       : null;
-  const reviewedPrSha = parseSha(fieldValue(lines, "Reviewed PR SHA"));
-  const agentsBlobSha = parseSha(fieldValue(lines, "Reviewed `AGENTS.md` blob SHA"));
+  const prNumber = parsePrNumber(fieldValue(lines, "PR"));
+  const reviewedHeadSha = parseSha(hiddenFieldValue(lines, "docs-review-head-sha"));
+  const agentsBlobSha = parseSha(hiddenFieldValue(lines, "docs-review-agents-blob-sha"));
 
   return {
     agent: nonEmpty(fieldValue(lines, "Agent")),
@@ -308,9 +332,10 @@ function parseReceipt(body: string): ParsedReceipt {
     ),
     duplicateSections: matches.length > 1,
     evidence: nonEmpty(fieldValue(lines, "Evidence")),
+    prNumber,
     present: true,
     result,
-    reviewedPrSha,
+    reviewedHeadSha,
   };
 }
 
@@ -318,6 +343,21 @@ function fieldValue(lines: string[], name: string): string | null {
   const prefix = `- ${name}:`;
   const line = lines.find((candidate) => candidate.startsWith(prefix));
   return line ? line.slice(prefix.length).trim() : null;
+}
+
+function hiddenFieldValue(lines: string[], name: string): string | null {
+  const prefix = `<!-- ${name}:`;
+  const suffix = "-->";
+  const line = lines.find(
+    (candidate) => candidate.startsWith(prefix) && candidate.endsWith(suffix),
+  );
+  return line ? line.slice(prefix.length, -suffix.length).trim() : null;
+}
+
+function parsePrNumber(value: string | null): number | null {
+  const normalized = value?.trim();
+  if (!normalized || !/^#[1-9]\d*$/u.test(normalized)) return null;
+  return Number(normalized.slice(1));
 }
 
 function parseSha(value: string | null): string | null {
@@ -347,6 +387,7 @@ function toReportRecord(pullRequest: GhPullRequest): ReportRecord {
     ...evaluateReceipt(
       pullRequest.body ?? "",
       classifyPrType(pullRequest.body ?? ""),
+      pullRequest.number,
       pullRequest.headRefOid,
     ),
   };
@@ -441,7 +482,9 @@ function buildReport(repository: string, since: string, through: string, records
   const unclassified = records.filter((record) => record.codeChanged === null);
   const recorded = eligible.filter((record) => record.status !== "missing");
   const valid = eligible.filter((record) => record.status === "valid");
-  const fresh = recorded.filter((record) => record.prShaMatches === true);
+  const fresh = recorded.filter(
+    (record) => record.prNumberMatches === true && record.headShaMatches === true,
+  );
   const resultCounts: Record<ReviewResult, number> = {
     blocked: 0,
     "docs-updated": 0,
@@ -495,9 +538,11 @@ function renderCsv(records: ReportRecord[]): string {
     "receipt_status",
     "result",
     "agent",
-    "reviewed_pr_sha",
+    "receipt_pr_number",
+    "pr_number_matches",
+    "reviewed_head_sha",
     "head_pr_sha",
-    "pr_sha_matches",
+    "head_sha_matches",
     "agents_blob_sha",
     "evidence",
     "issues",
@@ -515,9 +560,11 @@ function renderCsv(records: ReportRecord[]): string {
     record.status,
     record.result,
     record.agent,
-    record.reviewedPrSha,
+    record.prNumber,
+    record.prNumberMatches,
+    record.reviewedHeadSha,
     record.headPrSha,
-    record.prShaMatches,
+    record.headShaMatches,
     record.agentsBlobSha,
     record.evidence,
     record.issues.join("; "),

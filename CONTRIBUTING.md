@@ -497,18 +497,21 @@ Record one result:
 
 Record the product and surface that ran the review, such as `Codex Desktop`, `Codex CLI`, `Claude Code`, or `Cursor`.
 Use the same name for the same surface across PRs so the report groups its data correctly.
+Record the PR number in the visible receipt so the check can detect a receipt copied from another PR.
 
 Commit all changes from the final review.
-Then run these commands to record the revisions that the review covers:
+Then run these commands and put their values in the receipt's hidden HTML metadata comments:
 
 ```bash
 git rev-parse --short HEAD
 git rev-parse --short HEAD:AGENTS.md
 ```
 
-Rerun the review when implementation changes after the recorded PR SHA.
+The visible PR number ties the receipt to this PR, while the hidden head SHA identifies the implementation revision that the review covered.
+Rerun the review when implementation changes after the hidden head SHA.
+Pushing a new commit runs the receipt check again and reports the review as stale until the hidden metadata is refreshed.
 The Documentation Writer Review check reports an advisory finding when the receipt is missing, incomplete, or stale.
-The check compares both recorded SHAs with the PR version.
+The check compares the receipt's PR number with the current PR number, the hidden head SHA with the current PR head, and the hidden `AGENTS.md` blob SHA with the current PR's file.
 
 Maintainers can export receipt data from PR descriptions:
 
@@ -517,8 +520,8 @@ npm run docs-review:report -- --since 2026-06-12 --format csv > /tmp/nemoclaw-do
 ```
 
 The report uses the authenticated GitHub CLI session and returns JSON by default.
-It measures receipt coverage, PR SHA freshness, review results, and agent-surface counts.
-It records the `AGENTS.md` blob SHA, but only the PR check compares that SHA with the PR version.
+It measures receipt coverage, PR-number integrity, head-revision freshness, review results, and agent-surface counts.
+It records the `AGENTS.md` blob SHA, but only the PR check compares that SHA with the current PR's file.
 It does not prove that an agent loaded `AGENTS.md`; it records observable workflow compliance.
 The retrospective report classifies code changes from the checked Type of Change field.
 It reports a PR as unclassified when that field is incomplete or contradictory.
