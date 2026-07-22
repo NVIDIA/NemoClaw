@@ -36,11 +36,11 @@ describe("installer express install prompt (sourced)", () => {
   // detection (#7318) can be exercised deterministically without a real Docker
   // daemon. The probe wraps docker in `timeout`, which execs the real binary
   // from PATH, so a stub on PATH (not a shell function) is required here.
-  function dockerStubBin(operatingSystem: string) {
+  function dockerStubBin(operatingSystem: string, exitCode = 0) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-stub-"));
     writeExecutable(
       path.join(dir, "docker"),
-      `#!/usr/bin/env bash\nif [ "$1" = "info" ]; then\n  printf '%s\\n' "${operatingSystem}"\nfi\nexit 0\n`,
+      `#!/usr/bin/env bash\nif [ "$1" = "info" ]; then\n  printf '%s\\n' "${operatingSystem}"\nfi\nexit ${exitCode}\n`,
     );
     return dir;
   }
@@ -1308,10 +1308,25 @@ printf 'PROMPT_REACHED\n'
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected Windows WSL/);
-    expect(output).toMatch(
-      /Express install will configure WSL-local Ollama \(native Docker Engine detected\)/,
-    );
+    expect(output).toMatch(/Express install will configure WSL-local Ollama/);
+    expect(output).not.toMatch(/native Docker Engine detected/);
     expect(output).toMatch(/Using express install for Windows WSL/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=/,
+    );
+  });
+
+  it("uses a runtime-neutral WSL-local Ollama summary when the docker probe fails", () => {
+    // Probe exits non-zero with no output — an unavailable/wedged daemon. The
+    // fallback must not claim native Docker Engine was detected (#7318 review).
+    const dockerBin = dockerStubBin("", 1);
+    const result = runExpressPromptWithTty("\n", "pipe", "Windows WSL", {
+      PATH: `${dockerBin}:${TEST_SYSTEM_PATH}`,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Express install will configure WSL-local Ollama/);
+    expect(output).not.toMatch(/native Docker Engine detected/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL= VLLM_MODEL= POLICY=suggested YES=1 SANDBOX=/,
     );

@@ -3795,7 +3795,7 @@ describe_express_install() {
       if express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
       else
-        inference_summary="WSL-local Ollama (native Docker Engine detected)"
+        inference_summary="WSL-local Ollama"
       fi
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
