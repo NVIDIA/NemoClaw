@@ -65,6 +65,13 @@ graph as the live targets:
 - `scorecard` writes the scheduled/manual result summary, compares the trusted
   cloud-onboard timing summary with the latest prior-release `e2e.yaml` run,
   and posts to the daily or full-run Slack route.
+- `E2E Main Runner Loss Retry` authenticates a failed scheduled or full manual
+  `E2E main` attempt after it completes. On attempt 1 only, it reruns failed
+  jobs when every failed job has the GitHub-hosted stranded-step signature and
+  the complete job listing contains no ordinary failure. Assertions, mixed or
+  ambiguous failures, cancelled runs, selective PR dispatches, and later
+  attempts receive no automatic retry. The retry stays on the same workflow
+  run and tested SHA, while attempt links preserve the original evidence.
 - Selective dispatches remain silent unless they run on `main` with
   `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
   runs never receive Slack webhook secrets.

@@ -89,6 +89,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests(...E2E_WORKFLOW_CONTRACTS),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/e2e-main-runner-loss-retry\.yaml$/,
+    testsToRun: runTests("test/e2e/support/main-e2e-runner-loss-retry-workflow.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
     testsToRun: runTests("test/code-scanning-workflow.test.ts"),
   },

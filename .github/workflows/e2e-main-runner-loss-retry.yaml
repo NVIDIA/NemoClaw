@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E Main Runner Loss Retry
+run-name: "E2E main runner-loss retry for run ${{ github.event.workflow_run.id }} attempt ${{ github.event.workflow_run.run_attempt }}"
+
+on:
+  workflow_run:
+    workflows: [E2E]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  classify-and-retry:
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.event.workflow_run.event != 'pull_request' && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch') && github.event.workflow_run.path == '.github/workflows/e2e.yaml' && github.event.workflow_run.display_title == 'E2E main' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+    concurrency:
+      group: e2e-main-runner-loss-retry-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout trusted retry controller
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Classify runner loss and retry failed jobs once
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SUBJECT_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          SUBJECT_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: node --experimental-strip-types tools/e2e/main-e2e-runner-loss-retry.mts
