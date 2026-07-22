@@ -218,10 +218,11 @@ test/e2e/
   There is no separate polling Actions job. The coordinator has a 120-minute
   job budget and allows a selected E2E child 105 minutes. Authorization states
   remain pending while the maintainer decision is recorded. During rollout,
-  maintainer gate inspection also accepts the former
-  `E2E / PR Gate Coordination` custom-check name for the same exact-diff
-  identity. The controller builds the risk plan from GitHub's complete file
-  list. Internal
+  maintainer gate inspection accepts the former
+  `E2E / PR Gate Coordination` custom-check name only when the current
+  `E2E / PR Gate` check is absent. The exact-diff reservation identity includes
+  both the PR head and base SHAs. The controller builds the risk plan from
+  GitHub's complete file list. Internal
   revisions normally dispatch every selected job and verify each expected
   `risk-signal.json`; this remains automatic when their `e2e-control-plane`
   matches are drawn only from the trusted controller workflow and scripts.

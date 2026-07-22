@@ -16,13 +16,13 @@ const { spawn } = require("node:child_process");
 const childScriptPath = process.argv[2];
 const childReadyPath = process.argv[3];
 spawn(process.execPath, [childScriptPath, childReadyPath], { stdio: "ignore" });
-setTimeout(() => {}, 5000);
+setInterval(() => {}, 60000);
 `;
 const WEAKENING_CHILD_SOURCE = `
 const fs = require("node:fs");
 const childReadyPath = process.argv[2];
 fs.writeFileSync(childReadyPath, String(process.pid));
-setTimeout(() => {}, 5000);
+setInterval(() => {}, 60000);
 `;
 
 type ShieldsHarness = {
@@ -580,6 +580,7 @@ describe("shields command flow", () => {
     expect(takeoverEvents.indexOf("owner-enumerated")).toBeGreaterThan(
       takeoverEvents.indexOf("owner-stopped"),
     );
+    expect(takeoverEvents).toContain("owner-enumerated");
     expect(takeoverEvents.indexOf("policy-restored")).toBeGreaterThan(
       takeoverEvents.indexOf("owner-enumerated"),
     );
