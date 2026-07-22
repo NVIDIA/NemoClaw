@@ -113,9 +113,17 @@ consumer on the plugin's reviewed `2.8.0` graph while satisfying Jaeger's exact
 contains diagnostics `2026.7.1`, SDK Node `0.219.0`, Jaeger `2.8.0`, and no
 preexisting nested Core. The resulting package tree is pinned to
 `sha512-2qyDTRPqNs97jo/pAWWfxAkVZyCXYqui/IjrGf4eEfYop1eGN8qBMJ/Kp/bJ/V18RNnYpMxHi5ECFelekVxcAQ==`.
-Malformed Jaeger trace and baggage headers no longer throw, while a valid
-Jaeger header still produces the expected trace and span context in the real
-remediated package graph.
+The trusted main-only
+`test/openclaw-diagnostics-jaeger-runtime.test.ts` harness runs with
+`NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS=1`.
+It materializes the exact reviewed diagnostics archive, applies the production
+remediation, and installs that local archive with lifecycle scripts disabled.
+The child-process probe confirms these results:
+
+- malformed percent-encoded `uber-trace-id` and `uberctx-*` headers do not throw;
+- malformed baggage is ignored;
+- valid `uberctx-test` baggage remains available;
+- a valid Jaeger header produces the expected trace and span context.
 
 `scripts/lib/openclaw-npm-remediation.mts` verifies the original plugin and
 replacement package identities before it writes the archive. It rejects an
@@ -133,6 +141,7 @@ The Axios remediation is limited to `@openclaw/slack@2026.7.1` and
 `@openclaw/diagnostics-otel@2026.7.1`. Remove each branch when a reviewed stable
 OpenClaw plugin release bundles the corresponding patched graph and passes the
 repository audit.
+Issue #7337 tracks removal of the Jaeger branch and its exact replacement pins.
 
 The reviewed installer verifies each registry identity and downloaded tarball
 integrity. `scripts/lib/reviewed-npm-archive.mts` uses `npm pack --json` and

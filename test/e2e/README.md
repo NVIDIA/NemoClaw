@@ -210,8 +210,8 @@ An internal revision whose matched control-plane files are drawn only from the
 trusted controller and observer boundaries—`.github/workflows/pr-e2e-gate.yaml`,
 `tools/e2e/pr-e2e-gate.mts`, and `tools/e2e/pr-e2e-required.mts`—automatically
 dispatches those selected jobs.
-Any other or mixed internal control-plane revision requires maintainer authorization
-for the PR SHA before credentialed execution begins. If no job
+Any other or mixed internal control-plane revision requires an authorized E2E
+reviewer to approve the PR SHA before credentialed execution begins. If no job
 or target is selected, coordination passes without an E2E run and the native
 required job mirrors that success.
 
@@ -243,24 +243,41 @@ before mirroring that terminal result.
 
 An internal revision whose control-plane matches include a file outside the
 trusted controller and observer boundaries leaves coordination in progress
-with `Maintainer authorization required to run E2E`. The native required job
+with `E2E reviewer authorization required to run E2E`. The native required job
 keeps waiting for the authorization flow. No selected job or target runs and no
-repository secret is exposed. After reviewing the PR SHA, a repository
+repository secret is exposed. The same controller run starts `Approve
+credentialed E2E for internal PR`, which waits on the protected
+`approve-credentialed-e2e-for-internal-pr` environment. With `deployment:
+false`, the job does not create a deployment record. After reviewing the exact
+head SHA, base SHA, and risk plan as described below, an environment reviewer
+opens the linked run, chooses **Review deployments**, selects that environment,
+and approves it. GitHub records the reviewer and optional comment. The
+protected approval job uses per-PR concurrency with in-progress cancellation.
+When a newer revision reaches authorization, its job cancels any waiting
+approval job for the prior revision and becomes available for review without
+waiting on the obsolete request. The controller reads that approval history and
+requires one approved review naming only the exact environment in the first
+attempt of the trusted `workflow_run`
+controller. It then revalidates the internal repository origin, open PR, PR SHA
+and base SHA, risk plan, matching pending coordination state, compatible
+trusted controller commit, and final live revision. It updates coordination to
+`Running <count> E2E check(s)` and dispatches the selected jobs and targets in
+one workflow run.
+
+The manual maintainer path remains available as a fallback. A repository
 maintainer or administrator chooses **Run workflow** on `main`, selects
 `run-control-plane`, and supplies the PR number, current 40-character head SHA
 as `expected_head_sha`, current 40-character base SHA as `expected_base_sha`,
-and a specific 10–500-character `review_reason`. The authorization requires the
-first workflow attempt and revalidates the actor's `maintain` or `admin`
-permission, internal repository origin, open PR, PR SHA and base SHA, risk
-plan, matching pending coordination state, compatible trusted controller
-commit, and final live revision. It then updates coordination to
-`Running <count> E2E check(s)` and dispatches the selected jobs and targets in
-one workflow run. If authorization
+and a specific 10–500-character `review_reason`. This path additionally
+revalidates the triggering actor's `maintain` or `admin` permission and uses the
+same exact-revision and deterministic-plan checks. If authorization
 fails before a child run is dispatched, the controller restores the
-authorization title and leaves coordination in progress so a maintainer can
-correct the problem and launch a fresh first-attempt authorization. After a
-child is dispatched, a startup failure requests cancellation. Whether or not
-cancellation is confirmed, the controller completes coordination as
+authorization title and leaves coordination in progress. A maintainer can then
+launch a fresh first-attempt manual authorization. To use the protected path
+again, correct its environment configuration, update the PR to create a new
+head, and trigger fresh PR CI. After a child is dispatched, a startup failure
+requests cancellation. Whether or not cancellation is confirmed, the
+controller completes coordination as
 `Authorized E2E run requires reconciliation`; that authorization for the PR/base SHA pair
 cannot be retried because the child may still execute and a retry could start
 duplicate credential-bearing work. Inspect the linked run, then update the PR
@@ -309,23 +326,32 @@ That controller run starts
 `Approve credentialed E2E skip for fork PR`, which waits on the protected
 `approve-credentialed-e2e-skip-for-fork-pr` environment. With
 `deployment: false`, the job does not create a deployment record. A maintainer
-opens the linked run, chooses **Review deployments**, selects that environment,
-and approves it. The approval records that the selected credential-bearing
-jobs and targets will not run; it does not authorize fork code to run with
-repository secrets. The comment is optional, and the workflow reads both the
-reviewer and comment from GitHub's run approval history rather than accepting
-an actor supplied by the job.
+or delegated E2E reviewer reviews the exact head SHA, base SHA, and risk plan as
+described below, opens the linked run, chooses **Review deployments**, selects
+that environment, and approves it. The approval records that the selected
+credential-bearing jobs and targets will not run; it does not authorize fork
+code to run with repository secrets. The comment is optional, and the workflow
+reads both the reviewer and comment from GitHub's run approval history rather
+than accepting an actor supplied by the job.
 
-Before rollout, create `approve-credentialed-e2e-skip-for-fork-pr` in the
-repository with one or more required reviewers whose approving members have
-repository `maintain` or `admin` permission. Do not add environment secrets,
-variables, or custom protection apps; this job records the skip approval and
-runs no PR-controlled code. Prefer disabling administrator bypass so every
-decision appears in the approval history. If **Review deployments** is absent,
-the environment may be missing or unprotected, or the run may no longer be
-waiting. Configure the environment, update the PR to create a new head, and
-trigger fresh upstream PR CI to create a new gate run, or use the manual
-fallback described below. GitHub approval
+Before rollout, create both `approve-credentialed-e2e-for-internal-pr` and
+`approve-credentialed-e2e-skip-for-fork-pr` in the repository. Configure each
+environment with one or more required reviewers. Protected-environment
+reviewers are the authorization allowlist and may have repository read access
+without merge rights. Do not add environment secrets, variables, or custom
+protection apps. Enable **Prevent self-review** and prefer disabling
+administrator bypass so every decision is independent and appears in the
+approval history. Restrict deployment branches to protected `main`. Before
+either decision, verify the exact head SHA, base SHA, and selected jobs and
+targets in the coordination check summary and the
+`pr-e2e-risk-plan-<head-sha>` artifact from the linked controller run. The
+internal approval job receives only its job-scoped token after approval and
+executes the trusted controller from `main`; the fork approval job records a
+skip and runs no PR-controlled code. If **Review deployments** is absent, the
+environment may be missing or unprotected, or the run may no longer be waiting.
+Configure the environment, update the PR to create a new head, and trigger fresh
+upstream PR CI to create a new gate run, or use the corresponding manual
+maintainer fallback. GitHub approval
 history is not bound to a run attempt, so the controller rejects reruns of an
 approval run. Per-PR approval concurrency cancels an older waiting job when a
 newer revision reaches the gate.
@@ -333,8 +359,8 @@ newer revision reaches the gate.
 For the fork button path, the controller requires a first-attempt, in-progress run
 of this exact workflow on `main`, at the trusted workflow SHA and with the
 `workflow_run` event. It requires exactly one approved review that names only
-the exact environment, then verifies that the recorded reviewer still has
-repository `maintain` or `admin` permission. The shared resolver revalidates
+the exact environment. The environment's required-reviewer configuration is
+the authority for this protected path. The shared resolver revalidates
 the open PR, repository origin, PR SHA and base SHA, deterministic plan,
 matching failed coordination check, and that the controller commit is either
 still `main` or
@@ -343,7 +369,7 @@ recording success, it reads the live PR again and requires the same PR SHA and
 base SHA. The result records the reviewer, bounded optional comment, validated
 approval-run URL, plan hash, and jobs and targets that did not run. The
 successful skip coordination check is titled
-`Credentialed E2E skipped for fork PR — approved by @<maintainer>` and begins
+`Credentialed E2E skipped for fork PR — approved by @<reviewer>` and begins
 with `Outcome: APPROVED SKIP — credentialed E2E did not run.` It never claims
 that the selected checks passed. The native required job mirrors this
 approved-skip success.
@@ -405,13 +431,18 @@ These dispatches suppress PR comments and the scheduled or manual
 scorecard, including scorecard Slack reporting.
 
 Synchronizing, reopening, or closing an internal PR cancels its active E2E
-runs. A new dispatch also cancels the previous run. The previous controller
-then completes the old PR/base SHA coordination check as cancelled when the PR
-revision moved or closed, or as failed when the current revision's selected E2E
-did not pass. Native observer concurrency cancels the old required-job run and
-starts a new one when a configured non-closed PR event identifies the current
-revision. Metadata-only edits restart the observer against the unchanged
-PR/base SHA identity.
+runs. On synchronization, the trusted cancellation job receives the event's
+current and previous head SHAs and first requires the live PR to match the
+current internal revision. It completes each active GitHub Actions-owned
+coordination check for the previous head as cancelled and rejects unexpected
+GitHub App ownership. Completed checks remain immutable audit history. A new
+dispatch also cancels the previous run. The previous controller then completes
+the old PR/base SHA coordination check as cancelled when the PR revision moved
+or closed, or as failed when the current revision's selected E2E did not pass.
+Native observer concurrency cancels the old required-job run and starts a new
+one when a configured non-closed PR event identifies the current revision.
+Metadata-only edits restart the observer against the unchanged PR/base SHA
+identity.
 The controller does not read PR Review Advisor output, so model availability
 and recommendations are not part of merge authority.
 

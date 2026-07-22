@@ -63,7 +63,9 @@ describe("PR E2E controller commands", () => {
     );
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("--mode must be seed, start, start-control-plane, finish");
+    expect(result.stderr).toContain(
+      "--mode must be seed, start, start-control-plane, start-approved-control-plane, finish",
+    );
     expect(result.stderr).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
   });
 
@@ -83,10 +85,29 @@ describe("PR E2E controller commands", () => {
   });
 
   it("parses a cancel command", () => {
-    expect(parseControllerCommand(["--mode", "cancel", "--pr", "42"])).toEqual({
+    expect(
+      parseControllerCommand([
+        "--mode",
+        "cancel",
+        "--pr",
+        "42",
+        "--head",
+        HEAD_SHA,
+        "--superseded-head",
+        BASE_SHA,
+      ]),
+    ).toEqual({
       mode: "cancel",
       prNumber: 42,
+      headSha: HEAD_SHA,
+      supersededHeadSha: BASE_SHA,
     });
+  });
+
+  it("requires current and superseded head SHAs together", () => {
+    expect(() =>
+      parseControllerCommand(["--mode", "cancel", "--pr", "42", "--head", HEAD_SHA]),
+    ).toThrow("--head and --superseded-head must be provided together");
   });
 
   it("parses a seed command", () => {
@@ -200,6 +221,46 @@ describe("PR E2E controller commands", () => {
         workflowSha: WORKFLOW_SHA,
         maintainer: "maintainer",
         reason: "Reviewed exact credentialed control-plane execution",
+        gateRunId: 77,
+        workflowRunAttempt: 1,
+        planPath: path.join(workDir, "risk-plan.json"),
+      });
+    });
+  });
+
+  it("parses a protected-environment control-plane run inside a private workspace", () => {
+    withPrivateWorkDir((workDir) => {
+      expect(
+        parseControllerCommand([
+          "--mode",
+          "start-approved-control-plane",
+          "--pr",
+          "42",
+          "--head",
+          HEAD_SHA,
+          "--base",
+          BASE_SHA,
+          "--workflow-sha",
+          WORKFLOW_SHA,
+          "--approval-run-id",
+          "77",
+          "--approval-run-attempt",
+          "1",
+          "--gate-run-id",
+          "77",
+          "--workflow-run-attempt",
+          "1",
+          "--work-dir",
+          workDir,
+        ]),
+      ).toMatchObject({
+        mode: "start-approved-control-plane",
+        prNumber: 42,
+        headSha: HEAD_SHA,
+        baseSha: BASE_SHA,
+        workflowSha: WORKFLOW_SHA,
+        approvalRunId: 77,
+        approvalRunAttempt: 1,
         gateRunId: 77,
         workflowRunAttempt: 1,
         planPath: path.join(workDir, "risk-plan.json"),
