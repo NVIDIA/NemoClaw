@@ -100,7 +100,7 @@ $$nemoclaw my-assistant policy-add outlook --dry-run
 $$nemoclaw my-assistant policy-add outlook --yes
 ```
 
-Re-running `policy-add outlook` when the preset is already applied is a safe no-op: the command compares the preset with the live policy, exits zero when nothing changed, and re-applies the preset when its file changed since it was applied.
+Re-running `policy-add outlook` when the preset is already applied is a safe no-op: the command compares the preset with the live policy, exits zero when they match, and re-applies the preset whenever they no longer match, including after the preset file changes.
 You do not need to remove the preset first; removing it only to re-add it needlessly drops the entries from the live policy in between.
 
 Then configure the email or calendar tool credentials through the integration you run in the sandbox.
