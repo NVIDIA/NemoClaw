@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxEntry } from "../../state/registry";
+import { teardownSandboxDashboardForward } from "./forward-recovery";
 import { type SandboxStopDeps, stopSandbox } from "./stop";
 
 function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
@@ -55,6 +56,26 @@ function harness(overrides: Partial<SandboxStopDeps> = {}) {
     warn,
   };
 }
+
+describe("teardownSandboxDashboardForward", () => {
+  it("stops only the selected sandbox's resolved dashboard forward (#7227)", () => {
+    const resolveSandboxDashboardPort = vi.fn(() => 19443);
+    const runOpenshell = vi.fn(() => ({ status: 1 }) as never);
+
+    expect(() =>
+      teardownSandboxDashboardForward("selected-sandbox", {
+        resolveSandboxDashboardPort,
+        runOpenshell,
+      }),
+    ).not.toThrow();
+
+    expect(resolveSandboxDashboardPort).toHaveBeenCalledWith("selected-sandbox");
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "19443", "selected-sandbox"], {
+      ignoreError: true,
+      stdio: "ignore",
+    });
+  });
+});
 
 describe("stopSandbox", () => {
   it("gracefully stops in-sandbox channels before stopping the container (#6026)", () => {
