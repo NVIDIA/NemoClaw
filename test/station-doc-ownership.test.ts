@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { parse } from "yaml";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
@@ -112,7 +113,11 @@ describe("DGX Station documentation ownership", () => {
   });
 
   it("redirects every retired Prerequisites child route directly to Additional Setup", () => {
-    const redirects = fs.readFileSync(FERN_DOCS, "utf-8");
+    const redirects = (
+      parse(fs.readFileSync(FERN_DOCS, "utf-8")) as {
+        redirects?: Array<{ source: string; destination: string }>;
+      }
+    ).redirects;
     const pages = ["dgx-station-preparation", "windows-preparation"];
     const variantPrefixes = [
       "/nemoclaw/latest/user-guide/:variant",
@@ -123,9 +128,13 @@ describe("DGX Station documentation ownership", () => {
       for (const page of pages) {
         for (const suffix of ["", ".html", "/index.html", ".md", ".mdx"]) {
           const destinationSuffix = suffix === ".md" || suffix === ".mdx" ? suffix : "";
-          expect(redirects).toContain(
-            `- source: "${prefix}/get-started/prerequisites/${page}${suffix}"\n    destination: "${prefix}/get-started/additional-setup/${page}${destinationSuffix}"`,
-          );
+          const source = `${prefix}/get-started/prerequisites/${page}${suffix}`;
+          expect(redirects?.filter((redirect) => redirect.source === source)).toEqual([
+            {
+              source,
+              destination: `${prefix}/get-started/additional-setup/${page}${destinationSuffix}`,
+            },
+          ]);
         }
       }
     }
@@ -135,10 +144,15 @@ describe("DGX Station documentation ownership", () => {
       ["/nemoclaw", "/nemoclaw/user-guide/openclaw"],
     ]) {
       for (const page of pages) {
-        for (const suffix of ["", ".html", "/index.html"]) {
-          expect(redirects).toContain(
-            `- source: "${legacyPrefix}/get-started/prerequisites/${page}${suffix}"\n    destination: "${destinationPrefix}/get-started/additional-setup/${page}"`,
-          );
+        for (const suffix of ["", ".html", "/index.html", ".md", ".mdx"]) {
+          const destinationSuffix = suffix === ".md" || suffix === ".mdx" ? suffix : "";
+          const source = `${legacyPrefix}/get-started/prerequisites/${page}${suffix}`;
+          expect(redirects?.filter((redirect) => redirect.source === source)).toEqual([
+            {
+              source,
+              destination: `${destinationPrefix}/get-started/additional-setup/${page}${destinationSuffix}`,
+            },
+          ]);
         }
       }
     }

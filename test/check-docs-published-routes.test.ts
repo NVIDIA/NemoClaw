@@ -263,6 +263,24 @@ redirects:
     ]);
   });
 
+  it("rejects an Additional Setup redirect to an unpublished destination", () => {
+    const index = buildPublishedRouteIndex(navYaml);
+    const fernYaml = `
+redirects:
+  - source: /nemoclaw/get-started/prerequisites/station
+    destination: /nemoclaw/user-guide/openclaw/get-started/additional-setup/missing
+`;
+
+    expect(findBrokenPublishedRedirects(index, fernYaml)).toEqual([
+      {
+        source: "/nemoclaw/get-started/prerequisites/station",
+        destination: "/nemoclaw/user-guide/openclaw/get-started/additional-setup/missing",
+        resolved: "/user-guide/openclaw/get-started/additional-setup/missing",
+        variant: null,
+      },
+    ]);
+  });
+
   it("rejects Manage Sandboxes HTML redirects that would require a second hop", () => {
     const fernYaml = `
 redirects:
