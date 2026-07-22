@@ -264,7 +264,8 @@ It installs the archive with lifecycle scripts disabled and invokes `postinstall
 The `v0.0.74` fixture retains npm registry signature verification for its historical mcporter lock.
 The reviewed `v0.0.36` and `v0.0.55` profiles require no advisory audit statement.
 The reviewed `v0.0.74` profile requires exactly one advisory audit statement, which the adapter replaces with a test-only skip.
-The adapter rejects an unknown profile or an advisory audit count that does not match its reviewed profile.
+Each audit policy is bound to one exact reviewed NemoClaw tag, full commit SHA, and OpenClaw version tuple before the installer is patched.
+The adapter rejects an unknown or mixed tuple and any advisory audit count that does not match its reviewed profile.
 `test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts` verifies these constraints.
 
 Invalid state: a production image build overriding `OPENCLAW_VERSION` to an old fixture pin or replacing any repository-reviewed integrity/tarball value while still passing the workflow boundary. Source boundary: Dockerfile and Dockerfile.base install blocks plus the guard that precedes every production image build. Source-fix constraint: keep stale-upgrade E2Es able to build old images without normalizing those pins or accepting caller-controlled production package identity. Regression tests: the integrity-pin contract suite rejects the flag, both legacy versions, all declared integrity/tarball ARG overrides through direct, `--build-arg`, and environment paths, and a future-shaped positional pin name; `test/openclaw-dependency-review.test.ts` proves all seven production image builds are guard-protected and carry no literal fixture selectors. Removal condition: issue #5896 section 9 retires the old-base fixture strategy and fixture flag; the general repository-owned production pin guard remains until production builds no longer expose package identity as Docker ARGs.

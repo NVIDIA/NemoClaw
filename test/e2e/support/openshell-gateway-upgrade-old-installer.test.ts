@@ -27,8 +27,25 @@ const HISTORICAL_OPENCLAW_VERSIONS = Object.freeze({
   "v0.0.55": "2026.5.22",
   "v0.0.74": "2026.5.27",
 });
+const HISTORICAL_NEMOCLAW_COMMITS = Object.freeze({
+  "v0.0.36": "3351fbdd4eb7d9b80ec471545083956327da2b10",
+  "v0.0.55": "95d483fe2b6569d68e59493c60f19df09a068e8f",
+  "v0.0.74": "3a05b54e8ec3e1d5550ec5c728de54af872bffe3",
+});
 
 type ReviewedHistoricalRef = keyof typeof HISTORICAL_BUILD_CONTEXT_MODULES;
+
+function historicalFixtureIdentity(nemoclawRef: ReviewedHistoricalRef): {
+  nemoclawCommit: string;
+  nemoclawRef: ReviewedHistoricalRef;
+  openclawVersion: string;
+} {
+  return {
+    nemoclawCommit: HISTORICAL_NEMOCLAW_COMMITS[nemoclawRef],
+    nemoclawRef,
+    openclawVersion: HISTORICAL_OPENCLAW_VERSIONS[nemoclawRef],
+  };
+}
 
 function writeInstallerHarness(sourceRoot: string): {
   archive: string;
@@ -152,7 +169,7 @@ process.stdout.write(staged.buildCtx);
 
 function runReviewedHistoricalFixture(nemoclawRef: ReviewedHistoricalRef): string {
   const fixture = writeInstallerHarness(extractReviewedHistoricalSource(nemoclawRef));
-  patchOldInstallerFixture(fixture.installer, nemoclawRef);
+  patchOldInstallerFixture(fixture.installer, historicalFixtureIdentity(nemoclawRef));
 
   const result = spawnSync("bash", [fixture.installer], {
     encoding: "utf8",
@@ -213,7 +230,7 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
 
   it("rejects an ambiguous historical advisory boundary", () => {
     const fixture = writeHistoricalFixture(2);
-    patchOldInstallerFixture(fixture.installer, "v0.0.74");
+    patchOldInstallerFixture(fixture.installer, historicalFixtureIdentity("v0.0.74"));
     const originalDockerfile = fs.readFileSync(fixture.dockerfile, "utf8");
 
     const result = spawnSync("bash", [fixture.installer], {
@@ -231,7 +248,7 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
 
   it("rejects a missing historical advisory boundary", () => {
     const fixture = writeHistoricalFixture(0);
-    patchOldInstallerFixture(fixture.installer, "v0.0.74");
+    patchOldInstallerFixture(fixture.installer, historicalFixtureIdentity("v0.0.74"));
     const originalDockerfile = fs.readFileSync(fixture.dockerfile, "utf8");
 
     const result = spawnSync("bash", [fixture.installer], {
@@ -249,7 +266,7 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
 
   it("rejects an advisory audit in a profile that predates the audit", () => {
     const fixture = writeHistoricalFixture(1);
-    patchOldInstallerFixture(fixture.installer, "v0.0.36");
+    patchOldInstallerFixture(fixture.installer, historicalFixtureIdentity("v0.0.36"));
     const originalDockerfile = fs.readFileSync(fixture.dockerfile, "utf8");
 
     const result = spawnSync("bash", [fixture.installer], {
@@ -269,9 +286,26 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
     const fixture = writeHistoricalFixture();
     const originalInstaller = fs.readFileSync(fixture.installer, "utf8");
 
-    expect(() => patchOldInstallerFixture(fixture.installer, "v0.0.75")).toThrow(
-      /has no reviewed installer profile/u,
-    );
+    expect(() =>
+      patchOldInstallerFixture(fixture.installer, {
+        nemoclawCommit: "4".repeat(40),
+        nemoclawRef: "v0.0.75",
+        openclawVersion: "2026.5.28",
+      }),
+    ).toThrow(/exact reviewed ref\/commit\/OpenClaw profile/u);
+    expect(fs.readFileSync(fixture.installer, "utf8")).toBe(originalInstaller);
+  });
+
+  it("rejects a mixed historical installer profile", () => {
+    const fixture = writeHistoricalFixture();
+    const originalInstaller = fs.readFileSync(fixture.installer, "utf8");
+
+    expect(() =>
+      patchOldInstallerFixture(fixture.installer, {
+        ...historicalFixtureIdentity("v0.0.55"),
+        nemoclawCommit: HISTORICAL_NEMOCLAW_COMMITS["v0.0.36"],
+      }),
+    ).toThrow(/exact reviewed ref\/commit\/OpenClaw profile/u);
     expect(fs.readFileSync(fixture.installer, "utf8")).toBe(originalInstaller);
   });
 

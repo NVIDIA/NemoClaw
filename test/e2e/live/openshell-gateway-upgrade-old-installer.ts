@@ -10,6 +10,17 @@ export type ReviewedOldOpenClawArchive = Readonly<{
   tarballUrl: string;
 }>;
 
+export type OldInstallerFixtureIdentity = Readonly<{
+  nemoclawCommit: string;
+  nemoclawRef: string;
+  openclawVersion: string;
+}>;
+
+type ReviewedOldInstallerProfile = OldInstallerFixtureIdentity &
+  Readonly<{
+    expectedAdvisoryAuditCount: 0 | 1;
+  }>;
+
 const REVIEWED_OLD_OPENCLAW_ARCHIVES: Readonly<Record<string, ReviewedOldOpenClawArchive>> =
   Object.freeze({
     "2026.4.24": {
@@ -42,11 +53,27 @@ export const OLD_INSTALLER_ADVISORY_AUDIT =
   "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\\n";
 export const OLD_INSTALLER_ARCHIVE_CONTEXT_PATH = "nemoclaw/src/.nemoclaw-e2e-old-openclaw.tgz";
 
-const OLD_INSTALLER_ADVISORY_AUDIT_COUNTS: Readonly<Record<string, 0 | 1>> = Object.freeze({
-  "v0.0.36": 0,
-  "v0.0.55": 0,
-  "v0.0.74": 1,
-});
+const REVIEWED_OLD_INSTALLER_PROFILES: Readonly<Record<string, ReviewedOldInstallerProfile>> =
+  Object.freeze({
+    "v0.0.36": Object.freeze({
+      expectedAdvisoryAuditCount: 0,
+      nemoclawCommit: "3351fbdd4eb7d9b80ec471545083956327da2b10",
+      nemoclawRef: "v0.0.36",
+      openclawVersion: "2026.4.24",
+    }),
+    "v0.0.55": Object.freeze({
+      expectedAdvisoryAuditCount: 0,
+      nemoclawCommit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
+      nemoclawRef: "v0.0.55",
+      openclawVersion: "2026.5.22",
+    }),
+    "v0.0.74": Object.freeze({
+      expectedAdvisoryAuditCount: 1,
+      nemoclawCommit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3",
+      nemoclawRef: "v0.0.74",
+      openclawVersion: "2026.5.27",
+    }),
+  });
 
 export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClawArchive {
   const reviewedArchive = REVIEWED_OLD_OPENCLAW_ARCHIVES[version];
@@ -56,15 +83,32 @@ export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClaw
   return reviewedArchive;
 }
 
+export function reviewedOldInstallerProfile(
+  identity: OldInstallerFixtureIdentity,
+): ReviewedOldInstallerProfile {
+  const profile = REVIEWED_OLD_INSTALLER_PROFILES[identity.nemoclawRef];
+  if (
+    !profile ||
+    profile.nemoclawCommit !== identity.nemoclawCommit ||
+    profile.openclawVersion !== identity.openclawVersion
+  ) {
+    throw new Error(
+      `Historical gateway upgrade fixture must match an exact reviewed ref/commit/OpenClaw profile; got ${identity.nemoclawRef}/${identity.nemoclawCommit}/${identity.openclawVersion}`,
+    );
+  }
+  return profile;
+}
+
 // The frozen release installers are the source of truth, but their embedded
 // Dockerfiles predate the fixture pins needed for a deterministic upgrade test.
 // Keep this adapter scoped to the frozen historical lanes and retire it with
 // them; changing the tagged release payloads is not viable.
-export function patchOldInstallerFixture(installer: string, nemoclawRef: string): void {
-  const expectedAdvisoryAuditCount = OLD_INSTALLER_ADVISORY_AUDIT_COUNTS[nemoclawRef];
-  if (expectedAdvisoryAuditCount === undefined) {
-    throw new Error(`Historical gateway upgrade ${nemoclawRef} has no reviewed installer profile`);
-  }
+export function patchOldInstallerFixture(
+  installer: string,
+  identity: OldInstallerFixtureIdentity,
+): void {
+  const profile = reviewedOldInstallerProfile(identity);
+  const expectedAdvisoryAuditCount = profile.expectedAdvisoryAuditCount;
 
   const hook =
     String.raw`  if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" && -f "$payload_script" ]]; then
