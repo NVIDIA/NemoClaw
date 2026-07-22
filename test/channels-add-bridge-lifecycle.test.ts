@@ -311,7 +311,9 @@ describe("channels add owns the bridge-provider lifecycle (#6120)", () => {
         expect.objectContaining({ channelId: "googlechat", active: true, disabled: false }),
       ]),
     );
-    expect(policies.applyPreset).toHaveBeenCalledWith("test-sb", "googlechat");
+    expect(policies.applyPreset).toHaveBeenCalledWith("test-sb", "googlechat", {
+      disclosedPresetState: null,
+    });
     expect(appliedPresets).toContain("googlechat");
     expect(session.policyPresets).toContain("googlechat");
     expect(providerSpy).not.toHaveBeenCalled();
