@@ -153,12 +153,20 @@ function expectHermeticCompatibleEndpointUsed(
 // The e2e-live Vitest project owns the NEMOCLAW_RUN_LIVE_E2E collection gate,
 // so accidental cli-test-shard discovery cannot run this without real
 // `openshell`, Docker, or a sandbox-reachable fake OpenAI-compatible endpoint.
-test("onboard-resume: interrupted onboard then --resume can recreate with cached setup", async ({
-  artifacts,
-  cleanup,
-  host,
-  sandbox,
-}) => {
+test("onboard-resume: interrupted onboard then --resume can recreate with cached setup", {
+  meta: {
+    e2ePhases: [
+      "confirm runtime and compatible-endpoint prerequisites",
+      "clear prior resumable onboarding state",
+      "interrupt onboard after OpenClaw configuration",
+      "resume cached setup with sandbox recreation",
+      "validate resumed sandbox state and corporate trust",
+      "retry final verification after route repair",
+      "compare implicit resume with fresh onboard",
+      "record the completed resume contract",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox }) => {
   const corporateCa = createCorporateCaFixture("host-anchor", "nemoclaw-resume-corporate-ca-");
   cleanup.trackDisposable("remove corporate CA fixture", () =>
     cleanupCorporateCaFixture(corporateCa),
@@ -250,6 +258,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   // Done after the prereq gates pass so we don't mutate host state if
   // the test would have skipped anyway.
   // ──────────────────────────────────────────────────────────────────
+  progress.phase("clear prior resumable onboarding state");
   const probeEnv = buildAvailabilityProbeEnv();
   await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: "pre-cleanup-nemoclaw-destroy",
@@ -349,6 +358,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   // ──────────────────────────────────────────────────────────────────
   // Phase 2: first onboard (forced failure at the policies step)
   // ──────────────────────────────────────────────────────────────────
+  progress.phase("interrupt onboard after OpenClaw configuration");
   const firstRunEnv: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
     COMPATIBLE_API_KEY: FAKE_COMPATIBLE_AUTH_VALUE,
@@ -453,6 +463,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   // gateway/session state, then recreate the sandbox with stale extra-provider
   // attachments filtered out for this create attempt.
   // ──────────────────────────────────────────────────────────────────
+  progress.phase("resume cached setup with sandbox recreation");
   const resumeEnv: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
@@ -504,6 +515,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   // openclaw before failing at policies. Inference was already configured
   // during that run, so the resume path either re-runs it or detects
   // readiness and skips. Both are valid.
+  progress.phase("validate resumed sandbox state and corporate trust");
   const ranInference = resumeText.includes("[4/8] Setting up inference provider");
   const skippedInference =
     resumeText.includes("[resume] Skipping inference") ||
@@ -553,6 +565,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   // verification retryable; restoring the same endpoint lets a later resume
   // re-probe and complete without recreating the sandbox.
   // ──────────────────────────────────────────────────────────────────
+  progress.phase("retry final verification after route repair");
   markSessionInProgress(SESSION_FILE);
   await fake.close();
 
@@ -612,6 +625,7 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   // Phase 4: implicit resume — a plain `onboard` auto-detects an
   // in_progress session, and `--fresh` suppresses that auto-resume.
   // ──────────────────────────────────────────────────────────────────
+  progress.phase("compare implicit resume with fresh onboard");
   markSessionInProgress(SESSION_FILE);
   const implicitResumeRun = await host.command(
     "node",
@@ -659,5 +673,6 @@ test("onboard-resume: interrupted onboard then --resume can recreate with cached
   expect(freshRun.exitCode, freshText).not.toBe(0);
   expect(freshText).toContain("[e2e] Forced onboarding failure at step 'preflight'.");
   expect(freshText).not.toContain("(resume mode)");
+  progress.phase("record the completed resume contract");
   await artifacts.target.complete({ id: "onboard-resume", status: "passed" });
 });
