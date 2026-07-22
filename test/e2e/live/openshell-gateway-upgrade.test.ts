@@ -70,11 +70,14 @@ const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
 const OLD_OPENCLAW_VERSION = process.env.NEMOCLAW_OLD_OPENCLAW_VERSION ?? "2026.4.24";
-const { sandboxBaseDigest: OLD_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgradeFixture({
-  nemoclawRef: OLD_NEMOCLAW_REF,
+const OLD_INSTALLER_FIXTURE_IDENTITY = Object.freeze({
   nemoclawCommit: OLD_NEMOCLAW_COMMIT,
-  installerSha256: OLD_INSTALLER_SHA256,
+  nemoclawRef: OLD_NEMOCLAW_REF,
   openclawVersion: OLD_OPENCLAW_VERSION,
+});
+const { sandboxBaseDigest: OLD_SANDBOX_BASE_DIGEST } = validateLegacyGatewayUpgradeFixture({
+  ...OLD_INSTALLER_FIXTURE_IDENTITY,
+  installerSha256: OLD_INSTALLER_SHA256,
   sandboxBaseImageRef: OLD_SANDBOX_BASE_IMAGE_REF,
 });
 const SURVIVOR_SANDBOX =
@@ -403,7 +406,7 @@ async function installOldNemoclawAndClaw(
     `downloaded ${OLD_NEMOCLAW_REF} installer must match its pinned SHA-256`,
   ).toBe(OLD_INSTALLER_SHA256);
   fs.chmodSync(oldInstaller, 0o755);
-  patchOldInstallerFixture(oldInstaller);
+  patchOldInstallerFixture(oldInstaller, OLD_INSTALLER_FIXTURE_IDENTITY);
 
   const reviewedOpenClaw = packReviewedNpmArchive(reviewedOldOpenClawArchive(OLD_OPENCLAW_VERSION));
 

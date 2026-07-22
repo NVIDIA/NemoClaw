@@ -10,6 +10,17 @@ export type ReviewedOldOpenClawArchive = Readonly<{
   tarballUrl: string;
 }>;
 
+export type OldInstallerFixtureIdentity = Readonly<{
+  nemoclawCommit: string;
+  nemoclawRef: string;
+  openclawVersion: string;
+}>;
+
+type ReviewedOldInstallerProfile = OldInstallerFixtureIdentity &
+  Readonly<{
+    expectedAdvisoryAuditCount: 0 | 1;
+  }>;
+
 const REVIEWED_OLD_OPENCLAW_ARCHIVES: Readonly<Record<string, ReviewedOldOpenClawArchive>> =
   Object.freeze({
     "2026.4.24": {
@@ -40,6 +51,29 @@ export const OLD_INSTALLER_CLONE_NEEDLE =
   '    spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"\n';
 export const OLD_INSTALLER_ADVISORY_AUDIT =
   "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\\n";
+export const OLD_INSTALLER_ARCHIVE_CONTEXT_PATH = "nemoclaw/src/.nemoclaw-e2e-old-openclaw.tgz";
+
+const REVIEWED_OLD_INSTALLER_PROFILES: Readonly<Record<string, ReviewedOldInstallerProfile>> =
+  Object.freeze({
+    "v0.0.36": Object.freeze({
+      expectedAdvisoryAuditCount: 0,
+      nemoclawCommit: "3351fbdd4eb7d9b80ec471545083956327da2b10",
+      nemoclawRef: "v0.0.36",
+      openclawVersion: "2026.4.24",
+    }),
+    "v0.0.55": Object.freeze({
+      expectedAdvisoryAuditCount: 0,
+      nemoclawCommit: "95d483fe2b6569d68e59493c60f19df09a068e8f",
+      nemoclawRef: "v0.0.55",
+      openclawVersion: "2026.5.22",
+    }),
+    "v0.0.74": Object.freeze({
+      expectedAdvisoryAuditCount: 1,
+      nemoclawCommit: "3a05b54e8ec3e1d5550ec5c728de54af872bffe3",
+      nemoclawRef: "v0.0.74",
+      openclawVersion: "2026.5.27",
+    }),
+  });
 
 export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClawArchive {
   const reviewedArchive = REVIEWED_OLD_OPENCLAW_ARCHIVES[version];
@@ -49,11 +83,33 @@ export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClaw
   return reviewedArchive;
 }
 
+export function reviewedOldInstallerProfile(
+  identity: OldInstallerFixtureIdentity,
+): ReviewedOldInstallerProfile {
+  const profile = REVIEWED_OLD_INSTALLER_PROFILES[identity.nemoclawRef];
+  if (
+    !profile ||
+    profile.nemoclawCommit !== identity.nemoclawCommit ||
+    profile.openclawVersion !== identity.openclawVersion
+  ) {
+    throw new Error(
+      `Historical gateway upgrade fixture must match an exact reviewed ref/commit/OpenClaw profile; got ${identity.nemoclawRef}/${identity.nemoclawCommit}/${identity.openclawVersion}`,
+    );
+  }
+  return profile;
+}
+
 // The frozen release installers are the source of truth, but their embedded
 // Dockerfiles predate the fixture pins needed for a deterministic upgrade test.
 // Keep this adapter scoped to the frozen historical lanes and retire it with
 // them; changing the tagged release payloads is not viable.
-export function patchOldInstallerFixture(installer: string): void {
+export function patchOldInstallerFixture(
+  installer: string,
+  identity: OldInstallerFixtureIdentity,
+): void {
+  const profile = reviewedOldInstallerProfile(identity);
+  const expectedAdvisoryAuditCount = profile.expectedAdvisoryAuditCount;
+
   const hook =
     String.raw`  if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" && -f "$payload_script" ]]; then
     python3 - "$payload_script" <<'NEMOCLAW_OLD_PAYLOAD_PIN_PY'
@@ -68,7 +124,12 @@ hook = r'''    if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" ]]; then
         echo "ERROR: reviewed historical OpenClaw archive is missing" >&2
         exit 1
       fi
-      cp -- "$NEMOCLAW_OLD_OPENCLAW_ARCHIVE" "$nemoclaw_src/.nemoclaw-e2e-old-openclaw.tgz"
+      archive_context_path="$nemoclaw_src/${OLD_INSTALLER_ARCHIVE_CONTEXT_PATH}"
+      if [[ ! -d "$(dirname "$archive_context_path")" ]]; then
+        echo "ERROR: historical OpenClaw archive context directory is missing" >&2
+        exit 1
+      fi
+      cp -- "$NEMOCLAW_OLD_OPENCLAW_ARCHIVE" "$archive_context_path"
       python3 - "$nemoclaw_src/Dockerfile" "$NEMOCLAW_OLD_OPENCLAW_VERSION" <<'NEMOCLAW_OLD_DOCKERFILE_PIN_PY'
 from pathlib import Path
 import sys
@@ -78,7 +139,7 @@ version = sys.argv[2]
 text = path.read_text(encoding="utf-8")
 injection = (
     "# E2E old-upgrade fixture: force the historical OpenClaw before the old Dockerfile's version gate.\n"
-    "COPY .nemoclaw-e2e-old-openclaw.tgz /tmp/nemoclaw-e2e-old-openclaw.tgz\n"
+    "COPY ${OLD_INSTALLER_ARCHIVE_CONTEXT_PATH} /tmp/nemoclaw-e2e-old-openclaw.tgz\n"
     "RUN rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw \\\n"
     "    && npm install -g --ignore-scripts --no-audit --no-fund --no-progress /tmp/nemoclaw-e2e-old-openclaw.tgz \\\n"
     "    && node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs \\\n"
@@ -105,14 +166,17 @@ if injection not in text:
 
 advisory_audit = ${JSON.stringify(OLD_INSTALLER_ADVISORY_AUDIT)}
 advisory_audit_count = text.count(advisory_audit)
-if advisory_audit_count != 1:
+expected_advisory_audit_count = ${expectedAdvisoryAuditCount}
+if advisory_audit_count != expected_advisory_audit_count:
     raise SystemExit(
-        f"{path}: found {advisory_audit_count} historical mcporter advisory audits; expected exactly one"
+        f"{path}: found {advisory_audit_count} historical mcporter advisory audits; "
+        f"expected {expected_advisory_audit_count}"
     )
-audit_fixture_note = (
-    '    echo "INFO: Skipping current advisory audit for the immutable historical mcporter lock"; \\\n'
-)
-text = text.replace(advisory_audit, audit_fixture_note, 1)
+if expected_advisory_audit_count == 1:
+    audit_fixture_note = (
+        '    echo "INFO: Skipping current advisory audit for the immutable historical mcporter lock"; \\\n'
+    )
+    text = text.replace(advisory_audit, audit_fixture_note, 1)
 
 path.write_text(text, encoding="utf-8")
 print(f"INFO: Forced OpenClaw {version} in old upgrade fixture Dockerfile", flush=True)
