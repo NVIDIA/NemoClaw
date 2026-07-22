@@ -404,19 +404,20 @@ phase limits in the budget file, and limits the longest onboard output gap to
 `full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
 
 When changed base-image inputs require the authoritative local OpenClaw base
-build, the target applies the separately calibrated 31-second allowance only to
+build, the target applies the separately calibrated 90-second allowance only to
 the root-start and sandbox-phase limits. The installer must emit the exact local
 base-build reason before the allowance applies. Published-image runs retain the
 normal limits, and output silence, first-turn, and all other phase requirements
 remain unchanged.
 
-The two Hermes rebuild jobs add a bounded 32 GiB swap file on their ephemeral
-hosted runners before invoking the live fixture. The fixture verifies that
-floor and provisions the same swap file on GitHub Actions when a trusted
-control-plane run uses the workflow definition from `main`. Those jobs build
-both old and current Hermes image layers and can otherwise exhaust the runner's
-default memory and swap during Docker layer export. Other E2E jobs keep the
-standard runner memory configuration.
+The two Hermes rebuild jobs and both reusable-workflow Hermes image exporters
+add a bounded 32 GiB swap file on their ephemeral hosted runners before the
+memory-heavy image build. The rebuild fixture verifies that floor and
+provisions the same swap file on GitHub Actions when a trusted control-plane
+run uses the workflow definition from `main`. Those paths build large Hermes
+image layers and can otherwise exhaust the runner's default memory and swap
+during Docker layer export. Other E2E jobs keep the standard runner memory
+configuration.
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first

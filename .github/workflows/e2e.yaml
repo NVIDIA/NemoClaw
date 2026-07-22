@@ -431,7 +431,7 @@ jobs:
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.85"
-      DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d"
+      DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -3491,7 +3491,7 @@ jobs:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-upgrade,') }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
@@ -3532,6 +3532,17 @@ jobs:
             sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6"
             openshell_version: 0.0.72
             openclaw_version: 2026.5.27
+          - id: v0.0.89-x86_64
+            runner: ubuntu-latest
+            shard: v0-0-89-x86-64
+            nemoclaw_ref: v0.0.89
+            nemoclaw_commit: "1143aa5cce77f3bad1b3b5588bd7fddbe438237e"
+            installer_sha256: "00f24959e5ca68104fe91221c0a015dab6a4154618497fa36b969b661f418cc2"
+            sandbox_base_image_ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:3265d482f67c9d81ee3a59b0bbad5eb5ea6c705fea81ece8ae888ed12794f7f1"
+            openshell_version: 0.0.85
+            openclaw_version: 2026.6.10
+            current_openclaw_version: 2026.7.1
+            openclaw_state_upgrade: "1"
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openshell-gateway-upgrade"
@@ -3548,6 +3559,8 @@ jobs:
       NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: ${{ matrix.sandbox_base_image_ref }}
       NEMOCLAW_OLD_OPENSHELL_VERSION: ${{ matrix.openshell_version }}
       NEMOCLAW_OLD_OPENCLAW_VERSION: ${{ matrix.openclaw_version }}
+      NEMOCLAW_CURRENT_OPENCLAW_VERSION: ${{ matrix.current_openclaw_version }}
+      NEMOCLAW_OPENCLAW_STATE_UPGRADE_PROOF: ${{ matrix.openclaw_state_upgrade }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -3563,7 +3576,9 @@ jobs:
       - name: Run OpenShell gateway upgrade live Vitest test
         # Keep the original v0.0.36 fixture on x86_64 and validate the exact
         # v0.0.55/OpenShell 0.0.44 regression shape on x86_64 and arm64, plus
-        # the immediate v0.0.74/OpenShell 0.0.72 predecessor to this bump.
+        # the immediate v0.0.74/OpenShell 0.0.72 predecessor to this bump. The
+        # v0.0.89 row proves OpenClaw 2026.6.10 state survives the 2026.7.1
+        # migration without crossing the OpenShell secret boundary.
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -3964,7 +3979,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker pull node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
+          docker pull node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
       - name: Remove Docker auth before release-pinned fixture
         if: always()
