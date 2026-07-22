@@ -398,11 +398,6 @@
     },
     {
       "file": "test/pr-e2e-gate-shards.test.ts",
-      "test": "rejects a direct matrix whose shard selector names another field",
-      "category": "security"
-    },
-    {
-      "file": "test/pr-e2e-gate-shards.test.ts",
       "test": "rejects malformed configured matrix shard selectors",
       "category": "security"
     },

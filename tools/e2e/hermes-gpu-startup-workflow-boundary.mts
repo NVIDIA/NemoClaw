@@ -117,11 +117,12 @@ export function validateHermesGpuStartupWorkflow(
   if (
     strategy["fail-fast"] !== false ||
     strategy["max-parallel"] !== 1 ||
-    !Array.isArray(matrix.scenario) ||
-    matrix.scenario.length !== 3 ||
-    matrix.scenario[0] !== "native" ||
-    matrix.scenario[1] !== "fallback" ||
-    matrix.scenario[2] !== "compatibility-only"
+    JSON.stringify(matrix.include) !==
+      JSON.stringify([
+        { scenario: "native" },
+        { scenario: "fallback" },
+        { scenario: "compatibility-only" },
+      ])
   ) {
     errors.push(`${JOB_NAME} must serialize GPU scenarios`);
   }

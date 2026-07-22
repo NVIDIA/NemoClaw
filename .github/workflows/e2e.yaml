@@ -1627,7 +1627,10 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        scenario: [native, fallback, compatibility-only]
+        include:
+          - scenario: native
+          - scenario: fallback
+          - scenario: compatibility-only
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-gpu-startup"
