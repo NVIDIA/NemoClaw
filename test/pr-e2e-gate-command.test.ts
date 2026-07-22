@@ -85,10 +85,29 @@ describe("PR E2E controller commands", () => {
   });
 
   it("parses a cancel command", () => {
-    expect(parseControllerCommand(["--mode", "cancel", "--pr", "42"])).toEqual({
+    expect(
+      parseControllerCommand([
+        "--mode",
+        "cancel",
+        "--pr",
+        "42",
+        "--head",
+        HEAD_SHA,
+        "--superseded-head",
+        BASE_SHA,
+      ]),
+    ).toEqual({
       mode: "cancel",
       prNumber: 42,
+      headSha: HEAD_SHA,
+      supersededHeadSha: BASE_SHA,
     });
+  });
+
+  it("requires current and superseded head SHAs together", () => {
+    expect(() =>
+      parseControllerCommand(["--mode", "cancel", "--pr", "42", "--head", HEAD_SHA]),
+    ).toThrow("--head and --superseded-head must be provided together");
   });
 
   it("parses a seed command", () => {

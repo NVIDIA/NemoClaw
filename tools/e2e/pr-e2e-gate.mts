@@ -197,7 +197,12 @@ export type ControllerCommand =
       evidenceOutcome: EvidenceStepOutcome;
     } & ControllerPaths)
   | { mode: "abandon"; checkRunId: number; childRunId?: number }
-  | { mode: "cancel"; prNumber: number }
+  | {
+      mode: "cancel";
+      prNumber: number;
+      headSha?: string;
+      supersededHeadSha?: string;
+    }
   | { mode: "wait"; childRunId: number }
   | ({ mode: "download"; childRunId: number } & ControllerPaths)
   | ControlPlaneDispatchCommand
@@ -489,9 +494,20 @@ export function parseControllerCommand(argv: string[]): ControllerCommand {
     };
   }
   if (args.mode === "cancel") {
+    if ((args.head === undefined) !== (args.supersededHead === undefined)) {
+      throw new Error("--head and --superseded-head must be provided together");
+    }
+    if (args.head !== undefined && !SHA_PATTERN.test(args.head)) {
+      throw new Error("--head is invalid");
+    }
+    if (args.supersededHead !== undefined && !SHA_PATTERN.test(args.supersededHead)) {
+      throw new Error("--superseded-head is invalid");
+    }
     return {
       mode: "cancel",
       prNumber: parsePositiveId(requiredArgument(args.pr, "pr"), "--pr"),
+      headSha: args.head,
+      supersededHeadSha: args.supersededHead,
     };
   }
   if (args.mode === "wait") {
@@ -3466,9 +3482,67 @@ export async function recordApprovedForkE2ESkip(command: ApprovedForkSkipCommand
   });
 }
 
-export async function cancelPrGate(prNumber: number): Promise<number> {
+async function activeSupersededPrGateChecks(options: {
+  repository: string;
+  token: string;
+  prNumber: number;
+  headSha?: string;
+  supersededHeadSha?: string;
+}): Promise<CheckRun[]> {
+  if (!options.headSha && !options.supersededHeadSha) return [];
+  if (!options.headSha || !options.supersededHeadSha) {
+    throw new Error("current and superseded PR head SHAs must be provided together");
+  }
+  if (!SHA_PATTERN.test(options.headSha)) throw new Error("current PR head SHA is invalid");
+  if (!SHA_PATTERN.test(options.supersededHeadSha)) {
+    throw new Error("superseded PR head SHA is invalid");
+  }
+  if (options.headSha === options.supersededHeadSha) return [];
+  const supersededHeadSha = options.supersededHeadSha;
+
+  const pull = validatePullRequest(
+    await githubApi<unknown>(
+      `repos/${options.repository}/pulls/${options.prNumber}`,
+      options.token,
+      { userAgent: USER_AGENT },
+    ),
+  );
+  if (
+    pull.number !== options.prNumber ||
+    pull.head.sha !== options.headSha ||
+    pull.head.repo?.full_name !== options.repository ||
+    pull.base.repo.full_name !== options.repository
+  ) {
+    throw new Error("current pull request identity does not match the cancellation event");
+  }
+
+  const lineage = (
+    await listPrGateChecks({
+      repository: options.repository,
+      token: options.token,
+      headSha: supersededHeadSha,
+    })
+  ).filter((check) => isPrGateLineage(check, options.prNumber, supersededHeadSha));
+  if (lineage.some((check) => check.app?.id !== GITHUB_ACTIONS_APP_ID)) {
+    throw new Error("superseded PR gate check identity was claimed by an unexpected GitHub App");
+  }
+  return lineage.filter((check) => check.status !== "completed");
+}
+
+export async function cancelPrGate(
+  prNumber: number,
+  headSha?: string,
+  supersededHeadSha?: string,
+): Promise<number> {
   const { token, repository } = tokenAndRepository();
   if (!Number.isSafeInteger(prNumber) || prNumber < 1) throw new Error("PR number is invalid");
+  const supersededChecks = await activeSupersededPrGateChecks({
+    repository,
+    token,
+    prNumber,
+    headSha,
+    supersededHeadSha,
+  });
   const titlePrefix = `E2E PR #${prNumber} (`;
   const active = new Map<number, WorkflowRun>();
   for (const status of ACTIVE_WORKFLOW_RUN_STATUSES) {
@@ -3504,6 +3578,14 @@ export async function cancelPrGate(prNumber: number): Promise<number> {
     console.log(
       `Cancelled superseded run: pr=${prNumber} run=${run.id} url=https://github.com/${repository}/actions/runs/${run.id}`,
     );
+  }
+  for (const check of supersededChecks) {
+    await completeCheck({ repository, checkRunId: check.id }, token, {
+      conclusion: "cancelled",
+      title: "Superseded by PR update",
+      summary: `[PR #${prNumber}](https://github.com/${repository}/pull/${prNumber}) moved to head \`${headSha!.slice(0, 7)}\`. This check for superseded head \`${supersededHeadSha!.slice(0, 7)}\` no longer applies.`,
+    });
+    console.log(`Closed superseded PR gate check: pr=${prNumber} check=${check.id}`);
   }
   if (active.size === 0) {
     console.log(`No active E2E runs found for PR #${prNumber}`);
@@ -3569,7 +3651,7 @@ async function main(): Promise<void> {
     await recordApprovedForkE2ESkip(command);
     return;
   }
-  await cancelPrGate(command.prNumber);
+  await cancelPrGate(command.prNumber, command.headSha, command.supersededHeadSha);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -211,8 +211,10 @@ function runCancelStep(prNumber: string) {
         ...process.env,
         FAKE_NODE_ARGUMENTS: argumentsPath,
         GITHUB_TOKEN: "token",
+        HEAD_SHA,
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         PR_NUMBER: prNumber,
+        SUPERSEDED_HEAD_SHA: "c".repeat(40),
       },
       timeout: 5_000,
     });
@@ -426,7 +428,12 @@ describe("PR E2E gate workflow", () => {
     );
     expect(cancel.if).toContain("github.event.action != 'edited'");
     expect(cancel.if).toContain("github.event.changes.base != null");
-    expect(cancel.permissions).toEqual({ actions: "write", contents: "read" });
+    expect(cancel.permissions).toEqual({
+      actions: "write",
+      checks: "write",
+      contents: "read",
+      "pull-requests": "read",
+    });
     expect(coordinate.if).toContain("github.event_name == 'workflow_run'");
     expect(coordinate.if).toContain("github.event.workflow_run.event == 'pull_request'");
     expect(coordinate.if).toContain(
@@ -477,7 +484,7 @@ describe("PR E2E gate workflow", () => {
     expect(approveInternal.concurrency).toEqual({
       group:
         "pr-e2e-gate-approve-internal-${{ needs.coordinate.outputs.control_plane_approval_pr_number }}",
-      "cancel-in-progress": false,
+      "cancel-in-progress": true,
     });
     expect(approveInternal.secrets).toBeUndefined();
     expect(approveForkSkip.name).toBe("Approve credentialed E2E skip for fork PR");
@@ -635,6 +642,10 @@ describe("PR E2E gate workflow", () => {
       "cancel",
       "--pr",
       "42",
+      "--head",
+      HEAD_SHA,
+      "--superseded-head",
+      "c".repeat(40),
     ]);
   });
 

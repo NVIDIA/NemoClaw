@@ -205,8 +205,12 @@ false`, the job does not create a deployment record. After reviewing the exact
 head SHA, base SHA, and risk plan as described below, an environment reviewer
 opens the linked run, chooses **Review deployments**, selects that environment,
 and approves it. GitHub records the reviewer and optional comment. The
-controller reads that approval history and requires one approved review naming
-only the exact environment in the first attempt of the trusted `workflow_run`
+protected approval job uses per-PR concurrency with in-progress cancellation.
+When a newer revision reaches authorization, its job cancels any waiting
+approval job for the prior revision and becomes available for review without
+waiting on the obsolete request. The controller reads that approval history and
+requires one approved review naming only the exact environment in the first
+attempt of the trusted `workflow_run`
 controller. It then revalidates the internal repository origin, open PR, PR SHA
 and base SHA, risk plan, matching pending coordination state, compatible
 trusted controller commit, and final live revision. It updates coordination to
@@ -380,13 +384,18 @@ These dispatches suppress PR comments and the scheduled or manual
 scorecard, including scorecard Slack reporting.
 
 Synchronizing, reopening, or closing an internal PR cancels its active E2E
-runs. A new dispatch also cancels the previous run. The previous controller
-then completes the old PR/base SHA coordination check as cancelled when the PR
-revision moved or closed, or as failed when the current revision's selected E2E
-did not pass. Native observer concurrency cancels the old required-job run and
-starts a new one when a configured non-closed PR event identifies the current
-revision. Metadata-only edits restart the observer against the unchanged
-PR/base SHA identity.
+runs. On synchronization, the trusted cancellation job receives the event's
+current and previous head SHAs and first requires the live PR to match the
+current internal revision. It completes each active GitHub Actions-owned
+coordination check for the previous head as cancelled and rejects unexpected
+GitHub App ownership. Completed checks remain immutable audit history. A new
+dispatch also cancels the previous run. The previous controller then completes
+the old PR/base SHA coordination check as cancelled when the PR revision moved
+or closed, or as failed when the current revision's selected E2E did not pass.
+Native observer concurrency cancels the old required-job run and starts a new
+one when a configured non-closed PR event identifies the current revision.
+Metadata-only edits restart the observer against the unchanged PR/base SHA
+identity.
 The controller does not read PR Review Advisor output, so model availability
 and recommendations are not part of merge authority.
 
