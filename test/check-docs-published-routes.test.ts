@@ -434,6 +434,24 @@ describe("Manage Sandboxes extension routes", () => {
   });
 });
 
+describe("headless server deployment routes", () => {
+  const index = buildPublishedRouteIndex();
+
+  it("publishes the guide for every agent variant (#7180)", () => {
+    for (const variant of ["openclaw", "hermes", "deepagents"]) {
+      expect(index.routes.has(`/user-guide/${variant}/deployment/deploy-to-headless-server`)).toBe(
+        true,
+      );
+    }
+  });
+
+  it("resolves every guide link against generated published routes (#7180)", () => {
+    expect(findBrokenPublishedRoutes("deployment/deploy-to-headless-server.mdx", index)).toEqual(
+      [],
+    );
+  });
+});
+
 describe("native changelog legacy routes", () => {
   it("redirects every retired Release Notes route directly to the changelog", () => {
     expect(findMissingDirectLegacyReleaseNotesRedirects()).toEqual([]);
