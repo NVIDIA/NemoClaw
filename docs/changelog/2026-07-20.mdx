@@ -5,11 +5,14 @@
 
 ## v0.0.90
 
-NemoClaw v0.0.90 keeps managed-image routing identifiers out of secret-shaped build arguments, restores provider-reset recovery, corrects WhatsApp health reporting, and aligns DGX Station guidance with the versioned installer.
+NemoClaw v0.0.90 keeps managed-image routing identifiers out of secret-shaped build arguments, remediates reviewed OpenClaw dependency vulnerabilities, restores provider-reset recovery, corrects WhatsApp health reporting, and aligns DGX Station guidance with the versioned installer.
 
 - Managed OpenClaw, Hermes, and Deep Agents images now use `NEMOCLAW_INFERENCE_PROVIDER_ID` for the non-secret inference route selector, while provider credentials stay in OpenShell storage and the host-side credential alias remains unchanged.
   Existing custom images can use the legacy selector through v0.0.90 and should migrate before the fallback is removed in v0.0.91.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- OpenClaw core, Slack, and Microsoft Teams installations now replace reviewed vulnerable transitive packages with integrity-verified remediated versions while retaining the `openclaw@2026.6.10` release pin.
+  Archive validation fails closed, and the dependency audit records the remaining reviewed low- and moderate-severity findings.
+  For more information, refer to the [OpenClaw 2026.6.10 Dependency Review](https://github.com/NVIDIA/NemoClaw/blob/main/docs/security/openclaw-2026.6.10-dependency-review.md).
 - `credentials reset` now recognizes sandbox attachments from wrapped OpenShell diagnostics, validates each sandbox name, detaches affected sandboxes, and retries provider deletion without exposing credential values.
   For more information, refer to [Credential Rotation](/user-guide/openclaw/security/credential-rotation).
 - OpenClaw WhatsApp status now recognizes the current paired-session path and derives in-process bridge activity from redacted gateway-log evidence.
