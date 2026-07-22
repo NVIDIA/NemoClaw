@@ -57,6 +57,13 @@ function writeChatSendFixture(dist: string): string {
       "          message",
       "        });",
       "      }",
+      "      let queuedFollowupEnqueued = true;",
+      "      if (queuedFollowupEnqueued && !context.chatAbortedRuns.has(clientRunId)) broadcastChatFinal({",
+      "        context,",
+      "        runId: clientRunId,",
+      "        sessionKey,",
+      "        agentId",
+      "      });",
       "    });",
       "  }",
       "};",
@@ -664,6 +671,7 @@ describe("OpenClaw chat.send compatibility patch", () => {
       expect(patched).toContain("idempotencyKey: clientRunId");
       expect(patched).toContain("if (message) broadcastChatFinal({");
       expect(patched).toContain("suppressing empty final event");
+      expect(patched).toContain("suppressing premature queued followup final event");
 
       const patchedFollowup = fs.readFileSync(followupFixture, "utf-8");
       expect(patchedFollowup).toContain(
@@ -686,6 +694,9 @@ describe("OpenClaw chat.send compatibility patch", () => {
       expect(rerunPatched.match(/context\.addChatRun\(runId/g)).toHaveLength(1);
       expect(rerunPatched.match(/idempotencyKey: clientRunId/g)).toHaveLength(1);
       expect(rerunPatched.match(/suppressing empty final event/g)).toHaveLength(1);
+      expect(rerunPatched.match(/suppressing premature queued followup final event/g)).toHaveLength(
+        1,
+      );
       const rerunPatchedFollowup = fs.readFileSync(followupFixture, "utf-8");
       expect(
         rerunPatchedFollowup.match(/preserve chat\.send run ids in followup queue/g),

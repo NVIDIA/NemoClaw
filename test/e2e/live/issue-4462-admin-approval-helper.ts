@@ -155,7 +155,7 @@ export function adminApprovalConnectScript(
     'echo "ISSUE_5324_STAGE=explicit-admin-approval"',
     'if ! openclaw devices approve "$request_id" >"$approve_output" 2>&1; then echo "ADMIN_APPROVE_FAILED" >&2; exit 27; fi',
     'if ! openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello" >"$cron_output" 2>&1; then echo "ADMIN_CRON_RETRY_FAILED" >&2; exit 28; fi',
-    // OpenClaw 2026.6.10 classifies cron.add and cron.run at the same
+    // OpenClaw 2026.6.10 and 2026.7.1 classify cron.add and cron.run at the same
     // operator.admin gateway-method boundary (gateway/methods/core-descriptors.ts).
     // The exact-request approval above therefore grants the scope both use.
     // The cron.run response is validated below after the final agent proof so
