@@ -41,10 +41,20 @@ function validate(value: MutableWorkflow): string[] {
   return validateBaseImagePublicationGate(value as unknown as OperationsWorkflow);
 }
 
+function required<T>(value: T | undefined, message: string): T {
+  return (
+    value ??
+    (() => {
+      throw new Error(message);
+    })()
+  );
+}
+
 function gateSteps(value: MutableWorkflow): MutableStep[] {
-  const steps = value.jobs["base-image-publication"]?.steps;
-  if (!steps) throw new Error("base-image-publication test fixture is missing steps");
-  return steps;
+  return required(
+    value.jobs["base-image-publication"]?.steps,
+    "base-image-publication test fixture is missing steps",
+  );
 }
 
 function runClassifier(environment: {
@@ -53,8 +63,10 @@ function runClassifier(environment: {
   ref: string;
   repository: string;
 }): { output: string; status: number | null } {
-  const source = gateSteps(workflow())[0]?.run;
-  if (!source) throw new Error("publication classifier fixture is missing its script");
+  const source = required(
+    gateSteps(workflow())[0]?.run,
+    "publication classifier fixture is missing its script",
+  );
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-publication-mode-"));
   const outputPath = path.join(directory, "github-output");
   try {

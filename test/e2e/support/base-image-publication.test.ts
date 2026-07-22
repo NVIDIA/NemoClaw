@@ -40,6 +40,30 @@ const WORKFLOW_SOURCE = `on:
 jobs: {}
 `;
 
+function required<T>(value: T | undefined, message: string): T {
+  return (
+    value ??
+    (() => {
+      throw new Error(message);
+    })()
+  );
+}
+
+function historyGitResponse(args: string[], relevantSha: string, firstParentShas: string): string {
+  const responses = new Map([
+    ["rev-parse:--verify", EXPECTED_SHA],
+    ["rev-parse:--is-shallow-repository", "false"],
+    ["log:--first-parent", relevantSha],
+    ["rev-list:--first-parent", firstParentShas],
+  ]);
+  return required(responses.get(`${args[0]}:${args[1]}`), "unexpected git history request");
+}
+
+function nextFetchResponse(responses: Array<Response | Error>): Promise<Response> {
+  const response = required(responses.shift(), "unexpected GitHub request");
+  return response instanceof Error ? Promise.reject(response) : Promise.resolve(response);
+}
+
 function history(): FirstParentHistory {
   return {
     expectedSha: EXPECTED_SHA,
@@ -196,10 +220,11 @@ describe("base-image publication evidence", () => {
     const calls: string[][] = [];
     const resolved = resolveFirstParentHistory(EXPECTED_SHA, ["Dockerfile.base"], (args) => {
       calls.push(args);
-      if (args[0] === "rev-parse" && args[1] === "--is-shallow-repository") return "false";
-      if (args[0] === "rev-parse") return EXPECTED_SHA;
-      if (args[0] === "log") return RELEVANT_SHA;
-      return `${EXPECTED_SHA}\n${DESCENDANT_SHA}\n${RELEVANT_SHA}\n${STALE_SHA}`;
+      return historyGitResponse(
+        args,
+        RELEVANT_SHA,
+        `${EXPECTED_SHA}\n${DESCENDANT_SHA}\n${RELEVANT_SHA}\n${STALE_SHA}`,
+      );
     });
 
     expect(resolved.relevantSha).toBe(RELEVANT_SHA);
@@ -266,12 +291,9 @@ describe("base-image publication evidence", () => {
       resolveFirstParentHistory(EXPECTED_SHA, ["Dockerfile.base"], () => DESCENDANT_SHA),
     ).toThrow(/checked-out commit/u);
     expect(() =>
-      resolveFirstParentHistory(EXPECTED_SHA, ["Dockerfile.base"], (args) => {
-        if (args[0] === "rev-parse" && args[1] === "--is-shallow-repository") return "false";
-        if (args[0] === "rev-parse") return EXPECTED_SHA;
-        if (args[0] === "log") return STALE_SHA;
-        return `${EXPECTED_SHA}\n${RELEVANT_SHA}`;
-      }),
+      resolveFirstParentHistory(EXPECTED_SHA, ["Dockerfile.base"], (args) =>
+        historyGitResponse(args, STALE_SHA, `${EXPECTED_SHA}\n${RELEVANT_SHA}`),
+      ),
     ).toThrow(/not on the first-parent history/u);
   });
 
@@ -537,12 +559,7 @@ describe("base-image publication evidence", () => {
 
     await expect(
       githubRequest("/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml", "token", {
-        fetchImpl: async () => {
-          const next = transientResponses.shift();
-          if (next instanceof Error) throw next;
-          if (!next) throw new Error("unexpected request");
-          return next;
-        },
+        fetchImpl: () => nextFetchResponse(transientResponses),
         sleep: async (milliseconds) => {
           transientSleeps.push(milliseconds);
         },
@@ -550,7 +567,7 @@ describe("base-image publication evidence", () => {
     ).resolves.toEqual({ ok: true });
     expect(transientSleeps).toEqual([1000, 2000]);
 
-    const rateLimitResponses = [
+    const rateLimitResponses: Array<Response | Error> = [
       new Response("limited", {
         status: 403,
         headers: { "retry-after": "7", "x-ratelimit-remaining": "0" },
@@ -561,11 +578,7 @@ describe("base-image publication evidence", () => {
     await expect(
       githubRequest("/repos/NVIDIA/NemoClaw/actions/workflows/base-image.yaml", "token", {
         attempts: 2,
-        fetchImpl: async () => {
-          const next = rateLimitResponses.shift();
-          if (!next) throw new Error("unexpected request");
-          return next;
-        },
+        fetchImpl: () => nextFetchResponse(rateLimitResponses),
         sleep: async (milliseconds) => {
           rateLimitSleeps.push(milliseconds);
         },
