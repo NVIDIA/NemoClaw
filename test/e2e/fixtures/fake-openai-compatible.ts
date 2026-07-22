@@ -224,7 +224,14 @@ export async function startFakeOpenAiCompatibleServer(
   try {
     port = await waitForReady(portFile, child, host);
   } catch (error) {
-    await close();
+    try {
+      await close();
+    } catch (closeError) {
+      throw new AggregateError(
+        [error, closeError],
+        "fake OpenAI-compatible server failed to become ready and failed to terminate cleanly",
+      );
+    }
     throw error;
   }
   const publicHost = options.publicHost ?? readinessProbeHost(host);

@@ -5,12 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 
 import { ArtifactSink, createArtifactSink } from "../fixtures/artifacts.ts";
 import { assertCleanupPassed, CleanupRegistry } from "../fixtures/cleanup.ts";
 import { test as e2eTest } from "../fixtures/e2e-test.ts";
-import { startTestProgress } from "../fixtures/progress.ts";
+import { startTestProgress, type TestProgress } from "../fixtures/progress.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import {
   ShellProbe,
@@ -20,11 +20,22 @@ import {
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-function supportProgress() {
-  return startTestProgress("ShellProbe support", ["run support command", "verify support result"], {
-    logLine: () => undefined,
-  });
+const supportProgressInstances: TestProgress[] = [];
+
+function supportProgress(): TestProgress {
+  const progress = startTestProgress(
+    "ShellProbe support",
+    ["run support command", "verify support result"],
+    { logLine: () => undefined },
+  );
+  supportProgressInstances.push(progress);
+  return progress;
 }
+
+afterEach(() => {
+  for (const progress of supportProgressInstances) progress.stop();
+  supportProgressInstances.length = 0;
+});
 
 function isProcessAlive(pid: number): boolean {
   try {
@@ -479,6 +490,7 @@ describe("E2E fixture primitives", () => {
       expect(abortAdds).toBe(1);
       expect(abortRemoves).toBe(1);
       progress.stop("failed");
+      expect(progress.summary().phases[0]).toMatchObject({ outcome: "failed" });
       const spawnArtifact = fs.readFileSync(
         artifacts.pathFor("shell/spawn-error.result.json"),
         "utf8",

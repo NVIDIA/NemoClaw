@@ -33,6 +33,24 @@ export interface RawRunOptions {
   readonly timeoutMs?: number;
 }
 
+const MAX_RAW_OUTPUT_BYTES = 10 * 1024 * 1024;
+const TRUNCATED_OUTPUT_MARKER = "\n[raw command output truncated at safe capture limit]";
+
+function appendBoundedOutput(
+  output: Buffer,
+  chunk: Buffer,
+): { output: Buffer; truncated: boolean } {
+  const remaining = Math.max(0, MAX_RAW_OUTPUT_BYTES - output.length);
+  return {
+    output: Buffer.concat([output, chunk.subarray(0, remaining)]),
+    truncated: chunk.length > remaining,
+  };
+}
+
+function renderBoundedOutput(output: Buffer, truncated: boolean): string {
+  return `${output.toString("utf8")}${truncated ? TRUNCATED_OUTPUT_MARKER : ""}`;
+}
+
 function progressCommandName(artifactName: string): string {
   return /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/u.test(artifactName)
     ? artifactName
@@ -77,8 +95,10 @@ export async function runRawCommand(
     throw error;
   }
   const fullCommand = [command, ...args];
-  let stdout = "";
-  let stderr = "";
+  let stdoutBuffer = Buffer.alloc(0);
+  let stderrBuffer = Buffer.alloc(0);
+  let stdoutTruncated = false;
+  let stderrTruncated = false;
   let timedOut = false;
   let spawnError: Error | undefined;
 
@@ -103,10 +123,14 @@ export async function runRawCommand(
   timeout.unref();
 
   child.stdout?.on("data", (chunk: Buffer) => {
-    stdout += chunk.toString("utf8");
+    const capture = appendBoundedOutput(stdoutBuffer, chunk);
+    stdoutBuffer = capture.output;
+    stdoutTruncated ||= capture.truncated;
   });
   child.stderr?.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
+    const capture = appendBoundedOutput(stderrBuffer, chunk);
+    stderrBuffer = capture.output;
+    stderrTruncated ||= capture.truncated;
   });
   child.on("error", (error) => {
     spawnError = error;
@@ -129,6 +153,8 @@ export async function runRawCommand(
     throw new Error(`failed to spawn ${redactString(command, redactionValues)}: ${message}`);
   }
 
+  const stdout = renderBoundedOutput(stdoutBuffer, stdoutTruncated);
+  const stderr = renderBoundedOutput(stderrBuffer, stderrTruncated);
   const redactedStdout = redactString(stdout, redactionValues);
   const redactedStderr = redactString(stderr, redactionValues);
   const artifactOutputMode = options.artifactOutputMode ?? "content";

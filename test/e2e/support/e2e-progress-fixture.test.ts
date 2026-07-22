@@ -37,6 +37,7 @@ it("writes completed target and shard evidence through the automatic progress fi
       {
         cwd: REPO_ROOT,
         encoding: "utf8",
+        killSignal: "SIGKILL",
         timeout: 20_000,
         env: {
           ...process.env,
