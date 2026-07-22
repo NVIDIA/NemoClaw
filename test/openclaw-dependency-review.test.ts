@@ -274,7 +274,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
       "The mcporter locked graph reported `0` info, `0` low, `0` moderate, `0` high, and `0` critical findings across `138` dependencies",
     );
     expect(review).toContain("GHSA-frvp-7c67-39w9");
-    expect(review).toContain("Hono finding remains in the reviewed OpenClaw graph");
+    expect(review).toContain("The remediated graph closes `GHSA-frvp-7c67-39w9`");
     expect(review).toContain("GHSA-v422-hmwv-36x6");
     expect(review).toContain("reviewed Slack and Microsoft Teams plugin graphs");
     expect(review).toContain("GHSA-j3f2-48v5-ccww");
