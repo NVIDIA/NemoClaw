@@ -14,36 +14,35 @@ import {
   patchOldInstallerFixture,
   reviewedOldOpenClawArchive,
 } from "../live/openshell-gateway-upgrade-old-installer.ts";
+import { REPO_ROOT } from "../fixtures/paths.ts";
 
 const temporaryDirectories: string[] = [];
+const HISTORICAL_BUILD_CONTEXT_MODULES = Object.freeze({
+  "v0.0.36": "src/lib/sandbox-build-context.ts",
+  "v0.0.55": "src/lib/sandbox/build-context.ts",
+  "v0.0.74": "src/lib/sandbox/build-context.ts",
+});
+const HISTORICAL_OPENCLAW_VERSIONS = Object.freeze({
+  "v0.0.36": "2026.4.24",
+  "v0.0.55": "2026.5.22",
+  "v0.0.74": "2026.5.27",
+});
 
-function writeHistoricalFixture(advisoryAuditCount = 1): {
+type ReviewedHistoricalRef = keyof typeof HISTORICAL_BUILD_CONTEXT_MODULES;
+
+function writeInstallerHarness(sourceRoot: string): {
   archive: string;
   dockerfile: string;
   installer: string;
   sourceRoot: string;
 } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-old-upgrade-installer-"));
-  temporaryDirectories.push(root);
-  const sourceRoot = path.join(root, "source");
+  const root = path.dirname(sourceRoot);
   const dockerfile = path.join(sourceRoot, "Dockerfile");
   const archive = path.join(root, "reviewed-openclaw.tgz");
   const payload = path.join(root, "payload.sh");
   const installer = path.join(root, "install.sh");
-  fs.mkdirSync(path.join(sourceRoot, "nemoclaw", "src"), { recursive: true });
   fs.writeFileSync(archive, "reviewed fixture archive");
 
-  fs.writeFileSync(
-    dockerfile,
-    [
-      "FROM fixture",
-      "ARG OPENCLAW_VERSION=2026.5.27",
-      ...Array.from({ length: advisoryAuditCount }, () => OLD_INSTALLER_ADVISORY_AUDIT.trimEnd()),
-      "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures; \\",
-      "    true",
-      "",
-    ].join("\n"),
-  );
   fs.writeFileSync(
     payload,
     [
@@ -75,8 +74,84 @@ function writeHistoricalFixture(advisoryAuditCount = 1): {
   return { archive, dockerfile, installer, sourceRoot };
 }
 
-function runReviewedHistoricalFixture(nemoclawRef: string, auditCount: 0 | 1): string {
-  const fixture = writeHistoricalFixture(auditCount);
+function writeHistoricalFixture(advisoryAuditCount = 1): {
+  archive: string;
+  dockerfile: string;
+  installer: string;
+  sourceRoot: string;
+} {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-old-upgrade-installer-"));
+  temporaryDirectories.push(root);
+  const sourceRoot = path.join(root, "source");
+  fs.mkdirSync(path.join(sourceRoot, "nemoclaw", "src"), { recursive: true });
+
+  fs.writeFileSync(
+    path.join(sourceRoot, "Dockerfile"),
+    [
+      "FROM fixture",
+      "ARG OPENCLAW_VERSION=2026.5.27",
+      ...Array.from({ length: advisoryAuditCount }, () => OLD_INSTALLER_ADVISORY_AUDIT.trimEnd()),
+      "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures; \\",
+      "    true",
+      "",
+    ].join("\n"),
+  );
+  return writeInstallerHarness(sourceRoot);
+}
+
+function extractReviewedHistoricalSource(nemoclawRef: ReviewedHistoricalRef): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-old-upgrade-source-"));
+  temporaryDirectories.push(root);
+  const sourceRoot = path.join(root, "source");
+  fs.mkdirSync(sourceRoot);
+
+  const archive = spawnSync("git", ["-C", REPO_ROOT, "archive", nemoclawRef], {
+    maxBuffer: 128 * 1024 * 1024,
+  });
+  expect(archive.status, archive.stderr.toString()).toBe(0);
+  const extract = spawnSync("tar", ["-xf", "-", "-C", sourceRoot], {
+    input: archive.stdout,
+    maxBuffer: 128 * 1024 * 1024,
+  });
+  expect(extract.status, extract.stderr.toString()).toBe(0);
+  return sourceRoot;
+}
+
+function stageFrozenOptimizedBuildContext(
+  sourceRoot: string,
+  nemoclawRef: ReviewedHistoricalRef,
+): string {
+  const modulePath = path.join(sourceRoot, HISTORICAL_BUILD_CONTEXT_MODULES[nemoclawRef]);
+  const runner = String.raw`
+import { pathToFileURL } from "node:url";
+
+const modulePath = process.argv[1];
+const sourceRoot = process.argv[2];
+const temporaryRoot = process.argv[3];
+const buildContext = await import(pathToFileURL(modulePath).href);
+const staged = buildContext.stageOptimizedSandboxBuildContext(sourceRoot, temporaryRoot);
+process.stdout.write(staged.buildCtx);
+`;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--no-warnings",
+      "--experimental-strip-types",
+      "--input-type=module",
+      "--eval",
+      runner,
+      modulePath,
+      sourceRoot,
+      path.dirname(sourceRoot),
+    ],
+    { encoding: "utf8" },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  return result.stdout;
+}
+
+function runReviewedHistoricalFixture(nemoclawRef: ReviewedHistoricalRef): string {
+  const fixture = writeInstallerHarness(extractReviewedHistoricalSource(nemoclawRef));
   patchOldInstallerFixture(fixture.installer, nemoclawRef);
 
   const result = spawnSync("bash", [fixture.installer], {
@@ -84,7 +159,7 @@ function runReviewedHistoricalFixture(nemoclawRef: string, auditCount: 0 | 1): s
     env: {
       ...process.env,
       NEMOCLAW_OLD_OPENCLAW_ARCHIVE: fixture.archive,
-      NEMOCLAW_OLD_OPENCLAW_VERSION: "2026.5.27",
+      NEMOCLAW_OLD_OPENCLAW_VERSION: HISTORICAL_OPENCLAW_VERSIONS[nemoclawRef],
     },
   });
   expect(result.status, result.stderr).toBe(0);
@@ -98,16 +173,11 @@ function runReviewedHistoricalFixture(nemoclawRef: string, auditCount: 0 | 1): s
   expect(dockerfile).toContain(
     "npm install -g --ignore-scripts --no-audit --no-fund --no-progress /tmp/nemoclaw-e2e-old-openclaw.tgz",
   );
-  expect(dockerfile).not.toMatch(/npm install -g [^\n]*openclaw@/u);
-
-  const stagedContext = path.join(path.dirname(fixture.sourceRoot), "staged-context");
-  fs.mkdirSync(path.join(stagedContext, "nemoclaw"), { recursive: true });
-  // Each frozen optimized-context builder copies nemoclaw/src recursively.
-  fs.cpSync(
-    path.join(fixture.sourceRoot, "nemoclaw", "src"),
-    path.join(stagedContext, "nemoclaw", "src"),
-    { recursive: true },
+  expect(dockerfile).toContain(
+    `test "$(openclaw --version | awk '{print $2}')" = "${HISTORICAL_OPENCLAW_VERSIONS[nemoclawRef]}"`,
   );
+
+  const stagedContext = stageFrozenOptimizedBuildContext(fixture.sourceRoot, nemoclawRef);
   expect(
     fs.readFileSync(path.join(stagedContext, OLD_INSTALLER_ARCHIVE_CONTEXT_PATH), "utf8"),
   ).toBe("reviewed fixture archive");
@@ -125,7 +195,7 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
     "v0.0.36",
     "v0.0.55",
   ] as const)("accepts the reviewed %s profile without an advisory audit", (nemoclawRef) => {
-    const dockerfile = runReviewedHistoricalFixture(nemoclawRef, 0);
+    const dockerfile = runReviewedHistoricalFixture(nemoclawRef);
     expect(dockerfile).not.toContain("audit --omit=dev --audit-level=low");
     expect(dockerfile).not.toContain(
       "Skipping current advisory audit for the immutable historical mcporter lock",
@@ -133,7 +203,7 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
   });
 
   it("accepts the reviewed v0.0.74 advisory and signature audit boundary", () => {
-    const dockerfile = runReviewedHistoricalFixture("v0.0.74", 1);
+    const dockerfile = runReviewedHistoricalFixture("v0.0.74");
     expect(dockerfile).not.toContain("audit --omit=dev --audit-level=low");
     expect(dockerfile).toContain(
       "Skipping current advisory audit for the immutable historical mcporter lock",
