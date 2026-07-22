@@ -255,9 +255,13 @@ The reviewed `@openclaw/diagnostics-otel@2026.6.10` package dist imports `OTLPTr
 
 The legacy `2026.3.11` and `2026.4.24` OpenClaw pins are retained only for stale-upgrade fixture builds. Production Dockerfile install blocks now reject those versions unless `NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1` is set explicitly. The E2E-scoped name is intentionally noisy so production build workflows do not treat it as a general override. Production image workflows run `scripts/check-production-build-args.sh` before production Docker builds so the fixture flag, both legacy version values, and every integrity/tarball Docker ARG declared by a production Dockerfile cannot be overridden through production build args or their corresponding environment variables. The guard also rejects future positional `*_INTEGRITY` and `*_TARBALL` names, keeping reviewed pin values repository-controlled even before the Dockerfile's registry and downloaded-archive checks run. The stale-upgrade E2E build contexts pass their fixture values only on fixture-specific build paths, and the integrity-pin contract suite verifies the default rejection, the explicit fixture opt-in, and the production workflow guard.
 
-Frozen OpenShell gateway-upgrade fixtures retain npm registry signature verification.
-Their E2E adapter skips only the current advisory audit for the immutable historical mcporter lock and rejects an ambiguous audit boundary.
-`test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts` verifies both constraints.
+Frozen OpenShell gateway-upgrade fixtures select only the SRI-pinned OpenClaw `2026.4.24`, `2026.5.22`, or `2026.5.27` archive.
+The live test uses `packReviewedNpmArchive` to verify exact registry metadata, the reviewed tarball URL, and the downloaded SRI.
+The adapter copies only that verified local archive into the historical build context.
+It installs the archive with lifecycle scripts disabled and invokes `postinstall-bundled-plugins.mjs` directly.
+The fixtures retain npm registry signature verification for the historical mcporter lock.
+The adapter requires exactly one advisory audit statement before it replaces that statement with a test-only skip.
+`test/e2e/support/openshell-gateway-upgrade-old-installer.test.ts` verifies these constraints.
 
 Invalid state: a production image build overriding `OPENCLAW_VERSION` to an old fixture pin or replacing any repository-reviewed integrity/tarball value while still passing the workflow boundary. Source boundary: Dockerfile and Dockerfile.base install blocks plus the guard that precedes every production image build. Source-fix constraint: keep stale-upgrade E2Es able to build old images without normalizing those pins or accepting caller-controlled production package identity. Regression tests: the integrity-pin contract suite rejects the flag, both legacy versions, all declared integrity/tarball ARG overrides through direct, `--build-arg`, and environment paths, and a future-shaped positional pin name; `test/openclaw-dependency-review.test.ts` proves all seven production image builds are guard-protected and carry no literal fixture selectors. Removal condition: issue #5896 section 9 retires the old-base fixture strategy and fixture flag; the general repository-owned production pin guard remains until production builds no longer expose package identity as Docker ARGs.
 

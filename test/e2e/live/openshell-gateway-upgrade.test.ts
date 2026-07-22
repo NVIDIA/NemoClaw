@@ -21,6 +21,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  packReviewedNpmArchive,
+  removeReviewedNpmArchive,
+} from "../../../scripts/lib/reviewed-npm-archive.mts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -40,7 +44,10 @@ import {
   upgradeGatewayStateCleanupScript,
   validateLegacyGatewayUpgradeFixture,
 } from "./openshell-gateway-upgrade-helpers.ts";
-import { patchOldInstallerFixture } from "./openshell-gateway-upgrade-old-installer.ts";
+import {
+  patchOldInstallerFixture,
+  reviewedOldOpenClawArchive,
+} from "./openshell-gateway-upgrade-old-installer.ts";
 
 const INSTALL_OPENSHELL = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 const STATE_DIR = path.join(
@@ -398,12 +405,15 @@ async function installOldNemoclawAndClaw(
   fs.chmodSync(oldInstaller, 0o755);
   patchOldInstallerFixture(oldInstaller);
 
+  const reviewedOpenClaw = packReviewedNpmArchive(reviewedOldOpenClawArchive(OLD_OPENCLAW_VERSION));
+
   const installEnv = liveEnv({
     PATH: `${wrapperDir}:${process.env.PATH ?? "/usr/bin:/bin"}`,
     COMPATIBLE_API_KEY: "dummy",
     NEMOCLAW_REAL_DOCKER: process.env.NEMOCLAW_REAL_DOCKER ?? "/usr/bin/docker",
     NEMOCLAW_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
     NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF: OLD_SANDBOX_BASE_IMAGE_REF,
+    NEMOCLAW_OLD_OPENCLAW_ARCHIVE: reviewedOpenClaw.archivePath,
     NEMOCLAW_OLD_OPENCLAW_VERSION: OLD_OPENCLAW_VERSION,
     NEMOCLAW_OLD_DOCKER_WRAPPER_LOG: oldDockerLog,
     NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE: "1",
@@ -422,13 +432,17 @@ async function installOldNemoclawAndClaw(
   // A transient gateway import failure leaves the old installer session in a
   // failed state. Keep Vitest retries independent without applying --fresh to
   // the later current-version upgrade, which must preserve the survivor.
-  await runInstallerPayload(
-    host,
-    `old-${OLD_NEMOCLAW_REF}`,
-    oldGatewayUpgradeInstallerArgs(oldInstaller),
-    oldInstallLog,
-    installEnv,
-  );
+  try {
+    await runInstallerPayload(
+      host,
+      `old-${OLD_NEMOCLAW_REF}`,
+      oldGatewayUpgradeInstallerArgs(oldInstaller),
+      oldInstallLog,
+      installEnv,
+    );
+  } finally {
+    removeReviewedNpmArchive(reviewedOpenClaw);
+  }
   await artifacts.writeText(
     "old-docker-wrapper.log",
     fs.existsSync(oldDockerLog) ? fs.readFileSync(oldDockerLog, "utf8") : "",

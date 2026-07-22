@@ -3,6 +3,46 @@
 
 import fs from "node:fs";
 
+export type ReviewedOldOpenClawArchive = Readonly<{
+  expectedIntegrity: string;
+  label: string;
+  packageSpec: string;
+  tarballUrl: string;
+}>;
+
+const REVIEWED_OLD_OPENCLAW_ARCHIVES: Readonly<Record<string, ReviewedOldOpenClawArchive>> =
+  Object.freeze({
+    "2026.4.24": {
+      expectedIntegrity:
+        "sha512-W6u4XeIIP4+uG4DYV9G3JeS6QNuKwfhQIej1GIoL4BdcnUFgrnB8kHYNXL3MxiHRKuhZB9OYwUMGs8jKFZR/Vg==",
+      label: "historical fixture OpenClaw 2026.4.24",
+      packageSpec: "openclaw@2026.4.24",
+      tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.4.24.tgz",
+    },
+    "2026.5.22": {
+      expectedIntegrity:
+        "sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==",
+      label: "historical fixture OpenClaw 2026.5.22",
+      packageSpec: "openclaw@2026.5.22",
+      tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.5.22.tgz",
+    },
+    "2026.5.27": {
+      expectedIntegrity:
+        "sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==",
+      label: "historical fixture OpenClaw 2026.5.27",
+      packageSpec: "openclaw@2026.5.27",
+      tarballUrl: "https://registry.npmjs.org/openclaw/-/openclaw-2026.5.27.tgz",
+    },
+  });
+
+export function reviewedOldOpenClawArchive(version: string): ReviewedOldOpenClawArchive {
+  const reviewedArchive = REVIEWED_OLD_OPENCLAW_ARCHIVES[version];
+  if (!reviewedArchive) {
+    throw new Error(`Historical gateway upgrade OpenClaw ${version} has no reviewed archive pin`);
+  }
+  return reviewedArchive;
+}
+
 // The frozen release installers are the source of truth, but their embedded
 // Dockerfiles predate the fixture pins needed for a deterministic upgrade test.
 // Keep this adapter scoped to the frozen historical lanes and retire it with
@@ -19,6 +59,11 @@ path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 needle = '    spin "Cloning \${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"\n'
 hook = r'''    if [[ -n "\${NEMOCLAW_OLD_OPENCLAW_VERSION:-}" ]]; then
+      if [[ -z "\${NEMOCLAW_OLD_OPENCLAW_ARCHIVE:-}" || ! -f "$NEMOCLAW_OLD_OPENCLAW_ARCHIVE" ]]; then
+        echo "ERROR: reviewed historical OpenClaw archive is missing" >&2
+        exit 1
+      fi
+      cp -- "$NEMOCLAW_OLD_OPENCLAW_ARCHIVE" "$nemoclaw_src/.nemoclaw-e2e-old-openclaw.tgz"
       python3 - "$nemoclaw_src/Dockerfile" "$NEMOCLAW_OLD_OPENCLAW_VERSION" <<'NEMOCLAW_OLD_DOCKERFILE_PIN_PY'
 from pathlib import Path
 import sys
@@ -28,9 +73,12 @@ version = sys.argv[2]
 text = path.read_text(encoding="utf-8")
 injection = (
     "# E2E old-upgrade fixture: force the historical OpenClaw before the old Dockerfile's version gate.\n"
+    "COPY .nemoclaw-e2e-old-openclaw.tgz /tmp/nemoclaw-e2e-old-openclaw.tgz\n"
     "RUN rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw \\\n"
-    f"    && npm install -g --no-audit --no-fund --no-progress \"openclaw@{version}\" \\\n"
-    "    && openclaw --version\n\n"
+    "    && npm install -g --ignore-scripts --no-audit --no-fund --no-progress /tmp/nemoclaw-e2e-old-openclaw.tgz \\\n"
+    "    && node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs \\\n"
+    f"    && test \"$(openclaw --version | awk '{{print $2}}')\" = \"{version}\" \\\n"
+    "    && rm -f /tmp/nemoclaw-e2e-old-openclaw.tgz\n\n"
 )
 if injection not in text:
     arg_markers = [
@@ -52,15 +100,14 @@ if injection not in text:
 
 advisory_audit = '    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\\n'
 advisory_audit_count = text.count(advisory_audit)
-if advisory_audit_count > 1:
+if advisory_audit_count != 1:
     raise SystemExit(
-        f"{path}: found {advisory_audit_count} historical mcporter advisory audits; expected at most one"
+        f"{path}: found {advisory_audit_count} historical mcporter advisory audits; expected exactly one"
     )
-if advisory_audit_count == 1:
-    audit_fixture_note = (
-        '    echo "INFO: Skipping current advisory audit for the immutable historical mcporter lock"; \\\n'
-    )
-    text = text.replace(advisory_audit, audit_fixture_note, 1)
+audit_fixture_note = (
+    '    echo "INFO: Skipping current advisory audit for the immutable historical mcporter lock"; \\\n'
+)
+text = text.replace(advisory_audit, audit_fixture_note, 1)
 
 path.write_text(text, encoding="utf-8")
 print(f"INFO: Forced OpenClaw {version} in old upgrade fixture Dockerfile", flush=True)
