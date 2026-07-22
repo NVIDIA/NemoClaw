@@ -149,7 +149,7 @@ const RUNNER_ROUTING_STEP_NAME = "Build trusted larger-runner routing";
 const RUNNER_ROUTING_SCRIPT = [
   "set -euo pipefail",
   'larger_runner="ubuntu-latest"',
-  'if [[ "${REPOSITORY}" == "NVIDIA/NemoClaw" && "${REF}" == "refs/heads/main" && -n "${LARGER_RUNNER_LABEL}" ]]; then',
+  'if [[ "${REPOSITORY}" == "NVIDIA/NemoClaw" && "${REF}" == "refs/heads/main" && -z "${CHECKOUT_SHA}" && -n "${LARGER_RUNNER_LABEL}" ]]; then',
   '  if [[ ! "${LARGER_RUNNER_LABEL}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then',
   '    echo "::error::E2E_LARGER_RUNNER_LABEL must be a 1-64 character workflow label using letters, digits, dots, underscores, or hyphens" >&2',
   "    exit 1",
@@ -752,6 +752,7 @@ function validateLargerRunnerRouting(
     errors.push("trusted larger-runner routing step must use bash");
   }
   const expectedEnv = {
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
     LARGER_RUNNER_LABEL: "${{ vars.E2E_LARGER_RUNNER_LABEL }}",
     REF: "${{ github.ref }}",
     REPOSITORY: "${{ github.repository }}",

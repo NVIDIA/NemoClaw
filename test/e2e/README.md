@@ -57,7 +57,10 @@ The larger-runner experiment is inactive while the configuration variable
 `E2E_LARGER_RUNNER_LABEL` is unset. In that state, every eligible lane continues
 to use `ubuntu-latest`. The trusted `generate-matrix` job builds one runner map
 before checking out test code, and it consumes the variable only when the
-workflow repository is `NVIDIA/NemoClaw` and the ref is `refs/heads/main`.
+workflow repository is `NVIDIA/NemoClaw`, the ref is `refs/heads/main`, and
+no alternate checkout SHA is requested. PR-gate dispatches therefore remain on
+standard runners even though they use the trusted workflow definition from
+`main`.
 
 The eligible set is limited to the measured or repeatedly interrupted heavy
 lanes:

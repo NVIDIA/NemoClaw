@@ -41,7 +41,7 @@ function routingStep(workflow: RoutingWorkflow): WorkflowStep {
 
 function evaluateRouting(
   workflow: RoutingWorkflow,
-  env: { label: string; ref: string; repository: string },
+  env: { checkoutSha?: string; label: string; ref: string; repository: string },
 ): Record<string, string> {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runner-routing-"));
   const outputPath = path.join(directory, "github-output");
@@ -49,6 +49,7 @@ function evaluateRouting(
     execFileSync("bash", ["-c", routingStep(workflow).run!], {
       env: {
         ...process.env,
+        CHECKOUT_SHA: env.checkoutSha ?? "",
         GITHUB_OUTPUT: outputPath,
         LARGER_RUNNER_LABEL: env.label,
         REF: env.ref,
@@ -102,14 +103,27 @@ describe("larger-runner workflow routing boundary", () => {
       ref: "refs/heads/main",
       repository: "someone/NemoClaw",
     },
+    {
+      checkoutSha: "0123456789abcdef",
+      label: "ubuntu-24.04-8core",
+      name: "the workflow checks out a pull request revision",
+      ref: "refs/heads/main",
+      repository: "NVIDIA/NemoClaw",
+    },
   ])("keeps every candidate on standard runners when $name (#7145)", ({
+    checkoutSha,
     label,
     ref,
     repository,
   }) => {
-    expect(evaluateRouting(readWorkflow() as RoutingWorkflow, { label, ref, repository })).toEqual(
-      standardRouting,
-    );
+    expect(
+      evaluateRouting(readWorkflow() as RoutingWorkflow, {
+        checkoutSha,
+        label,
+        ref,
+        repository,
+      }),
+    ).toEqual(standardRouting);
   });
 
   // source-shape-contract: security -- Executes the shipped pre-checkout router to prove trusted main can reach only the reviewed heavy lanes
@@ -155,8 +169,10 @@ describe("larger-runner workflow routing boundary", () => {
     const steps = generate.steps!;
     const routing = routingStep(workflow);
     generate.outputs!.runner_routing = "${{ steps.matrix.outputs.runner_routing }}";
+    routing.env!.CHECKOUT_SHA = "${{ github.sha }}";
     routing.env!.REF = "${{ inputs.base_sha }}";
     routing.run = routing.run!.replace('"${REF}" == "refs/heads/main" && ', "");
+    routing.run = routing.run!.replace('-z "${CHECKOUT_SHA}" && ', "");
     steps.splice(steps.indexOf(routing), 1);
     steps.push(routing);
 
