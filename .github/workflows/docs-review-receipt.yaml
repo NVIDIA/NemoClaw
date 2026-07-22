@@ -46,9 +46,12 @@ jobs:
 
       - name: Check documentation writer review receipt
         continue-on-error: true
+        env:
+          AGENTS_BLOB: ${{ steps.receipt-inputs.outputs.agents_blob }}
+          CHANGED_FILES: ${{ steps.receipt-inputs.outputs.changed_files }}
         run: >-
           node --experimental-strip-types --no-warnings scripts/docs-review-receipt.mts check
           --event "$GITHUB_EVENT_PATH"
-          --changed-files "${{ steps.receipt-inputs.outputs.changed_files }}"
-          --agents-blob "${{ steps.receipt-inputs.outputs.agents_blob }}"
+          --changed-files "$CHANGED_FILES"
+          --agents-blob "$AGENTS_BLOB"
           --mode advisory

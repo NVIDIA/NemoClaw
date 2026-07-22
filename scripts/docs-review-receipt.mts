@@ -319,6 +319,8 @@ function parseReceipt(body: string): ParsedReceipt {
   const nextHeading = /^##\s+/mu.exec(remaining);
   const section = remaining.slice(0, nextHeading?.index ?? remaining.length);
   const lines = section.split(/\r?\n/u).map((line) => line.trim());
+  const reviewCheckboxPattern =
+    /^- \[[ xX]\] Documentation writer subagent reviewed the completed implementation$/u;
   const completionPattern =
     /^- \[[xX]\] Documentation writer subagent reviewed the completed implementation$/u;
   const duplicateFields = ["Result", "Evidence", "Agent", "PR"].filter(
@@ -327,7 +329,7 @@ function parseReceipt(body: string): ParsedReceipt {
   for (const name of ["docs-review-head-sha", "docs-review-agents-blob-sha"]) {
     if (hiddenFieldValues(lines, name).length > 1) duplicateFields.push(name);
   }
-  if (lines.filter((line) => completionPattern.test(line)).length > 1) {
+  if (lines.filter((line) => reviewCheckboxPattern.test(line)).length > 1) {
     duplicateFields.push("review completion checkbox");
   }
   const resultValue = fieldValue(lines, "Result");

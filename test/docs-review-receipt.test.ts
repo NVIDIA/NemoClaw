@@ -158,6 +158,22 @@ describe("documentation writer review receipt", () => {
     );
   });
 
+  it("rejects repeated review completion checkboxes", () => {
+    const body = receipt().replace(
+      "- [x] Documentation writer subagent reviewed the completed implementation",
+      [
+        "- [ ] Documentation writer subagent reviewed the completed implementation",
+        "- [x] Documentation writer subagent reviewed the completed implementation",
+      ].join("\n"),
+    );
+    const result = runCheck(body, ["src/lib/example.ts", "docs/index.mdx"]);
+
+    expect(result.output.status).toBe("invalid");
+    expect(result.output.issues).toContain(
+      "The Documentation Writer Review section repeats singleton fields: review completion checkbox.",
+    );
+  });
+
   it("reports a copied PR number and stale head and AGENTS.md revisions", () => {
     const result = runCheck(
       receipt({
