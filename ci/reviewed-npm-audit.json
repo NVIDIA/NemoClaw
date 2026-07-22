@@ -49,24 +49,6 @@
           "node_modules/@openclaw/msteams/node_modules/axios",
           "node_modules/@openclaw/slack/node_modules/axios"
         ]
-      },
-      {
-        "packageName": "tar",
-        "severity": "critical",
-        "advisories": [
-          {
-            "id": "GHSA-23hp-3jrh-7fpw",
-            "severity": "critical"
-          },
-          {
-            "id": "GHSA-8x88-c5mf-7j5w",
-            "severity": "high"
-          }
-        ],
-        "nodes": [
-          "node_modules/@openclaw/fs-safe/node_modules/tar",
-          "node_modules/tar"
-        ]
       }
     ]
   },
