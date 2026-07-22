@@ -269,10 +269,24 @@ function buildImage(dockerLog: string[], image: string): void {
   expect(build.status, spawnResultText(build)).toBe(0);
 }
 
+// biome-ignore format: preserve legacy live-test body formatting so phase-only changes stay reviewable.
 test(
   "runtime config overrides patch OpenClaw config through the Docker entrypoint",
-  testTimeoutOptions(TEST_TIMEOUT_MS),
-  async ({ artifacts, secrets, skip }) => {
+  {
+    ...testTimeoutOptions(TEST_TIMEOUT_MS),
+    meta: {
+      e2ePhases: [
+        "confirm Docker and build the runtime image",
+        "capture the baseline OpenClaw config",
+        "apply valid runtime overrides",
+        "exercise the combined override transaction",
+        "reject invalid override values",
+        "confirm rejected overrides preserve the baseline",
+        "record runtime override evidence",
+      ],
+    },
+  },
+  async ({ artifacts, progress, secrets, skip }) => {
     const dockerLog: string[] = [];
     const image = process.env.NEMOCLAW_TEST_IMAGE ?? `nemoclaw-runtime-overrides-${process.pid}`;
     const cleanupImage = process.env.NEMOCLAW_TEST_IMAGE === undefined;
@@ -308,6 +322,7 @@ test(
 
       buildImage(dockerLog, image);
 
+      progress.phase("capture the baseline OpenClaw config");
       const baseline = captureConfig(dockerLog, image, "baseline");
       const baselineModel = primaryModel(baseline);
       const baselineFirstModel = firstProviderModel(baseline);
@@ -317,6 +332,7 @@ test(
       assertManagedInferenceCompactionRuntime(dockerLog, image);
       expect(runConfigHashCheck(dockerLog, image, "baseline")).toBe("OK");
 
+      progress.phase("apply valid runtime overrides");
       const overrideModel = "anthropic/claude-sonnet-4-6";
       const modelOverride = captureConfig(dockerLog, image, "model override", {
         NEMOCLAW_MODEL_OVERRIDE: overrideModel,
@@ -363,6 +379,7 @@ test(
       expect(allowedOrigins(corsOverride)).toContain(corsOrigin);
       expect(allowedOrigins(corsOverride).length).toBeGreaterThan(baselineOriginCount);
 
+      progress.phase("exercise the combined override transaction");
       const combined = captureConfig(dockerLog, image, "combined overrides", {
         NEMOCLAW_MODEL_OVERRIDE: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
         NEMOCLAW_CONTEXT_WINDOW: "65536",
@@ -378,6 +395,7 @@ test(
       });
       expect(allowedOrigins(combined)).toContain("https://multi.example.com");
 
+      progress.phase("reject invalid override values");
       expect(
         runOverrideStderr(dockerLog, image, "invalid model override", {
           NEMOCLAW_MODEL_OVERRIDE: "bad\u0001model",
@@ -413,6 +431,7 @@ test(
         }),
       ).toContain("openai-completions");
 
+      progress.phase("confirm rejected overrides preserve the baseline");
       const rejected = captureConfig(dockerLog, image, "rejected override", {
         NEMOCLAW_MODEL_OVERRIDE: "test",
         NEMOCLAW_CONTEXT_WINDOW: "notanumber",
@@ -420,6 +439,7 @@ test(
       expect(primaryModel(rejected)).toBe(baselineModel);
       expect(firstProviderModel(rejected).contextWindow).toBe(baselineContextWindow);
 
+      progress.phase("record runtime override evidence");
       await artifacts.target.complete({
         id: "runtime-overrides",
         status: "passed",

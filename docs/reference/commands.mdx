@@ -690,9 +690,9 @@ All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_INFERENCE_PROVIDER_ID`
 `NEMOCLAW_INFERENCE_PROVIDER_ID` is a non-secret inference route identifier (for example `inference` for proxied providers, or a provider family such as `openai`), never a credential; provider credentials stay in OpenShell provider storage.
 It replaces the former `NEMOCLAW_PROVIDER_KEY` image argument, whose secret-shaped name triggered a BuildKit `SecretsUsedInArgOrEnv` warning.
 The host-side `NEMOCLAW_PROVIDER_KEY` credential alias is unchanged; this migration only renames the managed image route selector.
-Custom Dockerfiles that declare either `ARG NEMOCLAW_INFERENCE_PROVIDER_ID` or the legacy `ARG NEMOCLAW_PROVIDER_KEY` keep working through v0.0.90.
+Custom Dockerfiles that declare either `ARG NEMOCLAW_INFERENCE_PROVIDER_ID` or the legacy `ARG NEMOCLAW_PROVIDER_KEY` continue working in v0.0.91.
 NemoClaw updates whichever supported declaration is present, and runtime consumers read the legacy name as a fallback.
-Rename the legacy `ARG`/`ENV` declaration to `NEMOCLAW_INFERENCE_PROVIDER_ID` before legacy support is removed in v0.0.91.
+Rename the legacy `ARG`/`ENV` declaration to `NEMOCLAW_INFERENCE_PROVIDER_ID`; the legacy fallback is retained for compatibility in this release and may be removed in a future release.
 
 Custom Dockerfiles must declare `ARG NEMOCLAW_TOOL_DISCLOSURE=progressive` exactly once in the final build stage and promote it into that stage's runtime environment.
 The usual runtime contract is:
@@ -2794,7 +2794,7 @@ Run this on the host where the sandbox is running.
 openshell term
 ```
 
-For a remote Brev instance, SSH to the instance and run `openshell term` there, or use a port-forward to the gateway.
+For a remote server, connect through SSH and run `openshell term` on that server.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -3673,11 +3673,11 @@ The following flags change defaults for commands that manage existing sandboxes.
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA` | `1` to opt in | Acknowledges data loss during `$$nemoclaw uninstall` and removes the otherwise-preserved entries (`rebuild-backups/`, `backups/`, `sandboxes.json`) under `~/.nemoclaw/`. Equivalent to passing the `--destroy-user-data` flag; the global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 
 <AgentOnly variant="openclaw">
-### Remote Deployment
+### Deprecated Brev Deployment
 
-The following variables seed defaults for `$$nemoclaw deploy` and `$$nemoclaw onboard --remote`, which provision a sandbox on a Brev instance.
-Each has a flag equivalent on `deploy`; the env var lets non-interactive runs skip the prompt.
-For narrative how-to coverage of `NEMOCLAW_BREV_PROVIDER` and `NEMOCLAW_GPU`, refer to [Deploy to Remote GPU](../deployment/deploy-to-remote-gpu).
+The following variables configure the deprecated `$$nemoclaw deploy` compatibility command.
+The maintained remote-server path does not use these variables.
+For the current remote-server deployment path, refer to [Deploy to a Headless Server](../deployment/deploy-to-headless-server).
 
 | Variable | Default | Effect |
 |----------|---------|--------|
