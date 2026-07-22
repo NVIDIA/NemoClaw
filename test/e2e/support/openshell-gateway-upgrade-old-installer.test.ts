@@ -7,6 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  OLD_INSTALLER_ADVISORY_AUDIT,
+  OLD_INSTALLER_BOOTSTRAP_NEEDLE,
+  OLD_INSTALLER_CLONE_NEEDLE,
   patchOldInstallerFixture,
   reviewedOldOpenClawArchive,
 } from "../live/openshell-gateway-upgrade-old-installer.ts";
@@ -28,14 +31,12 @@ function writeHistoricalFixture(advisoryAuditCount = 1): {
   fs.mkdirSync(sourceRoot);
   fs.writeFileSync(archive, "reviewed fixture archive");
 
-  const advisoryAudit =
-    "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \\\n";
   fs.writeFileSync(
     dockerfile,
     [
       "FROM fixture",
       "ARG OPENCLAW_VERSION=2026.5.27",
-      ...Array.from({ length: advisoryAuditCount }, () => advisoryAudit.trimEnd()),
+      ...Array.from({ length: advisoryAuditCount }, () => OLD_INSTALLER_ADVISORY_AUDIT.trimEnd()),
       "    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures; \\",
       "    true",
       "",
@@ -51,7 +52,7 @@ function writeHistoricalFixture(advisoryAuditCount = 1): {
       "release_ref=fixture",
       'spin() { shift; "$@"; }',
       "clone_nemoclaw_ref() { :; }",
-      '    spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"',
+      OLD_INSTALLER_CLONE_NEEDLE.trimEnd(),
       "",
     ].join("\n"),
     { mode: 0o700 },
@@ -63,7 +64,7 @@ function writeHistoricalFixture(advisoryAuditCount = 1): {
       "set -euo pipefail",
       `payload_script=${JSON.stringify(payload)}`,
       `source_root=${JSON.stringify(sourceRoot)}`,
-      '  legacy_script="${source_root}/install.sh"',
+      OLD_INSTALLER_BOOTSTRAP_NEEDLE.trimEnd(),
       '"$payload_script"',
       "",
     ].join("\n"),
@@ -117,6 +118,7 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
   it("rejects an ambiguous historical advisory boundary", () => {
     const fixture = writeHistoricalFixture(2);
     patchOldInstallerFixture(fixture.installer);
+    const originalDockerfile = fs.readFileSync(fixture.dockerfile, "utf8");
 
     const result = spawnSync("bash", [fixture.installer], {
       encoding: "utf8",
@@ -128,11 +130,13 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
     });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("historical mcporter advisory audits; expected exactly one");
+    expect(fs.readFileSync(fixture.dockerfile, "utf8")).toBe(originalDockerfile);
   });
 
   it("rejects a missing historical advisory boundary", () => {
     const fixture = writeHistoricalFixture(0);
     patchOldInstallerFixture(fixture.installer);
+    const originalDockerfile = fs.readFileSync(fixture.dockerfile, "utf8");
 
     const result = spawnSync("bash", [fixture.installer], {
       encoding: "utf8",
@@ -146,6 +150,7 @@ describe("historical OpenShell gateway upgrade installer adapter", () => {
     expect(result.stderr).toContain(
       "found 0 historical mcporter advisory audits; expected exactly one",
     );
+    expect(fs.readFileSync(fixture.dockerfile, "utf8")).toBe(originalDockerfile);
   });
 
   it.each([
