@@ -122,7 +122,7 @@ describe("reviewed npm audit gate", () => {
       string,
       { nodes: string[]; via: Array<Record<string, string>> }
     >;
-    vulnerabilities.tar.via.push({
+    vulnerabilities.axios.via.push({
       severity: "high",
       url: "https://github.com/advisories/GHSA-new0-high-risk",
     });
