@@ -3291,22 +3291,58 @@ def _force_fail_closed_lock(opened: OpenConfig, identity: Identity) -> list[str]
             except Exception as force_exc:
                 errors.append(f"forced fresh pair: {force_exc}")
         else:
-            # No bounded pair could be captured. Sever each canonical path
-            # rather than retaining an attacker-held writable inode.
-            for name in CONFIG_FILES:
+            # The pair could not be captured, but a drifted sibling (for
+            # example .config-hash missing after an interrupted transition,
+            # #7382) must not cost a surviving openclaw.json. When the config
+            # file alone still satisfies the single-file identity contract
+            # (regular, single-link, bounded, same-device, stable reads),
+            # rebuild the canonical pair from its bytes on fresh root-owned
+            # inodes; _force_replace_bytes never trusts the old inode, so no
+            # previously opened writable descriptor survives the rebuild.
+            rebuilt = False
+            try:
+                config = _snapshot_file(opened, "openclaw.json")
+                digest = hashlib.sha256(config.data).hexdigest()
+                _force_replace_bytes(opened, "openclaw.json", config.data, identity)
+                _force_replace_bytes(
+                    opened,
+                    ".config-hash",
+                    f"{digest}  openclaw.json\n".encode("ascii"),
+                    identity,
+                )
+                _snapshot_pair(opened)
+                rebuilt = True
+            except Exception as rebuild_exc:
+                errors.append(f"pair rebuild: {rebuild_exc}")
+            if rebuilt:
                 try:
-                    os.rename(
-                        name,
-                        f".nemoclaw-rejected-{name.lstrip('.')}-{secrets.token_hex(16)}",
-                        src_dir_fd=opened.config_fd,
-                        dst_dir_fd=opened.config_fd,
+                    _validate_runtime_config_json5(
+                        config.data,
+                        posixpath.join(opened.config_path, "openclaw.json"),
+                        identity,
                     )
-                except FileNotFoundError:
-                    # A concurrently absent canonical name is already severed.
-                    pass
-                except Exception as file_exc:
-                    errors.append(f"{name}: {file_exc}")
-            os.fsync(opened.config_fd)
+                except Exception as validation_exc:
+                    # Containment succeeds even when the preserved bytes are
+                    # invalid.
+                    errors.append(f"config validation: {validation_exc}")
+            else:
+                # Not even openclaw.json alone could be captured. Sever each
+                # canonical path rather than retaining an attacker-held
+                # writable inode.
+                for name in CONFIG_FILES:
+                    try:
+                        os.rename(
+                            name,
+                            f".nemoclaw-rejected-{name.lstrip('.')}-{secrets.token_hex(16)}",
+                            src_dir_fd=opened.config_fd,
+                            dst_dir_fd=opened.config_fd,
+                        )
+                    except FileNotFoundError:
+                        # A concurrently absent canonical name is already severed.
+                        pass
+                    except Exception as file_exc:
+                        errors.append(f"{name}: {file_exc}")
+                os.fsync(opened.config_fd)
     try:
         _commit_locked_dirs(opened, identity)
     except Exception as exc:
