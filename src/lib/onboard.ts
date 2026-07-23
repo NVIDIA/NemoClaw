@@ -3307,36 +3307,8 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         state.endpointUrl,
       );
     }
-    if (selected.key === "custom") {
-      const recordedCredentialEnv = sandboxName
-        ? registry.getSandbox(sandboxName)?.credentialEnv
-        : undefined;
-      try {
-        const authMode = await compatibleEndpointGatewayRoute.selectCompatibleEndpointAuthMode({
-          endpointUrl: requireValue(
-            state.endpointUrl,
-            "Missing endpoint URL for Other OpenAI-compatible endpoint",
-          ),
-          nonInteractive: isNonInteractive(),
-          credentialAvailable:
-            Boolean(getCredential(remoteConfig.credentialEnv)) ||
-            (recoveredFromSandbox && recordedCredentialEnv !== undefined),
-          configuredMode:
-            process.env[compatibleEndpointGatewayRoute.COMPATIBLE_ENDPOINT_AUTH_MODE_ENV],
-          prompt,
-          log: (message = "") => console.log(message),
-        });
-        if (
-          authMode === compatibleEndpointGatewayRoute.COMPATIBLE_ENDPOINT_NO_AUTH_MODE ||
-          (recoveredFromSandbox && recordedCredentialEnv === null)
-        ) {
-          state.credentialEnv = null;
-        }
-      } catch (error) {
-        console.error(`  ${error instanceof Error ? error.message : String(error)}`);
-        process.exit(1);
-      }
-    }
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    if (selected.key === "custom") state.credentialEnv = await compatibleEndpointGatewayRoute.selectCompatibleEndpointCredentialEnv({ endpointUrl: requireValue(state.endpointUrl, "Missing endpoint URL for Other OpenAI-compatible endpoint"), credentialEnv: state.credentialEnv, credentialAvailable: Boolean(getCredential(remoteConfig.credentialEnv)) || (recoveredFromSandbox && (sandboxName ? registry.getSandbox(sandboxName)?.credentialEnv : undefined) !== undefined), recordedCredentialEnv: sandboxName ? registry.getSandbox(sandboxName)?.credentialEnv : undefined, recoveredFromSandbox, nonInteractive: isNonInteractive(), configuredMode: process.env[compatibleEndpointGatewayRoute.COMPATIBLE_ENDPOINT_AUTH_MODE_ENV], prompt, log: (message = "") => console.log(message), error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
     const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
     state.preferredInferenceApi = selected.key === "custom" ? (explicitApi === "chat-completions" ? "openai-completions" : explicitApi || null) : null;
     if (!state.preferredInferenceApi) {
@@ -3457,7 +3429,6 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       _envModelRemote ||
       (recoveredFromSandbox && recoveredModel) ||
       remoteConfig.defaultModel;
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const selectedCredentialEnv = state.credentialEnv;
     const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
       selectedKey: selected.key,

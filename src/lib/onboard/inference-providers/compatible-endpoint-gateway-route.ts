@@ -74,6 +74,31 @@ export async function selectCompatibleEndpointAuthMode(options: {
   return selected === 2 ? "none" : "api-key";
 }
 
+export async function selectCompatibleEndpointCredentialEnv(options: {
+  endpointUrl: string;
+  credentialEnv: string | null;
+  credentialAvailable: boolean;
+  recordedCredentialEnv?: string | null;
+  recoveredFromSandbox: boolean;
+  nonInteractive: boolean;
+  configuredMode?: string | null;
+  prompt: (message: string) => Promise<string>;
+  log: (message?: string) => void;
+  error: (message: string) => void;
+  exitProcess: (code: number) => never;
+}): Promise<string | null> {
+  try {
+    const authMode = await selectCompatibleEndpointAuthMode(options);
+    return authMode === COMPATIBLE_ENDPOINT_NO_AUTH_MODE ||
+      (options.recoveredFromSandbox && options.recordedCredentialEnv === null)
+      ? null
+      : options.credentialEnv;
+  } catch (error) {
+    options.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    return options.exitProcess(1);
+  }
+}
+
 // #5744: keep host-side validation on the user-entered loopback URL, but
 // register the sandbox route through OpenShell's host bridge. Remove this when
 // OpenShell can verify provider routes from the sandbox/gateway network context.
