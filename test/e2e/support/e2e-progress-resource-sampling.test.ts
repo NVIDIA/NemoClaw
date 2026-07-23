@@ -259,6 +259,28 @@ describe("canonical runner comparison progress sampling", () => {
     progress.stop();
   });
 
+  it("keeps the initial cadence anchored when the scenario-start probe blocks (#7146)", () => {
+    const records: Array<{ atMs: number; kind: string }> = [];
+    let state: ReturnType<typeof progressHarness>["state"];
+    const harness = progressHarness((_phase, kind) => {
+      records.push({ atMs: state.now(), kind });
+      if (kind === "scenario-start") state.setClock(5_000);
+      return true;
+    });
+    state = harness.state;
+    const progress = startTestProgress(
+      "runner comparison startup",
+      ["build Hermes image", "validate Hermes sandbox"],
+      harness.options,
+    );
+
+    expect(state.now()).toBe(5_000);
+    expect(state.nextTimerAt()).toBe(60_000);
+    state.fireNext();
+    expect(records.at(-1)).toEqual({ atMs: 60_000, kind: "periodic" });
+    progress.stop();
+  });
+
   it("lets a boundary probe crossing a cadence deadline consume that slot (#7146)", () => {
     const records: Array<{ atMs: number; kind: string; phase: string }> = [];
     let state: ReturnType<typeof progressHarness>["state"];

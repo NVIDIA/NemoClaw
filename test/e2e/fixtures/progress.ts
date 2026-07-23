@@ -564,7 +564,7 @@ export function startTestProgress(
   if (comparisonSamplingActive) {
     nextPeriodicAtMs = scenarioStartedAt + resourceSampleIntervalMs;
   }
-  schedulePulse(scenarioStartedAt);
+  schedulePulse(now());
 
   const progress: TestProgress = {
     [TEST_PROGRESS_CAPABILITY]: true,
