@@ -75,11 +75,6 @@ function createHarness() {
     },
     redact: vi.fn((value: string) => value),
     compactText: vi.fn((value: string) => value.trim()),
-    prepareCompatibleEndpointNoAuthProxy: vi.fn(async () => ({
-      baseUrl: "http://host.openshell.internal:11435/v1",
-      credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
-      credentialValue: "internal-loopback-token",
-    })),
     probeOpenAiLikeEndpoint,
     readGatewayProviderMetadata,
     deleteGatewayProvider,

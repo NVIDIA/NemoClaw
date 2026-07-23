@@ -202,7 +202,7 @@ export function repairLocalInferenceSystemdOverrideOrExit(
 
 export interface LocalProviderReachabilityDeps {
   shouldFrontOllamaWithProxy: () => boolean;
-  ensureOllamaAuthProxy: (expectedOwner?: "ollama" | "compatible-endpoint") => void;
+  ensureOllamaAuthProxy: () => void;
   isProxyHealthy: () => boolean;
   isLocalProviderHostHealthy: (provider: string) => boolean;
 }
@@ -242,7 +242,7 @@ export function ensureLocalProviderReachable(
   deps: LocalProviderReachabilityDeps = defaultLocalProviderReachabilityDeps,
 ): boolean {
   if (provider === "ollama-local" && deps.shouldFrontOllamaWithProxy()) {
-    deps.ensureOllamaAuthProxy("ollama");
+    deps.ensureOllamaAuthProxy();
     return deps.isProxyHealthy();
   }
   return deps.isLocalProviderHostHealthy(provider);

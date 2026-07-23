@@ -80,7 +80,7 @@ describe("ollama-auth-proxy request handler", () => {
     expect(backend?.captured).toHaveLength(0);
   });
 
-  it("strips internal authorization before forwarding to a no-auth loopback upstream (#7424)", async () => {
+  it("forwards to the backend on a correct Bearer token and strips authorization + host headers", async () => {
     const res = await request(proxyPort, {
       path: "/v1/chat/completions",
       method: "POST",

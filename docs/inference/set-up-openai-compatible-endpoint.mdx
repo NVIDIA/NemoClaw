@@ -28,10 +28,10 @@ vllm serve meta-llama/Llama-3.1-8B-Instruct --host 0.0.0.0 --port 8000
 Port `8000` is one of NemoClaw's bundled host-gateway ports.
 
 <Warning>
-The example above listens on every IPv4 interface.
-That exposure is needed only for a direct API-key route.
-For that route, use a host firewall with default-deny inbound rules, allow TCP port `8000` only from the OpenShell Docker subnet, and deny the port on every other interface.
-For **No authentication**, bind the upstream to loopback, such as `127.0.0.1`, when the server supports it.
+The examples on this page listen on every IPv4 interface so both host-side onboarding and a containerized gateway can reach the server.
+When the server does not require authentication, use a host firewall with default-deny inbound rules.
+Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
+Do not expose the port to your LAN or the internet.
 </Warning>
 
 ## Run Onboarding
@@ -46,27 +46,21 @@ Select **Other OpenAI-compatible endpoint**.
 Enter the server base URL and the model ID reported by the server.
 
 Use a host-routable URL such as `http://localhost:8000/v1` when you want onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
-For an API-key route, automatic rewriting requires an HTTP URL with the exact loopback host `localhost`, `127.0.0.1`, or `[::1]` and a bundled host-gateway port: `8000`, `11434`, or `11435`.
-NemoClaw validates the entered URL from the host and registers the direct OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
-Make sure the upstream is reachable from containers, such as by listening on `0.0.0.0`, and apply the firewall guidance above.
+To qualify for automatic rewriting, an HTTP endpoint URL must use the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`.
+Automatic rewriting is limited to NemoClaw's bundled host-gateway ports: `8000`, `11434`, and `11435`.
+NemoClaw validates the entered URL from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` for sandbox traffic.
+Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
 NemoClaw leaves URLs without an explicit port, URLs on `:80` or another privileged port, and URLs on unsupported ports unchanged.
 Those URLs require a separately compatible runtime topology and network policy.
 This rewrite depends on an OpenShell topology that resolves `host.openshell.internal` inside the sandbox; if that bridge is unavailable, onboarding can still validate the host URL, but `$$nemoclaw <name> status` is the authoritative runtime check.
-
-For **No authentication**, the upstream can remain bound to loopback.
-NemoClaw exposes a protected local proxy to OpenShell, authenticates the internal route, and removes that internal `Authorization` header before forwarding to the upstream.
-The protected proxy supports one loopback upstream origin at a time.
-If an existing local inference route uses the proxy, NemoClaw preserves that route and rejects a different no-auth origin.
-Sandbox inference requests continue to use the base `inference.local` policy, so the managed compatible-endpoint route does not require adding the `local-inference` preset.
+Make sure the server listens on an address reachable from containers, such as `0.0.0.0`; a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.
 
 If you manually enter a sandbox-internal alias such as `http://host.openshell.internal:8000/v1`, host-side endpoint probing is skipped during onboarding.
 Use a host-routable endpoint such as `localhost` when you need onboarding to verify the API, tool-calling, and streaming paths before gateway registration.
 Otherwise, verify the runtime route after onboarding with `$$nemoclaw <name> status` and a short agent request.
 
-When the URL uses the exact loopback host `localhost`, `127.0.0.1`, or `[::1]`, the wizard offers **API key** and **No authentication**.
-Choose **No authentication** only when the loopback server does not require authentication.
-Choose **API key** and set `COMPATIBLE_API_KEY` when the loopback server requires authentication.
-Other endpoint URLs require `COMPATIBLE_API_KEY`.
+For an exact loopback URL, the API key prompt says that pressing Enter selects no authentication.
+Other URLs still require `COMPATIBLE_API_KEY`.
 
 Refer to [Choose a Compatible Inference API](choose-compatible-inference-api) for the probe order and runtime API selection.
 
@@ -127,10 +121,10 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_PROVIDER` | Set to `custom`. |
 | `NEMOCLAW_ENDPOINT_URL` | Base URL of the server. |
 | `NEMOCLAW_MODEL` | Model ID reported by the server. |
+| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Set to `none` to explicitly select no authentication for an exact loopback endpoint. |
 | `NEMOCLAW_REASONING` | Enables reasoning-only validation with the case-insensitive true values `true`, `1`, `yes`, and `y`. |
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private inference endpoints. Wildcards are not supported. |
-| `COMPATIBLE_API_KEY` | Endpoint API key. Required unless an exact loopback URL explicitly uses no-auth mode. |
-| `NEMOCLAW_COMPATIBLE_AUTH_MODE` | Authentication selection for non-interactive onboarding. Use `api-key` or `none`; `none` is accepted only for exact loopback URLs. |
+| `COMPATIBLE_API_KEY` | Endpoint API key. Required unless loopback no-auth mode is selected. |
 
 Private and reserved addresses are blocked by default.
 To use an inference gateway on a trusted corporate network, list only its exact host and keep the endpoint URL on that host:

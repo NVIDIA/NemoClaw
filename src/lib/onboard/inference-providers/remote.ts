@@ -6,14 +6,14 @@
 // onboard.setupInference (#767). Bedrock Runtime is delegated to
 // `onboard/bedrock-runtime.ts` exactly as the inline branch did.
 
-import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../../inference/config";
+import * as inferenceConfig from "../../inference/config";
 import type { TrustedPrivateEndpointCapability } from "../../inference/endpoint-ssrf-preflight";
+import { prepareCompatibleEndpointNoAuthProxy } from "../../inference/ollama/proxy";
 import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
 import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
 import {
-  compatibleEndpointAllowsMissingApiKey,
-  gatewayReachableCompatibleEndpointUrl,
+  gatewayReachableCompatibleEndpointUrl as gatewayUrl,
   reuseRegisteredProviderWithGatewayEndpoint,
 } from "./compatible-endpoint-gateway-route";
 import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
@@ -239,32 +239,14 @@ export async function setupRemoteProviderInference(
     (deleteProviderWithRecovery as unknown as NonNullable<
       RemoteProviderDeps["deleteGatewayProvider"]
     >);
-  const noAuth = provider === "compatible-endpoint" && credentialEnv === null;
-  if (noAuth && (!endpointUrl || !compatibleEndpointAllowsMissingApiKey(endpointUrl))) {
-    error("  No authentication is allowed only for an exact loopback endpoint.");
-    return exitProcess(1);
-  }
-  let noAuthProxy: Awaited<
-    ReturnType<RemoteProviderDeps["prepareCompatibleEndpointNoAuthProxy"]>
-  > | null = null;
-  if (noAuth && endpointUrl) {
-    try {
-      noAuthProxy = await deps.prepareCompatibleEndpointNoAuthProxy(endpointUrl);
-    } catch (err) {
-      error(`  ${err instanceof Error ? err.message : String(err)}`);
-      return exitProcess(1);
-    }
-  }
-  const rollbackNoAuthProxy = () => noAuthProxy?.rollback?.();
+  const noAuth = credentialEnv === inferenceConfig.OLLAMA_LOCAL_CREDENTIAL_ENV;
+  const noAuthProxy = noAuth ? prepareCompatibleEndpointNoAuthProxy(endpointUrl!) : null;
   while (true) {
-    const resolvedCredentialEnv = noAuthProxy
-      ? noAuthProxy.credentialEnv
-      : credentialEnv || (config && config.credentialEnv);
+    const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
-    const gatewayEndpointUrl =
-      noAuthProxy?.baseUrl ?? gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
+    const gatewayEndpointUrl = noAuthProxy?.baseUrl ?? gatewayUrl(provider, resolvedEndpointUrl);
     let providerResult;
-    if (reuseGatewayCredentialWithoutLocalKey && !noAuthProxy) {
+    if (reuseGatewayCredentialWithoutLocalKey) {
       providerResult = reuseRegisteredProviderWithGatewayEndpoint({
         provider,
         providerType: config.providerType,
@@ -294,7 +276,7 @@ export async function setupRemoteProviderInference(
         // already end in /v1. Re-add the suffix so the probe and the runtime
         // route exercise the identical URL.
         const openAiSurfaceBaseUrl =
-          getCompatibleAnthropicOpenAiSurfaceBaseUrl(resolvedEndpointUrl);
+          inferenceConfig.getCompatibleAnthropicOpenAiSurfaceBaseUrl(resolvedEndpointUrl);
         const surfaceProbe = await probeOpenAiSurface(
           openAiSurfaceBaseUrl,
           model,
@@ -352,7 +334,6 @@ export async function setupRemoteProviderInference(
       capabilityCache?.invalidate();
       error(`  ${providerResult.message}`);
       if (isNonInteractive()) {
-        rollbackNoAuthProxy();
         return exitProcess(providerResult.status || 1);
       }
       const retry = await promptValidationRecovery(
@@ -365,10 +346,8 @@ export async function setupRemoteProviderInference(
         continue;
       }
       if (retry === "selection" || retry === "model") {
-        rollbackNoAuthProxy();
         return { done: true, result: { retry: "selection" } };
       }
-      rollbackNoAuthProxy();
       return exitProcess(providerResult.status || 1);
     }
     const argsv = ["inference", "set"];
@@ -390,7 +369,6 @@ export async function setupRemoteProviderInference(
     capabilityCache?.invalidate();
     error(`  ${message}`);
     if (isNonInteractive()) {
-      rollbackNoAuthProxy();
       return exitProcess(applyResult.status || 1);
     }
     const retry = await promptValidationRecovery(
@@ -403,10 +381,8 @@ export async function setupRemoteProviderInference(
       continue;
     }
     if (retry === "selection" || retry === "model") {
-      rollbackNoAuthProxy();
       return { done: true, result: { retry: "selection" } };
     }
-    rollbackNoAuthProxy();
     return exitProcess(applyResult.status || 1);
   }
   return { done: false };

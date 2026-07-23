@@ -238,7 +238,6 @@ const {
   getOllamaProxyToken,
   isProxyHealthy,
   persistAndProbeOllamaProxy,
-  prepareCompatibleEndpointNoAuthProxy,
   prepareOllamaModel,
   printOllamaExposureWarning,
   promptOllamaModel,
@@ -3307,8 +3306,6 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         state.endpointUrl,
       );
     }
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    if (selected.key === "custom") state.credentialEnv = await compatibleEndpointGatewayRoute.selectCompatibleEndpointCredentialEnv({ endpointUrl: requireValue(state.endpointUrl, "Missing endpoint URL for Other OpenAI-compatible endpoint"), credentialEnv: state.credentialEnv, credentialAvailable: Boolean(hydrateCredentialEnv(remoteConfig.credentialEnv)) || (recoveredFromSandbox && (sandboxName ? registry.getSandbox(sandboxName)?.credentialEnv : undefined) !== undefined), recordedCredentialEnv: sandboxName ? registry.getSandbox(sandboxName)?.credentialEnv : undefined, recoveredFromSandbox, nonInteractive: isNonInteractive(), configuredMode: process.env[compatibleEndpointGatewayRoute.COMPATIBLE_ENDPOINT_AUTH_MODE_ENV], prompt, log: (message = "") => console.log(message), error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
     const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
     state.preferredInferenceApi = selected.key === "custom" ? (explicitApi === "chat-completions" ? "openai-completions" : explicitApi || null) : null;
     if (!state.preferredInferenceApi) {
@@ -3429,11 +3426,18 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       _envModelRemote ||
       (recoveredFromSandbox && recoveredModel) ||
       remoteConfig.defaultModel;
-    const selectedCredentialEnv = state.credentialEnv;
+    const selectedCredentialEnv = requireValue(
+      state.credentialEnv,
+      `Missing credential env for ${remoteConfig.label}`,
+    );
+    // biome-ignore format: keep the loopback no-auth gate visible at its only caller.
+    const compatibleNoAuth = selected.key === "custom" && Boolean(state.endpointUrl && compatibleEndpointGatewayRoute.gatewayReachableCompatibleEndpointUrl(state.provider, state.endpointUrl) !== state.endpointUrl);
+    // biome-ignore format: keep the explicit non-interactive opt-in next to the loopback gate.
+    const useNoAuth = compatibleNoAuth && (!isNonInteractive() || (process.env.NEMOCLAW_COMPATIBLE_AUTH_MODE || "").trim().toLowerCase() === "none");
     const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
       selectedKey: selected.key,
       endpointUrl: state.endpointUrl,
-      credentialEnv: selectedCredentialEnv ?? remoteConfig.credentialEnv,
+      credentialEnv: selectedCredentialEnv,
       label: remoteConfig.label,
       helpUrl: remoteConfig.helpUrl,
       defaultModel,
@@ -3460,19 +3464,28 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       state.model = defaultModel;
       state.assertRouteCompatible?.();
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      if (selectedCredentialEnv) recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
+      if (useNoAuth) state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV; else recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
         { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName, recoveredRegistryRoute },
         { resolveProviderCredential, readRecordedInferenceRoute: (name) => readRecordedInferenceRoute(name, args.recoverySessionId), readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell, args.gatewayName ?? GATEWAY_NAME), note },
       );
-    } else if (selectedCredentialEnv) {
-      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      const credentialResult = await credentialPrompt.ensureNamedCredential(selectedCredentialEnv, `${remoteConfig.label} API key`, remoteConfig.helpUrl, openrouterSelection.credentialValidatorForProvider(selected.key));
+    } else {
+      const credentialLabel = compatibleNoAuth
+        ? `${remoteConfig.label} API key (press Enter for no authentication)`
+        : `${remoteConfig.label} API key`;
+      const credentialResult = await credentialPrompt.ensureNamedCredential(
+        selectedCredentialEnv,
+        credentialLabel,
+        remoteConfig.helpUrl,
+        openrouterSelection.credentialValidatorForProvider(selected.key),
+        compatibleNoAuth,
+      );
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }
+      if (credentialResult === "") state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
     }
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    if (selectedCredentialEnv) openrouterSelection.validateNonInteractiveCredential({ selectedKey: selected.key, selectedCredentialEnv, isNonInteractive: isNonInteractive(), reuseGatewayCredentialWithoutLocalKey: state.reuseGatewayCredentialWithoutLocalKey, resolveProviderCredential, getCredential, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
+    if (!useNoAuth) openrouterSelection.validateNonInteractiveCredential({ selectedKey: selected.key, selectedCredentialEnv, isNonInteractive: isNonInteractive(), reuseGatewayCredentialWithoutLocalKey: state.reuseGatewayCredentialWithoutLocalKey, resolveProviderCredential, getCredential, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
     let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
     if (openrouterSelection.isOpenAiLikeRemoteProvider(selected.key)) {
       const modelAuthMode = getProbeAuthMode(state.provider);
@@ -3483,7 +3496,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
           remoteConfig.label,
           state.endpointUrl || remoteConfig.endpointUrl,
           candidate,
-          (selectedCredentialEnv ? getCredential(selectedCredentialEnv) : null) || "",
+          getCredential(selectedCredentialEnv) || "",
           openrouterSelection.openAiLikeModelValidationOptions(state.provider, modelAuthMode),
         );
       };
@@ -3494,9 +3507,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         return validateAnthropicModel(
           state.endpointUrl || ANTHROPIC_ENDPOINT_URL,
           candidate,
-          getCredential(
-            requireValue(selectedCredentialEnv, `Missing credential env for ${remoteConfig.label}`),
-          ) || "",
+          getCredential(selectedCredentialEnv) || "",
         );
       };
     }
@@ -3662,7 +3673,6 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
     bedrockRuntimeOnboard,
     openrouterRuntimeOnboard,
-    prepareCompatibleEndpointNoAuthProxy,
     validateLocalProvider,
     getLocalProviderHealthCheck,
     getLocalProviderBaseUrl,

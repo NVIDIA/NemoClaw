@@ -14,12 +14,10 @@
  *   OLLAMA_PROXY_TOKEN  — required, the Bearer token to validate
  *   OLLAMA_PROXY_PORT   — listen port (default: 11435)
  *   OLLAMA_BACKEND_PORT — Ollama port on localhost (default: 11434)
- *   OLLAMA_BACKEND_URL  — optional exact loopback upstream origin
  */
 
 import crypto from "node:crypto";
 import http from "node:http";
-import https from "node:https";
 
 const TOKEN = process.env.OLLAMA_PROXY_TOKEN;
 if (!TOKEN) {
@@ -72,10 +70,9 @@ const server = http.createServer(
       clientRes.end(`Ollama backend error: ${err.message}`);
     };
 
-    const transport = BACKEND_URL.protocol === "https:" ? https : http;
-    const proxyReq = transport.request(
+    const proxyReq = http.request(
       {
-        hostname: BACKEND_URL.hostname.replace(/^\[|\]$/g, ""),
+        hostname: BACKEND_URL.hostname,
         port: BACKEND_URL.port,
         path: clientReq.url,
         method: clientReq.method,
