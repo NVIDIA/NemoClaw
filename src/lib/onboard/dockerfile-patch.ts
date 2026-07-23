@@ -40,6 +40,8 @@ import {
 export { assertToolDisclosureDockerfileContract } from "./dockerfile-tool-disclosure-contract";
 
 const SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
+const NODE_RUNTIME_REFRESH_INSTRUCTION =
+  "COPY --from=builder /usr/local/bin/node /usr/local/bin/node";
 const PROXY_HOST_RE = /^[A-Za-z0-9._-]+$/;
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 
@@ -183,6 +185,31 @@ export function patchStagedDockerfile(
         }
         return line;
       },
+    );
+  }
+  // A source=local resolution is built from this checkout's Dockerfile.base,
+  // whose Node image pin is kept identical to the managed Dockerfile builder.
+  // Copying that same 125 MB binary into the final image creates a redundant
+  // export layer. Keep the checked-in COPY as the safe default for published
+  // and legacy bases, and elide it only for this trusted, authoritative local
+  // base path. Custom Dockerfiles never receive trusted resolution metadata.
+  if (
+    options.trustedManagedDockerfile === true &&
+    options.baseImageResolutionMetadata?.imageName === SANDBOX_BASE_IMAGE &&
+    options.baseImageResolutionMetadata.source === "local" &&
+    sanitizedBaseImageRef === options.baseImageResolutionMetadata.ref
+  ) {
+    const instructionCount = dockerfile
+      .split(/\r?\n/)
+      .filter((line) => line.trim() === NODE_RUNTIME_REFRESH_INSTRUCTION).length;
+    if (instructionCount !== 1) {
+      throw new Error(
+        `Managed OpenClaw Dockerfile must contain exactly one ${NODE_RUNTIME_REFRESH_INSTRUCTION} instruction; found ${instructionCount}.`,
+      );
+    }
+    dockerfile = dockerfile.replace(
+      NODE_RUNTIME_REFRESH_INSTRUCTION,
+      "# Node runtime refresh omitted: authoritative local base already uses the builder pin.",
     );
   }
   dockerfile = dockerfile.replace(

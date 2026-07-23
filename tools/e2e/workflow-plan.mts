@@ -147,9 +147,7 @@ function mapTrustedControllerBootstrapJob(
   return {
     ...selectors,
     jobs: jobs
-      .map((job) =>
-        job === LEGACY_BOOTSTRAP_INSTALL_JOB_ID ? BOOTSTRAP_INSTALL_JOB_ID : job,
-      )
+      .map((job) => (job === LEGACY_BOOTSTRAP_INSTALL_JOB_ID ? BOOTSTRAP_INSTALL_JOB_ID : job))
       .join(","),
   };
 }
