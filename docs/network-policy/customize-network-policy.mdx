@@ -26,7 +26,7 @@ Refer to [Agent cannot reach a host-side HTTP service](../reference/troubleshoot
 <Warning>
 Adding a host to the egress policy permits a connection only when the endpoint, port, method, and binary rules match.
 OpenShell still applies SSRF protection separately, so it can deny a request when the final address resolves to a loopback, private, link-local, or otherwise blocked internal range.
-If a package installer or browser runtime download still fails with an SSRF-style denial after you add the public host, install that binary into the sandbox image at build time with [`$$nemoclaw onboard --from`](/reference/commands#--from-dockerfile) instead of relying on runtime egress.
+If a package installer or browser runtime download still fails with an SSRF-style denial after you add the public host, install that binary into the sandbox image at build time with [`$$nemoclaw onboard --from`](../reference/commands#--from-dockerfile) instead of relying on runtime egress.
 </Warning>
 
 ## Prerequisites

@@ -45,3 +45,5 @@
 # ── CI / GitHub config ──
 /.github/                           @NVIDIA/nemoclaw-maintainer
 /ci/                                @NVIDIA/nemoclaw-maintainer
+/ci/npm-audit-exceptions.json       @NVIDIA/nemoclaw-security @NVIDIA/nemoclaw-maintainer
+/scripts/lib/reviewed-npm-audit.mts @NVIDIA/nemoclaw-security @NVIDIA/nemoclaw-maintainer
