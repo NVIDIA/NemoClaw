@@ -12,7 +12,9 @@ import { OPENROUTER_PROVIDER_NAME } from "../../inference/openrouter";
 import { readGatewayProviderMetadata } from "../gateway-provider-metadata";
 import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-provider-cleanup";
 import {
+  compatibleEndpointAllowsMissingApiKey,
   gatewayReachableCompatibleEndpointUrl,
+  LOCALHOST_COMPATIBLE_API_KEY_PLACEHOLDER,
   reuseRegisteredProviderWithGatewayEndpoint,
 } from "./compatible-endpoint-gateway-route";
 import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
@@ -255,11 +257,18 @@ export async function setupRemoteProviderInference(
       });
     } else {
       const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
+      const providerCredentialValue =
+        credentialValue ||
+        (provider === "compatible-endpoint" &&
+        resolvedEndpointUrl &&
+        compatibleEndpointAllowsMissingApiKey(resolvedEndpointUrl)
+          ? LOCALHOST_COMPATIBLE_API_KEY_PLACEHOLDER
+          : null);
       const env =
-        resolvedCredentialEnv && credentialValue
-          ? { [resolvedCredentialEnv]: credentialValue }
+        resolvedCredentialEnv && providerCredentialValue
+          ? { [resolvedCredentialEnv]: providerCredentialValue }
           : {};
-      if (!credentialValue) {
+      if (!providerCredentialValue) {
         providerResult = {
           ok: false,
           status: 1,

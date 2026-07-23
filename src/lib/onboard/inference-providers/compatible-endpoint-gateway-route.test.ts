@@ -8,10 +8,30 @@ import YAML from "yaml";
 
 import {
   BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS,
+  compatibleEndpointAllowsMissingApiKey,
   gatewayReachableCompatibleEndpointUrl,
 } from "./compatible-endpoint-gateway-route";
 
 describe("compatible endpoint gateway routing", () => {
+  it.each([
+    "http://localhost:8000/v1",
+    "http://127.0.0.1:8080/v1",
+    "http://[::1]:9000/v1",
+    "https://localhost/v1",
+  ])("allows a missing API key for the exact loopback endpoint %s (#7424)", (endpointUrl) => {
+    expect(compatibleEndpointAllowsMissingApiKey(endpointUrl)).toBe(true);
+  });
+
+  it.each([
+    "https://inference.example/v1",
+    "http://localhost.example:8000/v1",
+    "http://localhost.:8000/v1",
+    "http://127.0.0.2:8000/v1",
+    "http://user@localhost:8000/v1",
+  ])("requires an API key for %s (#7424)", (endpointUrl) => {
+    expect(compatibleEndpointAllowsMissingApiKey(endpointUrl)).toBe(false);
+  });
+
   // source-shape-contract: compatibility -- Bundled loopback routing must match the shipped host-gateway policy ports
   it("matches the bundled local-inference host-gateway ports (#5744)", () => {
     const policyPath = path.resolve(

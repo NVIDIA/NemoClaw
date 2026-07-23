@@ -12,6 +12,24 @@ const BUNDLED_LOCAL_INFERENCE_GATEWAY_PORT_SET = new Set<number>(
   BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS,
 );
 
+export const LOCALHOST_COMPATIBLE_API_KEY_PLACEHOLDER = "nemoclaw-local-endpoint";
+
+export function compatibleEndpointAllowsMissingApiKey(endpointUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpointUrl);
+  } catch {
+    return false;
+  }
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+    !parsed.username &&
+    !parsed.password &&
+    (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1")
+  );
+}
+
 // #5744: keep host-side validation on the user-entered loopback URL, but
 // register the sandbox route through OpenShell's host bridge. Remove this when
 // OpenShell can verify provider routes from the sandbox/gateway network context.

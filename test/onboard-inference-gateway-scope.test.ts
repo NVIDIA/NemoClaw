@@ -110,6 +110,43 @@ describe("onboarding inference gateway scope", () => {
     );
   });
 
+  it("accepts a missing compatible API key for an exact loopback endpoint (#7424)", async () => {
+    await withProcessEnv({ COMPATIBLE_API_KEY: undefined }, async () => {
+      const harness = createHarness({
+        runOpenshell: (args) =>
+          args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
+      });
+      const endpointUrl = "http://localhost:8000/v1";
+
+      await expect(
+        harness.setupInference(
+          "local-no-auth",
+          "local-model",
+          "compatible-endpoint",
+          endpointUrl,
+          "COMPATIBLE_API_KEY",
+          null,
+          [],
+          { gatewayName: GATEWAY },
+        ),
+      ).resolves.toEqual({ ok: true });
+
+      const providerCreate = harness.commands.find(({ command }) =>
+        command.startsWith("provider create "),
+      );
+      expect(providerCreate?.env).toEqual({
+        COMPATIBLE_API_KEY: "nemoclaw-local-endpoint",
+      });
+      expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+        }),
+      );
+    });
+  });
+
   it("updates a recovered loopback route without re-exporting its gateway credential (#5744)", async () => {
     await withProcessEnv({ COMPATIBLE_API_KEY: undefined }, async () => {
       const harness = createHarness({
