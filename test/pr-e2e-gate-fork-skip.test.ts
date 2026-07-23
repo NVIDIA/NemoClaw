@@ -29,12 +29,10 @@ const CI_RUN_ID = 99;
 const CI_RUN_ATTEMPT = 3;
 const GATE_RUN_ID = 77;
 const APPROVAL_RUN_ID = 123;
-
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
-
 function githubResponse(value?: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -43,14 +41,12 @@ function githubResponse(value?: unknown, status = 200): Response {
     text: async () => (value === undefined ? "" : JSON.stringify(value)),
   } as Response;
 }
-
 function emptyPrGateCheckRunsRoute() {
   return githubFetchRoute(
     ({ url, method }) => url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
     () => githubResponse({ total_count: 0, check_runs: [] }),
   );
 }
-
 function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
   return {
     id: 17,
@@ -59,18 +55,21 @@ function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
     conclusion: null,
+    output: {
+      title: "Waiting for PR CI",
+      summary:
+        "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.",
+    },
     app: { id: 15368 },
     ...overrides,
   };
 }
-
 function existingPrGateCheckRunsRoute(overrides: Record<string, unknown> = {}) {
   return githubFetchRoute(
     ({ url, method }) => url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
     () => githubResponse({ total_count: 1, check_runs: [exactPrGateCheck(overrides)] }),
   );
 }
-
 function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Response {
   const body = (request.body ?? {}) as Record<string, unknown>;
   return githubResponse(exactPrGateCheck({ id, ...body }));
@@ -915,6 +914,7 @@ describe("PR E2E controller fork credentialed E2E skip approval safety", () => {
                 name: `E2E PR #42 (${correlationId})`,
                 path: ".github/workflows/e2e.yaml",
                 workflow_id: 7,
+                run_attempt: 1,
                 event: "workflow_dispatch",
                 head_sha: WORKFLOW_SHA,
                 status: "queued",
