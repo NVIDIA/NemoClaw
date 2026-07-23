@@ -35,6 +35,7 @@ import {
   validateE2eOperationsWorkflow,
 } from "./operations-workflow-boundary.mts";
 import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
+import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
@@ -4026,6 +4027,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateSecurityPostureWorkflow(workflow));
   errors.push(...validateRunnerPressureWorkflow(workflow));
   errors.push(...validateTrustedHermesSwapWorkflow(workflow));
+  errors.push(...validateRunnerComparisonWorkflowBoundary(workflow));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
