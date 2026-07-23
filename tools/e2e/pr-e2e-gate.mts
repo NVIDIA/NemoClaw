@@ -63,6 +63,9 @@ const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
 const CHECK_EXTERNAL_ID_PATTERN =
   /^nemoclaw-pr-e2e:v2:([1-9][0-9]*):([0-9a-f]{40}):([0-9a-f]{40})$/u;
+const SELECTED_E2E_RUN_SUMMARY_PATTERN =
+  /^\[Selected E2E run ([1-9][0-9]*)\]\((https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/actions\/runs\/([1-9][0-9]*))\) concluded /u;
+const SELECTED_E2E_RUN_SUMMARY_PREFIX = "[Selected E2E run ";
 const GITHUB_ACTIONS_APP_ID = 15368;
 const USER_AGENT = "nemoclaw-pr-e2e-gate";
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
@@ -1157,12 +1160,36 @@ function retryableFailureReason(check: CheckRun): RetryableFailureReason | undef
   return reason as RetryableFailureReason;
 }
 
+function runnerLossChildRunUrl(repository: string, check: CheckRun): string | null {
+  if (retryableFailureReason(check) !== "child-cancelled") return null;
+  const summary = check.output?.summary ?? "";
+  const selectedRun = SELECTED_E2E_RUN_SUMMARY_PATTERN.exec(summary);
+  if (selectedRun) {
+    const [, labelRunId, linkedUrl, linkedRunId] = selectedRun;
+    if (labelRunId !== linkedRunId) return null;
+    const expectedUrl = `https://github.com/${repository}/actions/runs/${labelRunId}`;
+    if (linkedUrl !== expectedUrl) return null;
+    const canonicalCheckUrl = `https://github.com/${repository}/runs/${check.id}`;
+    return check.details_url === expectedUrl || check.details_url === canonicalCheckUrl
+      ? expectedUrl
+      : null;
+  }
+  if (summary.includes(SELECTED_E2E_RUN_SUMMARY_PREFIX)) return null;
+
+  const prefix = `https://github.com/${repository}/actions/runs/`;
+  const detailsUrl = check.details_url;
+  return typeof detailsUrl === "string" &&
+    detailsUrl.startsWith(prefix) &&
+    /^[1-9][0-9]*$/u.test(detailsUrl.slice(prefix.length))
+    ? detailsUrl
+    : null;
+}
+
 function priorRunnerLossRunUrls(
   repository: string,
   history: readonly CheckRun[],
   currentCheckId: number,
 ): string[] {
-  const prefix = `https://github.com/${repository}/actions/runs/`;
   const priorRunnerLossChecks = history.filter(
     (check) => check.id !== currentCheckId && retryableFailureReason(check) === "child-cancelled",
   );
@@ -1170,12 +1197,8 @@ function priorRunnerLossRunUrls(
     throw new Error("Runner-loss retry history exceeds the single permitted retry");
   }
   return priorRunnerLossChecks.map((check) => {
-    const url = check.details_url;
-    if (
-      typeof url !== "string" ||
-      !url.startsWith(prefix) ||
-      !/^[1-9][0-9]*$/u.test(url.slice(prefix.length))
-    ) {
+    const url = runnerLossChildRunUrl(repository, check);
+    if (!url) {
       throw new Error("Runner-loss retry history has an invalid child-run URL");
     }
     return url;
@@ -3445,10 +3468,7 @@ export async function retryRunnerLossPrGate(
     if (current?.id !== command.checkRunId) {
       throw new Error("runner-loss retry source is not the current PR gate check");
     }
-    if (
-      retryableFailureReason(current) !== "child-cancelled" ||
-      current.details_url !== originalRunUrl
-    ) {
+    if (!current || runnerLossChildRunUrl(repository, current) !== originalRunUrl) {
       throw new Error("PR gate check does not authorize this runner-loss retry");
     }
     if (priorRunnerLossRunUrls(repository, history, command.checkRunId).length !== 0) {
@@ -3605,8 +3625,7 @@ export async function retryRunnerLossPrGate(
       dispatchHistory.length !== historySize + 1 ||
       dispatchHistory.at(-1)?.id !== retryCheckRunId ||
       !dispatchSource ||
-      retryableFailureReason(dispatchSource) !== "child-cancelled" ||
-      dispatchSource.details_url !== originalRunUrl ||
+      runnerLossChildRunUrl(repository, dispatchSource) !== originalRunUrl ||
       priorRunnerLossRunUrls(repository, dispatchHistory, retryCheckRunId).length !== 1
     ) {
       throw new Error("runner-loss retry lost the current PR gate check before dispatch");
@@ -4421,8 +4440,7 @@ export async function abandonRunnerLossRetrySource(
     source.app?.id !== GITHUB_ACTIONS_APP_ID ||
     source.status !== "completed" ||
     source.conclusion !== "failure" ||
-    source.details_url !== childRunUrl ||
-    retryableFailureReason(source) !== "child-cancelled" ||
+    runnerLossChildRunUrl(repository, source) !== childRunUrl ||
     !externalIdMatch
   ) {
     throw new Error("completed check does not match the exact runner-loss retry source");
