@@ -72,13 +72,25 @@ graph as the live targets:
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for the five #7145 candidate executions:
+telemetry for the #7145 contract: 12 routed workflow lane identities / 13
+concrete job executions.
 
 - `common-egress-agent`
 - `rebuild-hermes`
 - `rebuild-hermes-stale-base`
 - `mcp-bridge` with the `hermes` shard
 - `mcp-bridge` with the `deepagents` shard
+- `channels-stop-start` with the `hermes` shard
+- `hermes-dashboard`
+- `hermes-discord`
+- `hermes-e2e`
+- `hermes-inference-switch` with the `hosted` and `anthropic` modes
+- `hermes-shields-config`
+- `security-posture` with the `hermes` shard
+
+The extra execution comes from `hermes-inference-switch`, which runs both
+listed modes. The OpenClaw matrix entries for `mcp-bridge`,
+`channels-stop-start`, and `security-posture` are not instrumented.
 
 Each execution writes two best-effort numeric samples to
 `runner-comparison.jsonl`, one after workspace preparation and one from an

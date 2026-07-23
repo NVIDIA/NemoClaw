@@ -11,17 +11,42 @@ export const RUNNER_COMPARISON_COMMAND = "npx tsx tools/e2e/runner-comparison.mt
 
 const TRUSTED_MAIN_GUARD =
   "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == ''";
+const HERMES_AGENT_GUARD = "matrix.agent == 'hermes'";
 const MCP_AGENT_GUARD = "(matrix.agent == 'hermes' || matrix.agent == 'deepagents')";
 const ORDINARY_INITIALIZE_GUARD = `\${{ ${TRUSTED_MAIN_GUARD} }}`;
 const ORDINARY_FINALIZE_GUARD = `\${{ always() && ${TRUSTED_MAIN_GUARD} }}`;
+const HERMES_INITIALIZE_GUARD = `\${{ ${TRUSTED_MAIN_GUARD} && ${HERMES_AGENT_GUARD} }}`;
+const HERMES_FINALIZE_GUARD = `\${{ always() && ${TRUSTED_MAIN_GUARD} && ${HERMES_AGENT_GUARD} }}`;
 const MCP_INITIALIZE_GUARD = `\${{ ${TRUSTED_MAIN_GUARD} && ${MCP_AGENT_GUARD} }}`;
 const MCP_FINALIZE_GUARD = `\${{ always() && ${TRUSTED_MAIN_GUARD} && ${MCP_AGENT_GUARD} }}`;
 
 const COMPARISON_JOBS: ReadonlyMap<string, { initializeIf: string; finalizeIf: string }> = new Map([
   [
+    "channels-stop-start",
+    { initializeIf: HERMES_INITIALIZE_GUARD, finalizeIf: HERMES_FINALIZE_GUARD },
+  ],
+  [
     "common-egress-agent",
     { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
   ],
+  [
+    "hermes-dashboard",
+    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
+  ],
+  [
+    "hermes-discord",
+    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
+  ],
+  ["hermes-e2e", { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD }],
+  [
+    "hermes-inference-switch",
+    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
+  ],
+  [
+    "hermes-shields-config",
+    { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
+  ],
+  ["mcp-bridge", { initializeIf: MCP_INITIALIZE_GUARD, finalizeIf: MCP_FINALIZE_GUARD }],
   [
     "rebuild-hermes",
     { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
@@ -30,7 +55,10 @@ const COMPARISON_JOBS: ReadonlyMap<string, { initializeIf: string; finalizeIf: s
     "rebuild-hermes-stale-base",
     { initializeIf: ORDINARY_INITIALIZE_GUARD, finalizeIf: ORDINARY_FINALIZE_GUARD },
   ],
-  ["mcp-bridge", { initializeIf: MCP_INITIALIZE_GUARD, finalizeIf: MCP_FINALIZE_GUARD }],
+  [
+    "security-posture",
+    { initializeIf: HERMES_INITIALIZE_GUARD, finalizeIf: HERMES_FINALIZE_GUARD },
+  ],
 ]);
 
 type WorkflowRecord = Record<string, unknown>;
@@ -51,6 +79,31 @@ function record(value: unknown): WorkflowRecord {
 
 function steps(value: unknown): WorkflowStep[] {
   return Array.isArray(value) ? (value as WorkflowStep[]) : [];
+}
+
+function matrixValues(jobs: WorkflowRecord, jobId: string, key: string): unknown[] {
+  const matrix = record(record(record(jobs[jobId]).strategy).matrix);
+  if (Array.isArray(matrix[key])) return matrix[key];
+  if (!Array.isArray(matrix.include)) return [];
+  return matrix.include.map((entry) => record(entry)[key]);
+}
+
+function requireExactMatrixValues(
+  errors: string[],
+  jobs: WorkflowRecord,
+  jobId: string,
+  key: string,
+  expected: readonly string[],
+): void {
+  const actual = matrixValues(jobs, jobId, key);
+  if (
+    actual.length !== expected.length ||
+    expected.some((value) => actual.filter((candidate) => candidate === value).length !== 1)
+  ) {
+    errors.push(
+      `${jobId} matrix must contain exactly ${expected.join(", ")} for runner comparison telemetry`,
+    );
+  }
 }
 
 function exactStep(
@@ -81,24 +134,26 @@ function publicationIndex(jobSteps: readonly WorkflowStep[]): number {
 }
 
 /**
- * Keep the #7145 comparison to five trusted-main executions: three standalone
- * jobs plus the Hermes and Deep Agents MCP matrix entries. Telemetry is
- * best-effort, but it must span the complete job and finish before evidence is
- * scanned or uploaded.
+ * Keep the #7145 comparison to 12 routed workflow lane identities / 13
+ * concrete trusted-main job executions. Telemetry is best-effort, but it must
+ * span the complete post-prepare job and finish before evidence is scanned or
+ * uploaded.
  */
 export function validateRunnerComparisonWorkflow(workflowValue: unknown): string[] {
   const jobs = record(record(workflowValue).jobs);
   const errors: string[] = [];
 
-  const mcpMatrix = record(record(record(jobs["mcp-bridge"]).strategy).matrix);
-  const mcpAgents = Array.isArray(mcpMatrix.agent) ? mcpMatrix.agent : [];
-  for (const expectedAgent of ["hermes", "deepagents"]) {
-    if (mcpAgents.filter((agent) => agent === expectedAgent).length !== 1) {
-      errors.push(
-        `mcp-bridge matrix must contain ${expectedAgent} exactly once for runner comparison telemetry`,
-      );
-    }
-  }
+  requireExactMatrixValues(errors, jobs, "channels-stop-start", "agent", ["openclaw", "hermes"]);
+  requireExactMatrixValues(errors, jobs, "mcp-bridge", "agent", [
+    "openclaw",
+    "hermes",
+    "deepagents",
+  ]);
+  requireExactMatrixValues(errors, jobs, "security-posture", "agent", ["openclaw", "hermes"]);
+  requireExactMatrixValues(errors, jobs, "hermes-inference-switch", "mode", [
+    "hosted",
+    "anthropic",
+  ]);
 
   for (const [jobId, value] of Object.entries(jobs)) {
     const jobSteps = steps(record(value).steps);

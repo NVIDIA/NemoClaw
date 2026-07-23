@@ -20,15 +20,25 @@ type WorkflowStep = Record<string, unknown> & {
   shell?: string;
   uses?: string;
 };
+type WorkflowMatrix = Record<string, unknown> & {
+  include?: Array<Record<string, unknown>>;
+};
 type Workflow = {
-  jobs: Record<string, { steps: WorkflowStep[]; strategy?: { matrix?: { agent?: unknown[] } } }>;
+  jobs: Record<string, { steps: WorkflowStep[]; strategy?: { matrix?: WorkflowMatrix } }>;
 };
 
 const JOBS = [
+  "channels-stop-start",
   "common-egress-agent",
+  "hermes-dashboard",
+  "hermes-discord",
+  "hermes-e2e",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "mcp-bridge",
   "rebuild-hermes",
   "rebuild-hermes-stale-base",
-  "mcp-bridge",
+  "security-posture",
 ] as const;
 
 function loadWorkflow(): Workflow {
@@ -47,33 +57,54 @@ function telemetrySteps(workflow: Workflow, jobId: string): WorkflowStep[] {
   );
 }
 
+function matrixValues(workflow: Workflow, jobId: string, key: string): unknown[] {
+  const matrix = workflow.jobs[jobId]!.strategy!.matrix!;
+  const direct = matrix[key];
+  if (Array.isArray(direct)) return direct;
+  return matrix.include?.map((entry) => entry[key]) ?? [];
+}
+
 describe("runner comparison E2E workflow boundary (#7145)", () => {
-  it("accepts the exact five-execution comparison wiring", () => {
+  it("accepts 12 routed workflow lane identities / 13 concrete job executions", () => {
     const workflow = loadWorkflow();
 
     expect(validateRunnerComparisonWorkflowBoundary(workflow)).toEqual([]);
-    expect(JOBS.flatMap((jobId) => telemetrySteps(workflow, jobId))).toHaveLength(8);
-    expect(
-      3 +
-        workflow.jobs["mcp-bridge"]!.strategy!.matrix!.agent!.filter((agent) =>
-          ["hermes", "deepagents"].includes(String(agent)),
-        ).length,
-    ).toBe(5);
+    expect(JOBS.flatMap((jobId) => telemetrySteps(workflow, jobId))).toHaveLength(JOBS.length * 2);
+
+    const mcpLanes = matrixValues(workflow, "mcp-bridge", "agent").filter((agent) =>
+      ["hermes", "deepagents"].includes(String(agent)),
+    ).length;
+    const routedLanes = JOBS.length - 1 + mcpLanes;
+    const concreteExecutions =
+      routedLanes - 1 + matrixValues(workflow, "hermes-inference-switch", "mode").length;
+    expect(routedLanes).toBe(12);
+    expect(concreteExecutions).toBe(13);
   });
 
-  it("requires both measured MCP matrix entries exactly once", () => {
+  it("locks the matrix topology that produces thirteen concrete executions", () => {
     const workflow = loadWorkflow();
     workflow.jobs["mcp-bridge"]!.strategy!.matrix!.agent = ["openclaw", "hermes", "hermes"];
+    workflow.jobs["channels-stop-start"]!.strategy!.matrix!.agent = ["openclaw", "openclaw"];
+    workflow.jobs["security-posture"]!.strategy!.matrix!.include = [
+      { agent: "openclaw" },
+      { agent: "openclaw" },
+    ];
+    workflow.jobs["hermes-inference-switch"]!.strategy!.matrix!.include = [
+      { mode: "hosted" },
+      { mode: "hosted" },
+    ];
 
     expect(validateRunnerComparisonWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "mcp-bridge matrix must contain hermes exactly once for runner comparison telemetry",
-        "mcp-bridge matrix must contain deepagents exactly once for runner comparison telemetry",
+        "channels-stop-start matrix must contain exactly openclaw, hermes for runner comparison telemetry",
+        "mcp-bridge matrix must contain exactly openclaw, hermes, deepagents for runner comparison telemetry",
+        "security-posture matrix must contain exactly openclaw, hermes for runner comparison telemetry",
+        "hermes-inference-switch matrix must contain exactly hosted, anthropic for runner comparison telemetry",
       ]),
     );
   });
 
-  it("rejects runner comparison consumers outside the four comparison jobs", () => {
+  it("rejects runner comparison consumers outside the eleven comparison jobs", () => {
     const workflow = loadWorkflow();
     workflow.jobs["shields-config"]!.steps.push(
       structuredClone(telemetrySteps(workflow, "common-egress-agent")[0]!),
@@ -145,7 +176,7 @@ describe("runner comparison E2E workflow boundary (#7145)", () => {
     );
   });
 
-  it("keeps OpenClaw out of both MCP comparison samples", () => {
+  it("keeps non-routed matrix counterparts out of comparison telemetry", () => {
     const workflow = loadWorkflow();
     for (const name of [RUNNER_COMPARISON_INITIALIZE_STEP, RUNNER_COMPARISON_FINALIZE_STEP]) {
       const comparison = step(workflow, "mcp-bridge", name);
@@ -153,12 +184,23 @@ describe("runner comparison E2E workflow boundary (#7145)", () => {
         "(matrix.agent == 'hermes' || matrix.agent == 'deepagents')",
         "(matrix.agent == 'openclaw' || matrix.agent == 'hermes' || matrix.agent == 'deepagents')",
       );
+      for (const jobId of ["channels-stop-start", "security-posture"]) {
+        const hermesComparison = step(workflow, jobId, name);
+        hermesComparison.if = hermesComparison.if!.replace(
+          "matrix.agent == 'hermes'",
+          "(matrix.agent == 'openclaw' || matrix.agent == 'hermes')",
+        );
+      }
     }
 
     expect(validateRunnerComparisonWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "mcp-bridge must use the exact trusted initialize telemetry step",
         "mcp-bridge must use the exact always-run trusted finalize telemetry step",
+        "channels-stop-start must use the exact trusted initialize telemetry step",
+        "channels-stop-start must use the exact always-run trusted finalize telemetry step",
+        "security-posture must use the exact trusted initialize telemetry step",
+        "security-posture must use the exact always-run trusted finalize telemetry step",
       ]),
     );
   });
