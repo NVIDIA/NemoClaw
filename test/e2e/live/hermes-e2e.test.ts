@@ -301,11 +301,6 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
       timeoutMs: 60_000,
     }),
   );
-  cleanup.trackSandbox(host, SANDBOX_NAME, {
-    artifactName: "cleanup-nemoclaw-destroy",
-    env: cleanupEnv,
-    timeoutMs: 120_000,
-  });
 
   // Phase 0: pre-cleanup, after the secret gate so local skipped runs do not
   // mutate host state.
@@ -360,6 +355,11 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
         ),
       ));
   expect(install.exitCode, resultText(install)).toBe(0);
+  cleanup.trackSandbox(host, SANDBOX_NAME, {
+    artifactName: "cleanup-nemoclaw-destroy",
+    env: cleanupEnv,
+    timeoutMs: 120_000,
+  });
 
   const cliProbe = await host.command(
     "bash",

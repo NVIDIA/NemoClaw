@@ -3352,6 +3352,8 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        with:
+          build-cli: "false"
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
