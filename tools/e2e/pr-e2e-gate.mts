@@ -81,7 +81,11 @@ const MAX_PR_FILES = 3000;
 const MAX_COMPATIBILITY_FILES = 300;
 const MAX_ACTIVE_RUN_PAGES_PER_STATUS = 10;
 const MAX_WORKFLOW_JOB_PAGES = 10;
-const MAX_JOB_ANNOTATION_PAGES = 10;
+const MAX_JOB_ANNOTATION_PAGES = 1;
+const MAX_RUNNER_LOSS_JOB_ANNOTATIONS = 20;
+const MAX_JOB_ANNOTATION_IDENTITY_BYTES = 8 * 1024;
+const MAX_JOB_ANNOTATION_TEXT_BYTES = 16 * 1024;
+const MAX_RUNNER_LOSS_JOB_ANNOTATION_BYTES = 64 * 1024;
 const HOSTED_RUNNER_LOST_COMMUNICATION_MESSAGE =
   "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.";
 const HOSTED_RUNNER_SHUTDOWN_MESSAGE =
@@ -1801,7 +1805,9 @@ function validateWorkflowJobAnnotation(value: unknown): WorkflowJobAnnotation {
     !isObjectRecord(value) ||
     typeof value.path !== "string" ||
     value.path.length === 0 ||
+    Buffer.byteLength(value.path, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
     typeof value.blob_href !== "string" ||
+    Buffer.byteLength(value.blob_href, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
     !Number.isSafeInteger(value.start_line) ||
     (value.start_line as number) < 1 ||
     (value.start_column !== null &&
@@ -1811,9 +1817,13 @@ function validateWorkflowJobAnnotation(value: unknown): WorkflowJobAnnotation {
     (value.end_column !== null &&
       (!Number.isSafeInteger(value.end_column) || (value.end_column as number) < 1)) ||
     typeof value.annotation_level !== "string" ||
+    Buffer.byteLength(value.annotation_level, "utf8") > MAX_JOB_ANNOTATION_IDENTITY_BYTES ||
     typeof value.title !== "string" ||
+    Buffer.byteLength(value.title, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES ||
     typeof value.message !== "string" ||
-    typeof value.raw_details !== "string"
+    Buffer.byteLength(value.message, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES ||
+    typeof value.raw_details !== "string" ||
+    Buffer.byteLength(value.raw_details, "utf8") > MAX_JOB_ANNOTATION_TEXT_BYTES
   ) {
     throw new Error("GitHub returned an invalid workflow job annotation");
   }
@@ -1879,15 +1889,19 @@ async function listWorkflowJobAnnotations(
     throw new Error("workflow job check run does not match the exact failed job");
   }
   const expectedCount = check.output.annotations_count as number;
+  if (expectedCount > MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
+    throw new Error("workflow job annotation count exceeds the hosted-runner-loss limit");
+  }
   const annotations: WorkflowJobAnnotation[] = [];
   const fingerprints = new Set<string>();
+  let annotationBytes = 0;
   for (let page = 1; page <= MAX_JOB_ANNOTATION_PAGES; page += 1) {
     const value = await githubApi<unknown>(
-      `repos/${repository}/check-runs/${job.id}/annotations?per_page=100&page=${page}`,
+      `repos/${repository}/check-runs/${job.id}/annotations?per_page=${MAX_RUNNER_LOSS_JOB_ANNOTATIONS}&page=${page}`,
       token,
       { userAgent: USER_AGENT },
     );
-    if (!Array.isArray(value) || value.length > 100) {
+    if (!Array.isArray(value) || value.length > MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
       throw new Error("GitHub returned an invalid workflow job annotation listing");
     }
     const pageAnnotations = value.map(validateWorkflowJobAnnotation);
@@ -1897,13 +1911,17 @@ async function listWorkflowJobAnnotations(
         throw new Error("GitHub returned duplicate workflow job annotations");
       }
       fingerprints.add(fingerprint);
+      annotationBytes += Buffer.byteLength(fingerprint, "utf8");
+      if (annotationBytes > MAX_RUNNER_LOSS_JOB_ANNOTATION_BYTES) {
+        throw new Error("workflow job annotation evidence exceeds its byte limit");
+      }
       annotations.push(annotation);
     }
     if (annotations.length > expectedCount) {
       throw new Error("workflow job annotation listing exceeds the trusted annotation count");
     }
     if (annotations.length === expectedCount) return annotations;
-    if (value.length < 100) {
+    if (value.length < MAX_RUNNER_LOSS_JOB_ANNOTATIONS) {
       throw new Error("workflow job annotation listing is incomplete");
     }
   }

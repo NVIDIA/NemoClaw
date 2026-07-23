@@ -703,23 +703,46 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
       error: /annotation listing is incomplete/u,
     },
     {
-      label: "overlapping annotation pages",
+      label: "an annotation count above the runner-loss evidence limit",
       options: () => {
         const check = workflowJobCheckRun(hostedRunnerLossJob());
-        const notices = Array.from({ length: 99 }, (_, index) => ({
+        return {
+          jobCheck: { ...check, output: { ...check.output, annotations_count: 21 } },
+        };
+      },
+      error: /annotation count exceeds/u,
+    },
+    {
+      label: "an oversized annotation field",
+      options: () => ({
+        annotationPages: [
+          [
+            {
+              ...runnerLossAnnotation(),
+              message: "x".repeat(16 * 1024 + 1),
+            },
+          ],
+        ],
+      }),
+      error: /invalid workflow job annotation/u,
+    },
+    {
+      label: "oversized aggregate annotation evidence",
+      options: () => {
+        const check = workflowJobCheckRun(hostedRunnerLossJob());
+        const notices = Array.from({ length: 19 }, (_, index) => ({
           ...runnerLossAnnotation(),
           start_line: index + 2,
           end_line: index + 2,
           annotation_level: "notice",
-          message: `notice ${index + 1}`,
+          message: `notice-${index}-${"x".repeat(4 * 1024)}`,
         }));
-        const firstPage = [runnerLossAnnotation(), ...notices];
         return {
-          jobCheck: { ...check, output: { ...check.output, annotations_count: 101 } },
-          annotationPages: [firstPage, [notices[0]!]],
+          jobCheck: { ...check, output: { ...check.output, annotations_count: 20 } },
+          annotationPages: [[runnerLossAnnotation(), ...notices]],
         };
       },
-      error: /duplicate workflow job annotations/u,
+      error: /annotation evidence exceeds/u,
     },
     {
       label: "a second generic-cancellation failure annotation",
