@@ -360,17 +360,46 @@ check_package_managers_idle test
     "stock-dgx-os",
     "ai-developer-tools",
   ])("allows idle PackageKit when %s preserves the factory package stack (#7417)", (profile) => {
-    const { result, output } = runSourced(
+    const { result, output } = runPackageKitBoundary(
       `
 STATION_HOST_PROFILE="$FACTORY_PROFILE"
 ps() { printf '4242 packagekitd\n'; }
 check_package_managers_idle test
+cat "$CALLS"
 `,
       { FACTORY_PROFILE: profile },
     );
 
     expect(result.status, output).toBe(0);
+    expect(output).toContain("GetTransactionList");
+    expect(output).toContain("packagekit_transactions=none phase=test");
     expect(output).toContain("package_manager=idle phase=test");
+  });
+
+  it.each([
+    "stock-dgx-os",
+    "ai-developer-tools",
+  ])("rejects an active PackageKit transaction for %s before factory validation (#7417)", (profile) => {
+    const { result, output } = runPackageKitBoundary(
+      `
+STATION_HOST_PROFILE="$FACTORY_PROFILE"
+ps() { printf '4242 packagekitd\n'; }
+trap 'cat "$CALLS"' EXIT
+check_package_managers_idle 'initial Station package preflight'
+printf 'FACTORY_VALIDATION\n' >>"$CALLS"
+`,
+      {
+        FACTORY_PROFILE: profile,
+        PACKAGEKIT_TRANSACTIONS: 'ao 1 "/42_deadbeef"',
+      },
+    );
+
+    expect(result.status, output).not.toBe(0);
+    expect(output).toContain("GetTransactionList");
+    expect(output).toMatch(
+      /active PackageKit transaction blocks initial Station package preflight/,
+    );
+    expect(output).not.toContain("FACTORY_VALIDATION");
   });
 
   it.each([

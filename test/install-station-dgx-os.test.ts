@@ -117,13 +117,20 @@ function writeNoOtaFactoryRelease(
 }
 
 function writeNoOtaDgxOs76Release(
-  overrides: Partial<{ pretty: string; version: string; buildDate: string; platform: string }> = {},
+  overrides: Partial<{
+    pretty: string;
+    version: string;
+    buildDate: string;
+    platform: string;
+    otaMetadata: string;
+  }> = {},
 ) {
   const fields = {
     pretty: "NVIDIA DGX GB300WS",
     version: "7.6.0",
     buildDate: "2026-07-14-13-59-06",
     platform: "DGX Server for GALAXY-GB300",
+    otaMetadata: "",
     ...overrides,
   };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-dgx-os-76-release-"));
@@ -136,6 +143,7 @@ function writeNoOtaDgxOs76Release(
       `DGX_SWBUILD_DATE="${fields.buildDate}"`,
       `DGX_SWBUILD_VERSION="${fields.version}"`,
       'DGX_COMMIT_ID="d0e99cc"',
+      fields.otaMetadata,
       `DGX_PLATFORM="${fields.platform}"`,
       "",
     ].join("\n"),
@@ -231,6 +239,10 @@ dgx_station_release_state "$DGX_RELEASE"
     ["future release family", writeNoOtaDgxOs76Release({ version: "7.7.0" })],
     ["non-numeric patch", writeNoOtaDgxOs76Release({ version: "7.6.rc1" })],
     ["different platform", writeNoOtaDgxOs76Release({ platform: "DGX Server for GALAXY-GB200" })],
+    [
+      "partial OTA identity",
+      writeNoOtaDgxOs76Release({ otaMetadata: 'DGX_OTA_PRETTY_NAME="DGX OS"' }),
+    ],
   ])("keeps no-OTA release metadata fail-closed with %s (#7417)", (_scenario, release) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
