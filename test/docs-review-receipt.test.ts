@@ -171,7 +171,7 @@ describe("documentation writer review receipt", () => {
     const result = runCheck(
       receipt()
         .replace("reviewed the completed changes", "reviewed the completed implementation")
-        .replace("- Agent: Codex", "- Agent: Codex\n- PR: #42"),
+        .replace("- Agent: Codex", "- Agent: Codex\n- PR: #999"),
       ["src/lib/example.ts", "docs/index.mdx"],
     );
 
@@ -376,6 +376,7 @@ printf '%s' '${JSON.stringify(pullRequests)}'
       expect(csvResult.status).toBe(0);
       expect(csvResult.stdout).toContain("receipt_status");
       expect(csvResult.stdout).not.toContain("receipt_pr_number");
+      expect(csvResult.stdout).not.toContain("pr_number_matches");
       expect(csvResult.stdout).toContain("1,https://github.com/NVIDIA/NemoClaw/pull/1");
       expect(csvResult.stdout).toContain("2,https://github.com/NVIDIA/NemoClaw/pull/2");
       expect(csvResult.stdout).toContain("'=1+1");
