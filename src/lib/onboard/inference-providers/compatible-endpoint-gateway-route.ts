@@ -54,13 +54,11 @@ export async function selectCompatibleEndpointAuthMode(options: {
       }
       return "none";
     }
-    if (
-      compatibleEndpointAllowsMissingApiKey(options.endpointUrl) &&
-      !options.credentialAvailable
-    ) {
-      throw new Error(
-        `Set COMPATIBLE_API_KEY or ${COMPATIBLE_ENDPOINT_AUTH_MODE_ENV}=none in non-interactive mode.`,
-      );
+    if (!options.credentialAvailable) {
+      const noAuthOption = compatibleEndpointAllowsMissingApiKey(options.endpointUrl)
+        ? ` or ${COMPATIBLE_ENDPOINT_AUTH_MODE_ENV}=none`
+        : "";
+      throw new Error(`Set COMPATIBLE_API_KEY${noAuthOption} in non-interactive mode.`);
     }
     return "api-key";
   }

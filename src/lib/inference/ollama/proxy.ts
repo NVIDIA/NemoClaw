@@ -355,12 +355,26 @@ async function prepareCompatibleEndpointNoAuthProxy(endpointUrl: string): Promis
 }> {
   const endpoint = new URL(endpointUrl);
   const backendUrl = normalizeLoopbackBackendUrl(endpoint.origin);
-  if (!backendUrl || !startOllamaAuthProxy(backendUrl)) {
+  if (!backendUrl) {
     throw new Error("Could not start the protected loopback route for the no-auth endpoint.");
   }
-  const credentialValue = getOllamaProxyToken();
+  const persistedToken = loadPersistedProxyToken();
+  const persistedBackendUrl =
+    normalizeLoopbackBackendUrl(readLocalAdapterJsonFile(PROXY_STATE_PATH)?.backendUrl) ||
+    DEFAULT_PROXY_BACKEND_URL;
+  if (persistedToken && persistedBackendUrl !== backendUrl) {
+    throw new Error(
+      "The shared loopback proxy is already reserved by another local inference route.",
+    );
+  }
+  if (persistedToken) {
+    ensureOllamaAuthProxy();
+  } else if (!startOllamaAuthProxy(backendUrl)) {
+    throw new Error("Could not start the protected loopback route for the no-auth endpoint.");
+  }
+  const credentialValue = persistedToken || getOllamaProxyToken();
   if (!credentialValue) throw new Error("Loopback proxy token was not initialized.");
-  await persistAndProbeOllamaProxy(credentialValue);
+  if (!persistedToken) await persistAndProbeOllamaProxy(credentialValue);
   const pathname = endpoint.pathname.replace(/\/+$/, "");
   return {
     baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${pathname}`,

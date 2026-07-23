@@ -81,6 +81,18 @@ describe("compatible endpoint gateway routing", () => {
     ).resolves.toBe("api-key");
   });
 
+  it("requires an API key for non-interactive non-loopback endpoints (#7424)", async () => {
+    await expect(
+      selectCompatibleEndpointAuthMode({
+        endpointUrl: "https://inference.example/v1",
+        nonInteractive: true,
+        credentialAvailable: false,
+        prompt: vi.fn(async () => ""),
+        log: vi.fn(),
+      }),
+    ).rejects.toThrow("Set COMPATIBLE_API_KEY in non-interactive mode.");
+  });
+
   it("rejects no-auth mode for non-loopback endpoints (#7424)", async () => {
     await expect(
       selectCompatibleEndpointAuthMode({
