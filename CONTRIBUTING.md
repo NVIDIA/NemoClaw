@@ -400,6 +400,57 @@ If your change affects user-facing behavior (new commands, changed defaults, new
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 During release prep, run that skill first, make any doc version bumps, then open the docs refresh PR.
 
+### Documentation Writer Review Receipt
+
+After you complete a code or documentation change, a documentation writer subagent must review the completed changes.
+For a documentation-only change, the subagent must verify the changed pages against [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) and [WRITING.md](WRITING.md).
+The review must cover terminology, structure, voice, and code-sample presentation.
+Complete the Documentation Writer Review section in the PR description after that review.
+Keep one review completion checkbox and one instance of each visible or hidden field.
+
+Record one result:
+
+- `docs-updated` when the reviewed pull request changes documentation.
+  List the changed documentation paths as evidence.
+  For a documentation-only change, state that the subagent reviewed the writing rules and documentation style.
+- `no-docs-needed` when a code change does not require documentation and the evidence explains why.
+- `blocked` when a named decision, dependency, access problem, or input prevents the review.
+
+Record the product and surface that ran the review, such as `Codex Desktop`, `Codex CLI`, `Claude Code`, or `Cursor`.
+Use the same name for the same surface across PRs so the report groups its data correctly.
+Record the PR number in the visible receipt so the check can detect a receipt copied from another PR.
+
+Commit all changes from the final review.
+Then run these commands and put their values in the receipt's hidden HTML metadata comments:
+
+```bash
+git rev-parse --short HEAD
+git rev-parse --short HEAD:AGENTS.md
+```
+
+The visible PR number ties the receipt to this PR, while the hidden head SHA identifies the pull-request revision that the review covered.
+Rerun the review after any new commit changes the pull-request head.
+Pushing a new commit runs the receipt check again and reports the review as stale until the hidden metadata is refreshed.
+The Documentation Writer Review check reports an advisory finding when the receipt is missing, incomplete, or stale.
+The check compares the receipt's PR number with the current PR number, the hidden head SHA with the current PR head, and the hidden `AGENTS.md` blob SHA with the current PR's file.
+
+Maintainers can export receipt data from PR descriptions:
+
+```bash
+npm run docs-review:report -- --since 2026-06-12 --format csv > /tmp/nemoclaw-docs-review.csv
+```
+
+The report uses the authenticated GitHub CLI session and returns JSON by default.
+It measures receipt coverage, PR-number integrity, head-revision freshness, review results, and agent-surface counts.
+The `eligiblePrs` JSON metric reports the total eligible pull requests.
+The `eligibleCodePrs` and `eligibleDocsOnlyPrs` metrics report the code and documentation-only counts.
+It records the `AGENTS.md` blob SHA, but only the PR check compares that SHA with the current PR's file.
+It does not prove that an agent loaded `AGENTS.md`; it records observable workflow compliance.
+The retrospective report classifies code and documentation changes from the checked Type of Change field.
+It reports a PR as unclassified when that field is incomplete or contradictory.
+Use `--format summary` to print only aggregate metrics.
+Use `--until YYYY-MM-DD` to set the end of the reporting period.
+
 To build and preview docs locally:
 
 ```console

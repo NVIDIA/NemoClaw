@@ -109,6 +109,7 @@ check_network() { :; }
 check_package_managers_idle() { :; }
 check_dpkg_database_health() { :; }
 check_failed_units() { :; }
+check_vllm_container_conflicts() { :; }
 check_agent_and_inference_conflicts() { :; }
 driver_loaded_exact() { return 0; }
 package_is_ready() { return 0; }
