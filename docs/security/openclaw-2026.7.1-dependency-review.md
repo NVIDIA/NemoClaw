@@ -78,10 +78,11 @@ major-version compatibility boundary.
 The SDK's locked AJV graph also requests `fast-uri@^3.0.1`; the newly published
 `GHSA-v2hh-gcrm-f6hx` affects releases through `3.1.3`. The same manifest pins
 the first compatible release outside that range, `3.1.4`. The resulting
-`138`-dependency graph reports `0` known vulnerabilities; image assembly keeps
-the low audit threshold, signature verification, and exact committed lock
-mandatory. Remove either override when the declared graph resolves to a
-reviewed patched release.
+`138`-dependency graph reports `0` known vulnerabilities; image assembly reports
+lower-severity findings and blocks unaccepted high or critical findings through
+the empty-by-default audit exception registry. Signature verification and the
+exact committed lock remain mandatory. Remove either override when the declared
+graph resolves to a reviewed patched release.
 
 The published Slack and Microsoft Teams plugin archives bundle `axios@1.16.0`.
 That version is in the affected range for the newly disclosed Axios
