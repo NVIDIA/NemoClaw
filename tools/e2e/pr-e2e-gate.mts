@@ -84,6 +84,20 @@ const MAX_WORKFLOW_JOB_PAGES = 10;
 const MAX_JOB_ANNOTATION_PAGES = 10;
 const HOSTED_RUNNER_LOST_COMMUNICATION_MESSAGE =
   "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.";
+const HOSTED_RUNNER_SHUTDOWN_MESSAGE =
+  "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
+const HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE = "The operation was canceled.";
+const HOSTED_RUNNER_ORPHAN_CLEANUP_MESSAGE = "Cleaning up orphan processes";
+const MAX_RUNNER_LOSS_JOB_INSPECTIONS = 20;
+const MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES = 64 * 1024;
+const MAX_RUNNER_LOSS_ORPHAN_PROCESSES = 64;
+const RUNNER_LOSS_JOB_LOG_TIMEOUT_MS = 30_000;
+const JOB_LOG_DOWNLOAD_HOST_PATTERN = /^productionresultssa[0-9]+\.blob\.core\.windows\.net$/u;
+const JOB_LOG_TIMESTAMPED_LINE_PATTERN =
+  /^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{7}Z) (.*)$/u;
+const JOB_LOG_ORPHAN_PROCESS_PATTERN =
+  /^Terminate orphan process: pid \(([1-9][0-9]*)\) \(([A-Za-z0-9._+ -]{1,128})\)$/u;
+const GITHUB_TIMESTAMP_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/u;
 const MAX_REPORTED_WORKFLOW_JOBS = 10;
 const MAX_WAIVER_REASON_CHARS = 500;
 const MAX_APPROVAL_REVIEWS = 20;
@@ -276,6 +290,17 @@ type WorkflowJobAnnotation = {
   message: string;
   rawDetails: string;
 };
+type WorkflowJobLogEvidence = {
+  etag: string;
+  totalBytes: number;
+  tail: string;
+};
+type HostedRunnerShutdownLogMarker = {
+  shutdownTimestamp: string;
+  operationTimestamp: string;
+  cleanupTimestamp: string;
+  lastTimestamp: string;
+};
 type WorkflowJob = {
   id: number;
   name: string;
@@ -294,7 +319,16 @@ type WorkflowJob = {
   runnerGroupName?: string | null;
   labels?: string[];
   annotations?: WorkflowJobAnnotation[];
-  steps: Array<{ name: string; status?: string; conclusion: string | null }>;
+  logEvidence?: WorkflowJobLogEvidence;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  steps: Array<{
+    name: string;
+    status?: string;
+    conclusion: string | null;
+    startedAt?: string | null;
+    completedAt?: string | null;
+  }>;
 };
 type WorkflowJobsPage = { totalCount: number; jobs: WorkflowJob[] };
 type CheckRun = {
@@ -1666,6 +1700,14 @@ export async function resolvePullRequest(options: {
   return detail;
 }
 
+function isOptionalGitHubTimestamp(value: unknown): boolean {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === "string" && GITHUB_TIMESTAMP_PATTERN.test(value))
+  );
+}
+
 function validateWorkflowJob(value: unknown): WorkflowJob {
   if (
     !isObjectRecord(value) ||
@@ -1685,6 +1727,8 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
     (value.check_run_url !== undefined && typeof value.check_run_url !== "string") ||
     (value.status !== undefined && typeof value.status !== "string") ||
     (value.conclusion !== null && typeof value.conclusion !== "string") ||
+    !isOptionalGitHubTimestamp(value.started_at) ||
+    !isOptionalGitHubTimestamp(value.completed_at) ||
     (value.runner_id !== undefined &&
       value.runner_id !== null &&
       (!Number.isSafeInteger(value.runner_id) || (value.runner_id as number) < 1)) ||
@@ -1709,7 +1753,9 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
       typeof step.name !== "string" ||
       step.name.length === 0 ||
       (step.status !== undefined && typeof step.status !== "string") ||
-      (step.conclusion !== null && typeof step.conclusion !== "string")
+      (step.conclusion !== null && typeof step.conclusion !== "string") ||
+      !isOptionalGitHubTimestamp(step.started_at) ||
+      !isOptionalGitHubTimestamp(step.completed_at)
     ) {
       throw new Error("GitHub returned an invalid workflow job step");
     }
@@ -1717,6 +1763,10 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
       name: step.name,
       ...(step.status === undefined ? {} : { status: step.status }),
       conclusion: step.conclusion,
+      ...(step.started_at === undefined ? {} : { startedAt: step.started_at as string | null }),
+      ...(step.completed_at === undefined
+        ? {}
+        : { completedAt: step.completed_at as string | null }),
     };
   });
   return {
@@ -1738,6 +1788,10 @@ function validateWorkflowJob(value: unknown): WorkflowJob {
       : { runnerGroupId: value.runner_group_id as number | null }),
     ...(value.runner_group_name === undefined ? {} : { runnerGroupName: value.runner_group_name }),
     ...(value.labels === undefined ? {} : { labels: value.labels as string[] }),
+    ...(value.started_at === undefined ? {} : { startedAt: value.started_at as string | null }),
+    ...(value.completed_at === undefined
+      ? {}
+      : { completedAt: value.completed_at as string | null }),
     steps,
   };
 }
@@ -1856,6 +1910,197 @@ async function listWorkflowJobAnnotations(
   throw new Error("workflow job annotation listing exceeded its page limit");
 }
 
+function parseJobLogContentLength(value: string | null, label: string): number {
+  if (!value || !/^(?:0|[1-9][0-9]*)$/u.test(value)) {
+    throw new Error(`${label} did not provide a valid content length`);
+  }
+  const length = Number(value);
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw new Error(`${label} content length is outside the safe integer range`);
+  }
+  return length;
+}
+
+function validateJobLogEtag(value: string | null): string {
+  if (!value || value.length > 130 || !/^"[^"\r\n]{1,128}"$/u.test(value)) {
+    throw new Error("job log download did not provide a strong bounded ETag");
+  }
+  return value;
+}
+
+function validateJobLogDownloadUrl(value: string | null): URL {
+  let url: URL;
+  try {
+    url = new URL(value ?? "");
+  } catch {
+    throw new Error("job log API returned an invalid signed download URL");
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.port !== "" ||
+    !JOB_LOG_DOWNLOAD_HOST_PATTERN.test(url.hostname) ||
+    !url.pathname.startsWith("/actions-results/") ||
+    url.search.length < 2 ||
+    url.hash !== ""
+  ) {
+    throw new Error("job log API returned an untrusted signed download URL");
+  }
+  return url;
+}
+
+function assertPlainUnencodedJobLog(response: Response, label: string): void {
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
+  if (contentType !== "text/plain" || response.headers.get("content-encoding") !== null) {
+    throw new Error(`${label} did not return unencoded plain text`);
+  }
+}
+
+async function cancelJobLogResponseBody(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
+}
+
+async function readExactJobLogRange(
+  response: Response,
+  expectedBytes: number,
+  discardPartialFirstLine: boolean,
+): Promise<string> {
+  if (!response.body) throw new Error("job log range response did not include a body");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      receivedBytes += chunk.value.byteLength;
+      if (receivedBytes > expectedBytes || receivedBytes > MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES) {
+        throw new Error("job log range response exceeded its authenticated byte bound");
+      }
+      chunks.push(chunk.value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  if (receivedBytes !== expectedBytes) {
+    throw new Error("job log range response was incomplete");
+  }
+  const bytes = new Uint8Array(receivedBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const firstLineFeed = discardPartialFirstLine ? bytes.indexOf(0x0a) : -1;
+  if (discardPartialFirstLine && firstLineFeed < 0) {
+    throw new Error("job log range did not contain a complete record");
+  }
+  const completeRecords = firstLineFeed < 0 ? bytes : bytes.subarray(firstLineFeed + 1);
+  return new TextDecoder("utf-8", { fatal: true }).decode(completeRecords);
+}
+
+async function downloadWorkflowJobLogTail(
+  repository: string,
+  token: string,
+  jobId: number,
+): Promise<WorkflowJobLogEvidence> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RUNNER_LOSS_JOB_LOG_TIMEOUT_MS);
+  const apiUrl = `https://api.github.com/repos/${repository}/actions/jobs/${jobId}/logs`;
+  try {
+    const redirect = await fetch(apiUrl, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "User-Agent": USER_AGENT,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    if (redirect.status !== 302) {
+      await cancelJobLogResponseBody(redirect);
+      throw new Error(`job log API returned unexpected status ${redirect.status}`);
+    }
+    const location = redirect.headers.get("location");
+    await cancelJobLogResponseBody(redirect);
+    const downloadUrl = validateJobLogDownloadUrl(location);
+
+    const downloadHeaders = {
+      Accept: "text/plain",
+      "Accept-Encoding": "identity",
+      "User-Agent": USER_AGENT,
+    };
+    const metadata = await fetch(downloadUrl, {
+      method: "HEAD",
+      headers: downloadHeaders,
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (metadata.status !== 200) {
+      await cancelJobLogResponseBody(metadata);
+      throw new Error(`job log metadata returned unexpected status ${metadata.status}`);
+    }
+    let totalBytes: number;
+    let etag: string;
+    try {
+      assertPlainUnencodedJobLog(metadata, "job log metadata");
+      totalBytes = parseJobLogContentLength(
+        metadata.headers.get("content-length"),
+        "job log metadata",
+      );
+      if (totalBytes < 1) throw new Error("job log is empty");
+      etag = validateJobLogEtag(metadata.headers.get("etag"));
+    } catch (error) {
+      await cancelJobLogResponseBody(metadata);
+      throw error;
+    }
+    await cancelJobLogResponseBody(metadata);
+
+    const rangeStart = Math.max(0, totalBytes - MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES);
+    const rangeEnd = totalBytes - 1;
+    const expectedBytes = rangeEnd - rangeStart + 1;
+    const range = await fetch(downloadUrl, {
+      headers: {
+        ...downloadHeaders,
+        "If-Match": etag,
+        Range: `bytes=${rangeStart}-${rangeEnd}`,
+      },
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (range.status !== 206) {
+      await cancelJobLogResponseBody(range);
+      throw new Error(`job log range returned unexpected status ${range.status}`);
+    }
+    try {
+      assertPlainUnencodedJobLog(range, "job log range");
+      if (
+        range.headers.get("etag") !== etag ||
+        range.headers.get("content-range") !== `bytes ${rangeStart}-${rangeEnd}/${totalBytes}` ||
+        parseJobLogContentLength(range.headers.get("content-length"), "job log range") !==
+          expectedBytes
+      ) {
+        throw new Error("job log range did not match its authenticated metadata");
+      }
+    } catch (error) {
+      await cancelJobLogResponseBody(range);
+      throw error;
+    }
+    return {
+      etag,
+      totalBytes,
+      tail: await readExactJobLogRange(range, expectedBytes, rangeStart > 0),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function validateWorkflowJobsPage(value: unknown): WorkflowJobsPage {
   if (
     !isObjectRecord(value) ||
@@ -1913,7 +2158,11 @@ async function listNonPassingWorkflowJobs(
         (job) => !["success", "skipped", "neutral"].includes(job.conclusion ?? ""),
       );
       if (options.includeAnnotations) {
-        for (const job of nonPassingJobs.filter(hasTrustedHostedRunnerLossStepShape)) {
+        const runnerLossCandidates = nonPassingJobs.filter(hasTrustedHostedRunnerLossStepShape);
+        if (runnerLossCandidates.length > MAX_RUNNER_LOSS_JOB_INSPECTIONS) {
+          throw new Error("workflow run exceeded the hosted-runner-loss inspection limit");
+        }
+        for (const job of runnerLossCandidates) {
           job.annotations = await listWorkflowJobAnnotations(
             repository,
             token,
@@ -1921,6 +2170,19 @@ async function listNonPassingWorkflowJobs(
             runId,
             runAttempt,
           );
+          const workflowSha = job.headSha ?? "";
+          if (
+            !hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha) &&
+            hasCompatibleHostedRunnerShutdownAnnotations(job, repository, workflowSha)
+          ) {
+            try {
+              job.logEvidence = await downloadWorkflowJobLogTail(repository, token, job.id);
+            } catch {
+              console.warn(
+                `Could not authenticate hosted-runner shutdown log for job ${job.id}; automatic retry remains disabled`,
+              );
+            }
+          }
         }
       }
       return {
@@ -2060,29 +2322,39 @@ function ciFailureReport(options: {
 
 const GITHUB_HOSTED_RUNNER_NAME_PATTERN = /^GitHub Actions [1-9][0-9]*$/u;
 
+function trustedWorkflowJobAnnotations(
+  job: WorkflowJob,
+  repository: string,
+  workflowSha: string,
+): WorkflowJobAnnotation[] | null {
+  if (job.headSha !== workflowSha || !Array.isArray(job.annotations)) return null;
+  const blobPrefix = `https://github.com/${repository}/blob/${workflowSha}/`;
+  if (
+    job.annotations.some((annotation) => annotation.blobHref !== `${blobPrefix}${annotation.path}`)
+  ) {
+    return null;
+  }
+  return job.annotations;
+}
+
 /**
  * GitHub records a lost hosted runner as a completed failed job with no
  * ordinary failed step. Older Jobs API responses left the interrupted step
  * `in_progress`; current responses can terminalize it as `cancelled`, skip the
  * remaining cleanup, and append the synthetic successful `Complete job` step.
  * A user or concurrency cancellation concludes the job itself as `cancelled`,
- * while an ordinary assertion records a failed step. The step shape is still
- * ambiguous with a job-level timeout, so a canonical GitHub runner-loss
- * annotation bound to this workflow SHA is also required.
+ * while an ordinary assertion records a failed step. The step shape must be
+ * paired with either a canonical GitHub runner-loss annotation or an
+ * authenticated exact terminal shutdown log.
  */
 function hasTrustedHostedRunnerLossAnnotation(
   job: WorkflowJob,
   repository: string,
   workflowSha: string,
 ): boolean {
-  if (job.headSha !== workflowSha || !Array.isArray(job.annotations)) return false;
-  const blobPrefix = `https://github.com/${repository}/blob/${workflowSha}/`;
-  if (
-    job.annotations.some((annotation) => annotation.blobHref !== `${blobPrefix}${annotation.path}`)
-  ) {
-    return false;
-  }
-  const failures = job.annotations.filter((annotation) => annotation.annotationLevel === "failure");
+  const annotations = trustedWorkflowJobAnnotations(job, repository, workflowSha);
+  if (!annotations) return false;
+  const failures = annotations.filter((annotation) => annotation.annotationLevel === "failure");
   return (
     failures.length === 1 &&
     failures[0]?.path === ".github" &&
@@ -2093,6 +2365,140 @@ function hasTrustedHostedRunnerLossAnnotation(
     failures[0].title === "" &&
     failures[0].rawDetails === "" &&
     failures[0].message === HOSTED_RUNNER_LOST_COMMUNICATION_MESSAGE
+  );
+}
+
+function hasCompatibleHostedRunnerShutdownAnnotations(
+  job: WorkflowJob,
+  repository: string,
+  workflowSha: string,
+): boolean {
+  const annotations = trustedWorkflowJobAnnotations(job, repository, workflowSha);
+  if (!annotations) return false;
+  const failures = annotations.filter((annotation) => annotation.annotationLevel === "failure");
+  const failure = failures[0];
+  return (
+    failures.length === 1 &&
+    failure?.path === ".github" &&
+    failure.startLine === failure.endLine &&
+    failure.startColumn === null &&
+    failure.endColumn === null &&
+    failure.title === "" &&
+    failure.rawDetails === "" &&
+    failure.message === HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE
+  );
+}
+
+function jobLogTimestampSecond(timestamp: string): string | null {
+  const second = `${timestamp.slice(0, 19)}Z`;
+  const milliseconds = Date.parse(second);
+  return Number.isFinite(milliseconds) &&
+    new Date(milliseconds).toISOString().slice(0, 19) === timestamp.slice(0, 19)
+    ? second
+    : null;
+}
+
+function parseHostedRunnerShutdownLogTail(logTail: string): HostedRunnerShutdownLogMarker | null {
+  if (!logTail.endsWith("\n") || logTail.endsWith("\n\n")) return null;
+  const lines = logTail.slice(0, -1).split("\n");
+  const shutdownMessage = `##[error]${HOSTED_RUNNER_SHUTDOWN_MESSAGE}`;
+  const shutdownIndex = lines
+    .map((line) => JOB_LOG_TIMESTAMPED_LINE_PATTERN.exec(line)?.[2] ?? "")
+    .lastIndexOf(shutdownMessage);
+  if (shutdownIndex < 0) return null;
+  const terminalLines = lines.slice(shutdownIndex);
+  if (terminalLines.length < 3 || terminalLines.length > 3 + MAX_RUNNER_LOSS_ORPHAN_PROCESSES) {
+    return null;
+  }
+  if (terminalLines.some((line) => line.includes("\r"))) return null;
+  const parsed = terminalLines.map((line) => JOB_LOG_TIMESTAMPED_LINE_PATTERN.exec(line));
+  if (parsed.some((line) => line === null)) return null;
+  const timestamps = parsed.map((line) => line?.[1] ?? "");
+  const timestampSeconds = timestamps.map(jobLogTimestampSecond);
+  const messages = parsed.map((line) => line?.[2] ?? "");
+  if (
+    timestampSeconds.some((timestamp) => timestamp === null) ||
+    messages[0] !== shutdownMessage ||
+    messages[1] !== `##[error]${HOSTED_RUNNER_OPERATION_CANCELLED_MESSAGE}` ||
+    messages[2] !== HOSTED_RUNNER_ORPHAN_CLEANUP_MESSAGE ||
+    timestamps[0]! >= timestamps[1]! ||
+    timestamps.slice(1).some((timestamp, index) => timestamp < timestamps[index]!)
+  ) {
+    return null;
+  }
+  const orphanProcesses = messages
+    .slice(3)
+    .map((message) => JOB_LOG_ORPHAN_PROCESS_PATTERN.exec(message));
+  const orphanProcessIds = orphanProcesses.map((process) => process?.[1] ?? "");
+  if (
+    orphanProcesses.some((process) => process === null) ||
+    new Set(orphanProcessIds).size !== orphanProcessIds.length
+  ) {
+    return null;
+  }
+  return {
+    shutdownTimestamp: timestamps[0]!,
+    operationTimestamp: timestamps[1]!,
+    cleanupTimestamp: timestamps[2]!,
+    lastTimestamp: timestamps.at(-1)!,
+  };
+}
+
+function isBoundedWorkflowJobLogEvidence(evidence: WorkflowJobLogEvidence): boolean {
+  const tailBytes = Buffer.byteLength(evidence.tail, "utf8");
+  return (
+    /^"[^"\r\n]{1,128}"$/u.test(evidence.etag) &&
+    Number.isSafeInteger(evidence.totalBytes) &&
+    evidence.totalBytes > 0 &&
+    tailBytes > 0 &&
+    tailBytes <= evidence.totalBytes &&
+    tailBytes <= MAX_RUNNER_LOSS_JOB_LOG_TAIL_BYTES
+  );
+}
+
+function hasTrustedHostedRunnerShutdownLog(
+  job: WorkflowJob,
+  repository: string,
+  workflowSha: string,
+): boolean {
+  const evidence = job.logEvidence;
+  if (
+    !evidence ||
+    !isBoundedWorkflowJobLogEvidence(evidence) ||
+    !hasCompatibleHostedRunnerShutdownAnnotations(job, repository, workflowSha)
+  ) {
+    return false;
+  }
+  const marker = parseHostedRunnerShutdownLogTail(evidence.tail);
+  const cancelledSteps = job.steps.filter(
+    (step) => step.status === "completed" && step.conclusion === "cancelled",
+  );
+  const cancelledStep = cancelledSteps[0];
+  if (
+    !marker ||
+    cancelledSteps.length !== 1 ||
+    !job.startedAt ||
+    !job.completedAt ||
+    !cancelledStep?.startedAt ||
+    !cancelledStep.completedAt
+  ) {
+    return false;
+  }
+  const shutdownSecond = jobLogTimestampSecond(marker.shutdownTimestamp);
+  const operationSecond = jobLogTimestampSecond(marker.operationTimestamp);
+  const cleanupSecond = jobLogTimestampSecond(marker.cleanupTimestamp);
+  const lastSecond = jobLogTimestampSecond(marker.lastTimestamp);
+  return (
+    shutdownSecond !== null &&
+    operationSecond !== null &&
+    cleanupSecond !== null &&
+    lastSecond !== null &&
+    job.startedAt <= cancelledStep.startedAt &&
+    cancelledStep.startedAt <= shutdownSecond &&
+    operationSecond === cancelledStep.completedAt &&
+    cancelledStep.completedAt <= cleanupSecond &&
+    cleanupSecond <= lastSecond &&
+    lastSecond <= job.completedAt
   );
 }
 
@@ -2166,7 +2572,8 @@ function hasTrustedHostedRunnerLossMarker(
 ): boolean {
   return (
     hasTrustedHostedRunnerLossStepShape(job) &&
-    hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha)
+    (hasTrustedHostedRunnerLossAnnotation(job, repository, workflowSha) ||
+      hasTrustedHostedRunnerShutdownLog(job, repository, workflowSha))
   );
 }
 
@@ -2534,6 +2941,55 @@ export function assertCorrelatedWorkflowRun(
       `E2E run identity mismatch: ${mismatches.join("; ")}; observed run_name=${diagnosticValue(child.name)} workflow_id=${diagnosticValue(child.workflow_id)}`,
     );
   }
+}
+
+async function requireUnchangedCompletedWorkflowRun(
+  repository: string,
+  token: string,
+  child: WorkflowRun,
+  identity: WorkflowRunIdentity,
+): Promise<void> {
+  const confirmed = await githubApi<WorkflowRun>(
+    `repos/${repository}/actions/runs/${identity.childRunId}`,
+    token,
+    { userAgent: USER_AGENT },
+  );
+  assertCorrelatedWorkflowRun(confirmed, identity);
+  if (
+    confirmed.status !== "completed" ||
+    confirmed.status !== child.status ||
+    confirmed.conclusion !== child.conclusion ||
+    confirmed.workflow_id !== child.workflow_id
+  ) {
+    throw new Error("E2E run changed while its hosted-runner-loss evidence was authenticated");
+  }
+}
+
+function workflowJobEvidenceFingerprint(details: {
+  jobs: readonly WorkflowJob[];
+  complete: boolean;
+}): string {
+  const jobs = [...details.jobs]
+    .sort((left, right) => left.id - right.id)
+    .map((job) => {
+      const { annotations, logEvidence, ...metadata } = job;
+      return {
+        ...metadata,
+        ...(annotations === undefined
+          ? {}
+          : { annotations: annotations.map((annotation) => JSON.stringify(annotation)).sort() }),
+        ...(logEvidence === undefined
+          ? {}
+          : {
+              logEvidence: {
+                etag: logEvidence.etag,
+                totalBytes: logEvidence.totalBytes,
+                tailHash: sha256(logEvidence.tail),
+              },
+            }),
+      };
+    });
+  return sha256(JSON.stringify({ complete: details.complete, jobs }));
 }
 
 export async function dispatchPrGate(options: {
@@ -2991,6 +3447,14 @@ export async function retryRunnerLossPrGate(
     const jobDetails = await listNonPassingWorkflowJobs(repository, token, command.childRunId, 1, {
       includeAnnotations: true,
     });
+    await requireUnchangedCompletedWorkflowRun(repository, token, child, {
+      childRunId: command.childRunId,
+      correlationId: state.correlationId,
+      prNumber: state.prNumber,
+      repository,
+      workflowSha: state.workflowSha,
+    });
+    const jobEvidenceFingerprint = workflowJobEvidenceFingerprint(jobDetails);
     const runnerLossEvidence = verifiedRunnerLossEvidence({
       repository,
       workflowSha: state.workflowSha,
@@ -3021,6 +3485,43 @@ export async function retryRunnerLossPrGate(
       throw new Error("runner-loss retry requires an internal pull request");
     }
 
+    const confirmedJobDetails = await listNonPassingWorkflowJobs(
+      repository,
+      token,
+      command.childRunId,
+      1,
+      { includeAnnotations: true },
+    );
+    await requireUnchangedCompletedWorkflowRun(repository, token, child, {
+      childRunId: command.childRunId,
+      correlationId: state.correlationId,
+      prNumber: state.prNumber,
+      repository,
+      workflowSha: state.workflowSha,
+    });
+    if (workflowJobEvidenceFingerprint(confirmedJobDetails) !== jobEvidenceFingerprint) {
+      throw new Error("hosted-runner-loss evidence changed before retry dispatch");
+    }
+    const confirmedRunnerLossEvidence = verifiedRunnerLossEvidence({
+      repository,
+      workflowSha: state.workflowSha,
+      workflowConclusion: child.conclusion,
+      jobs: confirmedJobDetails.jobs,
+      jobDetailsAvailable: true,
+      jobDetailsComplete: confirmedJobDetails.complete,
+    });
+    const confirmedRetryDecision = confirmedRunnerLossEvidence
+      ? decideRetry({
+          runnerLoss: detectRunnerLoss(confirmedRunnerLossEvidence),
+          classification: null,
+          attempt: 1,
+        })
+      : { retry: false, reason: "runner-loss evidence is incomplete" };
+    if (!confirmedRetryDecision.retry) {
+      throw new Error(
+        `runner-loss retry lost authorization before dispatch: ${confirmedRetryDecision.reason}`,
+      );
+    }
     const currentPull = await requireLiveExactDiff({
       repository,
       token,
@@ -3722,6 +4223,13 @@ export async function finishPrGate(options: {
       try {
         const details = await listNonPassingWorkflowJobs(repository, token, options.childRunId, 1, {
           includeAnnotations: true,
+        });
+        await requireUnchangedCompletedWorkflowRun(repository, token, child, {
+          childRunId: options.childRunId,
+          correlationId: state.correlationId,
+          prNumber: state.prNumber,
+          repository,
+          workflowSha: state.workflowSha,
         });
         jobs = details.jobs;
         jobDetailsComplete = details.complete;

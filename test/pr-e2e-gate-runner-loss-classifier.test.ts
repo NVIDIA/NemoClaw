@@ -8,6 +8,13 @@ import { detectRunnerLoss } from "../tools/e2e/runner-pressure-core.mts";
 const WORKFLOW_SHA = "d".repeat(40);
 const RUNNER_LOSS_MESSAGE =
   "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.";
+const RUNNER_SHUTDOWN_MESSAGE =
+  "The runner has received a shutdown signal. This can happen when the runner service is stopped, or a manually started runner is canceled.";
+const JOB_STARTED_AT = "2026-07-23T07:26:56Z";
+const CANCELLED_STEP_STARTED_AT = "2026-07-23T07:27:43Z";
+const CANCELLED_STEP_COMPLETED_AT = "2026-07-23T07:32:49Z";
+const COMPLETE_JOB_AT = "2026-07-23T07:32:50Z";
+const JOB_COMPLETED_AT = "2026-07-23T07:32:54Z";
 
 function runnerLossAnnotation(message = RUNNER_LOSS_MESSAGE) {
   return {
@@ -24,6 +31,39 @@ function runnerLossAnnotation(message = RUNNER_LOSS_MESSAGE) {
   };
 }
 
+function genericCancellationAnnotation() {
+  return {
+    ...runnerLossAnnotation("The operation was canceled."),
+    startLine: 34,
+    endLine: 34,
+  };
+}
+
+function orphanProcessLogLine(index: number, pid = index + 1, processName = `node-${pid}`) {
+  return `2026-07-23T07:32:50.${String(1_000_000 + index).padStart(
+    7,
+    "0",
+  )}Z Terminate orphan process: pid (${pid}) (${processName})`;
+}
+
+function runnerShutdownLogTail(orphanProcessLines: string[] = []) {
+  const lines = [
+    `2026-07-23T07:32:47.0261924Z ##[error]${RUNNER_SHUTDOWN_MESSAGE}`,
+    "2026-07-23T07:32:49.9360750Z ##[error]The operation was canceled.",
+    "2026-07-23T07:32:50.0577487Z Cleaning up orphan processes",
+    ...orphanProcessLines,
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+function runnerShutdownLogEvidence(tail = runnerShutdownLogTail()) {
+  return {
+    etag: '"runner-loss-log-etag"',
+    totalBytes: new TextEncoder().encode(tail).byteLength,
+    tail,
+  };
+}
+
 function hostedRunnerLossJob(overrides: Record<string, unknown> = {}) {
   return {
     id: 89_074_697_099,
@@ -37,16 +77,44 @@ function hostedRunnerLossJob(overrides: Record<string, unknown> = {}) {
     runnerGroupName: "GitHub Actions",
     labels: ["ubuntu-latest"],
     annotations: [runnerLossAnnotation()],
+    startedAt: JOB_STARTED_AT,
+    completedAt: JOB_COMPLETED_AT,
     steps: [
-      { name: "Set up job", status: "completed", conclusion: "success" },
+      {
+        name: "Set up job",
+        status: "completed",
+        conclusion: "success",
+        startedAt: "2026-07-23T07:26:57Z",
+        completedAt: "2026-07-23T07:27:03Z",
+      },
       {
         name: "Run security posture live Vitest test",
         status: "completed",
         conclusion: "cancelled",
+        startedAt: CANCELLED_STEP_STARTED_AT,
+        completedAt: CANCELLED_STEP_COMPLETED_AT,
       },
-      { name: "Upload security posture artifacts", status: "completed", conclusion: "skipped" },
-      { name: "Clean up Docker auth", status: "completed", conclusion: "skipped" },
-      { name: "Complete job", status: "completed", conclusion: "success" },
+      {
+        name: "Upload security posture artifacts",
+        status: "completed",
+        conclusion: "skipped",
+        startedAt: CANCELLED_STEP_COMPLETED_AT,
+        completedAt: CANCELLED_STEP_COMPLETED_AT,
+      },
+      {
+        name: "Clean up Docker auth",
+        status: "completed",
+        conclusion: "skipped",
+        startedAt: CANCELLED_STEP_COMPLETED_AT,
+        completedAt: CANCELLED_STEP_COMPLETED_AT,
+      },
+      {
+        name: "Complete job",
+        status: "completed",
+        conclusion: "success",
+        startedAt: COMPLETE_JOB_AT,
+        completedAt: COMPLETE_JOB_AT,
+      },
     ],
     ...overrides,
   };
@@ -88,6 +156,87 @@ describe("PR E2E hosted-runner-loss classifier", () => {
     expect(confirmsRunnerLoss()).toBe(true);
   });
 
+  it("accepts the exact authenticated terminal shutdown block from run 29988226653", () => {
+    expect(
+      confirmsRunnerLoss({
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(),
+          }),
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts a bounded orphan-process suffix after the terminal shutdown block", () => {
+    expect(
+      confirmsRunnerLoss({
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(
+              runnerShutdownLogTail([orphanProcessLogLine(0, 4_321, "node")]),
+            ),
+          }),
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores carriage-return progress output before the exact terminal shutdown block", () => {
+    expect(
+      confirmsRunnerLoss({
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(
+              `2026-07-23T07:31:00.0000000Z build progress 50%\r\n${runnerShutdownLogTail()}`,
+            ),
+          }),
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("allows a trusted notice beside the sole shutdown failure annotation", () => {
+    expect(
+      confirmsRunnerLoss({
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [
+              genericCancellationAnnotation(),
+              {
+                ...runnerLossAnnotation("Docker credentials were withheld."),
+                startLine: 53,
+                endLine: 53,
+                annotationLevel: "notice",
+              },
+            ],
+            logEvidence: runnerShutdownLogEvidence(),
+          }),
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts at most 64 unique bounded orphan-process records", () => {
+    expect(
+      confirmsRunnerLoss({
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(
+              runnerShutdownLogTail(
+                Array.from({ length: 64 }, (_, index) => orphanProcessLogLine(index)),
+              ),
+            ),
+          }),
+        ],
+      }),
+    ).toBe(true);
+  });
+
   it("accepts two strict standard-hosted legacy markers from run 29964500642", () => {
     expect(
       confirmsRunnerLoss({
@@ -126,6 +275,177 @@ describe("PR E2E hosted-runner-loss classifier", () => {
         jobs: [
           hostedRunnerLossJob({
             annotations: [runnerLossAnnotation("The operation was canceled.")],
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log has no generic failure annotation",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [],
+            logEvidence: runnerShutdownLogEvidence(),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log is followed by later output",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(
+              `${runnerShutdownLogTail()}2026-07-23T07:32:51.0000000Z later output\n`,
+            ),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log omits its final line feed",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(runnerShutdownLogTail().slice(0, -1)),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log uses CRLF records",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(
+              runnerShutdownLogTail().replaceAll("\n", "\r\n"),
+            ),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log ends with an extra blank line",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(`${runnerShutdownLogTail()}\n`),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log has a second explicit cancellation failure",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [
+              genericCancellationAnnotation(),
+              runnerLossAnnotation(
+                "Canceling since a higher priority waiting request for CI / Pull Request exists",
+              ),
+            ],
+            logEvidence: runnerShutdownLogEvidence(),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log records the terminal messages out of order",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(
+              [
+                "2026-07-23T07:32:47.0261924Z ##[error]The operation was canceled.",
+                `2026-07-23T07:32:49.9360750Z ##[error]${RUNNER_SHUTDOWN_MESSAGE}`,
+                "2026-07-23T07:32:50.0577487Z Cleaning up orphan processes",
+                "",
+              ].join("\n"),
+            ),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log timestamps move backward",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(
+              [
+                `2026-07-23T07:32:47.0261924Z ##[error]${RUNNER_SHUTDOWN_MESSAGE}`,
+                "2026-07-23T07:32:49.9360750Z ##[error]The operation was canceled.",
+                "2026-07-23T07:32:48.0577487Z Cleaning up orphan processes",
+                "",
+              ].join("\n"),
+            ),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log repeats an orphan-process PID",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(
+              runnerShutdownLogTail([
+                orphanProcessLogLine(0, 4_321, "node"),
+                orphanProcessLogLine(1, 4_321, "node"),
+              ]),
+            ),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log records an invalid orphan process",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(
+              runnerShutdownLogTail([orphanProcessLogLine(0, 4_321, "node/worker")]),
+            ),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the shutdown log contains more than 64 orphan-process records",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(
+              runnerShutdownLogTail(
+                Array.from({ length: 65 }, (_, index) => orphanProcessLogLine(index)),
+              ),
+            ),
+          }),
+        ],
+      },
+    },
+    {
+      label: "the operation cancellation timestamp does not match the cancelled step",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(),
+            steps: hostedRunnerLossJob().steps.map((step) =>
+              step.conclusion === "cancelled"
+                ? { ...step, completedAt: "2026-07-23T07:32:48Z" }
+                : step,
+            ),
           }),
         ],
       },
