@@ -39,9 +39,17 @@ function host(overrides: Partial<HostAssessment> = {}): HostAssessment {
   };
 }
 
-function report(overrides: Partial<HostAssessment> = {}) {
+function report(
+  overrides: Partial<HostAssessment> = {},
+  collectionOptions: { hostGpuPlatform?: string } = {},
+) {
   return projectHostReadiness(
-    collectHostObservations({ assess: () => host(overrides), architecture: "x64", now: () => NOW }),
+    collectHostObservations({
+      assess: () => host(overrides),
+      architecture: "x64",
+      now: () => NOW,
+      ...collectionOptions,
+    }),
     { nemoclawVersion: "0.1.0", now: () => NOW },
   );
 }
@@ -116,6 +124,21 @@ describe("host readiness projection (#7408)", () => {
     expect(findingIds(result)).toContain(findingId);
   });
 
+  it.each([
+    [{ cdiNvidiaGpuSpecMissing: true }, { hostGpuPlatform: "jetson" }],
+    [
+      { isWsl: true, runtime: "docker-desktop", cdiNvidiaGpuSpecStale: true },
+      { hostGpuPlatform: undefined },
+    ],
+  ] as const)("preserves CDI enforcement exclusions for %s", (overrides, collectionOptions) => {
+    const result = report(overrides, collectionOptions);
+
+    expect(state(result, "host.gpu.cdi_healthy")).toBe("unknown");
+    expect(findingIds(result)).not.toContain("host.gpu.cdi_missing");
+    expect(findingIds(result)).not.toContain("host.gpu.cdi_stale");
+    expect(result.status).not.toBe("incompatible");
+  });
+
   it("uses unknown for dependent facts when Docker is unreachable", () => {
     const result = report({ dockerReachable: false });
 
@@ -127,7 +150,7 @@ describe("host readiness projection (#7408)", () => {
   });
 
   it("bounds and redacts failed probe evidence and projects unknown", () => {
-    const failure = `token=top-secret ${"x".repeat(1500)}`;
+    const failure = `Authorization: Bearer top-secret token=other-secret ${"x".repeat(1500)}`;
     const snapshot = collectHostObservations({
       assess: () => {
         throw new Error(failure);
@@ -141,6 +164,7 @@ describe("host readiness projection (#7408)", () => {
       result.capabilities.every(({ state: capabilityState }) => capabilityState === "unknown"),
     ).toBe(true);
     expect(result.evidence[0]?.summary).not.toContain("top-secret");
+    expect(result.evidence[0]?.summary).not.toContain("other-secret");
     expect(result.evidence[0]?.summary.length).toBeLessThanOrEqual(1024);
   });
 
@@ -154,5 +178,19 @@ describe("host readiness projection (#7408)", () => {
     expect(
       result.capabilities.every(({ state: capabilityState }) => capabilityState === "unknown"),
     ).toBe(true);
+  });
+
+  it.each([
+    ["2026-06-01T11:00:00Z", true],
+    ["2026-06-01T11:59:30Z", false],
+  ] as const)("projects safe snapshot reuse at %s", (observedAt, reusable) => {
+    const current = collectHostObservations({ assess: () => host(), now: () => NOW });
+    const result = projectHostReadiness(
+      { ...current, observedAt, reusable },
+      { nemoclawVersion: "0.1.0", now: () => NOW },
+    );
+
+    expect(result.status).toBe("supported");
+    expect(result.evidence.map(({ id }) => id)).not.toContain("host.probe.stale");
   });
 });

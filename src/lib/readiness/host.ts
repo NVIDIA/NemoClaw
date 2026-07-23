@@ -18,7 +18,7 @@ import {
 const DEFAULT_MAX_AGE_MS = 30_000;
 const MAX_EVIDENCE_LENGTH = 1024;
 const SECRET_PATTERN =
-  /\b(?:bearer\s+)?(?:gh[opusr]_[a-z0-9_]{20,}|nvapi-[a-z0-9_-]{16,}|sk-[a-z0-9_-]{16,}|(?:api[_-]?key|token|password|secret)\s*[=:]\s*[^\s,;]+)/gi;
+  /(?:\bauthorization\s*:\s*bearer\s+[^\s,;]+|\b(?:bearer\s+)?(?:gh[opusr]_[a-z0-9_]{20,}|nvapi-[a-z0-9_-]{16,}|sk-[a-z0-9_-]{16,}|(?:api[_-]?key|token|password|secret)\s*[=:]\s*[^\s,;]+))/gi;
 
 export interface HostObservations {
   platform: string;
@@ -40,6 +40,7 @@ export interface HostObservations {
   nodeInstalled: boolean;
   openshellInstalled: boolean;
   hasNvidiaGpu: boolean;
+  hostGpuPlatform?: string;
   nvidiaContainerToolkitInstalled: boolean;
   dockerCdiSpecDirs: readonly string[];
   cdiNvidiaGpuSpecMissing: boolean;
@@ -57,6 +58,7 @@ export interface HostObservationSnapshot {
 export interface CollectHostObservationsOptions {
   assess?: () => HostAssessment;
   architecture?: string;
+  hostGpuPlatform?: string;
   now?: () => Date;
 }
 
@@ -74,6 +76,7 @@ function safeEvidence(value: string): string {
 function adaptHostAssessment(
   host: Readonly<HostAssessment>,
   architecture: string,
+  hostGpuPlatform?: string,
 ): HostObservations {
   return {
     platform: host.platform,
@@ -95,6 +98,7 @@ function adaptHostAssessment(
     nodeInstalled: host.nodeInstalled,
     openshellInstalled: host.openshellInstalled,
     hasNvidiaGpu: host.hasNvidiaGpu,
+    hostGpuPlatform,
     nvidiaContainerToolkitInstalled: host.nvidiaContainerToolkitInstalled,
     dockerCdiSpecDirs: [...host.dockerCdiSpecDirs],
     cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
@@ -111,7 +115,11 @@ export function collectHostObservations(
     const assessment = (options.assess ?? assessHost)();
     return {
       observedAt,
-      observations: adaptHostAssessment(assessment, options.architecture ?? process.arch),
+      observations: adaptHostAssessment(
+        assessment,
+        options.architecture ?? process.arch,
+        options.hostGpuPlatform,
+      ),
       reusable: false,
     };
   } catch (error) {
@@ -227,7 +235,11 @@ export function projectHostReadiness(
     ({ observations, capabilities, findings } = projected);
   } else {
     const cdiApplies =
-      host.platform === "linux" && host.hasNvidiaGpu && host.dockerCdiSpecDirs.length > 0;
+      host.platform === "linux" &&
+      host.hasNvidiaGpu &&
+      host.dockerCdiSpecDirs.length > 0 &&
+      host.hostGpuPlatform !== "jetson" &&
+      !(host.isWsl && host.runtime === "docker-desktop");
     const cdiHealthy = cdiApplies
       ? !host.cdiNvidiaGpuSpecMissing && !host.cdiNvidiaGpuSpecNeedsRepair
       : undefined;
