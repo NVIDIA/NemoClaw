@@ -474,6 +474,7 @@ test("double-onboard: reuses gateway, preserves sibling sandbox, and recovers st
   const fake = await startFakeOpenAiCompatibleServer({
     host: "0.0.0.0",
     port: Number(process.env.NEMOCLAW_FAKE_PORT ?? 0),
+    progress,
     publicHost: "host.openshell.internal",
   });
   await artifacts.writeJson("fake-openai.json", { baseUrl: fake.baseUrl });

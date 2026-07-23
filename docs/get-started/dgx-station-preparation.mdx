@@ -14,10 +14,20 @@ Complete this preparation before following the Quickstart on a qualifying DGX St
 
 ## Qualify Your DGX Station
 
-DGX Station GB300 express install accepts either the generic Ubuntu 24.04 ARM64 image or stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
-A stock DGX OS image qualifies only when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
+DGX Station GB300 Express install accepts these host images:
+
+- Generic Ubuntu 24.04 ARM64.
+- Stock OTA-form DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
+- Stock no-OTA DGX OS `7.6.x` with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`.
+
+Every stock DGX OS form requires a safe, root-owned `/etc/dgx-release` marker with `DGX_PLATFORM=DGX Server for GALAXY-GB300`.
+The no-OTA DGX OS `7.6.x` profile must omit every `DGX_OTA_*` field.
+NemoClaw rejects partial OTA metadata.
+It requires a numeric `7.6.x` `DGX_SWBUILD_VERSION` and a present `DGX_SWBUILD_DATE`, but does not match the date against an exact build.
+Full Station Express end-to-end qualification for the no-OTA DGX OS `7.6.x` profile is pending.
+All accepted DGX OS forms remain subject to the runtime checks below.
 NemoClaw also recognizes these exact no-OTA factory profiles for bounded qualification.
-Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires both `DGX_OTA_VERSION` and `DGX_OTA_DATE` to be absent, and requires every profile-specific field below:
+Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires every `DGX_OTA_*` field to be absent, and requires every profile-specific field below:
 
 - April 2026 NVIDIA Colossus BaseOS with `DGX_PRETTY_NAME=NVIDIA DGX Server`, `DGX_SWBUILD_VERSION=7.5.0-GB300ws-GB200ws`, and `DGX_SWBUILD_DATE=2026-04-02-08-20-16`.
 - June 2026 NVIDIA AI Developer Tools with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`, `DGX_SWBUILD_VERSION=7.5.0`, and `DGX_SWBUILD_DATE=2026-06-16-11-48-10`.
@@ -134,6 +144,8 @@ On a qualifying stock DGX OS or exact no-OTA factory image, express install vali
 It requires a loaded GB300 driver with zero volatile corrected and uncorrected ECC errors, active Docker and containerd services, working Docker Buildx, `nvidia-ctk`, the `nvidia.com/gpu=all` CDI device, and successful `nvidia-smi` device-visibility probes through both CDI and `--gpus all`.
 The stock DGX OS path does not install or replace host packages, enable or restart services, generate CDI configuration, or rewrite the Docker runtime.
 The AI Developer Tools path preserves those boundaries when `nvidia.com/gpu=all` is already present.
+A resident `packagekitd` process alone does not block stock DGX OS or AI Developer Tools preflight because those paths preserve the factory package stack, but an active or malformed PackageKit transaction does.
+The Colossus BaseOS path still blocks on `packagekitd`, while generic Ubuntu quiesces an idle PackageKit daemon before package mutation.
 When that CDI device is missing, the AI Developer Tools path first confirms that no workloads are active, then enables the packaged `nvidia-cdi-refresh.path` and `nvidia-cdi-refresh.service` units, starts the path unit, restarts the refresh service, and checks the device again.
 It stops with service diagnostics if packaged refresh fails or omits the device.
 It never generates CDI directly, rewrites the Docker runtime, or restarts Docker or containerd.

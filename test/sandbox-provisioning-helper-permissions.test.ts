@@ -150,7 +150,6 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       toolDisclosurePath,
       applierPath,
       messagingHookPath,
-      path.join(localLib, "ws-proxy-fix.js"),
       pluginFile,
       nestedPluginFile,
     ];

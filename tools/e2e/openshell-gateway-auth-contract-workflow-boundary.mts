@@ -17,9 +17,15 @@ const EXPLICIT_ONLY_CONDITION =
   "${{ contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-auth-contract,') }}";
 const GATEWAY_PROBE_IMAGE =
   "node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba";
+const ARTIFACT_SAFETY_GATED_UPLOAD =
+  "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
+const APPROVED_ARTIFACT_PATH = "${{ steps.artifact_safety.outputs.approved_path }}";
+const ARTIFACT_SAFETY_COMMAND =
+  'node --experimental-strip-types --no-warnings tools/e2e/openshell-gateway-auth-artifact-safety.mts "$E2E_ARTIFACT_DIR"';
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
+  id?: string;
   if?: string;
   name?: string;
   run?: string;
@@ -155,9 +161,26 @@ export function validateOpenShellGatewayAuthContractWorkflow(
     errors.push(`${JOB_NAME} live test must not receive workflow credentials`);
   }
 
+  const artifactSafetyName = "Validate final OpenShell gateway auth contract artifacts";
+  const artifactSafety = findStep(job, artifactSafetyName);
+  if (artifactSafety.id !== "artifact_safety" || artifactSafety.if !== "always()") {
+    errors.push(`${JOB_NAME} final artifact safety scan must run unconditionally with a stable id`);
+  }
+  if (artifactSafety.run?.trim() !== ARTIFACT_SAFETY_COMMAND) {
+    errors.push(
+      `${JOB_NAME} step '${artifactSafety.name ?? "<missing>"}' must run exactly: ${ARTIFACT_SAFETY_COMMAND}`,
+    );
+  }
+
   const upload = findStep(job, "Upload OpenShell gateway auth contract artifacts");
-  if (upload.uses !== UPLOAD_E2E_ARTIFACTS_ACTION || upload.if !== "always()") {
-    errors.push(`${JOB_NAME} must always use the reviewed artifact uploader`);
+  if (upload.uses !== UPLOAD_E2E_ARTIFACTS_ACTION) {
+    errors.push(`${JOB_NAME} must use the reviewed artifact uploader`);
+  }
+  if (upload.if !== ARTIFACT_SAFETY_GATED_UPLOAD) {
+    errors.push(`${JOB_NAME} must upload artifacts only after this run attempt passes safety scan`);
+  }
+  if (upload.with?.path !== APPROVED_ARTIFACT_PATH) {
+    errors.push(`${JOB_NAME} must upload only the immutable approved artifact payload`);
   }
 
   requireStepOrder(errors, steps, "Prepare E2E workspace", "Install OpenShell CLI");
@@ -168,6 +191,13 @@ export function validateOpenShellGatewayAuthContractWorkflow(
     "Pre-pull pinned gateway auth probe image",
   );
   requireStepOrder(errors, steps, "Pre-pull pinned gateway auth probe image", runName);
+  requireStepOrder(errors, steps, runName, artifactSafetyName);
+  requireStepOrder(
+    errors,
+    steps,
+    artifactSafetyName,
+    "Upload OpenShell gateway auth contract artifacts",
+  );
   requireStepOrder(errors, steps, runName, "Upload OpenShell gateway auth contract artifacts");
 
   return errors;
