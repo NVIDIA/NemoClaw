@@ -1,8 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const STATION_GB300_PRODUCT_PATTERN =
-  /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu;
+const STATION_GB300_PRODUCT_PATTERN = /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu;
 const NVIDIA_PCI_VENDOR = "0x10de";
 const DISPLAY_PCI_CLASS_PATTERN = /^0x03[0-9a-f]{4}$/iu;
 

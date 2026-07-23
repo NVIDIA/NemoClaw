@@ -7,10 +7,7 @@ import {
   type PlatformQualificationInput,
   projectPlatformQualification,
 } from "./platform-qualification";
-import {
-  isNvidiaDisplayClassPciDevice,
-  isStationGb300ProductName,
-} from "./station-qualification";
+import { isNvidiaDisplayClassPciDevice, isStationGb300ProductName } from "./station-qualification";
 
 function input(overrides: Partial<PlatformQualificationInput> = {}): PlatformQualificationInput {
   return {
