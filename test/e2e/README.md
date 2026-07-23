@@ -718,7 +718,8 @@ provisions the same swap file on GitHub Actions when a trusted control-plane
 run uses the workflow definition from `main`. Those paths build large Hermes
 image layers and can otherwise exhaust the runner's default memory and swap
 during Docker layer export. Other E2E jobs keep the standard runner memory
-configuration.
+configuration except for the exact-head Hermes PR-gate fallback described in
+[Larger-runner routing](#larger-runner-routing).
 
 These assertions run inside the existing `full-e2e` lifecycle instead of a
 second standalone onboarding run. This keeps the measurement on the job's first
