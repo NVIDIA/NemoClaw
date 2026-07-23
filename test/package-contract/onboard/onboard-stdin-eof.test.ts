@@ -111,10 +111,10 @@ runOnboardCommand({
       });
       const collect = (chunk: Buffer): void => {
         output += chunk.toString();
-        if (output.includes("NVIDIA API Key:")) promptReady?.();
       };
       child.stdout.on("data", collect);
       child.stderr.on("data", collect);
+      child.stderr.once("data", () => promptReady?.());
 
       try {
         await ready;
