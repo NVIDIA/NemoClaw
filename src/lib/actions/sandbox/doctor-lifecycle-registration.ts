@@ -18,7 +18,7 @@ const LIFECYCLE_FIELD_OPERATIONS = {
   nemoclawVersion: ["rebuild", "upgrade", "recovery"],
   fromDockerfile: ["rebuild", "upgrade", "recovery"],
   dashboardPort: ["rebuild", "recovery", "reboot"],
-  imageTag: ["rebuild", "upgrade", "recovery"],
+  imageTag: ["snapshot", "rebuild", "upgrade", "recovery"],
   gatewayName: ["snapshot", "recovery", "reboot"],
   gatewayPort: ["snapshot", "recovery", "reboot"],
 } as const satisfies Record<string, readonly LifecycleOperation[]>;
@@ -57,10 +57,6 @@ function addPresenceIssue(
   }
 }
 
-function hasManagedImageEvidence(entry: SandboxEntry): boolean {
-  return isPresentString(entry.nemoclawVersion);
-}
-
 function hasCustomImageEvidence(entry: SandboxEntry): boolean {
   return isPresentString(entry.fromDockerfile);
 }
@@ -71,19 +67,12 @@ function collectLifecycleRegistrationIssues(entry: SandboxEntry): FieldIssue[] {
   addPresenceIssue(issues, entry, "openshellVersion", isNullableString);
   addPresenceIssue(issues, entry, "fromDockerfile", isNullableString);
   addPresenceIssue(issues, entry, "dashboardPort", isNullablePort);
-  addPresenceIssue(issues, entry, "imageTag", isNullableString);
+  addPresenceIssue(issues, entry, "imageTag", isPresentString);
   addPresenceIssue(issues, entry, "gatewayName", isNullableString);
   addPresenceIssue(issues, entry, "gatewayPort", isNullablePort);
 
   if (!hasCustomImageEvidence(entry)) {
-    addPresenceIssue(issues, entry, "nemoclawVersion", isNullableString);
-    if (!hasManagedImageEvidence(entry)) {
-      issues.push({
-        field: "nemoclawVersion",
-        reason: "missing",
-        operations: LIFECYCLE_FIELD_OPERATIONS.nemoclawVersion,
-      });
-    }
+    addPresenceIssue(issues, entry, "nemoclawVersion", isPresentString);
   }
 
   return issues;

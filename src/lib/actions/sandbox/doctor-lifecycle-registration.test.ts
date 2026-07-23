@@ -71,6 +71,26 @@ describe("doctor lifecycle registration checks", () => {
     });
   });
 
+  it("warns when registered image metadata is null", () => {
+    const check = buildLifecycleRegistrationCheck("alpha", sandbox({ imageTag: null }), "nemoclaw");
+
+    expect(check.status).toBe("warn");
+    expect(check.detail).toContain("invalid imageTag");
+    expect(check.detail).toContain("snapshot");
+  });
+
+  it("reports blank managed-image version metadata only as invalid", () => {
+    const check = buildLifecycleRegistrationCheck(
+      "alpha",
+      sandbox({ nemoclawVersion: " " }),
+      "nemoclaw",
+    );
+
+    expect(check.status).toBe("warn");
+    expect(check.detail).toContain("invalid nemoclawVersion");
+    expect(check.detail).not.toContain("missing nemoclawVersion");
+  });
+
   it("reports invalid durable port metadata without printing values", () => {
     const check = buildLifecycleRegistrationCheck(
       "alpha",

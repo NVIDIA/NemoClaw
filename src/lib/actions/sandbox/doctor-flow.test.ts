@@ -402,6 +402,40 @@ describe("runSandboxDoctor flow", () => {
     );
   });
 
+  it("reports null image metadata in JSON lifecycle diagnostics", async () => {
+    const harness = createDoctorHarness();
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "docker",
+      openshellVersion: "0.0.72",
+      nemoclawVersion: "0.0.83",
+      fromDockerfile: null,
+      dashboardPort: 18789,
+      imageTag: null,
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        group: "Sandbox",
+        label: "Lifecycle registration",
+        status: "warn",
+        detail: expect.stringContaining("invalid imageTag"),
+      }),
+    );
+    expect(
+      report?.checks.find(
+        (check) => check.group === "Sandbox" && check.label === "Lifecycle registration",
+      )?.detail,
+    ).toContain("snapshot");
+  });
+
   it("keeps JSON gateway diagnostics read-only", async () => {
     const harness = createDoctorHarness();
 
