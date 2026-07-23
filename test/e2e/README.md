@@ -158,11 +158,12 @@ failed or cancelled and the native job is non-passing. Only a successful native
 `E2E / PR Gate` for the current head and base satisfies the required check. An
 eligible prerequisite-CI failure records the versioned retry reason
 `prerequisite-ci`. A selected child records `child-cancelled` only when a
-trusted hosted-runner-loss marker is present and no terminal classification
-was produced; cancellation alone is not retryable. Assertion failures and
-other selected-E2E outcomes do not receive a retry reason. An unexpected
-controller error still fails the controller workflow and fails coordination
-closed, which prevents the native job from passing.
+trusted GitHub-hosted runner-loss annotation is bound to the exact failed job
+and workflow commit and no other terminal classification was produced.
+Cancellation alone is not retryable. Assertion failures and other selected-E2E
+outcomes do not receive a retry reason. An unexpected controller error still
+fails the controller workflow and fails coordination closed, which prevents
+the native job from passing.
 
 On open, synchronization, reopen, transition out of draft, or base retarget,
 `.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate Coordination` for
@@ -411,14 +412,41 @@ fails. A failed coordination result links the selected E2E run and up to 10
 non-passing jobs, including up to three failed step names per job. If GitHub
 truncates the job listing or the controller cannot load it, the coordination
 check directs the maintainer to the complete run.
-The coordinator has a 180-minute job budget and gives the selected E2E run 105
-minutes to finish. When that limit expires, finalization cancels the child and
-records the non-passing result in the coordination check. The native observer
-has a 170-minute job budget and waits up to 165 minutes for a trusted terminal
-verdict. Evidence download has its own 10-minute limit. If the selected child
-succeeds but the `Download evidence` step fails, is cancelled, or is skipped,
-the controller cannot authenticate the child's artifacts. It fails
-coordination closed as
+The coordinator has a 330-minute job budget and gives each selected E2E run 140
+minutes to finish. A first-attempt controller may dispatch one replacement run
+when the first child fails because a standard GitHub-hosted `ubuntu-latest`
+runner lost communication. The Jobs API response must identify the exact run,
+attempt, workflow commit, job check, standard hosted runner group, and runner
+name. Its exact check-run annotation must contain one canonical runner-loss
+failure bound to `.github` at that workflow commit. Generic cancellation,
+timeout, unknown runner identity, self-hosted or custom runner groups, an
+ordinary failed step, another non-passing job, incomplete pagination, or
+mismatched annotation identity all fail closed without a retry.
+
+Before the one-time retry dispatch, the controller revalidates the unchanged
+internal PR head and base, original child, current coordination-check lineage,
+trusted runner-loss evidence, and deterministic plan. It reserves a distinct
+replacement coordination check before dispatch so the native observer can
+follow the retry without mutating completed attempt-one history. Attempt two
+uses separate private state and evidence paths. Its result is terminal: it can
+never authorize another automatic retry. If the retry controller stops before
+or after reservation, its always-run cleanup removes the retry authorization
+from the source or closes the reserved replacement so no retryable or active
+check is left behind.
+
+Each evidence download has its own 10-minute limit and 30-second process-kill
+grace. Two 140-minute waits plus both download windows consume 301 minutes,
+leaving 29 minutes of the coordinator budget for validation, dispatch, and
+finalization. The native required observer waits up to 358 minutes inside a
+360-minute job. That is 13 minutes longer than the 15-minute prerequisite-CI
+budget plus the 330-minute controller budget, so it can observe the retry's
+terminal result without racing the controller timeout. When a child wait
+expires, finalization cancels that child and records the non-passing result in
+the coordination check.
+
+If the selected child succeeds but the `Download evidence` step fails, is
+cancelled, or is skipped, the controller cannot authenticate the child's
+artifacts. It fails coordination closed as
 `Evidence could not be verified` and leaves `E2E / PR Gate Controller` red so
 maintainers inspect that infrastructure failure. This download-only outcome
 records `evidence-download`, so a later successful eligible PR CI run can create
