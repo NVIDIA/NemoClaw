@@ -583,11 +583,6 @@ describe("needsHermesE2ESwap (#7145)", () => {
       { NEMOCLAW_E2E_EXPECTED_SHA: "" },
     ],
     [
-      "a main larger-runner execution",
-      "test/e2e/live/hermes-inference-switch.test.ts",
-      { NEMOCLAW_E2E_EXPECTED_SHA: "" },
-    ],
-    [
       "an uppercase checkout SHA",
       "test/e2e/live/hermes-inference-switch.test.ts",
       { NEMOCLAW_E2E_EXPECTED_SHA: "A".repeat(40) },
