@@ -94,7 +94,7 @@ describe("host probe command (#7412)", () => {
       await HostProbeCommand.run(["--json"], process.cwd());
       const output = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
 
-      expect(() => assertSchemaValid(output)).not.toThrow();
+      assertSchemaValid(output);
       expect(output).toEqual(expectedReport);
       expect(process.exitCode).toBe(exitCode);
       expect(mocks.renderReadinessReport).not.toHaveBeenCalled();
