@@ -328,10 +328,11 @@ describe("PR E2E controller lifecycle", () => {
       id: 16,
       status: "completed",
       conclusion: "failure",
-      details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/22",
+      details_url: "https://github.com/NVIDIA/NemoClaw/runs/16",
       output: {
         title: "Selected E2E did not pass",
-        summary: "The child was cancelled.\n\n<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->",
+        summary:
+          "[Selected E2E run 22](https://github.com/NVIDIA/NemoClaw/actions/runs/22) concluded `failure`. No passing result was accepted.\nThe child was cancelled.\n\n<!-- nemoclaw-pr-e2e-retry:v1:child-cancelled -->",
       },
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(

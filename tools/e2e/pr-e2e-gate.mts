@@ -1154,12 +1154,46 @@ function retryableFailureReason(check: CheckRun): RetryableFailureReason | undef
   return reason as RetryableFailureReason;
 }
 
+type SelectedE2eRunBinding = {
+  runId: number;
+  runUrl: string;
+};
+
+function selectedRunnerLossRun(
+  repository: string,
+  check: CheckRun,
+): SelectedE2eRunBinding | undefined {
+  if (retryableFailureReason(check) !== "child-cancelled") return undefined;
+  const summary = check.output?.summary;
+  const prefix = "[Selected E2E run ";
+  if (typeof summary !== "string" || !summary.startsWith(prefix)) {
+    throw new Error("Runner-loss check has an invalid selected-run binding");
+  }
+  const labelEnd = summary.indexOf("](", prefix.length);
+  if (labelEnd < 0) {
+    throw new Error("Runner-loss check has an invalid selected-run binding");
+  }
+  const runId = parsePositiveId(
+    summary.slice(prefix.length, labelEnd),
+    "runner-loss selected run ID",
+  );
+  const runUrl = `https://github.com/${repository}/actions/runs/${runId}`;
+  const firstLine = summary.split("\n", 1)[0];
+  const acceptedFirstLines = new Set([
+    `[Selected E2E run ${runId}](${runUrl}) concluded \`failure\`. No passing result was accepted.`,
+    `[Selected E2E run ${runId}](${runUrl}) concluded \`cancelled\`. No passing result was accepted.`,
+  ]);
+  if (!firstLine || !acceptedFirstLines.has(firstLine)) {
+    throw new Error("Runner-loss check has an invalid selected-run binding");
+  }
+  return { runId, runUrl };
+}
+
 function priorRunnerLossRunUrls(
   repository: string,
   history: readonly CheckRun[],
   currentCheckId: number,
 ): string[] {
-  const prefix = `https://github.com/${repository}/actions/runs/`;
   const priorRunnerLossChecks = history.filter(
     (check) => check.id !== currentCheckId && retryableFailureReason(check) === "child-cancelled",
   );
@@ -1167,15 +1201,9 @@ function priorRunnerLossRunUrls(
     throw new Error("Runner-loss retry history exceeds the single permitted retry");
   }
   return priorRunnerLossChecks.map((check) => {
-    const url = check.details_url;
-    if (
-      typeof url !== "string" ||
-      !url.startsWith(prefix) ||
-      !/^[1-9][0-9]*$/u.test(url.slice(prefix.length))
-    ) {
-      throw new Error("Runner-loss retry history has an invalid child-run URL");
-    }
-    return url;
+    const selectedRun = selectedRunnerLossRun(repository, check);
+    if (!selectedRun) throw new Error("Runner-loss retry history has no selected child run");
+    return selectedRun.runUrl;
   });
 }
 
@@ -3400,10 +3428,8 @@ export async function retryRunnerLossPrGate(
     if (current?.id !== command.checkRunId) {
       throw new Error("runner-loss retry source is not the current PR gate check");
     }
-    if (
-      retryableFailureReason(current) !== "child-cancelled" ||
-      current.details_url !== originalRunUrl
-    ) {
+    const selectedRun = current ? selectedRunnerLossRun(repository, current) : undefined;
+    if (!selectedRun || selectedRun.runId !== command.childRunId) {
       throw new Error("PR gate check does not authorize this runner-loss retry");
     }
     if (priorRunnerLossRunUrls(repository, history, command.checkRunId).length !== 0) {
@@ -3556,12 +3582,13 @@ export async function retryRunnerLossPrGate(
       prNumber: state.prNumber,
     });
     const dispatchSource = dispatchHistory.find((check) => check.id === command.checkRunId);
+    const dispatchSourceRun = dispatchSource
+      ? selectedRunnerLossRun(repository, dispatchSource)
+      : undefined;
     if (
       dispatchHistory.length !== historySize + 1 ||
       dispatchHistory.at(-1)?.id !== retryCheckRunId ||
-      !dispatchSource ||
-      retryableFailureReason(dispatchSource) !== "child-cancelled" ||
-      dispatchSource.details_url !== originalRunUrl ||
+      dispatchSourceRun?.runId !== command.childRunId ||
       priorRunnerLossRunUrls(repository, dispatchHistory, retryCheckRunId).length !== 1
     ) {
       throw new Error("runner-loss retry lost the current PR gate check before dispatch");
@@ -4370,14 +4397,14 @@ export async function abandonRunnerLossRetrySource(
     typeof source.external_id === "string"
       ? CHECK_EXTERNAL_ID_PATTERN.exec(source.external_id)
       : null;
+  const selectedRun = selectedRunnerLossRun(repository, source);
   if (
     source.id !== checkRunId ||
     source.name !== CHECK_NAME ||
     source.app?.id !== GITHUB_ACTIONS_APP_ID ||
     source.status !== "completed" ||
     source.conclusion !== "failure" ||
-    source.details_url !== childRunUrl ||
-    retryableFailureReason(source) !== "child-cancelled" ||
+    selectedRun?.runId !== childRunId ||
     !externalIdMatch
   ) {
     throw new Error("completed check does not match the exact runner-loss retry source");
@@ -4401,7 +4428,9 @@ export async function abandonRunnerLossRetrySource(
     const canonicalReservedReplacement =
       current?.status === "in_progress" &&
       current.conclusion === null &&
-      (current.details_url === null || current.details_url === undefined) &&
+      (current.details_url === null ||
+        current.details_url === undefined ||
+        current.details_url === `https://github.com/${repository}/runs/${current.id}`) &&
       current.output?.title === RESERVED_CHECK_TITLE &&
       current.output.summary === RESERVED_CHECK_SUMMARY;
     if (!sourceImmediatelyPrecedesCurrent || !canonicalReservedReplacement) {
