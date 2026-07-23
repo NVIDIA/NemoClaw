@@ -883,7 +883,19 @@ async function runOpenClawInferenceSetWithRetry(
 
 test("openclaw-inference-switch: switches route and preserves live OpenClaw behavior", {
   timeout: TEST_TIMEOUT_MS,
-}, async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm Docker and choose the baseline provider",
+      "clear existing inference-switch state",
+      "install and onboard baseline OpenClaw",
+      "prepare the switched provider and endpoint",
+      "switch the route and verify restart semantics",
+      "inspect route configuration and recorded state",
+      "prove inference.local and OpenClaw agent turns",
+      "apply sandbox retention and record the result",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   await artifacts.target.declare({
     id: "openclaw-inference-switch",
     boundary: "install-sh-openclaw-inference-set-and-live-agent-turn",
@@ -977,8 +989,10 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     timeoutMs: 120_000,
   });
 
+  progress.phase("clear existing inference-switch state");
   await resetOpenClawInferenceSwitchState(host, sandbox, home, "pre-cleanup");
 
+  progress.phase("install and onboard baseline OpenClaw");
   const install = await host.command(
     "bash",
     ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
@@ -1006,6 +1020,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
   expect(install.exitCode, installText).toBe(0);
   expectMockBaselineAuthentication(baselineProvider);
 
+  progress.phase("prepare the switched provider and endpoint");
   const publicProvider = publicApiKey
     ? await registerPublicNvidiaSwitchProvider(host, publicApiKey, commandEnv(home))
     : null;
@@ -1025,6 +1040,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
       ? await ensureCompatibleAnthropicSwitchProvider(host, home, mockProvider)
       : null;
 
+  progress.phase("switch the route and verify restart semantics");
   expect(baseline.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
   const gatewayRestartExpected = SWITCH_MOCK_ANTHROPIC === "1";
   expect(SWITCH_INFERENCE_API).toBe(
@@ -1056,10 +1072,12 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     ).toBe(!gatewayRestartExpected);
   }
 
+  progress.phase("inspect route configuration and recorded state");
   await assertOpenShellRoute(host, home);
   await assertOpenClawConfig(sandbox, home);
   await assertRegistryAndSession(home, { mockProvider });
 
+  progress.phase("prove inference.local and OpenClaw agent turns");
   const inference = await checkSandboxInference(sandbox, home);
   if (inference !== "ok") {
     await artifacts.target.complete({
@@ -1082,6 +1100,7 @@ test("openclaw-inference-switch: switches route and preserves live OpenClaw beha
     skip(agentTurn.skipped);
   }
 
+  progress.phase("apply sandbox retention and record the result");
   if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
     await resetOpenClawInferenceSwitchState(host, sandbox, home, "final");
     const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");

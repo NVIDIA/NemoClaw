@@ -141,6 +141,8 @@ export type RebuildFlowHarness = {
   disposePreparedDcodeRebuildImageSpy: MockInstance;
   errorSpy: MockInstance;
   ensureAgentBaseImageSpy: MockInstance;
+  pinTrustedAgentBaseImageOverrideForOperationSpy: MockInstance;
+  restoreTrustedAgentBaseImageOverrideSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
@@ -309,7 +311,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       return overrides.sandboxBaseImageLabelsOutput;
     }
     if (args[0] === "{{.Id}}") {
-      const imageId = imageIdsByRef.get(String(args[1]));
+      const imageRef = String(args[1]);
+      if (imageRef === agentBaseImageRef && dcodeBaseImageIds.length > 0) {
+        return dcodeBaseImageIds.shift()!;
+      }
+      const imageId = imageIdsByRef.get(imageRef);
       if (imageId) return imageId;
     }
     return dcodeBaseImageIds.shift() ?? "sha256:dcode-base";
@@ -323,10 +329,19 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     return { status: 0 };
   });
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
+  const trustedLocalOverride = {
+    ref: agentBaseImageRef,
+    provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
+  };
   const ensureAgentBaseImageSpy = vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
     imageTag: agentBaseImageRef,
     built: true,
+    ...(agentName === "langchain-deepagents-code" ? { trustedLocalOverride } : {}),
   });
+  const restoreTrustedAgentBaseImageOverrideSpy = vi.fn();
+  const pinTrustedAgentBaseImageOverrideForOperationSpy = vi
+    .spyOn(agentOnboard, "pinTrustedAgentBaseImageOverrideForOperation")
+    .mockReturnValue(restoreTrustedAgentBaseImageOverrideSpy);
   const sessionAgentName =
     overrides.sessionAgentName === undefined ? agentName : overrides.sessionAgentName;
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
@@ -511,6 +526,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     );
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
+    if (argv.join(" ") === "sandbox get alpha") {
+      return {
+        status: 1,
+        output: "sandbox alpha not found",
+        stdout: "",
+        stderr: "sandbox alpha not found",
+      };
+    }
     return argv[0] === "provider" && argv[1] === "get"
       ? {
           status: 0,
@@ -681,6 +704,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     disposePreparedDcodeRebuildImageSpy,
     errorSpy,
     ensureAgentBaseImageSpy,
+    pinTrustedAgentBaseImageOverrideForOperationSpy,
+    restoreTrustedAgentBaseImageOverrideSpy,
     executeSandboxCommandSpy,
     checkAndRecoverSandboxProcessesSpy,
     ensureMessagingHostForwardAfterRebuildSpy,

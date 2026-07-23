@@ -37,6 +37,7 @@ Review the [Prerequisites](prerequisites) before you begin.
     Run the hosted installer in a terminal.
 
     ```bash
+    export NEMOCLAW_SANDBOX_NAME=my-gpt-claw
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
 
@@ -45,7 +46,9 @@ Review the [Prerequisites](prerequisites) before you begin.
 
   <Step title="Complete Onboarding">
     The wizard creates the sandbox.
-    Choose an inference provider and model, provide its credential when prompted, and enter a sandbox name such as `my-gpt-claw`.
+    If the installer offers Express, you can accept it to use managed local inference for that platform.
+    Otherwise, choose an inference provider and model, then provide its credential when prompted.
+    The install command uses `my-gpt-claw` as the sandbox name.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
   </Step>
 
@@ -73,17 +76,25 @@ Review the [Prerequisites](prerequisites) before you begin.
   </Step>
 </Steps>
 
-## Considerations
+## Installation and Runtime Details
 
 Use these details when your first-run path needs more control.
 
 <AccordionGroup>
   <Accordion title="Automate an installation">
-    The hosted installer follows the maintained last-known-good release by default and can prompt through an interactive terminal.
+    The hosted installer follows the maintained last-known-good release by default.
     In CI, a shell script, or another non-TTY context, pass the third-party software acceptance to `bash`.
 
     ```bash
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+    ```
+
+    The notice runs before the installer installs Node.js or the NemoClaw CLI.
+    A piped installer can prompt through a terminal when one is available.
+    You can also pass the acceptance flag through `bash -s`.
+
+    ```bash
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
     ```
 
     For a non-interactive first run, also set the provider, credential, and sandbox name.
@@ -125,8 +136,9 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Use Docker and supported platforms">
-    On Linux, the installer checks Docker and can install it when it is missing.
-    If the installer adds you to the `docker` group, run the printed `newgrp docker` command before you rerun it.
+    Review [Prerequisites](prerequisites) for Docker requirements and the setup-oriented platform table.
+    On Linux, the installer can install Docker.
+    If it prints a `newgrp docker` command, run that command before you retry the installer.
     On macOS, start Docker Desktop or Colima first.
 
     When a coding agent reports that its execution sandbox blocked Docker, use its command-scoped approval flow, if available.
@@ -134,20 +146,18 @@ Use these details when your first-run path needs more control.
     Do not change Docker socket permissions or grant broad host access only to bypass the restriction.
     If your organization blocks command-scoped approval, stop the coding-agent setup and contact the administrator who manages coding-agent permissions.
 
-    DGX Spark, qualifying Station GB300 hosts, and Windows WSL offer an interactive express-install path that chooses a managed local inference option for the platform.
-    Station accepts the generic Ubuntu 24.04 ARM64 image and stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` when a safe, root-owned `/etc/dgx-release` marker identifies `DGX Server for GALAXY-GB300`.
-    It also accepts the exact April 2026 NVIDIA Colossus BaseOS and June 2026 NVIDIA AI Developer Tools profiles described in the Station preparation guide.
-    On a qualifying Station, accepting the prompt selects the pinned `nemotron-3-ultra-550b-a55b` managed-vLLM recipe and completes onboarding without more provider, model, policy, or sandbox-name choices.
-    [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation) defines Station qualification, generic Ubuntu preparation, stock DGX OS validation, repair limits, and reboot handoff.
-    By default, unknown versions, unsafe release markers, unmatched no-OTA factory images, and other Station generations stop before host preparation; set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` to bypass Station host automation.
-    For an explicit temporary override on genuine Station GB300 hardware with unrecognized release metadata, follow the `--force-station-install` safeguards in the Station preparation guide.
-    Physical single-Station validation covers generic Ubuntu 24.04 ARM64, stock DGX OS `7.5.0`, the April 2026 NVIDIA Colossus BaseOS profile, and the June 2026 NVIDIA AI Developer Tools profile.
-    Clean-host end-to-end validation passed on generic Ubuntu and Colossus BaseOS; stock DGX OS and AI Developer Tools completed Station Express validation.
-    Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
-    Pass `--station-deepseek` to use DeepSeek V4 Flash for a Station demo instead; the flag selects the interactive prompt and requires terminal access.
-    Refer to [Platform Support](../reference/platform-support) and [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for the current platform behavior.
+    Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
+    Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    If `nemoclaw` is not found after installation and you use nvm or fnm, open a new terminal or reload your shell profile.
+    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
+
+    After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
+    Express install uses `my-assistant` unless you set `NEMOCLAW_SANDBOX_NAME`, and it applies the suggested Balanced policy.
+    It can still prompt for `sudo` when host setup needs it.
+    Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` to choose a provider yourself.
+
+    Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles, Station choices, and headless setup.
+    Refer to [Platform Support](../reference/platform-support) for current validation status.
   </Accordion>
 
   <Accordion title="Recover an incomplete or existing installation">
@@ -181,86 +191,22 @@ Use these details when your first-run path needs more control.
 
     The complete dashboard URL contains a gateway token fragment that authenticates the browser session.
     Treat an authenticated dashboard URL as a password.
-    Refer to [Remote Dashboard Access](../deployment/deploy-to-remote-gpu#remote-dashboard-access) for Brev tunnels and other remote-access options.
+    For remote access through SSH port forwarding and recovery guidance, refer to [Deploy to a Headless Server](../deployment/deploy-to-headless-server).
   </Accordion>
 
-  <Accordion title="Installer Behavior and Platform Details">
-    The installer script installs Node.js when it is not already present, then starts the guided onboarding wizard to create the sandbox, configure inference, and apply security policies.
-    NemoClaw creates a fresh OpenClaw instance inside that sandbox.
+  <Accordion title="Onboarding and Inference Details">
+    The wizard runs preflight checks, starts or reuses the OpenShell gateway, asks for an inference provider and model, collects required credentials, and asks for a sandbox name.
+    It prints a review summary before it registers the provider with OpenShell.
 
-    The third-party software notice runs before the installer installs Node.js or the NemoClaw CLI.
-    A piped installer can prompt through a terminal when a TTY is available.
-    You can also pass the acceptance flag through `bash -s`.
+    After confirmation, NemoClaw registers inference, prompts for optional web search and messaging channels, builds and starts the sandbox, sets up OpenClaw, and applies the selected network policy tier and presets.
 
-    ```bash
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
-    ```
-
-    If you use nvm or fnm and `nemoclaw` is not found after installation, run `source ~/.bashrc` or `source ~/.zshrc`, or open a new terminal.
-
-    On Linux, the installer checks Docker before it installs NemoClaw.
-    When Docker is missing, it downloads the official Docker convenience script, prompts for `sudo`, installs Docker, and starts the Docker service when systemd is available.
-    If the current shell cannot use the Docker socket, the installer adds your user to the `docker` group and exits with a recovery command.
-
-    On macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
-
-    ```bash
-    newgrp docker
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-    ```
-
-    On DGX Spark, qualifying Station GB300 hosts, and Windows WSL, interactive installation offers express install after you accept the third-party software notice.
-    After you confirm the interactive express prompt, the installer switches the remaining onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
-    DGX Spark uses managed vLLM with `qwen3.6-35b-a3b-nvfp4` by default.
-    DGX Station express install explicitly selects `nemotron-3-ultra-550b-a55b` instead of the Station managed-vLLM profile default, `deepseek-v4-flash`, and discloses the approximately `352 GB` model download before confirmation.
-    If the host does not meet the [Station prerequisites](additional-setup/dgx-station-preparation), the installer stops before host preparation.
-    Before Station host preparation begins, the installer stores the accepted Express recipe in owner-only local state.
-    If preparation requires a reboot or a new login, run the printed command to restore the recorded revision, agent, model, sandbox, policy tier, and gateway, dashboard, and vLLM ports without repeating the Express prompt.
-    Generic Ubuntu preparation can change pinned packages and then exits with status `10`; reboot, sign in, and run that printed command to resume.
-    Qualified DGX OS and factory-image validation checks the factory stack in place, with only the bounded repairs documented in the Station preparation guide.
-    Physical validation on one DGX Station GB300 covers the qualified generic Ubuntu, stock DGX OS `7.5.0`, April 2026 NVIDIA Colossus BaseOS, and June 2026 NVIDIA AI Developer Tools profiles.
-    Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
-    To select DeepSeek V4 Flash while retaining the one-confirmation Station express flow, run `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --station-deepseek`.
-    The `--station-deepseek` flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
-    The temporary `--force-station-install` flag has the same terminal requirement and bypasses only DGX release-metadata qualification on genuine Station GB300 hardware.
-    Without terminal access, the installer stops before it installs Docker or build dependencies instead of ignoring the flag.
-    For a headless or CI install on a qualifying DGX Station GB300 after host preparation, omit the flag and select the same managed-vLLM recipe explicitly.
-
-    ```bash
-    curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
-      NEMOCLAW_NON_INTERACTIVE=1 \
-      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-      NEMOCLAW_PROVIDER=install-vllm \
-      NEMOCLAW_VLLM_MODEL=deepseek-v4-flash \
-      NEMOCLAW_SANDBOX_NAME=my-assistant \
-      bash
-    ```
-
-    Unless `NEMOCLAW_POLICY_TIER` is set, express install applies policy in `suggested` mode with the `balanced` tier, including the base sandbox policy and supported package, model, web-search, and local-inference presets.
-    Express install uses `my-assistant` as the sandbox name across all platforms unless `NEMOCLAW_SANDBOX_NAME` is set.
-    Windows WSL selects the Windows-host Ollama setup path.
-    Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer to choose a provider yourself.
-
-    <Warning>
-    DGX Station is Tested with limitations across qualified profiles on one physical DGX Station GB300.
-    Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
-    </Warning>
-
-    The installer auto-launches `nemoclaw onboard` when it can find the new binary.
-    If it cannot find the binary or blocking host preflight checks fail, it prints diagnostics and a `To finish setup, run:` block with the explicit `nemoclaw onboard` command.
+    At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 
     <Note>
     Onboarding builds the sandbox image with a managed `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting so the dashboard is usable during setup.
     NemoClaw records that this value came from onboarding rather than reporting it as an operator-selected opt-out.
     This build-time setting is baked into the image and setting it after onboarding does not affect an existing sandbox.
     </Note>
-  </Accordion>
-
-  <Accordion title="Onboarding and Inference Details">
-    The wizard runs preflight checks, starts or reuses the OpenShell gateway, asks for an inference provider and model, collects required credentials, and asks for a sandbox name.
-    It prints a review summary before it registers the provider with OpenShell.
-    After confirmation, NemoClaw registers inference, prompts for optional web search and messaging channels, builds and starts the sandbox, sets up OpenClaw, and applies the selected network policy tier and presets.
-    At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 
     If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell, requires a fresh backup of every registered sandbox before it changes the gateway, and runs `nemoclaw upgrade-sandboxes --auto` after the host upgrade.
     After backup, it retires the running gateway before replacing OpenShell only when the installed OpenShell version is outside the current release's supported range; an unknown installed version or an invalid or missing range stops the update without retiring the gateway, while any retirement failure stops the update with the sandbox backups preserved.
@@ -437,7 +383,7 @@ Use these details when your first-run path needs more control.
     ```
 
     Run the SSH command in a second terminal on your workstation and substitute the port printed by NemoClaw.
-    For Brev tunnels or binding the dashboard to all interfaces instead of forwarding, refer to [Remote Dashboard Access](../deployment/deploy-to-remote-gpu#remote-dashboard-access).
+    For remote access through SSH port forwarding and recovery guidance, refer to [Deploy to a Headless Server](../deployment/deploy-to-headless-server).
   </Accordion>
 </AccordionGroup>
 
