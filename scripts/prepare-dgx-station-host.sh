@@ -915,8 +915,10 @@ check_package_managers_idle() {
   local phase=${1:-Station preflight} active locks process_pattern
   process_pattern='^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|unattended-upgr|unattended-upgrade)$'
   # Ubuntu keeps packagekitd resident after APT refreshes. Generic apply mode
-  # quiesces it separately before the repository/package critical section.
-  if [[ "$STATION_HOST_PROFILE" != "generic-ubuntu" ]]; then
+  # quiesces it before package mutation, while stock DGX OS and AI Developer
+  # Tools preserve factory packages. BaseOS keeps its existing fail-closed
+  # process gate because that profile validates an exact package inventory.
+  if [[ "$STATION_HOST_PROFILE" == "colossus-baseos" ]]; then
     process_pattern='^(apt|apt-get|apt.systemd.dai|apt.systemd.daily|dpkg|packagekitd|unattended-upgr|unattended-upgrade)$'
   fi
   active="$(ps -eo pid=,comm= | awk -v pattern="$process_pattern" '$2 ~ pattern {print}')"

@@ -344,7 +344,7 @@ check_package_managers_idle test
     expect(output).toMatch(/APT or dpkg lock is active/);
   });
 
-  it("keeps PackageKit process detection fail-closed outside generic Ubuntu", () => {
+  it("keeps PackageKit process detection fail-closed for BaseOS", () => {
     const { result, output } = runSourced(`
 STATION_HOST_PROFILE=colossus-baseos
 ps() { printf '4242 packagekitd\n'; }
@@ -354,6 +354,23 @@ check_package_managers_idle test
     expect(result.status, output).not.toBe(0);
     expect(output).toContain("4242 packagekitd");
     expect(output).toMatch(/package-manager process is active/);
+  });
+
+  it.each([
+    "stock-dgx-os",
+    "ai-developer-tools",
+  ])("allows idle PackageKit when %s preserves the factory package stack (#7417)", (profile) => {
+    const { result, output } = runSourced(
+      `
+STATION_HOST_PROFILE="$FACTORY_PROFILE"
+ps() { printf '4242 packagekitd\n'; }
+check_package_managers_idle test
+`,
+      { FACTORY_PROFILE: profile },
+    );
+
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("package_manager=idle phase=test");
   });
 
   it.each([
