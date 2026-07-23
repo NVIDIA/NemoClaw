@@ -35,6 +35,10 @@ describe("sandbox build context staging", () => {
 
     writeFixture("Dockerfile");
     writeFixture("tsconfig.runtime-preloads.json", "{}\n");
+    writeFixture(
+      path.join("ci", "npm-audit-exceptions.json"),
+      `${JSON.stringify({ schemaVersion: 1, exceptions: [] })}\n`,
+    );
     for (const runtimeName of ["mcporter-runtime", "wechat-runtime"]) {
       for (const fileName of ["package.json", "package-lock.json"]) {
         writeFixture(
@@ -117,6 +121,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-bundled-npm-tar.mts"));
     writeFixture(path.join("scripts", "verify-wechat-runtime-lock.mts"));
     writeFixture(path.join("scripts", "lib", "reviewed-npm-archive.mts"), "fixture\n", 0o700);
+    writeFixture(path.join("scripts", "lib", "reviewed-npm-audit.mts"), "fixture\n", 0o700);
     writeFixture(path.join("scripts", "lib", "openclaw-npm-remediation.mts"), "fixture\n", 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts"), 0o700);
     fs.chmodSync(path.join(sourceRoot, "scripts", "lib"), 0o700);
@@ -345,6 +350,9 @@ describe("sandbox build context staging", () => {
       const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
       expectDockerfileScriptCopiesExist(buildCtx, stagedDockerfile);
       expect(fs.existsSync(path.join(buildCtx, "tsconfig.runtime-preloads.json"))).toBe(true);
+      expect(fs.readFileSync(path.join(buildCtx, "ci", "npm-audit-exceptions.json"), "utf8")).toBe(
+        fs.readFileSync(path.join(repoRoot, "ci", "npm-audit-exceptions.json"), "utf8"),
+      );
       expectStagedOpenClawRuntimeGraphs(buildCtx, repoRoot);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
