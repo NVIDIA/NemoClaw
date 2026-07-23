@@ -13,7 +13,7 @@ import {
 } from "./helpers/installer-sourced-env";
 
 describe("installer Windows WSL express Ollama selection (sourced)", () => {
-  function runInstallerSourced(body: string) {
+  function runInstallerSourced(body: string, extraEnv: Record<string, string> = {}) {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-wsl-sourced-"));
     const result = spawnSync(
       "bash",
@@ -25,6 +25,7 @@ describe("installer Windows WSL express Ollama selection (sourced)", () => {
           HOME: home,
           PATH: TEST_SYSTEM_PATH,
           INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          ...extraEnv,
         },
       },
     );
@@ -242,6 +243,38 @@ sys.exit(exit_code)
         `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
         `activate_express_install "Windows WSL"\n` +
         `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama");
+  });
+
+  it("activate_express_install fails closed on a multiline persisted remote currentContext", () => {
+    const { result, output } = runInstallerSourced(
+      `mkdir -p "$HOME/.docker"\n` +
+        `cat > "$HOME/.docker/config.json" <<'JSON'\n` +
+        `{\n` +
+        `  "auths": {},\n` +
+        `  "currentContext":\n` +
+        `    "remote-prod"\n` +
+        `}\n` +
+        `JSON\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+      { PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("PROVIDER=install-ollama");
+  });
+
+  it("activate_express_install fails closed when a readable Docker config cannot be parsed", () => {
+    const { result, output } = runInstallerSourced(
+      `mkdir -p "$HOME/.docker"\n` +
+        `printf '%s' '{"currentContext":"default"' > "$HOME/.docker/config.json"\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'PROVIDER=%s\\n' "$NEMOCLAW_PROVIDER"\n`,
+      { PATH: `${path.dirname(process.execPath)}:${TEST_SYSTEM_PATH}` },
     );
     expect(result.status, output).toBe(0);
     expect(output).toContain("PROVIDER=install-ollama");

@@ -3603,23 +3603,58 @@ express_wsl_docker_operating_system() {
 
 # Resolve Docker's effective context name: the DOCKER_CONTEXT override if set,
 # otherwise the persisted currentContext from Docker's config (what
-# `docker context use` writes), defaulting to "default". Read from config.json
-# directly so this needs no Docker CLI and stays cheap/hermetic.
+# `docker context use` writes). A missing config or a config with no
+# currentContext uses Docker's "default"; an unreadable or unparseable config
+# fails closed as non-local.
 express_wsl_docker_active_context() {
   if [ -n "${DOCKER_CONTEXT:-}" ]; then
     printf '%s' "${DOCKER_CONTEXT}"
     return 0
   fi
   local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
-  local ctx=""
-  if [ -e "$cfg" ] && [ ! -r "$cfg" ]; then
-    printf '%s' "__unreadable__"
+  local ctx="" parse_status=0
+  if [ ! -e "$cfg" ]; then
+    printf '%s' "default"
     return 0
   fi
-  if [ -r "$cfg" ]; then
-    ctx="$(sed -n 's/.*"currentContext"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | head -n1)"
+  if [ -e "$cfg" ] && [ ! -r "$cfg" ]; then
+    printf '%s' "__unknown__"
+    return 0
   fi
-  printf '%s' "${ctx:-default}"
+  if command -v node >/dev/null 2>&1; then
+    ctx="$(
+      node - "$cfg" <<'NODE'
+const fs = require("node:fs");
+
+let config;
+try {
+  config = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+} catch {
+  process.exit(1);
+}
+if (config === null || typeof config !== "object" || Array.isArray(config)) process.exit(1);
+if (!Object.prototype.hasOwnProperty.call(config, "currentContext")) process.exit(2);
+if (typeof config.currentContext !== "string") process.exit(1);
+process.stdout.write(config.currentContext);
+NODE
+    )" || parse_status=$?
+    if [ "$parse_status" -eq 0 ]; then
+      printf '%s' "$ctx"
+      return 0
+    fi
+    if [ "$parse_status" -eq 2 ]; then
+      printf '%s' "default"
+      return 0
+    fi
+    printf '%s' "__unknown__"
+    return 0
+  fi
+  ctx="$(sed -n 's/.*"currentContext"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | head -n1)"
+  if [ -n "$ctx" ]; then
+    printf '%s' "$ctx"
+    return 0
+  fi
+  printf '%s' "__unknown__"
 }
 
 # True only when the Docker CLI targets the LOCAL default daemon: the active
@@ -3628,7 +3663,7 @@ express_wsl_docker_active_context() {
 # (a context name like desktop-linux is not proof of a local endpoint — it can be
 # pointed at a remote daemon) can reach a remote Docker Desktop whose sandbox
 # containers cannot reach this machine's Windows-host Ollama (PRA-1). Fails closed
-# (non-local) on any non-default or unreadable context.
+# (non-local) on any non-default, unreadable, or unparseable context.
 express_wsl_docker_target_is_local() {
   [ -z "${DOCKER_HOST:-}" ] || return 1
   [ "$(express_wsl_docker_active_context)" = "default" ]
