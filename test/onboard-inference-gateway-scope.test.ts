@@ -157,15 +157,20 @@ describe("onboarding inference gateway scope", () => {
 
   it("releases a new no-auth proxy reservation when provider registration fails (#7424)", async () => {
     const rollback = vi.fn();
-    const harness = createHarness({
-      runOpenshell: (args) => {
-        const command = args.join(" ");
-        if (command.startsWith("provider get")) return { status: 1 };
-        if (command.startsWith("provider create")) {
-          return { status: 7, stderr: "provider registration failed" };
-        }
-        return undefined;
+    const commandRouter = createDirectCommandRouter([
+      {
+        name: "provider-get",
+        matches: (command) => command.startsWith("provider get"),
+        results: [{ status: 1 }],
       },
+      {
+        name: "provider-create",
+        matches: (command) => command.startsWith("provider create"),
+        results: [{ status: 7, stderr: "provider registration failed" }],
+      },
+    ]);
+    const harness = createHarness({
+      runOpenshell: commandRouter.runOpenshell,
       overrides: {
         isNonInteractive: () => true,
         prepareCompatibleEndpointNoAuthProxy: async () => ({
