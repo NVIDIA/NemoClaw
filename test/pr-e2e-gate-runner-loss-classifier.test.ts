@@ -5,10 +5,30 @@ import { describe, expect, it } from "vitest";
 import { verifiedRunnerLossEvidence } from "../tools/e2e/pr-e2e-gate.mts";
 import { detectRunnerLoss } from "../tools/e2e/runner-pressure-core.mts";
 
+const WORKFLOW_SHA = "d".repeat(40);
+const RUNNER_LOSS_MESSAGE =
+  "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.";
+
+function runnerLossAnnotation(message = RUNNER_LOSS_MESSAGE) {
+  return {
+    path: ".github",
+    blobHref: `https://github.com/NVIDIA/NemoClaw/blob/${WORKFLOW_SHA}/.github`,
+    startLine: 1,
+    startColumn: null,
+    endLine: 1,
+    endColumn: null,
+    annotationLevel: "failure",
+    title: "",
+    message,
+    rawDetails: "",
+  };
+}
+
 function hostedRunnerLossJob(overrides: Record<string, unknown> = {}) {
   return {
     id: 89_074_697_099,
     name: "Hermes security-posture",
+    headSha: WORKFLOW_SHA,
     status: "completed",
     conclusion: "failure",
     runnerId: 1_021_277_393,
@@ -16,6 +36,7 @@ function hostedRunnerLossJob(overrides: Record<string, unknown> = {}) {
     runnerGroupId: 0,
     runnerGroupName: "GitHub Actions",
     labels: ["ubuntu-latest"],
+    annotations: [runnerLossAnnotation()],
     steps: [
       { name: "Set up job", status: "completed", conclusion: "success" },
       {
@@ -52,6 +73,8 @@ function confirmsRunnerLoss(
   } = {},
 ): boolean {
   const evidence = verifiedRunnerLossEvidence({
+    repository: "NVIDIA/NemoClaw",
+    workflowSha: WORKFLOW_SHA,
     workflowConclusion: options.workflowConclusion ?? "failure",
     jobs: options.jobs ?? [hostedRunnerLossJob()],
     jobDetailsAvailable: true,
@@ -61,7 +84,7 @@ function confirmsRunnerLoss(
 }
 
 describe("PR E2E hosted-runner-loss classifier", () => {
-  it("accepts the terminalized GitHub-hosted shutdown shape from run 29965049603", () => {
+  it("accepts a terminalized hosted shutdown only with canonical lost-communication evidence", () => {
     expect(confirmsRunnerLoss()).toBe(true);
   });
 
@@ -76,7 +99,66 @@ describe("PR E2E hosted-runner-loss classifier", () => {
     ).toBe(true);
   });
 
+  it("allows an unrelated notice beside the sole canonical failure annotation", () => {
+    expect(
+      confirmsRunnerLoss({
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [
+              runnerLossAnnotation(),
+              {
+                ...runnerLossAnnotation("Docker credentials were withheld."),
+                startLine: 53,
+                endLine: 53,
+                annotationLevel: "notice",
+              },
+            ],
+          }),
+        ],
+      }),
+    ).toBe(true);
+  });
+
   it.each([
+    {
+      label: "the only failure annotation is the generic cancellation from run 29965049603",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [runnerLossAnnotation("The operation was canceled.")],
+          }),
+        ],
+      },
+    },
+    {
+      label: "the failure annotation reports a job timeout",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [
+              runnerLossAnnotation(
+                "The job running on runner GitHub Actions 123 has exceeded the maximum execution time of 75 minutes.",
+              ),
+            ],
+          }),
+        ],
+      },
+    },
+    {
+      label: "the canonical annotation is bound to a different workflow SHA",
+      options: {
+        jobs: [
+          hostedRunnerLossJob({
+            annotations: [
+              {
+                ...runnerLossAnnotation(),
+                blobHref: `https://github.com/NVIDIA/NemoClaw/blob/${"e".repeat(40)}/.github`,
+              },
+            ],
+          }),
+        ],
+      },
+    },
     {
       label: "the workflow is cancelled",
       options: { workflowConclusion: "cancelled" },

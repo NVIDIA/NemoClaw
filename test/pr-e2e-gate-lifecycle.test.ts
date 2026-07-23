@@ -646,7 +646,7 @@ describe("PR E2E controller lifecycle", () => {
       expectedRetryReason: undefined,
     },
     {
-      label: "a GitHub-hosted runner disappears with its live step still active",
+      label: "a lost-runner step shape lacks trusted annotation identity",
       status: "completed",
       conclusion: "failure",
       jobs: [
@@ -658,7 +658,7 @@ describe("PR E2E controller lifecycle", () => {
           runner_id: 1_020_705_058,
           runner_name: "GitHub Actions 1020705058",
           runner_group_id: 0,
-          runner_group_name: "GitHub Actions",
+          runner_group_name: "Unverified runner group",
           labels: ["ubuntu-latest"],
           steps: [
             { name: "Set up job", status: "completed", conclusion: "success" },
@@ -680,11 +680,11 @@ describe("PR E2E controller lifecycle", () => {
       assertCompletionLink: expectSelectedRunLink,
       expectCancellation: false,
       expectedTitle: "rebuild-hermes failed",
-      expectedSummary: "confirmed hosted-runner loss on attempt 1",
-      expectedRetryReason: "child-cancelled",
+      expectedSummary: "concluded `failure`",
+      expectedRetryReason: undefined,
     },
     {
-      label: "a GitHub-hosted runner shutdown terminalizes the live step and skips cleanup",
+      label: "a terminalized shutdown shape lacks trusted annotation identity",
       status: "completed",
       conclusion: "failure",
       jobs: [
@@ -696,7 +696,7 @@ describe("PR E2E controller lifecycle", () => {
           runner_id: 1_021_276_374,
           runner_name: "GitHub Actions 1021276374",
           runner_group_id: 0,
-          runner_group_name: "GitHub Actions",
+          runner_group_name: "Unverified runner group",
           labels: ["ubuntu-latest"],
           steps: [
             { name: "Set up job", status: "completed", conclusion: "success" },
@@ -724,8 +724,8 @@ describe("PR E2E controller lifecycle", () => {
       assertCompletionLink: expectSelectedRunLink,
       expectCancellation: false,
       expectedTitle: "Hermes security-posture failed",
-      expectedSummary: "confirmed hosted-runner loss on attempt 1",
-      expectedRetryReason: "child-cancelled",
+      expectedSummary: "concluded `failure`",
+      expectedRetryReason: undefined,
     },
     {
       label: "a cancelled step followed by successful cleanup is not runner loss",
@@ -740,7 +740,7 @@ describe("PR E2E controller lifecycle", () => {
           runner_id: 1_021_276_374,
           runner_name: "GitHub Actions 1021276374",
           runner_group_id: 0,
-          runner_group_name: "GitHub Actions",
+          runner_group_name: "Unverified runner group",
           labels: ["ubuntu-latest"],
           steps: [
             { name: "Set up job", status: "completed", conclusion: "success" },
@@ -779,7 +779,7 @@ describe("PR E2E controller lifecycle", () => {
           runner_id: 1_020_705_058,
           runner_name: "GitHub Actions 1020705058",
           runner_group_id: 0,
-          runner_group_name: "GitHub Actions",
+          runner_group_name: "Unverified runner group",
           labels: ["ubuntu-latest"],
           steps: [
             { name: "Set up job", status: "completed", conclusion: "success" },
@@ -814,8 +814,7 @@ describe("PR E2E controller lifecycle", () => {
       assertCompletionLink: expectSelectedRunLink,
       expectCancellation: false,
       expectedTitle: "Selected E2E did not pass",
-      expectedSummary:
-        "an unclassified failure is never retried; only a confirmed hosted-runner loss is",
+      expectedSummary: "failed step: `Run security posture live test`",
       expectedRetryReason: undefined,
     },
     {

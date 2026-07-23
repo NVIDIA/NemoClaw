@@ -99,9 +99,17 @@ function workflowRun(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function hostedRunnerLossJob() {
+function hostedRunnerLossJob(runId = 23) {
+  const id = 89_074_697_099;
   return {
-    id: 89_074_697_099,
+    id,
+    run_id: runId,
+    run_attempt: 1,
+    head_sha: WORKFLOW_SHA,
+    run_url: `https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/${runId}`,
+    url: `https://api.github.com/repos/NVIDIA/NemoClaw/actions/jobs/${id}`,
+    html_url: `https://github.com/NVIDIA/NemoClaw/actions/runs/${runId}/job/${id}`,
+    check_run_url: `https://api.github.com/repos/NVIDIA/NemoClaw/check-runs/${id}`,
     name: "Hermes security-posture",
     status: "completed",
     conclusion: "failure",
@@ -121,6 +129,38 @@ function hostedRunnerLossJob() {
       { name: "Clean up Docker auth", status: "completed", conclusion: "skipped" },
       { name: "Complete job", status: "completed", conclusion: "success" },
     ],
+  };
+}
+
+function runnerLossAnnotation() {
+  return {
+    path: ".github",
+    blob_href: `https://github.com/NVIDIA/NemoClaw/blob/${WORKFLOW_SHA}/.github`,
+    start_line: 1,
+    start_column: null,
+    end_line: 1,
+    end_column: null,
+    annotation_level: "failure",
+    title: "",
+    message:
+      "The hosted runner lost communication with the server. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error.",
+    raw_details: "",
+  };
+}
+
+function workflowJobCheckRun(job: ReturnType<typeof hostedRunnerLossJob>) {
+  const annotationsUrl = `${job.check_run_url}/annotations`;
+  return {
+    id: job.id,
+    name: job.name,
+    head_sha: job.head_sha,
+    url: job.check_run_url,
+    html_url: job.html_url,
+    details_url: job.html_url,
+    status: "completed",
+    conclusion: "failure",
+    app: { id: 15368 },
+    output: { annotations_count: 1, annotations_url: annotationsUrl },
   };
 }
 
@@ -191,10 +231,14 @@ function retryRoutes(
     histories?: unknown[][];
     jobs?: unknown[];
     jobPages?: Array<{ total_count: number; jobs: unknown[] }>;
+    workflow?: unknown;
+    jobCheck?: unknown;
+    annotationPages?: unknown[][];
     createRetryStateDirectory?: string;
   } = {},
 ) {
   let historyRead = 0;
+  let annotationRead = 0;
   const defaultHistories = [
     [checkRun(17)],
     [checkRun(17), checkRun(18, { status: "in_progress", conclusion: null, details_url: null })],
@@ -204,7 +248,7 @@ function retryRoutes(
     [
       githubFetchRoute(
         ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
-        () => githubResponse(workflowRun()),
+        () => githubResponse(options.workflow ?? workflowRun()),
       ),
       githubFetchRoute(
         ({ url, method }) => url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
@@ -224,6 +268,20 @@ function retryRoutes(
           }
           const jobs = options.jobs ?? [hostedRunnerLossJob()];
           return githubResponse({ total_count: jobs.length, jobs });
+        },
+      ),
+      githubFetchRoute(
+        ({ url, method }) =>
+          url.endsWith(`/check-runs/${hostedRunnerLossJob().id}`) && method === "GET",
+        () => githubResponse(options.jobCheck ?? workflowJobCheckRun(hostedRunnerLossJob())),
+      ),
+      githubFetchRoute(
+        ({ url, method }) =>
+          url.includes(`/check-runs/${hostedRunnerLossJob().id}/annotations?`) && method === "GET",
+        () => {
+          const annotations = options.annotationPages?.[annotationRead] ?? [runnerLossAnnotation()];
+          annotationRead += 1;
+          return githubResponse(annotations);
         },
       ),
       githubFetchRoute(
@@ -339,40 +397,36 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     }
   });
 
-  it("rejects child reruns and mixed non-passing jobs before creating a retry check", async () => {
+  it("closes the reserved retry check for child reruns and mixed non-passing jobs", async () => {
     for (const scenario of ["child-rerun", "mixed-jobs"] as const) {
       const context = setup();
       const requests: RecordedGitHubRequest[] = [];
-      const routes = retryRoutes(requests, {
-        jobs:
-          scenario === "mixed-jobs"
-            ? [
-                hostedRunnerLossJob(),
-                { id: 2, name: "other", status: "completed", conclusion: "cancelled", steps: [] },
-              ]
-            : undefined,
-      });
-      if (scenario === "child-rerun") {
-        vi.spyOn(globalThis, "fetch").mockImplementation(
-          createGitHubFetchRouter(
-            [
-              githubFetchRoute(
-                ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
-                () => githubResponse(workflowRun({ run_attempt: 2 })),
-              ),
-            ],
-            requests,
-          ),
-        );
-      } else {
-        vi.spyOn(globalThis, "fetch").mockImplementation(routes);
-      }
+      vi.spyOn(globalThis, "fetch").mockImplementation(
+        retryRoutes(requests, {
+          workflow: scenario === "child-rerun" ? workflowRun({ run_attempt: 2 }) : undefined,
+          jobs:
+            scenario === "mixed-jobs"
+              ? [
+                  hostedRunnerLossJob(),
+                  { id: 2, name: "other", status: "completed", conclusion: "cancelled", steps: [] },
+                ]
+              : undefined,
+        }),
+      );
 
       try {
         await expect(retryRunnerLossPrGate(context.command)).rejects.toThrow(
           scenario === "child-rerun" ? /run_attempt/u : /not authorized/u,
         );
-        expect(requests.some((request) => request.method === "POST")).toBe(false);
+        expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+        expect(
+          requests.some(
+            (request) =>
+              request.url.endsWith("/check-runs/18") &&
+              request.method === "PATCH" &&
+              (request.body as { status?: string }).status === "completed",
+          ),
+        ).toBe(true);
       } finally {
         fs.rmSync(context.workDir, { recursive: true, force: true });
         vi.restoreAllMocks();
@@ -404,7 +458,7 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     }
   });
 
-  it("rejects overlapping workflow-job pages before creating a retry check", async () => {
+  it("closes the reserved retry check when workflow-job pages overlap", async () => {
     const context = setup();
     const requests: RecordedGitHubRequest[] = [];
     const firstPage = Array.from({ length: 100 }, (_, index) => ({
@@ -424,7 +478,117 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
       await expect(retryRunnerLossPrGate(context.command)).rejects.toThrow(
         /duplicate workflow job IDs/u,
       );
-      expect(requests.some((request) => request.method === "POST")).toBe(false);
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+      expect(
+        requests.some(
+          (request) =>
+            request.url.endsWith("/check-runs/18") &&
+            request.method === "PATCH" &&
+            (request.body as { status?: string }).status === "completed",
+        ),
+      ).toBe(true);
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      label: "job run ID mismatch",
+      options: () => ({ jobs: [{ ...hostedRunnerLossJob(), run_id: 24 }] }),
+      error: /job identity/u,
+    },
+    {
+      label: "job run-attempt mismatch",
+      options: () => ({ jobs: [{ ...hostedRunnerLossJob(), run_attempt: 2 }] }),
+      error: /job identity/u,
+    },
+    {
+      label: "job check URL mismatch",
+      options: () => ({
+        jobs: [{ ...hostedRunnerLossJob(), check_run_url: "https://api.github.com/check-runs/1" }],
+      }),
+      error: /job identity/u,
+    },
+    {
+      label: "check-run app mismatch",
+      options: () => ({
+        jobCheck: { ...workflowJobCheckRun(hostedRunnerLossJob()), app: { id: 7 } },
+      }),
+      error: /check run does not match/u,
+    },
+    {
+      label: "check-run head mismatch",
+      options: () => ({
+        jobCheck: {
+          ...workflowJobCheckRun(hostedRunnerLossJob()),
+          head_sha: "e".repeat(40),
+        },
+      }),
+      error: /check run does not match/u,
+    },
+    {
+      label: "incomplete annotation page",
+      options: () => {
+        const check = workflowJobCheckRun(hostedRunnerLossJob());
+        return {
+          jobCheck: { ...check, output: { ...check.output, annotations_count: 2 } },
+          annotationPages: [[runnerLossAnnotation()]],
+        };
+      },
+      error: /annotation listing is incomplete/u,
+    },
+    {
+      label: "overlapping annotation pages",
+      options: () => {
+        const check = workflowJobCheckRun(hostedRunnerLossJob());
+        const notices = Array.from({ length: 99 }, (_, index) => ({
+          ...runnerLossAnnotation(),
+          start_line: index + 2,
+          end_line: index + 2,
+          annotation_level: "notice",
+          message: `notice ${index + 1}`,
+        }));
+        const firstPage = [runnerLossAnnotation(), ...notices];
+        return {
+          jobCheck: { ...check, output: { ...check.output, annotations_count: 101 } },
+          annotationPages: [firstPage, [notices[0]!]],
+        };
+      },
+      error: /duplicate workflow job annotations/u,
+    },
+    {
+      label: "a second generic-cancellation failure annotation",
+      options: () => {
+        const check = workflowJobCheckRun(hostedRunnerLossJob());
+        return {
+          jobCheck: { ...check, output: { ...check.output, annotations_count: 2 } },
+          annotationPages: [
+            [
+              runnerLossAnnotation(),
+              { ...runnerLossAnnotation(), message: "The operation was canceled." },
+            ],
+          ],
+        };
+      },
+      error: /not authorized/u,
+    },
+  ])("fails closed after reservation for $label", async ({ options, error }) => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(retryRoutes(requests, options()));
+
+    try {
+      await expect(retryRunnerLossPrGate(context.command)).rejects.toThrow(error);
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+      expect(
+        requests.some(
+          (request) =>
+            request.url.endsWith("/check-runs/18") &&
+            request.method === "PATCH" &&
+            (request.body as { status?: string }).status === "completed",
+        ),
+      ).toBe(true);
     } finally {
       fs.rmSync(context.workDir, { recursive: true, force: true });
     }
@@ -617,7 +781,18 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
           githubFetchRoute(
             ({ url, method }) =>
               url.includes("/actions/runs/24/attempts/1/jobs?") && method === "GET",
-            () => githubResponse({ total_count: 1, jobs: [hostedRunnerLossJob()] }),
+            () => githubResponse({ total_count: 1, jobs: [hostedRunnerLossJob(24)] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith(`/check-runs/${hostedRunnerLossJob().id}`) && method === "GET",
+            () => githubResponse(workflowJobCheckRun(hostedRunnerLossJob(24))),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/check-runs/${hostedRunnerLossJob().id}/annotations?`) &&
+              method === "GET",
+            () => githubResponse([runnerLossAnnotation()]),
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
@@ -690,6 +865,17 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
             ({ url, method }) =>
               url.includes("/actions/runs/23/attempts/1/jobs?") && method === "GET",
             () => githubResponse({ total_count: 1, jobs: [hostedRunnerLossJob()] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith(`/check-runs/${hostedRunnerLossJob().id}`) && method === "GET",
+            () => githubResponse(workflowJobCheckRun(hostedRunnerLossJob())),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/check-runs/${hostedRunnerLossJob().id}/annotations?`) &&
+              method === "GET",
+            () => githubResponse([runnerLossAnnotation()]),
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
