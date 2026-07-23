@@ -2539,7 +2539,9 @@ function hasTrustedHostedRunnerShutdownLog(
       workflowSha,
       marker.annotationMessage,
     ) ||
-    !hasTrustedHostedRunnerLossStepShapeForConclusion(job, marker.interruptedStepConclusion)
+    !hasTrustedHostedRunnerLossStepShapeForConclusion(job, marker.interruptedStepConclusion, {
+      allowLegacyStrandedStep: false,
+    })
   ) {
     return false;
   }
@@ -2577,6 +2579,7 @@ function hasTrustedHostedRunnerShutdownLog(
 function hasTrustedHostedRunnerLossStepShapeForConclusion(
   job: WorkflowJob,
   interruptedStepConclusion: "cancelled" | "failure",
+  options: { allowLegacyStrandedStep: boolean },
 ): boolean {
   if (
     job.status !== "completed" ||
@@ -2610,7 +2613,13 @@ function hasTrustedHostedRunnerLossStepShapeForConclusion(
     job.steps
       .slice(strandedIndex + 1)
       .every((step) => step.status === "pending" && step.conclusion === null);
-  if (interruptedStepConclusion === "cancelled" && legacyStrandedStep) return true;
+  if (
+    options.allowLegacyStrandedStep &&
+    interruptedStepConclusion === "cancelled" &&
+    legacyStrandedStep
+  ) {
+    return true;
+  }
 
   const interruptedStepIndexes = job.steps.flatMap((step, index) =>
     step.status === "completed" && step.conclusion === interruptedStepConclusion ? [index] : [],
@@ -2641,13 +2650,17 @@ function hasTrustedHostedRunnerLossStepShapeForConclusion(
 }
 
 function hasTrustedHostedRunnerLossStepShape(job: WorkflowJob): boolean {
-  return hasTrustedHostedRunnerLossStepShapeForConclusion(job, "cancelled");
+  return hasTrustedHostedRunnerLossStepShapeForConclusion(job, "cancelled", {
+    allowLegacyStrandedStep: true,
+  });
 }
 
 function hasTrustedHostedRunnerLossInspectionStepShape(job: WorkflowJob): boolean {
   return (
     hasTrustedHostedRunnerLossStepShape(job) ||
-    hasTrustedHostedRunnerLossStepShapeForConclusion(job, "failure")
+    hasTrustedHostedRunnerLossStepShapeForConclusion(job, "failure", {
+      allowLegacyStrandedStep: false,
+    })
   );
 }
 

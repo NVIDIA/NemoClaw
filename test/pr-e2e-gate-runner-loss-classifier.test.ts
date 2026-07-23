@@ -139,16 +139,27 @@ function hostedRunnerLossJob(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function legacyHostedRunnerLossJob(id: number, runnerId: number) {
+function legacyHostedRunnerLossJob(
+  id: number,
+  runnerId: number,
+  overrides: Record<string, unknown> = {},
+) {
   return hostedRunnerLossJob({
     id,
     runnerId,
     runnerName: `GitHub Actions ${runnerId}`,
     steps: [
       { name: "Set up job", status: "completed", conclusion: "success" },
-      { name: "Run live test", status: "in_progress", conclusion: null },
+      {
+        name: "Run live test",
+        status: "in_progress",
+        conclusion: null,
+        startedAt: CANCELLED_STEP_STARTED_AT,
+        completedAt: null,
+      },
       { name: "Upload artifacts", status: "pending", conclusion: null },
     ],
+    ...overrides,
   });
 }
 
@@ -320,7 +331,7 @@ describe("PR E2E hosted-runner-loss classifier", () => {
     ).toBe(true);
   });
 
-  it("accepts two strict standard-hosted legacy markers from run 29964500642", () => {
+  it("accepts two canonical standard-hosted legacy markers from run 29964500642", () => {
     expect(
       confirmsRunnerLoss({
         jobs: [
@@ -329,6 +340,19 @@ describe("PR E2E hosted-runner-loss classifier", () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it("rejects generic shutdown-log evidence for a legacy stranded workload step", () => {
+    expect(
+      confirmsRunnerLoss({
+        jobs: [
+          legacyHostedRunnerLossJob(89_073_235_001, 1_021_276_370, {
+            annotations: [genericCancellationAnnotation()],
+            logEvidence: runnerShutdownLogEvidence(),
+          }),
+        ],
+      }),
+    ).toBe(false);
   });
 
   it("allows an unrelated notice beside the sole canonical failure annotation", () => {
