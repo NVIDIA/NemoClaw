@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { discoverStationGb300SysfsReadOnlyPaths } from "../onboard/initial-policy";
 import {
   collectPlatformIdentity,
   type PlatformQualificationInput,
@@ -204,6 +205,30 @@ describe("platform readiness qualification (#7410)", () => {
     });
     expect(stat).toHaveBeenCalledWith("/fixtures/dgx-release");
     expect(readFile.mock.calls.every(([path]) => String(path).startsWith("/fixtures/"))).toBe(true);
+  });
+
+  it.each([
+    "unsupported-dgx-os",
+    "unknown",
+  ] as const)("keeps %s Station readiness and direct-GPU preparation fail-closed", (stationProfile) => {
+    const readiness = projectPlatformQualification(
+      input({
+        nvidiaPlatform: "station",
+        productName: "NVIDIA DGX Station GB300",
+        stationProfile,
+        stationGb300PciGpu: true,
+        hasNvidiaGpu: true,
+      }),
+    );
+
+    expect(qualification(readiness, "host.platform.dgx_station")).not.toBe("qualified");
+    expect(() =>
+      discoverStationGb300SysfsReadOnlyPaths(
+        "NVIDIA DGX Station GB300",
+        "/fixtures/pci",
+        stationProfile,
+      ),
+    ).toThrow("software profile is unsupported or unknown");
   });
 
   it.each([

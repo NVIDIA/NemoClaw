@@ -6,7 +6,9 @@ import path from "node:path";
 import type { NvidiaPlatform } from "../inference/nim.js";
 import {
   isNvidiaDisplayClassPciDevice,
+  isQualifiedStationProfile,
   isStationGb300ProductName,
+  type StationProfile,
 } from "./station-qualification.js";
 import type {
   QualificationStatus,
@@ -19,13 +21,7 @@ import type {
 
 const IDENTITY_FILE_MAX_BYTES = 4096;
 
-export type StationProfile =
-  | "generic-ubuntu"
-  | "supported-dgx-os"
-  | "supported-colossus-baseos"
-  | "supported-ai-developer-tools"
-  | "unsupported-dgx-os"
-  | "unknown";
+export type { StationProfile } from "./station-qualification.js";
 
 export interface PlatformIdentity {
   nvidiaPlatform?: NvidiaPlatform | null;
@@ -266,8 +262,7 @@ export function projectPlatformQualification(
     stationIdentity &&
     stationProduct === true &&
     input.stationGb300PciGpu === true &&
-    knownStationProfile &&
-    input.stationProfile !== "unsupported-dgx-os";
+    isQualifiedStationProfile(input.stationProfile);
   const stationStatus: QualificationStatus = !stationIdentity
     ? "unknown"
     : stationProduct === undefined || input.stationGb300PciGpu === undefined || !knownStationProfile

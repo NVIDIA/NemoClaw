@@ -8,13 +8,16 @@ import YAML from "yaml";
 import { isObjectRecord } from "../core/json-types";
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
+import { collectPlatformIdentity } from "../readiness/platform-qualification";
 import {
   applyBaselineExclusions,
   type BaselineExclusionRequest,
 } from "../policy/baseline-exclusion";
 import {
   isNvidiaDisplayClassPciDevice,
+  isQualifiedStationProfile,
   isStationGb300ProductName,
+  type StationProfile,
 } from "../readiness/station-qualification";
 import {
   allMessagingChannelPolicyPresets,
@@ -86,8 +89,14 @@ function readTrimmedFile(filePath: string): string | null {
 export function discoverStationGb300SysfsReadOnlyPaths(
   productName: string,
   sysfsRoot = SYSFS_PATH,
+  stationProfile?: StationProfile | null,
 ): string[] {
   if (!isStationGb300ProductName(productName)) return [];
+  if (stationProfile !== undefined && !isQualifiedStationProfile(stationProfile)) {
+    throw new Error(
+      "Cannot prepare Station GB300 direct GPU sandbox policy; the Station software profile is unsupported or unknown.",
+    );
+  }
 
   const readOnlyPaths: string[] = [];
   const pciDevicesRoot = path.join(sysfsRoot, "bus", "pci", "devices");
@@ -122,8 +131,17 @@ export function discoverStationGb300SysfsReadOnlyPaths(
 
 function discoverHostStationGb300SysfsReadOnlyPaths(): string[] {
   if (process.platform !== "linux") return [];
+  const identity = collectPlatformIdentity();
+  if (identity.nvidiaPlatform !== "station") return [];
+  if (!isQualifiedStationProfile(identity.stationProfile)) {
+    throw new Error(
+      "Cannot prepare Station GB300 direct GPU sandbox policy; the Station software profile is unsupported or unknown.",
+    );
+  }
   const productName = readTrimmedFile(DMI_PRODUCT_NAME_PATH);
-  return productName ? discoverStationGb300SysfsReadOnlyPaths(productName) : [];
+  return productName
+    ? discoverStationGb300SysfsReadOnlyPaths(productName, SYSFS_PATH, identity.stationProfile)
+    : [];
 }
 
 export function buildDirectGpuPolicyYaml(
