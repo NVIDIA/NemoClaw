@@ -10,6 +10,7 @@ import {
   spawnSync,
 } from "node:child_process";
 
+import { redirectInheritedChildStdoutToStderr } from "../../cli/stdout-guard";
 import { buildSubprocessEnv } from "../../subprocess-env";
 
 export type OpenshellSpawnSync = (
@@ -185,7 +186,7 @@ export function runOpenshellCommand(
     cwd: opts.cwd,
     env: openshellSpawnEnv(opts),
     encoding: "utf-8",
-    stdio: opts.stdio ?? "inherit",
+    stdio: redirectInheritedChildStdoutToStderr(opts.stdio ?? "inherit"),
     input: opts.input,
     timeout: opts.timeout,
   });
