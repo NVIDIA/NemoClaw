@@ -128,6 +128,68 @@ process.exit(0);
   }
 });
 
+it("preserves stale content for directories whose backup failed (#7428)", () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-failed-dir-"));
+  const oldPath = process.env.PATH;
+  const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+  try {
+    const binDir = path.join(fixture, "bin");
+    const sshLog = path.join(fixture, "ssh-log.jsonl");
+    const workspaceMarker = path.join(fixture, "workspace-content");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(workspaceMarker, "preserve");
+
+    const openshell = writeFakeOpenshell(binDir);
+    writeExecutable(
+      path.join(binDir, "ssh"),
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+const cmd = process.argv[process.argv.length - 1] || "";
+fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify({ cmd }) + "\\n");
+if (cmd.includes("[ -d ") && cmd.includes("printf")) {
+  process.exit(0);
+}
+if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
+  process.exit(2);
+}
+if (cmd.includes("d='/sandbox/.openclaw/workspace'")) {
+  fs.rmSync(${JSON.stringify(workspaceMarker)}, { force: true });
+}
+process.exit(0);
+`,
+    );
+
+    writeOpenClawRegistry("alpha");
+    process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+    process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+
+    const backup = sandboxState.backupSandboxState("alpha");
+    expect(backup.success).toBe(true);
+    const manifestPath = path.join(backup.manifest!.backupPath, "rebuild-manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    manifest.failedBackupDirs = ["workspace"];
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+    const restore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+
+    expect(restore.success).toBe(true);
+    const cleanupCommands = fs
+      .readFileSync(sshLog, "utf-8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line).cmd as string)
+      .filter((cmd) => cmd.includes("rm -rf"));
+    expect(cleanupCommands).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("d='/sandbox/.openclaw/workspace'")]),
+    );
+    expect(fs.existsSync(workspaceMarker)).toBe(true);
+  } finally {
+    restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
+    restoreEnv("PATH", oldPath);
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 it("reports stale directories when restore cannot obtain SSH configuration (#7428)", () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stale-dir-ssh-failure-"));
   const oldPath = process.env.PATH;
