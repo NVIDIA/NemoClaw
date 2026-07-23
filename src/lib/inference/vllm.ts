@@ -1328,7 +1328,13 @@ async function runVllmInstall(
   });
   if (!resolved) return { ok: false };
   const { model, source: modelSource } = resolved;
-  if (model.runtime && !model.platforms.includes(profile.platform)) {
+  // Platform-restricted models are filtered out of the interactive picker,
+  // but a direct NEMOCLAW_VLLM_MODEL override bypasses that filter, so this
+  // gate is the only platform enforcement on the env-override path. It must
+  // reject every wrong-platform model, not just runtime-carrying ones — an
+  // NVFP4 Spark checkpoint or a 352 GB Station recipe cannot serve here and
+  // must fail before the image pull and download (#7358).
+  if (!model.platforms.includes(profile.platform)) {
     console.error(`  vLLM install failed: ${model.label} is not supported on ${profile.name}`);
     return { ok: false };
   }

@@ -153,6 +153,7 @@ function main(): void {
   );
   fs.rmSync(artifactDirectory, { recursive: true, force: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
+  const npmVersion = run("npm", ["--version"], REPO_ROOT).stdout.trim();
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
     const reports = [
@@ -162,6 +163,12 @@ function main(): void {
           directory: materializeArchiveGraph(config.archivePackages, tempRoot),
           exceptionFile,
           graph: config.archiveGraphId,
+          provenance: {
+            label: "reviewed archive graph",
+            nodeVersion: process.version,
+            npmVersion,
+            packageSpecs: config.archivePackages.map((reviewed) => reviewed.packageSpec),
+          },
           reportFile: path.join(artifactDirectory, "reviewed-archive-graph.json"),
           resultFile: path.join(artifactDirectory, "reviewed-archive-graph-policy.json"),
           threshold: config.severityThreshold,
@@ -174,6 +181,12 @@ function main(): void {
           directory: materializeLockedGraph(graph, tempRoot),
           exceptionFile,
           graph: graph.id,
+          provenance: {
+            label: graph.label,
+            nodeVersion: process.version,
+            npmVersion,
+            packageSpecs: [graph.packageSpec],
+          },
           reportFile: path.join(artifactDirectory, `locked-graph-${index + 1}.json`),
           resultFile: path.join(artifactDirectory, `locked-graph-${index + 1}-policy.json`),
           threshold: config.severityThreshold,
