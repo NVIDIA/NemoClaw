@@ -58,6 +58,8 @@ describe("system readiness contract", () => {
     expect(validate({ ...fixture, schemaVersion: "1.7.4" }), JSON.stringify(validate.errors)).toBe(
       true,
     );
+    expect(checkSystemReadinessSchemaVersion("1.01.0").compatible).toBe(false);
+    expect(validate({ ...fixture, schemaVersion: "1.01.0" })).toBe(false);
   });
 
   it("rejects unknown schema majors before reading the report (#7409)", () => {

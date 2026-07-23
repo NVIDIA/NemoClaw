@@ -9,7 +9,7 @@
   "properties": {
     "schemaVersion": {
       "type": "string",
-      "pattern": "^1\\.[0-9]+\\.[0-9]+$",
+      "pattern": "^1\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
       "description": "Semantic contract version. Consumers must reject unknown major versions. New optional fields may be added within major version 1."
     },
     "status": {
