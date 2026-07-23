@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { assessHost } from "../onboard/preflight";
 import { describe, expect, it, vi } from "vitest";
+import { assessHost } from "../onboard/preflight";
 import { createHostReadinessReport } from "./host";
 
 const NOW = new Date("2026-06-01T12:00:00Z");
