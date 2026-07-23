@@ -776,7 +776,12 @@ describe("PR E2E controller", () => {
         status: "in_progress",
       },
     });
-    expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+    expect(
+      requests.some(
+        (request) =>
+          request.url.endsWith("/check-runs/18") && !["GET", "HEAD"].includes(request.method),
+      ),
+    ).toBe(false);
   });
 
   it("rejects a seeded identity claimed by another GitHub App", async () => {
