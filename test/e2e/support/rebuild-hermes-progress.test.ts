@@ -105,6 +105,31 @@ describe("Hermes rebuild live progress", () => {
     activeProgress.stop();
   });
 
+  it("labels the portable free-memory fallback honestly in stall evidence", () => {
+    const { options, state } = progressHarness();
+    options.sampleResources = () => ({
+      availableMemoryBytes: 3 * 1024 ** 3,
+      memoryAvailabilityKind: "free",
+      processRssBytes: 0.5 * 1024 ** 3,
+      totalMemoryBytes: 16 * 1024 ** 3,
+      workspaceFreeBytes: 6 * 1024 ** 3,
+      loadAverage1m: 2.5,
+    });
+    const progress = startTestProgress(
+      "rebuild-hermes memory fallback",
+      ["run authoritative Hermes rebuild", "remove rebuilt Hermes resources"],
+      options,
+    );
+
+    state.clockMs = 301_000;
+    state.timerCallback?.();
+    progress.stop();
+
+    expect(state.lines.find((line) => line.includes("still running"))).toContain(
+      "memory free 3.0 GiB/16.0 GiB",
+    );
+  });
+
   it("keeps diagnostics best-effort when host sampling and output fail", () => {
     const { options, state } = progressHarness();
     options.logLine = vi.fn(() => {
