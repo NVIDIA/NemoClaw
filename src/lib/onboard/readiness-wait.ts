@@ -25,6 +25,7 @@ export function getLegacyPollDeadlineBudgetMs(
 
 export function createReadinessWaitOptions(options: {
   budgetMs: number;
+  initialIntervalMs?: number;
   maxIntervalMs?: number;
   zeroBudgetAttempts?: number;
   now?: () => number;
@@ -34,6 +35,10 @@ export function createReadinessWaitOptions(options: {
   const maxIntervalMs = nonNegativeFinite(
     options.maxIntervalMs ?? DEFAULT_MAX_INTERVAL_MS,
     DEFAULT_MAX_INTERVAL_MS,
+  );
+  const initialIntervalMs = Math.min(
+    nonNegativeFinite(options.initialIntervalMs ?? DEFAULT_INITIAL_INTERVAL_MS),
+    maxIntervalMs,
   );
   const zeroBudgetAttempts = Math.floor(nonNegativeFinite(options.zeroBudgetAttempts ?? 0));
   const sourceNow = options.now ?? Date.now;
@@ -54,7 +59,7 @@ export function createReadinessWaitOptions(options: {
       }
     : undefined;
   const common = {
-    initialIntervalMs: Math.min(DEFAULT_INITIAL_INTERVAL_MS, maxIntervalMs),
+    initialIntervalMs,
     maxIntervalMs,
     backoffFactor: DEFAULT_BACKOFF_FACTOR,
     now,

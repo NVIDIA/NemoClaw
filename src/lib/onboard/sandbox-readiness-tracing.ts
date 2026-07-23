@@ -200,7 +200,8 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
    * The Docker GPU compatibility recreate passes 2 because the OpenShell
    * gateway can briefly retain the pre-recreate Ready row before publishing
    * the new supervisor's Error -> Ready registration transition. Requiring a
-   * confirmation poll keeps that stale row from reaching the GPU proof.
+   * confirmation poll at the original two-second interval keeps that stale row
+   * from reaching the GPU proof.
    */
   stableReadyPolls?: number;
   /**
@@ -248,6 +249,7 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
     const budgetMs = Math.max(0, timeoutSecs * 1000);
     const waitOptions = createReadinessWaitOptions({
       budgetMs,
+      initialIntervalMs: stableReadyPolls > 1 ? 2_000 : undefined,
       maxIntervalMs: 2_000,
       now: options.now,
       sleep: (ms) => sleep(ms / 1000),

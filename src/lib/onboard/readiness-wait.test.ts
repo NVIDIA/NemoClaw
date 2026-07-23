@@ -30,6 +30,16 @@ describe("readiness deadline options", () => {
     expect(sleep.mock.calls.reduce((total, [ms]) => total + ms, 0)).toBe(2_000);
   });
 
+  it("honors a slower initial interval for readiness paths with a stability contract", () => {
+    const options = createReadinessWaitOptions({
+      budgetMs: 10_000,
+      initialIntervalMs: 2_000,
+      maxIntervalMs: 2_000,
+    });
+
+    expect(options?.initialIntervalMs).toBe(2_000);
+  });
+
   it("preserves bounded immediate probes for a zero-interval legacy configuration", () => {
     const probe = vi.fn(() => false);
     const options = createReadinessWaitOptions({
