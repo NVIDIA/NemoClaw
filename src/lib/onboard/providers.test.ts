@@ -32,6 +32,7 @@ const {
       providerName: string;
       providerType: string;
       credentialEnv: string;
+      endpointUrl: string;
     }
   >;
   buildProviderArgs: (
@@ -145,6 +146,7 @@ describe("onboard provider helpers", () => {
       providerType: "openai",
       credentialEnv: "ATLASCLOUD_API_KEY",
     });
+    expect(provider.endpointUrl).toBe("https://api.atlascloud.ai/v1");
     expect(NON_INTERACTIVE_PROVIDER_KEYS.has("atlasCloud")).toBe(true);
     expect(NON_INTERACTIVE_PROVIDER_ALIASES.atlas).toBe("atlasCloud");
     expect(NON_INTERACTIVE_PROVIDER_ALIASES["atlas-cloud"]).toBe("atlasCloud");
@@ -155,7 +157,7 @@ describe("onboard provider helpers", () => {
         provider.providerName,
         provider.providerType,
         provider.credentialEnv,
-        "https://api.atlascloud.ai/v1",
+        provider.endpointUrl,
       ),
     ).toContain("OPENAI_BASE_URL=https://api.atlascloud.ai/v1");
   });

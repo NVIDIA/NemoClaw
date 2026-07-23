@@ -168,12 +168,14 @@ describe("inference health", () => {
 
     it("invokes Atlas Cloud chat-completions with ATLASCLOUD_API_KEY", () => {
       let capturedArgv: string[] = [];
+      let capturedProbeOptions: { trustedConfigFiles?: readonly string[] } | undefined;
       const result = probeRemoteProviderHealth("atlas-cloud", {
         model: "qwen/qwen3.5-flash",
         getCredentialImpl: (envName) =>
           envName === "ATLASCLOUD_API_KEY" ? "atlas-test-secret" : null,
-        runCurlProbeImpl: (argv) => {
+        runCurlProbeImpl: (argv, options) => {
           capturedArgv = argv;
+          capturedProbeOptions = options;
           return httpOk();
         },
       });
@@ -184,6 +186,8 @@ describe("inference health", () => {
       expect(result?.endpoint).toBe("https://api.atlascloud.ai/v1/chat/completions");
       expect(capturedArgv.at(-1)).toBe("https://api.atlascloud.ai/v1/chat/completions");
       expect(capturedArgv.join(" ")).not.toContain("atlas-test-secret");
+      expect(capturedProbeOptions?.trustedConfigFiles).toEqual(expect.any(Array));
+      expect(capturedProbeOptions?.trustedConfigFiles?.length).toBeGreaterThan(0);
       const payload = JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1]);
       expect(payload.model).toBe("qwen/qwen3.5-flash");
     });
