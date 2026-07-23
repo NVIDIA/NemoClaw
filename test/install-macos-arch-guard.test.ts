@@ -15,12 +15,13 @@ import { describe, expect, it } from "vitest";
 const INSTALLER = path.join(import.meta.dirname, "..", "install.sh");
 
 // Drive the real bootstrap: source install.sh, stub `uname` to report the target
-// platform, and replace the download entrypoint with a sentinel so we can prove
-// whether the clone path was reached.
+// platform, and replace ref and download entrypoints with sentinels.
 function runBootstrap(unameS: string, unameM: string) {
   const script = [
     'source "$INSTALLER_UNDER_TEST"',
     'uname() { case "$1" in -s) printf %s "$UNAME_S" ;; -m) printf %s "$UNAME_M" ;; *) command uname "$@" ;; esac; }',
+    'resolve_release_tag() { printf "REACHED_RESOLVE\\n" >&2; printf "test-ref"; }',
+    'clone_nemoclaw_ref() { printf "REACHED_CLONE\\n"; }',
     'exec_installer_from_ref() { printf "REACHED_INSTALLER\\n"; }',
     "bootstrap_main",
   ].join("\n");
@@ -32,15 +33,14 @@ function runBootstrap(unameS: string, unameM: string) {
 }
 
 describe("installer macOS architecture guard (#7297)", () => {
-  it("fast-fails on Intel Mac (x86_64 Darwin) before any clone", () => {
+  it("rejects Intel macOS before ref resolution or clone", () => {
     const { result, output } = runBootstrap("Darwin", "x86_64");
 
     expect(result.status).not.toBe(0);
     expect(output).toContain(
       "Apple Silicon (aarch64) is required on macOS. Intel Mac (x86_64) is not supported.",
     );
-    // The download entrypoint must never be reached on the rejected platform.
-    expect(output).not.toContain("REACHED_INSTALLER");
+    expect(output).not.toMatch(/REACHED_(RESOLVE|CLONE|INSTALLER)/);
   });
 
   it.each([
