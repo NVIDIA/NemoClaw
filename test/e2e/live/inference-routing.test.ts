@@ -69,6 +69,7 @@ test("TC-INF-06 invalid API key fails with credential classification and cleanup
     { NVIDIA_INFERENCE_API_KEY: invalidKey },
     [invalidKey],
     "tc-inf-06-onboard-invalid-api-key",
+    progress,
     120_000,
   );
   const raw = resultText(result);
@@ -126,6 +127,7 @@ test("TC-INF-07 unreachable endpoint fails with transport classification and cle
     },
     [nvidiaKey, compatibleKey],
     "tc-inf-07-onboard-unreachable-endpoint",
+    progress,
     120_000,
   );
   const raw = resultText(result);
@@ -217,6 +219,7 @@ await main(["apply"]);
         PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
         E2E_API_KEY: "e2e-fake-key",
       },
+      progress,
       redactionValues: ["e2e-fake-key"],
       timeoutMs: 60_000,
     },
@@ -259,6 +262,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
     host: "0.0.0.0",
     model,
     port: 8000,
+    progress,
     publicHost: "localhost",
     requireAuth: true,
     requireAuthModels: true,
@@ -296,6 +300,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
     },
     [apiKey],
     "tc-inf-09-onboard-compatible-endpoint",
+    progress,
     15 * 60_000,
   );
   expectOnboardSuccess(onboard, "TC-INF-09 compatible-endpoint onboard");
@@ -350,6 +355,7 @@ test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through infere
       artifactName: "tc-inf-09-dcode-compatible-endpoint",
       artifacts,
       env: buildAvailabilityProbeEnv(),
+      progress,
       redactionValues: [apiKey],
       timeoutMs: 3 * 60_000,
     },
