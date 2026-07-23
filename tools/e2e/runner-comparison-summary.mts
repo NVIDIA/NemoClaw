@@ -245,7 +245,7 @@ function maximumBusyWindow(samples: readonly RunnerComparisonSample[]) {
     const idleDelta = current.cpu.idleTicks - previous.cpu.idleTicks;
     if (totalDelta <= 0 || idleDelta < 0 || idleDelta > totalDelta) continue;
     const percent = rounded(((totalDelta - idleDelta) / totalDelta) * 100, 2);
-    const phase = phaseFor(current, index, samples);
+    const phase = current.kind === "scenario-start" ? null : phaseFor(current, index, samples);
     if (selected.percent === null || percent > selected.percent) {
       selected = { percent, phase };
     }

@@ -17,7 +17,7 @@ export const RUNNER_COMPARISON_SAMPLE_LINE_PREFIX = "E2E_RUNNER_COMPARISON_SAMPL
 const SAMPLE_LINE_MAX_BYTES = 4096;
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const CANONICAL_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
-const SAMPLE_KINDS = ["initialize", "phase", "periodic", "finalize"] as const;
+const SAMPLE_KINDS = ["initialize", "scenario-start", "phase", "periodic", "finalize"] as const;
 
 export type RunnerComparisonSampleKind = (typeof SAMPLE_KINDS)[number];
 export type RunnerComparisonProcessClass = ProcessClass;
@@ -444,7 +444,7 @@ function parseSampleObject(parsed: UnknownRecord, line: string): ParsedRunnerCom
   if ((kind === "initialize" || kind === "finalize") && phase !== null) {
     throw new Error(`sample.phase must be null for ${kind} samples`);
   }
-  if ((kind === "phase" || kind === "periodic") && phase === null) {
+  if ((kind === "scenario-start" || kind === "phase" || kind === "periodic") && phase === null) {
     throw new Error(`sample.phase is required for ${kind} samples`);
   }
   const sample: RunnerComparisonSample = {

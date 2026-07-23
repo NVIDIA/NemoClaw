@@ -98,7 +98,14 @@ function runOrNull(
       encoding: "utf-8",
       killSignal: "SIGKILL",
       maxBuffer: RESOURCE_COMMAND_MAX_BUFFER_BYTES,
-      timeout,
+      timeout:
+        timeout === 1_000
+          ? 1_000
+          : timeout === 2_000
+            ? 2_000
+            : timeout === 3_000
+              ? 3_000
+              : DEFAULT_RESOURCE_COMMAND_TIMEOUT_MS,
     });
     return result.status === 0 ? (result.stdout ?? null) : null;
   } catch {

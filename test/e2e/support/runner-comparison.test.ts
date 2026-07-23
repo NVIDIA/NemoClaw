@@ -350,25 +350,32 @@ describe("runner comparison schema", () => {
 });
 
 describe("runner comparison v2 schema", () => {
-  it("accepts a bounded initialize/periodic/phase/finalize ledger (#7146)", () => {
+  it("accepts a bounded initialize/start/periodic/phase/finalize ledger (#7146)", () => {
     const samples = [
       currentSample(),
       currentSample({
         sequence: 1,
+        kind: "scenario-start",
+        phase: "build",
+        at: "2026-07-22T10:00:30.000Z",
+        cpu: null,
+      }),
+      currentSample({
+        sequence: 2,
         kind: "periodic",
         phase: "build",
         at: "2026-07-22T10:01:00.000Z",
         cpu: null,
       }),
       currentSample({
-        sequence: 2,
+        sequence: 3,
         kind: "phase",
         phase: "build",
         at: "2026-07-22T10:02:00.000Z",
         cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
       }),
       currentSample({
-        sequence: 3,
+        sequence: 4,
         kind: "finalize",
         at: "2026-07-22T10:03:00.000Z",
         cpu: { logicalCpuCount: 4, idleTicks: 120, totalTicks: 300 },
@@ -512,10 +519,17 @@ describe("runner comparison summary", () => {
       currentSample(),
       currentSample({
         sequence: 1,
+        kind: "scenario-start",
+        phase: "build",
+        at: "2026-07-22T10:00:10.000Z",
+        cpu: { logicalCpuCount: 4, idleTicks: 45, totalTicks: 120 },
+      }),
+      currentSample({
+        sequence: 2,
         kind: "phase",
         phase: "build",
         at: "2026-07-22T10:01:00.000Z",
-        cpu: { logicalCpuCount: 4, idleTicks: 50, totalTicks: 200 },
+        cpu: { logicalCpuCount: 4, idleTicks: 55, totalTicks: 220 },
         memory: {
           availableKb: 100,
           cachedKb: 300,
@@ -536,11 +550,11 @@ describe("runner comparison summary", () => {
         largestProcess: { class: "docker-buildkit", rssKb: 999 },
       }),
       currentSample({
-        sequence: 2,
+        sequence: 3,
         kind: "phase",
         phase: "test",
         at: "2026-07-22T10:02:00.000Z",
-        cpu: { logicalCpuCount: 4, idleTicks: 140, totalTicks: 300 },
+        cpu: { logicalCpuCount: 4, idleTicks: 145, totalTicks: 320 },
         memory: {
           availableKb: 400,
           cachedKb: 200,
@@ -561,10 +575,10 @@ describe("runner comparison summary", () => {
         largestProcess: { class: "openshell", rssKb: 500 },
       }),
       currentSample({
-        sequence: 3,
+        sequence: 4,
         kind: "finalize",
         at: "2026-07-22T10:03:00.000Z",
-        cpu: { logicalCpuCount: 4, idleTicks: 230, totalTicks: 400 },
+        cpu: { logicalCpuCount: 4, idleTicks: 235, totalTicks: 420 },
         memory: {
           availableKb: 500,
           cachedKb: 150,
@@ -595,11 +609,95 @@ describe("runner comparison summary", () => {
     });
   });
 
+  it("keeps the initialize-to-startup CPU window unattributed (#7146)", () => {
+    const summary = summarizeRunnerComparison([
+      currentSample(),
+      currentSample({
+        sequence: 1,
+        kind: "scenario-start",
+        phase: "build",
+        at: "2026-07-22T10:01:00.000Z",
+        cpu: { logicalCpuCount: 4, idleTicks: 45, totalTicks: 200 },
+      }),
+      currentSample({
+        sequence: 2,
+        kind: "phase",
+        phase: "build",
+        at: "2026-07-22T10:02:00.000Z",
+        cpu: { logicalCpuCount: 4, idleTicks: 135, totalTicks: 300 },
+      }),
+      currentSample({
+        sequence: 3,
+        kind: "finalize",
+        at: "2026-07-22T10:03:00.000Z",
+        cpu: { logicalCpuCount: 4, idleTicks: 225, totalTicks: 400 },
+      }),
+    ]);
+    expect(summary.v).toBe(2);
+    if (summary.v !== 2) throw new Error("expected v2 summary");
+    expect(summary.cpu.maximumBusy).toEqual({ percent: 95, phase: null });
+  });
+
+  it("keeps CPU windows before every scenario start unattributed across one job ledger (#7146)", () => {
+    const twoScenarioLedger = (secondStartIdleTicks: number) => [
+      currentSample(),
+      currentSample({
+        sequence: 1,
+        kind: "scenario-start" as const,
+        phase: "build-one",
+        at: "2026-07-22T10:01:00.000Z",
+        cpu: { logicalCpuCount: 4, idleTicks: 45, totalTicks: 200 },
+      }),
+      currentSample({
+        sequence: 2,
+        kind: "phase" as const,
+        phase: "teardown-one",
+        at: "2026-07-22T10:02:00.000Z",
+        cpu: { logicalCpuCount: 4, idleTicks: 135, totalTicks: 300 },
+      }),
+      currentSample({
+        sequence: 3,
+        kind: "scenario-start" as const,
+        phase: "build-two",
+        at: "2026-07-22T10:03:00.000Z",
+        cpu: { logicalCpuCount: 4, idleTicks: secondStartIdleTicks, totalTicks: 500 },
+        memory: { availableKb: 100 },
+      }),
+      currentSample({
+        sequence: 4,
+        kind: "phase" as const,
+        phase: "build-two",
+        at: "2026-07-22T10:04:00.000Z",
+        cpu: { logicalCpuCount: 4, idleTicks: secondStartIdleTicks + 90, totalTicks: 600 },
+      }),
+      currentSample({
+        sequence: 5,
+        kind: "finalize" as const,
+        at: "2026-07-22T10:05:00.000Z",
+        cpu: { logicalCpuCount: 4, idleTicks: secondStartIdleTicks + 180, totalTicks: 700 },
+      }),
+    ];
+
+    const firstStartWins = summarizeRunnerComparison(twoScenarioLedger(335));
+    const secondStartWins = summarizeRunnerComparison(twoScenarioLedger(141));
+    expect(firstStartWins.v).toBe(2);
+    expect(secondStartWins.v).toBe(2);
+    if (firstStartWins.v !== 2 || secondStartWins.v !== 2) {
+      throw new Error("expected v2 summaries");
+    }
+    expect(firstStartWins.cpu.maximumBusy).toEqual({ percent: 95, phase: null });
+    expect(secondStartWins.cpu.maximumBusy).toEqual({ percent: 97, phase: null });
+    expect(secondStartWins.memory.minimumAvailable).toEqual({
+      kb: 100,
+      phase: "build-two",
+    });
+  });
+
   it("leaves initialize extrema unattributed and requires complete validated ledgers (#7146)", () => {
     const initialize = currentSample({ load: { oneMinute: 99 } });
     const phase = currentSample({
       sequence: 1,
-      kind: "phase",
+      kind: "scenario-start",
       phase: "build",
       at: "2026-07-22T10:01:00.000Z",
       cpu: { logicalCpuCount: 4, idleTicks: 80, totalTicks: 200 },
@@ -626,7 +724,7 @@ describe("runner comparison summary", () => {
     });
     const phase = currentSample({
       sequence: 1,
-      kind: "phase",
+      kind: "scenario-start",
       phase: "build",
       at: "2026-07-22T10:01:00.000Z",
       memory: { rootCgroupOom: 4, rootCgroupOomKill: 2 },

@@ -98,7 +98,7 @@ export function initializeRunnerComparison(
  */
 export function appendRunnerComparisonSample(
   phase: string,
-  kind: Extract<RunnerComparisonSampleKind, "periodic" | "phase">,
+  kind: Extract<RunnerComparisonSampleKind, "periodic" | "scenario-start" | "phase">,
   collect: SnapshotCollector = collectResourceSnapshot,
 ): boolean {
   const paths = comparisonPaths();
@@ -170,11 +170,15 @@ function main(): number {
     finalizeRunnerComparison();
     return 0;
   }
-  if (mode === "sample" && (kind === "periodic" || kind === "phase") && phase) {
+  if (
+    mode === "sample" &&
+    (kind === "periodic" || kind === "scenario-start" || kind === "phase") &&
+    phase
+  ) {
     return appendRunnerComparisonSample(phase, kind) ? 0 : 1;
   }
   console.error(
-    "usage: runner-comparison.mts <initialize|finalize|sample <periodic|phase> <phase>>",
+    "usage: runner-comparison.mts <initialize|finalize|sample <periodic|scenario-start|phase> <phase>>",
   );
   return 2;
 }

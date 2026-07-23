@@ -28,14 +28,19 @@ describe("observed E2E child process", () => {
     const secret = "OBSERVED_CHILD_SECRET";
     const lines: string[] = [];
     const timers: Array<() => void> = [];
+    let clockMs = 0;
     const progress = startTestProgress(
       "observed child support",
       ["run observed child", "verify observation"],
       {
         clearTimer: () => undefined,
         logLine: (line) => lines.push(line),
-        setTimer: (callback) => {
-          timers.push(callback);
+        now: () => clockMs,
+        setTimer: (callback, delayMs) => {
+          timers.push(() => {
+            clockMs += delayMs;
+            callback();
+          });
           return {};
         },
       },
@@ -73,14 +78,19 @@ describe("observed E2E child process", () => {
   test("finishes the activity when spawn throws synchronously", () => {
     const lines: string[] = [];
     const timers: Array<() => void> = [];
+    let clockMs = 0;
     const progress = startTestProgress(
       "observed child support",
       ["run observed child", "verify observation"],
       {
         clearTimer: () => undefined,
         logLine: (line) => lines.push(line),
-        setTimer: (callback) => {
-          timers.push(callback);
+        now: () => clockMs,
+        setTimer: (callback, delayMs) => {
+          timers.push(() => {
+            clockMs += delayMs;
+            callback();
+          });
           return {};
         },
       },

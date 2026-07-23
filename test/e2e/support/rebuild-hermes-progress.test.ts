@@ -25,7 +25,7 @@ function progressHarness() {
     },
     logLine: (line) => state.lines.push(line),
     sampleResources: () => ({
-      freeMemoryBytes: 8 * 1024 ** 3,
+      availableMemoryBytes: 8 * 1024 ** 3,
       processRssBytes: 0.5 * 1024 ** 3,
       totalMemoryBytes: 16 * 1024 ** 3,
       workspaceFreeBytes: 6 * 1024 ** 3,
@@ -63,7 +63,7 @@ describe("Hermes rebuild live progress", () => {
     expect(state.lines).toHaveLength(linesAfterStop);
     expect(state.lines).toEqual([
       '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1/2] started: run authoritative Hermes rebuild (total 0s; phase 0s)',
-      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1/2] still running: run authoritative Hermes rebuild (total 5m; phase 5m; child output 4m ago; no active command; rss 0.5 GiB; memory free 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)',
+      '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1/2] still running: run authoritative Hermes rebuild (total 5m; phase 5m; child output 4m ago; no active command; rss 0.5 GiB; memory available 8.0 GiB/16.0 GiB; disk free 6.0 GiB; load 2.50)',
       'E2E_RESOURCE_SNAPSHOT {"phase":"run authoritative Hermes rebuild"}',
       '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 1/2] completed: run authoritative Hermes rebuild — passed in 5m (total 5m)',
       '[e2e target="unassigned" scenario="rebuild-hermes"] [phase 2/2] started: remove rebuilt Hermes resources (total 5m; phase 0s)',

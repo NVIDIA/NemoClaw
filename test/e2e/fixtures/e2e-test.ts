@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 import { test as base, expect } from "vitest";
-
+import { appendRunnerComparisonSample } from "../../../tools/e2e/runner-comparison.mts";
 import {
   appendResourcePhaseBaseline,
   collectResourceSnapshot,
@@ -112,6 +112,12 @@ export const test = base.extend<E2ETargetFixtures>({
   progress: [
     async ({ artifacts, onTestFinished, secrets, task }, use) => {
       const targetId = process.env.E2E_TARGET_ID || process.env.GITHUB_JOB;
+      const comparisonTargetId =
+        process.env.NEMOCLAW_RUN_LIVE_E2E === "1" &&
+        process.env.E2E_ARTIFACT_DIR &&
+        process.env.E2E_TARGET_ID
+          ? process.env.E2E_TARGET_ID
+          : null;
       const shardId = process.env.NEMOCLAW_E2E_SHARD;
       const baselinePath = process.env.E2E_RESOURCE_PHASE_BASELINES_FILE;
       const phasePlan = task.meta.e2ePhases;
@@ -142,6 +148,15 @@ export const test = base.extend<E2ETargetFixtures>({
                 renderSnapshotLine(collectResourceSnapshot(resourcePhaseLabel(targetId, phase))),
               recordResourceBaseline: (phase: string) =>
                 appendResourcePhaseBaseline(baselinePath, resourcePhaseLabel(targetId, phase)),
+            }
+          : {}),
+        ...(comparisonTargetId
+          ? {
+              recordResourceSample: (
+                phase: string,
+                kind: "periodic" | "scenario-start" | "phase",
+              ) =>
+                appendRunnerComparisonSample(resourcePhaseLabel(comparisonTargetId, phase), kind),
             }
           : {}),
       });
