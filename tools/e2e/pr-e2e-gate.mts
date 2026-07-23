@@ -943,6 +943,7 @@ function appendOutput(name: string, value: string): void {
     fork_skip_mode: (candidate) => candidate === "record-fork-e2e-skip",
     fork_skip_pr_number: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     finalized: (candidate) => /^(?:true|false)$/u.test(candidate),
+    runner_loss_retry_authorized: (candidate) => candidate === "true",
     run_id: (candidate) => /^[1-9][0-9]*$/u.test(candidate),
     state_hash: (candidate) => HASH_PATTERN.test(candidate),
   };
@@ -1091,18 +1092,27 @@ function priorRunnerLossRunUrls(
   });
 }
 
+function runnerLossLineageSummary(
+  priorRunUrls: readonly string[],
+  currentRunUrl: string,
+): string | undefined {
+  if (priorRunUrls.length === 0) return undefined;
+  const links = [...priorRunUrls, currentRunUrl].map(
+    (url, index) => `[attempt ${index + 1}](${url})`,
+  );
+  return `Runner-loss retry lineage: ${links.join(" → ")}.`;
+}
+
 function withRunnerLossLineage(
   verdict: PrGateVerdict,
   priorRunUrls: readonly string[],
   currentRunUrl: string,
 ): PrGateVerdict {
-  if (priorRunUrls.length === 0) return verdict;
-  const links = [...priorRunUrls, currentRunUrl].map(
-    (url, index) => `[attempt ${index + 1}](${url})`,
-  );
+  const lineage = runnerLossLineageSummary(priorRunUrls, currentRunUrl);
+  if (!lineage) return verdict;
   return {
     ...verdict,
-    summary: `${verdict.summary}\nRunner-loss retry lineage: ${links.join(" → ")}.`,
+    summary: `${verdict.summary}\n${lineage}`,
   };
 }
 
@@ -3358,14 +3368,7 @@ export async function finishPrGate(options: {
   let finalized = false;
   let controllerFailureRetryReason: RetryableFailureReason | undefined;
   try {
-    if (!HASH_PATTERN.test(options.stateHash)) throw new Error("controller state hash is invalid");
-    const serializedState = readPrivateRegularFile(options.statePath, {
-      maxBytes: MAX_PLAN_BYTES,
-    })!;
-    if (sha256(serializedState) !== options.stateHash) {
-      throw new Error("controller state changed after E2E dispatch");
-    }
-    const state = validatePrGateState(JSON.parse(serializedState));
+    const state = readBoundPrGateState(options.statePath, options.stateHash);
     const child = await githubApi<WorkflowRun>(
       `repos/${repository}/actions/runs/${options.childRunId}`,
       token,
@@ -3431,7 +3434,8 @@ export async function finishPrGate(options: {
     let verdict: PrGateVerdict;
     if (workflowConclusion === "success") {
       if (options.evidenceOutcome !== "success") {
-        controllerFailureRetryReason = "evidence-download";
+        controllerFailureRetryReason =
+          priorRunnerLossUrls.length === 0 ? "evidence-download" : undefined;
         const error = new Error(
           `Evidence download did not complete (outcome: ${options.evidenceOutcome}) after selected E2E run ${options.childRunId} succeeded. The controller could not verify its artifacts; inspect the Download evidence step and rerun the gate.`,
         );
@@ -3442,6 +3446,7 @@ export async function finishPrGate(options: {
           {
             error,
             detailsUrl: childRunUrl,
+            recovery: runnerLossLineageSummary(priorRunnerLossUrls, childRunUrl),
             retryableFailureReason: controllerFailureRetryReason,
           },
         );
@@ -3473,7 +3478,7 @@ export async function finishPrGate(options: {
       let jobDetailsAvailable = true;
       let jobDetailsComplete = false;
       try {
-        const details = await listNonPassingWorkflowJobs(repository, token, options.childRunId);
+        const details = await listNonPassingWorkflowJobs(repository, token, options.childRunId, 1);
         jobs = details.jobs;
         jobDetailsComplete = details.complete;
       } catch (error) {
@@ -3498,9 +3503,12 @@ export async function finishPrGate(options: {
     }
     verdict = withRunnerLossLineage(verdict, priorRunnerLossUrls, childRunUrl);
     if (await finalizeObsoleteExactDiff()) return;
+    if (priorRunnerLossUrls.length === 0 && verdict.retryableFailureReason === "child-cancelled") {
+      appendOutput("runner_loss_retry_authorized", "true");
+    }
     await completeCheck(context, token, verdict, childRunUrl);
-    appendOutput("finalized", "true");
     finalized = true;
+    appendOutput("finalized", "true");
     console.log(
       `Run completed: run=${options.childRunId} conclusion=${verdict.conclusion} title=${verdict.title} url=${childRunUrl}`,
     );

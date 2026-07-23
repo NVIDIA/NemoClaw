@@ -956,7 +956,8 @@ describe("PR E2E controller lifecycle", () => {
             () => githubResponse(undefined, 202),
           ),
           githubFetchRoute(
-            ({ url, method }) => url.includes("/actions/runs/23/jobs?") && method === "GET",
+            ({ url, method }) =>
+              url.includes("/actions/runs/23/attempts/1/jobs?") && method === "GET",
             () =>
               jobs === null
                 ? githubResponse({ message: "temporary failure" }, 503)

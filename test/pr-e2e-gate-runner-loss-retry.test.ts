@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  finishPrGate,
   type PrGateState,
   prGateExternalId,
   retryRunnerLossPrGate,
@@ -514,6 +515,160 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
           (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
         ),
       ).toHaveLength(0);
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { label: "loses another hosted runner", conclusion: "failure", evidenceOutcome: "skipped" },
+    { label: "cannot download evidence", conclusion: "success", evidenceOutcome: "failure" },
+  ] as const)("terminalizes attempt 2 when it $label", async ({ conclusion, evidenceOutcome }) => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    const retryCorrelationId = "87654321-4321-4123-8123-cba987654321";
+    const retryState = { ...state(), correlationId: retryCorrelationId };
+    const retryStateContents = `${JSON.stringify(retryState, null, 2)}\n`;
+    fs.writeFileSync(context.retryStatePath, retryStateContents, { mode: 0o600 });
+    const currentCheck = checkRun(18, {
+      status: "in_progress",
+      conclusion: null,
+      details_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/24",
+      output: { title: "Running 2 E2E checks", summary: "Attempt 2 is running." },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/24") && method === "GET",
+            () =>
+              githubResponse(
+                workflowRun({
+                  id: 24,
+                  conclusion,
+                  display_title: `E2E PR #42 (${retryCorrelationId})`,
+                  html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/24",
+                }),
+              ),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 2, check_runs: [checkRun(17), currentCheck] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes("/actions/runs/24/attempts/1/jobs?") && method === "GET",
+            () => githubResponse({ total_count: 1, jobs: [hostedRunnerLossJob()] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/18") && method === "PATCH",
+            (request) => mutationResponse(request),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      const finalization = finishPrGate({
+        statePath: context.retryStatePath,
+        stateHash: sha256(retryStateContents),
+        evidencePath: context.workDir,
+        checkRunId: 18,
+        childRunId: 24,
+        evidenceOutcome,
+      });
+      if (conclusion === "success") {
+        await expect(finalization).rejects.toThrow(/Evidence download did not complete/u);
+      } else {
+        await expect(finalization).resolves.toBeUndefined();
+      }
+      const completion = requests.find(
+        (request) =>
+          request.url.endsWith("/check-runs/18") &&
+          request.method === "PATCH" &&
+          (request.body as { status?: string }).status === "completed",
+      );
+      const summary = (completion?.body as { output?: { summary?: string } }).output?.summary;
+      expect(completion?.body).toMatchObject({ status: "completed", conclusion: "failure" });
+      expect(summary).toContain(`[attempt 1](${ORIGINAL_RUN_URL})`);
+      expect(summary).toContain("[attempt 2](https://github.com/NVIDIA/NemoClaw/actions/runs/24)");
+      expect(summary).not.toContain("nemoclaw-pr-e2e-retry:v1:");
+      expect(fs.readFileSync(context.outputPath, "utf8")).not.toContain(
+        "runner_loss_retry_authorized=true",
+      );
+    } finally {
+      fs.rmSync(context.workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when retry authorization cannot be written to controller output", async () => {
+    const context = setup();
+    const requests: RecordedGitHubRequest[] = [];
+    fs.rmSync(context.outputPath);
+    fs.mkdirSync(context.outputPath);
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/actions/runs/23") && method === "GET",
+            () => githubResponse(workflowRun()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () =>
+              githubResponse({
+                total_count: 1,
+                check_runs: [checkRun(17, { status: "in_progress", conclusion: null })],
+              }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes("/actions/runs/23/attempts/1/jobs?") && method === "GET",
+            () => githubResponse({ total_count: 1, jobs: [hostedRunnerLossJob()] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => mutationResponse(request, 17),
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(
+        finishPrGate({
+          statePath: context.statePath,
+          stateHash: sha256(context.serializedState),
+          evidencePath: context.workDir,
+          checkRunId: 17,
+          childRunId: 23,
+          evidenceOutcome: "skipped",
+        }),
+      ).rejects.toThrow();
+      const completions = requests.filter(
+        (request) =>
+          request.url.endsWith("/check-runs/17") &&
+          request.method === "PATCH" &&
+          (request.body as { status?: string }).status === "completed",
+      );
+      expect(completions).toHaveLength(1);
+      expect(completions[0]?.body).toMatchObject({
+        conclusion: "failure",
+        output: { title: "Evidence could not be verified" },
+      });
+      expect(JSON.stringify(completions[0]?.body)).not.toContain("nemoclaw-pr-e2e-retry:v1:");
     } finally {
       fs.rmSync(context.workDir, { recursive: true, force: true });
     }
