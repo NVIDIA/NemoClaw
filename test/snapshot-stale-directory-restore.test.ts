@@ -183,6 +183,15 @@ process.exit(0);
       expect.arrayContaining([expect.stringContaining("d='/sandbox/.openclaw/workspace'")]),
     );
     expect(fs.existsSync(workspaceMarker)).toBe(true);
+
+    Reflect.deleteProperty(manifest, "failedBackupDirs");
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(sshLog, "");
+    const legacyRestore = sandboxState.restoreSandboxState("alpha", backup.manifest!.backupPath);
+
+    expect(legacyRestore.success).toBe(true);
+    expect(fs.readFileSync(sshLog, "utf-8")).not.toContain("d='/sandbox/.openclaw/workspace'");
+    expect(fs.existsSync(workspaceMarker)).toBe(true);
   } finally {
     restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
     restoreEnv("PATH", oldPath);
