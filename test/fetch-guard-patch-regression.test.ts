@@ -16,6 +16,13 @@ import {
 const DOCKERFILE = path.join(import.meta.dirname, "..", "Dockerfile");
 const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "Dockerfile.base");
 const BLUEPRINT = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "blueprint.yaml");
+const REVIEWED_NPM_AUDIT_HELPER = path.join(
+  import.meta.dirname,
+  "..",
+  "scripts",
+  "lib",
+  "reviewed-npm-audit.mts",
+);
 const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
   "2026.4.24",
   "2026.5.18",
@@ -170,6 +177,10 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     .replaceAll("/usr/local/lib/node_modules/mcporter", mcporterInstall)
     .replaceAll("/usr/local/lib/nemoclaw/mcporter-runtime", mcporterInstall)
     .replaceAll("/usr/local/bin/mcporter", mcporterShim)
+    .replaceAll(
+      'from "/scripts/lib/reviewed-npm-audit.mts"',
+      `from ${JSON.stringify(REVIEWED_NPM_AUDIT_HELPER)}`,
+    )
     .replaceAll("/scripts/npm-audit-exceptions.json", auditExceptions);
   const script = [
     "#!/usr/bin/env bash",
