@@ -186,7 +186,6 @@ describe("DGX Station stock DGX OS classification", () => {
     "7.2.0",
     "7.4.0",
     "7.5.0",
-    "7.6.0",
   ])("accepts the reviewed stock DGX OS %s marker as data", (version) => {
     const release = writeDgxReleaseFixture(version);
     const { result, output } = runSourced(
@@ -295,7 +294,8 @@ dgx_station_release_state "$DGX_RELEASE"
   });
 
   it.each([
-    ["unreviewed version", writeDgxReleaseFixture("7.7.0")],
+    ["out-of-scope OTA version", writeDgxReleaseFixture("7.6.0")],
+    ["future OTA version", writeDgxReleaseFixture("7.7.0")],
     [
       "unproven Station platform identity",
       writeDgxReleaseFixture("7.5.0", 'DGX_PLATFORM="Not Specified"'),
@@ -478,7 +478,8 @@ dgx_station_release_state "$DGX_RELEASE"
       "a non-workstation DGX Server identity",
       writeOtaUpgradedRelease({ pretty: "NVIDIA DGX Server" }),
     ],
-    ["an unreviewed latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.7.0" })],
+    ["an out-of-scope latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.6.0" })],
+    ["a future latest OTA version", writeOtaUpgradedRelease({ otaVersion: "7.7.0" })],
   ])("keeps a marker-less OTA host fail-closed with %s (#7103)", (_scenario, release) => {
     const { result } = runSourced(
       STATION_PREPARE,

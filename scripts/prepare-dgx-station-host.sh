@@ -216,11 +216,8 @@ dgx_station_release_value() {
   printf '%s' "$value"
 }
 
-dgx_station_stock_version_is_supported() {
+dgx_station_no_ota_stock_version_is_supported() {
   local version=${1:-}
-  case "$version" in
-    7.2.0 | 7.4.0 | 7.5.0) return 0 ;;
-  esac
   [[ "$version" =~ ^7\.6\.[0-9]+$ ]]
 }
 
@@ -248,8 +245,10 @@ dgx_station_release_profile() {
       [[ "$pretty" == "NVIDIA DGX GB300WS" ]] || return 1
     fi
     version="$(dgx_station_release_value "$path" DGX_OTA_VERSION)" || return 1
-    dgx_station_stock_version_is_supported "$version" || return 1
-    printf '%s' supported-dgx-os
+    case "$version" in
+      7.2.0 | 7.4.0 | 7.5.0) printf '%s' supported-dgx-os ;;
+      *) return 1 ;;
+    esac
     return 0
   fi
 
@@ -265,8 +264,8 @@ dgx_station_release_profile() {
   version="$(dgx_station_release_value "$path" DGX_SWBUILD_VERSION)" || return 1
   build_date="$(dgx_station_release_value "$path" DGX_SWBUILD_DATE)" || return 1
 
-  if [[ "$pretty" == "NVIDIA DGX GB300WS" && "$version" == 7.6.* ]] \
-    && dgx_station_stock_version_is_supported "$version"; then
+  if [[ "$pretty" == "NVIDIA DGX GB300WS" ]] \
+    && dgx_station_no_ota_stock_version_is_supported "$version"; then
     printf '%s' supported-dgx-os
     return 0
   fi

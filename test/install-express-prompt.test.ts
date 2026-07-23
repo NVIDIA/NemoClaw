@@ -1262,7 +1262,7 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it.each(["7.2.0", "7.4.0", "7.5.0", "7.6.0"])("recognizes stock DGX OS %s", (version) => {
+  it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s", (version) => {
     const result = detectExpressPlatformForStockDgxRelease(
       "DGX Station GB300",
       stockDgxRelease(version),
@@ -1331,7 +1331,8 @@ detect_express_platform
   });
 
   it.each([
-    ["unreviewed version", stockDgxRelease("7.7.0")],
+    ["out-of-scope OTA version", stockDgxRelease("7.6.0")],
+    ["future OTA version", stockDgxRelease("7.7.0")],
     ["unreviewed no-OTA version", noOtaDgxOs76Release("7.7.0")],
     ["wrong DGX platform", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB200")],
     ["missing DGX_OTA_PRETTY_NAME", stockDgxRelease("7.5.0", "DGX Server for GALAXY-GB300", null)],
