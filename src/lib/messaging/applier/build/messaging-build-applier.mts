@@ -19,7 +19,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { remediateReviewedOpenClawArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
+import { remediateReviewedOpenClawPluginArchive } from "../../../../../scripts/lib/openclaw-npm-remediation.mts";
 import { packReviewedNpmArchive } from "../../../../../scripts/lib/reviewed-npm-archive.mts";
 import { discordManifest } from "../../channels/discord/manifest.ts";
 import { slackManifest } from "../../channels/slack/manifest.ts";
@@ -1298,7 +1298,7 @@ function packVerifiedOpenClawPluginArchive(
     tarballUrl: install.tarballUrl,
   });
   const exactPackage = requireExactNpmPackageSpec(install.spec, install.npmPackageSpec);
-  const remediated = remediateReviewedOpenClawArchive({
+  const remediated = remediateReviewedOpenClawPluginArchive({
     archivePath: archive.archivePath,
     env: env as NodeJS.ProcessEnv,
     packageSpec: exactPackage.packageSpec,
