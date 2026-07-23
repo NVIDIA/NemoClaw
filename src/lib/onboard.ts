@@ -120,6 +120,7 @@ const {
   finalizeCreatedSandbox,
 }: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
+const compatibleEndpointGatewayRoute: typeof import("./onboard/inference-providers/compatible-endpoint-gateway-route") = require("./onboard/inference-providers/compatible-endpoint-gateway-route");
 const {
   isLinuxDockerDriverGatewayEnabled,
 }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
@@ -3428,7 +3429,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const selectedCredentialEnv = requireValue(state.credentialEnv, `Missing credential env for ${remoteConfig.label}`);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const compatibleApiKeyOptional = openrouterSelection.compatibleApiKeyOptional(selected.key, state.endpointUrl, getCredential(selectedCredentialEnv));
+    const compatibleApiKeyOptional = selected.key === "custom" && Boolean(state.endpointUrl && compatibleEndpointGatewayRoute.compatibleEndpointAllowsMissingApiKey(state.endpointUrl)) && !getCredential(selectedCredentialEnv);
     const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
       selectedKey: selected.key,
       endpointUrl: state.endpointUrl,
@@ -3463,13 +3464,9 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName, recoveredRegistryRoute },
         { resolveProviderCredential, readRecordedInferenceRoute: (name) => readRecordedInferenceRoute(name, args.recoverySessionId), readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell, args.gatewayName ?? GATEWAY_NAME), note },
       );
-    } else if (!compatibleApiKeyOptional) {
-      const credentialResult = await credentialPrompt.ensureNamedCredential(
-        selectedCredentialEnv,
-        `${remoteConfig.label} API key`,
-        remoteConfig.helpUrl,
-        openrouterSelection.credentialValidatorForProvider(selected.key),
-      );
+    } else {
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      const credentialResult = await credentialPrompt.ensureNamedCredential(selectedCredentialEnv, `${remoteConfig.label} API key`, remoteConfig.helpUrl, openrouterSelection.credentialValidatorForProvider(selected.key), compatibleApiKeyOptional);
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }

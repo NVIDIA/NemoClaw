@@ -3,8 +3,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import * as credentials from "../credentials/store";
 import {
   BACK_TO_SELECTION,
+  ensureNamedCredential,
   returningToProviderSelection,
   shouldReturnToProviderSelection,
 } from "./credential-navigation";
@@ -49,5 +51,33 @@ describe("credential prompt navigation helpers", () => {
     }
 
     expect(logs).toEqual(["  Returning to provider selection.", ""]);
+  });
+
+  it("keeps the prompt and accepts an empty optional credential (#7424)", async () => {
+    const envName = "NEMOCLAW_TEST_OPTIONAL_CREDENTIAL";
+    const prompt = vi
+      .spyOn(credentials, "readCredentialPrompt")
+      .mockResolvedValue({ kind: "credential", value: "" });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    delete process.env[envName];
+
+    try {
+      await expect(
+        ensureNamedCredential({
+          envName,
+          label: "Optional API key",
+          allowEmpty: true,
+          exitOnboardFromPrompt: () => {
+            throw new Error("unexpected exit");
+          },
+        }),
+      ).resolves.toBe("");
+      expect(prompt).toHaveBeenCalledWith("  Optional API key: ", expect.any(Function));
+      expect(error).not.toHaveBeenCalled();
+      expect(process.env[envName]).toBeUndefined();
+    } finally {
+      delete process.env[envName];
+      vi.restoreAllMocks();
+    }
   });
 });
