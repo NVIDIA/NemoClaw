@@ -19,6 +19,26 @@ function openPrivateFileForWrite(file: string): number {
   }
 }
 
+/** Create a private regular file without replacing any existing path. */
+export function createPrivateRegularFile(file: string, contents: string): void {
+  const descriptor = fs.openSync(
+    file,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NO_FOLLOW | NON_BLOCK,
+    0o600,
+  );
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.nlink !== 1) {
+      throw new Error(`${file} must be a private regular file`);
+    }
+    fs.fchmodSync(descriptor, 0o600);
+    fs.writeFileSync(descriptor, contents, "utf8");
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 export function readPrivateRegularFile(
   file: string,
   options: { allowMissing?: boolean; maxBytes: number },
@@ -39,7 +59,18 @@ export function readPrivateRegularFile(
     if (stat.size > options.maxBytes) {
       throw new Error(`${file} exceeds ${options.maxBytes} bytes`);
     }
-    return fs.readFileSync(descriptor, "utf8");
+
+    const contents = Buffer.allocUnsafe(options.maxBytes + 1);
+    let bytesRead = 0;
+    while (bytesRead < contents.length) {
+      const count = fs.readSync(descriptor, contents, bytesRead, contents.length - bytesRead, null);
+      if (count === 0) break;
+      bytesRead += count;
+    }
+    if (bytesRead > options.maxBytes) {
+      throw new Error(`${file} exceeds ${options.maxBytes} bytes`);
+    }
+    return contents.toString("utf8", 0, bytesRead);
   } finally {
     fs.closeSync(descriptor);
   }
@@ -61,7 +92,13 @@ export function writePrivateRegularFile(file: string, contents: string): void {
   }
 }
 
-/** Append to an existing private regular file without following links. */
+/**
+ * Append to an existing private regular file without following links.
+ *
+ * Callers must serialize appends to a given file. O_APPEND positions each
+ * individual write at EOF, but the size check is not a cross-process lock, so
+ * concurrent writers could both pass it and exceed maxBytes.
+ */
 export function appendPrivateRegularFile(
   file: string,
   contents: string,

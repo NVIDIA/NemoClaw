@@ -69,20 +69,16 @@ describe("live-test outcome invocation contract (#7146)", () => {
       expect(vitest.status, `${vitest.stdout}\n${vitest.stderr}`).toBe(1);
       expect(readLiveTestOutcome(outcomeFile)).toBe(outcome);
 
-      const classified = spawnSync(
-        process.execPath,
-        ["--experimental-strip-types", CLASSIFIER, "classify"],
-        {
-          cwd: ROOT,
-          encoding: "utf8",
-          timeout: 20_000,
-          env: {
-            ...process.env,
-            E2E_RESOURCE_BASELINE_FILE: baselineFile,
-            E2E_TEST_OUTCOME_FILE: outcomeFile,
-          },
+      const classified = spawnSync("npx", ["tsx", CLASSIFIER, "classify"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        timeout: 20_000,
+        env: {
+          ...process.env,
+          E2E_RESOURCE_BASELINE_FILE: baselineFile,
+          E2E_TEST_OUTCOME_FILE: outcomeFile,
         },
-      );
+      });
       expect(classified.status, classified.stderr).toBe(0);
       const line = classified.stdout
         .split("\n")

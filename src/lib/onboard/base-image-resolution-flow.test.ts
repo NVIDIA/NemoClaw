@@ -118,4 +118,30 @@ describe("base image resolution flow", () => {
     });
     expect(context.preResolvedMetadata).toBe(resolvedMetadata);
   });
+
+  it("retains a rebuild handoff when a bound local override has no new metadata (#7144)", () => {
+    const context = createBaseImageResolutionContext({
+      fresh: false,
+      initialHint: recordedMetadata,
+      initialPreResolvedMetadata: recordedMetadata,
+      env: {},
+    });
+    const agent = { name: "hermes" } as AgentDefinition;
+    const staged = {
+      buildCtx: "/tmp/hermes-build",
+      stagedDockerfile: "/tmp/hermes-build/Dockerfile",
+      baseImageResolutionMetadata: null,
+    };
+
+    createAgentSandboxWithResolution(
+      context,
+      agent,
+      vi.fn(() => staged),
+    );
+
+    expect(context.preResolvedMetadata).toBe(recordedMetadata);
+    expect(getBaseImageResolutionPatchOptions(context).preResolvedBaseImageMetadata).toBe(
+      recordedMetadata,
+    );
+  });
 });

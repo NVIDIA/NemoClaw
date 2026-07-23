@@ -795,6 +795,28 @@ def _recapture_exact_identity(
         return current
 
 
+def _read_stable_file_with_proof_grace(
+    reader: ProcReader,
+    identity: ProcessIdentity,
+    name: str,
+    limit: int,
+) -> bytes:
+    """Retry an inconsistent proc read only while the pinned process is exact."""
+
+    deadline = time.monotonic() + PROCESS_PROOF_GRACE_SECONDS
+    while True:
+        try:
+            return reader.read_stable_file(identity, name, limit)
+        except ControlError as error:
+            if error.code != "SUPERVISOR_UNAVAILABLE":
+                raise
+            _recapture_exact_identity(reader, identity, deadline=deadline)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(PROCESS_PROOF_RETRY_SECONDS, remaining))
+
+
 def _basename(value: bytes) -> bytes:
     return value.rsplit(b"/", 1)[-1]
 
@@ -1313,7 +1335,12 @@ def _hermes_preflight(reader: ProcReader, supervisor: ProcessIdentity) -> None:
         validator,
         ["env-file", _system_path("/sandbox/.hermes/.env")],
     )
-    raw_environment = reader.read_stable_file(supervisor, "environ", MAX_ENV_BYTES)
+    raw_environment = _read_stable_file_with_proof_grace(
+        reader,
+        supervisor,
+        "environ",
+        MAX_ENV_BYTES,
+    )
     _validate_runtime_environment(validator, _parse_environment(raw_environment))
     _verify_locked_hermes_hash()
 

@@ -1,33 +1,41 @@
-# Sequence Work Workflow
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 
-Turn a large problem into a short sequence of mergeable slices.
+# Sequence Work
 
-## Step 1: Read the Full Problem Surface
+Divide the work into changes that can merge separately.
 
-Read greedily: issue body and comments, linked issues, linked PRs with review comments and status, touched code/tests/docs, recent `main` changes if the area is active.
+## Step 1: Read the context
 
-Do not sequence work from the title alone.
+Read the issue body, comments, linked issues, and linked PRs.
+Read review comments, PR status, changed files, tests, and documentation.
+If the files change often, read recent `main` changes.
 
-## Step 2: Identify What Is Moving
+Do not use the title as the only source.
 
-Inventory overlapping open PRs and recently merged changes. For each: blocker that must land first? Dependency to build on? Conflict to avoid? Noise?
+## Step 2: List related changes
+
+List overlapping PRs and recent merged changes.
+For each item, record prerequisites, dependencies, conflicts, and unrelated changes.
 
 ## Step 3: Define Slices
 
-Each slice should have: one core objective, short file list, explicit tests, merge dependency list, stop condition.
+For each change, give one objective, a file list, tests, merge dependencies, and a stop condition.
 
-Prefer substrate-first sequencing:
+Use this sequence when possible:
 
 1. Extract stable helper or type boundary
 2. Add regression tests for current behavior
-3. Land behavioral fix or refactor on top
+3. Apply the behavior change or refactor
 4. Remove duplication afterward
 
 ## Step 4: Rank
 
 Use repo priorities: (1) backlog reduction, (2) security, (3) test coverage, (4) hotspot cooling.
+An identified security concern overrides this default order.
 
-A slice that unblocks several PRs moves up. An elegant but non-urgent slice moves down.
+Give more priority to a change that unblocks several PRs.
+Give less priority to style-only work.
 
 ## Step 5: Output
 
@@ -35,9 +43,11 @@ A slice that unblocks several PRs moves up. An elegant but non-urgent slice move
 |-------|-------|---------|------------|-------|
 | 1 | Extract timeout parsing from onboard | Enables safe tests, reduces conflicts | None | Unit tests for invalid env values |
 
-Also include: outstanding blockers, which slices are safe for the maintainer loop, where human design decisions are needed.
+Also list outstanding blockers.
+Identify changes that the maintainer loop can make.
+Identify decisions that require a user.
 
 ## Notes
 
-- Every slice maps to real files, tests, and merge behavior — not abstract architecture.
-- Prefer small serially mergeable changes over one ambitious cleanup branch.
+- Each change must name files, tests, and merge behavior.
+- Prefer changes that can merge one at a time.

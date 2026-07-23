@@ -359,17 +359,47 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
     let restoreTempRootMode: (() => void) | undefined;
 
     try {
+      const sandboxUidResult = spawnSync("id", ["-u", "sandbox"], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      const sandboxGidResult = spawnSync("id", ["-g", "sandbox"], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      expect(sandboxUidResult.status, sandboxUidResult.stderr).toBe(0);
+      expect(sandboxGidResult.status, sandboxGidResult.stderr).toBe(0);
+      const sandboxUid = Number(sandboxUidResult.stdout.trim());
+      const sandboxGid = Number(sandboxGidResult.stdout.trim());
+      expect(Number.isSafeInteger(sandboxUid)).toBe(true);
+      expect(Number.isSafeInteger(sandboxGid)).toBe(true);
+
+      for (const pathname of [
+        fixture.sandboxDir,
+        fixture.hermesDir,
+        fixture.configPath,
+        fixture.envPath,
+        fixture.compatHashPath,
+      ]) {
+        fs.chownSync(pathname, sandboxUid, sandboxGid);
+      }
+      // chown clears setgid, so restore the canonical mutable Hermes mode.
+      fs.chmodSync(fixture.hermesDir, 0o3770);
+
       restoreTempRootMode = allowRestartFixturePeerTraversal(fixture);
       const sealed = runGuard("seal-restart", fixture);
       expect(sealed.status, sealed.stderr).toBe(0);
 
-      const hermesGid = fs.statSync(fixture.hermesDir).gid;
+      const sealedHermes = fs.statSync(fixture.hermesDir);
+      expect(sealedHermes.uid).toBe(0);
+      expect(sealedHermes.gid).toBe(sandboxGid);
+      expect(mode(fixture.hermesDir)).toBe(0o3770);
       const peer = spawnSync(
         "setpriv",
         [
           "--reuid=65534",
           "--regid=65534",
-          `--groups=${hermesGid}`,
+          `--groups=${sandboxGid}`,
           "sh",
           "-c",
           'touch "$1/peer-runtime-state" || exit 10; rm "$1/config.yaml" 2>/dev/null && exit 20; test -f "$1/config.yaml"',
@@ -385,6 +415,17 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
 
       const unsealed = runGuard("unseal-restart", fixture);
       expect(unsealed.status, unsealed.stderr).toBe(0);
+      for (const pathname of [
+        fixture.sandboxDir,
+        fixture.hermesDir,
+        fixture.configPath,
+        fixture.envPath,
+        fixture.compatHashPath,
+      ]) {
+        const restored = fs.statSync(pathname);
+        expect(restored.uid).toBe(sandboxUid);
+        expect(restored.gid).toBe(sandboxGid);
+      }
     } finally {
       try {
         fs.rmSync(fixture.root, { recursive: true, force: true });
