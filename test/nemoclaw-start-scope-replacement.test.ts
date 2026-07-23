@@ -51,7 +51,6 @@ exit "\${APPROVAL_EXIT_CODE:-0}"
       '_SANDBOX_SAFETY_NET="/tmp/safety-net.js"',
       '_PROXY_FIX_SCRIPT="/tmp/http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemotron-fix.js"',
-      '_SECCOMP_GUARD_SCRIPT="/tmp/seccomp-guard.js"',
       '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       "emit_messaging_connect_runtime_preload_exports() { :; }",
       'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
