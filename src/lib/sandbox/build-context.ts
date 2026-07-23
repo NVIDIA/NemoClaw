@@ -106,6 +106,7 @@ function stageOptimizedSandboxBuildContext(
   const stagedNemoclawDir = path.join(buildCtx, "nemoclaw");
   const sourceBlueprintDir = path.join(rootDir, "nemoclaw-blueprint");
   const stagedBlueprintDir = path.join(buildCtx, "nemoclaw-blueprint");
+  const stagedCiDir = path.join(buildCtx, "ci");
   const stagedScriptsDir = path.join(buildCtx, "scripts");
 
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), stagedDockerfile);
@@ -114,6 +115,13 @@ function stageOptimizedSandboxBuildContext(
     path.join(buildCtx, "tsconfig.runtime-preloads.json"),
   );
   stageOpenClawRuntimeGraphs(rootDir, buildCtx);
+
+  fs.mkdirSync(stagedCiDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(rootDir, "ci", "npm-audit-exceptions.json"),
+    path.join(stagedCiDir, "npm-audit-exceptions.json"),
+  );
+  normalizeReadModesForDockerCopy(stagedCiDir);
 
   fs.mkdirSync(stagedNemoclawDir, { recursive: true });
   for (const fileName of [
@@ -272,6 +280,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "reviewed-npm-audit.mts"),
+    path.join(stagedScriptsDir, "lib", "reviewed-npm-audit.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw-npm-remediation.mts"),
