@@ -139,10 +139,11 @@ graph as the live targets:
 ### Runner comparison telemetry
 
 Trusted `main` runs without an alternate checkout SHA record runner-comparison
-telemetry for the #7145 contract: 12 routed workflow lane identities / 13
+telemetry for the #7145 contract: 12 routed workflow lane identities / 15
 concrete job executions.
 
-- `common-egress-agent`
+- `common-egress-agent` with the `openclaw-balanced-weather`,
+  `openclaw-open-reference`, and `hermes-open-reference` shards
 - `rebuild-hermes`
 - `rebuild-hermes-stale-base`
 - `mcp-bridge` with the `hermes` shard
@@ -155,8 +156,9 @@ concrete job executions.
 - `hermes-shields-config`
 - `security-posture` with the `hermes` shard
 
-The extra execution comes from `hermes-inference-switch`, which runs both
-listed modes. The OpenClaw matrix entries for `mcp-bridge`,
+The three extra executions come from `common-egress-agent`, which runs three
+scenario shards, and `hermes-inference-switch`, which runs both listed modes.
+The OpenClaw matrix entries for `mcp-bridge`,
 `channels-stop-start`, and `security-posture` are not instrumented.
 
 Each execution writes two best-effort numeric samples to
