@@ -51,6 +51,72 @@ discovery command locally to inspect the generated test matrix:
 npx tsx tools/e2e/credential-free-tests.mts
 ```
 
+## Larger-runner routing
+
+The larger-runner experiment is inactive while the configuration variable
+`E2E_LARGER_RUNNER_LABEL` is unset. In that state, every eligible lane continues
+to use `ubuntu-latest`. The trusted `generate-matrix` job builds one runner map
+before checking out test code, and it consumes the variable only when the
+workflow repository is `NVIDIA/NemoClaw`, the ref is `refs/heads/main`, and
+no alternate checkout SHA is requested. PR-gate dispatches therefore remain on
+standard runners even though they use the trusted workflow definition from
+`main`.
+
+Exact-head PR-gate dispatches use a bounded swap fallback for the hosted
+Hermes image-building lanes that remain on those standard runners. The live
+Vitest helper activates the fallback only when GitHub Actions supplies a
+validated lowercase 40-hex checkout SHA. It reuses at least 32 GiB of active
+swap when available; otherwise, it creates one fixed 32 GiB swap file under
+`/mnt` before agent-turn latency, Hermes inference switch and shields, the
+Hermes Bedrock and stable MCP shards, or the `hermes-e2e`, `hermes-dashboard`,
+and Hermes security-posture tests. Setup failure stops before Vitest. Scheduled
+and ordinary manual `main` runs, larger-runner executions, rebuild lanes with
+workflow-managed swap, dedicated-runner lanes, `mcp-bridge-dev`, and non-Hermes
+shards do not use this fallback.
+
+The fallback exists because the alternate-checkout trust boundary deliberately
+keeps PR-authored code from selecting the administrator-managed larger-runner
+label; changing the PR checkout cannot safely grant itself that capacity.
+Remove the fallback only after the trusted controller routes exact-head PR
+gates to an ephemeral GitHub-hosted runner with at least 32 GB RAM without
+weakening the exact-SHA guard, and five consecutive runs of every protected
+lane complete without runner loss while runner-pressure telemetry reports less
+than 1 GiB of swap used.
+
+The eligible set is limited to the measured or repeatedly interrupted heavy
+lanes:
+
+- `common-egress-agent`;
+- `hermes-e2e`, `hermes-dashboard`, and `hermes-discord`;
+- both `hermes-inference-switch` modes;
+- `hermes-shields-config`;
+- the Hermes shards of `security-posture` and `channels-stop-start`;
+- `rebuild-hermes`;
+- `rebuild-hermes-stale-base`;
+- the `hermes` and `deepagents` shards of `mcp-bridge`.
+
+The OpenClaw shards of the matrix jobs, the `openclaw` MCP shard, and
+`mcp-bridge-dev` remain on `ubuntu-latest`; unrelated jobs retain their
+existing runner assignments. Before setting the variable, an organization
+owner must:
+
+1. Create a GitHub-hosted Ubuntu x64 larger runner with 8 vCPU, 32 GB RAM, and
+   300 GB SSD in a dedicated runner group.
+2. Set the group maximum concurrency to 4 and restrict repository access to
+   `NVIDIA/NemoClaw` and workflow access to
+   `NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/heads/main`.
+3. Record at least five standard-runner samples for each eligible lane,
+   including queue time, execution time, peak CPU, memory and disk use,
+   infrastructure failures, and estimated cost.
+4. Copy the larger runner's workflow label into the repository variable, then
+   repeat the same measurements for at least five representative executions
+   per migrated lane.
+
+Clearing `E2E_LARGER_RUNNER_LABEL` is the rollback. It sends the eligible lanes
+back to `ubuntu-latest` without changing selectors, test setup, or test
+semantics. Do not replace this experiment with a persistent self-hosted runner;
+that requires a separate decision.
+
 ## Scheduled operations
 
 The consolidated workflow keeps its operational reporting in the same job
@@ -179,20 +245,24 @@ failed or cancelled and the native job is non-passing. Only a successful native
 `E2E / PR Gate` for the current head and base satisfies the required check. An
 eligible prerequisite-CI failure records the versioned retry reason
 `prerequisite-ci`. A selected child records `child-cancelled` only when a
-trusted hosted-runner-loss marker is present and no terminal classification
-was produced; cancellation alone is not retryable. Assertion failures and
-other selected-E2E outcomes do not receive a retry reason. An unexpected
-controller error still fails the controller workflow and fails coordination
-closed, which prevents the native job from passing.
+trusted GitHub-hosted runner-loss annotation is bound to the exact failed job
+and workflow commit and no other terminal classification was produced.
+Cancellation alone is not retryable. Assertion failures and other selected-E2E
+outcomes do not receive a retry reason. An unexpected controller error still
+fails the controller workflow and fails coordination closed, which prevents
+the native job from passing.
 
 On open, synchronization, reopen, transition out of draft, or base retarget,
 `.github/workflows/pr-e2e-gate.yaml` reserves `E2E / PR Gate Coordination` for
 the PR SHA and base SHA, including fork SHAs. The read-only native
 observer starts for every configured non-closed PR event; metadata-only edits
 mirror the existing PR/base SHA coordination result instead of publishing a
-skipped success. A base retarget fails any still-active earlier coordination
-result in that head's lineage, preserves completed audit history, and then
-reserves the new PR/base SHA identity. The
+skipped success. A base retarget reserves a distinct PR/base SHA identity.
+Controllers never mutate coordination owned by another base because a newer
+base can appear after an older controller's live validation. The exact-identity
+observer ignores checks from other bases, and an older controller that resumes
+fails its own coordination closed at final live validation. Completed results
+remain audit history. The
 `CI / Pull Request` run name binds its PR number, head SHA, base SHA, and gate
 eligibility so the trusted controller can authenticate the completed run even
 when a fork `workflow_run` payload omits pull-request metadata. The controller
@@ -206,15 +276,17 @@ the deterministic risk plan.
 Runtime families and changes to workflow-wired live tests select
 canonical selectors from the trusted `e2e.yaml` inventory independently of
 advisor output. Ordinary internal changes execute those focused selections.
-Gate initialization and CI coordination share one non-cancelling concurrency
-group for the head repository and branch. Before the controller creates or
-updates coordination for the current revision, it reads the live PR and
-requires the event's PR SHA and base SHA, including when PR CI failed. The
-native observer performs the same live PR/base SHA check before waiting and
-again before accepting a terminal verdict. This keeps a stale seed, completed
-CI run, or observer from being applied to a newer PR/base SHA pair. A completed CI
-event for an older revision is handled without creating or updating the current
-revision's coordination check.
+Gate initialization, CI coordination, protected approval, and manual fork-skip
+recording share one non-cancelling FIFO concurrency group for the exact
+repository, PR number, PR SHA, and base SHA. `queue: max` keeps pending jobs for
+that exact identity instead of replacing them, up to GitHub's 100-job bound.
+Before the controller creates or updates coordination for the current revision,
+it reads the live PR and requires the event's PR SHA and base SHA, including
+when PR CI failed. The native observer performs the same live PR/base SHA check
+before waiting and again before accepting a terminal verdict. This keeps a
+stale seed, completed CI run, or observer from being applied to a newer PR/base
+SHA pair. A completed CI event for an older revision is handled without
+creating or updating the current revision's coordination check.
 If the older revision still has an in-progress coordination check, the
 controller completes it as cancelled with `Superseded by PR update` or
 `PR closed — gate no longer applies` and identifies the obsolete head and base.
@@ -276,17 +348,18 @@ false`, the job does not create a deployment record. After reviewing the exact
 head SHA, base SHA, and risk plan as described below, an environment reviewer
 opens the linked run, chooses **Review deployments**, selects that environment,
 and approves it. GitHub records the reviewer and optional comment. The
-protected approval job uses per-PR concurrency with in-progress cancellation.
-When a newer revision reaches authorization, its job cancels any waiting
-approval job for the prior revision and becomes available for review without
-waiting on the obsolete request. The controller reads that approval history and
-requires one approved review naming only the exact environment in the first
-attempt of the trusted `workflow_run`
-controller. It then revalidates the internal repository origin, open PR, PR SHA
-and base SHA, risk plan, matching pending coordination state, compatible
-trusted controller commit, and final live revision. It updates coordination to
-`Running <count> E2E check(s)` and dispatches the selected jobs and targets in
-one workflow run.
+protected approval job uses the exact-revision FIFO concurrency group without
+in-progress cancellation. A newer revision uses a distinct group and can
+become available for review without waiting on the obsolete request. The
+synchronization controller cancels active child runs and closes coordination
+checks for the old revision. If an old approval job later starts, exact live
+PR SHA and base SHA validation rejects it. The controller reads the approval
+history and requires one approved review naming only the exact environment in
+the first attempt of the trusted `workflow_run` controller. It then revalidates
+the internal repository origin, open PR, PR SHA and base SHA, risk plan,
+matching pending coordination state, compatible trusted controller commit, and
+final live revision. It updates coordination to `Running <count> E2E check(s)`
+and dispatches the selected jobs and targets in one workflow run.
 
 The manual maintainer path remains available as a fallback. A repository
 maintainer or administrator chooses **Run workflow** on `main`, selects
@@ -377,8 +450,9 @@ Configure the environment, update the PR to create a new head, and trigger fresh
 upstream PR CI to create a new gate run, or use the corresponding manual
 maintainer fallback. GitHub approval
 history is not bound to a run attempt, so the controller rejects reruns of an
-approval run. Per-PR approval concurrency cancels an older waiting job when a
-newer revision reaches the gate.
+approval run. Approval concurrency is bound to the exact PR SHA and base SHA.
+A newer revision creates a separate approval request, while an obsolete request
+cannot authorize it.
 
 For the fork button path, the controller requires a first-attempt, in-progress run
 of this exact workflow on `main`, at the trusted workflow SHA and with the
@@ -432,14 +506,85 @@ fails. A failed coordination result links the selected E2E run and up to 10
 non-passing jobs, including up to three failed step names per job. If GitHub
 truncates the job listing or the controller cannot load it, the coordination
 check directs the maintainer to the complete run.
-The coordinator has a 180-minute job budget and gives the selected E2E run 105
-minutes to finish. When that limit expires, finalization cancels the child and
-records the non-passing result in the coordination check. The native observer
-has a 170-minute job budget and waits up to 165 minutes for a trusted terminal
-verdict. Evidence download has its own 10-minute limit. If the selected child
-succeeds but the `Download evidence` step fails, is cancelled, or is skipped,
-the controller cannot authenticate the child's artifacts. It fails
-coordination closed as
+The coordinator has a 330-minute job budget and gives each selected E2E run 140
+minutes to finish. A first-attempt controller may dispatch one replacement run
+when the first child fails because a standard GitHub-hosted `ubuntu-latest`
+runner lost communication. The Jobs API response must identify the exact run,
+attempt, workflow commit, job check, standard hosted runner group, and runner
+name. The controller accepts one canonical runner-loss failure annotation bound
+to `.github` at that workflow commit.
+
+When GitHub emits a generic cancellation instead, the controller requires
+exactly one failure annotation whose message is `The operation was canceled.`
+The annotation must use `.github`, equal start and end lines, null columns, and
+empty title and detail fields. Every annotation must use a blob URL bound to the
+same workflow commit. The controller accepts at most 20 annotations, bounds
+each text field, and limits the normalized annotation evidence to 64 KiB. This
+permits trusted bounded non-failure notices beside the sole failure annotation
+without allowing annotation output to exhaust the coordinator.
+
+GitHub Actions creates this `.github` failure annotation after the hosted runner
+shuts down; NemoClaw workflow code cannot replace its generic message with the
+canonical lost-communication annotation. The classifier test `accepts the
+exact authenticated terminal shutdown block from run 29988226653` preserves
+the observed fallback contract. Remove the fallback and that test together
+only after GitHub's documented Jobs or Checks API contract provides an
+authenticated structured runner-loss reason for this exact shutdown path.
+
+The generic-cancellation fallback also authenticates the job log. The
+controller requests the GitHub job-log endpoint and accepts only its signed
+HTTPS redirect to GitHub Actions result storage. It does not forward the
+repository token to that signed URL. A metadata request must return plain,
+unencoded text with a strong bounded ETag and an exact content length. The
+controller then reads at most the final 64 KiB with `If-Match` and requires an
+exact partial-content range, length, and matching ETag.
+
+The authenticated tail must end with exactly one line feed after the
+timestamped shutdown error, operation-cancelled error, and orphan-cleanup
+record, in that order. Up to 64 unique orphan-process termination records may
+follow the cleanup record. Each record must contain a positive process ID and a
+bounded process name. The record timestamps must not move backward. The
+job must start no later than the cancelled step. The shutdown must occur at or
+after that step starts, and the cancellation second must equal the step's
+completion time. Cleanup must not precede cancellation. Cleanup and
+orphan-process records must finish no later than the job completion time.
+
+A generic cancellation without this log contract, timeout, unknown runner
+identity, self-hosted or custom runner group, ordinary failed step, another
+non-passing job, incomplete pagination, or mismatched annotation identity
+fails closed without a retry.
+
+Before the one-time retry dispatch, the controller revalidates the unchanged
+internal PR head and base, original child, current coordination-check lineage,
+trusted runner-loss evidence, and deterministic plan. It reads the complete
+job, annotation, and optional log evidence twice. It confirms the unchanged
+completed child after each read and requires identical evidence fingerprints,
+including pagination state, log ETag, log length, and log-tail hash. After the
+second classification, it validates the live PR head and base and the current
+coordination-check lineage again.
+
+The controller reserves a distinct replacement coordination check before
+dispatch so the native observer can follow the retry without mutating completed
+attempt-one history. Attempt two uses separate private state and evidence paths.
+Its result is terminal and cannot authorize another automatic retry. If the
+retry setup fails, is cancelled, or is skipped before reservation, its
+always-run cleanup removes the retry authorization from the source. If it stops
+after reservation, cleanup closes the reserved replacement. This prevents a
+retryable or active check from remaining.
+
+Each evidence download has its own 10-minute limit and 30-second process-kill
+grace. Two 140-minute waits plus both download windows consume 301 minutes,
+leaving 29 minutes of the coordinator budget for validation, dispatch, and
+finalization. The native required observer waits up to 358 minutes inside a
+360-minute job. That is 13 minutes longer than the 15-minute prerequisite-CI
+budget plus the 330-minute controller budget, so it can observe the retry's
+terminal result without racing the controller timeout. When a child wait
+expires, finalization cancels that child and records the non-passing result in
+the coordination check.
+
+If the selected child succeeds but the `Download evidence` step fails, is
+cancelled, or is skipped, the controller cannot authenticate the child's
+artifacts. It fails coordination closed as
 `Evidence could not be verified` and leaves `E2E / PR Gate Controller` red so
 maintainers inspect that infrastructure failure. This download-only outcome
 records `evidence-download`, so a later successful eligible PR CI run can create

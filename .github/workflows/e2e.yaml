@@ -144,6 +144,7 @@ jobs:
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
       explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
+      runner_routing: ${{ steps.runner_routing.outputs.runner_routing }}
     steps:
       - id: controller_matrix
         name: Build trusted controller target matrix
@@ -166,6 +167,27 @@ jobs:
               ;;
           esac
           printf 'matrix=%s\n' "${matrix}" >> "${GITHUB_OUTPUT}"
+
+      - id: runner_routing
+        name: Build trusted larger-runner routing
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          LARGER_RUNNER_LABEL: ${{ vars.E2E_LARGER_RUNNER_LABEL }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          larger_runner="ubuntu-latest"
+          if [[ "${REPOSITORY}" == "NVIDIA/NemoClaw" && "${REF}" == "refs/heads/main" && -z "${CHECKOUT_SHA}" && -n "${LARGER_RUNNER_LABEL}" ]]; then
+            if [[ ! "${LARGER_RUNNER_LABEL}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+              echo "::error::E2E_LARGER_RUNNER_LABEL must be a 1-64 character workflow label using letters, digits, dots, underscores, or hyphens" >&2
+              exit 1
+            fi
+            larger_runner="${LARGER_RUNNER_LABEL}"
+          fi
+          runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" '{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-dashboard":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}')"
+          printf 'runner_routing=%s\n' "${runner_routing}" >> "${GITHUB_OUTPUT}"
 
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -541,7 +563,7 @@ jobs:
   mcp-bridge:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',mcp-bridge,') || contains(format(',{0},', inputs.targets), ',mcp-bridge,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('mcp-bridge-{0}', matrix.agent)] }}
     permissions:
       contents: read
     # Keep each destructive agent lifecycle on a fresh runner. This bounds the
@@ -1138,7 +1160,7 @@ jobs:
   hermes-inference-switch:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-inference-switch,') || contains(format(',{0},', inputs.targets), ',hermes-inference-switch,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-inference-switch'] }}
     permissions:
       contents: read
     timeout-minutes: 55
@@ -1637,7 +1659,7 @@ jobs:
   hermes-e2e:
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}
     timeout-minutes: 75
     env:
       E2E_JOB: "1"
@@ -1944,7 +1966,7 @@ jobs:
   hermes-dashboard:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-dashboard'] }}
     timeout-minutes: 75
     env:
       E2E_JOB: "1"
@@ -1990,7 +2012,7 @@ jobs:
   hermes-discord:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-discord,') || contains(format(',{0},', inputs.targets), ',hermes-discord,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-discord'] }}
     timeout-minutes: 75
     env:
       E2E_JOB: "1"
@@ -2104,7 +2126,7 @@ jobs:
   common-egress-agent:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',common-egress-agent,') || contains(format(',{0},', inputs.targets), ',common-egress-agent,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}
     timeout-minutes: 120
     env:
       E2E_JOB: "1"
@@ -2224,7 +2246,7 @@ jobs:
   hermes-shields-config:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-shields-config,') || contains(format(',{0},', inputs.targets), ',hermes-shields-config,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-shields-config'] }}
     timeout-minutes: 45
     env:
       E2E_JOB: "1"
@@ -2326,7 +2348,7 @@ jobs:
   rebuild-hermes:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',rebuild-hermes,') || contains(format(',{0},', inputs.targets), ',rebuild-hermes,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes'] }}
     timeout-minutes: 90
     env:
       E2E_JOB: "1"
@@ -2427,7 +2449,7 @@ jobs:
   rebuild-hermes-stale-base:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',rebuild-hermes-stale-base,') || contains(format(',{0},', inputs.targets), ',rebuild-hermes-stale-base,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes-stale-base'] }}
     timeout-minutes: 90
     env:
       E2E_JOB: "1"
@@ -3116,7 +3138,7 @@ jobs:
       contents: read
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',security-posture,') || contains(format(',{0},', inputs.targets), ',security-posture,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('security-posture-{0}', matrix.agent)] }}
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -4593,7 +4615,7 @@ jobs:
   channels-stop-start:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',channels-stop-start,') || contains(format(',{0},', inputs.targets), ',channels-stop-start,') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('channels-stop-start-{0}', matrix.agent)] }}
     timeout-minutes: 90
     strategy:
       fail-fast: false

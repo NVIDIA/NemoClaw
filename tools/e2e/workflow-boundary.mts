@@ -144,6 +144,50 @@ const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} &
 const GUARDED_DOCKER_HUB_USERNAME = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_USERNAME || '' }}`;
 const GUARDED_DOCKER_HUB_TOKEN = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`;
 const GUARDED_HERMES_E2E_INFERENCE_KEY = `\${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.checkout_sha == '' && (inputs.inference_mode || 'mock') != 'mock' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
+const RUNNER_ROUTING_OUTPUT = "${{ steps.runner_routing.outputs.runner_routing }}";
+const RUNNER_ROUTING_STEP_NAME = "Build trusted larger-runner routing";
+const RUNNER_ROUTING_SCRIPT = [
+  "set -euo pipefail",
+  'larger_runner="ubuntu-latest"',
+  'if [[ "${REPOSITORY}" == "NVIDIA/NemoClaw" && "${REF}" == "refs/heads/main" && -z "${CHECKOUT_SHA}" && -n "${LARGER_RUNNER_LABEL}" ]]; then',
+  '  if [[ ! "${LARGER_RUNNER_LABEL}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then',
+  '    echo "::error::E2E_LARGER_RUNNER_LABEL must be a 1-64 character workflow label using letters, digits, dots, underscores, or hyphens" >&2',
+  "    exit 1",
+  "  fi",
+  '  larger_runner="${LARGER_RUNNER_LABEL}"',
+  "fi",
+  'runner_routing="$(jq -cn --arg standard "ubuntu-latest" --arg larger "${larger_runner}" \'{"channels-stop-start-hermes":$larger,"channels-stop-start-openclaw":$standard,"common-egress-agent":$larger,"hermes-dashboard":$larger,"hermes-discord":$larger,"hermes-e2e":$larger,"hermes-inference-switch":$larger,"hermes-shields-config":$larger,"mcp-bridge-deepagents":$larger,"mcp-bridge-hermes":$larger,"mcp-bridge-openclaw":$standard,"rebuild-hermes":$larger,"rebuild-hermes-stale-base":$larger,"security-posture-hermes":$larger,"security-posture-openclaw":$standard}\')"',
+  'printf \'runner_routing=%s\\n\' "${runner_routing}" >> "${GITHUB_OUTPUT}"',
+].join("\n");
+const ROUTED_JOB_RUNNER_EXPRESSIONS = {
+  "common-egress-agent":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}",
+  "hermes-dashboard":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-dashboard'] }}",
+  "hermes-discord":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-discord'] }}",
+  "hermes-e2e": "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-e2e'] }}",
+  "hermes-inference-switch":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-inference-switch'] }}",
+  "hermes-shields-config":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['hermes-shields-config'] }}",
+  "rebuild-hermes":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes'] }}",
+  "rebuild-hermes-stale-base":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['rebuild-hermes-stale-base'] }}",
+} as const;
+const MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS = {
+  "channels-stop-start":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('channels-stop-start-{0}', matrix.agent)] }}",
+  "mcp-bridge":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('mcp-bridge-{0}', matrix.agent)] }}",
+  "security-posture":
+    "${{ fromJSON(needs.generate-matrix.outputs.runner_routing)[format('security-posture-{0}', matrix.agent)] }}",
+} as const;
+const ROUTED_JOB_NAMES = new Set([
+  ...Object.keys(ROUTED_JOB_RUNNER_EXPRESSIONS),
+  ...Object.keys(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS),
+]);
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -676,6 +720,95 @@ function requireRunDoesNotContain(
   if (!step) return;
   if (stringValue(step.run).includes(forbidden)) {
     errors.push(`step '${step.name ?? "<unnamed>"}' run script must not include ${forbidden}`);
+  }
+}
+
+function validateLargerRunnerRouting(
+  errors: string[],
+  jobs: WorkflowRecord,
+  generateMatrix: WorkflowRecord,
+  generateSteps: readonly WorkflowStep[],
+  generateCheckout: WorkflowStep | undefined,
+): void {
+  const generateOutputs = asRecord(generateMatrix.outputs);
+  if (generateOutputs.runner_routing !== RUNNER_ROUTING_OUTPUT) {
+    errors.push("generate-matrix job must expose the trusted larger-runner routing output");
+  }
+
+  const routing = requireJobStep(
+    errors,
+    "generate-matrix",
+    generateSteps,
+    RUNNER_ROUTING_STEP_NAME,
+  );
+  if (!routing) return;
+  if (routing.id !== "runner_routing") {
+    errors.push("trusted larger-runner routing step must use id runner_routing");
+  }
+  if (routing.if !== undefined) {
+    errors.push("trusted larger-runner routing step must always publish the fallback map");
+  }
+  if (routing.shell !== "bash") {
+    errors.push("trusted larger-runner routing step must use bash");
+  }
+  const expectedEnv = {
+    CHECKOUT_SHA: "${{ inputs.checkout_sha }}",
+    LARGER_RUNNER_LABEL: "${{ vars.E2E_LARGER_RUNNER_LABEL }}",
+    REF: "${{ github.ref }}",
+    REPOSITORY: "${{ github.repository }}",
+  };
+  if (!isDeepStrictEqual(asRecord(routing.env), expectedEnv)) {
+    errors.push(
+      "trusted larger-runner routing step must bind only the administrator label and trusted repository identity",
+    );
+  }
+  if (stringValue(routing.run).trimEnd() !== RUNNER_ROUTING_SCRIPT) {
+    errors.push(
+      "trusted larger-runner routing step must preserve the exact main-only map and ubuntu-latest fallback",
+    );
+  }
+  if (
+    generateCheckout &&
+    generateSteps.indexOf(routing) >= generateSteps.indexOf(generateCheckout)
+  ) {
+    errors.push("trusted larger-runner routing step must run before PR checkout");
+  }
+
+  for (const [jobName, expected] of Object.entries(ROUTED_JOB_RUNNER_EXPRESSIONS)) {
+    if (asRecord(jobs[jobName])["runs-on"] !== expected) {
+      errors.push(`${jobName} job must use the trusted larger-runner routing map`);
+    }
+  }
+  for (const [jobName, expected] of Object.entries(MATRIX_ROUTED_JOB_RUNNER_EXPRESSIONS)) {
+    if (asRecord(jobs[jobName])["runs-on"] !== expected) {
+      errors.push(`${jobName} job must route each matrix entry through the trusted runner map`);
+    }
+  }
+  if (asRecord(jobs["mcp-bridge-dev"])["runs-on"] !== "ubuntu-latest") {
+    errors.push("mcp-bridge-dev job must remain on ubuntu-latest");
+  }
+
+  for (const [jobName, jobValue] of Object.entries(jobs)) {
+    const runsOn = stringValue(asRecord(jobValue)["runs-on"]);
+    if (
+      runsOn.includes("needs.generate-matrix.outputs.runner_routing") &&
+      !ROUTED_JOB_NAMES.has(jobName)
+    ) {
+      errors.push(`${jobName} job must not use the larger-runner routing map`);
+    }
+    if (
+      jobName !== "generate-matrix" &&
+      JSON.stringify(jobValue).includes("vars.E2E_LARGER_RUNNER_LABEL")
+    ) {
+      errors.push(`${jobName} job must not consume E2E_LARGER_RUNNER_LABEL directly`);
+    }
+  }
+  for (const step of generateSteps) {
+    if (step !== routing && JSON.stringify(step).includes("vars.E2E_LARGER_RUNNER_LABEL")) {
+      errors.push(
+        "only the trusted larger-runner routing step may consume E2E_LARGER_RUNNER_LABEL",
+      );
+    }
   }
 }
 
@@ -1257,9 +1390,6 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
     return;
   }
 
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("common-egress-agent job must run on ubuntu-latest");
-  }
   validateFreeStandingJobSelector(errors, jobs, jobName, "common-egress-agent");
   if (job["timeout-minutes"] !== 120) {
     errors.push("common-egress-agent job must keep the legacy 120 minute timeout");
@@ -1601,9 +1731,6 @@ function validateRebuildHermesJob(
   }
   errors.push(...validateRebuildHermesBootstrapBoundary(jobName, job));
 
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push(`${jobName} job must run on ubuntu-latest`);
-  }
   validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
   if (job["timeout-minutes"] !== 90) {
     errors.push(`${jobName} job must keep the legacy 90 minute timeout`);
@@ -1683,7 +1810,6 @@ function validateRebuildHermesJob(
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
-
 }
 
 function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2485,9 +2611,6 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
     return;
   }
 
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("hermes-e2e job must run on ubuntu-latest");
-  }
   if (job.needs !== "generate-matrix") {
     errors.push("hermes-e2e job must depend on generate-matrix validation");
   }
@@ -3400,9 +3523,6 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
     return;
   }
 
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("channels-stop-start job must run on ubuntu-latest");
-  }
   validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
   if (job["timeout-minutes"] !== 90) {
     errors.push("channels-stop-start job must keep the 90 minute timeout");
@@ -4003,6 +4123,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
     errors.push("generate-matrix checkout step must set persist-credentials=false");
   }
+  validateLargerRunnerRouting(errors, jobs, generateMatrix, generateSteps, generateCheckout);
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.CHECKOUT_SHA !== "${{ inputs.checkout_sha }}") {
