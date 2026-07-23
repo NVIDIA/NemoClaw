@@ -350,7 +350,12 @@ export function selectPublicationRun(
     throw new Error("workflow run listing is incomplete");
   }
 
-  const runs = response.workflow_runs.map((run, index) => validateRun(run, index, workflowId));
+  const runs = response.workflow_runs.flatMap((value, index) => {
+    const run = asRecord(value);
+    return typeof run.head_sha === "string" && history.distanceBySha.has(run.head_sha)
+      ? [validateRun(run, index, workflowId)]
+      : [];
+  });
   if (new Set(runs.map((run) => run.id)).size !== runs.length) {
     throw new Error("workflow run listing contains duplicate run ids");
   }
