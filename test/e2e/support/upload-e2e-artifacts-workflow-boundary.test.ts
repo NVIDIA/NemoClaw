@@ -173,6 +173,19 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     );
   });
 
+  it("requires the skill-agent semantic progress artifact", () => {
+    const workflow = mutableWorkflow();
+    const upload = uploadStep(workflow.jobs["skill-agent"]);
+    upload.with!.path = String(upload.with!.path).replace(
+      "e2e-artifacts/live/skill-agent/*/test-progress.json\n",
+      "",
+    );
+
+    expect(validateUploadE2eArtifactsInvocations(workflow)).toContain(
+      "skill-agent upload-e2e-artifacts must preserve its explicit name/path contract",
+    );
+  });
+
   it("derives execution jobs even when a marker and its upload disappear together", () => {
     const workflow = mutableWorkflow();
     const removedJob = workflow.jobs["credential-sanitization"];

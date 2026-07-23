@@ -62,106 +62,10 @@ outcome, the smallest change, and how it was verified. Explore alternatives only
 change behavior, security, data safety, or a supported contract. Once the smallest safe change is
 clear and testable, stop exploring and implement it.
 
-### NemoClaw Technical English
+### Writing Guide
 
-NemoClaw uses a technical-English profile based on
-[ASD-STE100 Issue 9](https://www.asd-ste100.org/assets/files/ASD-STE100_ISSUE9.pdf).
-The profile applies its plain-language principles to software engineering.
-The project does not claim full ASD-STE100 compliance.
-
-Use repository terms, software identifiers, API names, and necessary domain terms as technical
-nouns or technical verbs. Do not copy the ASD-STE100 dictionary or its examples into this
-repository. Use the rules and examples below as the NemoClaw source of truth.
-
-#### Writing rules
-
-1. Use one term for one concept. Do not use synonyms to add variety.
-2. Use a term with one meaning in a given context.
-3. Use the shortest familiar term that preserves the technical meaning.
-4. Name the actor when known. Use passive voice only when the actor is unknown or does not matter.
-5. Put one instruction in each sentence. Split actions that occur at different times.
-6. Keep instructions at 20 words or fewer when possible. Keep descriptions at 25 words or fewer when possible.
-7. State a condition before the action that depends on it.
-8. Use `must` for a requirement, `may` for permission, `can` for capability, and `should` for a recommendation.
-9. Name the object of relative terms such as `current`, `latest`, `previous`, and `next`.
-10. Replace `ready`, `clean`, `safe`, `small`, and similar judgments with the condition that makes them true.
-11. Remove `just`, `simply`, `obviously`, `clearly`, `easy`, `robust`, and other words that do not change the meaning.
-12. Avoid an idiom or phrasal verb that can have more than one meaning. Use a direct technical term when one is available.
-13. Use a vertical list for three or more conditions, actions, or results.
-14. In a code comment, explain a constraint, invariant, or reason that the code does not show. Do not restate the code.
-
-Sentence lengths are review targets, not mechanical limits. Do not make a sentence less accurate to
-meet a word count. Quoted user text, external text, code, identifiers, commands, URLs, and generated
-content are outside the word and sentence rules.
-
-#### Project word list
-
-Use these terms consistently:
-
-| Term | Meaning | Avoid |
-|---|---|---|
-| PR SHA | The PR-branch commit that the evidence covers. Use its short SHA in reports. Use the full SHA only when a command or API requires it. | relative revision terms without a SHA |
-| base SHA | The target-branch commit used to evaluate the PR. | current base without a SHA |
-| required check | A named GitHub check required by repository policy. | CI gate when no check is named |
-| passing | A command exited with status 0, or a check concluded with `SUCCESS`. | green when the result is not named |
-| approval-ready | All product, contributor, CI, merge-state, review, and test gates pass. | ready, good to go |
-| blocked | A named decision, dependency, access problem, or input prevents progress. | stuck, cannot proceed without a reason |
-| advisory | Information that does not change a gate, approval, or merge state. | warning when no risk requires attention |
-| changed text | Explanatory text added or modified by the diff. | the whole file when unchanged text is out of scope |
-| user-visible change | A change to a command, output, configuration, workflow, or supported behavior. | improvement without the changed behavior |
-| release entry | The dated `docs/changelog/YYYY-MM-DD.mdx` record created before the tag. | release notes when the dated entry is intended |
-| Announcement | The post-tag release communication. | release entry |
-
-Use a different term only when it identifies a different concept. Define that difference where the
-term first appears.
-
-#### Rewrite examples
-
-These examples use recurring NemoClaw concepts. They show the required level of precision.
-
-| Surface | Avoid | Use |
-|---|---|---|
-| Code comment | `// Handle edge case.` | `// GitHub omits headRepository after a fork is deleted.` |
-| Code comment | `// This is needed for safety.` | `// Reject private IP targets to prevent SSRF.` |
-| Code comment | `// Keep this in sync.` | `// This list must match requiredChecks in check-gates.ts.` |
-| Code comment | `// Use the latest state.` | `// Read headRefOid again before approval.` |
-| Code comment | `// Work around a GitHub issue.` | `// GitHub can return no PR association for a deleted fork repository.` |
-| Test title | `handles invalid config correctly` | `rejects a config that has no provider` |
-| Test title | `works after retry` | `retries evidence download after child cancellation` |
-| Test title | `covers edge cases (#1234)` | `rejects an empty policy name (#1234)` |
-| Test title | `fixes issue #1234` | `preserves credentials when a sandbox rebuilds (#1234)` |
-| Test title | `does the right thing for forks` | `does not expose repository secrets to fork code` |
-| PR discussion | `This seems brittle.` | `This catch block hides EACCES. Callers then treat denied access as missing state.` |
-| PR discussion | `Can we clean this up?` | `These two parsers implement the same policy. Use parsePolicy in both call sites.` |
-| PR discussion | `Make this more robust.` | `Return a typed access error for EACCES and add a denial-path test.` |
-| PR discussion | `This is a small change.` | `This change updates one parser and does not change the policy schema.` |
-| PR discussion | `The PR is ready.` | `Required checks pass on 1a2b3c4, and GitHub reports MERGEABLE.` |
-| Announcement | `Improved onboarding.` | `Onboarding now resumes after provider selection fails.` |
-| Announcement | `Added more robust E2E handling.` | `The PR gate now retries evidence download after a child run is cancelled.` |
-| Release entry | `Fixed various issues.` | `The CLI now rejects a provider configuration that has no endpoint.` |
-| Release entry | `Better error handling.` | `The CLI now reports the provider authentication error without a stack trace.` |
-| Procedure | `Refresh and rerun as needed.` | `Fetch origin/main. Rerun the gate after the PR SHA changes.` |
-
-#### Changed-text pilot
-
-The pilot begins when the PR that adds this section merges. It ends 30 calendar days later.
-Use the GitHub merge time as the time source. During the pilot, apply the profile to changed text only:
-
-- Added or modified code comments.
-- Added or modified test titles.
-- PR descriptions and new review comments.
-- New or modified changelog entries and Announcements.
-- Added or modified contributor guidance, agent guidance, and user documentation.
-
-Do not request unrelated language cleanup in a feature, fix, or release PR. Put existing language
-debt in a focused follow-up PR.
-
-During the pilot, language findings are non-blocking suggestions unless the ambiguity can change
-behavior, security, data safety, test meaning, or release meaning. A blocking comment must name that
-effect. A suggestion should include a proposed rewrite.
-
-At the end of the pilot, maintainers should review accepted suggestions, rejected suggestions, and
-false positives before they add an automated check or make a language rule blocking.
+Follow the [NemoClaw Writing Guide](WRITING.md) when you add or modify explanatory text.
+The guide defines its scope, terms, rules, examples, and review policy.
 
 ## Before You Open an Issue
 
@@ -307,6 +211,8 @@ These are the primary npm scripts for day-to-day development:
 | `npm run test:watch` | Watch the CLI, plugin, and E2E-support projects and rerun affected tests |
 | `npm run test:shuffle` | Shuffle test order in the focused source projects without collecting coverage |
 | `npm run test:diagnose:leaks` | Report async-resource leaks and diagnose a Vitest process that hangs during shutdown |
+| `npm run test:e2e-phases:check` | Validate semantic phase plans for every live E2E test without executing live bodies |
+| `npm run test:runtime-audit -- <artifact-dir> [...]` | Rank captured live E2E runs by median, p95, variability, and slowest phase |
 | `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
 | `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
 | `npm run test:live-e2e` | Opt into live E2E scenarios (mutates real external state) |
@@ -327,6 +233,16 @@ npx vitest run --project e2e-support
 
 This project is fast and does not run live targets. Live E2E remains opt-in through
 `npm run test:live-e2e` or the applicable GitHub Actions workflow.
+
+Every `e2e-live` test must declare its ordered, behavior-specific phase plan in
+`meta.e2ePhases`, call `progress.phase("literal phase label")` at those
+boundaries, and reach the final test-declared phase on every passing path. The
+harness then appends `release registered E2E resources` so cleanup duration and
+failures have their own phase. Run `npm run test:e2e-phases:check` after adding
+or changing a live E2E case; collection validates the plans without running
+infrastructure-mutating test bodies. See
+[`test/e2e/docs/README.md`](test/e2e/docs/README.md) for the logging and artifact
+contract.
 
 ### Test Declarative Behavior
 
@@ -402,10 +318,10 @@ issue references in a final suffix such as `(#1234)`. Prefer
 `it("reticulates splines for valid control points (#1234)")` over
 `it("#1234 fixes spline reticulation")`.
 
-Apply the [NemoClaw Technical English](#nemoclaw-technical-english) profile to each added or modified
-test title. During the changed-text pilot, the title checker continues to enforce objective title
-shape only. A language finding can block when ambiguity changes the test meaning. Other findings are
-suggestions. Reviewers must not request unrelated title cleanup.
+Apply the [NemoClaw Writing Guide](WRITING.md) to each added or modified test title.
+The title checker enforces objective title shape only. A language finding can block when ambiguity
+changes the test meaning. Other findings are suggestions. Reviewers must not request unrelated title
+cleanup.
 
 Run `npm run test:spec` to render the suite with Vitest's hierarchical tree reporter. Run
 `npm run test:titles:check` to enforce the objective title-shape conventions without attempting to
@@ -483,6 +399,57 @@ If your change affects user-facing behavior (new commands, changed defaults, new
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 During release prep, run that skill first, make any doc version bumps, then open the docs refresh PR.
+
+### Documentation Writer Review Receipt
+
+After you complete a code or documentation change, a documentation writer subagent must review the completed changes.
+For a documentation-only change, the subagent must verify the changed pages against [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) and [WRITING.md](WRITING.md).
+The review must cover terminology, structure, voice, and code-sample presentation.
+Complete the Documentation Writer Review section in the PR description after that review.
+Keep one review completion checkbox and one instance of each visible or hidden field.
+
+Record one result:
+
+- `docs-updated` when the reviewed pull request changes documentation.
+  List the changed documentation paths as evidence.
+  For a documentation-only change, state that the subagent reviewed the writing rules and documentation style.
+- `no-docs-needed` when a code change does not require documentation and the evidence explains why.
+- `blocked` when a named decision, dependency, access problem, or input prevents the review.
+
+Record the product and surface that ran the review, such as `Codex Desktop`, `Codex CLI`, `Claude Code`, or `Cursor`.
+Use the same name for the same surface across PRs so the report groups its data correctly.
+Record the PR number in the visible receipt so the check can detect a receipt copied from another PR.
+
+Commit all changes from the final review.
+Then run these commands and put their values in the receipt's hidden HTML metadata comments:
+
+```bash
+git rev-parse --short HEAD
+git rev-parse --short HEAD:AGENTS.md
+```
+
+The visible PR number ties the receipt to this PR, while the hidden head SHA identifies the pull-request revision that the review covered.
+Rerun the review after any new commit changes the pull-request head.
+Pushing a new commit runs the receipt check again and reports the review as stale until the hidden metadata is refreshed.
+The Documentation Writer Review check reports an advisory finding when the receipt is missing, incomplete, or stale.
+The check compares the receipt's PR number with the current PR number, the hidden head SHA with the current PR head, and the hidden `AGENTS.md` blob SHA with the current PR's file.
+
+Maintainers can export receipt data from PR descriptions:
+
+```bash
+npm run docs-review:report -- --since 2026-06-12 --format csv > /tmp/nemoclaw-docs-review.csv
+```
+
+The report uses the authenticated GitHub CLI session and returns JSON by default.
+It measures receipt coverage, PR-number integrity, head-revision freshness, review results, and agent-surface counts.
+The `eligiblePrs` JSON metric reports the total eligible pull requests.
+The `eligibleCodePrs` and `eligibleDocsOnlyPrs` metrics report the code and documentation-only counts.
+It records the `AGENTS.md` blob SHA, but only the PR check compares that SHA with the current PR's file.
+It does not prove that an agent loaded `AGENTS.md`; it records observable workflow compliance.
+The retrospective report classifies code and documentation changes from the checked Type of Change field.
+It reports a PR as unclassified when that field is incomplete or contradictory.
+Use `--format summary` to print only aggregate metrics.
+Use `--until YYYY-MM-DD` to set the end of the reporting period.
 
 To build and preview docs locally:
 
