@@ -263,7 +263,16 @@ function runWrapper(wrapper: string, args: readonly string[]): string[] {
   return result.stdout.trimEnd().split("\n");
 }
 
-test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox create", () => {
+test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox create", {
+  meta: {
+    e2ePhases: [
+      "create fake OpenShell delegates",
+      "inspect wrapper capabilities and environment",
+      "verify sandbox-create argument injection",
+      "reject duplicate driver config and remove the fixture",
+    ],
+  },
+}, ({ progress }) => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exdev-wrapper-contract-"));
   const delegate = path.join(fixture, "real-openshell");
   const gateway = path.join(fixture, "openshell-gateway");
@@ -278,6 +287,7 @@ test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox crea
   const components = resolvePinnedOpenShellComponents(delegate);
   const wrapper = createOpenShellTmpfsWrapper(components.cli);
   try {
+    progress.phase("inspect wrapper capabilities and environment");
     const wrapperSource = fs.readFileSync(wrapper.executable, "utf8");
     expect(
       wrapperSource
@@ -311,6 +321,7 @@ test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox crea
         mounts: [EXDEV_TMPFS_MOUNT_CONFIG],
       },
     });
+    progress.phase("verify sandbox-create argument injection");
     expect(
       runWrapper(wrapper.executable, [
         "sandbox",
@@ -340,6 +351,7 @@ test("OpenShell wrapper injects only the reviewed tmpfs config into sandbox crea
       "demo",
     ]);
     expect(runWrapper(wrapper.executable, ["--version"])).toEqual(["--version"]);
+    progress.phase("reject duplicate driver config and remove the fixture");
     const duplicateConfig = spawnSync(
       wrapper.executable,
       ["sandbox", "create", "--driver-config-json", "{}"],
@@ -377,15 +389,25 @@ function createCustomPluginBuildContext(): CustomPluginBuildContext {
   };
 }
 
-test("custom plugin build paths are collision-safe and outside the checkout", () => {
+test("custom plugin build paths are collision-safe and outside the checkout", {
+  meta: {
+    e2ePhases: [
+      "allocate isolated plugin build contexts",
+      "verify unique paths outside the checkout",
+      "remove the plugin build contexts",
+    ],
+  },
+}, ({ progress }) => {
   const first = createCustomPluginBuildContext();
   const second = createCustomPluginBuildContext();
   try {
+    progress.phase("verify unique paths outside the checkout");
     expect(first.sourceParentDir).not.toBe(second.sourceParentDir);
     expect(first.sourceParentDir.startsWith(`${REPO_ROOT}${path.sep}`)).toBe(false);
     expect(second.sourceParentDir.startsWith(`${REPO_ROOT}${path.sep}`)).toBe(false);
     expect(fs.statSync(first.sourceParentDir).isDirectory()).toBe(true);
     expect(fs.statSync(second.sourceParentDir).isDirectory()).toBe(true);
+    progress.phase("remove the plugin build contexts");
   } finally {
     fs.rmSync(first.sourceParentDir, { recursive: true, force: true });
     fs.rmSync(second.sourceParentDir, { recursive: true, force: true });
@@ -842,7 +864,19 @@ const runtimeDepsReplacementProbe = trustedSandboxShellScript(runtimeDepsReplace
 
 test("a custom OpenClaw plugin survives restart, recreation, and rebuild without EXDEV failures (#6108)", {
   timeout: ONBOARD_TIMEOUT_MS * 3 + REBUILD_TIMEOUT_MS + 15 * 60_000,
-}, async ({ artifacts, cleanup, host, sandbox, skip }) => {
+  meta: {
+    e2ePhases: [
+      "confirm Docker CLI and clear the plugin sandbox",
+      "clone and build the tagged plugin fixture",
+      "install tagged OpenShell and onboard the release sandbox",
+      "install current OpenShell and onboard plugin v1",
+      "restart the gateway and confirm plugin v1",
+      "recreate the sandbox with plugin v2",
+      "rebuild the sandbox with plugin v3",
+      "prove cross-device runtime dependency replacement",
+    ],
+  },
+}, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
   await artifacts.target.declare({
     id: "openclaw-plugin-runtime-exdev",
     boundary: "fresh-openclaw-sandbox-exec",
@@ -916,6 +950,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     }),
   );
 
+  progress.phase("clone and build the tagged plugin fixture");
   const policySourceSnapshot = snapshotPolicySources();
   const customPluginContext = createCustomPluginBuildContext();
   cleanup.add("remove v0.0.71 custom-plugin source worktree", () =>
@@ -954,6 +989,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
   createCustomPluginDockerfile(customPluginContext);
   await buildAndVerifyTaggedCli(host, customPluginContext);
 
+  progress.phase("install tagged OpenShell and onboard the release sandbox");
   await stopOpenShellGatewayBeforeVersionSwitch(host, "existing");
   const taggedPinnedOpenshell = await installAndResolvePinnedOpenShell(
     host,
@@ -1065,6 +1101,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
     }),
   );
 
+  progress.phase("install current OpenShell and onboard plugin v1");
   await stopOpenShellGatewayBeforeVersionSwitch(host, "v0-0-71", taggedSandboxEnv);
   const pinnedOpenshell = await installAndResolvePinnedOpenShell(
     host,
@@ -1122,6 +1159,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
 
   const weatherAfterOnboard = await assertWeatherPluginRuntime(sandbox, "after-onboard", "v1");
 
+  progress.phase("restart the gateway and confirm plugin v1");
   const restart = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "gateway", "restart"], {
     artifactName: "openclaw-weather-plugin-gateway-restart",
     env: sandboxEnv,
@@ -1137,6 +1175,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
   // Change an actual build-context input so rebuild must produce a distinct
   // plugin artifact. Onboarding recreation must preserve the fresh v2
   // extension instead of replacing it with the backed-up v1 directory.
+  progress.phase("recreate the sandbox with plugin v2");
   writeCustomPluginVersion(customPluginContext.versionSourcePath, "v2");
   const recreate = await host.command(
     "node",
@@ -1170,6 +1209,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
 
   // A subsequent rebuild exercises the same semantic recreated-sandbox
   // restore boundary with another fresh image artifact.
+  progress.phase("rebuild the sandbox with plugin v3");
   writeCustomPluginVersion(customPluginContext.versionSourcePath, "v3");
   const rebuild = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "rebuild", "--yes"], {
     artifactName: "openclaw-weather-plugin-rebuild",
@@ -1183,6 +1223,7 @@ test("a custom OpenClaw plugin survives restart, recreation, and rebuild without
   expect(weatherAfterRebuild.imageMarker).not.toBe(weatherAfterRecreate.imageMarker);
   await assertWorkspaceMarker(sandbox, "after-rebuild", workspaceMarker);
 
+  progress.phase("prove cross-device runtime dependency replacement");
   const df = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(

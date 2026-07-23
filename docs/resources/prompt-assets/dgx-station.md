@@ -23,7 +23,8 @@ Before asking for consent, explain all of these boundaries:
 - Official Station preparation may add the trusted local account to the `docker` group, which grants root-equivalent control and is suitable only for a trusted single-user development host.
 - Official Station preparation may require an operator-controlled reboot and resumes only with the accepted NemoClaw revision.
 - Nemotron Ultra Express discloses an approximately `352 GB` model download. DeepSeek Express downloads its pinned vLLM container and model data. Both require enough space on the model-cache filesystem and Docker storage.
-- DGX Station remains an evaluation path with deferred end-to-end validation on physical hardware, so startup may still fail after readiness checks.
+- DGX Station is tested with limitations across qualified profiles on one physical DGX Station GB300.
+- Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
 
 Ask: "Which DGX Station Express model would you like?"
 Choices:

@@ -38,6 +38,8 @@ const LIVE_TIMEOUT_MS = 50 * 60_000;
 const FIRST_TURN_TIMEOUT_MS = 240_000;
 const MAX_SILENCE_SECS = 60;
 const EXPECTED_FIRST_REPLY = "NEMOCLAW_E2E_READY_6002";
+const AUTHORITATIVE_LOCAL_BASE_BUILD_OUTPUT =
+  "Building OpenClaw sandbox base image locally because no compatible published base image was found.";
 const MEASURE_COLD_ONBOARD = process.env.E2E_TARGET_ID === "full-e2e";
 
 interface ColdOnboardCapture {
@@ -173,6 +175,7 @@ async function assertColdOnboardPerformance(input: {
   ).toBeGreaterThanOrEqual(traceWindow.finishedAtMs);
   const ansiSgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
   const plain = resultText(input.install).replace(ansiSgr, "");
+  const usedAuthoritativeLocalBaseBuild = plain.includes(AUTHORITATIVE_LOCAL_BASE_BUILD_OUTPUT);
   const heartbeatCount = (plain.match(/Still working on /g) ?? []).length;
   const buildKitFallback = /Local BuildKit build [^\n]*using the gateway builder instead\./u.test(
     plain,
@@ -204,6 +207,7 @@ async function assertColdOnboardPerformance(input: {
     traceWindow,
     firstTurnCompletedAtMs,
     input.budget,
+    usedAuthoritativeLocalBaseBuild,
   );
   const rootStartToFirstTurnCompletionSecs = Math.ceil(
     performanceEvaluation.rootStartToFirstTurnCompletionMs / 1_000,
@@ -232,6 +236,9 @@ async function assertColdOnboardPerformance(input: {
     performance: {
       passed: performanceEvaluation.passed,
       violations: performanceEvaluation.violations,
+      usedAuthoritativeLocalBaseBuild,
+      appliedAuthoritativeLocalBaseBuildAllowanceMs:
+        performanceEvaluation.appliedAuthoritativeLocalBaseBuildAllowanceMs,
     },
     heartbeatCount,
     maxSilenceSecs,
@@ -263,7 +270,17 @@ async function assertColdOnboardPerformance(input: {
 
 test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   timeout: LIVE_TIMEOUT_MS,
-}, async ({ artifacts, cleanup: cleanupRegistry, host, sandbox, secrets, skip }) => {
+  meta: {
+    e2ePhases: [
+      "check full E2E prerequisites",
+      "install and onboard OpenClaw sandbox",
+      "validate CLI sandbox and policy state",
+      "exercise hosted and sandbox inference",
+      "inspect runtime logs and security posture",
+      "remove full-E2E sandbox",
+    ],
+  },
+}, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox, secrets, skip }) => {
   const hosted = requireHostedInferenceConfig(secrets);
   const coldOnboardBudget = readFullE2eColdPathBudget();
   const redactionValues = [hosted.apiKey];
@@ -322,6 +339,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       fs.rmSync(coldOnboard.traceDirectory, { recursive: true, force: true });
     });
 
+  progress.phase("install and onboard OpenClaw sandbox");
   const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
     artifactName: "phase-1-install-sh",
     cwd: REPO_ROOT,
@@ -352,6 +370,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       })
     : Promise.resolve());
 
+  progress.phase("validate CLI sandbox and policy state");
   const pathProbe = await host.command(
     "bash",
     [
@@ -386,6 +405,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(policy.exitCode, resultText(policy)).toBe(0);
   expect(resultText(policy)).toMatch(/network_policies|egress/i);
 
+  progress.phase("exercise hosted and sandbox inference");
   const direct = await host.command(
     "curl",
     [
@@ -423,6 +443,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(sandboxInference.exitCode, resultText(sandboxInference)).toBe(0);
   expect(containsInteger42Answer(sandboxInference.stdout), resultText(sandboxInference)).toBe(true);
 
+  progress.phase("inspect runtime logs and security posture");
   const logs = await repoNemoclaw(
     host,
     [SANDBOX_NAME, "logs"],
@@ -437,6 +458,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw")
     : null;
 
+  progress.phase("remove full-E2E sandbox");
   await cleanup(host, sandbox);
   const registry = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
   const registryText = fs.existsSync(registry) ? fs.readFileSync(registry, "utf8") : "";

@@ -26,8 +26,6 @@ const NO_BUILD_JOBS = new Set([
   "generate-matrix",
   "bootstrap-install-smoke",
   "ollama-auth-proxy",
-  "rebuild-hermes",
-  "rebuild-hermes-stale-base",
   "shields-config",
   "snapshot-commands",
   "spark-install",
