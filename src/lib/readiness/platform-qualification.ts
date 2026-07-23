@@ -13,7 +13,7 @@ import type {
   ReadinessState,
 } from "./types.js";
 
-const STATION_PRODUCT_PATTERN = /(?:^|[^A-Za-z0-9])Station(?:[^A-Za-z0-9]|$).*\bGB300\b/i;
+const STATION_PRODUCT_PATTERN = /(?:^|[^A-Za-z0-9])Station[\s_-]+GB300(?:$|[^A-Za-z0-9])/iu;
 const IDENTITY_FILE_MAX_BYTES = 4096;
 
 export type StationProfile =

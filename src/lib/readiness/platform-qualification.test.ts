@@ -143,7 +143,7 @@ describe("platform readiness qualification (#7410)", () => {
         architecture: "arm64",
         hasNvidiaGpu: true,
         nvidiaPlatform: "station",
-        productName: "Custom Station platform with GB300",
+        productName: "Custom Station GB300 platform",
         stationProfile: "generic-ubuntu",
         stationGb300PciGpu: true,
       }),
