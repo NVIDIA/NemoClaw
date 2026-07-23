@@ -18,6 +18,16 @@ export default class HostProbeCommand extends NemoClawCommand {
   static usage = ["host probe [--json]"];
   static examples = ["<%= config.bin %> host probe", "<%= config.bin %> host probe --json"];
   static flags = {};
+  static publicDisplay = [
+    {
+      usage: "nemoclaw host probe",
+      description: "Report host readiness without changing the system",
+      flags: "[--json]",
+      group: "Troubleshooting",
+      scope: "global",
+      order: 37.5,
+    },
+  ] as const;
 
   public async run(): Promise<unknown> {
     await this.parse(HostProbeCommand);

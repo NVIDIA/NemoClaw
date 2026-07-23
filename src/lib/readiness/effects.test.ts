@@ -14,6 +14,19 @@ const DOCKER_INFO = JSON.stringify({
   MemTotal: 16 * 1024 ** 3,
   OperatingSystem: "Docker Engine",
 });
+const COMMAND_OUTPUTS: Record<string, string> = {
+  "sh -lc command -v node": "/usr/bin/node",
+  "sh -lc command -v openshell": "/usr/bin/openshell",
+  "sh -lc command -v nvidia-container-cli": "/usr/bin/nvidia-container-cli",
+  "docker info --format {{json .}}": DOCKER_INFO,
+  "systemctl is-active docker": "active",
+  "systemctl is-enabled docker": "enabled",
+};
+const FILE_CONTENTS: Record<string, string> = {
+  "/proc/version": "Linux version 6.8",
+  "/etc/docker/daemon.json": "{}",
+  "/home/rootless/.config/docker/daemon.json": "{}",
+};
 
 describe("readiness process effects (#7412)", () => {
   it("repeats the host probe without invoking a mutating dependency", () => {
@@ -22,14 +35,11 @@ describe("readiness process effects (#7412)", () => {
     const directories: string[] = [];
     const runCaptureImpl = vi.fn((command: readonly string[]) => {
       commands.push([...command]);
-      if (command[0] === "sh" && command[4]) return `/usr/bin/${command[4]}`;
-      if (command[0] === "docker") return DOCKER_INFO;
-      if (command[0] === "systemctl") return command[1] === "is-active" ? "active" : "enabled";
-      return "";
+      return COMMAND_OUTPUTS[command.join(" ")] ?? "";
     });
     const readFileImpl = vi.fn((path: string) => {
       reads.push(path);
-      return path === "/proc/version" ? "Linux version 6.8" : "{}";
+      return FILE_CONTENTS[path] ?? "";
     });
     const readdirImpl = vi.fn((path: string) => {
       directories.push(path);
