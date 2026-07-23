@@ -2184,17 +2184,30 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   network-policy:
+    name: Network policy (${{ matrix.scenario }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',network-policy,') || contains(format(',{0},', inputs.targets), ',network-policy,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scenario: live-probes
+            selector: "^network-policy:.+probes$"
+            sandbox: e2e-net-policy-live-probes
+          - scenario: zero-presets
+            selector: "^network-policy:.+presets$"
+            sandbox: e2e-net-policy-zero-presets
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "network-policy"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/network-policy
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/network-policy/${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox }}
       # Raw OpenShell sandbox commands in the migrated live test must target
       # the gateway registered by NemoClaw onboarding even when OpenShell has
       # no active gateway selected on the runner.
@@ -2236,11 +2249,15 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/network-policy.test.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/network-policy.test.ts \
+            --selector "${{ matrix.selector }}"
 
       - name: Upload network-policy artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-network-policy-${{ matrix.scenario }}
+          path: e2e-artifacts/live/network-policy/${{ matrix.scenario }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -2248,15 +2265,28 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   common-egress-agent:
+    name: Common egress agent (${{ matrix.scenario }})
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',common-egress-agent,') || contains(format(',{0},', inputs.targets), ',common-egress-agent,') }}
     runs-on: ${{ fromJSON(needs.generate-matrix.outputs.runner_routing)['common-egress-agent'] }}
-    timeout-minutes: 120
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - scenario: openclaw-balanced-weather
+            selector: "^common-egress.+C1.+$"
+          - scenario: openclaw-open-reference
+            selector: "^common-egress.+C2.+$"
+          - scenario: hermes-open-reference
+            selector: "^common-egress.+C3.+$"
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "common-egress-agent"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/common-egress-agent
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: ${{ matrix.scenario }}
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -2311,7 +2341,8 @@ jobs:
           export OPENSHELL_BIN
           echo "Using OPENSHELL_BIN=$OPENSHELL_BIN"
           "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/common-egress-agent.test.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/common-egress-agent.test.ts \
+            --selector "${{ matrix.selector }}"
 
       - name: Finalize runner comparison telemetry
         if: ${{ always() && github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -2322,6 +2353,9 @@ jobs:
       - name: Upload common-egress agent artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-common-egress-agent-${{ matrix.scenario }}
+          path: e2e-artifacts/live/common-egress-agent/${{ matrix.scenario }}/
 
       - name: Clean up Docker auth
         if: always()
@@ -3352,6 +3386,8 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+        with:
+          build-cli: "false"
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
