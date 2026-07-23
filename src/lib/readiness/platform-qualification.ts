@@ -15,7 +15,6 @@ import type {
 
 const STATION_PRODUCT_PATTERN = /(?:^|[^A-Za-z0-9])Station(?:[^A-Za-z0-9]|$).*\bGB300\b/i;
 const IDENTITY_FILE_MAX_BYTES = 4096;
-const GB300_PCI_DEVICES = new Set(["0x31c2", "0x31c3"]);
 
 export type StationProfile =
   | "generic-ubuntu"
@@ -166,14 +165,8 @@ function stationHasGb300PciGpu(
     for (const entry of readdir(pciDevicesPath).slice(0, 256)) {
       const devicePath = path.join(pciDevicesPath, entry);
       const vendor = readOptional(readFile, path.join(devicePath, "vendor"));
-      const device = readOptional(readFile, path.join(devicePath, "device"));
       const pciClass = readOptional(readFile, path.join(devicePath, "class"));
-      if (
-        vendor === "0x10de" &&
-        device &&
-        GB300_PCI_DEVICES.has(device) &&
-        pciClass?.startsWith("0x03")
-      ) {
+      if (vendor?.toLowerCase() === "0x10de" && /^0x03[0-9a-f]{4}$/iu.test(pciClass ?? "")) {
         matches += 1;
       }
     }

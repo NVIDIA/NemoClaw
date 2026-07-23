@@ -173,7 +173,6 @@ describe("platform readiness qualification (#7410)", () => {
     const readFile = vi.fn((path: string) => {
       if (path.endsWith("product_name")) return "NVIDIA DGX Station GB300\n";
       if (path.endsWith("vendor")) return "0x10de\n";
-      if (path.endsWith("device")) return "0x31c2\n";
       if (path.endsWith("class")) return "0x030200\n";
       return "";
     });
@@ -197,6 +196,41 @@ describe("platform readiness qualification (#7410)", () => {
     });
     expect(stat).toHaveBeenCalledWith("/fixtures/dgx-release");
     expect(readFile.mock.calls.every(([path]) => String(path).startsWith("/fixtures/"))).toBe(true);
+  });
+
+  it("accepts the same Station NVIDIA display-class device as preparation", () => {
+    const readFile = vi.fn((path: string) => {
+      if (path.endsWith("product_name")) return "NVIDIA DGX Station GB300\n";
+      if (path.endsWith("vendor")) return "0x10DE\n";
+      if (path.endsWith("device")) return "0xffff\n";
+      if (path.endsWith("class")) return "0x030000\n";
+      return "";
+    });
+
+    const identity = collectPlatformIdentity({
+      productNamePath: "/fixtures/product_name",
+      stationReleasePath: "/fixtures/dgx-release",
+      pciDevicesPath: "/fixtures/pci",
+      readFile,
+      readdir: () => ["0000:01:00.0"],
+      stat: () => ({ isFile: () => true, isSymbolicLink: () => false, size: 256 }),
+    });
+
+    expect(identity.stationGb300PciGpu).toBe(true);
+    expect(
+      qualification(
+        projectPlatformQualification(
+          input({
+            architecture: "arm64",
+            hasNvidiaGpu: true,
+            ...identity,
+            stationProfile: "generic-ubuntu",
+          }),
+        ),
+        "host.platform.dgx_station",
+      ),
+    ).toBe("qualified");
+    expect(readFile).not.toHaveBeenCalledWith(expect.stringContaining("/device"));
   });
 
   it("bounds firmware identity before publishing it", () => {
