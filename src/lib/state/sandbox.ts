@@ -1628,11 +1628,15 @@ function restoreSandboxStateInternal(
       // image-managed extensions are preserved from the freshly built image and
       // excluded from the restore tar; only user/non-managed extension entries
       // are cleared and restored from the backup.
+      const staleContentDirs = targetAgent.stateDirs.filter(
+        (stateDir) => !targetRuntimeAuthDirs.has(stateDir),
+      );
       const rmCmd = buildRestoreCleanupCommand(
         dir,
         localDirs,
         pluginRestorePlan.preservedExtensionDirs,
         new Set(pluginRestorePlan.requiredFreshExtensionDirs),
+        staleContentDirs,
       );
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
       const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
