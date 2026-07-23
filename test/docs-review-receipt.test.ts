@@ -25,7 +25,7 @@ function receipt(overrides: Partial<Record<string, string>> = {}): string {
   };
   return `## Documentation Writer Review
 
-- [${values.checked}] Documentation writer subagent reviewed the completed implementation
+- [${values.checked}] Documentation writer subagent reviewed the completed changes
 - Result: ${values.result}
 - Evidence: ${values.evidence}
 - Agent: ${values.agent}
@@ -113,7 +113,7 @@ describe("documentation writer review receipt", () => {
 
     expect(result.status).toBe(0);
     expect(result.output.status).toBe("missing");
-    expect(result.stderr).toContain("Code-changing PRs must include");
+    expect(result.stderr).toContain("change code or documentation must include");
   });
 
   it("fails required mode when a code change has no receipt", () => {
@@ -125,24 +125,59 @@ describe("documentation writer review receipt", () => {
     expect(result.output.status).toBe("missing");
   });
 
-  it("does not require a receipt for a documentation-only change", () => {
-    const result = runCheck("## Summary\n\nUpdate prose.\n", ["README.md", "docs/index.mdx"]);
+  it("accepts a fresh receipt for a documentation-only change", () => {
+    const result = runCheck(receipt(), ["README.md", "docs/index.mdx"]);
 
     expect(result.status).toBe(0);
-    expect(result.output).toMatchObject({ status: "not-required", codeChanged: false });
+    expect(result.output).toMatchObject({
+      status: "valid",
+      codeChanged: false,
+      docsChanged: true,
+    });
+    expect(result.output.issues).toEqual([]);
     expect(result.stderr).toBe("");
   });
 
-  it("does not require a receipt for an MDX file outside docs", () => {
+  it("reports a missing receipt for a documentation-only change", () => {
+    const result = runCheck("## Summary\n\nUpdate prose.\n", ["docs/index.mdx"]);
+
+    expect(result.status).toBe(0);
+    expect(result.output).toMatchObject({
+      status: "missing",
+      codeChanged: false,
+      docsChanged: true,
+    });
+    expect(result.stderr).toContain("change code or documentation must include");
+  });
+
+  it("fails required mode when a documentation-only change has no receipt", () => {
+    const result = runCheck("## Summary\n\nUpdate prose.\n", ["docs/index.mdx"], {
+      mode: "required",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output.status).toBe("missing");
+  });
+
+  it("requires a receipt for an MDX file outside docs", () => {
     const result = runCheck("## Summary\n\nUpdate prose.\n", ["examples/guide.mdx"]);
 
     expect(result.status).toBe(0);
     expect(result.output).toMatchObject({
-      status: "not-required",
+      status: "missing",
       codeChanged: false,
       docsChanged: true,
     });
-    expect(result.stderr).toBe("");
+    expect(result.stderr).toContain("change code or documentation must include");
+  });
+
+  it("accepts the completed-implementation wording in historical receipts", () => {
+    const result = runCheck(
+      receipt().replace("reviewed the completed changes", "reviewed the completed implementation"),
+      ["src/lib/example.ts", "docs/index.mdx"],
+    );
+
+    expect(result.output.status).toBe("valid");
   });
 
   it("rejects repeated singleton receipt fields", () => {
@@ -160,10 +195,10 @@ describe("documentation writer review receipt", () => {
 
   it("rejects repeated review completion checkboxes", () => {
     const body = receipt().replace(
-      "- [x] Documentation writer subagent reviewed the completed implementation",
+      "- [x] Documentation writer subagent reviewed the completed changes",
       [
-        "- [ ] Documentation writer subagent reviewed the completed implementation",
-        "- [x] Documentation writer subagent reviewed the completed implementation",
+        "- [ ] Documentation writer subagent reviewed the completed changes",
+        "- [x] Documentation writer subagent reviewed the completed changes",
       ].join("\n"),
     );
     const result = runCheck(body, ["src/lib/example.ts", "docs/index.mdx"]);
@@ -190,7 +225,7 @@ describe("documentation writer review receipt", () => {
     expect(result.output.issues).toEqual(
       expect.arrayContaining([
         "The receipt PR number does not match this pull request.",
-        "The documentation writer review is stale after a new implementation commit.",
+        "The documentation writer review is stale after a new commit.",
         "The reviewed AGENTS.md blob SHA does not match the pull request version.",
       ]),
     );
@@ -309,12 +344,14 @@ printf '%s' '${JSON.stringify(pullRequests)}'
       expect(jsonResult.status).toBe(0);
       expect(report.metrics).toEqual({
         totalPrs: 3,
+        eligiblePrs: 3,
         eligibleCodePrs: 2,
+        eligibleDocsOnlyPrs: 1,
         unclassifiedPrs: 0,
         recordedReceipts: 1,
-        receiptCoverage: 0.5,
+        receiptCoverage: 0.3333,
         validReceipts: 1,
-        validReceiptRate: 0.5,
+        validReceiptRate: 0.3333,
         freshReceipts: 1,
         freshReceiptRate: 1,
         results: { blocked: 0, "docs-updated": 1, "no-docs-needed": 0 },
