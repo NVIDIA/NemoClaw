@@ -151,6 +151,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     );
     expect(review).toContain("SDK Node `0.219.0`");
     expect(review).toContain("preexisting nested Core");
+    expect(review).toContain("test/openclaw-diagnostics-jaeger-runtime.test.ts");
+    expect(review).toContain("NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS=1");
   });
 
   it("records the active mcporter advisory remediations", () => {
@@ -290,6 +292,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("Default PR and main CI now rematerialize");
     expect(review).toContain("`npm audit --omit=dev --json`");
     expect(review).toContain("configured threshold in `ci/reviewed-npm-audit.json` is `high`");
+    expect(review).toContain(
+      "exception registry at `ci/npm-audit-exceptions.json` is empty by default",
+    );
+    expect(review).toContain("contains no exception for `GHSA-v2hh-gcrm-f6hx`");
     expect(review).toContain("Transitive Dependency Graph Rationale");
     expect(review).toContain("Transitive Remediation Boundary");
     expect(review).toContain("point-in-time record of the remediation shipped for the");
@@ -510,7 +516,10 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
   check_contains "$openclaw_block" 'mcporter-integrity=' "$dockerfile mcporter provenance integrity"
   check_contains "$openclaw_block" 'mcporter-lock-sha256=' "$dockerfile mcporter provenance lock hash"
-  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+audit-signatures-v1' "$dockerfile mcporter provenance recipe"
+  check_contains "$openclaw_block" 'mcporter-audit-policy-sha256=' "$dockerfile mcporter audit policy hash"
+  check_contains "$openclaw_block" 'mcporter-audit-status=' "$dockerfile mcporter audit status"
+  check_contains "$openclaw_block" 'mcporter-audit-exceptions=' "$dockerfile mcporter audit exceptions"
+  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+reviewed-audit+signatures-v2' "$dockerfile mcporter provenance recipe"
 done
 
 check_contains "$(cat Dockerfile.base)" 'chmod 0444 "$OPENCLAW_PROVENANCE_TMP"' "base provenance protected mode"
@@ -716,6 +725,12 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     );
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").run).toContain(
       "test/openclaw-real-patched-dist-harness.test.ts",
+    );
+    expect(requiredStep(mainJob, "Verify reviewed Jaeger header handling").env).toEqual({
+      NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS: "1",
+    });
+    expect(requiredStep(mainJob, "Verify reviewed Jaeger header handling").run).toContain(
+      "test/openclaw-diagnostics-jaeger-runtime.test.ts",
     );
     expect(
       requiredStep(mainJob, "Audit managed OpenClaw security finding suppressions").env,

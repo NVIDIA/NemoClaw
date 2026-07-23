@@ -392,6 +392,7 @@ test(
       apiKey: BASELINE_API_KEY,
       host: "0.0.0.0",
       model: BASELINE_MODEL,
+      progress,
       publicHost: "host.openshell.internal",
       requireAuth: true,
     });

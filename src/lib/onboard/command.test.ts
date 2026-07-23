@@ -261,6 +261,22 @@ describe("onboard command options", () => {
     expect(errors.join("\n")).toContain("Installation cancelled");
   });
 
+  it("returns without rethrowing when a prompt rejects with SIGINT (#7439)", async () => {
+    const exit = vi.fn<(code: number) => never>();
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
+        },
+        error: () => {},
+        exit,
+      }),
+    ).resolves.toBeUndefined();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
   it("rethrows non-cancellation onboarding failures unchanged (#5976)", async () => {
     await expect(
       runOnboardCommand({

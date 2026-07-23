@@ -7,7 +7,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { auditTestRuntime, formatRuntimeAudit } from "../../../scripts/audit-test-runtime.mts";
+import {
+  auditTestRuntime,
+  formatRuntimeAudit,
+  formatRuntimeAuditSummary,
+} from "../../../scripts/audit-test-runtime.mts";
 
 function writeProgress(
   root: string,
@@ -16,6 +20,7 @@ function writeProgress(
   durationMs: number,
   phase: string,
   phaseDurationMs: number,
+  phaseOutcome: string | undefined,
 ): void {
   const directory = path.join(root, run, scenario);
   fs.mkdirSync(directory, { recursive: true });
@@ -31,6 +36,7 @@ function writeProgress(
       phases: [
         {
           label: phase,
+          ...(phaseOutcome === undefined ? {} : { outcome: phaseOutcome }),
           startedAtMs: 1_000,
           finishedAtMs: 1_000 + phaseDurationMs,
           durationMs: phaseDurationMs,
@@ -47,9 +53,9 @@ describe("test runtime audit", () => {
   it("ranks repeated artifact summaries by p95 and identifies the slowest phase", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-audit-"));
     try {
-      writeProgress(root, "run-1", "variable test", 10_000, "install", 8_000);
-      writeProgress(root, "run-2", "variable test", 50_000, "inference", 40_000);
-      writeProgress(root, "run-1", "steady test", 20_000, "sandbox", 15_000);
+      writeProgress(root, "run-1", "variable test", 10_000, "install", 8_000, "passed");
+      writeProgress(root, "run-2", "variable test", 50_000, "inference", 40_000, "failed");
+      writeProgress(root, "run-1", "steady test", 20_000, "sandbox", 15_000, "passed");
 
       const rows = auditTestRuntime([root]);
 
@@ -64,6 +70,7 @@ describe("test runtime audit", () => {
           variabilityMs: 20_000,
           slowestPhase: "inference",
           slowestPhaseMs: 40_000,
+          slowestPhaseOutcome: "failed",
         },
         {
           target: "steady test-target",
@@ -75,20 +82,41 @@ describe("test runtime audit", () => {
           variabilityMs: 0,
           slowestPhase: "sandbox",
           slowestPhaseMs: 15_000,
+          slowestPhaseOutcome: "passed",
         },
       ]);
       expect(formatRuntimeAudit(rows)).toContain(
-        "| variable test-target | variable test | 2 | 30.0s | 50.0s | 50.0s | 20.0s | inference (40.0s) |",
+        "| variable test-target | variable test | 2 | 30.0s | 50.0s | 50.0s | 20.0s | inference (40.0s, failed) |",
       );
+      expect(formatRuntimeAuditSummary(rows)).toContain("## E2E Test Phase Runtime");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("renders an explicit no-artifact summary", () => {
+    expect(formatRuntimeAuditSummary([])).toContain(
+      "No `test-progress.json` artifacts were available for this run.",
+    );
   });
 
   it("rejects malformed progress artifacts instead of producing a misleading ranking", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-audit-invalid-"));
     try {
       fs.writeFileSync(path.join(root, "test-progress.json"), '{"version":1}\n', "utf8");
+      expect(() => auditTestRuntime([root])).toThrow(/invalid test progress summary/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unknown", "unexpected"],
+  ])("rejects a valid progress artifact with a %s phase outcome", (_case, outcome) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-audit-outcome-"));
+    try {
+      writeProgress(root, "run-1", "invalid outcome", 10_000, "install", 8_000, outcome);
       expect(() => auditTestRuntime([root])).toThrow(/invalid test progress summary/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
