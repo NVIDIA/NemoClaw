@@ -64,7 +64,7 @@ function hasCustomImageEvidence(entry: SandboxEntry): boolean {
 function collectLifecycleRegistrationIssues(entry: SandboxEntry): FieldIssue[] {
   const issues: FieldIssue[] = [];
   addPresenceIssue(issues, entry, "openshellDriver", isPresentString);
-  addPresenceIssue(issues, entry, "openshellVersion", isNullableString);
+  addPresenceIssue(issues, entry, "openshellVersion", isPresentString);
   addPresenceIssue(issues, entry, "fromDockerfile", isNullableString);
   addPresenceIssue(issues, entry, "dashboardPort", isNullablePort);
   addPresenceIssue(issues, entry, "imageTag", isPresentString);

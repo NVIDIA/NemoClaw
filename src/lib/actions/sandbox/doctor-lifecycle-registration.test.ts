@@ -79,6 +79,18 @@ describe("doctor lifecycle registration checks", () => {
     expect(check.detail).toContain("snapshot");
   });
 
+  it("warns when registered OpenShell version metadata is null", () => {
+    const check = buildLifecycleRegistrationCheck(
+      "alpha",
+      sandbox({ openshellVersion: null }),
+      "nemoclaw",
+    );
+
+    expect(check.status).toBe("warn");
+    expect(check.detail).toContain("invalid openshellVersion");
+    expect(check.detail).toContain("snapshot");
+  });
+
   it("reports blank managed-image version metadata only as invalid", () => {
     const check = buildLifecycleRegistrationCheck(
       "alpha",
