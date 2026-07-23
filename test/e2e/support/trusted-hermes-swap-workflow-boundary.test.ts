@@ -50,14 +50,15 @@ function trustedSwapStep(workflow: SwapWorkflow, jobName: string): WorkflowStep 
   return step;
 }
 
-type SwapFailureOptions = {
+type SwapHarnessOptions = {
+  activeSwapBytes?: number;
   diskBytes?: number;
   failCleanupQuery?: boolean;
   failMkswap?: boolean;
   failSwapoff?: boolean;
 };
 
-type SwapFailureResult = {
+type SwapHarnessResult = {
   calls: string[];
   status: number | null;
   stderr: string;
@@ -70,7 +71,7 @@ function writeFakeCommand(directory: string, name: string, lines: string[]): str
   return commandPath;
 }
 
-function runTrustedSwapFailure(options: SwapFailureOptions = {}): SwapFailureResult {
+function runTrustedSwapHarness(options: SwapHarnessOptions = {}): SwapHarnessResult {
   const fakeBin = mkdtempSync(path.join(tmpdir(), "nemoclaw-trusted-swap-"));
   const callLog = path.join(fakeBin, "calls.log");
   const queryCount = path.join(fakeBin, "query-count");
@@ -86,7 +87,11 @@ function runTrustedSwapFailure(options: SwapFailureOptions = {}): SwapFailureRes
       'case "$*" in',
       '  *"--output SIZE"*)',
       '    state="$(head -n 1 "$FAKE_SWAP_STATE")"',
-      '    if [ "$state" = "active" ]; then printf "1\\n"; else printf "0\\n"; fi',
+      '    if [ "$state" = "active" ]; then',
+      '      printf "1\\n"',
+      "    else",
+      '      printf "%s\\n" "$FAKE_ACTIVE_SWAP_BYTES"',
+      "    fi",
       "    ;;",
       '  *"--output NAME"*)',
       "    count=0",
@@ -182,6 +187,7 @@ function runTrustedSwapFailure(options: SwapFailureOptions = {}): SwapFailureRes
         ENV: "/dev/null",
         EVENT_NAME: "workflow_dispatch",
         EXPECTED_WORKFLOW_SHA: workflowSha,
+        FAKE_ACTIVE_SWAP_BYTES: String(options.activeSwapBytes ?? 0),
         FAKE_CALL_LOG: callLog,
         FAKE_DISK_BYTES: String(options.diskBytes ?? 100_000_000_000),
         FAKE_FAIL_MKSWAP: options.failMkswap ? "1" : "0",
@@ -245,8 +251,18 @@ describe("trusted Hermes swap workflow boundary", () => {
     expect(TRUSTED_HERMES_SWAP_SCRIPT).not.toContain("${{");
   });
 
+  it("exits before privileged allocation when enough swap is already active (#7145)", () => {
+    const result = runTrustedSwapHarness({ activeSwapBytes: 34_359_738_368 });
+
+    expect(result.status).toBe(0);
+    expect(result.calls).toEqual([
+      "stat:-c %F:%u:%g -- /mnt",
+      "swapon:--show --bytes --noheadings --output SIZE",
+    ]);
+  });
+
   it("removes an inactive partial allocation after setup fails (#7145)", () => {
-    const result = runTrustedSwapFailure({ failMkswap: true });
+    const result = runTrustedSwapHarness({ failMkswap: true });
 
     expect(result.status).toBe(43);
     expect(result.calls).toEqual(
@@ -258,7 +274,7 @@ describe("trusted Hermes swap workflow boundary", () => {
   });
 
   it("disables an active partial allocation before removing it (#7145)", () => {
-    const result = runTrustedSwapFailure();
+    const result = runTrustedSwapHarness();
     const swapoffIndex = result.calls.indexOf(
       "swapoff:/mnt/nemoclaw-hermes-e2e-swap/nemoclaw-hermes.fake.swap",
     );
@@ -283,7 +299,7 @@ describe("trusted Hermes swap workflow boundary", () => {
       options: { failSwapoff: true },
     },
   ])("preserves the partial allocation when $name (#7145)", ({ expected, options }) => {
-    const result = runTrustedSwapFailure(options);
+    const result = runTrustedSwapHarness(options);
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(expected);
@@ -291,7 +307,7 @@ describe("trusted Hermes swap workflow boundary", () => {
   });
 
   it("fails before allocation when disk reserve is unavailable (#7145)", () => {
-    const result = runTrustedSwapFailure({ diskBytes: 1 });
+    const result = runTrustedSwapHarness({ diskBytes: 1 });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("insufficient disk capacity");
