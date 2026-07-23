@@ -22,6 +22,13 @@ vi.mock("../../lib/readiness/index", () => ({
 
 import HostProbeCommand from "./probe";
 
+function assertSchemaValid(value: unknown): void {
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  ajv.addFormat("date-time", true);
+  const validate = ajv.compile(systemReadinessSchema as AnySchema);
+  if (!validate(value)) throw new Error(JSON.stringify(validate.errors));
+}
+
 function report(
   status: SystemReadinessReport["status"],
   exitCode: SystemReadinessReport["exitCode"],
@@ -82,12 +89,9 @@ describe("host probe command (#7412)", () => {
     try {
       await HostProbeCommand.run(["--json"], process.cwd());
       const output = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
-      const ajv = new Ajv2020({ allErrors: true, strict: true });
-      ajv.addFormat("date-time", true);
-      const validate = ajv.compile(systemReadinessSchema as AnySchema);
 
+      expect(() => assertSchemaValid(output)).not.toThrow();
       expect(output).toEqual(expectedReport);
-      expect(validate(output), JSON.stringify(validate.errors)).toBe(true);
       expect(process.exitCode).toBe(exitCode);
       expect(mocks.renderReadinessReport).not.toHaveBeenCalled();
     } finally {
