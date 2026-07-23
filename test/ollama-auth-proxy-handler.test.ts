@@ -44,7 +44,9 @@ describe("ollama-auth-proxy request handler", () => {
   beforeEach(async () => {
     backend = await startBackend();
     proxyPort = await freePort();
-    proxy = await startProxy(proxyPort, backend.port, TOKEN);
+    proxy = await startProxy(proxyPort, backend.port, TOKEN, {
+      backendUrl: `http://localhost:${backend.port}`,
+    });
   });
 
   afterEach(async () => {
@@ -78,7 +80,7 @@ describe("ollama-auth-proxy request handler", () => {
     expect(backend?.captured).toHaveLength(0);
   });
 
-  it("forwards to the backend on a correct Bearer token and strips authorization + host headers", async () => {
+  it("strips internal authorization before forwarding to a no-auth loopback upstream (#7424)", async () => {
     const res = await request(proxyPort, {
       path: "/v1/chat/completions",
       method: "POST",

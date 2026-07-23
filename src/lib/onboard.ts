@@ -238,6 +238,7 @@ const {
   getOllamaProxyToken,
   isProxyHealthy,
   persistAndProbeOllamaProxy,
+  prepareCompatibleEndpointNoAuthProxy,
   prepareOllamaModel,
   printOllamaExposureWarning,
   promptOllamaModel,
@@ -3306,6 +3307,36 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         state.endpointUrl,
       );
     }
+    if (selected.key === "custom") {
+      const recordedCredentialEnv = sandboxName
+        ? registry.getSandbox(sandboxName)?.credentialEnv
+        : undefined;
+      try {
+        const authMode = await compatibleEndpointGatewayRoute.selectCompatibleEndpointAuthMode({
+          endpointUrl: requireValue(
+            state.endpointUrl,
+            "Missing endpoint URL for Other OpenAI-compatible endpoint",
+          ),
+          nonInteractive: isNonInteractive(),
+          credentialAvailable:
+            Boolean(getCredential(remoteConfig.credentialEnv)) ||
+            (recoveredFromSandbox && recordedCredentialEnv !== undefined),
+          configuredMode:
+            process.env[compatibleEndpointGatewayRoute.COMPATIBLE_ENDPOINT_AUTH_MODE_ENV],
+          prompt,
+          log: (message = "") => console.log(message),
+        });
+        if (
+          authMode === compatibleEndpointGatewayRoute.COMPATIBLE_ENDPOINT_NO_AUTH_MODE ||
+          (recoveredFromSandbox && recordedCredentialEnv === null)
+        ) {
+          state.credentialEnv = null;
+        }
+      } catch (error) {
+        console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
+    }
     const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
     state.preferredInferenceApi = selected.key === "custom" ? (explicitApi === "chat-completions" ? "openai-completions" : explicitApi || null) : null;
     if (!state.preferredInferenceApi) {
@@ -3427,13 +3458,11 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       (recoveredFromSandbox && recoveredModel) ||
       remoteConfig.defaultModel;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const selectedCredentialEnv = requireValue(state.credentialEnv, `Missing credential env for ${remoteConfig.label}`);
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const compatibleApiKeyOptional = selected.key === "custom" && Boolean(state.endpointUrl && compatibleEndpointGatewayRoute.compatibleEndpointAllowsMissingApiKey(state.endpointUrl)) && !getCredential(selectedCredentialEnv);
+    const selectedCredentialEnv = state.credentialEnv;
     const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
       selectedKey: selected.key,
       endpointUrl: state.endpointUrl,
-      credentialEnv: selectedCredentialEnv,
+      credentialEnv: selectedCredentialEnv ?? remoteConfig.credentialEnv,
       label: remoteConfig.label,
       helpUrl: remoteConfig.helpUrl,
       defaultModel,
@@ -3460,19 +3489,19 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       state.model = defaultModel;
       state.assertRouteCompatible?.();
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      if (!compatibleApiKeyOptional) recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
+      if (selectedCredentialEnv) recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
         { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName, recoveredRegistryRoute },
         { resolveProviderCredential, readRecordedInferenceRoute: (name) => readRecordedInferenceRoute(name, args.recoverySessionId), readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell, args.gatewayName ?? GATEWAY_NAME), note },
       );
-    } else {
+    } else if (selectedCredentialEnv) {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      const credentialResult = await credentialPrompt.ensureNamedCredential(selectedCredentialEnv, `${remoteConfig.label} API key`, remoteConfig.helpUrl, openrouterSelection.credentialValidatorForProvider(selected.key), compatibleApiKeyOptional);
+      const credentialResult = await credentialPrompt.ensureNamedCredential(selectedCredentialEnv, `${remoteConfig.label} API key`, remoteConfig.helpUrl, openrouterSelection.credentialValidatorForProvider(selected.key));
       if (credentialPrompt.returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }
     }
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    openrouterSelection.validateNonInteractiveCredential({ selectedKey: selected.key, selectedCredentialEnv, isNonInteractive: isNonInteractive(), reuseGatewayCredentialWithoutLocalKey: state.reuseGatewayCredentialWithoutLocalKey, resolveProviderCredential, getCredential, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
+    if (selectedCredentialEnv) openrouterSelection.validateNonInteractiveCredential({ selectedKey: selected.key, selectedCredentialEnv, isNonInteractive: isNonInteractive(), reuseGatewayCredentialWithoutLocalKey: state.reuseGatewayCredentialWithoutLocalKey, resolveProviderCredential, getCredential, error: (message) => console.error(message), exitProcess: (code) => process.exit(code) });
     let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
     if (openrouterSelection.isOpenAiLikeRemoteProvider(selected.key)) {
       const modelAuthMode = getProbeAuthMode(state.provider);
@@ -3483,7 +3512,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
           remoteConfig.label,
           state.endpointUrl || remoteConfig.endpointUrl,
           candidate,
-          getCredential(selectedCredentialEnv) || "",
+          (selectedCredentialEnv ? getCredential(selectedCredentialEnv) : null) || "",
           openrouterSelection.openAiLikeModelValidationOptions(state.provider, modelAuthMode),
         );
       };
@@ -3494,7 +3523,9 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         return validateAnthropicModel(
           state.endpointUrl || ANTHROPIC_ENDPOINT_URL,
           candidate,
-          getCredential(selectedCredentialEnv) || "",
+          getCredential(
+            requireValue(selectedCredentialEnv, `Missing credential env for ${remoteConfig.label}`),
+          ) || "",
         );
       };
     }
@@ -3660,6 +3691,7 @@ function getSetupInferenceDeps(): SetupInferenceDeps {
     localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
     bedrockRuntimeOnboard,
     openrouterRuntimeOnboard,
+    prepareCompatibleEndpointNoAuthProxy,
     validateLocalProvider,
     getLocalProviderHealthCheck,
     getLocalProviderBaseUrl,

@@ -12,7 +12,8 @@ const BUNDLED_LOCAL_INFERENCE_GATEWAY_PORT_SET = new Set<number>(
   BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS,
 );
 
-export const LOCALHOST_COMPATIBLE_API_KEY_PLACEHOLDER = "nemoclaw-local-endpoint";
+export const COMPATIBLE_ENDPOINT_AUTH_MODE_ENV = "NEMOCLAW_COMPATIBLE_AUTH_MODE";
+export const COMPATIBLE_ENDPOINT_NO_AUTH_MODE = "none";
 
 export function compatibleEndpointAllowsMissingApiKey(endpointUrl: string): boolean {
   let parsed: URL;
@@ -28,6 +29,49 @@ export function compatibleEndpointAllowsMissingApiKey(endpointUrl: string): bool
     !parsed.password &&
     (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1")
   );
+}
+
+export async function selectCompatibleEndpointAuthMode(options: {
+  endpointUrl: string;
+  nonInteractive: boolean;
+  credentialAvailable: boolean;
+  configuredMode?: string | null;
+  prompt: (message: string) => Promise<string>;
+  log: (message?: string) => void;
+}): Promise<"api-key" | "none"> {
+  const configuredMode = String(options.configuredMode || "")
+    .trim()
+    .toLowerCase();
+  if (options.nonInteractive) {
+    if (configuredMode && configuredMode !== "api-key" && configuredMode !== "none") {
+      throw new Error(`${COMPATIBLE_ENDPOINT_AUTH_MODE_ENV} must be 'api-key' or 'none'.`);
+    }
+    if (configuredMode === "none") {
+      if (!compatibleEndpointAllowsMissingApiKey(options.endpointUrl)) {
+        throw new Error(
+          `${COMPATIBLE_ENDPOINT_AUTH_MODE_ENV}=none is allowed only for an exact loopback endpoint.`,
+        );
+      }
+      return "none";
+    }
+    if (
+      compatibleEndpointAllowsMissingApiKey(options.endpointUrl) &&
+      !options.credentialAvailable
+    ) {
+      throw new Error(
+        `Set COMPATIBLE_API_KEY or ${COMPATIBLE_ENDPOINT_AUTH_MODE_ENV}=none in non-interactive mode.`,
+      );
+    }
+    return "api-key";
+  }
+  if (!compatibleEndpointAllowsMissingApiKey(options.endpointUrl)) return "api-key";
+  options.log("");
+  options.log("  Authentication:");
+  options.log("    1) API key");
+  options.log("    2) No authentication");
+  options.log("");
+  const selected = Number.parseInt((await options.prompt("  Choose [1]: ")) || "1", 10);
+  return selected === 2 ? "none" : "api-key";
 }
 
 // #5744: keep host-side validation on the user-entered loopback URL, but

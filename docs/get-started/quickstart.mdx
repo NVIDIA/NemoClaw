@@ -254,7 +254,8 @@ Use these details when your first-run path needs more control.
     | Local Ollama | You want a host-local Ollama model. | None |
     | Model Router | You want NemoClaw to start the host-side model router. | `NVIDIA_INFERENCE_API_KEY` |
 
-    `COMPATIBLE_API_KEY` is optional for an OpenAI-compatible endpoint on the exact loopback hosts `localhost`, `127.0.0.1`, or `[::1]`.
+    For an OpenAI-compatible endpoint on the exact loopback hosts `localhost`, `127.0.0.1`, or `[::1]`, choose **No authentication** when the upstream does not require a key.
+    In non-interactive mode, set `NEMOCLAW_COMPATIBLE_AUTH_MODE=none` explicitly.
     Other compatible endpoint URLs require their credential variable.
 
     After you enter a sandbox name, the wizard asks for final confirmation before it registers the provider, prompts for integrations, and builds the sandbox image.

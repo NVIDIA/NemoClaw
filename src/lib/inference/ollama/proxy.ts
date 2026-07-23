@@ -4,6 +4,7 @@
 // Ollama auth-proxy lifecycle: token persistence, PID management,
 // proxy start/stop, model pull and validation.
 
+import { OLLAMA_LOCAL_CREDENTIAL_ENV } from "../config";
 import type { GpuInfo } from "../local";
 import type { PulledModelDiscoveryDeps } from "./model-discovery";
 
@@ -42,8 +43,10 @@ const {
   killLocalAdapterPid,
   loadLocalAdapterPid,
   persistLocalAdapterPid,
+  readLocalAdapterJsonFile,
   readLocalAdapterTextFile,
   spawnDetachedNodeAdapter,
+  writeLocalAdapterJsonFile,
   writeLocalAdapterSecretFile,
 } = require("../local-adapter-lifecycle");
 
@@ -52,8 +55,32 @@ const {
 const PROXY_STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
 const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
 const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
+const PROXY_STATE_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.json");
+const DEFAULT_PROXY_BACKEND_URL = `http://127.0.0.1:${OLLAMA_PORT}`;
 
 let ollamaProxyToken: string | null = null;
+let ollamaProxyBackendUrl = DEFAULT_PROXY_BACKEND_URL;
+
+function normalizeLoopbackBackendUrl(value: unknown): string | null {
+  try {
+    const url = new URL(String(value));
+    const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:") ||
+      !["localhost", "127.0.0.1", "::1"].includes(hostname) ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    ) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
 
 function sleep(seconds: number): void {
   spawnSync("sleep", [String(seconds)]);
@@ -72,6 +99,7 @@ function persistProxyToken(token: string): void {
 // (Docker Desktop, DNS, missing network) is non-fatal.
 async function persistAndProbeOllamaProxy(token: string): Promise<void> {
   persistProxyToken(token);
+  writeLocalAdapterJsonFile(PROXY_STATE_PATH, { backendUrl: ollamaProxyBackendUrl });
   const reach = await probeOllamaProxySandboxReachability();
   if (!reach.ok && reach.reason === "tcp_failed") {
     console.error(formatOllamaProxyUnreachableMessage(reach));
@@ -139,13 +167,14 @@ function isOllamaProxyProcess(pid: number | null | undefined): boolean {
   return isLocalAdapterProcess(pid, isOllamaAuthProxyCommandLine, runCapture);
 }
 
-function spawnOllamaAuthProxy(token: string): number | null {
+function spawnOllamaAuthProxy(token: string, backendUrl: string): number | null {
   const child = spawnDetachedNodeAdapter({
     scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.mts"),
     env: {
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
+      OLLAMA_BACKEND_URL: backendUrl,
     },
     buildEnv: buildSubprocessEnv,
   });
@@ -253,8 +282,14 @@ function printProxyPortConflict(owners: { pids: number[]; descriptions: string[]
 // so poll with backoff instead of the previous single 2s probe (issue #4820).
 const PROXY_START_ATTEMPTS = 12;
 
-function startOllamaAuthProxy(): boolean {
+function startOllamaAuthProxy(backendUrl: string = DEFAULT_PROXY_BACKEND_URL): boolean {
   const crypto = require("crypto");
+  const normalizedBackendUrl = normalizeLoopbackBackendUrl(backendUrl);
+  if (!normalizedBackendUrl) {
+    console.error("  Error: loopback auth proxy requires an exact loopback upstream origin.");
+    return false;
+  }
+  ollamaProxyBackendUrl = normalizedBackendUrl;
   killStaleProxy();
 
   // After clearing any stale NemoClaw proxy, a process still holding the port
@@ -274,7 +309,7 @@ function startOllamaAuthProxy(): boolean {
   // Don't persist yet — wait until provider is confirmed in setupInference.
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
-  const pid = spawnOllamaAuthProxy(proxyToken);
+  const pid = spawnOllamaAuthProxy(proxyToken, ollamaProxyBackendUrl);
 
   // Poll for readiness with backoff. Three terminal outcomes:
   //   • proxy alive and listening → success
@@ -311,6 +346,27 @@ function startOllamaAuthProxy(): boolean {
   console.error("  Containers will not be able to reach Ollama without the proxy.");
   console.error(`  Check the proxy port owner: lsof -ti :${OLLAMA_PROXY_PORT}`);
   return false;
+}
+
+async function prepareCompatibleEndpointNoAuthProxy(endpointUrl: string): Promise<{
+  baseUrl: string;
+  credentialEnv: string;
+  credentialValue: string;
+}> {
+  const endpoint = new URL(endpointUrl);
+  const backendUrl = normalizeLoopbackBackendUrl(endpoint.origin);
+  if (!backendUrl || !startOllamaAuthProxy(backendUrl)) {
+    throw new Error("Could not start the protected loopback route for the no-auth endpoint.");
+  }
+  const credentialValue = getOllamaProxyToken();
+  if (!credentialValue) throw new Error("Loopback proxy token was not initialized.");
+  await persistAndProbeOllamaProxy(credentialValue);
+  const pathname = endpoint.pathname.replace(/\/+$/, "");
+  return {
+    baseUrl: `http://host.openshell.internal:${OLLAMA_PROXY_PORT}${pathname}`,
+    credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
+    credentialValue,
+  };
 }
 
 /**
@@ -363,6 +419,9 @@ function ensureOllamaAuthProxy(): void {
   // Try to load persisted token first — if none, this isn't an Ollama setup.
   const token = loadPersistedProxyToken();
   if (!token) return;
+  ollamaProxyBackendUrl =
+    normalizeLoopbackBackendUrl(readLocalAdapterJsonFile(PROXY_STATE_PATH)?.backendUrl) ||
+    DEFAULT_PROXY_BACKEND_URL;
 
   const pid = loadPersistedProxyPid();
   if (isOllamaProxyProcess(pid)) {
@@ -376,7 +435,7 @@ function ensureOllamaAuthProxy(): void {
 
   // Proxy not running, token mismatch, or PID stale — restart with the persisted token.
   ollamaProxyToken = token;
-  const startedPid = spawnOllamaAuthProxy(token);
+  const startedPid = spawnOllamaAuthProxy(token, ollamaProxyBackendUrl);
   for (let attempt = 0; attempt < 10; attempt++) {
     if (isOllamaProxyProcess(startedPid) && probeProxyToken(token) === "accepted") return;
     sleep(1);
@@ -973,6 +1032,7 @@ export {
   killStaleProxy,
   persistAndProbeOllamaProxy,
   persistProxyToken,
+  prepareCompatibleEndpointNoAuthProxy,
   prepareOllamaModel,
   printOllamaExposureWarning,
   probeOllamaAuthProxyHealth,

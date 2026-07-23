@@ -157,7 +157,7 @@ type RemoteModelValidatorDeps = {
     label: string,
     endpointUrl: string,
     model: string,
-    credentialEnv: string,
+    credentialEnv: string | null,
     helpUrl: string | null,
   ) => Promise<ValidationResult>;
   validateCustomAnthropicSelection: (
@@ -199,7 +199,7 @@ type ValidateSelectedRemoteModelArgs = {
   selected: ProviderChoice;
   remoteConfig: RemoteProviderConfig;
   state: SetupNimSelectionState;
-  selectedCredentialEnv: string;
+  selectedCredentialEnv: string | null;
   intendedInferenceApi?: string | null;
 };
 
@@ -300,7 +300,10 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           remoteConfig.label,
           state.endpointUrl || deps.ANTHROPIC_ENDPOINT_URL,
           selectedModel,
-          selectedCredentialEnv,
+          deps.requireValue(
+            selectedCredentialEnv,
+            `Missing credential env for ${remoteConfig.label}`,
+          ),
           remoteConfig.helpUrl,
           { intendedApi },
         );
@@ -326,7 +329,10 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           remoteConfig.label,
           state.endpointUrl || deps.ANTHROPIC_ENDPOINT_URL,
           selectedModel,
-          selectedCredentialEnv,
+          deps.requireValue(
+            selectedCredentialEnv,
+            `Missing credential env for ${remoteConfig.label}`,
+          ),
           retryMessage,
           remoteConfig.helpUrl,
         );

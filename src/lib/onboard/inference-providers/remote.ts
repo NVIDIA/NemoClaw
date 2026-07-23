@@ -14,7 +14,6 @@ import { deleteProviderWithRecovery, parseAttachedSandboxes } from "../sandbox-p
 import {
   compatibleEndpointAllowsMissingApiKey,
   gatewayReachableCompatibleEndpointUrl,
-  LOCALHOST_COMPATIBLE_API_KEY_PLACEHOLDER,
   reuseRegisteredProviderWithGatewayEndpoint,
 } from "./compatible-endpoint-gateway-route";
 import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
@@ -240,12 +239,31 @@ export async function setupRemoteProviderInference(
     (deleteProviderWithRecovery as unknown as NonNullable<
       RemoteProviderDeps["deleteGatewayProvider"]
     >);
+  const noAuth = provider === "compatible-endpoint" && credentialEnv === null;
+  if (noAuth && (!endpointUrl || !compatibleEndpointAllowsMissingApiKey(endpointUrl))) {
+    error("  No authentication is allowed only for an exact loopback endpoint.");
+    return exitProcess(1);
+  }
+  let noAuthProxy: Awaited<
+    ReturnType<RemoteProviderDeps["prepareCompatibleEndpointNoAuthProxy"]>
+  > | null = null;
+  if (noAuth && endpointUrl) {
+    try {
+      noAuthProxy = await deps.prepareCompatibleEndpointNoAuthProxy(endpointUrl);
+    } catch (err) {
+      error(`  ${err instanceof Error ? err.message : String(err)}`);
+      return exitProcess(1);
+    }
+  }
   while (true) {
-    const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
+    const resolvedCredentialEnv = noAuthProxy
+      ? noAuthProxy.credentialEnv
+      : credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
-    const gatewayEndpointUrl = gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
+    const gatewayEndpointUrl =
+      noAuthProxy?.baseUrl ?? gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
     let providerResult;
-    if (reuseGatewayCredentialWithoutLocalKey) {
+    if (reuseGatewayCredentialWithoutLocalKey && !noAuthProxy) {
       providerResult = reuseRegisteredProviderWithGatewayEndpoint({
         provider,
         providerType: config.providerType,
@@ -256,19 +274,13 @@ export async function setupRemoteProviderInference(
         upsertProvider,
       });
     } else {
-      const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
-      const providerCredentialValue =
-        credentialValue ||
-        (provider === "compatible-endpoint" &&
-        resolvedEndpointUrl &&
-        compatibleEndpointAllowsMissingApiKey(resolvedEndpointUrl)
-          ? LOCALHOST_COMPATIBLE_API_KEY_PLACEHOLDER
-          : null);
+      const credentialValue =
+        noAuthProxy?.credentialValue ?? hydrateCredentialEnv(resolvedCredentialEnv);
       const env =
-        resolvedCredentialEnv && providerCredentialValue
-          ? { [resolvedCredentialEnv]: providerCredentialValue }
+        resolvedCredentialEnv && credentialValue
+          ? { [resolvedCredentialEnv]: credentialValue }
           : {};
-      if (!providerCredentialValue) {
+      if (!credentialValue) {
         providerResult = {
           ok: false,
           status: 1,

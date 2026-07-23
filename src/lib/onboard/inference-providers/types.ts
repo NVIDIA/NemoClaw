@@ -105,6 +105,11 @@ export type RemoteProviderDeps = CommonDeps & {
   LOCAL_INFERENCE_TIMEOUT_SECS: number;
   redact: (input: string) => string;
   compactText: (input: string) => string;
+  prepareCompatibleEndpointNoAuthProxy: (endpointUrl: string) => Promise<{
+    baseUrl: string;
+    credentialEnv: string;
+    credentialValue: string;
+  }>;
   // #6294 OpenAI-surface registration for openai_compatible agents onboarded
   // on compatible-anthropic-endpoint. Optional: production falls back to the
   // real implementations inside remote.ts; tests inject fakes.

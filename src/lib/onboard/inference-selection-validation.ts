@@ -104,7 +104,7 @@ export interface InferenceSelectionValidationHelpers {
     label: string,
     endpointUrl: string,
     model: string,
-    credentialEnv: string,
+    credentialEnv: string | null,
     helpUrl?: string | null,
   ): Promise<EndpointValidationResult>;
   validateCustomAnthropicSelection(
@@ -331,7 +331,7 @@ export function createInferenceSelectionValidationHelpers(
     label: string,
     endpointUrl: string,
     model: string,
-    credentialEnv: string,
+    credentialEnv: string | null,
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
     const preflight = await preflightCustomEndpointOrFail(
@@ -342,7 +342,7 @@ export function createInferenceSelectionValidationHelpers(
     );
     if ("blocked" in preflight) return preflight.blocked;
     const { pinnedAddresses, trustedPrivateCapability } = preflight;
-    const apiKey = resolveCredential(credentialEnv);
+    const apiKey = credentialEnv ? resolveCredential(credentialEnv) : "";
     const reasoningEnabled = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING) === "true";
     // Reasoning-only compatible endpoints often reject Responses, tool-call, and streaming probes.
     const probe = await runOpenAiLikeProbe(endpointUrl, model, apiKey, {

@@ -110,11 +110,17 @@ describe("onboarding inference gateway scope", () => {
     );
   });
 
-  it("accepts a missing compatible API key for an exact loopback endpoint (#7424)", async () => {
+  it("routes explicit loopback no-auth through the protected header-stripping proxy (#7424)", async () => {
     await withProcessEnv({ COMPATIBLE_API_KEY: undefined }, async () => {
+      const prepareCompatibleEndpointNoAuthProxy = vi.fn(async () => ({
+        baseUrl: "http://host.openshell.internal:11435/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        credentialValue: "internal-loopback-token",
+      }));
       const harness = createHarness({
         runOpenshell: (args) =>
           args.slice(0, 2).join(" ") === "provider get" ? { status: 1 } : undefined,
+        overrides: { prepareCompatibleEndpointNoAuthProxy },
       });
       const endpointUrl = "http://localhost:8000/v1";
 
@@ -124,7 +130,7 @@ describe("onboarding inference gateway scope", () => {
           "local-model",
           "compatible-endpoint",
           endpointUrl,
-          "COMPATIBLE_API_KEY",
+          null,
           null,
           [],
           { gatewayName: GATEWAY },
@@ -135,13 +141,15 @@ describe("onboarding inference gateway scope", () => {
         command.startsWith("provider create "),
       );
       expect(providerCreate?.env).toEqual({
-        COMPATIBLE_API_KEY: "nemoclaw-local-endpoint",
+        NEMOCLAW_OLLAMA_PROXY_TOKEN: "internal-loopback-token",
       });
+      expect(providerCreate?.command).not.toContain("COMPATIBLE_API_KEY");
       expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      expect(prepareCompatibleEndpointNoAuthProxy).toHaveBeenCalledWith(endpointUrl);
       expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledWith(
         expect.objectContaining({
           endpointUrl,
-          credentialEnv: "COMPATIBLE_API_KEY",
+          credentialEnv: null,
         }),
       );
     });

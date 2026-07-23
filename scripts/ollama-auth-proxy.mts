@@ -14,10 +14,12 @@
  *   OLLAMA_PROXY_TOKEN  — required, the Bearer token to validate
  *   OLLAMA_PROXY_PORT   — listen port (default: 11435)
  *   OLLAMA_BACKEND_PORT — Ollama port on localhost (default: 11434)
+ *   OLLAMA_BACKEND_URL  — optional exact loopback upstream origin
  */
 
 import crypto from "node:crypto";
 import http from "node:http";
+import https from "node:https";
 
 const TOKEN = process.env.OLLAMA_PROXY_TOKEN;
 if (!TOKEN) {
@@ -27,6 +29,7 @@ if (!TOKEN) {
 
 const LISTEN_PORT = parseInt(process.env.OLLAMA_PROXY_PORT || "11435", 10);
 const BACKEND_PORT = parseInt(process.env.OLLAMA_BACKEND_PORT || "11434", 10);
+const BACKEND_URL = new URL(process.env.OLLAMA_BACKEND_URL || `http://127.0.0.1:${BACKEND_PORT}`);
 
 const server = http.createServer(
   (clientReq: http.IncomingMessage, clientRes: http.ServerResponse) => {
@@ -69,10 +72,11 @@ const server = http.createServer(
       clientRes.end(`Ollama backend error: ${err.message}`);
     };
 
-    const proxyReq = http.request(
+    const transport = BACKEND_URL.protocol === "https:" ? https : http;
+    const proxyReq = transport.request(
       {
-        hostname: "127.0.0.1",
-        port: BACKEND_PORT,
+        hostname: BACKEND_URL.hostname.replace(/^\[|\]$/g, ""),
+        port: BACKEND_URL.port,
         path: clientReq.url,
         method: clientReq.method,
         headers,
@@ -112,5 +116,5 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 });
 
 server.listen(LISTEN_PORT, "0.0.0.0", () => {
-  console.log(`Ollama auth proxy listening on 0.0.0.0:${LISTEN_PORT} -> 127.0.0.1:${BACKEND_PORT}`);
+  console.log(`Ollama auth proxy listening on 0.0.0.0:${LISTEN_PORT} -> ${BACKEND_URL.origin}`);
 });

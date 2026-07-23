@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import { canonicalEndpoint } from "../core/url-utils";
+import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
@@ -36,6 +36,7 @@ function matchesOnboardEndpoint(
   const selected = canonicalEndpoint(endpointUrl, flavor);
   return selected !== null && selected === canonicalEndpoint(onboardEndpointUrl, flavor);
 }
+
 import type {
   CommonDeps,
   HermesDeps,
@@ -125,6 +126,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   probeOpenAiLikeEndpoint?: RemoteProviderDeps["probeOpenAiLikeEndpoint"];
   readGatewayProviderMetadata?: RemoteProviderDeps["readGatewayProviderMetadata"];
   deleteGatewayProvider?: RemoteProviderDeps["deleteGatewayProvider"];
+  prepareCompatibleEndpointNoAuthProxy: RemoteProviderDeps["prepareCompatibleEndpointNoAuthProxy"];
   log: (message: string) => void;
   error: (message: string) => void;
   exitProcess: (code: number) => never;
@@ -422,6 +424,7 @@ export function createSetupInference(
               probeOpenAiLikeEndpoint: deps.probeOpenAiLikeEndpoint,
               readGatewayProviderMetadata: deps.readGatewayProviderMetadata,
               deleteGatewayProvider: deps.deleteGatewayProvider,
+              prepareCompatibleEndpointNoAuthProxy: deps.prepareCompatibleEndpointNoAuthProxy,
             },
           );
           if (outcome.done) return outcome.result;

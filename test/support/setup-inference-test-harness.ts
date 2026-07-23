@@ -328,6 +328,11 @@ export function createDirectSetupInferenceHarnessFactory(
       openrouterRuntimeOnboard: {
         setupOpenRouterRuntimeInference: async () => ({ handled: false as const }),
       },
+      prepareCompatibleEndpointNoAuthProxy: async () => ({
+        baseUrl: "http://host.openshell.internal:11435/v1",
+        credentialEnv: "NEMOCLAW_OLLAMA_PROXY_TOKEN",
+        credentialValue: "internal-loopback-token",
+      }),
       validateLocalProvider: () => ({ ok: true }),
       getLocalProviderHealthCheck: () => null,
       getLocalProviderBaseUrl: (provider: string) =>
