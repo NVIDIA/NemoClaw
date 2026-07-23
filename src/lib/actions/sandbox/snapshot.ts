@@ -61,6 +61,7 @@ import {
   parseDcodeProbeState,
 } from "./dcode-activity-probe";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
+import { establishRestoredSandboxGatewayPairing } from "./restore-gateway-pairing";
 import {
   buildSandboxExecMarkedCommand,
   createSandboxExecMarker,
@@ -1099,6 +1100,9 @@ async function runSnapshotRestoreUnlocked(
     // managed observability binding from current target state.
     reconcileSnapshotPolicyPresets(targetSandbox, resolvedSnapshot);
   });
+  if (isCrossSandboxRestore) {
+    establishRestoredSandboxGatewayPairing(targetSandbox);
+  }
 }
 
 export async function runSandboxSnapshot(

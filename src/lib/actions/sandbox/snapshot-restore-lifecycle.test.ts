@@ -5,7 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as f from "./snapshot-restore-test-fixture";
 
-beforeEach(f.resetSnapshotRestoreMocks);
+const pairingMocks = vi.hoisted(() => ({
+  establish: vi.fn(),
+}));
+vi.mock("./restore-gateway-pairing", () => ({
+  establishRestoredSandboxGatewayPairing: pairingMocks.establish,
+}));
+
+beforeEach(() => {
+  f.resetSnapshotRestoreMocks();
+  pairingMocks.establish.mockReset();
+});
 afterEach(f.cleanupSnapshotRestoreMocks);
 describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
   it("restores the latest snapshot into the source sandbox", async () => {
@@ -186,5 +196,62 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.lifecycleMock.events).not.toContain("delete");
     expect(f.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(f.registerSandboxMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("runSandboxSnapshot restore: gateway pairing on a freshly created destination", () => {
+  it("provokes and approves device pairing after a cross-sandbox restore", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha"
+        ? {
+            name: "alpha",
+            agent: "openclaw",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+            provider: "nvidia-nim",
+            model: "nvidia/model-a",
+          }
+        : null,
+    );
+    f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
+    f.captureOpenshellMock.mockImplementation((args) =>
+      f.openshellResponses(args, {
+        "sandbox exec": { status: 0, output: f.dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["user.md"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true });
+
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
+    expect(pairingMocks.establish).toHaveBeenCalledWith("beta");
+  });
+
+  it("leaves the working gateway credentials untouched on a self-restore", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["user.md"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    expect(pairingMocks.establish).not.toHaveBeenCalled();
   });
 });
