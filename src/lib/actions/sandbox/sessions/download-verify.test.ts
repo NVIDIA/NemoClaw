@@ -5,7 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { assertDownloadedFile } from "./download-verify";
+import {
+  assertDownloadArtifactExists,
+  assertDownloadedFile,
+  resolveDownloadArtifactPath,
+} from "./download-verify";
 
 describe("assertDownloadedFile", () => {
   let dir: string;
@@ -86,5 +90,72 @@ describe("assertDownloadedFile", () => {
         sandboxName: "alpha",
       }),
     ).not.toThrow();
+  });
+});
+
+describe("resolveDownloadArtifactPath", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-7367-artifact-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("returns the exact dest for a file source when the dest is not a directory", () => {
+    const dest = path.join(dir, "out.txt");
+    expect(resolveDownloadArtifactPath("/sandbox/a/b.txt", dest, "file")).toBe(dest);
+  });
+
+  it("joins the source basename when the dest is an existing directory (file source)", () => {
+    expect(resolveDownloadArtifactPath("/sandbox/a/b.txt", dir, "file")).toBe(
+      path.join(dir, "b.txt"),
+    );
+  });
+
+  it("joins the source basename when the dest has a trailing separator (file source)", () => {
+    const dest = `${path.join(dir, "sub")}${path.sep}`;
+    expect(resolveDownloadArtifactPath("/sandbox/a/b.txt", dest, "file")).toBe(
+      path.join(dest, "b.txt"),
+    );
+  });
+
+  it("returns the dest itself for a directory source (contents extract into it)", () => {
+    expect(resolveDownloadArtifactPath("/sandbox/a/mydir", dir, "dir")).toBe(dir);
+  });
+});
+
+describe("assertDownloadArtifactExists", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-7367-exists-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("passes when a file artifact exists", () => {
+    const target = path.join(dir, "f.txt");
+    fs.writeFileSync(target, "x");
+    expect(() =>
+      assertDownloadArtifactExists(target, { remoteLabel: "/sandbox/f.txt", sandboxName: "alpha" }),
+    ).not.toThrow();
+  });
+
+  it("passes when a directory artifact exists (directory downloads are valid)", () => {
+    expect(() =>
+      assertDownloadArtifactExists(dir, { remoteLabel: "/sandbox/d", sandboxName: "alpha" }),
+    ).not.toThrow();
+  });
+
+  it("throws when nothing was written (the #7367 exit-0 race)", () => {
+    const target = path.join(dir, "missing");
+    expect(() =>
+      assertDownloadArtifactExists(target, { remoteLabel: "/sandbox/x", sandboxName: "alpha" }),
+    ).toThrow(/reported success \(exit 0\) but nothing was written to/);
   });
 });

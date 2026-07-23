@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 
 export interface DownloadOutcome {
   status: number | null;
@@ -72,6 +73,57 @@ export function assertDownloadedFile(
   if (requireNonEmpty && stat.size === 0) {
     throw new Error(
       `${prefix}: openshell reported success (exit 0) but wrote an empty file to '${hostPath}'.`,
+    );
+  }
+}
+
+export type SandboxSourceKind = "file" | "dir";
+
+/**
+ * Resolve where a successful `openshell sandbox download` lands on the host,
+ * following openshell's cp-style semantics, so the caller can confirm the
+ * artifact actually appeared (openshell can exit 0 without writing — #7367).
+ *
+ * - A directory source is extracted into `hostDest` (openshell creates it when
+ *   absent), so `hostDest` itself is the artifact to confirm.
+ * - A file source lands at `hostDest/<basename>` when `hostDest` is a directory
+ *   target (an existing directory or a trailing-separator path); otherwise
+ *   `hostDest` is the exact file path.
+ *
+ * Called before the download so `hostDest`'s directory-ness reflects the same
+ * pre-download state openshell itself branches on.
+ */
+export function resolveDownloadArtifactPath(
+  sandboxPath: string,
+  hostDest: string,
+  sourceKind: SandboxSourceKind,
+): string {
+  if (sourceKind === "dir") {
+    return hostDest;
+  }
+  const destIsDirectoryTarget =
+    hostDest.endsWith(path.sep) ||
+    hostDest.endsWith("/") ||
+    (fs.existsSync(hostDest) && fs.statSync(hostDest).isDirectory());
+  return destIsDirectoryTarget ? path.join(hostDest, path.basename(sandboxPath)) : hostDest;
+}
+
+/**
+ * Confirm a reported-success download produced an artifact at `hostPath`
+ * (a file or a directory — the download command supports both). Unlike
+ * {@link assertDownloadedFile}, this does not require a regular file, so it is
+ * safe for directory downloads.
+ *
+ * @throws if nothing exists at `hostPath` — i.e. openshell exited 0 without
+ * writing, the #7367 race.
+ */
+export function assertDownloadArtifactExists(
+  hostPath: string,
+  { remoteLabel, sandboxName }: { remoteLabel: string; sandboxName: string },
+): void {
+  if (!fs.existsSync(hostPath)) {
+    throw new Error(
+      `Failed to download '${remoteLabel}' from sandbox '${sandboxName}': openshell reported success (exit 0) but nothing was written to '${hostPath}'.`,
     );
   }
 }
