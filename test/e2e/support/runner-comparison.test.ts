@@ -222,6 +222,7 @@ describe("runner comparison collection", () => {
         { cpuPercent: 12.5, memBytes: 500, memLimitBytes: 1_000 },
         { cpuPercent: 3, memBytes: 700, memLimitBytes: 1_000 },
       ],
+      maximumContainerCpuPercent: 99,
       dockerDisk: { imagesBytes: 100, containersBytes: 200, buildCacheBytes: 300 },
       disk: { totalBytes: 409_600, freeBytes: 102_400, inodesTotal: 1000, inodesFree: 250 },
     };
@@ -267,7 +268,7 @@ describe("runner comparison collection", () => {
         containersBytes: 200,
         buildCacheBytes: 300,
         maximumContainerMemoryBytes: 700,
-        maximumContainerCpuPercent: 12.5,
+        maximumContainerCpuPercent: 99,
       },
       largestProcess: { class: "docker-buildkit", rssKb: 999 },
     });

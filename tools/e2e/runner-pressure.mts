@@ -54,7 +54,7 @@ import {
   parseCgroupScalar,
   parseClassificationLine,
   parseCpuTicks,
-  parseDockerStats,
+  parseDockerStatsEvidence,
   parseDockerSystemDf,
   parseLargestClassifiedProcess,
   parseLoadAverages,
@@ -216,6 +216,10 @@ export function collectResourceSnapshot(
           ["system", "df", "--format", "{{json .}}"],
           commandPlan.dockerDiskTimeoutMs,
         );
+  const dockerStats =
+    statsText === null
+      ? { containers: [], maximumCpuPercent: null }
+      : parseDockerStatsEvidence(statsText);
   return {
     phase,
     at: sources.now().toISOString(),
@@ -235,7 +239,8 @@ export function collectResourceSnapshot(
     ioPressure: ioPressure === null ? null : parsePressure(ioPressure),
     topProcesses: psText === null ? [] : parseTopProcesses(psText),
     largestProcess: psText === null ? null : parseLargestClassifiedProcess(psText),
-    containers: statsText === null ? [] : parseDockerStats(statsText),
+    containers: dockerStats.containers,
+    maximumContainerCpuPercent: dockerStats.maximumCpuPercent,
     dockerDisk: dfText === null ? null : parseDockerSystemDf(dfText),
     disk: collectDisk(sources),
   };

@@ -38,6 +38,7 @@ import {
   parseCpuTicks,
   parseDockerSize,
   parseDockerStats,
+  parseDockerStatsEvidence,
   parseDockerSystemDf,
   parseLargestClassifiedProcess,
   parseLoadAverages,
@@ -278,6 +279,22 @@ describe("host measurement parsers (#7146)", () => {
     expect(JSON.stringify(rows)).not.toContain("token-");
   });
 
+  it("aggregates maximum Docker CPU across rows outside the retained memory ranks", () => {
+    const stats = Array.from({ length: 6 }, (_, index) =>
+      JSON.stringify({
+        Name: `secret-${index}`,
+        CPUPerc: index === 5 ? "999%" : `${index + 1}%`,
+        MemUsage: `${6 - index}GiB / 16GiB`,
+      }),
+    ).join("\n");
+
+    const evidence = parseDockerStatsEvidence(stats);
+    expect(evidence.containers).toHaveLength(5);
+    expect(evidence.containers.map((row) => row.memBytes)).not.toContain(1024 ** 3);
+    expect(evidence.maximumCpuPercent).toBe(999);
+    expect(JSON.stringify(evidence)).not.toContain("secret-");
+  });
+
   it("attributes docker disk use to images, containers, and build cache", () => {
     const df = [
       JSON.stringify({ Type: "Images", Size: "20GiB", Reclaimable: "4GiB" }),
@@ -394,6 +411,7 @@ describe("runner pressure collection profiles (#7146)", () => {
     expect(snapshot.containers).toEqual([
       { cpuPercent: 25, memBytes: 256 * 1024 ** 2, memLimitBytes: 16 * 1024 ** 3 },
     ]);
+    expect(snapshot.maximumContainerCpuPercent).toBe(25);
     expect(snapshot.dockerDisk).toEqual({
       imagesBytes: 3 * 1024 ** 3,
       containersBytes: 1024 ** 3,

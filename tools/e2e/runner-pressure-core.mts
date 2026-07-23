@@ -294,15 +294,21 @@ export interface ContainerStatSample {
   memLimitBytes: number | null;
 }
 
+export interface DockerStatsEvidence {
+  containers: ContainerStatSample[];
+  maximumCpuPercent: number | null;
+}
+
 /**
  * Parse `docker stats --no-stream --format '{{json .}}'` lines. Malformed
  * lines are skipped. Container-controlled names are intentionally discarded.
- * Rows are sorted before limiting so evidence reports the largest consumers.
+ * The retained rows are memory-ranked and bounded, while the numeric CPU
+ * maximum covers every row in the already bounded command output.
  */
-export function parseDockerStats(
+export function parseDockerStatsEvidence(
   text: string,
   limit = CONTAINER_STAT_LIMIT,
-): ContainerStatSample[] {
+): DockerStatsEvidence {
   const rows: ContainerStatSample[] = [];
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
@@ -331,7 +337,20 @@ export function parseDockerStats(
       (b.memBytes ?? Number.NEGATIVE_INFINITY) - (a.memBytes ?? Number.NEGATIVE_INFINITY) ||
       (b.cpuPercent ?? Number.NEGATIVE_INFINITY) - (a.cpuPercent ?? Number.NEGATIVE_INFINITY),
   );
-  return rows.slice(0, limit);
+  const cpuValues = rows
+    .map((row) => row.cpuPercent)
+    .filter((value): value is number => value !== null);
+  return {
+    containers: rows.slice(0, Math.max(0, limit)),
+    maximumCpuPercent: cpuValues.length === 0 ? null : Math.max(...cpuValues),
+  };
+}
+
+export function parseDockerStats(
+  text: string,
+  limit = CONTAINER_STAT_LIMIT,
+): ContainerStatSample[] {
+  return parseDockerStatsEvidence(text, limit).containers;
 }
 
 export interface DockerDiskSample {
@@ -393,6 +412,7 @@ export interface ResourceSnapshot {
   topProcesses: ProcessSample[];
   largestProcess: ClassifiedProcessSample | null;
   containers: ContainerStatSample[];
+  maximumContainerCpuPercent?: number | null;
   dockerDisk: DockerDiskSample | null;
   disk: DiskSample | null;
 }

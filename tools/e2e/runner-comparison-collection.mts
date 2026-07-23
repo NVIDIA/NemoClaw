@@ -96,9 +96,9 @@ export function collectRunnerComparisonSample(
       maximumContainerMemoryBytes: maximum(
         snapshot.containers.map((container) => container.memBytes),
       ),
-      maximumContainerCpuPercent: maximum(
-        snapshot.containers.map((container) => container.cpuPercent),
-      ),
+      maximumContainerCpuPercent:
+        snapshot.maximumContainerCpuPercent ??
+        maximum(snapshot.containers.map((container) => container.cpuPercent)),
     },
     largestProcess: snapshot.largestProcess,
   };
