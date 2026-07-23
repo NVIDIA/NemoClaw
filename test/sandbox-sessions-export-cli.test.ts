@@ -172,10 +172,14 @@ describe("sandbox sessions export CLI", () => {
       expect(downloadLines).toHaveLength(2);
       expect(downloadLines[0]).toContain("/sandbox/.openclaw/agents/main/sessions/sid-a.jsonl");
       // #7367: each file downloads into a fresh staging dir under outDir and is
-      // renamed to its final path only after verification, so the download
-      // target is a staging path — the published file lands at outDir/<file>.
+      // renamed to its final path only after verification, so every download
+      // targets a staging path — the published files land at outDir/<file>.
+      // Assert staging for BOTH downloads so a regression on only the second
+      // file cannot pass (the stub still creates the final file either way).
       expect(downloadLines[0]).toContain(path.join(outDir, ".sessions-export-"));
       expect(downloadLines[0]).toContain("sid-a.jsonl");
+      expect(downloadLines[1]).toContain(path.join(outDir, ".sessions-export-"));
+      expect(downloadLines[1]).toContain("sid-b.jsonl");
       expect(fs.existsSync(path.join(outDir, "sid-a.jsonl"))).toBe(true);
       expect(fs.existsSync(path.join(outDir, "sid-b.jsonl"))).toBe(true);
 
