@@ -13,6 +13,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -40,6 +41,9 @@ export const EXPECTED_ROUTE_PROVIDER =
   (PROVIDER === "custom" ? "compatible-endpoint" : "nvidia-prod");
 export const MAX_TURN_SECONDS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_MAX_SECONDS, 300);
 const INSTALL_ATTEMPTS = positiveInt(process.env.NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS, 2);
+const INSTALL_TIMEOUT_MS = 30 * 60_000;
+
+type AgentTurnProgress = Pick<TestProgress, "activity" | "event" | "onOutput">;
 
 function positiveInt(value: string | undefined, fallback: number): number {
   return value && /^[1-9][0-9]*$/u.test(value) ? Number.parseInt(value, 10) : fallback;
@@ -77,13 +81,52 @@ export function env(
 export async function bestEffortPreclean(
   label: string,
   run: () => Promise<unknown>,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await run();
-  } catch (error) {
-    console.warn(
-      `best-effort cleanup failed (${label}): ${error instanceof Error ? error.message : String(error)}`,
-    );
+    return true;
+  } catch {
+    console.warn(`best-effort cleanup failed (${label}); see redacted command artifacts`);
+    return false;
+  }
+}
+
+function emitProgressEvent(progress: AgentTurnProgress | undefined, label: string): void {
+  try {
+    progress?.event(label);
+  } catch {
+    // Progress diagnostics must never change the agent-turn result.
+  }
+}
+
+function startProgressActivity(progress: AgentTurnProgress | undefined, label: string): () => void {
+  let finish: (() => void) | undefined;
+  try {
+    finish = progress?.activity(label);
+  } catch {
+    return () => undefined;
+  }
+  return () => {
+    try {
+      finish?.();
+    } catch {
+      // Progress diagnostics must never change the agent-turn result.
+    }
+  };
+}
+
+async function runBestEffortCleanupStep(
+  label: string,
+  run: () => Promise<unknown>,
+  progress?: AgentTurnProgress,
+): Promise<void> {
+  emitProgressEvent(progress, `${label} started`);
+  const finishActivity = startProgressActivity(progress, `cleanup: ${label}`);
+  try {
+    const succeeded = await bestEffortPreclean(label, run);
+    emitProgressEvent(progress, `${label} ${succeeded ? "passed" : "failed"}`);
+  } finally {
+    finishActivity();
   }
 }
 
@@ -252,27 +295,67 @@ export async function installSandbox(
   agent: "openclaw" | "hermes",
   apiKey: string,
   cleanupBeforeRetry?: () => Promise<void>,
+  progress?: AgentTurnProgress,
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
-    install = await host.command(
-      "bash",
-      ["install.sh", "--non-interactive", "--fresh", "--yes-i-accept-third-party-software"],
-      {
-        artifactName: `${agent}-install-attempt-${attempt}`,
-        cwd: REPO_ROOT,
-        env: env(sandboxName, agent, apiKey),
-        redactionValues: [apiKey],
-        timeoutMs: 30 * 60_000,
-      },
+    const attemptLabel = `${agent} install attempt ${attempt}/${INSTALL_ATTEMPTS}`;
+    emitProgressEvent(progress, `${attemptLabel} started`);
+    const finishInstallActivity = startProgressActivity(
+      progress,
+      `command: ${agent}-install-attempt-${attempt}`,
+    );
+    try {
+      install = await host.command(
+        "bash",
+        ["install.sh", "--non-interactive", "--fresh", "--yes-i-accept-third-party-software"],
+        {
+          artifactName: `${agent}-install-attempt-${attempt}`,
+          cwd: REPO_ROOT,
+          env: env(sandboxName, agent, apiKey),
+          onOutput: progress?.onOutput,
+          redactionValues: [apiKey],
+          timeoutMs: INSTALL_TIMEOUT_MS,
+        },
+      );
+    } catch (error) {
+      emitProgressEvent(progress, `${attemptLabel} failed before returning a result`);
+      throw error;
+    } finally {
+      finishInstallActivity();
+    }
+    emitProgressEvent(
+      progress,
+      install.timedOut
+        ? `${attemptLabel} timeout fired at the 30-minute limit`
+        : `${attemptLabel} ${install.exitCode === 0 ? "passed" : "failed"}`,
     );
     const retry =
       install.exitCode !== 0 &&
       isTransientProviderValidationFailure(install) &&
       attempt < INSTALL_ATTEMPTS;
     install.exitCode === 0 && (attempt = INSTALL_ATTEMPTS + 1);
-    retry && cleanupBeforeRetry && (await cleanupBeforeRetry());
-    retry && (await new Promise((resolve) => setTimeout(resolve, 10_000 * attempt)));
+    if (retry && cleanupBeforeRetry) {
+      emitProgressEvent(progress, `${attemptLabel} starting cleanup before retry`);
+      const finishCleanupActivity = startProgressActivity(
+        progress,
+        `cleanup: ${agent}-install-attempt-${attempt}-retry`,
+      );
+      try {
+        await cleanupBeforeRetry();
+        emitProgressEvent(progress, `${attemptLabel} cleanup before retry passed`);
+      } catch (error) {
+        emitProgressEvent(progress, `${attemptLabel} cleanup before retry failed`);
+        throw error;
+      } finally {
+        finishCleanupActivity();
+      }
+    }
+    if (retry) {
+      const backoffSeconds = 10 * attempt;
+      emitProgressEvent(progress, `${attemptLabel} waiting ${backoffSeconds}s before retry`);
+      await new Promise((resolve) => setTimeout(resolve, backoffSeconds * 1_000));
+    }
     !retry && install.exitCode !== 0 && (attempt = INSTALL_ATTEMPTS + 1);
   }
   if (!install) throw new Error(`${agent} install command did not run`);
@@ -282,35 +365,50 @@ export async function installSandbox(
 export async function cleanupTurnSandboxes(
   host: HostCliClient,
   sandbox: SandboxClient,
+  progress?: AgentTurnProgress,
 ): Promise<void> {
   for (const [name, agent] of [
     [OPENCLAW_SANDBOX, "openclaw"],
     [HERMES_SANDBOX, "hermes"],
   ] as const) {
-    await bestEffortPreclean(`destroy ${agent} sandbox`, () =>
-      cleanupTurnSandbox(host, name, agent),
+    await runBestEffortCleanupStep(
+      `destroy ${agent} sandbox`,
+      () => cleanupTurnSandbox(host, name, agent, progress),
+      progress,
     );
-    await bestEffortPreclean(`delete ${agent} sandbox`, () =>
-      sandbox.openshell(["sandbox", "delete", name], {
-        artifactName: `cleanup-${agent}-delete`,
-        env: env(name, agent),
-        timeoutMs: 60_000,
-      }),
+    await runBestEffortCleanupStep(
+      `delete ${agent} sandbox`,
+      () =>
+        sandbox.openshell(["sandbox", "delete", name], {
+          artifactName: `cleanup-${agent}-delete`,
+          env: env(name, agent),
+          onOutput: progress?.onOutput,
+          timeoutMs: 60_000,
+        }),
+      progress,
     );
   }
-  await bestEffortPreclean("stop Hermes API forward", () =>
-    sandbox.openshell(["forward", "stop", "8642"], {
-      artifactName: "cleanup-forward-stop-hermes-api",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    }),
+  await runBestEffortCleanupStep(
+    "stop Hermes API forward",
+    () =>
+      sandbox.openshell(["forward", "stop", "8642"], {
+        artifactName: "cleanup-forward-stop-hermes-api",
+        env: buildAvailabilityProbeEnv(),
+        onOutput: progress?.onOutput,
+        timeoutMs: 30_000,
+      }),
+    progress,
   );
-  await bestEffortPreclean("destroy OpenShell gateway", () =>
-    sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
-      artifactName: "cleanup-gateway-destroy-turn-latency",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    }),
+  await runBestEffortCleanupStep(
+    "destroy OpenShell gateway",
+    () =>
+      sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+        artifactName: "cleanup-gateway-destroy-turn-latency",
+        env: buildAvailabilityProbeEnv(),
+        onOutput: progress?.onOutput,
+        timeoutMs: 60_000,
+      }),
+    progress,
   );
 }
 
@@ -318,10 +416,12 @@ export async function cleanupTurnSandbox(
   host: HostCliClient,
   name: string,
   agent: "openclaw" | "hermes",
+  progress?: Pick<TestProgress, "onOutput">,
 ): Promise<void> {
   const result = await host.command("node", [CLI, name, "destroy", "--yes"], {
     artifactName: `cleanup-${agent}-destroy`,
     env: env(name, agent),
+    onOutput: progress?.onOutput,
     timeoutMs: 120_000,
   });
   const output = resultText(result);
@@ -339,10 +439,12 @@ export async function route(
   sandboxName: string,
   agent: "openclaw" | "hermes",
   artifactName: string,
+  progress?: Pick<TestProgress, "onOutput">,
 ): Promise<ShellProbeResult> {
   return await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
     artifactName,
     env: env(sandboxName, agent),
+    onOutput: progress?.onOutput,
     timeoutMs: 30_000,
   });
 }
@@ -350,6 +452,7 @@ export async function route(
 export async function openclawTurn(
   sandbox: SandboxClient,
   apiKey: string,
+  progress?: Pick<TestProgress, "onOutput">,
 ): Promise<{ result: ShellProbeResult; elapsedMs: number }> {
   const started = process.hrtime.bigint();
   const result = await sandbox.execShell(
@@ -360,6 +463,7 @@ export async function openclawTurn(
     {
       artifactName: "openclaw-agent-turn",
       env: env(OPENCLAW_SANDBOX, "openclaw"),
+      onOutput: progress?.onOutput,
       redactionValues: [apiKey],
       timeoutMs: (MAX_TURN_SECONDS + 30) * 1000,
     },
@@ -367,13 +471,21 @@ export async function openclawTurn(
   return { result, elapsedMs: msSince(started) };
 }
 
-export async function waitHermesHealth(sandbox: SandboxClient): Promise<ShellProbeResult> {
+export async function waitHermesHealth(
+  sandbox: SandboxClient,
+  progress?: Pick<TestProgress, "onOutput">,
+): Promise<ShellProbeResult> {
   return await sandbox.execShell(
     HERMES_SANDBOX,
     trustedSandboxShellScript(
       "for attempt in $(seq 1 10); do body=$(curl -sf --max-time 10 http://localhost:8642/health 2>/dev/null || true); printf '%s' \"$body\" | grep -qi '\"ok\"' && { printf '%s' \"$body\"; exit 0; }; sleep 5; done; printf '%s' \"$body\"; exit 1",
     ),
-    { artifactName: "hermes-health", env: env(HERMES_SANDBOX, "hermes"), timeoutMs: 90_000 },
+    {
+      artifactName: "hermes-health",
+      env: env(HERMES_SANDBOX, "hermes"),
+      onOutput: progress?.onOutput,
+      timeoutMs: 90_000,
+    },
   );
 }
 

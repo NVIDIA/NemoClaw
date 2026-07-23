@@ -690,9 +690,9 @@ All NemoClaw build arguments (`NEMOCLAW_MODEL`, `NEMOCLAW_INFERENCE_PROVIDER_ID`
 `NEMOCLAW_INFERENCE_PROVIDER_ID` is a non-secret inference route identifier (for example `inference` for proxied providers, or a provider family such as `openai`), never a credential; provider credentials stay in OpenShell provider storage.
 It replaces the former `NEMOCLAW_PROVIDER_KEY` image argument, whose secret-shaped name triggered a BuildKit `SecretsUsedInArgOrEnv` warning.
 The host-side `NEMOCLAW_PROVIDER_KEY` credential alias is unchanged; this migration only renames the managed image route selector.
-Custom Dockerfiles that declare either `ARG NEMOCLAW_INFERENCE_PROVIDER_ID` or the legacy `ARG NEMOCLAW_PROVIDER_KEY` keep working through v0.0.90.
+Custom Dockerfiles that declare either `ARG NEMOCLAW_INFERENCE_PROVIDER_ID` or the legacy `ARG NEMOCLAW_PROVIDER_KEY` continue working in v0.0.91.
 NemoClaw updates whichever supported declaration is present, and runtime consumers read the legacy name as a fallback.
-Rename the legacy `ARG`/`ENV` declaration to `NEMOCLAW_INFERENCE_PROVIDER_ID` before legacy support is removed in v0.0.91.
+Rename the legacy `ARG`/`ENV` declaration to `NEMOCLAW_INFERENCE_PROVIDER_ID`; the legacy fallback is retained for compatibility in this release and may be removed in a future release.
 
 Custom Dockerfiles must declare `ARG NEMOCLAW_TOOL_DISCLOSURE=progressive` exactly once in the final build stage and promote it into that stage's runtime environment.
 The usual runtime contract is:
@@ -1562,6 +1562,12 @@ Do not log it, share it, or commit it to version control.
 
 Print the Hermes API bearer token for a running sandbox to stdout.
 NemoClaw retrieves the sandbox's `API_SERVER_KEY`, which authenticates OpenAI-compatible clients on the forwarded API port.
+During a normal sandbox lifecycle, the token is generated once for each sandbox home.
+Different sandbox homes receive different tokens.
+NemoClaw preserves it across a gateway restart, sandbox stop and start, and host OpenShell gateway restart.
+When you rebuild or replace the sandbox, the replacement home receives a new token.
+At gateway startup, NemoClaw also generates a new token when `API_SERVER_KEY` is missing or is not exactly 64 lowercase hexadecimal characters.
+If an ordinary restart changes the token while the existing `API_SERVER_KEY` was present and valid, collect the before and after sandbox identity plus redacted mint logs and report it as a bug.
 Capture the token and pass it in the `Authorization` header:
 
 ```bash
@@ -1570,8 +1576,13 @@ curl -fsS -H "Authorization: Bearer $TOKEN" \
   http://127.0.0.1:8642/v1/models
 ```
 
+<Warning>
 Treat the token like a password.
 Do not log it, share it, or commit it to version control.
+</Warning>
+
+The sandbox must be running for `nemohermes my-assistant gateway-token --quiet` to retrieve the token.
+Use this supported command instead of reading or editing `.hermes/.env` directly.
 For browser access to the dashboard, use `nemohermes my-assistant dashboard-url`.
 
 </AgentOnly>
@@ -2525,6 +2536,10 @@ For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <
 For a pending or both-marker transaction, it points to `$$nemoclaw <name> destroy` because the registry records that OpenShell deletion was already confirmed.
 Before backup or deletion, rebuild checks the staged messaging configuration for credentials or channel resources already used by another registered sandbox.
 A conflict aborts with the original sandbox registered and intact so you can resolve the conflict before retrying.
+After OpenShell accepts the sandbox deletion, `rebuild` waits until OpenShell explicitly reports that the old sandbox is absent.
+Only then can NemoClaw perform any required local registry removal and begin creating the replacement.
+If OpenShell does not confirm absence within the bounded wait, including when gateway transport errors block the probes, `rebuild` exits nonzero before registry removal or replacement creation and preserves both the local registry entry and the state backup.
+Restore OpenShell connectivity and confirm the sandbox's live state before you retry, and keep the printed backup path for recovery.
 When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
 A detached auto-lock timer remains active until NemoClaw commits a successful shields-up state, so it can attempt to restore lockdown if the host rebuild process exits unexpectedly.
 
@@ -2536,6 +2551,8 @@ After restore, the command runs `openclaw doctor --fix` for cross-version struct
 <AgentOnly variant="hermes">
 
 After restore, the command restores Hermes manifest-defined state and starts the rebuilt Hermes gateway with the regenerated `/sandbox/.hermes` config.
+A rebuild creates a new sandbox home and a new Hermes API bearer token.
+After the rebuild succeeds, retrieve the replacement token with `nemohermes my-assistant gateway-token --quiet` before reconnecting API clients.
 For an older Hermes image that predates sealed shields transitions, rebuild is the only workflow authorized to use the descriptor-safe compatibility transition.
 The compatibility path verifies the strict root-owned hash and the in-tree hash, publishes fresh config inodes to revoke retained write descriptors, and restores the trusted lock posture if the transition cannot finish.
 Ordinary `shields up` and `shields down` commands refuse the older protocol and direct you to rebuild.
@@ -2777,7 +2794,7 @@ Run this on the host where the sandbox is running.
 openshell term
 ```
 
-For a remote Brev instance, SSH to the instance and run `openshell term` there, or use a port-forward to the gateway.
+For a remote server, connect through SSH and run `openshell term` on that server.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -3656,11 +3673,11 @@ The following flags change defaults for commands that manage existing sandboxes.
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA` | `1` to opt in | Acknowledges data loss during `$$nemoclaw uninstall` and removes the otherwise-preserved entries (`rebuild-backups/`, `backups/`, `sandboxes.json`) under `~/.nemoclaw/`. Equivalent to passing the `--destroy-user-data` flag; the global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 
 <AgentOnly variant="openclaw">
-### Remote Deployment
+### Deprecated Brev Deployment
 
-The following variables seed defaults for `$$nemoclaw deploy` and `$$nemoclaw onboard --remote`, which provision a sandbox on a Brev instance.
-Each has a flag equivalent on `deploy`; the env var lets non-interactive runs skip the prompt.
-For narrative how-to coverage of `NEMOCLAW_BREV_PROVIDER` and `NEMOCLAW_GPU`, refer to [Deploy to Remote GPU](../deployment/deploy-to-remote-gpu).
+The following variables configure the deprecated `$$nemoclaw deploy` compatibility command.
+The maintained remote-server path does not use these variables.
+For the current remote-server deployment path, refer to [Deploy to a Headless Server](../deployment/deploy-to-headless-server).
 
 | Variable | Default | Effect |
 |----------|---------|--------|

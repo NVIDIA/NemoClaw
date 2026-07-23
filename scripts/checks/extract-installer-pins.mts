@@ -47,10 +47,22 @@ const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 // only in a prerequisite trust-anchor PR that keeps the currently selected
 // release; the later pin PR may then change release data without authorizing
 // any operational installer change. A mismatch reports the candidate hash.
-const TRUSTED_INSTALLER_TEMPLATE_SHA256 =
+// This transition accepts the current installer and the reviewed formula
+// installer. Tighten this back to the formula installer hash when its consumer
+// lands; accepting both is necessary because base-trusted CI validates both
+// the prerequisite branch and the dependent pull request. Each trusted hash is
+// coupled below to the exact asset set consumed by that template.
+const TRUSTED_ARCHIVE_INSTALLER_TEMPLATE_SHA256 =
   "a101f002bd8e02aa7b38960ddcb76c9fca419bc3766f6870446f6a7e99e14d78";
-const TRUSTED_BREV_TEMPLATE_SHA256 =
-  "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a";
+const TRUSTED_FORMULA_INSTALLER_TEMPLATE_SHA256 =
+  "2b6a6195241d6b946fe29503d8d2d99d5b864864458f510ca129e3396248ac58";
+const TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST = [
+  TRUSTED_ARCHIVE_INSTALLER_TEMPLATE_SHA256,
+  TRUSTED_FORMULA_INSTALLER_TEMPLATE_SHA256,
+] as const;
+const TRUSTED_BREV_TEMPLATE_SHA256_ALLOWLIST = [
+  "c0a4ddf25a02a9fe02b2df53a60942ea887610f04d4ce16a121b6e79a5aeff1a",
+] as const;
 const EXPECTED_INSTALLER_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-aarch64-unknown-linux-musl.tar.gz",
@@ -61,6 +73,14 @@ const EXPECTED_INSTALLER_ASSETS = [
   "openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz",
   "openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz",
 ] as const;
+const TRANSITIONAL_INSTALLER_ASSET = "openshell.rb";
+const EXPECTED_INSTALLER_ASSETS_BY_TEMPLATE_SHA256 = new Map<string, readonly string[]>([
+  [TRUSTED_ARCHIVE_INSTALLER_TEMPLATE_SHA256, EXPECTED_INSTALLER_ASSETS],
+  [
+    TRUSTED_FORMULA_INSTALLER_TEMPLATE_SHA256,
+    [...EXPECTED_INSTALLER_ASSETS, TRANSITIONAL_INSTALLER_ASSET],
+  ],
+]);
 const EXPECTED_BREV_ASSETS = [
   "openshell-x86_64-unknown-linux-musl.tar.gz",
   "openshell-aarch64-unknown-linux-musl.tar.gz",
@@ -162,6 +182,14 @@ function assertExactAssetSet(
         `missing=[${missing.join(", ")}], unexpected=[${unexpected.join(", ")}]`,
     );
   }
+}
+
+function assertInstallerAssetSet(pins: InstallerPin[], templateSha256: string): void {
+  // extractInstallerPins rejects duplicate assets before this transition check.
+  const expectedAssets =
+    EXPECTED_INSTALLER_ASSETS_BY_TEMPLATE_SHA256.get(templateSha256) ??
+    fail(`installer template ${templateSha256} has no trusted asset contract`);
+  assertExactAssetSet(pins, expectedAssets, "installer pin table");
 }
 
 // invalidState: the blueprint and stable runtime selectors request a newer
@@ -655,9 +683,9 @@ function assertTrustedTemplate(
   source: string,
   functionNames: readonly string[],
   selectorPatterns: readonly RegExp[],
-  expectedSha256: string,
+  expectedSha256: readonly string[],
   label: string,
-): void {
+): string {
   const normalized = normalizeTrustedInstallerTemplate(
     source,
     functionNames,
@@ -665,12 +693,13 @@ function assertTrustedTemplate(
     label,
   );
   const actualSha256 = createHash("sha256").update(normalized).digest("hex");
-  if (actualSha256 !== expectedSha256) {
+  if (!expectedSha256.includes(actualSha256)) {
     fail(
       `${label} operational template is not base-trusted; ` +
-        `expected_sha256=${expectedSha256}, actual_sha256=${actualSha256}`,
+        `expected_sha256=[${expectedSha256.join(", ")}], actual_sha256=${actualSha256}`,
     );
   }
+  return actualSha256;
 }
 
 function skipSeparators(tokens: Token[], start: number): number {
@@ -931,7 +960,6 @@ function runCli(): void {
     functionName: "openshell_cli_pinned_sha256",
     sourceLabel: "Brev launchable",
   });
-  assertExactAssetSet(installerPins, EXPECTED_INSTALLER_ASSETS, "installer pin table");
   assertExactAssetSet(brevPins, EXPECTED_BREV_ASSETS, "Brev pin table");
   const pins = [...installerPins, ...brevPins];
   const releaseVersions = [...new Set(pins.map((pin) => pin.releaseVersion))].sort();
@@ -947,7 +975,7 @@ function runCli(): void {
       `pinned_sandbox_build_version must contain at least one digest for release ${releaseVersion}`,
     );
   }
-  assertTrustedTemplate(
+  const installerTemplateSha256 = assertTrustedTemplate(
     installerSource,
     ["openshell_pinned_sha256", "pinned_sandbox_build_version"],
     [
@@ -955,14 +983,15 @@ function runCli(): void {
       /^MAX_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,
       /^DEV_MIN_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"$/gm,
     ],
-    TRUSTED_INSTALLER_TEMPLATE_SHA256,
+    TRUSTED_INSTALLER_TEMPLATE_SHA256_ALLOWLIST,
     "installer",
   );
+  assertInstallerAssetSet(installerPins, installerTemplateSha256);
   assertTrustedTemplate(
     brevInstallerSource,
     ["openshell_cli_pinned_sha256"],
     [/^\s*stable\s*\|\s*auto\)\s*OPENSHELL_VERSION="v([0-9]+\.[0-9]+\.[0-9]+)"\s*;;\s*$/gm],
-    TRUSTED_BREV_TEMPLATE_SHA256,
+    TRUSTED_BREV_TEMPLATE_SHA256_ALLOWLIST,
     "Brev launchable",
   );
   for (const [label, runtimeVersion] of [
