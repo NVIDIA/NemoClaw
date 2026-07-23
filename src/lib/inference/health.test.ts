@@ -166,6 +166,28 @@ describe("inference health", () => {
       expect(result?.detail).toContain("GEMINI_API_KEY");
     });
 
+    it("invokes Atlas Cloud chat-completions with ATLASCLOUD_API_KEY", () => {
+      let capturedArgv: string[] = [];
+      const result = probeRemoteProviderHealth("atlas-cloud", {
+        model: "qwen/qwen3.5-flash",
+        getCredentialImpl: (envName) =>
+          envName === "ATLASCLOUD_API_KEY" ? "atlas-test-secret" : null,
+        runCurlProbeImpl: (argv) => {
+          capturedArgv = argv;
+          return httpOk();
+        },
+      });
+
+      expect(result?.ok).toBe(true);
+      expect(result?.probed).toBe(true);
+      expect(result?.providerLabel).toBe("Atlas Cloud");
+      expect(result?.endpoint).toBe("https://api.atlascloud.ai/v1/chat/completions");
+      expect(capturedArgv.at(-1)).toBe("https://api.atlascloud.ai/v1/chat/completions");
+      expect(capturedArgv.join(" ")).not.toContain("atlas-test-secret");
+      const payload = JSON.parse(capturedArgv[capturedArgv.indexOf("-d") + 1]);
+      expect(payload.model).toBe("qwen/qwen3.5-flash");
+    });
+
     it("probes non-Kimi NVIDIA models with a real chat-completions invocation (Stage A generalization)", () => {
       let capturedArgv: string[] = [];
       const result = probeRemoteProviderHealth("nvidia-prod", {

@@ -204,6 +204,25 @@ describe("model prompt helpers", () => {
     expect(result).toBe("gpt-5.4-mini");
   });
 
+  it("offers Atlas Cloud curated remote models", async () => {
+    const writeLine = vi.fn();
+    const result = await promptRemoteModel(
+      "Atlas Cloud",
+      "atlasCloud",
+      "qwen/qwen3.5-flash",
+      null,
+      {
+        promptFn: promptSequence(["2"]),
+        writeLine,
+      },
+    );
+
+    expect(result).toBe("deepseek-ai/deepseek-v4-pro");
+    expect(writeLine).toHaveBeenCalledWith("  Atlas Cloud models:");
+    expect(writeLine).toHaveBeenCalledWith("    1) qwen/qwen3.5-flash");
+    expect(writeLine).toHaveBeenCalledWith("    2) deepseek-ai/deepseek-v4-pro");
+  });
+
   it("treats non-numeric curated selections as manual-entry fallback", async () => {
     const result = await promptRemoteModel("OpenAI", "openai", "gpt-5.4-mini", null, {
       promptFn: promptSequence(["abc", "custom-model"]),

@@ -5,6 +5,10 @@ import { describe, expect, it } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
 import {
+  ATLAS_CLOUD_CREDENTIAL_ENV,
+  ATLAS_CLOUD_DEFAULT_MODEL,
+  ATLAS_CLOUD_MODEL_OPTIONS,
+  ATLAS_CLOUD_PROVIDER_NAME,
   CLOUD_MODEL_OPTIONS,
   coerceAgentInferenceApi,
   DEFAULT_CLOUD_MODEL,
@@ -136,6 +140,14 @@ describe("inference selection config", () => {
     expect(HERMES_PROVIDER_MODEL_OPTIONS.length).toBeGreaterThan(10);
   });
 
+  it("exposes the Atlas Cloud OpenAI-compatible model defaults", () => {
+    expect(ATLAS_CLOUD_DEFAULT_MODEL).toBe("qwen/qwen3.5-flash");
+    expect([...ATLAS_CLOUD_MODEL_OPTIONS]).toEqual([
+      "qwen/qwen3.5-flash",
+      "deepseek-ai/deepseek-v4-pro",
+    ]);
+  });
+
   it.each([
     "z-ai/glm-5.1",
     "moonshotai/kimi-k2.6",
@@ -210,6 +222,18 @@ describe("inference selection config", () => {
       provider: "openrouter-api",
       providerLabel: "OpenRouter",
     });
+    expect(
+      getProviderSelectionConfig(ATLAS_CLOUD_PROVIDER_NAME, "deepseek-ai/deepseek-v4-pro"),
+    ).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "deepseek-ai/deepseek-v4-pro",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: ATLAS_CLOUD_CREDENTIAL_ENV,
+      provider: ATLAS_CLOUD_PROVIDER_NAME,
+      providerLabel: "Atlas Cloud",
+    });
     expect(getProviderSelectionConfig("anthropic-prod", "claude-sonnet-4-6")).toEqual(
       expect.objectContaining({ model: "claude-sonnet-4-6", providerLabel: "Anthropic" }),
     );
@@ -264,6 +288,7 @@ describe("inference selection config", () => {
       "nvidia-nim",
       "openai-api",
       "openrouter-api",
+      ATLAS_CLOUD_PROVIDER_NAME,
       "anthropic-prod",
       "compatible-anthropic-endpoint",
       "gemini-api",
@@ -299,6 +324,9 @@ describe("inference selection config", () => {
   it("falls back to provider defaults when model is omitted", () => {
     expect(getProviderSelectionConfig("openai-api")?.model).toBe("gpt-5.4");
     expect(getProviderSelectionConfig("openrouter-api")?.model).toBe(DEFAULT_CLOUD_MODEL);
+    expect(getProviderSelectionConfig(ATLAS_CLOUD_PROVIDER_NAME)?.model).toBe(
+      ATLAS_CLOUD_DEFAULT_MODEL,
+    );
     expect(getProviderSelectionConfig("anthropic-prod")?.model).toBe("claude-sonnet-4-6");
     expect(getProviderSelectionConfig("gemini-api")?.model).toBe("gemini-2.5-flash");
     expect(getProviderSelectionConfig("compatible-endpoint")?.model).toBe("custom-model");
@@ -392,6 +420,18 @@ describe("getSandboxInferenceConfig", () => {
     expect(getSandboxInferenceConfig("moonshotai/kimi-k2.6", "openrouter-api")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
       primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
+    });
+  });
+
+  it("maps Atlas Cloud to the managed inference provider with store disabled", () => {
+    expect(getSandboxInferenceConfig("qwen/qwen3.5-flash", ATLAS_CLOUD_PROVIDER_NAME)).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/qwen/qwen3.5-flash`,
       inferenceBaseUrl: INFERENCE_ROUTE_URL,
       inferenceApi: "openai-completions",
       inferenceCompat: {

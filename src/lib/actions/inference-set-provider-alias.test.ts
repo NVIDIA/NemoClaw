@@ -52,6 +52,8 @@ describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)"
     expect(normalizeInferenceSetProvider("openai")).toBe("openai-api");
     expect(normalizeInferenceSetProvider("openrouter")).toBe("openrouter-api");
     expect(normalizeInferenceSetProvider("open-router")).toBe("openrouter-api");
+    expect(normalizeInferenceSetProvider("atlas")).toBe("atlas-cloud");
+    expect(normalizeInferenceSetProvider("atlasCloud")).toBe("atlas-cloud");
     expect(normalizeInferenceSetProvider("custom")).toBe("compatible-endpoint");
     expect(normalizeInferenceSetProvider("ollama")).toBe("ollama-local");
   });

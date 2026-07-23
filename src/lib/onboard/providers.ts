@@ -7,6 +7,10 @@
 const { redact } = require("../runner");
 const { normalizeCredentialValue } = require("../credentials/store");
 const {
+  ATLAS_CLOUD_CREDENTIAL_ENV,
+  ATLAS_CLOUD_DEFAULT_MODEL,
+  ATLAS_CLOUD_ENDPOINT_URL,
+  ATLAS_CLOUD_PROVIDER_NAME,
   DEFAULT_CLOUD_MODEL,
   DEFAULT_HERMES_PROVIDER_MODEL,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
@@ -43,6 +47,9 @@ const NON_INTERACTIVE_PROVIDER_ALIASES = {
   vllm: "vllm",
   "open-router": "openrouter",
   openrouterai: "openrouter",
+  atlas: "atlasCloud",
+  "atlas-cloud": "atlasCloud",
+  atlascloud: "atlasCloud",
   anthropiccompatible: "anthropicCompatible",
   hermes: "hermesProvider",
   "hermes-provider": "hermesProvider",
@@ -53,6 +60,7 @@ const NON_INTERACTIVE_PROVIDER_ALIASES = {
 const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "build",
   "openrouter",
+  "atlasCloud",
   "openai",
   "anthropic",
   "anthropicCompatible",
@@ -69,7 +77,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "start-windows-ollama",
 ]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+  "Valid values: build, openrouter, atlas-cloud, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -99,6 +107,17 @@ const REMOTE_PROVIDER_CONFIG = {
     helpUrl: openrouter.OPENROUTER_HELP_URL,
     modelMode: "catalog",
     defaultModel: DEFAULT_CLOUD_MODEL,
+    skipVerify: true,
+  },
+  atlasCloud: {
+    label: "Atlas Cloud",
+    providerName: ATLAS_CLOUD_PROVIDER_NAME,
+    providerType: "openai",
+    credentialEnv: ATLAS_CLOUD_CREDENTIAL_ENV,
+    endpointUrl: ATLAS_CLOUD_ENDPOINT_URL,
+    helpUrl: "https://www.atlascloud.ai/console/api-keys",
+    modelMode: "curated",
+    defaultModel: ATLAS_CLOUD_DEFAULT_MODEL,
     skipVerify: true,
   },
   openai: {

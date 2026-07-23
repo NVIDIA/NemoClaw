@@ -3,7 +3,11 @@
 
 import { BACK_TO_SELECTION, type BackToSelection } from "../navigation";
 import { isSafeModelId } from "../validation";
-import { CLOUD_MODEL_OPTIONS, HERMES_PROVIDER_MODEL_OPTIONS } from "./config";
+import {
+  ATLAS_CLOUD_MODEL_OPTIONS,
+  CLOUD_MODEL_OPTIONS,
+  HERMES_PROVIDER_MODEL_OPTIONS,
+} from "./config";
 import { validateNvidiaEndpointModel } from "./provider-models";
 
 export { promptVllmModel, type VllmModelPromptOptions } from "./vllm-prompt";
@@ -26,6 +30,7 @@ export const REMOTE_MODEL_OPTIONS: Record<string, string[]> = {
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
   ],
+  atlasCloud: [...ATLAS_CLOUD_MODEL_OPTIONS],
   hermesProvider: [...HERMES_PROVIDER_MODEL_OPTIONS],
 };
 

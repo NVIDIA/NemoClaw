@@ -145,6 +145,7 @@ const SUPPORTED_PROVIDER_NAMES = [
   "nvidia-router",
   "openai-api",
   "openrouter-api",
+  "atlas-cloud",
   "anthropic-prod",
   "compatible-anthropic-endpoint",
   "gemini-api",
@@ -176,6 +177,8 @@ const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   "open-router": "openrouter-api",
   openrouter: "openrouter-api",
   openrouterai: "openrouter-api",
+  atlas: "atlas-cloud",
+  atlascloud: "atlas-cloud",
   anthropic: "anthropic-prod",
   gemini: "gemini-api",
   // Hermes Provider (Nous portal) is reachable under several onboard synonyms;

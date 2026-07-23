@@ -81,6 +81,7 @@ describe("providerNameToOptionKey", () => {
     expect(providerNameToOptionKey("openai-api")).toBe("openai");
     expect(providerNameToOptionKey("anthropic-prod")).toBe("anthropic");
     expect(providerNameToOptionKey("gemini-api")).toBe("gemini");
+    expect(providerNameToOptionKey("atlas-cloud")).toBe("atlasCloud");
     expect(providerNameToOptionKey("compatible-endpoint")).toBe("custom");
     expect(providerNameToOptionKey("compatible-anthropic-endpoint")).toBe("anthropicCompatible");
   });

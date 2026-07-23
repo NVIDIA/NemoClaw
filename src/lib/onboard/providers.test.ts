@@ -137,6 +137,29 @@ describe("onboard provider helpers", () => {
     ).toContain("OPENAI_BASE_URL=https://openrouter.ai/api/v1");
   });
 
+  it("registers Atlas Cloud with an OpenAI-compatible provider profile and aliases", () => {
+    const provider = REMOTE_PROVIDER_CONFIG.atlasCloud;
+
+    expect(provider).toMatchObject({
+      providerName: "atlas-cloud",
+      providerType: "openai",
+      credentialEnv: "ATLASCLOUD_API_KEY",
+    });
+    expect(NON_INTERACTIVE_PROVIDER_KEYS.has("atlasCloud")).toBe(true);
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES.atlas).toBe("atlasCloud");
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES["atlas-cloud"]).toBe("atlasCloud");
+    expect(NON_INTERACTIVE_PROVIDER_ALIASES.atlascloud).toBe("atlasCloud");
+    expect(
+      buildProviderArgs(
+        "create",
+        provider.providerName,
+        provider.providerType,
+        provider.credentialEnv,
+        "https://api.atlascloud.ai/v1",
+      ),
+    ).toContain("OPENAI_BASE_URL=https://api.atlascloud.ai/v1");
+  });
+
   it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", () => {
     const provider = REMOTE_PROVIDER_CONFIG.anthropicCompatible;
 
@@ -474,6 +497,7 @@ describe("onboard provider helpers", () => {
 
   it.each([
     "anthropic",
+    "atlas-cloud",
     "build",
     "cloud",
     "custom",

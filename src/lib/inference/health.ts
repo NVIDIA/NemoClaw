@@ -13,7 +13,11 @@ import { createBearerAuthConfig, createXApiKeyAuthConfig } from "../adapters/htt
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import { normalizeCredentialValue, resolveProviderCredential } from "../credentials/store";
-import { getProviderSelectionConfig } from "./config";
+import {
+  ATLAS_CLOUD_ENDPOINT_URL,
+  ATLAS_CLOUD_PROVIDER_NAME,
+  getProviderSelectionConfig,
+} from "./config";
 import type { LocalProviderHealthProbeOptions } from "./local";
 import { probeLocalProviderHealth } from "./local";
 import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
@@ -597,6 +601,16 @@ export function probeRemoteProviderHealth(
       config.model,
       config.credentialEnv,
       GEMINI_CHAT_COMPLETIONS_ENDPOINT,
+      options,
+    );
+  }
+
+  if (provider === ATLAS_CLOUD_PROVIDER_NAME) {
+    return probeChatCompletionsProviderHealth(
+      providerLabel,
+      config.model,
+      config.credentialEnv,
+      `${ATLAS_CLOUD_ENDPOINT_URL}/chat/completions`,
       options,
     );
   }

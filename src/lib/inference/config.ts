@@ -14,6 +14,14 @@ export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
   "https://portal.nousresearch.com/api/nous/recommended-models";
 export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+export const ATLAS_CLOUD_PROVIDER_NAME = "atlas-cloud";
+export const ATLAS_CLOUD_ENDPOINT_URL = "https://api.atlascloud.ai/v1";
+export const ATLAS_CLOUD_CREDENTIAL_ENV = "ATLASCLOUD_API_KEY";
+export const ATLAS_CLOUD_MODEL_OPTIONS = [
+  "qwen/qwen3.5-flash",
+  "deepseek-ai/deepseek-v4-pro",
+] as const;
+export const ATLAS_CLOUD_DEFAULT_MODEL = ATLAS_CLOUD_MODEL_OPTIONS[0];
 // Fallback context window used when no per-model value is known. Cloud providers
 // have no per-model context metadata today (CLOUD_MODEL_OPTIONS carries only
 // id/label), so they fall back to this; matches the onboarding build default in
@@ -166,6 +174,13 @@ export function getProviderSelectionConfig(
         credentialEnv: OPENROUTER_CREDENTIAL_ENV,
         providerLabel: "OpenRouter",
       };
+    case ATLAS_CLOUD_PROVIDER_NAME:
+      return {
+        ...base,
+        model: model || ATLAS_CLOUD_DEFAULT_MODEL,
+        credentialEnv: ATLAS_CLOUD_CREDENTIAL_ENV,
+        providerLabel: "Atlas Cloud",
+      };
     case "anthropic-prod":
       return {
         ...base,
@@ -268,6 +283,7 @@ export function getSandboxInferenceConfig(
       break;
     case "gemini-api":
     case OPENROUTER_PROVIDER_NAME:
+    case ATLAS_CLOUD_PROVIDER_NAME:
     case "hermes-provider":
       providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;

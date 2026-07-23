@@ -32,7 +32,12 @@ export function isOpenRouterProvider(selectedKey: string): boolean {
 }
 
 export function isOpenAiLikeRemoteProvider(selectedKey: string): boolean {
-  return selectedKey === "openai" || selectedKey === "gemini" || isOpenRouterProvider(selectedKey);
+  return (
+    selectedKey === "openai" ||
+    selectedKey === "gemini" ||
+    selectedKey === "atlasCloud" ||
+    isOpenRouterProvider(selectedKey)
+  );
 }
 
 export function credentialValidatorForProvider(
