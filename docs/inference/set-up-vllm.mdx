@@ -155,7 +155,22 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 On DGX Station, accepting the installer express prompt sets `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b` and overrides the profile default.
-Pass `--station-deepseek` to select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow.
+To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+<AgentOnly variant="openclaw">
+  NEMOCLAW_AGENT=openclaw \
+</AgentOnly>
+<AgentOnly variant="hermes">
+  NEMOCLAW_AGENT=hermes \
+</AgentOnly>
+<AgentOnly variant="deepagents">
+  NEMOCLAW_AGENT=langchain-deepagents-code \
+</AgentOnly>
+  bash -s -- --station-deepseek
+```
+
 The flag requires an interactive terminal; in a `curl | bash` pipeline, `/dev/tty` must be available.
 Without terminal access, the installer stops before it installs Docker or build dependencies instead of silently continuing with another configuration.
 The registered Ultra recipe tracks the [official DGX Station deployment guide](https://github.com/NVIDIA-NeMo/Nemotron/blob/287ae845639d2ce998998cb8fd1f70a3fa943c0b/usage-cookbook/Nemotron-3-Ultra/StationDeploymentGuide/README.md) and configures the pinned model revision, CPU offload, `16 GB` of shared memory, memory/stack ulimits, MTP speculative decoding, and the Nemotron reasoning and tool-call parsers.
@@ -163,16 +178,8 @@ NemoClaw intentionally keeps its existing bridge-networked managed-inference top
 The container publishes port `8000` through Docker, so apply the firewall guidance at the top of this page.
 
 <Warning>
-DGX Station is Tested with limitations across qualified profiles on one physical DGX Station GB300.
-On DGX Station GB300, NemoClaw can prepare a clean generic Ubuntu 24.04 ARM64 host for the reviewed Station path.
-Stock DGX OS `7.2.0`, `7.4.0`, or `7.5.0` requires the supported release marker before NemoClaw validates the factory GPU runtime in place; the exact April 2026 NVIDIA Colossus BaseOS and June 2026 NVIDIA AI Developer Tools profiles use their bounded factory-image paths.
-For the explicit temporary metadata override, follow [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation).
-On Station GB300 only, a direct GPU sandbox receives the exact read-only BDF directory for each host-discovered NVIDIA display-class PCI device, plus the existing CPU, memory, NUMA topology, and NVIDIA module initialization paths.
-The policy does not grant `/sys`, the PCI parent subtree, or sysfs write access.
-In the physical DGX OS `7.5.0` validation, this exact-BDF policy passed sandbox `cuInit(0)` while reads of `/sys/fs/cgroup/cgroup.controllers` and `/sys/class/net/lo/address` remained denied.
-Physical validation covers generic Ubuntu 24.04 ARM64, stock DGX OS `7.5.0`, the April 2026 NVIDIA Colossus BaseOS profile, and the June 2026 NVIDIA AI Developer Tools profile on one DGX Station GB300.
-Clean-host end-to-end validation passed on generic Ubuntu and Colossus BaseOS; stock DGX OS and AI Developer Tools completed Station Express validation.
-Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
+Before managed vLLM setup on DGX Station, follow [Prepare DGX Station to Install NemoClaw](../../get-started/additional-setup/dgx-station-preparation).
+For the current support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
 </Warning>
 
 ## Run Non-Interactive Onboarding
@@ -202,6 +209,27 @@ For a headless DGX Station setup that selects DeepSeek V4 Flash explicitly, use 
 NEMOCLAW_PROVIDER=install-vllm \
   NEMOCLAW_VLLM_MODEL=deepseek-v4-flash \
   $$nemoclaw onboard --non-interactive
+```
+
+For a headless or CI first install on a qualifying DGX Station after host preparation, set the same managed-vLLM recipe in the installer environment.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+<AgentOnly variant="openclaw">
+  NEMOCLAW_AGENT=openclaw \
+</AgentOnly>
+<AgentOnly variant="hermes">
+  NEMOCLAW_AGENT=hermes \
+</AgentOnly>
+<AgentOnly variant="deepagents">
+  NEMOCLAW_AGENT=langchain-deepagents-code \
+</AgentOnly>
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_MODEL=deepseek-v4-flash \
+  NEMOCLAW_SANDBOX_NAME=my-assistant \
+  bash
 ```
 
 ## Select a Managed Model

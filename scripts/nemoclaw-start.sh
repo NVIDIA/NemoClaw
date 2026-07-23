@@ -664,6 +664,32 @@ PY_CLASSIFY_MUTABLE_CONFIG
   fi
 }
 
+# OpenClaw 2026.7.1 requires its startup migration checkpoint to complete
+# without warnings before the gateway reports readiness. Older NemoClaw images
+# persisted update-check.json as update polling and notification cache. Empty
+# placeholders fail JSON parsing, while nonempty files cannot be hardened and
+# archived by the separate gateway user when shields protect the parent.
+# NemoClaw pins OpenClaw in the image, so discard only a descriptor-pinned,
+# stable regular cache file before the mandatory checkpoint.
+# Remove this repair after every supported upgrade source stops seeding the
+# cache or OpenClaw can migrate it across split users and a protected parent.
+remove_openclaw_legacy_update_check_state() {
+  local config_dir="/sandbox/.openclaw"
+  if [ ! -e "$config_dir" ] && [ ! -L "$config_dir" ]; then
+    return 0
+  fi
+
+  local normalizer
+  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
+    printf '[SECURITY] Refusing legacy update-check repair — trusted normalizer is missing\n' >&2
+    return 1
+  fi
+  if ! python3 -I "$normalizer" remove-legacy-update-check "$config_dir"; then
+    printf '[SECURITY] Refusing legacy update-check repair — expected a stable regular file or no file\n' >&2
+    return 1
+  fi
+}
+
 classify_openclaw_config_seal() {
   local config_dir="$1"
   local sandbox_uid sandbox_gid
@@ -2147,7 +2173,7 @@ validate_nemoclaw_tmp_permissions() {
     [ -n "$_target" ] && _dynamic_targets+=("$_target")
   done < <(messaging_runtime_preload_targets)
 
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
 }
 
 verify_messaging_runtime_secret_scans() {
@@ -2513,8 +2539,9 @@ start_auto_pair() {
   # The gateway must retain NemoClaw's private-interface URL, but the watcher
   # is an ordinary OpenClaw CLI client. Source the trusted runtime environment
   # in this child only so an injected private URL is removed before the first
-  # `devices list`. OpenClaw can then complete its local-loopback pairing
-  # bootstrap before this unchanged watcher starts approving bounded requests.
+  # `devices list`. The first list call keeps shared gateway auth but uses the
+  # reviewed child-only marker to retain CLI identity, allowing OpenClaw's
+  # canonical local-loopback pairing bootstrap. Later calls use device auth.
   # An explicit URL override is preserved by write_runtime_shell_env().
   (
     if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
@@ -2636,6 +2663,7 @@ QUIET_POLLS = 0
 APPROVED = 0
 SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
+PAIRING_BOOTSTRAPPED = False
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
 # (the gateway stores connectParams.client.id verbatim). The policy requires
 # an explicit known clientId and never trusts an allowlisted mode by itself.
@@ -2848,16 +2876,14 @@ def brief_child_error(out, err):
     return (lines[-1] if lines else '')[:400]
 
 # Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
-# runtime environment, so list calls resolve the same live gateway through
-# local loopback instead of the injected private-interface URL. Approval calls
-# additionally drop the gateway env triplet so OpenClaw must use the local
-# device token. The reviewed 2026.6.10 dist patch requests only
-# operator.pairing for a complete bounded CLI self-upgrade and forces the
-# existing local-only stored-device-auth path so a shared token reloaded from
-# config cannot win authentication. The gateway then validates and commits in
-# OpenClaw's canonical locked pairing writer. Remove both pieces when upstream
-# supports that flow.
-def run(*args, strip_gateway_env=False):
+# runtime environment, so its first list call resolves the live gateway through
+# local loopback and retains the shared token plus a private child marker. The
+# reviewed 2026.7.1 dist patch uses that marker to retain CLI identity before a
+# stored device credential exists. Once OpenClaw issues that credential, the
+# patch retains identity for ordinary loopback CLI calls automatically. Later
+# list and approval calls drop the gateway env triplet and use the stored device
+# credential. Remove both pieces when upstream supports that flow.
+def run(*args, strip_gateway_env=False, force_device_pairing=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
     # no timeout would hold a hung `openclaw devices list/approve` past
@@ -2865,6 +2891,9 @@ def run(*args, strip_gateway_env=False):
     env = None
     if strip_gateway_env:
         env = gateway_approval_env(os.environ)
+    elif force_device_pairing:
+        env = dict(os.environ)
+        env['NEMOCLAW_OPENCLAW_FORCE_DEVICE_PAIRING'] = '1'
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS, env=env,
@@ -2912,7 +2941,14 @@ while time.time() < DEADLINE:
     if not SLOW_MODE and time.time() >= FAST_DEADLINE:
         SLOW_MODE = True
         print(f'[auto-pair] fast-mode deadline reached; switching to slow-mode approvals={APPROVED}')
-    rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
+    rc, out, err = run(
+        OPENCLAW,
+        'devices',
+        'list',
+        '--json',
+        strip_gateway_env=PAIRING_BOOTSTRAPPED,
+        force_device_pairing=not PAIRING_BOOTSTRAPPED,
+    )
     if rc != 0 or not out:
         initial_request_id = pairing_required_request_id(out, err)
         if (
@@ -2935,6 +2971,9 @@ while time.time() < DEADLINE:
                 print(f'[auto-pair] initial CLI approve failed request={initial_request_id}: {failure}')
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
+    if not PAIRING_BOOTSTRAPPED:
+        PAIRING_BOOTSTRAPPED = True
+        print('[auto-pair] loopback CLI pairing bootstrap completed')
     try:
         data = json.loads(out)
     except Exception:
@@ -3267,31 +3306,6 @@ _NEMOTRON_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/nemotron-inference-fix.js
 _CIAO_GUARD_SCRIPT="/tmp/nemoclaw-ciao-network-guard.js"
 _CIAO_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js"
 
-# WebSocket CONNECT tunnel fix (NemoClaw#1570).
-# The `ws` library calls https.request() for wss:// WebSocket upgrades.
-# EnvHttpProxyAgent (NODE_USE_ENV_PROXY=1) sends a forward proxy request
-# instead of CONNECT — rejected by the L7 proxy with 400. Without
-# NODE_USE_ENV_PROXY, ws goes direct — blocked by sandbox netns.
-# The preload patches https.request() to inject a CONNECT tunnel agent for
-# WebSocket upgrade requests. Activates whenever HTTPS_PROXY is set (the
-# script itself guards on the env var).
-_WS_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/ws-proxy-fix.js"
-_WS_FIX_SCRIPT="/tmp/nemoclaw-ws-proxy-fix.js"
-
-# ── Seccomp syscall guard ─────────────────────────────────────
-# OpenShell ≥0.0.36 seccomp policy blocks syscalls like getifaddrs
-# (used by Node's os.networkInterfaces()). Third-party libraries (e.g.,
-# @homebridge/ciao mDNS) call these without error handling, producing
-# unhandled promise rejections that crash the gateway under Node v22's
-# default --unhandled-rejections=throw.
-#
-# This preload catches those specific sandbox-infrastructure errors
-# and logs them as warnings instead of letting them kill the process.
-# Unlike the Slack channel guard, this is always installed because the
-# seccomp-blocked syscalls affect all sandboxes, not just Slack ones.
-_SECCOMP_GUARD_SCRIPT="/tmp/nemoclaw-seccomp-guard.js"
-_SECCOMP_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/seccomp-guard.js"
-
 # Stage the immutable, image-packaged preload set into /tmp. Startup and
 # authenticated PID 1 recovery share this exact path so a pod-recreate-style
 # /tmp wipe cannot drift from the initial security boundary. The shared emit
@@ -3310,16 +3324,6 @@ install_core_runtime_preloads() {
 
   emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <"$_CIAO_GUARD_SOURCE" || return 1
   append_node_require_once "$_CIAO_GUARD_SCRIPT"
-
-  if [ -f "$_WS_FIX_SOURCE" ]; then
-    # Copy to /tmp so the sandbox user can read it under Landlock-constrained
-    # runtimes. The missing optional source keeps the historical no-op.
-    emit_sandbox_sourced_file "$_WS_FIX_SCRIPT" <"$_WS_FIX_SOURCE" || return 1
-    append_node_require_once "$_WS_FIX_SCRIPT"
-  fi
-
-  emit_sandbox_sourced_file "$_SECCOMP_GUARD_SCRIPT" <"$_SECCOMP_GUARD_SOURCE" || return 1
-  append_node_require_once "$_SECCOMP_GUARD_SCRIPT"
 }
 
 install_core_runtime_preloads || exit 1
@@ -3363,6 +3367,13 @@ PROXYEOF
       _escaped_openclaw_env_value="$(printf '%s' "$_openclaw_env_value" | sed "s/'/'\\\\''/g")"
       printf "export %s='%s'\n" "$_openclaw_env_name" "$_escaped_openclaw_env_value"
     done
+    if [ "${NEMOCLAW_OPENCLAW_SHARED_STATE:-}" = "1" ]; then
+      printf 'export NEMOCLAW_OPENCLAW_SHARED_STATE=1\n'
+    else
+      # Old/custom images may still carry the former image-wide marker. Keep
+      # connect shells aligned with the topology selected by PID 1.
+      printf 'unset NEMOCLAW_OPENCLAW_SHARED_STATE\n'
+    fi
     if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
       _escaped_gateway_port="$(printf '%s' "$OPENCLAW_GATEWAY_PORT" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_PORT='%s'\n" "$_escaped_gateway_port"
@@ -3452,7 +3463,7 @@ openclaw() {
   local _nemoclaw_guard_request_handled=0 _nemoclaw_guard_request_status=0
   # NemoClaw#4462: approval calls temporarily drop the gateway URL/port/token
   # so OpenClaw resolves the local loopback gateway and device token. The
-  # reviewed 2026.6.10 compatibility patch then performs bounded same-device
+  # reviewed 2026.7.1 compatibility patch then performs bounded same-device
   # scope upgrades in the gateway's canonical locked pairing writer. This
   # wrapper never reads or writes pending.json/paired.json.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
@@ -3915,10 +3926,6 @@ GUARDENVEOF
     if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
       echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT\""
     fi
-    # WebSocket CONNECT tunnel fix for connect sessions. (NemoClaw#1570)
-    if [ -f "$_WS_FIX_SCRIPT" ]; then
-      echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_WS_FIX_SCRIPT\""
-    fi
     # Git TLS CA bundle for connect sessions (NemoClaw#2270)
     if [ -n "${GIT_SSL_CAINFO:-}" ]; then
       printf 'export GIT_SSL_CAINFO=%q\n' "$GIT_SSL_CAINFO"
@@ -3939,8 +3946,6 @@ GUARDENVEOF
     fi
     # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""
-    # Seccomp guard for connect sessions.
-    echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT\""
     # ciao network guard for connect sessions.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT\""
     # Manifest-declared messaging preloads for connect sessions.
@@ -4833,7 +4838,7 @@ launch_openclaw_gateway() {
   # script -- keeps it in place.
   arm_openclaw_gateway_supervisor_cleanup
   mark_in_container_gateway
-  nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" sh -c \
+  nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" env HOME=/sandbox sh -c \
     'umask 0007; exec "$@" >>/tmp/gateway.log 2>&1' sh \
     "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" &
   GATEWAY_PID=$!
@@ -5113,12 +5118,10 @@ openclaw_runtime_guard_chain_complete() {
     "$_SANDBOX_SAFETY_NET"
     "$_NEMOTRON_FIX_SCRIPT"
     "$_CIAO_GUARD_SCRIPT"
-    "$_SECCOMP_GUARD_SCRIPT"
     "$_RUNTIME_SHELL_ENV_FILE"
   )
   local target
   [ "${NODE_USE_ENV_PROXY:-}" = "1" ] && targets+=("$_PROXY_FIX_SCRIPT")
-  [ -f "$_WS_FIX_SOURCE" ] && targets+=("$_WS_FIX_SCRIPT")
   for target in "${targets[@]}"; do
     [ -f "$target" ] && [ ! -L "$target" ] || return 1
   done
@@ -5336,6 +5339,17 @@ handle_openclaw_gateway_control_request() {
 
 # ── Main ─────────────────────────────────────────────────────────
 
+# OpenClaw 2026.7.1 enforces owner-only SQLite and models-file modes on every
+# open. Only the root entrypoint uses NemoClaw's separate sandbox/gateway UIDs;
+# OpenShell starts this entrypoint as the sandbox UID and runs both roles as that
+# same user. Derive the compatibility marker from the real topology instead of
+# an image-wide or caller-supplied environment marker.
+if [ "$(id -u)" -eq 0 ]; then
+  export NEMOCLAW_OPENCLAW_SHARED_STATE=1
+else
+  unset NEMOCLAW_OPENCLAW_SHARED_STATE
+fi
+
 # Begin the root PID 1 readiness lease before any startup path reads or mutates
 # OpenClaw config. Recovery runs before the locked-parent discriminator so a
 # crash in a prior config write/restart/handoff can complete deterministically.
@@ -5356,6 +5370,7 @@ fi
 
 # Migrate legacy symlink layout before anything else reads .openclaw
 migrate_legacy_layout "/sandbox/.openclaw" "/sandbox/.openclaw-data" "openclaw" || exit 1
+remove_openclaw_legacy_update_check_state || exit 1
 
 echo 'Setting up NemoClaw...' >&2
 # Best-effort: .env may not exist.

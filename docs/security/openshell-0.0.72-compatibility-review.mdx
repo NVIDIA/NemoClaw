@@ -23,7 +23,12 @@ The dependency compatibility review was completed on June 29, 2026; the MCP inte
 
 ## Source-of-Truth Boundaries
 
+<AgentOnly variant="openclaw,hermes">
 The generated gateway authentication contract remains unchanged from the [OpenShell 0.0.71 gateway authentication review](./openshell-0.0.71-gateway-auth-review).
+</AgentOnly>
+<AgentOnly variant="deepagents">
+The generated gateway authentication contract remains unchanged from the OpenShell 0.0.71 gateway authentication review.
+</AgentOnly>
 The `v0.0.71...v0.0.72` source comparison does not change the gateway config loader, local TLS tables, mTLS user authentication, gateway JWT issuer, or `SandboxJwtAuthenticator` contract used by NemoClaw.
 The live `openshell-gateway-auth-source-contract.test.ts` scenario revalidates that NemoClaw keeps the main OpenShell listener on `127.0.0.1`, rejects unauthenticated Docker-origin calls, accepts a correctly scoped sandbox JWT over guest mTLS, rejects cross-sandbox tokens, and scrubs `OPENSHELL_DISABLE_GATEWAY_AUTH=true`.
 The inherited contract also continues to reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0`.
